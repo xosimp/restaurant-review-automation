@@ -30,15 +30,15 @@ This module keeps the draft's shape and re-solves the assignment:
               a new hour of overtime for anybody (the owner's rule: a same-
               role teammate with room takes it, or the draft's own person
               keeps it) — the longest run of consecutive days (the tail
-              counts), and the rules the day is held to whoever works it:
-              a MANAGER ON THE FLOOR EVERY MINUTE anybody is (Constraints.
+              counts), and the rules the day is held to whoever works it: a
+              MANAGER ON THE FLOOR EVERY MINUTE anybody is (Constraints.
               manages — a manager, or an acting manager on their dates; the
-              owner's highest rule, schedule audit 10/3/26 PR-32: every
-              stretch the draft had managed stays managed, a stretch newly
-              staffed must be, and an unmanaged stretch the draft left costs
-              what the score charges it), and each role's closer as the last
-              of the role out (D-9). A row the manager plan or the owner
-              pinned ("_pinned") is never reassigned.
+              owner's highest rule: every stretch the draft had managed
+              stays managed, a stretch newly staffed must be, and an
+              unmanaged stretch the draft left costs what the score charges
+              it), and each role's closer as the last of the role out. A row
+              the manager plan or the owner pinned ("_pinned") is never
+              reassigned.
   objective   a cost that mirrors the Shift Quality scorer an assignment can
               move, dimension by dimension, in the scorer's own units (a
               dimension's shortfall × its weight, on a shift's demand weight;
@@ -53,28 +53,26 @@ This module keeps the draft's shape and re-solves the assignment:
               against the profile's mix (managers and salaried people
               experienced by default), cross-training by role family,
               reliability (somebody late often never the only opener or
-              closer — D-44), pairings (a preferred pair split costs, L-20),
-              stations, fairness and the rotation, fatigue (this week and
-              sustained), staff preferences (stated, and learned at half
-              weight — L-19, D-36), minimum hours, overtime premium, labor
-              dollars (each person's own rate; salaried hours cost nothing
-              more — P-32), stability, and what the restaurant's scheduling
-              memory holds (signals["learned"], as the scorer's learned-
-              patterns measure reads it through schedule_memory.misses:
-              somebody kept off a slot or on it, the role the managers make
-              them, the usual opener or closer, a team on the same shifts,
-              somebody who habitually runs past their shift kept their
-              headroom under the overtime line — L-3, D-35). The dimensions
-              only the shape can move (coverage, coverage by the hour, labor
-              efficiency, sales per labor hour) are constants to it. The
-              final choice between the draft and the solver's answers is
-              made by shift_quality.score_rows over every dimension in
+              closer), pairings (a preferred pair split costs), stations,
+              fairness and the rotation, fatigue (this week and sustained),
+              staff preferences (stated, and learned at half weight), minimum
+              hours, overtime premium, labor dollars (each person's own rate;
+              salaried hours cost nothing more), stability, and what the
+              restaurant's scheduling memory holds (signals["learned"], as
+              the scorer's learned- patterns measure reads it through
+              schedule_memory.misses: somebody kept off a slot or on it, the
+              role the managers make them, the usual opener or closer, a team
+              on the same shifts, somebody who habitually runs past their
+              shift kept their headroom under the overtime line). The
+              dimensions only the shape can move (coverage, coverage by the
+              hour, labor efficiency, sales per labor hour) are constants to
+              it. The final choice between the draft and the solver's answers
+              is made by shift_quality.score_rows over every dimension in
               shift_quality.DIMENSIONS, the same judge the owner's number
               comes from, with the breaches of each candidate's own rows,
               less what it costs in dollars and in memory broken — and only
               among candidates that make nothing at or above the budget tier
-              new or worse (schedule_rules.regressions, by breach identity —
-              E-1, P-14).
+              new or worse (schedule_rules.regressions, by breach identity).
 
 The search is complete: backtracking over the most-constrained unit first,
 forward checking after every assignment (a person removed from every unit
@@ -135,14 +133,14 @@ LNS_MAX_UNITS = 14
 LNS_NODES = 4000
 _CHECK_EVERY = 64
 
-# A deterministic work budget (scheduler audit 10/10/26 ARCH-26): the
-# search's clock counts WORK — a node of the search, a large-neighbourhood
-# round — at SOLVER_WORK_PER_SECOND units to one budget "second", never the
-# wall clock, so the same draft gives the same week on an idle box and on one
-# where two generations share the GIL. The wall clock is only an emergency
-# cap (`wall_cap`, else WALL_CAP_FACTOR x the budget): when it cuts a search
-# short the result says so (`wall_capped`) and the repair loop reports it.
-# SCHEDULE_SOLVER_DETERMINISTIC=0 puts the budget back on the wall clock.
+# A deterministic work budget: the search's clock counts WORK — a node of the
+# search, a large-neighbourhood round — at SOLVER_WORK_PER_SECOND units to
+# one budget "second", never the wall clock, so the same draft gives the same
+# week on an idle box and on one where two generations share the GIL. The
+# wall clock is only an emergency cap (`wall_cap`, else WALL_CAP_FACTOR x the
+# budget): when it cuts a search short the result says so (`wall_capped`) and
+# the repair loop reports it. SCHEDULE_SOLVER_DETERMINISTIC=0 puts the budget
+# back on the wall clock.
 SOLVER_WORK_PER_SECOND = float(os.getenv("SCHEDULE_SOLVER_WORK_PER_SECOND", "") or 8000000.0)
 DETERMINISTIC = str(os.getenv("SCHEDULE_SOLVER_DETERMINISTIC", "1")).strip() != "0"
 WALL_CAP_FACTOR = 4.0
@@ -205,11 +203,11 @@ K_WEEKEND = 0.3           # per weekend shift they already have
 K_HARD = 0.1              # per busy shift they already have
 K_MIN_HOURS_NEW = 1000.0  # per hour under what the draft kept somebody at toward their minimum: never worth it
 # A habit the manager taught by hand and the memory now binds (schedule_
-# memory tier "bound" — re-audit 10/11/26 LEARNING-12): each one broken costs
-# more than a whole peak shift's score (2 x 100 points) — so no fairness,
-# preference or strength gain trades it away — and less than an hour under
-# somebody's minimum, so the tiers above quality (coverage, overtime, the
-# minimums) still win. A person's own pending day-off ask is never a miss.
+# memory tier "bound"): each one broken costs more than a whole peak shift's
+# score (2 x 100 points) — so no fairness, preference or strength gain trades
+# it away — and less than an hour under somebody's minimum, so the tiers
+# above quality (coverage, overtime, the minimums) still win. A person's own
+# pending day-off ask is never a miss.
 K_HABIT = 250.0
 # What the edit predictor costs: points of the shift a row the manager is
 # expected to change is kept on (schedule_optimizer.LIKELY_EDIT_SHIFT_POINTS
@@ -271,7 +269,7 @@ class Problem:
         self.draft_overcommitted = set()
         self.c = constraints
         # One person, one key, as the rules file them (Constraints.key:
-        # spacing folded, the roster's spelling of an alias — D-8).
+        # spacing folded, the roster's spelling of an alias).
         self.key = constraints.key if (constraints is not None and hasattr(constraints, "key")) else _low
         self.signals = signals = dict(signals or {})
         self.profiles = sq.profile_set(profiles, signals.get("demand_by_day"))
@@ -295,9 +293,9 @@ class Problem:
         # The days-off run (min_consecutive_days_off) is no rule here: the
         # owner retired it 10/2/26 and compliance() forces it off for every
         # restaurant; the solver's propagation and costs for it are gone with
-        # the CP-SAT replacement (scheduler audit 10/10/26 LOGIC-31). The
-        # sweep still names a hand-built rule set's days_off, and the judge
-        # refuses a candidate that brings one back (_soft_repaired).
+        # the CP-SAT replacement. The sweep still names a hand-built rule
+        # set's days_off, and the judge refuses a candidate that brings one
+        # back (_soft_repaired).
         self.week_ords = sorted(o for o in (_ordinal(d) for d in self.week_dates) if o is not None)
         self.week_ord_set = set(self.week_ords)
         self.commit_level = {}          # {unit id: a published shift's commitment level} (_build_units)
@@ -339,14 +337,14 @@ class Problem:
                 for role in rls or []:
                     if str(role).strip():
                         self.roles[p].add(_low(str(role)))
-        # The roles a person holds or has worked here (Constraints
-        # .known_roles: roster, people.held_roles — trained, promoted, the
-        # POS job list — and history), and a trainee the role they are
-        # learning. Never the roles the draft's own rows gave them: a role
-        # the model wrongly wrote for somebody was treated as one they hold
-        # (schedule audit 10/3/26 D-15). Each held role brings every job
-        # code of its family in use here — "Server AM" and "Server PM" are
-        # one role (D-13). The rows only name the codes in use.
+        # The roles a person holds or has worked here
+        # (Constraints.known_roles: roster, people.held_roles — trained,
+        # promoted, the POS job list — and history), and a trainee the role
+        # they are learning. Never the roles the draft's own rows gave
+        # them: a role the model wrongly wrote for somebody was treated as
+        # one they hold. Each held role brings every job code of its family
+        # in use here — "Server AM" and "Server PM" are one role. The rows
+        # only name the codes in use.
         for k, rls in ((getattr(c, "known_roles", None) or {}) if c is not None else {}).items():
             p = self.pidx.get(k)
             if p is not None:
@@ -366,8 +364,8 @@ class Problem:
             for f in {fam(x) for x in self.roles[p]}:
                 self.roles[p] |= by_family.get(f, set())
         # Flexible: two or more role FAMILIES among the roles worked here,
-        # held and on the roster (SQ-10, D1b) — "Server AM" and "Server PM"
-        # are one station.
+        # held and on the roster (D1b) — "Server AM" and "Server PM" are
+        # one station.
         held = {self.key(k): set(v or ()) for k, v in ((getattr(c, "held_roles", None) if c is not None else None)
                                                  or s.get("held_roles") or {}).items()}
         self.fams_of = []
@@ -381,9 +379,9 @@ class Problem:
         self.cross_on = bool(cross or held)
         # A person with a written note the code cannot read is kept as the
         # draft had them — unless every open part of their note is read as
-        # rules (held, confirmed, or typed — owner_rules, scheduler audit
-        # 10/10/26 AI-10): those rules are in the Constraints the domains are
-        # built from, so the solver may choose them like anyone else.
+        # rules (held, confirmed, or typed — owner_rules): those rules are in
+        # the Constraints the domains are built from, so the solver may
+        # choose them like anyone else.
         read = {self.key(n) for n in (s.get("notes_read") or ())}
         self.constrained = {self.key(n) for n, note in (s.get("constraints") or {}).items()
                             if n and str(note or "").strip()} - read
@@ -393,8 +391,7 @@ class Problem:
         lscores = {self.key(k): v for k, v in scores.items() if v is not None}
         self.score = [lscores.get(self.key(n)) for n in self.names]
         # A person's score for one role, over the overall one, wherever a
-        # unit's role is known (schedule audit 10/3/26 D-12, F2's per-role
-        # ratings): {family: score}.
+        # unit's role is known (F2's per-role ratings): {family: score}.
         lroles = {self.key(k): {str(f).strip().lower(): v for f, v in (fams or {}).items() if v is not None}
                   for k, fams in (s.get("role_scores") or {}).items()}
         self.role_score = [lroles.get(self.key(n)) or {} for n in self.names]
@@ -407,7 +404,7 @@ class Problem:
         lrel = {self.key(k): v for k, v in rel.items()}
         self.no_show, self.late_risk, self.rel_known = [], [], []
         # Each person's rate by weekday (staff_settings' weekday_rates,
-        # shrunk toward their own) — the scorer's own reading (LEARNING-14).
+        # shrunk toward their own) — the scorer's own reading.
         self.no_show_day, self.late_rate, self.rel_explore = [], [], []
         for n in self.names:
             r = lrel.get(self.key(n)) or {}
@@ -423,13 +420,13 @@ class Problem:
             except (TypeError, ValueError):
                 self.late_rate.append(0.0)
             self.rel_known.append(self.key(n) in lrel)
-            # Exploring (staff_settings, LEARNING-21): too few recent shifts
-            # to clear a risky label — not steered off shared busy shifts.
+            # Exploring (staff_settings): too few recent shifts to clear a
+            # risky label — not steered off shared busy shifts.
             self.rel_explore.append(bool(r.get("explore")))
         tenure = {self.key(k): int(v or 0) for k, v in (s.get("tenure") or {}).items() if v is not None}
         marked = {self.key(n) for n in (s.get("experienced") or ()) if n}
         # Managers, acting managers and salaried people are experienced by
-        # default (D-6) — they never turn the measure on by themselves.
+        # default — they never turn the measure on by themselves.
         by_default = {sq.name_key(n) for n in (s.get("experienced_default") or ()) if n}
         if not by_default and c is not None:
             by_default = sq.experienced_by_default(getattr(c, "managers", None), getattr(c, "acting_managers", None),
@@ -459,16 +456,16 @@ class Problem:
                 self.desired.append(float(p.get("desired_hours")) if p.get("desired_hours") else None)
             except (TypeError, ValueError):
                 self.desired.append(None)
-            # What they keep dropping and picking up (schedule_intel.
-            # behaviour_preferences), weighed as the scorer weighs it:
-            # LEARNED_PREFERENCE_WEIGHT of a stated preference (L-19, D-36).
+            # What they keep dropping and picking up
+            # (schedule_intel.behaviour_preferences), weighed as the scorer
+            # weighs it: LEARNED_PREFERENCE_WEIGHT of a stated preference.
             _lp = learned_prefs.get(self.key(n)) or p.get("learned") or {}
             avoid, prefer, wt = sq._learned(_lp)
             # Their usual week, for somebody who never stated one (shift_quality
             # USUAL_HOURS_BAND, at the learned weight).
             self.usual.append(sq._usual_hours(_lp, p))
             # Wider above for somebody who keeps picking up open shifts: the
-            # usual week is what they were assigned (LEARNING-28).
+            # usual week is what they were assigned.
             self.usual_up.append(sq.usual_band(_lp)[1])
             self.l_avoid.append(avoid)
             self.l_prefer.append(prefer)
@@ -493,7 +490,7 @@ class Problem:
         # who is due a weekend off, who should rest from closing — what
         # fairness now judges a week against.
         self.rot_weekend, self.rot_rest, self.rot_rich, self.rich_slots = {}, {}, {}, {}
-        # Retention (retention_risk, MARKET-29, owner-only): the valued people
+        # Retention (retention_risk, owner-only): the valued people
         # at risk the owner protects, and the slots they keep dropping.
         self.protect_avoid = {}
         for n, v in ((s.get("retention") or {}).items()):
@@ -503,8 +500,8 @@ class Problem:
             key = _low(role)
             self.rot_weekend[key] = {self.pidx[self.key(n)] for n in (plan.get("weekend_due") or []) if self.key(n) in self.pidx}
             self.rot_rest[key] = {self.pidx[self.key(n)] for n in (plan.get("rest_from_close") or []) if self.key(n) in self.pidx}
-            # The tip opportunity (tip_opportunity, MARKET-17): who should
-            # rest from the role's best-tipped slots, and which slots those are.
+            # The tip opportunity (tip_opportunity): who should rest from the
+            # role's best-tipped slots, and which slots those are.
             tips = plan.get("tips") or {}
             self.rot_rich[key] = {self.pidx[self.key(n)] for n in (tips.get("rest_from_rich") or []) if self.key(n) in self.pidx}
             self.rich_slots[key] = {(s_.get("day"), s_.get("part")) for s_ in (tips.get("rich_slots") or [])}
@@ -532,9 +529,9 @@ class Problem:
         except (TypeError, ValueError):
             self.max_run = 0
         try:
-            # No rule unless one is set; "off" is none (MARKET-3). Under a
-            # consent rule the solver still never plans a short turnaround —
-            # one is the person's to agree to, in writing, not a draft's.
+            # No rule unless one is set; "off" is none. Under a consent rule
+            # the solver still never plans a short turnaround — one is the
+            # person's to agree to, in writing, not a draft's.
             self.need_rest = (float(comp.get("min_rest_hours") or 0)
                               if _rules.rest_mode(comp) != "off" else 0.0)
         except (TypeError, ValueError):
@@ -546,8 +543,8 @@ class Problem:
         self.min_hours = [c.min_hours(n) if c is not None else None for n in self.names]
         self.employment = [(getattr(c, "employment", None) or {}).get(self.key(n)) for n in self.names]
         self.week_dates = list(getattr(c, "week_dates", None) or [])
-        # Labor dollars (P-32): each person's own rate, else the role's, the
-        # role's typical, the blended; salaried people's hours cost no more.
+        # Labor dollars: each person's own rate, else the role's, the role's
+        # typical, the blended; salaried people's hours cost no more.
         ot = s.get("overtime") or {}
         self.rates = {str(k).strip().lower(): float(v) for k, v in (ot.get("rates") or {}).items()
                       if k and k != "_default" and _num(v)}
@@ -565,11 +562,11 @@ class Problem:
         blended = ot.get("default_rate") or (ot.get("rates") or {}).get("_default")
         self.blended = float(blended) if _num(blended) else (sum(self.rates.values()) / len(self.rates) if self.rates else 0.0)
         self.priced = bool(self.rates or self.person_rates or self.blended)
-        # What the scheduling memory holds (schedule_memory.enforced_signals —
-        # L-3, D-35), read as the scorer's learned-patterns measure reads it
+        # What the scheduling memory holds (schedule_memory.enforced_signals),
+        # read as the scorer's learned-patterns measure reads it
         # (shift_quality.week_learned → schedule_memory.misses, the one
-        # meaning of each kind), and the edit predictor's rows (L-15) when
-        # the engine passes them.
+        # meaning of each kind), and the edit predictor's rows when the engine
+        # passes them.
         self.mem = []
         for m in s.get("learned") or []:
             if not isinstance(m, dict) or not m.get("kind") or str(m.get("enforcement") or "soft").lower() == "prompt":
@@ -587,11 +584,11 @@ class Problem:
             if m["kind"] in ("moved_off", "role_change", "opener", "closer") and m.get("person"):
                 self.mem_person.setdefault(self.key(m["person"]), []).append(m)
         # A team on the same shifts (pair "prefer"), or two the owner keeps
-        # apart (pair "avoid" — schedule re-audit 10/4/26 LEARN-1: every
-        # pair was read as "together", so the owner's Keep on a learned
-        # keep-apart made the solver pay to put them on the same shift): the
-        # people, the memory's weight and its polarity. A pair with no
-        # polarity binds nothing (schedule_memory.misses' meaning).
+        # apart (pair "avoid": every pair was read as "together", so the
+        # owner's Keep on a learned keep-apart made the solver pay to put
+        # them on the same shift): the people, the memory's weight and its
+        # polarity. A pair with no polarity binds nothing
+        # (schedule_memory.misses' meaning).
         self.mem_pairs = []
         for m in self.mem:
             if m["kind"] == "pair" and _val(m).get("kind") in ("prefer", "avoid"):
@@ -599,7 +596,7 @@ class Problem:
                 members.discard("")
                 if len(members) > 1:
                     self.mem_pairs.append((frozenset(members), m["confidence"], _val(m)["kind"]))
-        # Somebody who habitually runs past their shift (ot_risk, L-16): their
+        # Somebody who habitually runs past their shift (ot_risk): their
         # overtime line is the line less the headroom they usually run over —
         # for the caps (never past it beyond the draft) and for the measure.
         self.headroom = {}
@@ -617,9 +614,9 @@ class Problem:
         for f in s.get("likely_edits") or []:
             if isinstance(f, dict) and _num(f.get("weight")):
                 self.likely[(self.key(f.get("employee")), f.get("date") or "", f.get("shift_start") or "")] = float(f["weight"])
-        # Sustained fatigue across the published weeks (SQ-27): the busy
-        # shifts this week, and the hours, at which somebody's last weeks
-        # make them strained.
+        # Sustained fatigue across the published weeks: the busy shifts
+        # this week, and the hours, at which somebody's last weeks make
+        # them strained.
         self.sustained_busy_at, self.sustained_hours_at = {}, {}
         ledger = {self.key(k): v for k, v in (s.get("load_ledger") or {}).items()}
         if ledger:
@@ -706,9 +703,9 @@ class Problem:
         # Which bucket closes each date, exactly as build_contexts reads it.
         primary, latest_end = {}, {}
         for r in self.rows:
-            # A shape slot still to be staffed ("_open", schedule_engine.
-            # assign_shape_slots — AI cost audit 10/7/26 #69) counts as the
-            # shift it will be: the day's last slot of a role is its close.
+            # A shape slot still to be staffed ("_open",
+            # schedule_engine.assign_shape_slots) counts as the shift it
+            # will be: the day's last slot of a role is its close.
             if not (((r.get("employee") or "").strip() or r.get("_open")) and r.get("date")):
                 continue
             part = sq.present_dayparts(r)[0]
@@ -780,7 +777,7 @@ class Problem:
             name = (rs[0].get("employee") or "").strip()
             u.draft = self.pidx.get(self.key(name)) if name else None
             # A shift already published with a commitment level (commitment_
-            # ladder, MARKET-27): moving its holder off it costs stability.
+            # ladder): moving its holder off it costs stability.
             commits = self.signals.get("commitments") or {}
             if commits and name:
                 lv = commits.get((u.date, " ".join(name.split()).casefold(), (rs[0].get("shift_start") or "").strip()))
@@ -790,7 +787,7 @@ class Problem:
                      tuple(sorted((r.get("shift_start") or "", r.get("shift_end") or "") for r in rs)))
             if any(r.get("_pinned") for r in rs):
                 # The manager plan's rows, a day the owner kept: never handed
-                # to somebody else (PR-32, the pinned-rows contract).
+                # to somebody else (the pinned-rows contract).
                 u.fixed, u.why_fixed = True, "pinned"
             elif editable is not None and u.date not in editable:
                 u.fixed, u.why_fixed = True, "a day the owner kept"
@@ -801,9 +798,9 @@ class Problem:
             elif not u.date or u.dord is None or any(sp[0] is None for sp in u.spans) or not u.roles:
                 u.fixed, u.why_fixed = True, "times or date could not be read"
             self.units.append(u)
-        # The edges of each role's day (D-44): a unit that is the only one of
-        # its role starting first, or ending last, that date — somebody with
-        # a lateness risk there is the only opener or closer.
+        # The edges of each role's day: a unit that is the only one of its
+        # role starting first, or ending last, that date — somebody with a
+        # lateness risk there is the only opener or closer.
         by = {}
         for u in self.units:
             for r, sp in zip(u.rows, (_rules._span(x) for x in u.rows)):
@@ -823,8 +820,8 @@ class Problem:
         past their overtime line (a salaried person's weekly cap) beyond what
         the draft already had them at — the solver may take overtime away,
         never add it (the owner's rule). A payroll week that runs on past
-        this one keeps its reserve for those days (E-10, payroll_tail_full).
-        A minor's band caps their week too."""
+        this one keeps its reserve for those days (payroll_tail_full). A
+        minor's band caps their week too."""
         c = self.c
         draft = [dict(h) for h in self.base_hours]
         for u in self.units:
@@ -847,7 +844,7 @@ class Problem:
                 if c is not None and self.key(n) in c.minors:
                     br = _rules.minor_rules(c.minor_bands.get(self.key(n)), c.jurisdiction)
                     # the school week's cap (the stricter), else the state's one
-                    # weekly cap (Oregon's 44 for 16-17s) — MARKET-5
+                    # weekly cap (Oregon's 44 for 16-17s)
                     wk = br.get("max_weekly_school_week") or br.get("max_weekly_other_week")
                     if wk:
                         cap = min(cap, max(float(wk), draft[p].get(b, 0.0)))
@@ -945,15 +942,15 @@ class Problem:
         drafted = p == u.draft
         if not drafted and c is not None:
             # Code never chooses somebody who has not worked in weeks, or on a
-            # day their unconfirmed note covers (P-2); the draft's own person
-            # stays theirs.
+            # day their unconfirmed note covers; the draft's own person stays
+            # theirs.
             ok, why = c.fillable(name, u.date)
             if not ok:
                 return why
         for r in u.rows:
-            # Any minute in a blocked half of the day (RULES-11), the card as
-            # it stands that date (RULES-14) — the sweep's own tests.
-            # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+            # Any minute in a blocked half of the day, the card as it stands
+            # that date — the sweep's own tests. at the restaurant's own
+            # lunch/dinner boundary
             ok, why = c.can_work_row(name, dict(r, date=u.date))
             if not ok:
                 return why
@@ -968,7 +965,7 @@ class Problem:
             if not drafted and c.training_row(dict(r, employee=name)):
                 return "would be a training shift"
             # a minor's time-of-day limits — late, early, school hours — by
-            # the sweep's one rule (STRESS-5)
+            # the sweep's one rule
             why = _rules.minor_row_breach(c, low, r, u.date)
             if why:
                 return why
@@ -1275,8 +1272,7 @@ class Problem:
                                  s.get("role_minimums") or {}, self.profiles, self.families)
         self.ratings = sq.role_ratings(s.get("scores") or {}, s.get("roster_roles") or {}, self.rows, self.families)
         # Who can flex into which family, by what is on file (the scorer's
-        # can_flex, SQ-10): a family nobody who works it can flex is not
-        # judged.
+        # can_flex): a family nobody who works it can flex is not judged.
         self.can_flex = set()
         for f in self.fams_of:
             if len(f) > 1:
@@ -1290,7 +1286,7 @@ class Problem:
                 continue
         self.cross_targets = owner_targets
         self.cross_default = float(s.get("cross_training_target") or 0.34)
-        self.groups = {}          # key -> {"units": [...], "kind", ...}
+        self.groups = {}          # key -> {"units": [...], "kind",...}
         req_by_date = s.get("requirements_by_date") or {}
         typical = s.get("typical_headcount") or {}
         self.shift_info = {}
@@ -1376,15 +1372,15 @@ class Problem:
 
     def _manager_groups(self):
         """A manager on the floor every minute anybody is (owner, 10/2/26 —
-        the highest rule; schedule audit 10/3/26 PR-32): each stretch of a
-        date between the units' starts and ends, with the units on for all
-        of it. A stretch the draft had a manager on stays managed, and one
-        only an unnamed row covered (it becomes somebody's) must be — both
-        hard. A stretch the draft left unmanaged costs what the score
-        charges a broken hard rule (the shifts it touches held at the cap)
-        while it stays so. Read as schedule_rules.manager_gaps reads it:
-        business minutes, a manager who may work that date, closed dates out,
-        only the acting dates when nobody else manages."""
+        the highest rule): each stretch of a date between the units' starts
+        and ends, with the units on for all of it. A stretch the draft had a
+        manager on stays managed, and one only an unnamed row covered (it
+        becomes somebody's) must be — both hard. A stretch the draft left
+        unmanaged costs what the score charges a broken hard rule (the shifts
+        it touches held at the cap) while it stays so. Read as
+        schedule_rules.manager_gaps reads it: business minutes, a manager who
+        may work that date, closed dates out, only the acting dates when
+        nobody else manages."""
         c = self.c
         if c is None or not (c.managers or c.acting_managers):
             return
@@ -1431,12 +1427,12 @@ class Problem:
                             cost_fn=lambda mins=minutes, loss=cap_loss: loss + K_MANAGER_MINUTE * mins, date=d)
 
     def _closer_groups(self):
-        """Each role's closer (D-9): on every trading day, the last of a role
-        with closers to leave is one of them, staying until close plus the
-        role's minutes (schedule_rules._closer_breaches) — hard where the
-        draft held it, and never further from it where it did not; a close
-        the draft left without its closer costs the cap on the closing shift
-        until a closer is on it."""
+        """Each role's closer: on every trading day, the last of a role with
+        closers to leave is one of them, staying until close plus the role's
+        minutes (schedule_rules._closer_breaches) — hard where the draft held
+        it, and never further from it where it did not; a close the draft
+        left without its closer costs the cap on the closing shift until a
+        closer is on it."""
         c = self.c
         if c is None or not c.closers_by_role or not c.compliance.get("keyholder_until_close", True):
             return
@@ -1457,7 +1453,7 @@ class Problem:
             ok = {self.pidx[k] for k in closers if k in self.pidx}
             day = sq._day_name(d)
             e_last = max(e for e, _u in items)
-            # The sweep's own target for the role (closer_need, RULES-6).
+            # The sweep's own target for the role (closer_need).
             need, _until = _rules.closer_need(c, fam, day, e_last)
             full = max(need - 15, e_last - 15)
             draft_best = max((e for e, uid in items if self.units[uid].draft in ok), default=None)
@@ -1540,15 +1536,15 @@ class Problem:
                 days, parts = pat
                 if (days and _low(u.day) not in days) or (parts and part not in parts):
                     # the usual-pattern reading, at its own share of the
-                    # weight (shift_quality.STABILITY_PATTERN_SHARE — RM-3)
+                    # weight (shift_quality.STABILITY_PATTERN_SHARE)
                     out["stability"] = out.get("stability", 0.0) + self.dim_cost(
                         "stability", 100.0 / n_here, dw) * sq.STABILITY_PATTERN_SHARE
             # Reliability: a no-show risk alone in the role or on a busy shift
             # is the scorer's exposure; a lateness risk as the only one of the
-            # role opening or closing the day (D-44).
+            # role opening or closing the day.
             if self.rel_known[p]:
                 # Graded on the shift's own weekday (attendance_risk.exposure),
-                # as the scorer weighs it — never the 20% cliff (LEARNING-14).
+                # as the scorer weighs it — never the 20% cliff.
                 from attendance_risk import exposure as _exposure
                 alone = len([i for i in (self.groups.get(("S", d, part)) or {}).get("units") or ()
                              if self.units[i].role_at.get(part) == u.role_at.get(part)]) <= 1
@@ -1566,15 +1562,15 @@ class Problem:
             out["rotation_weekend"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         if u.closing and any(p in self.rot_rest.get(r, ()) for r in u.roles):
             out["rotation_close"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
-        # A published shift's commitment (MARKET-27): handing it to somebody
-        # else breaks the promise made to its holder — stability points by
-        # level (firm the most), on top of any predictability pay at Send.
+        # A published shift's commitment: handing it to somebody else breaks
+        # the promise made to its holder — stability points by level (firm
+        # the most), on top of any predictability pay at Send.
         lv = self.commit_level.get(u.id)
         if lv and u.draft is not None and p != u.draft:
             import commitment_ladder as _cl
             out["commitment"] = self.dim_cost("stability", _cl.COMMIT_POINTS.get(lv, 0.0), dw0)
-        # Retention (MARKET-29): taking a protected person's drafted shift
-        # away, or putting them on a slot they keep dropping, is a soft cost.
+        # Retention: taking a protected person's drafted shift away, or
+        # putting them on a slot they keep dropping, is a soft cost.
         if self.protect_avoid:
             import retention_risk as _rr
             if u.draft is not None and p != u.draft and u.draft in self.protect_avoid:
@@ -1586,7 +1582,7 @@ class Problem:
             out["rotation_tips"] = self.dim_cost("fairness", sq.ROTATION_PENALTY, dw0)
         # Preferences, a week-level measure: a daypart they said they do not
         # want, a slot they keep dropping (half weight), a slot somebody else
-        # keeps picking up taken by somebody who does not (L-19, D-36).
+        # keeps picking up taken by somebody who does not.
         item = self.week_unit("preferences") / self.n_pref * 100.0
         if self.pref_parts[p] and any(x not in self.pref_parts[p] for x in u.primary if x != "unknown"):
             out["preference"] = item
@@ -1600,8 +1596,8 @@ class Problem:
                     self.l_weight[q] for q in fans)
         if self.primary_role[p] and self.primary_role[p] not in u.roles:
             out["role"] = K_OFF_ROLE
-        # Labor dollars (P-32): what their own rate costs over the draft's
-        # person on the shift (a cheaper person earns nothing — the solver
+        # Labor dollars: what their own rate costs over the draft's person
+        # on the shift (a cheaper person earns nothing — the solver
         # finishes the draft's quality, it never trades it for dollars).
         if self.per_dollar:
             role = u.role_at.get(u.primary[0], "") if u.primary else ""
@@ -1609,11 +1605,11 @@ class Problem:
             dollars = u.hours * max(0.0, self.rate(p, role) - ref)
             if dollars:
                 out["dollars"] = dollars * self.per_dollar
-        # The scheduling memory (L-3, D-35), as schedule_memory.misses reads
-        # it: somebody the managers keep taking off this slot (a row's slot is
-        # its first daypart), or keep making another role on it; the role's
-        # usual opener or closer working that day without opening or closing
-        # it. The edit predictor (L-15).
+        # The scheduling memory, as schedule_memory.misses reads it: somebody
+        # the managers keep taking off this slot (a row's slot is its first
+        # daypart), or keep making another role on it; the role's usual opener
+        # or closer working that day without opening or closing it. The edit
+        # predictor.
         mem, habit = 0.0, 0
         for m in self.mem_person.get(low) or ():
             kind = m["kind"]
@@ -1638,7 +1634,7 @@ class Problem:
             out["learned"] = mem * self.k_miss
         if habit:
             # Its own tier, never scaled by a confidence or the measure's
-            # slope (LEARNING-12).
+            # slope.
             out["habit"] = habit * K_HABIT
         if self.likely:
             for r in u.rows:
@@ -1678,8 +1674,7 @@ class Problem:
         """A team the scheduling memory keeps on the same shifts, split across
         one date's dayparts (schedule_memory.misses' pair: two or more of them
         on that date, not all on each daypart any of them is on); two the
-        owner keeps apart, on the same daypart of one date (a pair "avoid",
-        LEARN-1)."""
+        owner keeps apart, on the same daypart of one date (a pair "avoid")."""
         g = self.groups[key]
         by_part = {}
         for i in g["units"]:
@@ -1750,7 +1745,7 @@ class Problem:
             people.append(p)
             by_fam.setdefault(self.family(role), []).append(p)
         out = {}
-        # Leadership (dim_leadership, SQ-1/2/13/16): each rule earns credit
+        # Leadership (dim_leadership): each rule earns credit
         # for what it found, a bar or attribute never asks for more of the
         # role than the shift has; the profile's "somebody able to run it"
         # counts a manager; the dimension is the weakest check.
@@ -1791,13 +1786,12 @@ class Problem:
             lead = int(round(sq.LEADER_MISS_SCORE + (100 - sq.LEADER_MISS_SCORE) * min(credits)))
             floor = prof.floor("leadership") if answerable else None
             out["leadership"] = self.dim_cost("leadership", 100 - lead, dw, floor, lead)
-        # Strength (dim_operational_strength — one rating measure since the
-        # scheduler audit 10/10/26 LOGIC-30): each family's rated people
-        # against the owner's target ÷ crew (SQ-3/4/5: unrated unknown, never
-        # zero) and against the level this restaurant's own ratings want for
-        # a shift this busy (SQ-12, the former demand match), the lower of the
-        # two the family's, the weakest family the shift's. Only the target
-        # part is a critical floor.
+        # Strength (dim_operational_strength — one rating measure since the):
+        # each family's rated people against the owner's target ÷ crew
+        # (unrated unknown, never zero) and against the level this
+        # restaurant's own ratings want for a shift this busy (the former
+        # demand match), the lower of the two the family's, the weakest family
+        # the shift's. Only the target part is a critical floor.
         if self.rated_any:
             fam_scores, target_scores = {}, {}
             for role, target in (prof.min_strength or {}).items():
@@ -1835,9 +1829,9 @@ class Problem:
                 floor = prof.floor("operational_strength") if target_scores and \
                     min(target_scores.values()) < (prof.floor("operational_strength") or 0) else None
                 out["operational_strength"] = self.dim_cost("operational_strength", 100 - st, dw, floor, st)
-        # Training balance (dim_training_balance, SQ-9): somebody rated 2 or
-        # under with a mentor 2 points stronger in the family, else on the
-        # floor who works it, else — at a one-person station — the manager.
+        # Training balance (dim_training_balance): somebody rated 2 or under
+        # with a mentor 2 points stronger in the family, else on the floor
+        # who works it, else — at a one-person station — the manager.
         if self.rated_any:
             checked = mentored = 0
             for fam, ps in by_fam.items():
@@ -1858,8 +1852,8 @@ class Problem:
                         mentored += 1
             if checked:
                 out["training_balance"] = self.dim_cost("training_balance", 100 - sq._pct(mentored, checked), dw)
-        # Experience (dim_experience_balance, D-6): veterans' share against
-        # the profile's mix, managers and salaried people experienced.
+        # Experience (dim_experience_balance): veterans' share against the
+        # profile's mix, managers and salaried people experienced.
         if self.experience_on:
             known = [p for p in people if self.exp_known[p]]
             if known:
@@ -1867,8 +1861,8 @@ class Problem:
                 have = sum(1 for p in known if self.veteran[p]) / float(len(known))
                 ex = 100 if want <= 0 else sq._pct(have, want)
                 out["experience_balance"] = self.dim_cost("experience_balance", 100 - ex, dw)
-        # Cross-training (dim_cross_training, SQ-10): by family, a family
-        # nobody who works it can flex not judged.
+        # Cross-training (dim_cross_training): by family, a family nobody
+        # who works it can flex not judged.
         if self.cross_on and people:
             tot = tw = 0.0
             for fam, ps in by_fam.items():
@@ -1880,7 +1874,7 @@ class Problem:
                 tw += len(ps)
             if tw:
                 out["cross_training"] = self.dim_cost("cross_training", 100 - int(round(tot / tw)), dw)
-        # Pairings (dim_pairings, L-20): a kept-apart pair on together, a
+        # Pairings (dim_pairings): a kept-apart pair on together, a
         # preferred pair split.
         if self.avoid_pairs or self.prefer_pairs:
             on = set(people)
@@ -1965,7 +1959,7 @@ class Problem:
         if u.hard and st.hards[p]:
             c += K_HARD * st.hards[p] * wn.get("fairness", 1)
         # Fatigue (week-level): this unit making them strained — past the
-        # busy-shift ceiling, or past what their last weeks allow (SQ-27).
+        # busy-shift ceiling, or past what their last weeks allow.
         if not self._strained(p, st.hards[p], st.total[p]) and \
                 self._strained(p, st.hards[p] + (1 if u.hard else 0), st.total[p] + u.hours):
             c += self.week_unit("fatigue") / self.n_tracked * 100.0
@@ -1992,9 +1986,9 @@ class Problem:
                 premium = ot * rate * sq.OVERTIME_PREMIUM
                 pay = self.week_dollars or 1.0
                 c += premium * (self.per_dollar + self.week_unit("overtime") * sq.OVERTIME_POINTS * 100.0 / pay)
-        # Somebody who habitually runs past their shift (ot_risk, L-16):
-        # drafted into the headroom under the line, the memory weighs more the
-        # further in (schedule_memory.misses — this week's rows only).
+        # Somebody who habitually runs past their shift (ot_risk): drafted
+        # into the headroom under the line, the memory weighs more the further
+        # in (schedule_memory.misses — this week's rows only).
         if p in self.headroom and self.k_miss:
             head, w = self.headroom[p]
             have = st.hours[p].get(u.bucket, 0.0) - float(self.base_hours[p].get(u.bucket, 0.0) or 0.0)
@@ -2022,7 +2016,7 @@ class Problem:
             if mn:
                 # Under the minimum the owner set: the measure's points for
                 # each hour short — and never further under it than the draft
-                # (after the minimum-hours pass) had them (P-4).
+                # (after the minimum-hours pass) had them.
                 short = max(0.0, mn - st.total[p])
                 if short > 0.05 and self.min_owed:
                     pen += self.week_unit("min_hours") * 100.0 * short / self.min_owed
@@ -2214,8 +2208,8 @@ class _Search:
         prob = self.prob
         unit = prob.units[u]
         rec = [len(self.trail), marginal, []]
-        # The work this placement costs (WorkClock, ARCH-26): the conflicts,
-        # the person's other units and the dates' open units it checks.
+        # The work this placement costs (WorkClock): the conflicts, the
+        # person's other units and the dates' open units it checks.
         self.clock.tick(len(prob.conf.get(u, ())) + len(self.p_units.get(p, ())))
         self.assign[u] = p
         self.lb -= self.minc[u]
@@ -2356,8 +2350,8 @@ class _Search:
         self._tick()
         if self.stop:
             return None
-        # The work of choosing (WorkClock, ARCH-26): every open unit scanned,
-        # and each candidate person priced below.
+        # The work of choosing (WorkClock): every open unit scanned, and each
+        # candidate person priced below.
         self.clock.tick(len(free))
         u = self._select(free)
         if u is None:
@@ -2376,12 +2370,12 @@ class _Search:
         gracefully (every frame undoes its own assignment) when the clock or
         a node cap says so; `disc` limits discrepancies, None is complete.
 
-        An explicit stack of frames, never Python recursion (schedule audit
-        10/10/26 SCALE-9): it recursed once per assigned unit, so a week of
-        about a thousand units (some 220 people) raised RecursionError and
-        the solver never ran for exactly the large restaurants it is for.
-        Each frame walks its unit's values in cost order exactly as the
-        recursive version did — the same nodes, in the same order."""
+        An explicit stack of frames, never Python recursion: it recursed
+        once per assigned unit, so a week of about a thousand units (some
+        220 people) raised RecursionError and the solver never ran for
+        exactly the large restaurants it is for. Each frame walks its
+        unit's values in cost order exactly as the recursive version did —
+        the same nodes, in the same order."""
         root = self._enter(free, persons, disc)
         if root is None:
             return
@@ -2576,8 +2570,8 @@ def solve(rows, constraints, signals=None, weights=None, profiles=None, only_dat
     week, not proved best), 'infeasible' (some unit nobody may legally
     work, or a component with no legal arrangement), or 'nothing_to_solve'.
     """
-    # The budget is work (WorkClock, ARCH-26): `max_seconds` of it, the wall
-    # clock only as the emergency cap.
+    # The budget is work (WorkClock): `max_seconds` of it, the wall clock
+    # only as the emergency cap.
     clock = WorkClock(wall_cap=wall_cap if wall_cap else WALL_CAP_FACTOR * max(0.05, float(max_seconds)),
                       deterministic=deterministic)
     t0 = clock.now()
@@ -2832,17 +2826,16 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     what it breaks of the scheduling memory is the score's learned-patterns
     measure), less the labor dollars it adds and the rows it keeps that the
     manager is expected to change — schedule_optimizer.week_value, the
-    repair loop's own value — and only when it makes nothing at or
-    above the budget tier new or worse, compared by breach identity
+    repair loop's own value — and only when it makes nothing at or above
+    the budget tier new or worse, compared by breach identity
     (schedule_rules.regressions: a person's legality, the manager every
-    minute, the floors and the closer, overtime, minimum hours — schedule
-    audit 10/3/26 E-1, P-14), brings back no soft breach a pass repaired,
-    and puts nobody newly past their overtime line (for somebody who
-    habitually runs past their shift, the line less that headroom — L-16)
-    nor the week further over its hourly hours budget (`hours_budget`, else
-    inputs["hours_budget"]) — each candidate held to what the repair loop
-    holds the stage to (schedule_engine._judge), so a good answer is never
-    lost to a bad one.
+    minute, the floors and the closer, overtime, minimum hours), brings
+    back no soft breach a pass repaired, and puts nobody newly past their
+    overtime line (for somebody who habitually runs past their shift, the
+    line less that headroom) nor the week further over its hourly hours
+    budget (`hours_budget`, else inputs["hours_budget"]) — each candidate
+    held to what the repair loop holds the stage to
+    (schedule_engine._judge), so a good answer is never lost to a bad one.
 
     Returns {applied, rows, before_score, after_score, quality, changes,
     stats, reason}. The input rows are never modified.
@@ -2857,7 +2850,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     sweep = _rules.IncrementalSweep(constraints) if constraints is not None else None
 
     def judged(rs):
-        """(violations, profile, the scorer's signals) for `rs` (P-28)."""
+        """(violations, profile, the scorer's signals) for `rs`."""
         if sweep is None:
             return None, None, signals
         viols = sweep.violations(rs)
@@ -2904,7 +2897,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
         return _opt.week_value(q, rs, pricing, base_dollars, likely)
     # The judge needs about a second per candidate on a big week; the search
     # gets the rest of the budget — a work budget, fixed by the inputs, never
-    # what the wall clock left of it (ARCH-26); `wall_cap` is the emergency.
+    # what the wall clock left of it; `wall_cap` is the emergency.
     judge_reserve = min(max_seconds * 0.25, 0.25 + 0.004 * len(base) * JUDGE_CANDIDATES)
     solved = solve(base, constraints, signals=signals, weights=weights, profiles=profiles, only_dates=only_dates,
                    max_seconds=max(0.1, max_seconds - judge_reserve),

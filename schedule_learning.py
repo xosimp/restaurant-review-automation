@@ -19,7 +19,7 @@ deterministic, and never calls a model.
                                own finished drafts (edit_prediction_backtest
                                measures it on held-out weeks); once the
                                backtest has earned it, likely_edit_signals /
-                               likely_to_change put it to use (L-15)
+                               likely_to_change put it to use
   learning_weeks / edited_weeks  every week a person finished with, read by
                                schedule_versions.learning_weeks (the original
                                draft, the manager's own pre-publish changes)
@@ -54,11 +54,11 @@ log = logging.getLogger(__name__)
 
 from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
-# How far back the edit learners read (schedule audit 10/3/26 L-27): 24
-# weeks, every week weighted by its age's half-life
-# (schedule_versions.HALF_LIFE_DAYS — a person on a slot 120 days, a role's
-# headcount or start 180) instead of a flat 8-week cliff. Within the
-# intermediate versions' retention floor (ops "schedule_versions", 168 days).
+# How far back the edit learners read: 24 weeks, every week weighted by its
+# age's half-life (schedule_versions.HALF_LIFE_DAYS — a person on a slot 120
+# days, a role's headcount or start 180) instead of a flat 8-week cliff.
+# Within the intermediate versions' retention floor (ops "schedule_versions",
+# 168 days).
 EDIT_WEEKS = 24
 NEW_PATTERN_CAP = 8
 BUSY_NIGHTS = ("Friday", "Saturday")
@@ -67,22 +67,21 @@ _PRETTY = {"morning": "lunch/day", "night": "dinner/night"}
 
 CALIBRATION_MIN_WEEKS = 8
 CALIBRATION_MIN_SHIFTS = 40
-# More shifts per dimension (schedule audit 10/3/26 SQ-22): sixteen
-# dimensions were fitted together on as few as forty shifts. A dimension now
-# needs CALIBRATION_MIN_PAIRS shifts with the outcome before it is read at
-# all, and the joint fit carries at most one dimension per
-# CALIBRATION_SAMPLES_PER_DIMENSION shifts — the best-observed first; the
-# rest wait, and say so.
+# More shifts per dimension: sixteen dimensions were fitted together on as
+# few as forty shifts. A dimension now needs CALIBRATION_MIN_PAIRS shifts
+# with the outcome before it is read at all, and the joint fit carries at
+# most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts — the
+# best-observed first; the rest wait, and say so.
 CALIBRATION_MIN_PAIRS = 30        # per dimension per outcome, before a correlation is reported
 CALIBRATION_SAMPLES_PER_DIMENSION = 10
 CALIBRATION_MIN_EVIDENCE = 0.1    # |mean fitted effect| below this suggests no change
 CALIBRATION_MAX_NUDGE = 0.30      # the fitted weight never strays more than 30% from its default
 CALIBRATION_MAX_STEP = 0.10       # one Apply moves a weight at most 10% of its default
 CALIBRATION_RIDGE = 0.1           # ridge penalty, as a share of the shifts fitted (standardized)
-# Floors and bars, per shift profile (SQ-22): weights cannot lift a shift a
-# floor caps, so calibration also reads, for each profile with enough of
-# its own shifts on record, where its critical floors and its quality bar
-# sit against what those shifts did — the line under which shifts measurably
+# Floors and bars, per shift profile: weights cannot lift a shift a floor
+# caps, so calibration also reads, for each profile with enough of its own
+# shifts on record, where its critical floors and its quality bar sit
+# against what those shifts did — the line under which shifts measurably
 # went worse — and suggests a bounded step toward it.
 CALIBRATION_MIN_PROFILE_SHIFTS = 30   # a profile's own shifts with an outcome, before its floors and bar are read
 CALIBRATION_MIN_SIDE = 10             # shifts on each side of a candidate line
@@ -164,12 +163,12 @@ def edited_weeks(restaurant_id, weeks=EDIT_WEEKS, db_path=DB_PATH) -> list:
     what the manager settled on, so a shift removed and put back in one
     sitting teaches nothing.
 
-    What it no longer counts (schedule audit 10/3/26): saves after the first
-    publish (L-4 — a replacement for a call-out is a reaction, not a habit),
-    Cavnar AI's changes the owner saved (L-5), an admin's changes through
-    view-as unless adopted — the rest of that week still counts (L-8) — and
-    the days an owner's redo replaced: the draft is the original one, so the
-    edits made before the redo are kept (L-26)."""
+    What it no longer counts: saves after the first publish (a replacement
+    for a call-out is a reaction, not a habit), Cavnar AI's changes the
+    owner saved, an admin's changes through view-as unless adopted — the
+    rest of that week still counts — and the days an owner's redo replaced:
+    the draft is the original one, so the edits made before the redo are
+    kept."""
     return [w for w in learning_weeks(restaurant_id, weeks, db_path) if w["edited"]]
 
 
@@ -184,12 +183,12 @@ def _strength(hits_w, opps_w) -> tuple:
 
 
 def _since_onset(week_edits, kind, hit_ids, is_opp) -> tuple:
-    """One pattern's newest regime (schedule audit 10/10/26 LEARNING-2): the
-    weeks it was an opportunity (a hit, or `is_opp(week)`), oldest first,
-    read from its change point (learning_stats.since_change) instead of the
-    whole 24-week window — so a habit a new manager starts is counted from
-    its onset. (hits_w, opps_w, {history ids of the hits in it}, opportunities
-    in it, {history ids of every week in it})."""
+    """One pattern's newest regime: the weeks it was an opportunity (a hit, or
+    `is_opp(week)`), oldest first, read from its change point
+    (learning_stats.since_change) instead of the whole 24-week window — so a
+    habit a new manager starts is counted from its onset. (hits_w, opps_w,
+    {history ids of the hits in it}, opportunities in it, {history ids of
+    every week in it})."""
     import learning_stats
     seq = []
     for w in sorted(week_edits, key=lambda w_: (str(w_.get("week_start") or ""), int(w_.get("history_id") or 0))):
@@ -211,7 +210,7 @@ def _min_rate():
 
 def _candidate(n, of, hits_w, opp_w, min_repeats, min_rate) -> bool:
     """schedule_versions.candidate_ok — the one candidacy rule every edit
-    learner reads (re-audit 10/11/26 LEARNING-10)."""
+    learner reads."""
     from schedule_versions import candidate_ok
     return candidate_ok(n, of, hits_w, opp_w, min_repeats, min_rate)
 
@@ -220,8 +219,8 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """Per role × weekday × daypart, the start or end the manager keeps
     moving shifts to — counted once per week, so three servers retimed on
     one Friday is one week of evidence, not three — in at least `min_rate`
-    of the weeks the draft had that role there at another time (L-6),
-    recent weeks weighing more (L-27)."""
+    of the weeks the draft had that role there at another time, recent
+    weeks weighing more."""
     min_rate = _min_rate() if min_rate is None else min_rate
     tally = {}
     for w in week_edits:
@@ -268,8 +267,8 @@ def retime_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
             return bool(slot) and times != {when}
         hits_w, opp_w, ids, of, _seg = _since_onset([w for w, _at in drafted], kind, set(e["weeks"]), _opp)
         n = len(ids)
-        # A minimum of opportunities and a Wilson lower bound (re-audit
-        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        # A minimum of opportunities and a Wilson lower bound
+        # (schedule_versions.candidate_ok).
         if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
@@ -311,10 +310,10 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     """The net number of people per role × weekday × daypart the manager
     keeps adding to or taking off the draft. Needs `min_repeats` weeks
     moving the same way, more of them than weeks moving the other way, and
-    at least `min_rate` of the weeks that daypart traded (L-6: two adds in
+    at least `min_rate` of the weeks that daypart traded (two adds in
     eight Fridays is an occasion, not a habit — an unedited Friday is a
-    Friday the draft's count was kept), recent weeks weighing more (L-27);
-    the size is the median of those weeks."""
+    Friday the draft's count was kept), recent weeks weighing more; the
+    size is the median of those weeks."""
     min_rate = _min_rate() if min_rate is None else min_rate
     tally, spellings, traded = {}, {}, []
     for w in week_edits:
@@ -329,12 +328,12 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
         traded.append((w, {(_weekday(d), part) for (d, part, _rl) in set(before) | set(after)}))
         per = {}
         for k in set(before) | set(after):
-            # The residual against what the draft was ASKED for (schedule
-            # audit 10/10/26 LEARNING-3), where the week kept it: a draft
-            # that came in one short of its requirement and was filled by
-            # the manager taught "+1" on top of a requirement that was
-            # already right. A week saved before the requirement was kept
-            # reads against its draft, as before.
+            # The residual against what the draft was ASKED for, where
+            # the week kept it: a draft that came in one short of its
+            # requirement and was filled by the manager taught "+1" on
+            # top of a requirement that was already right. A week saved
+            # before the requirement was kept reads against its draft, as
+            # before.
             was = asked[k] if k in asked else len(before.get(k, ()))
             delta = len(after.get(k, ())) - was
             if delta:
@@ -349,9 +348,9 @@ def headcount_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list:
     traded_by = {w["history_id"]: slots for w, slots in traded}
     weeks_only = [w for w, _s in traded]
     for (day, part, rl), pairs in tally.items():
-        # Each direction read from its own onset (LEARNING-2): the manager
-        # who used to cut a server and now adds one is adding, from the week
-        # they started.
+        # Each direction read from its own onset: the manager who used to
+        # cut a server and now adds one is adding, from the week they
+        # started.
         best = None
         for sign in (1, -1):
             ids_sign = {h for d_, h, _w, _s in pairs if (d_ > 0) == (sign > 0)}
@@ -424,8 +423,8 @@ def role_change_patterns(week_edits: list, min_repeats=2, min_rate=None) -> list
                        for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "role_change", set(e["weeks"]), _there)
         n = len(ids)
-        # A minimum of opportunities and a Wilson lower bound (re-audit
-        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        # A minimum of opportunities and a Wilson lower bound
+        # (schedule_versions.candidate_ok).
         if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
@@ -489,8 +488,8 @@ def leader_swap_patterns(week_edits: list, leaders: set, scores: dict, min_repea
                        and _part(r.get("shift_start")) == part for r in w.get("base") or [])
         hits_w, opp_w, ids, of, _seg = _since_onset(week_edits, "leader_swap", set(e["weeks"]), _there)
         n = len(ids)
-        # A minimum of opportunities and a Wilson lower bound (re-audit
-        # 10/11/26 LEARNING-10, schedule_versions.candidate_ok).
+        # A minimum of opportunities and a Wilson lower bound
+        # (schedule_versions.candidate_ok).
         if not _candidate(n, of, hits_w, opp_w, min_repeats, min_rate):
             continue
         rate, conf = _strength(hits_w, opp_w)
@@ -535,14 +534,14 @@ def learned_headcount_adjustments(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, 
     apply on top of its own figure. Dismissed patterns are left out; the
     role is spelled as the schedule spells it.
 
-    What worked stays learned (memory re-audit 9/29/26, QUALITY-3): once
-    the draft carried the 4th server the manager stopped adding one, the
-    edits aged out of the eight-week window and the draft dropped the
-    server again. An ACTIVE standing headcount row (schedule_versions.
-    refresh_standing_patterns) now applies whenever the live window no
-    longer shows it, and a live pattern its standing row has retired
-    (without newer evidence) no longer applies. One being re-tested
-    (status 'retest', L-30) is left out of the draft once on purpose."""
+    What worked stays learned: once the draft carried the 4th server the
+    manager stopped adding one, the edits aged out of the eight-week
+    window and the draft dropped the server again. An ACTIVE standing
+    headcount row (schedule_versions. refresh_standing_patterns) now
+    applies whenever the live window no longer shows it, and a live
+    pattern its standing row has retired (without newer evidence) no
+    longer applies. One being re-tested (status 'retest') is left out of
+    the draft once on purpose."""
     return {slot: {role: v["delta"] for role, v in roles.items()}
             for slot, roles in learned_headcount(restaurant_id, weeks, min_weeks, db_path).items()}
 
@@ -556,7 +555,7 @@ SETTLED_WEEKS = 4
 def _settled_levels(week_edits) -> dict:
     """{(weekday, daypart, role lower): [(week_start, heads)], newest first}
     — the people of each role the manager finished each slot with, in every
-    week the slot ran (LEARNING-3)."""
+    week the slot ran."""
     out = {}
     for w in week_edits:
         before, _sb = _slot_heads(w.get("base") or [])
@@ -588,10 +587,10 @@ def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_P
     there (`settled`, the median of their final heads in the newest weeks
     the slot ran — since the pattern began, for a live one). The
     requirements table applies a delta only while its own baseline is short
-    of that level (labor.apply_learned_headcount — schedule audit 10/10/26
-    LEARNING-3): once the punches have absorbed the manager's extra server
-    the baseline already carries them, and adding the delta again asked for
-    a sixth server the manager never wanted."""
+    of that level (labor.apply_learned_headcount): once the punches have
+    absorbed the manager's extra server the baseline already carries them,
+    and adding the delta again asked for a sixth server the manager never
+    wanted."""
     from schedule_intel import dismissed_patterns, pattern_key
     import schedule_versions as _sv
     recs = learning_weeks(restaurant_id, weeks, db_path)
@@ -628,10 +627,9 @@ def learned_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_P
                                                                          "settled": _settled(levels, slot)}
             live_slots.add(slot)
     # What the manager kept adding or cutting AFTER the week went out, by
-    # demand (LEARNING-16) — for a slot the pre-publish edits say nothing
-    # about. Its settled level is the week as it ended: the pre-publish
-    # level plus the reaction, so it too applies only while the baseline is
-    # short of it.
+    # demand — for a slot the pre-publish edits say nothing about. Its
+    # settled level is the week as it ended: the pre-publish level plus the
+    # reaction, so it too applies only while the baseline is short of it.
     try:
         reactions = reaction_headcount(restaurant_id, weeks, min_weeks, db_path)
     except Exception as e:                 # a read; the edits above still apply
@@ -658,10 +656,10 @@ _LEAD = re.compile(r'^Move somebody who clears ".*" onto (?P<where>.+?)\.?$')
 _PAIR = re.compile(r"^Pair (?P<name>.+?) on (?P<where>.+?) with a stronger hand")
 _TRIM = re.compile(r"^Trim about (?P<h>\d+(?:\.\d+)?)h from (?P<where>.+?) to get back")
 _REST = re.compile(r"^Give (?P<name>.+?) a day off — \d+ in a row")
-# The shapes the five above missed (schedule audit 10/3/26 L-34: most kinds
-# never got an outcome because an edit that carried them out was never read
-# as acceptance). A rule breach is not here: whether an edit fixed it needs
-# the rule sweep, and Apply fixes — Cavnar AI's own change — answers it.
+# The shapes the five above missed (most kinds never got an outcome because
+# an edit that carried them out was never read as acceptance). A rule
+# breach is not here: whether an edit fixed it needs the rule sweep, and
+# Apply fixes — Cavnar AI's own change — answers it.
 _COVER = re.compile(r"^Cover the gap in service on (?P<where>.+?): (?P<role>.+?) is down to \d+ at (?P<at>\S+), under")
 _STRONGER = re.compile(r"^Put a stronger (?P<role>.+?) on (?P<where>.+?): ")
 _SPREAD = re.compile(r"^Spread the busy shifts — (?P<names>.+?) (?:is|are) carrying too many")
@@ -671,7 +669,7 @@ def _slot_test(where: str):
     """'Saturday night' or '2026-10-10' → a row predicate, or None."""
     where = (where or "").strip().rstrip(".")
     parts = where.split()
-    # The owner's word pair (lunch/dinner, TRUST-31) and the older morning/night.
+    # The owner's word pair (lunch/dinner) and the older morning/night.
     _p = {"lunch": "morning", "dinner": "night", "morning": "morning", "night": "night"}
     if len(parts) == 2 and parts[0] in WEEKDAYS and parts[1].lower() in _p:
         day, part = parts[0], _p[parts[1].lower()]
@@ -802,7 +800,7 @@ def _covers(rows, name_low, test, minute) -> bool:
 # naive-Bayes log-odds (the strongest in full, the rest at half). Per restaurant, deterministic, no model call, no
 # library — and every flagged row names the rates that flagged it.
 
-PREDICT_WEEKS = EDIT_WEEKS       # drafts looked back over, each weighted by its age (L-27)
+PREDICT_WEEKS = EDIT_WEEKS       # drafts looked back over, each weighted by its age
 PREDICT_MIN_WEEKS = 3            # drafts with a manager's final word before anything is predicted
 PREDICT_MIN_ROWS = 60
 PREDICT_MIN_EDITED = 8
@@ -823,8 +821,7 @@ def _origin(notes: str) -> str:
     if not n:
         return "model"
     # "Cavnar AI:" is what the optimizer and the solver write now; "Cavnar:"
-    # an older draft's rows (schedule audit 10/3/26 L-5 — the AI tag used to
-    # fall through to "adjusted").
+    # an older draft's rows (the AI tag used to fall through to "adjusted").
     if n.startswith(("cavnar:", "cavnar ai:")) or " cavnar:" in n or " cavnar ai:" in n:
         return "optimizer"
     if n.startswith("added") or "top-up" in n or " floor" in n:
@@ -886,11 +883,10 @@ def _edited_keys(d: dict) -> set:
 
 
 def _edited_kinds(d: dict) -> dict:
-    """{(date, lower name, start): "move" | "retime" | "role"} — what the
-    net diff did to each draft row it changed (schedule re-audit 10/11/26
-    LEARNING-20): a person taken off or swapped is a move, a start or end
-    changed a retime, a role changed a role change. A row changed two ways is
-    its move first."""
+    """{(date, lower name, start): "move" | "retime" | "role"} — what the net
+    diff did to each draft row it changed: a person taken off or swapped is a
+    move, a start or end changed a retime, a role changed a role change. A
+    row changed two ways is its move first."""
     out = {}
     for rc in d.get("role_changed") or []:
         out[(rc.get("date") or "", (rc.get("employee") or "").strip().lower(), rc.get("shift_start") or "")] = "role"
@@ -909,15 +905,14 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
     untouched is evidence too: every row in it was kept). [{history_id,
     week_start, rows, edited: [bool per row], weight}], oldest first.
 
-    Read as schedule_versions.learning_weeks reads a week (schedule audit
-    10/3/26): the draft against the week as it was FIRST sent — a save after
-    that is a reaction (L-4); a change Cavnar AI made and the owner kept, an
-    admin's hand and a change the owner called a one-off are not the
-    manager changing a row (L-5, L-8, L-35); a week the automatic publish
-    sent with no edit is nobody keeping anything and is left out (L-7); and
-    the rows of the days an owner's redo threw away are rows the manager
-    changed — the strongest "no" there is (L-26). `weight` is the week's
-    recency (half-life PERSON_HALF_LIFE_DAYS, L-27)."""
+    Read as schedule_versions.learning_weeks reads a week: the draft against
+    the week as it was FIRST sent — a save after that is a reaction; a
+    change Cavnar AI made and the owner kept, an admin's hand and a change
+    the owner called a one-off are not the manager changing a row; a week
+    the automatic publish sent with no edit is nobody keeping anything and
+    is left out; and the rows of the days an owner's redo threw away are
+    rows the manager changed — the strongest "no" there is. `weight` is the
+    week's recency (half-life PERSON_HALF_LIFE_DAYS)."""
     import schedule_versions as _sv
     out = []
     for w in _sv.learning_weeks(restaurant_id, weeks, db_path):
@@ -947,12 +942,12 @@ def prediction_weeks(restaurant_id, weeks=PREDICT_WEEKS, db_path=DB_PATH) -> lis
 
 
 def fit_edit_model(weeks: list) -> dict:
-    """Counts behind the predictor: overall and per feature value. Not
-    ready (with the reason) under the minimum history. Each week counts by
-    its recency `weight` (L-27 — a draft from five months ago says less about
-    next week than last week's; 1.0 when a week carries none); every table
-    keeps the raw counts too ([weighted changed, weighted seen, changed,
-    seen]) for the words a flag is explained in."""
+    """Counts behind the predictor: overall and per feature value. Not ready
+    (with the reason) under the minimum history. Each week counts by its
+    recency `weight` (a draft from five months ago says less about next week
+    than last week's; 1.0 when a week carries none); every table keeps the
+    raw counts too ([weighted changed, weighted seen, changed, seen]) for the
+    words a flag is explained in."""
     n = sum(len(w["rows"]) for w in weeks)
     e = sum(sum(1 for x in w["edited"] if x) for w in weeks)
     need = (f"{PREDICT_MIN_WEEKS} drafts you've finished with, {PREDICT_MIN_ROWS} rows and "
@@ -1058,7 +1053,7 @@ def edit_predictor(restaurant_id, db_path=DB_PATH, weeks=None) -> dict:
     """The fitted model for this restaurant, or {ready: False, reason}."""
     import learning_stats as _ls_gate
     if _ls_gate.learning_off():
-        return {"ready": False, "reason": "nothing learned is used this week"}  # learning_v2's off week (LEARNING-14)
+        return {"ready": False, "reason": "nothing learned is used this week"}  # learning_v2's off week
     weeks = prediction_weeks(restaurant_id, db_path=db_path) if weeks is None else weeks
     return fit_edit_model(weeks)
 
@@ -1109,15 +1104,15 @@ def edit_prediction_summary(restaurant_id, db_path=DB_PATH) -> dict:
 
 
 def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
-    """Rolling origin (schedule re-audit 10/11/26 LEARNING-20): each week
-    is predicted from the weeks BEFORE it only — fit on weeks[:i], predict
-    week i, count — as the predictor will be used. It was leave-one-out, so
-    later weeks predicted earlier ones and the >=60% gate that lets the
-    predictor steer drafts was read on a backtest no draft ever faces.
-    `weeks` oldest first (prediction_weeks). hit_rate is the share of
-    flagged rows the manager did change; recall the share of changed rows
-    that were flagged; base_rate what flagging at random would hit. Weeks
-    whose history is under the minimum are skipped, and said."""
+    """Rolling origin: each week is predicted from the weeks BEFORE it only
+    — fit on weeks[:i], predict week i, count — as the predictor will be
+    used. It was leave-one-out, so later weeks predicted earlier ones and
+    the >=60% gate that lets the predictor steer drafts was read on a
+    backtest no draft ever faces. `weeks` oldest first (prediction_weeks).
+    hit_rate is the share of flagged rows the manager did change; recall
+    the share of changed rows that were flagged; base_rate what flagging at
+    random would hit. Weeks whose history is under the minimum are skipped,
+    and said."""
     flagged = hits = edited = rows = skipped = 0
     per_week = []
     weeks = sorted(weeks or [], key=lambda w: (str(w.get("week_start") or ""), int(w.get("history_id") or 0)))
@@ -1144,15 +1139,14 @@ def edit_prediction_backtest(weeks: list, threshold=PREDICT_THRESHOLD) -> dict:
             "per_week": per_week}
 
 
-# ── the predictor put to use (schedule audit 10/3/26 L-15) ────────────────
+# ── the predictor put to use ────────────────
 #
-# The edit predictor was display-only: rows the manager changes at 50% or
-# more on their own backtest were written into the draft anyway. Once its
-# rolling-origin (LEARNING-20) backtest on this restaurant's own drafts is right at least
-# PREDICT_ACTIONABLE_HIT_RATE of the time, its flags are (a) a pre-publish
-# "likely to change" review (strategy_routes._do_publish_check) and (b)
-# soft-cost signals for the solver, the optimizer and the scorer
-# (likely_edit_signals — the shape the next wave consumes).
+# The edit predictor was display-only: rows the manager changes at 50% or more on their
+# own backtest were written into the draft anyway. Once its rolling-origin backtest on
+# this restaurant's own drafts is right at least PREDICT_ACTIONABLE_HIT_RATE of the time,
+# its flags are (a) a pre-publish "likely to change" review
+# (strategy_routes._do_publish_check) and (b) soft-cost signals for the solver, the
+# optimizer and the scorer (likely_edit_signals — the shape the next wave consumes).
 
 PREDICT_ACTIONABLE_HIT_RATE = 0.6
 
@@ -1187,10 +1181,10 @@ def likely_edit_signals(restaurant_id, rows: list, db_path=DB_PATH, weeks=None) 
         f = feats[p["index"]]
         kind = _edit_kind_for(f, by_person, by_slot)
         w = round(max(0.0, p["likelihood"] - base) * hr, 3)
-        # The cost has a direction (LEARNING-20): only a row the manager
-        # moves people off costs keeping that PERSON there; a row they retime
-        # costs its time, one they change the role of its role — never the
-        # person, who only needed a different start.
+        # The cost has a direction: only a row the manager moves people off
+        # costs keeping that PERSON there; a row they retime costs its time,
+        # one they change the role of its role — never the person, who only
+        # needed a different start.
         flags.append({"index": p["index"], "employee": p["employee"], "date": p["date"],
                       "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"), "role": r.get("role"),
                       "likelihood": p["likelihood"], "features": p["features"], "origin": f["origin"],
@@ -1233,10 +1227,10 @@ def _edit_kind_for(feats, by_person, by_slot) -> str:
 
 
 def likely_to_change(restaurant_id, rows: list, db_path=DB_PATH, limit=PREDICT_MAX_FLAGS) -> dict:
-    """The pre-publish review (L-15): the rows the manager has been shown,
-    by their own backtest, to change — before staff are told. {ready,
-    reason, hit_rate, note, rows: [{employee, date, role, shift_start,
-    likelihood, text}]} (the likeliest `limit`)."""
+    """The pre-publish review: the rows the manager has been shown, by
+    their own backtest, to change — before staff are told. {ready, reason,
+    hit_rate, note, rows: [{employee, date, role, shift_start, likelihood,
+    text}]} (the likeliest `limit`)."""
     sig = likely_edit_signals(restaurant_id, rows, db_path=db_path)
     if not sig["ready"]:
         return {"ready": False, "reason": sig["reason"], "hit_rate": sig["hit_rate"], "rows": []}
@@ -1247,14 +1241,13 @@ def likely_to_change(restaurant_id, rows: list, db_path=DB_PATH, limit=PREDICT_M
             "rows": [{k: f[k] for k in ("employee", "date", "role", "shift_start", "likelihood", "text")} for f in top]}
 
 
-# ── what a save teaches, as it is made (schedule audit 10/3/26 L-4, L-5,
-#    L-35) ────────────────────────────────────────────────────────────────
+# ── what a save teaches, as it is made ───────────────────────────────────────
 
 # The first weeks carry the most explicit intent and teach the learners
 # almost nothing (two edited weeks before a pattern, seven drafts before
 # the predictor). While a restaurant has fewer than this many weeks it
 # drafted with Cavnar AI and sent, a big change of the manager's own asks
-# one tap — always / just this week / they called off (L-35).
+# one tap — always / just this week / they called off.
 COLD_START_WEEKS = 4
 WHY_MAX_QUESTIONS = 3
 WHY_RETIME_MIN_MINUTES = 30
@@ -1320,13 +1313,13 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
       * Cavnar AI's changes the owner kept credit trust in that kind of move
         — the apply-fixes, Improve and overtime-move recommendations are
         implemented (rec_ledger) — and are observed as cavnar_change_saved,
-        never as the manager's habit (L-5);
+        never as the manager's habit;
       * on a week staff already have every change is a reaction (phase
         post_publish), observed with the attendance record of the person
-        taken off when there is one — the learners never read it as a habit
-        (L-4);
+        taken off when there is one — the learners never read it as a
+        habit;
       * in the first weeks, a big change of the manager's own asks a one-tap
-        why (L-35).
+        why.
     Returns {why_questions, reactions, cavnar_changes, credited}."""
     import schedule_memory
     import schedule_versions as _sv
@@ -1357,7 +1350,7 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         for f in ("from", "to", "old_start", "new_start", "old_end", "new_end", "old_role", "new_role"):
             if it.get(f):
                 value[f] = it[f]
-        # The stable shift id, where the rows carry one (ARCH-28).
+        # The stable shift id, where the rows carry one.
         if row.get("shift_id") or it.get("shift_id"):
             value["shift_id"] = row.get("shift_id") or it.get("shift_id")
         person = it.get("employee") or it.get("from") or it.get("to")
@@ -1374,17 +1367,16 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
                 link = _attendance_link(restaurant_id, off, it.get("date"), db_path)
                 if link:
                     value["attendance"] = link
-            # What kind of reaction it is (schedule audit 10/10/26
-            # LEARNING-16): a call-off's replacement, a demand add or cut, a
-            # personal swap, a retime — what reaction_headcount and the
-            # one-tap why read.
+            # What kind of reaction it is: a call-off's replacement, a
+            # demand add or cut, a personal swap, a retime — what
+            # reaction_headcount and the one-tap why read.
             value["class"] = classify_reaction(ch["kind"], value)
             out["reactions"] += 1
             schedule_memory.observe(restaurant_id, "reaction", week_start=week_start, date=it.get("date"),
                                     daypart=part, role=row.get("role"), person=person, value=value, origin="manager",
                                     phase=phase, authority=auth, editor=who, source="save", history_id=history_id,
                                     db_path=db_path)
-    # Trust in the move kind the owner kept (L-5): the recommendation that
+    # Trust in the move kind the owner kept: the recommendation that
     # proposed it is implemented — once per save.
     if by_source and auth != "admin":
         try:
@@ -1408,13 +1400,13 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
         except Exception as e:
             import ops
             ops.capture(e, job="schedule_cavnar_credit", context=f"restaurant_id={restaurant_id} history={history_id}")
-    # The one-tap why (L-35): every big change, from its FIRST occurrence, at
-    # any age (schedule re-audit 10/11/26 LEARNING-10 — past the first four
-    # weeks it was asked only from the second repeat, so two one-off edits
-    # were already a habit candidate before anyone could say "just this
-    # week"; LEARNING-2 before that asked only in the first weeks). A repeat
-    # is still asked first; at most WHY_MAX_QUESTIONS a save. "Always" binds
-    # it at once (the owner's word), a one-off keeps it out of the habits.
+    # The one-tap why: every big change, from its FIRST occurrence, at any
+    # age (past the first four weeks it was asked only from the second
+    # repeat, so two one-off edits were already a habit candidate before
+    # anyone could say "just this week"; before that it asked only in
+    # the first weeks). A repeat is still asked first; at most
+    # WHY_MAX_QUESTIONS a save. "Always" binds it at once (the owner's word),
+    # a one-off keeps it out of the habits.
     try:
         out["why_questions"] = why_questions(restaurant_id, history_id, version, step, phase, db_path=db_path,
                                              repeats_only=False)
@@ -1426,7 +1418,7 @@ def capture_save(restaurant_id, history_id, version, step, user=None, published=
 
 REPEAT_LOOKBACK_DAYS = 168          # schedule_versions.LEARN_DAYS: the edit learners' own window
 
-# ── reactions to a sent week (schedule audit 10/10/26 LEARNING-16) ─────────
+# ── reactions to a sent week ─────────
 #
 # A change to a week staff already have was stored and never read: the
 # strongest real-world signal of a draft's error — what the manager changed
@@ -1466,8 +1458,8 @@ def reaction_headcount(restaurant_id, weeks=EDIT_WEEKS, min_weeks=2, db_path=DB_
     went out, by demand (classified demand_add / demand_cut — never a
     call-off's replacement or a personal swap): the requirement's residual
     the pre-publish edits never showed. A slot needs `min_weeks` weeks moving
-    the same way and more of them than the other way; its size is the
-    median net change of those weeks (LEARNING-16)."""
+    the same way and more of them than the other way; its size is the median
+    net change of those weeks."""
     import schedule_memory
     from datetime import date as _d, timedelta as _td
     since = (_d.today() - _td(weeks=int(weeks))).isoformat()
@@ -1506,7 +1498,7 @@ def _earlier_weeks(restaurant_id, history_id, subject, db_path=DB_PATH) -> int:
     observe_publish: edit_move, edit_retime, edit_headcount, edit_role) and
     reactions to a sent week (capture_save), never an admin's or Cavnar AI's
     own (counted_only) — matched on the change's kind, person or role,
-    weekday and daypart (LEARNING-2, LEARNING-16: the edit events read)."""
+    weekday and daypart (the edit events read)."""
     import schedule_memory
     from datetime import date as _d, timedelta as _td
     kind = subject.get("kind")
@@ -1555,16 +1547,16 @@ def _meal(part) -> str:
 
 
 def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PATH, repeats_only=False) -> list:
-    """The one-tap "why" for the biggest of a save's own changes (L-35), at
-    most WHY_MAX_QUESTIONS, never one already asked about this week: a
-    person taken off a slot (moved or removed), more of a role on a slot,
-    a role's start or end moved WHY_RETIME_MIN_MINUTES or more, a role
-    change. Each is stored (schedule_edit_answers, answer NULL) and
-    returned as {key, kind, text, options: [{answer, label}], date, employee,
-    role, daypart, repeat} — "They called off" only on a week staff already
-    have. `repeats_only` (past the first weeks, LEARNING-2): only a change
-    the manager already made by hand in an earlier week — its second
-    occurrence onward — is asked about; `repeat` is how many earlier weeks."""
+    """The one-tap "why" for the biggest of a save's own changes, at most
+    WHY_MAX_QUESTIONS, never one already asked about this week: a person
+    taken off a slot (moved or removed), more of a role on a slot, a role's
+    start or end moved WHY_RETIME_MIN_MINUTES or more, a role change. Each is
+    stored (schedule_edit_answers, answer NULL) and returned as {key, kind,
+    text, options: [{answer, label}], date, employee, role, daypart, repeat}
+    — "They called off" only on a week staff already have. `repeats_only`
+    (past the first weeks): only a change the manager already made by hand in
+    an earlier week — its second occurrence onward — is asked about; `repeat`
+    is how many earlier weeks."""
     import schedule_versions as _sv
     from shift_quality import present_dayparts
     from schedule_rules import parse_minutes
@@ -1644,7 +1636,7 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
     if repeats_only:
         # A person taken off a sent week's shift today or tomorrow is most
         # likely a call-off: asked at once, so the owner's "They called off"
-        # becomes the attendance record reliability reads (LEARNING-16).
+        # becomes the attendance record reliability reads.
         from datetime import date as _d, timedelta as _td
         soon = {_d.today().isoformat(), (_d.today() + _td(days=1)).isoformat()}
 
@@ -1684,13 +1676,13 @@ def why_questions(restaurant_id, history_id, version, step, phase, db_path=DB_PA
 
 
 def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_path=DB_PATH) -> dict:
-    """The owner's tap on a "why" (L-35). `always` makes the change a
-    standing pattern at once with their authority (and tells the
-    observation log — a candidate memory); `this_week` keeps it out of the
-    habits; `call_off` records the person's call-out (attendance, source
-    manual) and keeps it out of the habits. An admin's answer (view-as) is
-    kept and counts only once the account holder adopts it. Raises
-    ValueError with the owner's words."""
+    """The owner's tap on a "why". `always` makes the change a standing
+    pattern at once with their authority (and tells the observation log —
+    a candidate memory); `this_week` keeps it out of the habits;
+    `call_off` records the person's call-out (attendance, source manual)
+    and keeps it out of the habits. An admin's answer (view-as) is kept
+    and counts only once the account holder adopts it. Raises ValueError
+    with the owner's words."""
     import schedule_memory
     import schedule_versions as _sv
     if answer not in WHY_ANSWERS:
@@ -1705,11 +1697,11 @@ def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_p
         if answer not in (subject.get("options") or WHY_ANSWERS[:2]):
             raise ValueError("That answer doesn't fit this change.")
         auth = _sv.authority_of(user) if user else _sv.SYSTEM
-        # Only a COUNTED answer locks the question (schedule re-audit 10/4/26
-        # LEARN-9): an admin's through view-as is kept but changes nothing
-        # until the owner adopts it, so the restaurant's own login answers
-        # over it — the rule dismiss_pattern applies — instead of being
-        # refused and left to agree with the admin or adopt their answer.
+        # Only a COUNTED answer locks the question: an admin's through
+        # view-as is kept but changes nothing until the owner adopts it, so
+        # the restaurant's own login answers over it — the rule
+        # dismiss_pattern applies — instead of being refused and left to
+        # agree with the admin or adopt their answer.
         admins_only = (row["authority"] or "") == "admin" and not row["adopted_at"] and auth != "admin"
         if row["answer"] and row["answer"] != answer and not admins_only:
             raise ValueError("This one is already answered.")
@@ -1732,8 +1724,8 @@ def answer_edit_question(restaurant_id, history_id, key, answer, user=None, db_p
 def _said_pattern(subject, authority="principal") -> dict:
     """The learned-pattern shape of an answered question (pattern_key's
     fields and the standing row's words) — worded by whose "always" it is:
-    "The owner said always" only for an account holder's (schedule re-audit
-    10/4/26 LEARN-3: a manager's tap was stored and shown as the owner's)."""
+    "The owner said always" only for an account holder's (a manager's tap
+    was stored and shown as the owner's)."""
     kind, day, part = subject.get("kind"), subject.get("day"), subject.get("daypart")
     meal = _PRETTY.get(part, part)
     said = "The owner said always" if authority == "principal" else "A manager said always"
@@ -1829,9 +1821,9 @@ def _solve(a, b):
 
 
 def _fe_group(sample) -> str:
-    """A sample's fixed-effect cell: its weekday × daypart (calibration v2,
-    LEARNING-8) — busy nights carry harder demand and more issues, and
-    without the cell the demand-sensitive dimensions absorbed it."""
+    """A sample's fixed-effect cell: its weekday × daypart (calibration v2)
+    — busy nights carry harder demand and more issues, and without the cell
+    the demand-sensitive dimensions absorbed it."""
     meta = sample[3] if len(sample) > 3 else {}
     return str((meta or {}).get("cell") or "")
 
@@ -1870,13 +1862,13 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     fitted one at a time each took the credit for the other.
 
     At most one dimension per CALIBRATION_SAMPLES_PER_DIMENSION shifts is
-    fitted (SQ-22), the best-observed first; the ones that did not fit are
+    fitted, the best-observed first; the ones that did not fit are
     returned as `crowded`.
 
-    Calibration v2 (schedule audit 10/10/26 LEARNING-8): the fit is WITHIN
-    each weekday × daypart cell and at the shift's own demand (the samples'
-    `cell` and `demand` — _within), so a busy night's harder demand and its
-    issues are not read as the dimensions' doing."""
+    Calibration v2: the fit is WITHIN each weekday × daypart cell and at
+    the shift's own demand (the samples' `cell` and `demand` — _within), so
+    a busy night's harder demand and its issues are not read as the
+    dimensions' doing."""
     picked = [s for s in samples if s[1].get(outcome) is not None]
     rows = [(s[0], s[1][outcome]) for s in picked]
     if len(rows) < min_pairs:
@@ -1925,12 +1917,12 @@ def _ridge_fit(samples: list, keys: list, outcome: str, min_pairs: int):
     return {k: beta[i] * (1 + CALIBRATION_RIDGE) for i, k in enumerate(used)}, seen, len(rows), crowded
 
 
-# Calibration v2 (schedule audit 10/10/26 LEARNING-8): each outcome is fitted
-# on its own and the fits are COMBINED by what each outcome costs — the
-# owner sees these: a coverage or no-show issue, one star on a meal's
-# reviews, one point of labor % on a shift's sales (its measured sales when
-# known, else CALIBRATION_LABOR_POINT_USD). Averaging the outcomes made
-# coverage's "fewer issues" and "higher labor" cancel into no signal.
+# Calibration v2: each outcome is fitted on its own and the fits are COMBINED
+# by what each outcome costs — the owner sees these: a coverage or no-show
+# issue, one star on a meal's reviews, one point of labor % on a shift's
+# sales (its measured sales when known, else CALIBRATION_LABOR_POINT_USD).
+# Averaging the outcomes made coverage's "fewer issues" and "higher labor"
+# cancel into no signal.
 CALIBRATION_ISSUE_USD = 150.0
 CALIBRATION_REVIEW_POINT_USD = 200.0
 CALIBRATION_LABOR_POINT_USD = 25.0
@@ -1959,15 +1951,14 @@ def _calibration_samples(restaurant_id, db_path):
     the restaurant cannot be watched at all). meta: the shift's profile key
     and label, its score, the bar it was held to and each dimension's floor
     on it (when the stored score kept them) — what the floors and bars are
-    read against (SQ-22)."""
+    read against."""
     conn = get_conn(db_path)
     try:
         # The review rating a shift is judged on is only the reviews that
         # named its meal and were posted within two days of it
-        # (review_rating_attributed — memory audit 9/29/26,
-        # reviews_to_labor): a dinner complaint posted on Sunday used to be
-        # scored against Sunday lunch, and the calibration learned from noise.
-        # Labor % is the DAYPART's own (schedule audit 10/3/26 L-13): the
+        # (review_rating_attributed, reviews_to_labor): a dinner complaint
+        # posted on Sunday used to be scored against Sunday lunch, and the
+        # calibration learned from noise. Labor % is the DAYPART's own: the
         # punched hours priced at their rates over the daypart's measured
         # sales (schedule_intel.record_outcomes). The day's figure, copied
         # onto both rows, fitted lunch and dinner to the same number; a row
@@ -1987,7 +1978,7 @@ def _calibration_samples(restaurant_id, db_path):
             import models as _m_sl
             for h in conn.execute(f"SELECT id, quality_json, quality_ref, labor_target FROM schedule_history "
                                   f"WHERE restaurant_id=? AND id IN ({marks})", (restaurant_id, *chunk)).fetchall():
-                # The whole evaluation (stored once, SCALE-13): its shifts.
+                # The whole evaluation (stored once): its shifts.
                 hist[h["id"]] = {"labor_target": h["labor_target"], "quality": _m_sl.history_quality(conn, h)}
     finally:
         conn.close()
@@ -2018,10 +2009,10 @@ def _calibration_samples(restaurant_id, db_path):
         except Exception as e:
             log.warning("[calibration] watched dates unavailable for %s: %s", restaurant_id, e)
             watched = set()
-    # The week AS IT RAN where it was scored so (schedule audit 10/10/26
-    # LEARNING-8: the planned week was fitted against what the run week
-    # did) — the as-run dimensions (schedule_scorecard.record_as_run_quality,
-    # sq_as_run); the planned ones only for a shift never scored as run.
+    # The week AS IT RAN where it was scored so (the planned week was fitted
+    # against what the run week did) — the as-run dimensions
+    # (schedule_scorecard.record_as_run_quality, sq_as_run); the planned ones
+    # only for a shift never scored as run.
     as_run = {}
     try:
         import schedule_memory as _sm_cal
@@ -2154,8 +2145,8 @@ def _holdout_check(samples, keys, current, usd) -> dict:
     if rc is None or rn is None:
         out["reason"] = "the held-out shifts did not vary enough to tell"
         return out
-    # Williams' test of two dependent correlations (LEARNING-1): the
-    # bootstrap's share of resamples confirmed noise.
+    # Williams' test of two dependent correlations: the bootstrap's
+    # share of resamples confirmed noise.
     test = better_correlation(xa, xb, yv)
     out["p_better"] = test["better"]
     out["p_value"] = test["p"]
@@ -2171,8 +2162,8 @@ def paired_better(xa, xb, yv, tries=200) -> float:
     shifts in which the score `xb` correlates with the outcome `yv` better
     than `xa` does. None when no resample could be read. A DESCRIPTION of
     how stable the difference is, not a test: two nearly identical scores
-    keep the sign of a noise difference in most resamples (blind re-audit
-    10/11/26 LEARNING-1) — a decision reads better_correlation."""
+    keep the sign of a noise difference in most resamples — a decision
+    reads better_correlation."""
     import random
     n = len(yv)
     if n < 3:
@@ -2191,15 +2182,15 @@ def paired_better(xa, xb, yv, tries=200) -> float:
 
 
 def better_correlation(xa, xb, yv) -> dict:
-    """The test a weights decision reads (blind re-audit 10/11/26
-    LEARNING-1): does the score `xb` track the outcome `yv` better than `xa`
-    does, beyond chance, on shifts neither was fitted on? Williams' t for
-    two dependent correlations that share `yv` (Steiger 1980, eq. 14) —
-    one-sided, n − 3 degrees of freedom. It accounts for how alike the two
-    scores are (r_ab): two nearly identical weightings differ by little, and
-    a bootstrap kept the sign of a noise difference in most resamples, so it
-    confirmed noise. {"gain" (r_yb − r_ya), "t", "p" (one-sided), "better"
-    (1 − p)}; None values with too little to read. Pure."""
+    """The test a weights decision reads: does the score `xb` track the
+    outcome `yv` better than `xa` does, beyond chance, on shifts neither was
+    fitted on? Williams' t for two dependent correlations that share `yv`
+    (Steiger 1980, eq. 14) — one-sided, n − 3 degrees of freedom. It
+    accounts for how alike the two scores are (r_ab): two nearly identical
+    weightings differ by little, and a bootstrap kept the sign of a noise
+    difference in most resamples, so it confirmed noise. {"gain" (r_yb −
+    r_ya), "t", "p" (one-sided), "better" (1 − p)}; None values with too
+    little to read. Pure."""
     from learning_stats import t_cdf
     n = len(yv)
     out = {"gain": None, "t": None, "p": None, "better": None}
@@ -2252,12 +2243,11 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
       * every dimension says which outcome drove its change, and how many
         shifts that rests on. Deterministic.
 
-    Floors and bars too (schedule audit 10/3/26 SQ-22): weights cannot lift
-    a shift a critical floor caps, so each shift profile with
-    CALIBRATION_MIN_PROFILE_SHIFTS of its own shifts on record also has its
-    quality bar and each critical floor read against what those shifts did
-    (`profiles`, `suggested_profiles`; _profile_calibration). Apply writes
-    them (apply_profile_calibration)."""
+    Floors and bars too: weights cannot lift a shift a critical floor caps,
+    so each shift profile with CALIBRATION_MIN_PROFILE_SHIFTS of its own
+    shifts on record also has its quality bar and each critical floor read
+    against what those shifts did (`profiles`, `suggested_profiles`;
+    _profile_calibration). Apply writes them (apply_profile_calibration)."""
     from shift_quality import DEFAULT_WEIGHTS
     samples, watched = _calibration_samples(restaurant_id, db_path)
     n_weeks = len({s[2] for s in samples})
@@ -2328,15 +2318,15 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
                        "target": round(target, 1),
                        "evidence": round(ev, 3) if ev is not None else None,
                        # What a standard deviation more of it went with, in
-                       # dollars per outcome (LEARNING-8).
+                       # dollars per outcome.
                        "dollars": {o: round(v, 2) for o, v in dollars.items()},
                        "correlation": corr, "coefficient": coefs, "pairs": pairs_n,
                        "driver": driver, "explanation": explanation,
                        "reading": ("tracked better outcomes" if target_nudge > 0 else
                                    "did not track outcomes here" if target_nudge < 0 else
                                    "no clear signal yet")}
-    # Held-out weeks before anything is suggested (LEARNING-8): the weights
-    # the OLDER weeks fit, against the weights now, on the newest weeks.
+    # Held-out weeks before anything is suggested: the weights the OLDER
+    # weeks fit, against the weights now, on the newest weeks.
     holdout = _holdout_check(samples, keys, current, usd)
     if holdout.get("confirmed") is False or holdout.get("confirmed") is None:
         why = holdout.get("reason") or "the newest weeks did not confirm it"
@@ -2354,9 +2344,9 @@ def calibrate_weights(restaurant_id, db_path=DB_PATH, current_weights=None) -> d
     return {"ready": True, **base, "applied": False, "dimensions": report, "suggested_weights": suggested,
             "moving": moving, "profiles": profiles, "suggested_profiles": suggested_profiles,
             "moving_profiles": sorted(suggested_profiles),
-            # v2 (LEARNING-8): what each outcome is worth, how the week was
-            # read (as it ran, or as planned), the fixed effects, and the
-            # held-out check the suggestion passed or failed.
+            # v2: what each outcome is worth, how the week was read (as it
+            # ran, or as planned), the fixed effects, and the held-out
+            # check the suggestion passed or failed.
             "method": "v2", "dollar_weights": usd, "holdout": holdout,
             "basis": {"as_run": sum(1 for s in samples if (s[3] or {}).get("basis") == "as_run"),
                       "planned": sum(1 for s in samples if (s[3] or {}).get("basis") != "as_run")},
@@ -2450,11 +2440,10 @@ def _line_reading(name: str, points: list, current) -> dict:
         out["explanation"] = (f"{name} stays at {current}: shifts under no nearby line did clearly worse "
                               f"(the best gap was {ev:.2f} standard deviations).")
         return out
-    # Corrected for looking at every line (schedule audit 10/10/26
-    # LEARNING-8): the best gap must beat the best gap the same search finds
-    # with the outcomes shuffled among the shifts, in all but
-    # CALIBRATION_THRESHOLD_ALPHA of CALIBRATION_PERMUTATIONS tries — a
-    # search over ±20 points finds some line by chance.
+    # Corrected for looking at every line: the best gap must beat the best
+    # gap the same search finds with the outcomes shuffled among the shifts,
+    # in all but CALIBRATION_THRESHOLD_ALPHA of CALIBRATION_PERMUTATIONS
+    # tries — a search over ±20 points finds some line by chance.
     p = _threshold_pvalue(points, current, ev, name)
     out["p_value"] = p
     if p > CALIBRATION_THRESHOLD_ALPHA:
@@ -2497,10 +2486,10 @@ def _profile_settings(restaurant_id, db_path=DB_PATH) -> dict:
 def _profile_calibration(samples: list, settings: dict = None) -> tuple:
     """({profile key: reading}, {profile key: {"min_quality", "floors"}}) —
     each profile's quality bar and critical floors read against what its
-    own shifts did (SQ-22), and the suggestions that move. A profile with
-    fewer than CALIBRATION_MIN_PROFILE_SHIFTS shifts on record is named and
-    left alone: a weekly profile is one shift a week, and its numbers are
-    not moved on a handful."""
+    own shifts did, and the suggestions that move. A profile with fewer
+    than CALIBRATION_MIN_PROFILE_SHIFTS shifts on record is named and left
+    alone: a weekly profile is one shift a week, and its numbers are not
+    moved on a handful."""
     from shift_quality import DIMENSION_LABELS
     by_profile = {}
     for sample in samples:
@@ -2548,13 +2537,13 @@ def _profile_calibration(samples: list, settings: dict = None) -> tuple:
 
 def apply_profile_calibration(restaurant_id, cal: dict = None, updated_by: str = None, db_path=DB_PATH) -> dict:
     """Write the suggested floors and bars (calibrate_weights'
-    `suggested_profiles`) — the owner's Apply (SQ-22). A profile the
-    restaurant configured gets them in its own settings (save_shift_profile);
-    a built-in gets them in the tuning the engine lays over the built-ins
-    (restaurants.quality_tuning_json, shift_quality.profiles_from_config),
-    so the rest of the built-in set stays as it was. Returns
-    {"profiles": {key: what was written}, "before": tuning before} — {} of
-    profiles when there was nothing to write."""
+    `suggested_profiles`) — the owner's Apply. A profile the restaurant
+    configured gets them in its own settings (save_shift_profile); a built-in
+    gets them in the tuning the engine lays over the built-ins
+    (restaurants.quality_tuning_json, shift_quality.profiles_from_config), so
+    the rest of the built-in set stays as it was. Returns {"profiles": {key:
+    what was written}, "before": tuning before} — {} of profiles when there
+    was nothing to write."""
     cal = cal if cal is not None else calibrate_weights(restaurant_id, db_path=db_path)
     moves = (cal or {}).get("suggested_profiles") or {}
     kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
@@ -2612,9 +2601,9 @@ def attendance_by_weekday(restaurant_id, min_shifts=ATTENDANCE_MIN_WEEKDAY_SHIFT
 
     The one weighted attendance reader (staff_settings.weekday_attendance
     over attendance_events): the same window, recency weighting and
-    notice-weighted call-outs as reliability (schedule audit 10/3/26 L-17,
-    L-18) — this read an unweighted 360 days of its own, so the review and
-    the scorer disagreed about the same person and day."""
+    notice-weighted call-outs as reliability — this read an unweighted 360
+    days of its own, so the review and the scorer disagreed about the same
+    person and day."""
     import staff_settings
     today = staff_settings.local_today(restaurant_id)
     return staff_settings.weekday_attendance(staff_settings.attendance_events(restaurant_id, today=today,
@@ -2628,9 +2617,9 @@ def _week_rows(restaurant_id, week_dates, db_path=DB_PATH) -> list:
         return []
     conn = get_conn(db_path)
     try:
-        # The week staff have (its live copy's published rows), else the
-        # week's working copy — the one rule (models, ARCH-11) — read from
-        # the shift table (schedule_shifts, schedule re-audit 10/11/26 ARCH-7).
+        # The week staff have (its live copy's published rows), else the week's
+        # working copy — the one rule (models) — read from the shift table
+        # (schedule_shifts).
         import models as _m_live
         live = _m_live.live_week_row(conn, restaurant_id, sorted(week_dates)[0])
         if live:
@@ -2655,16 +2644,15 @@ def standby_days(restaurant_id, week_dates, rows=None, limit=2, min_risk=0.1, db
     than the shift needs) (attendance_risk.shift_risks, every person at
     their own weekday rate shrunk in a hierarchy) — and `standby_required`
     when a busy shift's P(short) reaches attendance_risk.STANDBY_RISK: a
-    standby requirement, listed first, the standby in that shift's role
-    (scheduler audit 10/10/26 RM-18, LEARNING-14)."""
+    standby requirement, listed first, the standby in that shift's role."""
     rows = _week_rows(restaurant_id, week_dates, db_path) if rows is None else rows
     if not rows:
         return []
-    # The one weighted attendance reader (staff_settings.attendance_record —
-    # schedule audit 10/3/26 L-17): the window and recency weighting
-    # reliability uses. Standby plans for a body missing, so it reads the
-    # ABSENCE rate — a call-out counts in full whatever its notice, kept
-    # apart from reliability's notice-weighted miss rate (L-18).
+    # The one weighted attendance reader (staff_settings.attendance_record):
+    # the window and recency weighting reliability uses. Standby plans for a
+    # body missing, so it reads the ABSENCE rate — a call-out counts in full
+    # whatever its notice, kept apart from reliability's notice-weighted
+    # miss rate.
     import staff_settings
     rec = staff_settings.attendance_record(restaurant_id, db_path=db_path)
     tally = {k.strip().lower(): v for k, v in rec["tally"].items()}
@@ -2754,8 +2742,8 @@ def _standby_person(restaurant_id, day, rows, tally, db_path, base=0.0):
     risky = (day.get("people") or [{}])[0].get("employee")
     sh = day.get("standby_shift") or {}
     if sh.get("people"):
-        # The standby a shift's requirement asks for is in that shift's role
-        # (RM-18): its likeliest absence's own role.
+        # The standby a shift's requirement asks for is in that shift's
+        # role: its likeliest absence's own role.
         risky = max(sh["people"], key=lambda p: (p.get("miss") or 0, p.get("employee") or ""))["employee"]
     shift = next((r for r in rows if (r.get("date") or "")[:10] == d
                   and (r.get("employee") or "").strip() == risky), None) if risky else None
@@ -2809,8 +2797,8 @@ def price_overtime_moves(forecast: list, role_rates=None, default_rate=None) -> 
         # Only hours past the weekly OVERTIME line earn the premium. Being
         # past a personal cap (Ana's 25h) is a different flag with no
         # premium in it: pricing it as overtime told an owner a move saved
-        # "$70 in overtime pay" on a 32h week (re-audit A-4). Entries built
-        # before overtime_hours existed fall back to `over`.
+        # "$70 in overtime pay" on a 32h week. Entries built before
+        # overtime_hours existed fall back to `over`.
         ot = f.get("overtime_hours", f.get("over"))
         hours_off = round(min(float(ot or 0), float(c.get("hours") or 0)), 1)
         c["overtime_hours_avoided"] = hours_off
@@ -2835,10 +2823,10 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
     from shift_quality import _SwapIndex, WEEKLY_HOURS_CEILING
     rows = [r for r in (rows or []) if (r.get("employee") or "").strip()]
     # A salaried person owes no overtime and their hours are not the hourly
-    # pay this forecasts (owner's rule; schedule re-audit 10/4/26 SQ-5/SQ-6
-    # siblings): a salaried GM at 55h was "past the ceiling", with a move
-    # that "saves" overtime pay nobody owes. Their own cap is the sweep's
-    # (over_max_hours on Constraints.salaried_limit).
+    # pay this forecasts (owner's rule siblings): a salaried GM at 55h was
+    # "past the ceiling", with a move that "saves" overtime pay nobody
+    # owes. Their own cap is the sweep's (over_max_hours on
+    # Constraints.salaried_limit).
     salaried_row = (lambda r: constraints.is_salaried(r.get("employee"))) if constraints is not None \
         else (lambda r: False)
     if constraints is not None:
@@ -2850,8 +2838,8 @@ def overtime_forecast(rows: list, constraints=None, base_hours=None, bucket=None
     # The restaurant's weekly hours ceiling is a CAP (like a person's own
     # max_hours), never the overtime line. Overtime pay starts at
     # schedule_time.OVERTIME_THRESHOLD_HOURS (40): a ceiling set to 35 priced "5h of
-    # overtime ... saves about $50 in overtime pay" on a 40h week that owes
-    # none (NS3 H5; re-audit A-4 for the personal cap).
+    # overtime... saves about $50 in overtime pay" on a 40h week that owes none (NS3
+    # H5 for the personal cap).
     from schedule_time import OVERTIME_THRESHOLD_HOURS as _OT_LINE
     ceil = float(ceiling or WEEKLY_HOURS_CEILING)
     ot_line = float(_OT_LINE)

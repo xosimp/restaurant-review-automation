@@ -1,6 +1,6 @@
 """
 schedule_narrative.py — "Cavnar AI's note", written from the FINISHED week
-and checked against it (scheduler audit 10/10/26 TRUST-15, AI-21).
+and checked against it.
 
 The note was the model's own three bullets from its answer, checked against
 the prompt at call time — and then the repair loop, the solver, the
@@ -12,18 +12,15 @@ Now, after every pass has run, the note is written from what the owner will
 actually see:
 
   write(...)   Claude Haiku 5.5 (`ai_utils.model_for("schedule_note")`,
-               workflow `schedule_note`, no thinking, structured output)
-               reads the finished week as a compact table (each day's people
-               by role and hours), the "what changed" lines against the last
-               published week, what the week does not meet, and WHY it looks
-               as it does (reasons_for_note — re-audit 10/11/26 AI-17: the
-               drafting model's decisions that still hold in the final rows,
-               requirement reasons, the solver's picks, the repair's
-               changes), and writes at most three bullets. Each bullet passes the digest's own line
-               checks (labor._drop_note_bullets: no figure or count the input
-               did not hold, no name outside it, no cause it does not state,
-               no injection tell) AND the final-rows check (final_rows_problem:
-               every person it names works in the final week — on the day it
+               workflow `schedule_note`, no thinking, structured output) reads the finished week as
+               a compact table (each day's people by role and hours), the "what changed" lines
+               against the last published week, what the week does not meet, and WHY it looks as it
+               does (reasons_for_note: the drafting model's decisions that still hold in the final
+               rows, requirement reasons, the solver's picks, the repair's changes), and writes at
+               most three bullets. Each bullet passes the digest's own line checks
+               (labor._drop_note_bullets: no figure or count the input did not hold, no name
+               outside it, no cause it does not state, no injection tell) AND the final-rows check
+               (final_rows_problem: every person it names works in the final week — on the day it
                names, when it names one — and every day it names has shifts).
   fallback     when the model is off, unavailable or every bullet fails: the
                generation model's own bullets, kept only where they pass the
@@ -97,15 +94,14 @@ def _line(text, limit=200) -> str:
 
 def reasons_for_note(result, rows, limit=12) -> list:
     """Why the finished week looks as it does, as short lines for the note
-    writer (scheduler re-audit 10/11/26 AI-17 — it was given names by role,
-    hours, the diff and the misses, so its "biggest decisions" could only
-    restate the table): the drafting model's own decisions that still hold
-    in the final rows (AI-16: a decision about a date and role the final
-    week no longer has is dropped, never repeated), why a shift's
-    requirement moved (the date's measured demand, an event, the owner's
-    standard), the solver's reason for a pick, and what the repair and the
-    optimizer changed and why. Code-built except the model's `why`; every
-    line is one line, markers broken."""
+    writer (it was given names by role, hours, the diff and the misses, so
+    its "biggest decisions" could only restate the table): the drafting
+    model's own decisions that still hold in the final rows (a decision
+    about a date and role the final week no longer has is dropped, never
+    repeated), why a shift's requirement moved (the date's measured demand,
+    an event, the owner's standard), the solver's reason for a pick, and
+    what the repair and the optimizer changed and why. Code-built except
+    the model's `why`; every line is one line, markers broken."""
     result = result or {}
     on = set()
     for r in rows or []:

@@ -29,40 +29,38 @@ in every arm (weeks inside one restaurant are not independent), and calls
 one on the PRIMARIES — the Draft Rework Rate (schedule_scorecard) and the
 week's outcomes (issues, labor %, labor against the hourly target, minutes
 with no manager, uncovered no-shows): better on at least one at 90% and
-worse on none (schedule audit 10/10/26 LEARNING-25 — it used to call on
-acceptance, which reads a manager who stopped looking as improvement).
-Each arm carries `power_read`: the smallest difference its sample can
-detect and the weeks it would take to see one worth seeing — honest about
-an experiment that cannot conclude. The model arm of assign_v1 is clean
-(LOGIC-27): the optimizer's reassignments are off with the solver.
-learning_v1 is a within-restaurant SWITCHBACK (switchback_arm): the learned
-memory off one week in four, judged the same way — and the offline
-learning ablation (schedule_scorecard) answers it with no customer
+worse on none (it used to call on acceptance, which reads a manager who
+stopped looking as improvement). Each arm carries `power_read`: the
+smallest difference its sample can detect and the weeks it would take to
+see one worth seeing — honest about an experiment that cannot conclude. The
+model arm of assign_v1 is clean: the optimizer's reassignments are off with
+the solver. learning_v1 is a within-restaurant SWITCHBACK (switchback_arm):
+the learned memory off one week in four, judged the same way — and the
+offline learning ablation (schedule_scorecard) answers it with no customer
 exposure every generation meanwhile.
 
-The interval is CLUSTER-ROBUST by restaurant (memory audit 9/29/26,
-PLATFORM-13): weeks were treated as independent, so one busy restaurant
-supplying 15 of an arm's 20 weeks could narrow the interval enough to call
-a false winner that then shipped to everyone. Now each restaurant counts at
-most MAX_WEEKS_PER_RESTAURANT of its most recent published weeks per arm,
-the standard error is the restaurant-cluster (CR1) sandwich — the
-difference's includes the covariance of a restaurant's weeks in both arms —
-with a t quantile on (restaurants − 1) degrees of freedom; quality is the
-PUBLISHED version's score, not an average over every regeneration; only
-restaurants that may teach are read (models.learning_eligible, through
-intelligence.jobs.excluded_learning_ids — never a demo's regenerations); and
-the verdict is stored weekly (schedule_experiment_verdicts,
-record_verdicts), so what the readout said on a given week can be read
-back.
+The interval is CLUSTER-ROBUST by restaurant: weeks were treated as
+independent, so one busy restaurant supplying 15 of an arm's 20 weeks could
+narrow the interval enough to call a false winner that then shipped to
+everyone. Now each restaurant counts at most MAX_WEEKS_PER_RESTAURANT of its
+most recent published weeks per arm, the standard error is the
+restaurant-cluster (CR1) sandwich — the difference's includes the covariance
+of a restaurant's weeks in both arms — with a t quantile on (restaurants −
+1) degrees of freedom; quality is the PUBLISHED version's score, not an
+average over every regeneration; only restaurants that may teach are read
+(models.learning_eligible, through intelligence.jobs.excluded_learning_ids —
+never a demo's regenerations); and the verdict is stored weekly
+(schedule_experiment_verdicts, record_verdicts), so what the readout said on
+a given week can be read back.
 
 Kill switches: the env var SCHEDULE_EXPERIMENT_PIN ("off", an arm key, or
 "experiment:arm") pins every restaurant; a row in schedule_experiment_pins
 pins one. A pinned week records the arm it was pinned to and is left out of
 the comparison, since it was not randomised. "off" is the control arm.
 
-An experiment that cannot conclude does not run (schedule audit 10/3/26
-P-21, L-11): while fewer than MIN_RESTAURANTS_PER_ARM restaurants that may
-teach (models.learning_eligible) generated a schedule in the last
+An experiment that cannot conclude does not run: while fewer than
+MIN_RESTAURANTS_PER_ARM restaurants that may teach
+(models.learning_eligible) generated a schedule in the last
 POWER_WINDOW_DAYS, every week takes the experiment's `until_powered` arm —
 for assign_v1 the solver, the only pass that weighs fairness, experience
 and minimum hours across the whole assignment — recorded as pinned with
@@ -105,28 +103,28 @@ EXPERIMENTS = (
     {"key": "assign_v1",
      "active": True,
      "started": "2026-09-23",
-     # The model arm is the model's assignment (schedule audit 10/10/26
-     # LOGIC-27): the optimizer's replace / swap / trade moves are off with
-     # the solver ("reassign"), so the readout compares the model's own
-     # assignment with the solver's, not two partly optimizer-assigned weeks.
+     # The model arm is the model's assignment: the optimizer's replace /
+     # swap / trade moves are off with the solver ("reassign"), so the
+     # readout compares the model's own assignment with the solver's, not two
+     # partly optimizer-assigned weeks.
      "question": "Does the constraint solver's assignment (with the optimizer's reassignments) beat the model's own "
                  "assignment (nobody reassigned by code)?",
      "control": "model",
-     # Every week runs the solver until the experiment can conclude (P-21).
+     # Every week runs the solver until the experiment can conclude.
      "until_powered": "solver",
      "arms": ({"key": "model", "label": "Model assignment", "weight": 1,
                "flags": {"solver": False, "reassign": False}},
               {"key": "solver", "label": "Solver assignment", "weight": 1,
                "flags": {"solver": True, "reassign": True}})},
-    # Whether binding the learned memory makes weeks better (schedule audit
-    # 10/10/26 LEARNING-25: the framework never tested learning). A
-    # within-restaurant SWITCHBACK — the arm follows the week, so each
-    # restaurant is its own control — with the memory off on one week in
-    # four, judged on the outcome primaries and the rework rate. Until it
-    # can conclude every week keeps the memory on (pinned, not counted); the
-    # offline learning ablation (schedule_scorecard: the same loop over the
-    # same answer with the memory off, every generation) answers the same
-    # question with no customer exposure meanwhile.
+    # Whether binding the learned memory makes weeks better (the framework
+    # never tested learning). A within-restaurant SWITCHBACK — the arm
+    # follows the week, so each restaurant is its own control — with the
+    # memory off on one week in four, judged on the outcome primaries and
+    # the rework rate. Until it can conclude every week keeps the memory on
+    # (pinned, not counted); the offline learning ablation
+    # (schedule_scorecard: the same loop over the same answer with the
+    # memory off, every generation) answers the same question with no
+    # customer exposure meanwhile.
     {"key": "learning_v1",
      "active": True,
      "started": "2026-10-10",
@@ -141,15 +139,14 @@ EXPERIMENTS = (
      "until_powered": "memory_on",
      "arms": ({"key": "memory_off", "label": "Learned memory off", "weight": 1, "flags": {"learned": False}},
               {"key": "memory_on", "label": "Learned memory on", "weight": 3, "flags": {"learned": True}})},
-    # Whether LEARNING AS A WHOLE makes weeks better (blind re-audit
-    # 10/11/26 LEARNING-14: learning_v1 and the ablation switch off only the
-    # learned memory). A small within-restaurant switchback: one week in
-    # eight with EVERY learned input off (learning_stats.learning_off — the
-    # prompt's learned lines, learned headcount, measured staffing moves,
-    # driver standards, promoted weights, reliability, learned preferences,
-    # retention, the edit predictor and the memory), judged on the outcome
-    # primaries. Until it can conclude every week keeps learning on (pinned,
-    # not counted).
+    # Whether LEARNING AS A WHOLE makes weeks better (learning_v1 and the
+    # ablation switch off only the learned memory). A small
+    # within-restaurant switchback: one week in eight with EVERY learned
+    # input off (learning_stats.learning_off — the prompt's learned lines,
+    # learned headcount, measured staffing moves, driver standards, promoted
+    # weights, reliability, learned preferences, retention, the edit
+    # predictor and the memory), judged on the outcome primaries. Until it
+    # can conclude every week keeps learning on (pinned, not counted).
     {"key": "learning_v2",
      "active": True,
      "started": "2026-10-12",
@@ -160,13 +157,12 @@ EXPERIMENTS = (
      "until_powered": "learning_on",
      "arms": ({"key": "learning_off", "label": "Every learned input off", "weight": 1, "flags": {"learning": False}},
               {"key": "learning_on", "label": "Learning on", "weight": 7, "flags": {"learning": True}})},
-    # Where the draft comes from (scheduler audit 10/10/26 AI-1, AI-8,
-    # AI-11; cross-workstream contract #7 — schedule_fallback): the model's
-    # week, the last published week carried forward and repaired, or the
-    # week shaped in code and solved. Judged like any arm, on acceptance and
-    # outcomes. Since the blind re-audit of 10/11/26 (ARCH-1, LOGIC-7) the
-    # CONTROL is the solver-first draft ("code_shaped"): it holds every
-    # invariant of the schedule benchmark the carried week holds, in seconds
+    # Where the draft comes from (cross-workstream contract #7 —
+    # schedule_fallback): the model's week, the last published week carried
+    # forward and repaired, or the week shaped in code and solved. Judged
+    # like any arm, on acceptance and outcomes. Since the CONTROL is the
+    # solver-first draft ("code_shaped"): it holds every invariant of the
+    # schedule benchmark the carried week holds, in seconds
     # (scripts/schedule_benchmark.py; MODULE_OVERVIEW.md has the table), and
     # the model's draft paid 15-40 minutes and 48-56k thinking tokens for
     # work the solver re-did. Every week takes the solver's draft until the
@@ -187,9 +183,9 @@ EXPERIMENTS = (
               {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 1,
                "flags": {"draft_source": "solver"}},
               # The solver-first draft with the model as a critic of it
-              # (schedule_critic — scheduler audit 10/10/26 AI-8): a few
-              # judged edits, each validated by code. Off the hash until the
-              # eval reads it: reachable by a pin.
+              # (schedule_critic): a few judged edits, each validated by
+              # code. Off the hash until the eval reads it: reachable by a
+              # pin.
               {"key": "code_critic", "label": "Shaped in code, solved, then reviewed by the model", "weight": 0,
                "flags": {"draft_source": "solver", "critic": True}})},
 )
@@ -203,22 +199,21 @@ MIN_RESTAURANTS_PER_ARM = 5
 # How far back "generating schedules" looks when deciding whether an
 # experiment can conclude (powered): eight weeks.
 POWER_WINDOW_DAYS = 56
-# No one restaurant carries an arm (PLATFORM-13): its most recent published
-# weeks per arm, at most this many.
+# No one restaurant carries an arm: its most recent published weeks per
+# arm, at most this many.
 MAX_WEEKS_PER_RESTAURANT = 8
-# v2 (schedule audit 10/10/26 LEARNING-25): judged on the primaries — the
-# Draft Rework Rate and the week's outcomes — not on acceptance.
+# v2: judged on the primaries — the Draft Rework Rate and the week's
+# outcomes — not on acceptance.
 VERDICT_METHOD = "cluster_robust_outcomes_v3"
-# v3 (blind re-audit 10/11/26 LEARNING-15): "better on any of six primaries
-# at 90%, worse on none", re-read every week with a promote button, called a
-# winner in 39-42% of null readouts and in every null run peeked weekly.
-# Now an improvement must survive Holm's step-down at FAMILY_ALPHA over
-# every (arm, primary) tested, each p-value ALWAYS-VALID (the mixture SPRT,
-# learning_stats.always_valid_p, tau = the primary's MEANINGFUL difference)
-# so the weekly re-reading does not inflate it, and promotion needs the same
-# call on CONFIRM_SNAPSHOTS consecutive stored weekly verdicts as well as
-# today's readout. "Worse" stays the plain 90% interval: anything worse
-# blocks a call.
+# v3: "better on any of six primaries at 90%, worse on none", re-read every
+# week with a promote button, called a winner in 39-42% of null readouts and
+# in every null run peeked weekly. Now an improvement must survive Holm's
+# step-down at FAMILY_ALPHA over every (arm, primary) tested, each p-value
+# ALWAYS-VALID (the mixture SPRT, learning_stats.always_valid_p, tau = the
+# primary's MEANINGFUL difference) so the weekly re-reading does not inflate
+# it, and promotion needs the same call on CONFIRM_SNAPSHOTS consecutive
+# stored weekly verdicts as well as today's readout. "Worse" stays the plain
+# 90% interval: anything worse blocks a call.
 FAMILY_ALPHA = 0.05
 CONFIRM_SNAPSHOTS = 3
 Z90 = 1.645
@@ -250,11 +245,11 @@ def _arm_def(exp, arm_key):
 
 
 def switchback_arm(exp, restaurant_id, week_start) -> str:
-    """A switchback's arm (LEARNING-25): the weeks of each restaurant cycle
-    through the arms by their weights in a fixed order — with weights 1 and
-    3, one week in four off — offset per restaurant by a stable hash, so the
-    restaurants are not all off the same week. Deterministic: a
-    regeneration of the same week keeps its arm."""
+    """A switchback's arm: the weeks of each restaurant cycle through the
+    arms by their weights in a fixed order — with weights 1 and 3, one week
+    in four off — offset per restaurant by a stable hash, so the restaurants
+    are not all off the same week. Deterministic: a regeneration of the same
+    week keeps its arm."""
     import datetime as _dt
     try:
         d = _dt.date.fromisoformat(str(week_start)[:10])
@@ -312,9 +307,8 @@ def powered(db_path=DB_PATH) -> dict:
     restaurants generate schedules for an experiment to conclude — at least
     MIN_RESTAURANTS_PER_ARM that may teach (models.learning_eligible,
     through intelligence.jobs.excluded_learning_ids) with a schedule
-    generated in the last POWER_WINDOW_DAYS (schedule audit 10/3/26 P-21).
-    Raises when it cannot be read; arms_for then keeps the experiment's own
-    arm, the safe reading."""
+    generated in the last POWER_WINDOW_DAYS. Raises when it cannot be read;
+    arms_for then keeps the experiment's own arm, the safe reading."""
     excluded = _excluded(db_path)
     conn = get_conn(db_path)
     try:
@@ -348,7 +342,7 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
     experiment, for this restaurant's week — and, for an experiment retired
     in code whose winner was promoted, the promoted arm, so its flags keep
     holding. An experiment that cannot conclude yet gives every week its
-    `until_powered` arm, pinned ("underpowered"; P-21, L-11)."""
+    `until_powered` arm, pinned ("underpowered")."""
     out = []
     power = None
     try:
@@ -373,7 +367,7 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
             arm, source = promoted[exp["key"]]["arm"], "promoted"
         if arm is None and exp.get("until_powered") and _arm_def(exp, exp["until_powered"]):
             # Not enough restaurants for a verdict ever to arrive: no week is
-            # spent on the coin flip (P-21, L-11), and none of them counts.
+            # spent on the coin flip, and none of them counts.
             if power is None:
                 power = _power_or_pin(db_path)
             if not power.get("powered"):
@@ -445,8 +439,8 @@ def record(restaurant_id, history_id, arms, quality_score=None, solver_applied=N
            conn=None) -> None:
     """The week's arm, stored with the draft's score. A regeneration is a
     new history row with the same arm. With `conn`, on the caller's
-    connection inside its transaction (the generation's save, schedule
-    audit 10/10/26 ARCH-29) — the caller commits."""
+    connection inside its transaction (the generation's save) — the
+    caller commits."""
     if not history_id or not arms:
         return
     own = conn is None
@@ -547,8 +541,8 @@ def promote(experiment_key, arm, promoted_by=None, note=None, db_path=DB_PATH, _
     if verdict.get("state") != "winner" or verdict.get("call") != arm:
         return {"ok": False, "error": "Only the arm the readout calls the winner can be promoted "
                                       f"(now: {verdict.get('text') or 'no verdict'})."}
-    # The same call on CONFIRM_SNAPSHOTS consecutive stored weekly verdicts
-    # (LEARNING-15): one readout that happens to say "winner" is not enough.
+    # The same call on CONFIRM_SNAPSHOTS consecutive stored weekly verdicts:
+    # one readout that happens to say "winner" is not enough.
     held = confirmed_weeks(experiment_key, arm, db_path=db_path)
     if held < CONFIRM_SNAPSHOTS:
         return {"ok": False, "error": (f"The readout has called {arm} on {held} consecutive weekly verdict"
@@ -737,10 +731,10 @@ def _outcomes(conn, history_ids) -> dict:
             for h, e in out.items()}
 
 
-# The verdict's primaries (schedule audit 10/10/26 LEARNING-25): what the
-# week DID and the rework the draft needed — every one lower is better —
-# never the owner's acceptance alone (which reads a manager who stopped
-# looking as improvement). Acceptance is reported beside them.
+# The verdict's primaries: what the week DID and the rework the draft
+# needed — every one lower is better — never the owner's acceptance alone
+# (which reads a manager who stopped looking as improvement). Acceptance
+# is reported beside them.
 PRIMARIES = (("drr", "edits per 100 drafted rows"), ("issues", "issues per week"), ("labor_pct", "labor %"),
              ("labor_vs_target", "labor % against the hourly target"),
              ("unmanaged_minutes", "minutes with no manager"), ("uncovered_no_shows", "uncovered no-shows"))
@@ -799,10 +793,10 @@ def verdict(exp, arms: list) -> dict:
     """Whether to call a winner, by RULE: on the PRIMARIES (the rework rate
     and the week's outcomes), never on acceptance alone. An arm beats the
     control when some primary is better past the Holm step-down over every
-    (arm, primary) at FAMILY_ALPHA on always-valid p-values (LEARNING-15)
-    and none is worse at 90% (clustered); one better on some and worse on
-    another is a conflict. The control is called only when every other arm
-    is worse. `arms` are readout rows."""
+    (arm, primary) at FAMILY_ALPHA on always-valid p-values and none is
+    worse at 90% (clustered); one better on some and worse on another is a
+    conflict. The control is called only when every other arm is worse.
+    `arms` are readout rows."""
     control = next((a for a in arms if a["arm"] == exp["control"]), None)
 
     def n_of(a):
@@ -814,7 +808,7 @@ def verdict(exp, arms: list) -> dict:
         return {"call": None, "state": "insufficient",
                 "text": f"No call: not enough published weeks yet ({need})."}
     import learning_stats as _ls
-    # Every difference tested, both ways, one family (LEARNING-15).
+    # Every difference tested, both ways, one family.
     family = {}
     for a in arms:
         if a is control:
@@ -867,17 +861,17 @@ def verdict(exp, arms: list) -> dict:
 def _excluded(db_path):
     """Restaurants that may not teach any learner (intelligence.jobs.
     excluded_learning_ids — models.learning_eligible and the demo
-    quarantine). Raises when unreadable (memory re-audit 9/29/26,
-    PLATFORM-11): an unreadable set excluded none, so a test account's weeks
-    joined a verdict. The weekly verdict job fails and is captured."""
+    quarantine). Raises when unreadable: an unreadable set excluded none, so
+    a test account's weeks joined a verdict. The weekly verdict job fails
+    and is captured."""
     from intelligence.jobs import excluded_learning_ids
     return set(excluded_learning_ids(db_path=db_path))
 
 
 def _learning_since(db_path):
     """{restaurant_id: learning_since} — a converted demo's weeks before it
-    are its demo era and read in no arm (INT #20). Raises when unreadable
-    (PLATFORM-11), like _excluded."""
+    are its demo era and read in no arm. Raises when unreadable, like
+    _excluded."""
     from intelligence.jobs import learning_since_by_id
     return learning_since_by_id(db_path=db_path)
 
@@ -918,11 +912,10 @@ def readout(db_path=DB_PATH) -> dict:
     since = _learning_since(db_path)
     conn = get_conn(db_path)
     try:
-        # Eligibility and the demo-era floor in SQL, BEFORE the LIMIT (memory
-        # re-audit 9/29/26, PLATFORM-12): demo and test churn filled the
-        # 20,000-row window before the filter ran, so eligible restaurants'
-        # older weeks fell out. The Python check below stays as the same
-        # rule's second reading.
+        # Eligibility and the demo-era floor in SQL, BEFORE the LIMIT: demo
+        # and test churn filled the 20,000-row window before the filter ran,
+        # so eligible restaurants' older weeks fell out. The Python check
+        # below stays as the same rule's second reading.
         where = []
         if excluded:
             where.append(f"restaurant_id NOT IN ({','.join(str(int(i)) for i in sorted(excluded))})")
@@ -952,11 +945,11 @@ def readout(db_path=DB_PATH) -> dict:
         conn.close()
     # A week's acceptance is a person's verdict on the draft: a week the
     # automatic publish sent with nobody looking (or only an admin's hand)
-    # has no share and is left out of the acceptance series (schedule audit
-    # 10/3/26 L-7) — its outcomes and quality still count for its arm.
+    # has no share and is left out of the acceptance series — its outcomes
+    # and quality still count for its arm.
     accepted, published = {}, set()
-    # The primaries (LEARNING-25): each looked-at week's Draft Rework Rate
-    # (the scorecard's, or read from the week now), and what the scorecard
+    # The primaries: each looked-at week's Draft Rework Rate (the
+    # scorecard's, or read from the week now), and what the scorecard
     # measured of the week as it ran.
     scored = _scored(db_path, {r["history_id"] for r in rows if not r["pinned"]})
     rework = {h: s["drr"] for h, s in scored.items() if s.get("drr") is not None}
@@ -1011,7 +1004,7 @@ def readout(db_path=DB_PATH) -> dict:
                 "arm": a["key"], "label": a.get("label") or a["key"], "flags": dict(a.get("flags") or {}),
                 "generated": len(live), "pinned": sum(1 for r in mine if r["arm"] == a["key"] and r["pinned"]),
                 # The restaurants a verdict rests on: those with a week
-                # somebody looked at (L-7) and a rework rate read.
+                # somebody looked at and a rework rate read.
                 "restaurants": len({r["restaurant_id"] for r in reworked}),
                 "acceptance": cluster_mean_ci(series[a["key"]]["acceptance"], 0.0, 1.0),
                 "quality": cluster_mean_ci(series[a["key"]]["quality"], 0.0, 100.0),
@@ -1029,9 +1022,9 @@ def readout(db_path=DB_PATH) -> dict:
                                 for k in ("acceptance", "quality", "issues", "labor_pct", "drr", "labor_vs_target",
                                           "unmanaged_minutes", "uncovered_no_shows")}
                                if control is not None and a is not control else None)
-            # Honest powering (LEARNING-25): the smallest difference this
-            # sample can see on each primary, and the weeks it would take
-            # to see the one worth seeing.
+            # Honest powering: the smallest difference this sample can
+            # see on each primary, and the weeks it would take to see the
+            # one worth seeing.
             a["power_read"] = power_read(a, (a.get("drr") or {}).get("n")) if a.get("vs_control") else None
         call = verdict(exp, arms) if exp.get("control") else \
             {"call": None, "state": "retired", "text": "Retired experiment."}
@@ -1071,8 +1064,8 @@ def readout(db_path=DB_PATH) -> dict:
 
 
 def record_verdicts(db_path=DB_PATH, today=None) -> dict:
-    """The weekly verdict snapshot (PLATFORM-13): each experiment's verdict
-    and per-arm summary as the readout gives it this ISO week, stored in
+    """The weekly verdict snapshot: each experiment's verdict and per-arm
+    summary as the readout gives it this ISO week, stored in
     schedule_experiment_verdicts (one row per experiment and week — the
     first of the week stands, like a band). Returns the standard counts."""
     import datetime as _dt
@@ -1165,9 +1158,9 @@ def init_schedule_experiments(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_exp_promotion_live ON "
                  "schedule_experiment_promotions(experiment) WHERE reverted_at IS NULL")
-    # What the readout said, week by week (memory audit PLATFORM-13): one row
-    # per experiment and ISO week, the first of the week standing. Kept
-    # forever (a few rows a year per experiment).
+    # What the readout said, week by week: one row per experiment and ISO
+    # week, the first of the week standing. Kept forever (a few rows a year
+    # per experiment).
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_experiment_verdicts (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         week           TEXT    NOT NULL,

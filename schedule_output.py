@@ -1,25 +1,23 @@
 """
 schedule_output.py — what the week's schedule call hands back, what the
-finished week does not meet, and the record of every call (schedule audit
-10/3/26: PR-11, PR-12, PR-13, P-35, PR-15, PR-28, PR-31).
+finished week does not meet, and the record of every call.
 
 The output contract. labor.generate_optimized_schedule asks the model for
-JSON against a schema built for each generation (schedule_schema): the
-people on the roster (or the department's part of it), the roles they hold
-or have worked, the week's dates and the clock times are enums, so a name, a
-role, a date or a time format the model invents cannot be written. Rows come
-grouped under their date and carry no column the code works out itself (the
-weekday, the hours), which roughly halves what a row costs in output tokens.
-A row's note is one of NOTE_VALUES, because the note is printed on the
-employee's own schedule. parse_answer turns the answer into the CSV-shaped
-rows the rest of the pipeline reads; an answer cut short keeps every complete
-row (salvage_json), and a structured answer is never read as CSV. Two more
-contracts sit beside it behind SCHEDULE_CONTRACT (AI cost audit 10/7/26 #69,
-#70; see CONTRACTS): "compact", the same rows with one-letter keys, and
-"shape", slots without names whose people the solver chooses. An answer
-whose JSON broke partway keeps the days before the break (#71), and a
-streamed answer's finished days are counted as it is written (DayWatch,
-#36).
+JSON against a schema built for each generation (schedule_schema): the people
+on the roster (or the department's part of it), the roles they hold or have
+worked, the week's dates and the clock times are enums, so a name, a role, a
+date or a time format the model invents cannot be written. Rows come grouped
+under their date and carry no column the code works out itself (the weekday,
+the hours), which roughly halves what a row costs in output tokens. A row's
+note is one of NOTE_VALUES, because the note is printed on the employee's own
+schedule. parse_answer turns the answer into the CSV-shaped rows the rest of
+the pipeline reads; an answer cut short keeps every complete row
+(salvage_json), and a structured answer is never read as CSV. Two more
+contracts sit beside it behind SCHEDULE_CONTRACT (see CONTRACTS): "compact",
+the same rows with one-letter keys, and "shape", slots without names whose
+people the solver chooses. An answer whose JSON broke partway keeps the days
+before the break, and a streamed answer's finished days are counted as it is
+written (DayWatch).
 
 What the finished week does not meet (unmet_items): every floor, manager
 minute, closer, target, leader rule, staffing ask, minimum and limit the
@@ -61,11 +59,11 @@ def get_conn(db_path=None):
 
 # ── the output contract ────────────────────────────────────────────────────
 
-# A row's note is printed on that employee's own schedule (labor.
-# employee_shifts_from_csv → staff_facing_note), so the model may only ever
-# write one of these. It used to write "one brief phrase per shift" while
-# its prompt carried ratings, "Still developing" and "miss shifts often"
-# (schedule audit 10/3/26 PR-15).
+# A row's note is printed on that employee's own schedule
+# (labor.employee_shifts_from_csv → staff_facing_note), so the model may
+# only ever write one of these. It used to write "one brief phrase per
+# shift" while its prompt carried ratings, "Still developing" and "miss
+# shifts often".
 NOTE_VALUES = ("", "opener", "closer", "staggered start", "training shift", "standby")
 
 # The clock times a row may start or end at: every quarter hour, plus any
@@ -82,7 +80,7 @@ TIME_STEP_MINUTES = 15
 OLD_TOKENS_PER_ROW = 60
 ANSWER_TOKENS_PER_ROW_ESTIMATE = 30
 
-# ── the output contracts (AI cost audit 10/7/26 #69, #70) ──────────────────
+# ── the output contracts ──────────────────
 #
 # "schema" is the contract above: a row is {"employee", "role", "start",
 # "end", "note"} — about 30 output tokens, a fifth of them the five key names
@@ -252,12 +250,12 @@ def _enum(values) -> dict:
     return {"type": "string", "enum": vals} if vals else {"type": "string"}
 
 
-# The model's reasons, as data (scheduler re-audit 10/11/26 AI-16): at most
-# this many of the week's biggest choices, each tied to a date and a role of
-# the request, the reason in a few words. The free-text `summary` bullets
-# (and ~120 words of rules for them) were written on every call and then
-# replaced by the note the finished week gets (schedule_narrative); the note
-# writer now reads these, checked against the final rows.
+# The model's reasons, as data: at most this many of the week's biggest
+# choices, each tied to a date and a role of the request, the reason in a
+# few words. The free-text `summary` bullets (and ~120 words of rules for
+# them) were written on every call and then replaced by the note the
+# finished week gets (schedule_narrative); the note writer now reads these,
+# checked against the final rows.
 MAX_DECISIONS = 3
 DECISION_WHY_CHARS = 160
 
@@ -288,8 +286,8 @@ def iso_date_of(text) -> str:
     """The ISO date a date cell carries — "2026-10-05" from "2026-10-05",
     "Mon 2026-10-05" or "Monday, 2026-10-05" — or "" when it carries none or
     more than one. The request names each date with its weekday; an answer
-    that copies that form is the same date (schedule re-audit 10/4/26
-    PROMPT-7: such a row was dropped and the day read as missing)."""
+    that copies that form is the same date (such a row was dropped and the
+    day read as missing)."""
     found = _ISO_IN.findall(str(text or ""))
     if len(found) != 1:
         return ""
@@ -309,7 +307,7 @@ def schedule_schema(employees=None, roles=None, dates=None, times=None) -> dict:
     for every date slice of one generation (structured outputs compile a
     schema once and keep it 24 hours; a changed output format invalidates a
     cached prompt). A department call's roster and roles are its own, so
-    its schema is too (schedule re-audit 10/4/26 PROMPT-8).
+    its schema is too.
 
     Rows are grouped under their date, and the weekday and the hours are not
     asked for: the code derives both (the hours from the times — times win
@@ -389,7 +387,7 @@ def contract_schema(contract="schema", employees=None, roles=None, dates=None, t
 def vocabulary_note(note) -> str:
     """A free-text note (the CSV contract's) as one of NOTE_VALUES, or ""
     when it is not one: the CSV fallback must not put the model's own words
-    on an employee's schedule either (PR-15)."""
+    on an employee's schedule either."""
     n = " ".join(str(note or "").split()).strip(" .;-–—").lower()
     return n if n in NOTE_VALUES else ""
 
@@ -455,11 +453,10 @@ def _row_hours(start_m, end_m) -> float:
 
 def _recover_broken(text):
     """(obj, open_stack) for an answer that was NOT cut short but is still
-    not whole JSON — a malformed value partway (AI cost audit 10/7/26 #71):
-    the text is read up to the point the JSON broke and salvaged there
-    (salvage_json), so every day written whole before the break is kept and
-    only the rest is asked for again. (None, ()) when nothing before the
-    break is readable."""
+    not whole JSON — a malformed value partway: the text is read up to the
+    point the JSON broke and salvaged there (salvage_json), so every day
+    written whole before the break is kept and only the rest is asked for
+    again. (None,) when nothing before the break is readable."""
     s = text or ""
     start = s.find("{")
     if start < 0:
@@ -504,14 +501,14 @@ def parse_answer(raw, dates=None, contract=None) -> dict:
     and contributes no rows — half a day staffed is not a day written; the
     caller regenerates it. A row that starts and ends at the same time is
     dropped and named in `dropped`. Anything that is not JSON yields no
-    rows: a structured answer is never read as CSV (PR-28) — garbage lines
-    used to become rows.
+    rows: a structured answer is never read as CSV — garbage lines used to
+    become rows.
 
     An answer that was not cut short but whose JSON broke partway is read
-    up to the break (`recovered`, AI cost audit 10/7/26 #71): the days
-    written whole before it are kept, the day it broke inside is partial,
-    and only the days still missing are written again — it used to read as
-    no days at all, and the whole call was paid for twice."""
+    up to the break (`recovered`): the days written whole before it are
+    kept, the day it broke inside is partial, and only the days still
+    missing are written again — it used to read as no days at all, and the
+    whole call was paid for twice."""
     base = contract_base(contract)
     rows_key = DAY_ROWS_KEY[base]
     text = (raw or "").strip()
@@ -590,10 +587,10 @@ def parse_answer(raw, dates=None, contract=None) -> dict:
                 out["rows"].append(row)
     out["summary"] = [" ".join(str(b).split()) for b in (obj.get("summary") or [])
                       if isinstance(b, str) and str(b).strip()]
-    # The model's reasons as data (AI-16): kept only for a date of this call,
-    # each said as a short line in `summary` too (what the note falls back
-    # on when its own call fails). An answer from before 10/11/26 carries
-    # `summary` strings and no decisions.
+    # The model's reasons as data: kept only for a date of this call, each
+    # said as a short line in `summary` too (what the note falls back on when
+    # its own call fails). An answer from before 10/11/26 carries `summary`
+    # strings and no decisions.
     asked = set(dates or ())
     for d in (obj.get("decisions") or [])[:MAX_DECISIONS * 2]:
         if not isinstance(d, dict):
@@ -621,17 +618,16 @@ def _slot_count(v) -> int:
 
 def complete_dates_so_far(text, contract=None, dates=None) -> list:
     """The dates an answer still being written has finished — what the
-    Building screen shows as "N of 7 days drafted" while the call streams
-    (AI cost audit 10/7/26 #36): parse_answer on the partial text, where the
-    day being written is partial and every one before it complete. Never
-    raises."""
+    Building screen shows as "N of 7 days drafted" while the call streams:
+    parse_answer on the partial text, where the day being written is partial
+    and every one before it complete. Never raises."""
     try:
         return list(parse_answer(text, dates=dates, contract=contract)["complete_dates"])
     except Exception:
         return []
 
 
-# ── the days a streamed answer has finished (AI cost audit 10/7/26 #36) ────
+# ── the days a streamed answer has finished ────
 
 class _WatchedStream:
     """A streamed answer read through exactly as the SDK reads it, each text
@@ -699,10 +695,9 @@ class DayWatch:
     each time the answer starts a new date, the dates finished so far
     (complete_dates_so_far) go to `on_days(dates)` — once per newly finished
     day, so a seven-day answer is parsed about seven times, never once a
-    token (AI cost audit 10/7/26 #36). Everything else is the wrapped
-    client's — the call, its timeouts, its retries (ai_utils.
-    create_with_retry is unchanged). A watcher that fails never fails the
-    call: it is only the Building screen's count."""
+    token. Everything else is the wrapped client's — the call, its timeouts,
+    its retries (ai_utils. create_with_retry is unchanged). A watcher that
+    fails never fails the call: it is only the Building screen's count."""
 
     _DAY_KEY = '"date"'
 
@@ -756,7 +751,7 @@ def csv_lines(rows) -> list:
             for r in rows or []]
 
 
-# ── what the finished week does not meet (PR-11) ───────────────────────────
+# ── what the finished week does not meet ───────────────────────────
 
 _PART_WORDS = {"morning": "lunch/day", "night": "dinner/night"}
 
@@ -785,8 +780,7 @@ def _item(kind, what, why, date="", daypart="", source="rules", **extra):
 def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requirements=None,
                 hours_budget=None, station_gaps=None, owner_rules_unchecked=None) -> list:
     """Everything the finished week does not meet, worked out from the rows
-    the owner sees (schedule audit 10/3/26 PR-11): [{kind, date, day,
-    daypart, what, why, source, …}].
+    the owner sees: [{kind, date, day, daypart, what, why, source, …}].
 
     The prompt asked the model to report misses "in the summary" from eleven
     places — strength targets it could not clear, leader rules, the trim to
@@ -839,7 +833,7 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
                              detail[:1].upper() + detail[1:], d, "night"))
         elif kind == "over_role_max":
             # The most of a role on at once by the owner's hours & shift
-            # rules (schedule re-audit 10/4/26 PROMPT-1).
+            # rules.
             out.append(_item("role_max", f"Your {_role_label(v, v.get('floor_role') or '')} maximum",
                              detail[:1].upper() + detail[1:], d, over=v.get("severity")))
     c = constraints
@@ -880,7 +874,7 @@ def unmet_items(rows, constraints=None, violations=None, quality=None, soft_requ
             elif dim.get("key") == "operational_strength":
                 for miss in facts.get("shortfalls") or []:
                     # one bar: the owner's target ÷ crew, or the level a shift
-                    # this busy wants here (LOGIC-30)
+                    # this busy wants here
                     if miss.get("target") and miss.get("basis") != "demand":
                         out.append(_item("strength", f"{miss.get('role')} strength target on {when}",
                                          f"{float(miss.get('strength') or 0):g} against a target of "
@@ -951,7 +945,7 @@ def week_review_extras(restaurant_id, rows, constraints, violations=None, qualit
             import models as _m_so
             row = conn.execute("SELECT hours_budget, review_json, review_ref FROM schedule_history "
                                "WHERE id=? AND restaurant_id=?", (history_id, restaurant_id)).fetchone()
-            review = _m_so.history_review(conn, row) if row else {}       # stored once (SCALE-13)
+            review = _m_so.history_review(conn, row) if row else {}       # stored once
         finally:
             conn.close()
         if row:
@@ -987,7 +981,7 @@ def _role_label(v, role) -> str:
     return " ".join(w.capitalize() for w in str(role or "").split()) or "role"
 
 
-# ── the record of every schedule call (PR-31) ──────────────────────────────
+# ── the record of every schedule call ──────────────────────────────
 
 _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1018,14 +1012,14 @@ _CALLS_DDL = """CREATE TABLE IF NOT EXISTS schedule_model_calls (
     call_key       TEXT
 )"""
 
-# What a generated week was checked and scored against (schedule audit
-# 10/10/26 ARCH-35): the Constraints the repair loop, the sweep and the score
-# used — rebuilt after the model wrote (P-41), so they are not the prompt's
-# — the SHIFT REQUIREMENTS and the quality signals and weights, each
-# compressed, with the version of the rule code that read them. The model
-# calls are kept in schedule_model_calls; this is the other half a replay
-# needs, so a stored week is judged by what judged it, not by live tables
-# that have moved since (check_snapshot, schedule_engine.replay_checks).
+# What a generated week was checked and scored against: the Constraints the
+# repair loop, the sweep and the score used — rebuilt after the model wrote,
+# so they are not the prompt's — the SHIFT REQUIREMENTS and the quality
+# signals and weights, each compressed, with the version of the rule code
+# that read them. The model calls are kept in schedule_model_calls; this is
+# the other half a replay needs, so a stored week is judged by what judged
+# it, not by live tables that have moved since (check_snapshot,
+# schedule_engine.replay_checks).
 _SNAPSHOT_DDL = """CREATE TABLE IF NOT EXISTS schedule_check_snapshots (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -1038,12 +1032,12 @@ _SNAPSHOT_DDL = """CREATE TABLE IF NOT EXISTS schedule_check_snapshots (
     signals_z       BLOB
 )"""
 
-# What a call wrote (schedule re-audit 10/4/26 PROMPT-3): a whole week, a
-# date or department slice of a fresh generation, an owner's redo of some
-# days, or the quality gate's rewrite of the weakest ones. A small call
-# carries the same thinking as a big one, so its tokens per row read high;
-# the call planner models a call as a fixed cost plus a cost per row
-# (call_costs) instead of one median over every kind.
+# What a call wrote: a whole week, a date or department slice of a fresh
+# generation, an owner's redo of some days, or the quality gate's rewrite
+# of the weakest ones. A small call carries the same thinking as a big
+# one, so its tokens per row read high; the call planner models a call as
+# a fixed cost plus a cost per row (call_costs) instead of one median over
+# every kind.
 CALL_KINDS = ("week", "slice", "redo", "gate")
 
 
@@ -1064,7 +1058,7 @@ def init_schedule_output(db_path=None):
         # The queue job a call ran for and what its answer answers
         # (schedule_batch.call_key): a generation the queue runs again after
         # a deploy reads the answers its earlier try already paid for
-        # (scheduler audit 10/10/26 SCALE-2, SCALE-22 — schedule_resume).
+        # (schedule_resume).
         if "job_id" not in cols:
             conn.execute("ALTER TABLE schedule_model_calls ADD COLUMN job_id TEXT")
         if "call_key" not in cols:
@@ -1155,11 +1149,11 @@ def rules_version() -> str:
 
 def record_check_snapshot(restaurant_id, history_id, generation_id, constraints, requirements=None, signals=None,
                           weights=None, db_path=None):
-    """Keep what a saved week was checked and scored against (ARCH-35):
-    its post-model Constraints, its SHIFT REQUIREMENTS and the quality
-    signals and weights, compressed, with rules_version(). Returns the row
-    id; raises on a failed write (the caller captures it — the week is
-    saved either way)."""
+    """Keep what a saved week was checked and scored against: its
+    post-model Constraints, its SHIFT REQUIREMENTS and the quality signals
+    and weights, compressed, with rules_version(). Returns the row id;
+    raises on a failed write (the caller captures it — the week is saved
+    either way)."""
     if not history_id or constraints is None:
         return None
     conn = get_conn(db_path)
@@ -1276,8 +1270,8 @@ def record_call(restaurant_id, request, inputs=None, answer=None, generation_id=
                 "SELECT 1 FROM schedule_model_calls WHERE generation_id=? AND shared_z IS NOT NULL LIMIT 1",
                 (generation_id,)).fetchone():
             shared = None                       # this generation's first call holds it
-        # The blobs in object storage when BLOB_STORE says so (blob_store —
-        # scheduler audit 10/10/26 RM-14): the row keeps a pointer.
+        # The blobs in object storage when BLOB_STORE says so (blob_store):
+        # the row keeps a pointer.
         import blob_store as _bs
         _bkey = f"{int(restaurant_id or 0)}/{generation_id or 'none'}/{uuid.uuid4().hex[:12]}"
         _req_z = _bs.store("model-calls", _bkey + "/request", _z(req))
@@ -1308,7 +1302,7 @@ def prompt_sig(request=None, stored=None) -> str:
     same prompt). `request` — a call about to be sent; `stored` — the
     encoded request a row kept. A resumed try compares the two: equal, its
     stored answer was written for exactly this prompt; not, the inputs moved
-    while the job restarted (blind re-audit 10/11/26 ARCH-25)."""
+    while the job restarted."""
     import hashlib
     if stored is None:
         from ai_utils import guest_names_in
@@ -1330,7 +1324,7 @@ def prompt_sig(request=None, stored=None) -> str:
 # the model finished, or cut short (its finished days are kept the same way
 # the first time), never an error, a refusal or JSON that did not parse.
 # "batch_answer" — an auto-draft's Message Batches answer, stored by its
-# callback for the draft to read by call key (schedule_batch, ARCH-15).
+# callback for the draft to read by call key (schedule_batch).
 REUSABLE_OUTCOMES = ("ok", "truncated", "salvaged", "batch_answer")
 
 
@@ -1387,8 +1381,8 @@ def _answer_text(blob) -> str:
 def link_calls(restaurant_id, history_id, generation_id, db_path=None, conn=None) -> int:
     """Key every call of `generation_id` to the schedule_history row its
     draft was saved as. Returns how many were linked. With `conn`, on the
-    caller's connection inside its transaction (the generation's save,
-    schedule audit 10/10/26 ARCH-29) — the caller commits."""
+    caller's connection inside its transaction (the generation's save) —
+    the caller commits."""
     if not (history_id and generation_id):
         return 0
     own = conn is None
@@ -1518,10 +1512,10 @@ def _fit(points):
 # A call's thinking is most of its cost, and the effort sets how much of it
 # there is: one call at "high" (62,353 tokens for 215 rows, Simple EJ's
 # 10/6/26) read as the cost of a row at "medium" planned the next week as
-# two calls, each paying the whole input and its own thinking (AI cost
-# audit 10/7/26). So the measured cost is read at the effort in force:
-# `effort` None reads every call, "" the calls that ran without one (a
-# model that does not think), anything else that effort only.
+# two calls, each paying the whole input and its own thinking. So the
+# measured cost is read at the effort in force: `effort` None reads every
+# call, "" the calls that ran without one (a model that does not think),
+# anything else that effort only.
 def _effort_where(where, args, effort):
     if effort is None:
         return
@@ -1534,13 +1528,12 @@ def _effort_where(where, args, effort):
 
 def call_costs(restaurant_id=None, model=None, days=60, db_path=None, effort=None, contract=None) -> dict:
     """What a schedule call really costs, from the stored calls of the last
-    `days` that finished (end_turn) on the structured contract (schedule
-    re-audit 10/4/26 PROMPT-3, PROMPT-4) — `contract`'s own calls, with and
-    without enums (contract_family; the schema's when None): a compact row
-    costs less than a schema row, so one contract is never sized from
-    another's calls (AI cost audit 10/7/26 #70). A call whose broken JSON
-    was read up to the break (outcome 'salvaged', #71) is left out: its
-    tokens bought days it did not keep.
+    `days` that finished (end_turn) on the structured contract —
+    `contract`'s own calls, with and without enums (contract_family; the
+    schema's when None): a compact row costs less than a schema row, so one
+    contract is never sized from another's calls. A call whose broken JSON
+    was read up to the break (outcome 'salvaged') is left out: its tokens
+    bought days it did not keep.
 
     Adaptive thinking is mostly a cost per CALL — every call reads the same
     roster, rules and week — so one median of output tokens per row over
@@ -1692,23 +1685,22 @@ def station_report(rows: list, constraints, week_dates: list) -> dict:
 # schedule_batch) and answer_for (a batched answer, or a resumed try's stored
 # one — schedule_resume) before it sends anything. They live here, beside the
 # call records they read, so the call site never imports the batch or the
-# resume (ARCH-3); both re-export them.
+# resume; both re-export them.
 
 class CallPlanned(Exception):
-    """Raised at labor's call site while planning: the request this call
-    would have sent. An ordinary Exception: the engine's dispatch collects it
-    with the round's other calls (it used to be a BaseException that tunnelled
-    past cleanup written as `except Exception` and captured only the first
-    call — blind re-audit 10/11/26 ARCH-15)."""
+    """Raised at labor's call site while planning: the request this call would
+    have sent. An ordinary Exception: the engine's dispatch collects it with
+    the round's other calls (it used to be a BaseException that tunnelled past
+    cleanup written as `except Exception` and captured only the first call)."""
 
     def __init__(self, request):
         super().__init__("schedule call planned for a batch")
         self.request = request
 
 
-# None: calls go out as usual (or read a resumed try's stored answers).
-# {"mode": "plan", "requests": [...], "lock": Lock} while planning;
-# {"mode": "answer", ...} — a queue row from before ARCH-15 carrying one answer.
+# None: calls go out as usual (or read a resumed try's stored answers). {"mode":
+# "plan", "requests": [...], "lock": Lock} while planning; {"mode":
+# "answer",...} — a queue row from before the batched answers, carrying one.
 _HOOK = contextvars.ContextVar("schedule_batch_hook", default=None)
 
 
@@ -1752,7 +1744,7 @@ def answer_for(request):
     call key, each once), else None — send it."""
     hook = _HOOK.get()
     if hook and hook.get("mode") == "answer":
-        # A queue row from before ARCH-15 carrying its one batched answer.
+        # A queue row from before the batched answers, carrying its one answer.
         with hook["lock"]:
             if not hook.get("used") and call_key(request) == hook.get("key"):
                 hook["used"] = True
@@ -1787,7 +1779,7 @@ def planning():
 def answering(key, message):
     """`with answering(key, message):` — the call matching `key` reads
     `message` instead of calling the model, once. Kept for an auto-draft
-    queue row enqueued before ARCH-15 with its one answer in the payload."""
+    queue row enqueued before the batched answers with its one answer in the payload."""
     return _Scope({"mode": "answer", "key": key, "message": message, "used": False, "lock": threading.Lock()})
 
 
@@ -1861,7 +1853,7 @@ def stored_answer(request):
     # The answer was written for the prompt the dead try built; the prompt
     # this try builds is read from the database as it is NOW. When they
     # differ the inputs moved meanwhile (time off approved, a person gone,
-    # a week published): said on the draft (inputs_moved, ARCH-25).
+    # a week published): said on the draft (inputs_moved).
     try:
         if a.get("prompt_sig") and prompt_sig(request) != a["prompt_sig"]:
             with state["lock"]:
@@ -1871,8 +1863,8 @@ def stored_answer(request):
     msg = StoredMessage(a["answer"], stop_reason=a.get("stop_reason"), model=a.get("model"), record_id=a["id"])
     u = a.get("usage") or {}
     if u.get("batch"):
-        # An auto-draft's Message Batches answer (schedule_batch, ARCH-15):
-        # paid, at the batch rate — recorded with its tokens and as a batch.
+        # An auto-draft's Message Batches answer (schedule_batch): paid, at
+        # the batch rate — recorded with its tokens and as a batch.
         msg._cavnar_resumed = False
         msg._cavnar_batch = True
         msg._cavnar_call_id = u.get("call_id")
@@ -1899,10 +1891,10 @@ def inputs_moved() -> list:
 
 
 # What a resumed draft says when the answers it reused were written from
-# inputs that moved while the job restarted (blind re-audit 10/11/26
-# ARCH-25): the rows are re-checked against the inputs as they are now —
-# every rule, the repair loop and the score read the live tables — but the
-# model wrote them from the earlier ones.
+# inputs that moved while the job restarted: the rows are re-checked
+# against the inputs as they are now — every rule, the repair loop and the
+# score read the live tables — but the model wrote them from the earlier
+# ones.
 INPUTS_MOVED_LINE = ("⚠ Cavnar AI restarted while writing this draft and reused the AI model's answer it had "
                      "already paid for — but your team's details changed in between, so that answer was written "
                      "from the earlier details. Every rule was checked again against them as they are now; read "

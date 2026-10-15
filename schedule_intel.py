@@ -18,10 +18,9 @@ a model; nothing crosses a tenant.
   mentoring             shifts worked beside a closer in a role that is not
                         their own — who could hold a station
   chemistry_suggestions the teams offered to the owner — schedule_memory's
-                        Holm-tested pairs (LEARNING-13), never applied
+                        Holm-tested pairs, never applied
   slot_readings / ran_well  what a shift did on outcomes a lean shift does
                         not win, one reading set for every shift compared
-                        (LEARNING-12, LEARNING-24)
   recommendation events an accept/dismiss ledger, and the kinds nobody takes
   learned-pattern dismissals — the owner's say over what the draft learns
 """
@@ -120,40 +119,38 @@ def _mark_week_read(restaurant_id, history_id, step, fingerprint, db_path=DB_PAT
 
 @_stime_scope.scoped
 def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=False) -> dict:
-    """For every published week that has ended, one row per date and
-    daypart: scheduled hours and people (from the published CSV — the PLAN),
-    and beside them what HAPPENED (schedule audit 10/3/26 L-12 — the record
-    used to be the plan, so calibration and chemistry learned from planned
-    staffing): `actual_hours` and `actual_people` from the punches
-    (shift_facts — a shift is the daypart its clock-in falls in, as a
-    planned one is; the salaried don't clock in, so their planned shifts
-    count as worked), the shifts missed, late, left early and run past their
-    end; sales (labor_daily_history's FINAL day, split by the date's OWN
+    """For every published week that has ended, one row per date and daypart:
+    scheduled hours and people (from the published CSV — the PLAN), and beside
+    them what HAPPENED (the record used to be the plan, so calibration and
+    chemistry learned from planned staffing): `actual_hours` and `actual_people`
+    from the punches (shift_facts — a shift is the daypart its clock-in falls
+    in, as a planned one is; the salaried don't clock in, so their planned
+    shifts count as worked), the shifts missed, late, left early and run past
+    their end; sales (labor_daily_history's FINAL day, split by the date's OWN
     sales — its tickets, intraday captures or nightly report hours,
     demand_drivers.date_part_sales, split_basis 'measured' — else by the
-    weekday's median share, split_basis 'estimated', which no learner
-    reads: scheduler audit 10/10/26 LEARNING-11), the DAY's labor % (`labor_pct`
-    — labor_daily_history's, the same on both rows: a day-level figure) and
-    the DAYPART's (`labor_pct_daypart`, L-13: the punched hours priced at
-    each punch's rate, split at the 3pm line the sales split at, over that
-    daypart's measured sales — NULL when the split or the punches are not
-    there, never the day's copied); coverage and no-show issues on that
-    date, and the mean review rating dated that day. What was measured goes
-    into the observation log too (schedule_memory: actual_hours,
-    coverage_gap_actual, labor_vs_target_daypart). Idempotent: rows are
-    keyed by (history_id, date, daypart).
+    weekday's median share, split_basis 'estimated', which no learner reads:),
+    the DAY's labor % (`labor_pct` — labor_daily_history's, the same on both
+    rows: a day-level figure) and the DAYPART's (`labor_pct_daypart`: the
+    punched hours priced at each punch's rate, split at the 3pm line the sales
+    split at, over that daypart's measured sales — NULL when the split or the
+    punches are not there, never the day's copied); coverage and no-show issues
+    on that date, and the mean review rating dated that day. What was measured
+    goes into the observation log too (schedule_memory: actual_hours,
+    coverage_gap_actual, labor_vs_target_daypart). Idempotent: rows are keyed by
+    (history_id, date, daypart).
 
     A day whose morning share was never measured has NULL daypart sales
-    and split_basis 'unmeasured' (memory audit 9/29/26, QUALITY-11): the
-    split used to fall back to a stated 0.4, so every restaurant without
-    intraday data was recorded as doing 40% of its sales before 3pm — a
-    dinner-only bar included — and peer benchmarks and the schedule
-    prompt's sales per labor hour read it as measured.
+    and split_basis 'unmeasured': the split used to fall back to a
+    stated 0.4, so every restaurant without intraday data was recorded
+    as doing 40% of its sales before 3pm — a dinner-only bar included —
+    and peer benchmarks and the schedule prompt's sales per labor hour
+    read it as measured.
 
-    `only_changed` (the daily outcomes job — scheduler audit 10/10/26,
-    SCALE-15/16): a week is read while it is settling (WEEK_SETTLE_DAYS
-    after its end — its late reviews and punches) and after that only when
-    its inputs changed (week_fingerprint), never all twelve again."""
+    `only_changed` (the daily outcomes job/16): a week is read while it is
+    settling (WEEK_SETTLE_DAYS after its end — its late reviews and
+    punches) and after that only when its inputs changed
+    (week_fingerprint), never all twelve again."""
     today = today or date.today()
     conn = get_conn(db_path)
     written = 0
@@ -176,7 +173,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
         if not weeks:
             return {"written": 0, "weeks": 0}
         # Each week's published rows from the shift table, by shift_id
-        # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        # (schedule_shifts).
         import schedule_shifts as _ss_oc
         week_rows = _ss_oc.rows_by_week([w["id"] for w in weeks], "live", conn=conn)
         share = _morning_share(conn, restaurant_id)
@@ -220,12 +217,11 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
             placed = _place_reviews(conn, restaurant_id, by, _tz)
             worked = actuals.week(w["week_start"], w["week_end"], rows)
             # Each date split by its OWN sales — its tickets, else its
-            # intraday captures, else its nightly report's hours (scheduler
-            # audit 10/10/26 LEARNING-11): a brunch-event Sunday was booked
-            # 70% to dinner because Sundays usually are, and every daypart
-            # learner read that average as measured. The weekday's median
-            # share is the fallback, labelled "estimated" — never "measured",
-            # so no learner reads it.
+            # intraday captures, else its nightly report's hours: a
+            # brunch-event Sunday was booked 70% to dinner because Sundays
+            # usually are, and every daypart learner read that average as
+            # measured. The weekday's median share is the fallback, labelled
+            # "estimated" — never "measured", so no learner reads it.
             try:
                 import demand_drivers as _ddr
                 _end = (datetime.strptime(str(w["week_end"])[:10], "%Y-%m-%d").date()
@@ -258,7 +254,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
                 a = worked.get((d, part)) or {}
                 labor_part = None
                 # Only over the date's own split: an estimated one is no
-                # daypart labor % (LEARNING-11).
+                # daypart labor %.
                 if sales and a.get("labor_cost") is not None and split_basis == "measured":
                     labor_part = round(a["labor_cost"] / float(sales) * 100.0, 1)
                 issues = issue_at.get((d, part), 0)
@@ -304,7 +300,7 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
         conn.close()
     # What was measured, into the observation log (schedule_memory — after
     # the outcome rows are committed), in one transaction for the whole
-    # restaurant (SCALE-26: it was a commit per fact).
+    # restaurant (it was a commit per fact).
     import schedule_memory as _sm_b
     with _sm_b.observe_batch(restaurant_id, db_path=None if db_path in (None, DB_PATH) else db_path):
         for w, d, part, e, a, labor_part, sales in pending:
@@ -316,10 +312,10 @@ def record_outcomes(restaurant_id, db_path=DB_PATH, today=None, only_changed=Fal
 
 class _Actuals:
     """What each date and daypart of a published week actually had, from
-    the punches (schedule audit 10/3/26 L-12, L-13): {(date, daypart):
-    {hours, people, basis, missed, late, left_early, stayed_late,
-    labor_cost, plan_by_family, worked_by_family}}. A date with no punch at
-    all is not a date anybody measured: it is absent (unknown), never 0.
+    the punches: {(date, daypart): {hours, people, basis, missed, late,
+    left_early, stayed_late, labor_cost, plan_by_family,
+    worked_by_family}}. A date with no punch at all is not a date anybody
+    measured: it is absent (unknown), never 0.
 
       hours / people   punched hours and people of the shifts whose clock-in
                        falls in the daypart (the way a planned shift is
@@ -482,7 +478,7 @@ MORNING_SHARE_MIN_DAYS = 3
 
 
 # A review is placed on a shift at most this many days before it was posted
-# (memory audit 9/29/26, reviews_to_labor).
+# (reviews_to_labor).
 REVIEW_LAG_DAYS = 2
 # When a daypart's service has begun: a dinner review posted at 2pm is about
 # an EARLIER dinner.
@@ -569,7 +565,7 @@ def _morning_share(conn, restaurant_id) -> dict:
         caps.sort()
         total = caps[-1][1]
         # Sales captured by the restaurant's lunch/dinner boundary (schedule_
-        # time.daypart_split — 3pm unless set, ARCH-12).
+        # time.daypart_split — 3pm unless set).
         import schedule_time as _stime
         at3 = max((s for h, s in caps if h * 60 <= _stime.daypart_split()), default=None)
         if total > 0 and at3 is not None:
@@ -637,17 +633,16 @@ def outcomes_by_daypart(restaurant_id, db_path=DB_PATH) -> dict:
     splh_basis, labor_pct, issues, troubled, rating}}} over the recorded
     weeks — the plan (avg_hours, avg_people) and what the punches say
     happened (avg_actual_hours / avg_actual_people over the `actual_weeks`
-    that had punches, missed and stayed-late shifts; schedule audit 10/3/26
-    L-12). Sales per labor hour is over the hours WORKED where the weeks
-    have them (`splh_basis` "worked"), else over the hours scheduled
-    ("scheduled"); `labor_pct` is the daypart's own (L-13), None unless
-    measured."""
+    that had punches, missed and stayed-late shifts). Sales per labor hour is
+    over the hours WORKED where the weeks have them (`splh_basis` "worked"),
+    else over the hours scheduled ("scheduled"); `labor_pct` is the daypart's
+    own, None unless measured."""
     conn = get_conn(db_path)
     try:
         # Daypart sales only where the split was measured (split_basis): a
         # row recorded before the column existed divided the day by a stated
         # 0.4, and its sales per labor hour is not a figure to hand the
-        # schedule prompt (QUALITY-11).
+        # schedule prompt.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
         extra = (", actual_hours, actual_people, missed, stayed_late, labor_pct_daypart, people"
                  if "actual_hours" in cols else
@@ -749,8 +744,8 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
             if not e:
                 continue
             bits = [f"about {e['avg_hours']:g}h scheduled"]
-            # What the punches say was worked beside the plan (schedule
-            # audit 10/3/26 L-12): the block is called "actually did".
+            # What the punches say was worked beside the plan: the
+            # block is called "actually did".
             if e.get("avg_actual_hours") is not None:
                 bits.append(f"{e['avg_actual_hours']:g}h worked")
             if e.get("missed"):
@@ -766,9 +761,9 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
             lines.append(f"  {wd} {'lunch/day' if part == 'morning' else 'dinner/night'}: " + ", ".join(bits) + tag)
     if not lines:
         return ""
-    # Context, not a lever (schedule audit 10/3/26 PR-7, PR-24): "do not
-    # thin it" asked the model to hold a crew up on top of SHIFT
-    # REQUIREMENTS, and its hours read as a second target.
+    # Context, not a lever: "do not thin it" asked the model to hold a
+    # crew up on top of SHIFT REQUIREMENTS, and its hours read as a
+    # second target.
     return ("\n\nWHAT PUBLISHED WEEKS ACTUALLY DID (this restaurant's own record by daypart — context: the pattern "
             "that ran and how it went; SHIFT REQUIREMENTS already set this week's numbers):\n" + "\n".join(lines))
 
@@ -777,19 +772,18 @@ def outcome_block(outcomes: dict, week_days: list) -> str:
 #
 # Both read PUBLISHED weeks only, so a restaurant that never published a
 # Cavnar AI week (Simple EJ's) drafted with no fairness or rotation memory,
-# while its POS punches already said who worked the weekends and who closed
-# (schedule audit 10/3/26 D-21). Each week of the window is its live
-# published schedule, else what the time clock kept for it (shift_facts) —
-# labelled "punches" wherever it is said — so published weeks take over one
-# by one as they exist.
+# while its POS punches already said who worked the weekends and who
+# closed. Each week of the window is its live published schedule, else what
+# the time clock kept for it (shift_facts) — labelled "punches" wherever it
+# is said — so published weeks take over one by one as they exist.
 
 def _closes(r, close_times) -> bool:
     """Whether a shift closes its day: ending within 30 minutes of that
     day's close, read across midnight (schedule_rules.end_minutes, and a
     close in the small hours is the next morning — close_minutes). Raw
     minutes made "2:00am" 120, so every shift ending after 1:30am — or any
-    shift on a midnight-close Thursday — counted as a close (D-20). With no
-    close time set, a shift ending at 10pm or later."""
+    shift on a midnight-close Thursday — counted as a close. With no close
+    time set, a shift ending at 10pm or later."""
     from schedule_rules import parse_minutes, end_minutes, _OVERNIGHT_LATEST_BEFORE
     end = end_minutes(r)
     if end is None:
@@ -829,7 +823,7 @@ def record_weeks(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, toda
     conn = get_conn(db_path)
     try:
         published = _published_weeks(conn, restaurant_id, weeks, today)
-        # Their rows from the shift table (schedule_shifts, ARCH-7).
+        # Their rows from the shift table (schedule_shifts).
         week_rows = schedule_shifts.rows_by_week([w["id"] for w in published], "live", conn=conn)
     finally:
         conn.close()
@@ -886,7 +880,7 @@ def _source_of(hist) -> str:
 def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, today=None) -> dict:
     """{name: {"weekend": n, "closing": n, "holiday": n, "shifts": n,
     "weeks": w, "from_punches": p}} over the last `weeks` weeks of record
-    (record_weeks: published, else punches — D-21) — the rotation memory a
+    (record_weeks: published, else punches) — the rotation memory a
     seven-day window cannot hold. `from_punches`: how many of those weeks
     are the time clock's, said wherever the ledger is."""
     from schedule_time import _holiday_dates
@@ -900,8 +894,8 @@ def fairness_ledger(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, t
         close_times = get_close_times(restaurant_id, db_path) or {}
     except Exception:
         pass
-    # Both ends of every week: one starting Dec 28 holds New Year's Day of
-    # the next year, which the week_start year alone never looked up (SCHED-33).
+    # Both ends of every week: one starting Dec 28 holds New Year's Day of the
+    # next year, which the week_start year alone never looked up.
     holidays = {}
     years = set()
     for ws, _rs, _src in hist:
@@ -970,14 +964,14 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
     """{weeks, roles: {role: {...queues}}, holiday, lines, from_punches,
     source} — who is next for a weekend off, a close and a holiday, per
     role, from the last `weeks` weeks of record: each week's published
-    schedule, else its punches (record_weeks, D-21 — `from_punches` says
+    schedule, else its punches (record_weeks — `from_punches` says
     how many). roster_roles ({name: role}) limits the plan to people still
     on the roster and files them under their roster role; without it each
     person's most-worked role is used. Empty when fewer than two weeks of
     record exist: a rotation needs a history to rotate from."""
     from schedule_time import _holiday_dates
     today = today or date.today()
-    # The weeks of record (published, else punches — D-21), newest first.
+    # The weeks of record (published, else punches), newest first.
     hist = record_weeks(restaurant_id, weeks=weeks, db_path=db_path, today=today)
     close_times = {}
     try:
@@ -999,12 +993,12 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
     for y in years:
         holidays.update(_holiday_dates(y))
     roster = {str(n).strip().lower(): (n, (r or "").strip()) for n, r in (roster_roles or {}).items() if n}
-    # The closers the owner chose, per role family (schedule re-audit
-    # 10/4/26 PROMPT-2): for a role that has them, the closing queue is
-    # theirs alone — the plan handed closes to whoever had closed least,
-    # beside a [HARD] rule naming the chosen closers, and the fairness score
-    # then rewarded breaking it. Everyone else on until close stays
-    # alongside one of them. A read that fails leaves every role as before.
+    # The closers the owner chose, per role family: for a role that has
+    # them, the closing queue is theirs alone — the plan handed closes to
+    # whoever had closed least, beside a [HARD] rule naming the chosen
+    # closers, and the fairness score then rewarded breaking it. Everyone
+    # else on until close stays alongside one of them. A read that fails
+    # leaves every role as before.
     try:
         import schedule_rules as _sr
         chosen_closers = _sr.chosen_closers(restaurant_id, db_path=_models_mod.DB_PATH if db_path == DB_PATH
@@ -1047,11 +1041,10 @@ def rotation_plan(restaurant_id, weeks: int = LEDGER_WEEKS, db_path=DB_PATH, tod
         if role:
             by_role.setdefault(role, []).append(p)
     roles_out, lines = {}, []
-    # The tip opportunity (tip_opportunity, scheduler audit 10/10/26
-    # MARKET-17): per role family, the slots worth the most in tips and who
-    # is next for one / should rest from them — rotated like closes. A read
-    # that fails, or a POS with no punch archive, leaves the rotation as it
-    # was.
+    # The tip opportunity (tip_opportunity): per role family, the slots
+    # worth the most in tips and who is next for one / should rest from
+    # them — rotated like closes. A read that fails, or a POS with no punch
+    # archive, leaves the rotation as it was.
     try:
         import tip_opportunity as _tips
         tip_rot = _tips.rotation(restaurant_id, today=today,
@@ -1221,7 +1214,7 @@ def rotation_block(plan: dict) -> str:
 
 def _weeks_words(weeks, from_punches) -> str:
     """"8 published weeks", "8 weeks (5 from punches — the time clock, not a
-    published schedule)" — where the record came from, said (D-21)."""
+    published schedule)" — where the record came from, said."""
     weeks, punched = int(weeks or 0), int(from_punches or 0)
     if not punched:
         return f"{weeks} published weeks"
@@ -1253,24 +1246,24 @@ def ledger_block(ledger: dict) -> str:
 
 # ── behaviour-learned preferences ─────────────────────────────────────────
 
-# What staff drop and claim, read against how often they could have
-# (schedule audit 10/10/26 LEARNING-15): "two of the same is a pattern" with
-# no denominator made somebody scheduled on 12 Sunday nights who dropped 2
-# (17%) "avoids Sunday night", and somebody chasing hours who picked up two
-# open Tuesdays "prefers Tuesday" — and the solver moved them on it.
+# What staff drop and claim, read against how often they could have: "two of
+# the same is a pattern" with no denominator made somebody scheduled on 12
+# Sunday nights who dropped 2 (17%) "avoids Sunday night", and somebody
+# chasing hours who picked up two open Tuesdays "prefers Tuesday" — and the
+# solver moved them on it.
 BEHAVIOUR_MIN_EVENTS = 2
 AVOID_MIN_CONFIDENCE = 0.2          # Wilson lower bound of drops / times scheduled on the slot
 PREFER_MIN_CONFIDENCE = 0.2         # Wilson lower bound of claims / open shifts offered on the slot
 PREFER_MIN_OTHER_OFFERS = 2         # open shifts elsewhere they could have taken, before a slot is "preferred"
 # "Avoids this slot" binds the solver (signals["learned_preferences"]), so it
-# is held to more than a pattern (schedule re-audit 10/11/26 LEARNING-22: 2
-# drops of 3 scheduled in 12 weeks qualified — two swaps for personal reasons
-# became a learned "avoid"): AVOID_MIN_EVENTS drops — three of the same slot
-# is what two personal swaps cannot reach by chance across a person's 14
-# weekday x daypart slots — the drop rate's 90% Wilson lower bound of
-# AVOID_MIN_CONFIDENCE or more, and the drops weighted by a faster half-life
-# (a drop is about a season of someone's life, not a standing fact); the
-# person and the manager are told it with its denominator.
+# is held to more than a pattern (2 drops of 3 scheduled in 12 weeks
+# qualified — two swaps for personal reasons became a learned "avoid"):
+# AVOID_MIN_EVENTS drops — three of the same slot is what two personal swaps
+# cannot reach by chance across a person's 14 weekday x daypart slots — the
+# drop rate's 90% Wilson lower bound of AVOID_MIN_CONFIDENCE or more, and the
+# drops weighted by a faster half-life (a drop is about a season of someone's
+# life, not a standing fact); the person and the manager are told it with its
+# denominator.
 AVOID_MIN_EVENTS = 3
 AVOID_Z = 1.645
 AVOID_HALF_LIFE_DAYS = 45
@@ -1280,7 +1273,7 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
     """{name: {"avoids": ["Sunday night", …], "prefers": [...], "drops": n,
     "claims": n, "wants_hours": bool, "evidence": {slot: {...}}}} from the
     drops let go and the shifts picked up in the last `weeks`, each read
-    against its exposure (LEARNING-15), every event weighted by its age
+    against its exposure, every event weighted by its age
     (learning_stats.recency_weight, a person's half-life):
       avoids   a slot (weekday × day | night) they dropped at least
                BEHAVIOUR_MIN_EVENTS times, whose drop rate — drops over the
@@ -1295,12 +1288,12 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
                whatever is open says they want HOURS, not that slot;
       wants_hours  they picked up at least BEHAVIOUR_MIN_EVENTS open shifts
                that are not a slot preference — what the usual-hours band
-               reads (schedule_engine, LEARNING-28).
-    A denied drop is not a preference (SCHED-40); a drop let go that nobody
-    claimed before the shift passed still counts (LEARN-12)."""
+               reads (schedule_engine).
+    A denied drop is not a preference; a drop let go that nobody claimed
+    before the shift passed still counts."""
     import learning_stats as _ls_gate
     if _ls_gate.learning_off():
-        return {}  # learning_v2's off week (LEARNING-14)
+        return {}  # learning_v2's off week
     import learning_stats
     since = (date.today() - timedelta(days=int(weeks) * 7)).isoformat()
     conn = get_conn(db_path)
@@ -1313,9 +1306,8 @@ def behaviour_preferences(restaurant_id, weeks: int = 12, db_path=DB_PATH) -> di
             "superseded_by IS NULL AND COALESCE(week_end, week_start) >= ? AND NOT EXISTS (SELECT 1 FROM "
             "schedule_history n WHERE n.restaurant_id=h.restaurant_id AND n.week_start=h.week_start AND "
             "n.published_at IS NOT NULL AND n.id > h.id)", (restaurant_id, since)).fetchall()
-        # Each week's rows from the shift table (schedule_shifts — schedule
-        # re-audit 10/11/26 ARCH-7): the WORKING copy, as this read always
-        # took schedule_csv.
+        # Each week's rows from the shift table (schedule_shifts): the
+        # WORKING copy, as this read always took schedule_csv.
         import schedule_shifts
         pub_rows = schedule_shifts.rows_by_week([p["id"] for p in pubs], "working", conn=conn)
     except Exception:
@@ -1417,8 +1409,8 @@ def role_shifts(restaurant_id, days: int = MENTOR_WINDOW_DAYS, db_path=DB_PATH) 
     """{employee: {role: shifts}} over the last `days` of the per-shift
     history — the evidence the schedule prompt's CAN WORK holds a second
     role to (MENTOR_SHIFTS_TO_HOLD shifts, the bar "could hold a station"
-    already used; schedule audit 10/3/26 PR-21: one shift ever in a role
-    made somebody "cross-trained", flexing them "costs nothing extra")."""
+    already used: one shift ever in a role made somebody "cross-trained",
+    flexing them "costs nothing extra")."""
     import shift_facts as _sf
     since = (date.today() - timedelta(days=int(days))).isoformat()
     out = {}
@@ -1439,10 +1431,9 @@ def mentoring(restaurant_id, db_path=DB_PATH) -> dict:
     from models import get_leader_flags
     try:
         closers = {n.lower() for n, v in (get_leader_flags(restaurant_id, db_path) or {}).items() if v}
-        # A year of shifts from the per-shift history (memory audit 9/29/26,
-        # shift_facts): the stored file was a rolling window an upload could
-        # shrink to a fortnight, and the evidence for "could hold the bar"
-        # went with it.
+        # A year of shifts from the per-shift history (shift_facts): the
+        # stored file was a rolling window an upload could shrink to a
+        # fortnight, and the evidence for "could hold the bar" went with it.
         import shift_facts as _sf
         since = (date.today() - timedelta(days=MENTOR_WINDOW_DAYS)).isoformat()
         shifts = _sf.person_rows(restaurant_id, since=since)
@@ -1494,7 +1485,7 @@ def could_hold(mentored: dict) -> dict:
 #      rpower.fetch_clock_ins_today reads the business day's punches; this
 #      used to say RPOWER could not be watched, which sent anyone asking
 #      why Simple EJ's nights were unwatched the wrong way — schedule audit
-#      10/3/26 L-32);
+#      the draft);
 #   4. the check actually read the clock-ins during THAT night's service.
 #
 # 1-3 are read from the current configuration. 4 is per date: the check
@@ -1508,8 +1499,8 @@ def could_hold(mentored: dict) -> dict:
 # routing (2), a published week covering the night, and the clock-in read
 # itself. Without all four, "8 of 8 shared dayparts ran without an issue",
 # an accepted recommendation "improved", and auto-publish's "ran clean"
-# weeks were all true of every restaurant by default (re-audit A-19) — so
-# those reads are withheld for any date nobody was watching.
+# weeks were all true of every restaurant by default — so those reads are
+# withheld for any date nobody was watching.
 COVERAGE_RUNS_SINCE = "2026-09-25"
 
 def coverage_watch_missing(restaurant_id, db_path=DB_PATH) -> list:
@@ -1567,7 +1558,7 @@ def watched_dates(restaurant_id, start, end, db_path=DB_PATH) -> set:
 
 # ── what a shift DID, on readings that never reward a lean shift ──────────
 #
-# Schedule audit 10/10/26 LEARNING-12, LEARNING-24: the team learner read a
+# The team learner read a
 # shift as "ran well" when its sales per labor hour beat the weekday's median
 # (a shift with fewer hours has a higher one — under-staffing scored as
 # chemistry) and when the engine's own score of the week as it ran beat its
@@ -1750,17 +1741,17 @@ READING_WORDS = {"sales_resid": "sales against the forecast", "comps_rate": "com
 
 def chemistry_suggestions(restaurant_id, db_path=DB_PATH) -> list:
     """The teams the owner is offered: schedule_memory's Holm-tested
-    "prefer" pairs (schedule audit 10/10/26 LEARNING-13) — shared shifts
-    that ran well clearly more often than the restaurant's own shifts do
-    (against the rate without them together and their apart rate), on the
-    outcome readings (slot_readings / ran_well), surviving Holm's correction
-    over every pair tested — not already the owner's pair and not retired.
-    This used to be a second learner of its own: any pair with six shared
-    watched dayparts 80% issue-free, with no baseline and no correction, so
-    in a restaurant whose nights are 90% clean every pair that worked
-    together often was "suggested". Same shape as before ({a, b, kind,
-    shared, clean_rate — the ran-well rate —, evidence, rec_key}) plus the
-    `baseline` it beat and its `p_value`. Nothing is written."""
+    "prefer" pairs — shared shifts that ran well clearly more often than the
+    restaurant's own shifts do (against the rate without them together and
+    their apart rate), on the outcome readings (slot_readings / ran_well),
+    surviving Holm's correction over every pair tested — not already the
+    owner's pair and not retired. This used to be a second learner of its
+    own: any pair with six shared watched dayparts 80% issue-free, with no
+    baseline and no correction, so in a restaurant whose nights are 90%
+    clean every pair that worked together often was "suggested". Same shape
+    as before ({a, b, kind, shared, clean_rate — the ran-well rate —,
+    evidence, rec_key}) plus the `baseline` it beat and its `p_value`.
+    Nothing is written."""
     import schedule_memory as _sm
     conn = get_conn(db_path)
     try:
@@ -1811,7 +1802,7 @@ def chemistry_suggestions_shown(restaurant_id, surface="labor", user_id=None, db
     """chemistry_suggestions as an owner sees them: without the pairs they
     said "Ignore" to (rec_ledger, on any device), and logged as shown."""
     import rec_ledger as _rl
-    # ...and this login's own "Ignore" (PEOPLE-4).
+    # ...and this login's own "Ignore".
     quiet = _rl.silenced_keys(restaurant_id, db_path=db_path,
                               viewer=user_id if isinstance(user_id, int) else None)
     out = [x for x in chemistry_suggestions(restaurant_id, db_path=db_path) if x["rec_key"] not in quiet]
@@ -1853,8 +1844,8 @@ def record_recommendation(restaurant_id, kind: str, key: str, action: str, actor
                 _degraded(f"restore not held durably: {e}", e)
         # A showing is one per recommendation per day: a manager saving the
         # same week ten times in one sitting was ten "shown, never taken"
-        # and switched the advice off for good (SCHED-26), and every rescore
-        # grew the table (SCHED-27).
+        # and switched the advice off for good, and every rescore grew the
+        # table.
         if action == "shown" and conn.execute(
                 "SELECT 1 FROM schedule_recommendation_events WHERE restaurant_id=? AND kind=? AND key=? "
                 "AND action='shown' AND created_at >= date('now')",
@@ -1890,7 +1881,7 @@ REC_ACCEPTED_LOOKBACK_DAYS = 180          # long enough for seven weekly nights 
 
 def _evidence_nights(rows, restaurant_id, db_path):
     """The rows that are evidence: a night with an issue always; a night
-    with none only when the coverage check was watching it (A-19)."""
+    with none only when the coverage check was watching it."""
     if not rows:
         return []
     dates = sorted(str(o["date"]) for o in rows)
@@ -1923,8 +1914,8 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
     weekday and daypart's issue share once REC_MIN_NIGHTS_AFTER of its
     nights after acceptance have been recorded in published, finished weeks
     (schedule_outcomes), against the REC_BASELINE_WEEKS before it
-    (night_rate_verdict). Only watched nights count (A-19). Recorded ONCE as
-    the recommendation's outcome in rec_ledger. Idempotent."""
+    (night_rate_verdict). Only watched nights count. Recorded ONCE as the
+    recommendation's outcome in rec_ledger. Idempotent."""
     import rec_ledger as _rl
     today = today or date.today()
     conn = get_conn(db_path)
@@ -1968,7 +1959,7 @@ def measure_accepted_recommendations(restaurant_id, db_path=DB_PATH, today=None)
     return n
 
 
-# ── the week as it ran (schedule audit 10/3/26 L-29, L-34) ───────────────
+# ── the week as it ran ───────────────
 #
 # A published week was scored once, as planned. Nothing scored it as it RAN
 # — who actually came, when they came and went — so a recommendation the
@@ -2022,7 +2013,7 @@ def _rec_target(text):
             continue
         where = (m.groupdict().get("where") or "").strip().rstrip(".")
         parts = where.split()
-        # The owner's word pair (lunch/dinner, TRUST-31) and the older morning/night.
+        # The owner's word pair (lunch/dinner) and the older morning/night.
         _p = {"lunch": "morning", "dinner": "night", "morning": "morning", "night": "night"}
         if len(parts) == 2 and parts[1].lower() in _p:
             return dim, parts[0], _p[parts[1].lower()]
@@ -2033,12 +2024,12 @@ def _rec_target(text):
 
 
 def _outcome_verdict(readings, verdicts, accepted_on, day, part, today) -> dict:
-    """A recommendation's verdict on what the weeks DID (schedule audit
-    10/10/26 LEARNING-24): the share of the shifts it was about — that
-    weekday and daypart, or every shift for a week-level one — that did NOT
-    run well (ran_well's outcome readings), in the REC_BASELINE_WEEKS before
-    it was accepted against the shifts since, by night_rate_verdict's band
-    and night floors. "unknown" until enough shifts have run."""
+    """A recommendation's verdict on what the weeks DID: the share of the
+    shifts it was about — that weekday and daypart, or every shift for a
+    week-level one — that did NOT run well (ran_well's outcome readings), in
+    the REC_BASELINE_WEEKS before it was accepted against the shifts since,
+    by night_rate_verdict's band and night floors. "unknown" until enough
+    shifts have run."""
     since = (date.fromisoformat(accepted_on) - timedelta(weeks=REC_BASELINE_WEEKS)).isoformat()
     before, after = [], []
     for (d, p), good in verdicts.items():
@@ -2056,24 +2047,23 @@ def _outcome_verdict(readings, verdicts, accepted_on, day, part, today) -> dict:
 def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -> int:
     """Every recommendation the manager carried out — by the button or by
     the edit itself (schedule_learning.addressed_recommendations) — judged
-    on what the weeks DID (schedule audit 10/10/26 LEARNING-24: it was
-    judged by the engine's own as-run score — "improved" meant the punches
-    matched the scorer's model better, the engine grading itself, and that
-    fed rec_ledger, the measured-success curve and trust). The verdict is
-    _outcome_verdict: the shifts it was about — that weekday and daypart, or
-    every shift for one about the week — that did not run well on the
-    outcome readings (sales against the forecast, comps, table turns,
-    issues on watched nights, the meal's reviews; ran_well), before it was
-    accepted against since, past night_rate_verdict's band — recorded once
-    enough shifts have run, until then read again next week. The as-run
-    score of the dimension it named stays beside it only as a PLAN-ADHERENCE
-    check (`plan_adherence`: did the week run the way the draft said), never
-    the verdict. A "rate the unscored staff" recommendation is read on what
-    it asked for — the share of shifts judged without ratings — not on an
-    outcome. The punched heads of a coverage gap's slot ride along (actual
-    coverage). Recorded once per recommendation as its rec_ledger outcome (a
-    measured tracker's verdict, where there is one, still stands over it).
-    Returns outcomes recorded."""
+    on what the weeks DID (it was judged by the engine's own as-run score —
+    "improved" meant the punches matched the scorer's model better, the
+    engine grading itself, and that fed rec_ledger, the measured-success
+    curve and trust). The verdict is _outcome_verdict: the shifts it was
+    about — that weekday and daypart, or every shift for one about the week
+    — that did not run well on the outcome readings (sales against the
+    forecast, comps, table turns, issues on watched nights, the meal's
+    reviews; ran_well), before it was accepted against since, past
+    night_rate_verdict's band — recorded once enough shifts have run, until
+    then read again next week. The as-run score of the dimension it named
+    stays beside it only as a PLAN-ADHERENCE check (`plan_adherence`: did
+    the week run the way the draft said), never the verdict. A "rate the
+    unscored staff" recommendation is read on what it asked for — the share
+    of shifts judged without ratings — not on an outcome. The punched heads
+    of a coverage gap's slot ride along (actual coverage). Recorded once per
+    recommendation as its rec_ledger outcome (a measured tracker's verdict,
+    where there is one, still stands over it). Returns outcomes recorded."""
     import rec_ledger as _rl
     import schedule_memory as _sm
     from shift_quality import recommendation_kind
@@ -2126,7 +2116,7 @@ def measure_recommendations_as_run(restaurant_id, db_path=DB_PATH, today=None) -
         q = made[1] if made else {}
         if made and made[0]["quality_ref"]:
             # The whole evaluation the recommendation was made on (its
-            # headline only is inline — SCALE-4).
+            # headline only is inline).
             from schedule_versions import version_quality
             _c = get_conn(db_path)
             try:
@@ -2211,8 +2201,8 @@ def schedule_rec_key(kind, text) -> str:
 
 # A suppressed schedule kind is re-tested this long after it was suppressed
 # (and after each re-test that went unaccepted), for RETEST_WINDOW_DAYS
-# (memory audit 9/29/26, "quiet_kinds"): it used to come back by accident a
-# year later, when the pruned log forgot why.
+# ("quiet_kinds"): it used to come back by accident a year later, when the
+# pruned log forgot why.
 SUPPRESS_REVIEW_DAYS = 60
 RETEST_WINDOW_DAYS = 14
 
@@ -2367,17 +2357,17 @@ def pattern_key(p: dict) -> str:
     return key
 
 
-# A dismissal counts when it is the restaurant's own word (schedule audit
-# 10/3/26 L-10): an account holder's or a manager's — or one stored before
-# the authority was (NULL, read as it always was) — and an admin's only once
-# the account holder adopted it. An admin's dismissal through view-as used
-# to silence the pattern for everyone, forever.
+# A dismissal counts when it is the restaurant's own word: an account
+# holder's or a manager's — or one stored before the authority was (NULL,
+# read as it always was) — and an admin's only once the account holder
+# adopted it. An admin's dismissal through view-as used to silence the
+# pattern for everyone, forever.
 _DISMISSAL_COUNTS_SQL = "(COALESCE(authority, '') <> 'admin' OR adopted_at IS NOT NULL)"
 
 
 def dismissed_patterns(restaurant_id, db_path=DB_PATH) -> set:
     """The pattern keys the restaurant has dismissed (an admin's only once
-    adopted — L-10)."""
+    adopted)."""
     conn = get_conn(db_path)
     try:
         return {r["key"] for r in conn.execute(
@@ -2409,8 +2399,7 @@ def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH, author
     none, read as before). The restaurant's own word over an admin's
     replaces it: the owner dismissing what support already dismissed counts.
     A delegate (a manager's login) never dismisses a pattern the owner kept
-    or said "always" to — schedule_versions.OwnerAnswered, in words
-    (schedule re-audit 10/4/26 LEARN-3)."""
+    or said "always" to — schedule_versions.OwnerAnswered, in words."""
     if authority == "delegate":
         import schedule_versions as _sv
         conn = get_conn(db_path)
@@ -2453,7 +2442,7 @@ def dismiss_pattern(restaurant_id, key: str, actor=None, db_path=DB_PATH, author
 
 def adopt_admin_dismissals(restaurant_id, user, db_path=DB_PATH) -> int:
     """The account holder counts, as their own, the pattern dismissals an
-    admin made through view-as or support (L-10, mirroring
+    admin made through view-as or support (mirroring
     models.adopt_admin_ratings). Only a principal signed in as themselves
     may; returns how many now count."""
     from permissions import answer_authority
@@ -2473,10 +2462,9 @@ def adopt_admin_dismissals(restaurant_id, user, db_path=DB_PATH) -> int:
 
 
 def restore_pattern(restaurant_id, key: str, db_path=DB_PATH, authority=None) -> None:
-    """Undo a dismissal. A delegate (a manager's login) or an admin through
-    view-as never restores one the owner made — schedule_versions.OwnerAnswered, in words (schedule
-    re-audit 10/4/26 LEARN-3); a dismissal stored before whose it was got
-    recorded reads as the owner's."""
+    """Undo a dismissal. A delegate (a manager's login) or an admin through view-as never restores
+    one the owner made — schedule_versions.OwnerAnswered, in words; a dismissal stored before whose
+    it was got recorded reads as the owner's."""
     conn = get_conn(db_path)
     try:
         if authority in ("delegate", "admin"):
@@ -2514,23 +2502,22 @@ def init_schedule_intel(db_path: str = DB_PATH):
         UNIQUE(history_id, date, daypart)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_outcomes_rest ON schedule_outcomes(restaurant_id, date)")
-    # How each row's daypart sales were split (memory audit 9/29/26,
-    # QUALITY-11): 'measured' (the POS's intraday running total or the
-    # nightly report's hourly split) or 'unmeasured' (sales NULL). A row
-    # from before the column has NULL: read as unmeasured.
+    # How each row's daypart sales were split: 'measured' (the POS's
+    # intraday running total or the nightly report's hourly split) or
+    # 'unmeasured' (sales NULL). A row from before the column has NULL:
+    # read as unmeasured.
     if "split_basis" not in {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}:
         conn.execute("ALTER TABLE schedule_outcomes ADD COLUMN split_basis TEXT")
-    # Which shift a review's rating was put on, and how sure (memory audit
-    # 9/29/26, reviews_to_labor): "daypart" when the analyser read the meal
-    # in the review itself and it was posted within REVIEW_LAG_DAYS of that
-    # shift; "hours" when it was put on the day's busiest daypart for want
-    # of anything better. Calibration reads the first kind only.
-    # What happened beside what was planned (schedule audit 10/3/26 L-12,
-    # L-13 — record_outcomes): the punched hours and people (actual_basis
-    # 'punches'; NULL where the date has no punch — unknown, never 0), the
-    # shifts missed, late, left early and run past their end, and the
-    # daypart's own labor cost and labor % (NULL unless its sales split was
-    # measured). `labor_pct` stays the DAY's figure.
+    # Which shift a review's rating was put on, and how sure
+    # (reviews_to_labor): "daypart" when the analyser read the meal in the
+    # review itself and it was posted within REVIEW_LAG_DAYS of that shift;
+    # "hours" when it was put on the day's busiest daypart for want of
+    # anything better. Calibration reads the first kind only. What happened
+    # beside what was planned (record_outcomes): the punched hours and
+    # people (actual_basis 'punches'; NULL where the date has no punch —
+    # unknown, never 0), the shifts missed, late, left early and run past
+    # their end, and the daypart's own labor cost and labor % (NULL unless
+    # its sales split was measured). `labor_pct` stays the DAY's figure.
     _oc = {r[1] for r in conn.execute("PRAGMA table_info(schedule_outcomes)").fetchall()}
     for _col, _typ in (("review_attribution", "TEXT"), ("review_rating_attributed", "REAL"),
                        ("reviews_attributed", "INTEGER"), ("review_lag_days", "INTEGER"),
@@ -2553,13 +2540,13 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events ON schedule_recommendation_events(restaurant_id, kind)")
-    # Whose showing or answer each row is (memory audit 9/29/26,
-    # who_answered): only the owner's suppress a kind for the owner.
+    # Whose showing or answer each row is (who_answered): only the
+    # owner's suppress a kind for the owner.
     _cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_recommendation_events)").fetchall()}
     if "authority" not in _cols:
         conn.execute("ALTER TABLE schedule_recommendation_events ADD COLUMN authority TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rec_events_created "
-                 "ON schedule_recommendation_events(created_at)")          # ops.prune_ledgers (DATA-40)
+                 "ON schedule_recommendation_events(created_at)")          # ops.prune_ledgers
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_pattern_dismissals (
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
         key            TEXT    NOT NULL,
@@ -2567,11 +2554,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
         created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (restaurant_id, key)
     )""")
-    # What the draft has learned and keeps (memory audit 9/29/26,
-    # standing_patterns): a move the manager made in enough weeks becomes a
-    # row here, confirmed by every published week that keeps it and retired
-    # only when a manager reverses it twice — never because nobody had to
-    # make the correction again. Kept forever (one row per pattern).
+    # What the draft has learned and keeps (standing_patterns): a move the
+    # manager made in enough weeks becomes a row here, confirmed by every
+    # published week that keeps it and retired only when a manager reverses
+    # it twice — never because nobody had to make the correction again.
+    # Kept forever (one row per pattern).
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_standing_patterns (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2595,8 +2582,8 @@ def init_schedule_intel(db_path: str = DB_PATH):
         updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(restaurant_id, pattern_key)
     )""")
-    # The standing pattern's lifecycle (memory re-audit 9/29/26, LOOPS-2 /
-    # QUALITY-2 / FORGET-5 / INVENTORY-2 / QUALITY-3 / QUALITY-14):
+    # The standing pattern's lifecycle (LOOPS-2 / QUALITY-2 / FORGET-5 /
+    # INVENTORY-2 / QUALITY-3 / QUALITY-14):
     #   person_id        the person a person pattern is about (people.NAME_STORES
     #                    re-points and re-keys it on a rename or merge)
     #   detail           JSON the kinds need beyond the key: was_role, delta, names
@@ -2620,47 +2607,43 @@ def init_schedule_intel(db_path: str = DB_PATH):
             except Exception as _e:
                 if "duplicate column" not in str(_e).lower():
                     raise
-    # The standing pattern's evidence and decay (schedule audit 10/3/26 L-6,
-    # L-30): opportunities / hits — the published weeks that tested it and
-    # the ones that kept it, an unedited week counting as a keep; last_hand
-    # — the week (ISO date) a manager's own hand last confirmed it (the
-    # weeks that taught it, a week they re-applied it, or the owner's "keep
-    # it"); confidence — the Wilson lower bound of hits over opportunities
-    # times the half-life decay since last_hand; retest_since — while set
-    # (status 'retest') the next draft leaves it out once to see whether the
-    # manager puts it back; last_retest_end / retests; retired_reason
-    # (reversed | retest | decayed | owner); source 'learned' | 'owner_said'
-    # (the owner's one-tap "always", L-35) and authority — whose word made it.
-    # Whose answer settled it (schedule re-audit 10/4/26 LEARN-3, LEARN-4):
-    # owner_kept_at — when an account holder last kept it (their Keep holds
-    # it applied whatever its confidence, for two half-lives); and
-    # answer_authority — principal | delegate, whose keep or let-go it last
-    # was. A delegate's answer never undoes the owner's.
+    # The standing pattern's evidence and decay: opportunities / hits — the
+    # published weeks that tested it and the ones that kept it, an unedited
+    # week counting as a keep; last_hand — the week (ISO date) a manager's own
+    # hand last confirmed it (the weeks that taught it, a week they re-applied
+    # it, or the owner's "keep it"); confidence — the Wilson lower bound of
+    # hits over opportunities times the half-life decay since last_hand;
+    # retest_since — while set (status 'retest') the next draft leaves it out
+    # once to see whether the manager puts it back; last_retest_end / retests;
+    # retired_reason (reversed | retest | decayed | owner); source 'learned' |
+    # 'owner_said' (the owner's one-tap "always") and authority — whose word
+    # made it. Whose answer settled it: owner_kept_at — when an account holder
+    # last kept it (their Keep holds it applied whatever its confidence, for
+    # two half-lives); and answer_authority — principal | delegate, whose keep
+    # or let-go it last was. A delegate's answer never undoes the owner's.
     _sp2 = {r[1] for r in conn.execute("PRAGMA table_info(schedule_standing_patterns)").fetchall()}
     for _col, _typ in (("opportunities", "INTEGER NOT NULL DEFAULT 0"), ("hits", "INTEGER NOT NULL DEFAULT 0"),
                        ("last_hand", "TEXT"), ("confidence", "REAL"), ("retest_since", "TEXT"),
                        ("last_retest_end", "TEXT"), ("retests", "INTEGER NOT NULL DEFAULT 0"),
                        ("retired_reason", "TEXT"), ("source", "TEXT"), ("authority", "TEXT"),
                        ("owner_kept_at", "TEXT"), ("answer_authority", "TEXT"),
-                       # Habits that stick (schedule audit 10/10/26 LEARNING-1,
-                       # RM-5): last_kept_week — the newest published week a
-                       # person of the restaurant sent that kept it (ISO week
-                       # start); last_kept — the newest date such a week was
-                       # WORKED as published (the punches did not undo it), what
-                       # the decay now also runs from, so a habit the draft
-                       # carries every week never fades while it works;
-                       # enforced_since — when it first bound the passes (its
-                       # confidence cleared the line, or the owner's word): from
-                       # then on it binds until its lifecycle ends it (a failed
-                       # re-test, two reversals, dormant, the owner's let-go),
-                       # never because a confidence decayed.
+                       # Habits that stick: last_kept_week — the newest
+                       # published week a person of the restaurant sent that
+                       # kept it (ISO week start); last_kept — the newest date
+                       # such a week was WORKED as published (the punches did
+                       # not undo it), what the decay now also runs from, so a
+                       # habit the draft carries every week never fades while it
+                       # works; enforced_since — when it first bound the passes
+                       # (its confidence cleared the line, or the owner's word):
+                       # from then on it binds until its lifecycle ends it (a
+                       # failed re-test, two reversals, dormant, the owner's
+                       # let-go), never because a confidence decayed.
                        ("last_kept_week", "TEXT"), ("last_kept", "TEXT"), ("enforced_since", "TEXT"),
-                       # evidence_basis 'hand' (schedule re-audit 10/11/26
-                       # LEARNING-9): hits and opportunities count the
-                       # manager's own hand only. A row from before it counted
-                       # every week the draft carried it as a hit; boot takes
-                       # those weeks back out once (schedule_versions.
-                       # migrate_hand_evidence).
+                       # evidence_basis 'hand': hits and opportunities count
+                       # the manager's own hand only. A row from before it
+                       # counted every week the draft carried it as a hit;
+                       # boot takes those weeks back out once
+                       # (schedule_versions.migrate_hand_evidence).
                        ("evidence_basis", "TEXT")):
         if _col not in _sp2:
             try:
@@ -2670,12 +2653,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
                     raise
     import schedule_versions as _sv_ev
     _sv_ev.migrate_hand_evidence(conn)
-    # Whose pattern a dismissal is (INVENTORY-2): the key carries the name,
-    # so a rename re-keys it (people._repoint_patterns) and a merge folds it.
-    # Whose word the dismissal is (schedule audit 10/3/26 L-10): authority
-    # (permissions.answer_authority — principal | delegate | admin); an
-    # admin's (view-as, support) is kept but does not count until the
-    # account holder adopts it (adopted_by / adopted_at).
+    # Whose pattern a dismissal is: the key carries the name, so a rename
+    # re-keys it (people._repoint_patterns) and a merge folds it. Whose word
+    # the dismissal is: authority (permissions.answer_authority — principal |
+    # delegate | admin); an admin's (view-as, support) is kept but does not
+    # count until the account holder adopts it (adopted_by / adopted_at).
     _pd = {r[1] for r in conn.execute("PRAGMA table_info(schedule_pattern_dismissals)").fetchall()}
     for _col, _typ in (("employee", "TEXT"), ("person_id", "INTEGER"), ("authority", "TEXT"),
                        ("adopted_by", "TEXT"), ("adopted_at", "TEXT")):
@@ -2685,13 +2667,13 @@ def init_schedule_intel(db_path: str = DB_PATH):
             except Exception as _e:
                 if "duplicate column" not in str(_e).lower():
                     raise
-    # The owner throwing a draft away (schedule audit 10/3/26 L-26): "redo
-    # these days" (kind redo_days, with the owner's optional reason chip and
-    # words) and a whole-week regeneration over a draft that was never sent
-    # (kind draft_discarded). history_id is the draft rejected; the learners
-    # read a redo to link the new draft to the original it replaced, so the
-    # earlier edits are not lost, and the edit predictor counts the rejected
-    # days' rows as changed.
+    # The owner throwing a draft away: "redo these days" (kind redo_days,
+    # with the owner's optional reason chip and words) and a whole-week
+    # regeneration over a draft that was never sent (kind draft_discarded).
+    # history_id is the draft rejected; the learners read a redo to link the
+    # new draft to the original it replaced, so the earlier edits are not
+    # lost, and the edit predictor counts the rejected days' rows as
+    # changed.
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_rejections (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2707,11 +2689,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rejections ON schedule_rejections(restaurant_id, history_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_rejections_created ON schedule_rejections(created_at)")
-    # The owner's one-tap "why" for a big edit in the first weeks (schedule
-    # audit 10/3/26 L-35): asked on the save (answer NULL), answered
-    # always | this_week | call_off. `keys` are the changed rows' keys
-    # (date|employee|start) the answer is about; `subject` the question's
-    # facts (kind, person, role, day, daypart, time, delta).
+    # The owner's one-tap "why" for a big edit in the first weeks: asked on
+    # the save (answer NULL), answered always | this_week | call_off.
+    # `keys` are the changed rows' keys (date|employee|start) the answer is
+    # about; `subject` the question's facts (kind, person, role, day,
+    # daypart, time, delta).
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_edit_answers (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -2742,9 +2724,9 @@ def init_schedule_intel(db_path: str = DB_PATH):
         PRIMARY KEY (restaurant_id, employee_name)
     )""")
     # The newest shift date ever seen for each name (Benchmarking audit
-    # BM4-8, Top-50 #26), so retention — who stopped appearing — can be
-    # measured (intelligence.dna, dimension B10). A boot ALTER for a table
-    # created before the column; NULL until the next upload fills it.
+    # ), so retention — who stopped appearing — can be measured
+    # (intelligence.dna, dimension B10). A boot ALTER for a table created
+    # before the column; NULL until the next upload fills it.
     import sqlite3
     try:
         conn.execute("ALTER TABLE staff_first_seen ADD COLUMN last_seen TEXT")
@@ -2752,11 +2734,11 @@ def init_schedule_intel(db_path: str = DB_PATH):
         if "duplicate column" not in str(e).lower():
             raise
     # What the daily outcomes job last read of each ended week, by step
-    # (scheduler audit 10/10/26, SCALE-15/16): the fingerprint of the
-    # week's inputs then (week_fingerprint), so a week is read when its
-    # numbers are in and again only when they change — it used to be
-    # re-scored on four Mondays in a row. One row per published week and
-    # step, kept with the week (delete_restaurant takes them with it).
+    # The fingerprint of the week's inputs then
+    # (week_fingerprint), so a week is read when its numbers are in and
+    # again only when they change — it used to be re-scored on four
+    # Mondays in a row. One row per published week and step, kept with
+    # the week (delete_restaurant takes them with it).
     conn.execute("""CREATE TABLE IF NOT EXISTS schedule_week_reads (
         history_id     INTEGER NOT NULL REFERENCES schedule_history(id),
         step           TEXT    NOT NULL,
@@ -2777,14 +2759,14 @@ _ISO_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
 
 
 def _normalise_tenure_dates(conn) -> int:
-    """Every first_seen / last_seen as ISO, once, at boot (memory audit
-    9/29/26, tenure_date). A legacy "09/01/2026" sorts before every ISO date,
-    so it won first_seen=MIN(...) forever and passed dna's "180 days of
-    history" string comparison. Only malformed rows are read, so on a clean
-    table this is one indexed-free scan of a small table. A date that cannot
-    be read at all falls back to the other column (or updated_at's date):
-    first_seen is NOT NULL and a guess from the same row beats a sort-order
-    accident. Returns the rows rewritten."""
+    """Every first_seen / last_seen as ISO, once, at boot (tenure_date). A
+    legacy "09/01/2026" sorts before every ISO date, so it won
+    first_seen=MIN(...) forever and passed dna's "180 days of history" string
+    comparison. Only malformed rows are read, so on a clean table this is one
+    indexed-free scan of a small table. A date that cannot be read at all
+    falls back to the other column (or updated_at's date): first_seen is NOT
+    NULL and a guess from the same row beats a sort-order accident. Returns
+    the rows rewritten."""
     from schedule_time import _iso_date
     rows = conn.execute(
         f"SELECT restaurant_id, employee_name, first_seen, last_seen, updated_at FROM staff_first_seen "
@@ -2864,9 +2846,9 @@ def forget_stale_names(restaurant_id, window_rows: list, db_path=DB_PATH) -> int
         return 0
     lo, hi = dates[0], dates[-1]
     # Compared on name_key, and a person's other spelling is folded into the
-    # one the sync used before it goes (memory re-audit 9/29/26, FORGET-17):
-    # an exact-string match dropped "Dana K."'s earliest first_seen the day
-    # the POS started sending "Dana k.", and tenure restarted from the sync.
+    # one the sync used before it goes: an exact-string match dropped "Dana
+    # K."'s earliest first_seen the day the POS started sending "Dana k.",
+    # and tenure restarted from the sync.
     by_key = {}
     for n in names:
         by_key.setdefault(name_key(n), n)

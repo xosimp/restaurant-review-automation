@@ -25,37 +25,37 @@ This is a bounded local search over the moves a manager actually makes:
 
 Candidates come first from what the week breaks of the restaurant's
 scheduling memory (the score's learned-patterns measure, shift_quality.
-week_learned over signals["learned"] — L-3, D-35), then from the weak
-dimensions' own facts, costliest first (demand-weighted, capped shifts
-before everything), and — once those have nothing left — from the what-if's
-swaps and replacements, so a better arrangement the comparison would report
-is taken here instead (schedule audit 10/3/26 P-33, SQ-19).
+week_learned over signals["learned"]), then from the weak dimensions' own
+facts, costliest first (demand-weighted, capped shifts before everything),
+and — once those have nothing left — from the what-if's swaps and
+replacements, so a better arrangement the comparison would report is taken
+here instead.
 
 Every candidate is judged by what it does to the WEEK the owner gets:
 
   legal       the person-level rules for whoever gains a shift
-              (Constraints.can_add — overtime line included — and fillable,
-              P-2), then the whole week swept (incrementally, P-37) and
-              compared by breach identity with the week as it stands after
-              the moves already taken (schedule_rules.regressions up to the
-              budget tier: nothing about a person, the manager every minute,
-              the floors, the closer, overtime or minimum hours may get new
-              or worse — P-14, E-1); never a new hour of overtime for anybody
-              (the owner's rule: a same-role teammate takes it or nobody
-              does; somebody who habitually runs past their shift has the
-              line less that headroom — L-16); never a close the memory says
-              runs late ended before it really ends; never a row the manager
-              plan or the owner pinned; the hourly hours budget a ceiling
-              (salaried hours are not spent from it, P-6); the section count.
+              (Constraints.can_add — overtime line included — and fillable),
+              then the whole week swept (incrementally) and compared by
+              breach identity with the week as it stands after the moves
+              already taken (schedule_rules.regressions up to the budget
+              tier: nothing about a person, the manager every minute, the
+              floors, the closer, overtime or minimum hours may get new or
+              worse); never a new hour of overtime for anybody (the owner's
+              rule: a same-role teammate takes it or nobody does; somebody
+              who habitually runs past their shift has the line less that
+              headroom); never a close the memory says runs late ended before
+              it really ends; never a row the manager plan or the owner
+              pinned; the hourly hours budget a ceiling (salaried hours are
+              not spent from it); the section count.
   scored      by the same shift_quality.score_rows the owner's number comes
               from, with the rows that will not stand and the hard breaches
-              of THAT trial (P-28), less what the move costs in labor
-              dollars (schedule_economics.priced_cost: each person's own
-              rate, the role's, overtime at its premium, salaried people
-              free — P-32) — so a $25/h add no longer costs the same as a
-              $14/h one — and what it keeps of the rows the manager is
-              expected to change (signals["likely_edits"], L-15). What a
-              move breaks of the scheduling memory is in the score itself.
+              of THAT trial, less what the move costs in labor dollars
+              (schedule_economics.priced_cost: each person's own rate, the
+              role's, overtime at its premium, salaried people free) — so a
+              $25/h add no longer costs the same as a $14/h one — and what
+              it keeps of the rows the manager is expected to change
+              (signals["likely_edits"]). What a move breaks of the
+              scheduling memory is in the score itself.
 
 The best improvement is taken and recorded with a sentence saying what
 changed and what it bought. The search stops at the target, when nothing
@@ -94,33 +94,32 @@ BUDGET_TOLERANCE = 1.02
 MAX_EXTEND_MINUTES = 150
 STEP = 30
 # A move that takes hours out of a slot where cutting staffing was taken and
-# measured WORSE here (inputs["learned_worse"], rec_learning.
-# worsened_levers — memory audit 9/29/26, "what_worked") pays up to this
-# much of its gain, graded by the evidence's strength there (rec_learning.
-# learned_cut_penalty: the Wilson lower bound of the worsened share above
-# the restaurant's own base rate, scoped to the daypart and role the cuts
-# named) — the trim's one meaning of the same memory (sched audit 10/10/26
-# LOGIC-15): a small score gain no longer repeats a cut that went badly, a
-# large one (a breach fixed) still goes through and says what it overrode.
+# measured WORSE here (inputs["learned_worse"],
+# rec_learning.worsened_levers, "what_worked") pays up to this much of its
+# gain, graded by the evidence's strength there
+# (rec_learning.learned_cut_penalty: the Wilson lower bound of the worsened
+# share above the restaurant's own base rate, scoped to the daypart and role
+# the cuts named) — the trim's one meaning of the same memory: a small score
+# gain no longer repeats a cut that went badly, a large one (a breach fixed)
+# still goes through and says what it overrode.
 LEARNED_WORSE_STEP = 0.5          # kept for readers of the old per-result rate
 LEARNED_WORSE_MAX = 1.5
-# What labor dollars are worth against the score (schedule audit 10/3/26
-# P-32): week points per 1% of the week's labor dollars a move adds over the
-# draft. An 8h add at $25/h on a $15,000 week is 1.3% — 0.67 points — and
-# the same add at $14/h 0.37: of two adds that buy the same, the cheaper
-# wins, and an add has to buy more than its cost. Since the blind re-audit
-# of 10/11/26 (LOGIC-23) dollars a move SAVES are credited at the same rate
-# (they "earned nothing", so no pass ever tightened a week under its budget
-# but over-staffed against its curve); and the dollars are the one
-# objective's (schedule_objective — LOGIC-6), the same exchange rate CP-SAT's
-# quality tier uses. One number: schedule_objective.POINTS_PER_PCT_OF_LABOR.
+# What labor dollars are worth against the score: week points per 1% of the
+# week's labor dollars a move adds over the draft. An 8h add at $25/h on a
+# $15,000 week is 1.3% — 0.67 points — and the same add at $14/h 0.37: of two
+# adds that buy the same, the cheaper wins, and an add has to buy more than
+# its cost. Since dollars a move SAVES are credited at the same rate (they
+# "earned nothing", so no pass ever tightened a week under its budget but
+# over-staffed against its curve); and the dollars are the one objective's
+# (schedule_objective), the same exchange rate CP-SAT's quality tier uses.
+# One number: schedule_objective.POINTS_PER_PCT_OF_LABOR.
 LABOR_POINTS_PER_PCT = _obj.POINTS_PER_PCT_OF_LABOR
 # A row the edit predictor says the manager will change (schedule_learning.
 # likely_edit_signals, when the engine passes signals["likely_edits"]):
 # points of its shift per unit of its weight for keeping it as it is.
 LIKELY_EDIT_SHIFT_POINTS = 10.0
 # The what-if's swaps and replacements tried in a round once the weak
-# dimensions have no improving move left (P-33).
+# dimensions have no improving move left.
 WHAT_IF_CANDIDATES = 40
 
 NOTE_TAG = "Cavnar AI:"
@@ -140,19 +139,19 @@ def _fmt(minutes: int) -> str:
 
 def _span(row):
     """(start, end) minutes of a row on its business date's timeline
-    (schedule_time.span — the one placement, ARCH-12): a 12:30am-4:00am
-    porter is 1470-1680 of the night it works, as the rules read it, never
-    30-240 at the start of its date (the "nobody at close" move ranked such
-    a porter as ending at dawn and proposed retimes _judge then refused).
-    (None, None) when unreadable."""
+    (schedule_time.span — the one placement): a 12:30am-4:00am porter is
+    1470-1680 of the night it works, as the rules read it, never 30-240 at
+    the start of its date (the "nobody at close" move ranked such a porter
+    as ending at dawn and proposed retimes _judge then refused). (None,
+    None) when unreadable."""
     sp = _stime.span(row)
     return sp if sp is not None else (None, None)
 
 
 def _hours_text(row, constraints=None) -> str:
-    """A row's scheduled_hours from its real span in the restaurant's zone
-    (BUGSGEN-6): a retime or an added shift across the night the clocks
-    change is an hour more or less than the wall clock."""
+    """A row's scheduled_hours from its real span in the restaurant's
+    zone: a retime or an added shift across the night the clocks change is
+    an hour more or less than the wall clock."""
     return _stime.row_hours_text(row, getattr(constraints, "tz", None) if constraints is not None else None)
 
 
@@ -179,11 +178,11 @@ def objective(quality: dict) -> float:
     num = sum(s["score"] * sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     den = sum(sq.DEMAND_WEIGHT.get(s["profile"]["demand"], 1.0) for s in scored)
     mean = num / (den or 1.0)
-    # The week's hard-rule hold, as week_score_raw applies it (SQ-2).
+    # The week's hard-rule hold, as week_score_raw applies it.
     return mean * sq.WEEK_HARD_BREACH_CEILING / float(sq.SCORE_MAX) if sq.week_held(scored) else mean
 
 
-# ── labor dollars (P-32) ────────────────────────────────────────────────────
+# ── labor dollars ────────────────────────────────────────────────────
 
 def pricing_inputs(signals: dict, inputs: dict = None, constraints=None):
     """What a week is priced with — the overtime forecast's own inputs the
@@ -226,13 +225,13 @@ def labor_dollars(rows: list, pricing: dict) -> float:
     return float(out.get("total") or 0.0)
 
 
-# ── what the restaurant's scheduling memory holds (L-3, D-35) ──────────────
+# ── what the restaurant's scheduling memory holds ──────────────
 
 def ot_headroom(signals: dict, constraints=None) -> dict:
     """{person key: hours} — somebody the scheduling memory says habitually
-    runs past their shift (schedule_memory's ot_risk, L-16): their overtime
-    line is the line less these hours for every check that no move or
-    answer puts anybody newly past it."""
+    runs past their shift (schedule_memory's ot_risk): their overtime line
+    is the line less these hours for every check that no move or answer
+    puts anybody newly past it."""
     key = constraints.key if (constraints is not None and hasattr(constraints, "key")) else _low
     out = {}
     for m in (signals or {}).get("learned") or []:
@@ -263,7 +262,7 @@ def memory_misses(quality: dict) -> list:
 
 
 def _overrun_signals(signals: dict) -> list:
-    """The scheduling memory's closes that run late (end_overrun, L-16):
+    """The scheduling memory's closes that run late (end_overrun):
     schedule_memory.pad_overruns ended them when they really end before the
     search; no move may shorten one back below it."""
     return [m for m in (signals or {}).get("learned") or []
@@ -283,19 +282,18 @@ def week_value(quality: dict, rows: list, pricing=None, base_dollars: float = 0.
                objective_ctx=None, base_objective: float = None) -> float:
     """What a week is worth to the owner, in week points: its Shift Quality
     (objective — what it breaks of the scheduling memory is in it, the
-    learned-patterns measure, L-3), less LABOR_POINTS_PER_PCT for each 1% of
-    the draft's labor dollars (`base_dollars`) the week costs MORE — and,
-    since the blind re-audit of 10/11/26 (LOGIC-23), plus the same for each
-    1% it costs less: a saving is credited at the rate an add is charged, so
-    an over-staffed week under its budget is tightened where the score does
-    not fall (the coverage floors and the rules hold by the moves' own
-    legality). With `objective_ctx` (schedule_objective — LOGIC-6, ARCH-2)
-    the dollars are the ONE objective's (price_week: labor, overtime, the
-    value of every half hour short, the budget, stability, shape, fairness)
-    against `base_objective`, the draft's — the figure the solver drafted
-    to; else the labor dollars. Less what it keeps of the rows the manager
-    is expected to change (likely_cost, L-15). The one value the repair
-    loop and the solver's judge both choose by."""
+    learned-patterns measure), less LABOR_POINTS_PER_PCT for each 1% of the
+    draft's labor dollars (`base_dollars`) the week costs MORE — and, since,
+    plus the same for each 1% it costs less: a saving is credited at the
+    rate an add is charged, so an over-staffed week under its budget is
+    tightened where the score does not fall (the coverage floors and the
+    rules hold by the moves' own legality). With `objective_ctx`
+    (schedule_objective) the dollars are the ONE objective's (price_week:
+    labor, overtime, the value of every half hour short, the budget,
+    stability, shape, fairness) against `base_objective`, the draft's — the
+    figure the solver drafted to; else the labor dollars. Less what it keeps
+    of the rows the manager is expected to change (likely_cost). The one
+    value the repair loop and the solver's judge both choose by."""
     v = objective(quality)
     if base_dollars > 0:
         per_dollar = _obj.points_per_dollar(base_dollars)
@@ -326,7 +324,7 @@ def _demand_shares(rows: list, quality: dict = None):
 
 def likely_cost(rows: list, likely: list = None, quality: dict = None) -> float:
     """Week points `rows` give up for each row kept that the edit predictor
-    expects the manager to change (signals["likely_edits"], L-15):
+    expects the manager to change (signals["likely_edits"]):
     LIKELY_EDIT_SHIFT_POINTS of its shift per unit of its weight, the shift
     weighed into the week by its demand (the week score is the demand-
     weighted mean of its shifts)."""
@@ -353,7 +351,7 @@ def likely_cost(rows: list, likely: list = None, quality: dict = None) -> float:
 
 # What a shift holding a hard breach costs ahead of any dimension: a broken
 # hard rule outranks every quality dimension (the tiers), so its moves are
-# tried first (schedule re-audit 10/4/26 SQ-3).
+# tried first.
 HARD_RULE_PROBLEM_COST = 200.0
 
 
@@ -361,8 +359,8 @@ def _problems(quality: dict) -> list:
     """(cost, shift, dimension) for every dimension under 100, costliest
     first. A capping dimension carries the whole shift's shortfall. A shift
     held by a hard breach the sweep found is a problem of its own, ahead of
-    everything (SQ-3): it has no dimension, so no move used to name it and
-    the search walked past a manager gap."""
+    everything: it has no dimension, so no move used to name it and the
+    search walked past a manager gap."""
     out = []
     for s in (quality or {}).get("shifts") or []:
         if not s.get("scored"):
@@ -414,11 +412,11 @@ def _week_problems(quality: dict) -> list:
 def _learned_problems(quality: dict) -> list:
     """(cost, shift, pseudo-dimension) for each shift a broken memory of the
     restaurant's scheduling sits on (memory_misses), so the moves that put
-    it right are tried before anything else (L-3): the shift of each row it
-    names; else each shift on its weekday and daypart (somebody the managers
-    keep putting on it, one of the people they put on the role's slot);
-    else each shift the person works (overtime headroom) or, for a team,
-    each shift of the dates it is split on."""
+    it right are tried before anything else: the shift of each row it names;
+    else each shift on its weekday and daypart (somebody the managers keep
+    putting on it, one of the people they put on the role's slot); else each
+    shift the person works (overtime headroom) or, for a team, each shift of
+    the dates it is split on."""
     misses = memory_misses(quality)
     if not misses:
         return []
@@ -429,7 +427,7 @@ def _learned_problems(quality: dict) -> list:
         targets = []
         # A miss the score keeps private (the owner's keep-apart — no names
         # in the shared review, shift_quality.week_learned) names only its
-        # shifts; the move reads the memory itself (_moves_for, LEARN-1).
+        # shifts; the move reads the memory itself (_moves_for).
         for r in list(x.get("rows") or []) + [{"date": d, "daypart": p} for d, p in x.get("slots") or []]:
             s = at.get((r.get("date"), r.get("daypart")))
             if s is not None and s not in targets:
@@ -478,8 +476,8 @@ class _State:
         self.scores = signals.get("scores") or {}
         self.families = dict(signals.get("role_families") or
                              (getattr(constraints, "role_families", None) or {} if constraints is not None else {}))
-        # A person's score for one role over the overall one (F2, D-12):
-        # {name key: {family: score}}.
+        # A person's score for one role over the overall one (F2): {name
+        # key: {family: score}}.
         self.role_scores = {sq.name_key(n): {str(f).strip().lower(): v for f, v in (fams or {}).items()
                                              if v is not None}
                             for n, fams in (signals.get("role_scores") or {}).items()}
@@ -523,7 +521,7 @@ class _State:
         self.roster_roles = {_low(n): self.family(r) for n, r in roster_roles.items() if r}
         self.pinned = {i for i, r in enumerate(rows) if r.get("_pinned")}
         # The rule sweep's violations of these rows (optimize sets them each
-        # round): the hard-rule moves read a breach's own facts (SQ-3).
+        # round): the hard-rule moves read a breach's own facts.
         self.viols = []
         self._without = {}
         self.pricing = pricing_inputs(signals, inputs, constraints)
@@ -640,8 +638,8 @@ class _State:
         the person-level rules for them (Constraints.can_add — their week
         swept with it, the overtime line included — and fillable: code never
         picks somebody dormant or on a day their own note covers), every
-        daypart window and role they hold (P-2). Without Constraints, the
-        swap index's own checks."""
+        daypart window and role they hold. Without Constraints, the swap
+        index's own checks."""
         low = _low(name)
         if not low or row.get("date") in self.pending.get(low, ()):
             return False
@@ -707,7 +705,7 @@ class _State:
 def _new_row(date, name, role, start, end, why, constraints=None):
     # A string, like every row the engine writes: the iOS ScheduleRow
     # decodes scheduled_hours as String and a bare number failed the whole
-    # response. From the real span (BUGSGEN-6).
+    # response. From the real span.
     row = {"date": date, "day": _day(date), "employee": name, "role": role,
            "shift_start": start, "shift_end": end, "notes": f"{NOTE_TAG} {why}"}
     row["scheduled_hours"] = _hours_text(row, constraints)
@@ -754,8 +752,8 @@ def _moves_for(problem, state: _State) -> list:
                     return
                 start, end = _fmt(ts), _fmt(te)
         people = state.people_for(role) or sorted(state.pool.get(role.strip().lower(), ()))
-        # Of people who buy the same, the one who costs less is tried first
-        # (P-32): a move this good is taken without trying the rest.
+        # Of people who buy the same, the one who costs less is tried
+        # first: a move this good is taken without trying the rest.
         pool = sorted(people, key=lambda n: (-(prefer(n) if prefer else 0), state.rate(n, role),
                                              state.index.total_hours(n.lower()), n))
         for name in pool:
@@ -771,10 +769,10 @@ def _moves_for(problem, state: _State) -> list:
     def replace_in(idx, predicate, why, limit=4, rank=None):
         """Somebody else takes rows[idx]: anybody who works the role (its
         family, a role they hold, cross-trained), legal for them and chosen by
-        `predicate`, the fewest hours first (or by `rank`). A rated person
-        may take an unrated person's shift and the other way round: the
-        score judges unrated people as unknown, not as nothing, so it decides
-        (SQ-19 — the guard was for a score that counted them 0)."""
+        `predicate`, the fewest hours first (or by `rank`). A rated person may
+        take an unrated person's shift and the other way round: the score
+        judges unrated people as unknown, not as nothing, so it decides (the
+        guard was for a score that counted them 0)."""
         if idx in state.pinned:
             return
         row = state.rows[idx]
@@ -900,8 +898,8 @@ def _moves_for(problem, state: _State) -> list:
         # prompt's own rule): a shortfall is answered by a stronger person
         # in the place of a weaker one, never by another body. The add move
         # here let the search buy strength with hours up to the budget
-        # ceiling (schedule audit 10/3/26 SQ-5); the scorer now judges the
-        # role's average, so a body only ever helped by being stronger.
+        # ceiling; the scorer now judges the role's average, so a body only
+        # ever helped by being stronger.
         for sf in facts.get("shortfalls") or []:
             roles = sf.get("roles") or [sf.get("role") or ""]
             idxs = sorted({i for role in roles for i in state.role_rows(date, role, part)},
@@ -915,9 +913,9 @@ def _moves_for(problem, state: _State) -> list:
 
     elif key == "demand_match":
         # The team's average under what this restaurant's own rated people
-        # field on a shift this busy (SQ-12): somebody stronger in for the
-        # weakest rated person of the role, or traded in from a quieter date
-        # (schedule audit 10/3/26 SQ-19 — the dimension had no move at all).
+        # field on a shift this busy: somebody stronger in for the weakest
+        # rated person of the role, or traded in from a quieter date (the
+        # dimension had no move at all).
         for fam, info in sorted((facts.get("by_role") or {}).items(),
                                 key=lambda kv: (kv[1] or {}).get("average", 0) - (kv[1] or {}).get("wanted", 0)):
             info = info or {}
@@ -987,11 +985,10 @@ def _moves_for(problem, state: _State) -> list:
                         continue
                     replace_in(i, lambda n, nm=name: n == nm, why, limit=1)
                     _swap_moves(state, i, moves, why, want=lambda n, nm=name: n == nm)
-        # A pairing from one of the owner's owner-only rules (schedule audit
-        # 10/3/26 D-38) counts in the score and is never named — not in the
-        # dimension's facts, and not here: the change list and the row
-        # notes are read by the team, so its moves say only that the shift
-        # is better arranged.
+        # A pairing from one of the owner's owner-only rules counts in the
+        # score and is never named — not in the dimension's facts, and not
+        # here: the change list and the row notes are read by the team, so
+        # its moves say only that the shift is better arranged.
         pairs = state.signals.get("pairs") or {}
         private = pairs.get("private") or set()
         if private:
@@ -1015,9 +1012,9 @@ def _moves_for(problem, state: _State) -> list:
                             _swap_moves(state, i, moves, why, want=lambda n, nm=name: n == nm)
 
     elif key == "preferences":
-        # Staff preferences, week-level (SQ-24, L-19): a strained person's
-        # shift on a daypart they asked not to work, or a slot they keep
-        # dropping, goes to somebody else or is traded for one they prefer.
+        # Staff preferences, week-level: a strained person's shift on a
+        # daypart they asked not to work, or a slot they keep dropping,
+        # goes to somebody else or is traded for one they prefer.
         prefs = state.signals.get("preferences") or {}
         learned = state.signals.get("learned_preferences") or {}
         for name in sorted(set(facts.get("strained") or []) & set(shift.get("people") or [])):
@@ -1051,10 +1048,10 @@ def _moves_for(problem, state: _State) -> list:
                 _swap_moves(state, i, moves, why, want=lambda n: state.flexible(n))
 
     elif key == "overtime":
-        # Overtime a teammate with room could take (SQ-25; the owner's rule:
-        # a draft never runs overtime while a same-role teammate has room):
-        # one of the person's shifts in that payroll week goes to the teammate
-        # the measure names first, else to anybody in the role with room.
+        # Overtime a teammate with room could take (the owner's rule: a draft
+        # never runs overtime while a same-role teammate has room): one of the
+        # person's shifts in that payroll week goes to the teammate the
+        # measure names first, else to anybody in the role with room.
         c = state.constraints
         for o in facts.get("people") or []:
             name = o.get("name")
@@ -1091,7 +1088,7 @@ def _moves_for(problem, state: _State) -> list:
     elif key == "min_hours":
         # Somebody under the minimum the owner set takes a shift of their role
         # from a teammate (the giver is held to their own minimum by the
-        # sweep): the week measure had no move (P-4's score side).
+        # sweep): the week measure had no move (the score side).
         for o in facts.get("short") or []:
             name = o.get("name")
             if not name or name in (shift.get("people") or []):
@@ -1105,13 +1102,13 @@ def _moves_for(problem, state: _State) -> list:
 
     elif key == "learned":
         # What the restaurant's scheduling memory holds and this shift breaks
-        # (L-3, D-35; the kinds as schedule_memory.misses reads them). The
-        # words on the row and in the list say only that this is how the
-        # managers schedule the shift: staff read the notes.
+        # (the kinds as schedule_memory.misses reads them). The words on the
+        # row and in the list say only that this is how the managers schedule
+        # the shift: staff read the notes.
         x = facts.get("miss") or {}
         if (x.get("value") or {}).get("private"):
             # The owner's keep-apart, read back from the memory by its key
-            # (the score's copy names nobody — LEARN-1, LEARN-6).
+            # (the score's copy names nobody).
             m = next((m for m in (state.signals or {}).get("learned") or []
                       if isinstance(m, dict) and m.get("key") == x.get("key")), None)
             x = dict(x, person=m.get("person"), value=dict(m.get("value") or {})) if m else {}
@@ -1165,9 +1162,9 @@ def _moves_for(problem, state: _State) -> list:
                     for j in edge[:3]:
                         moves.append(_trade_move(state, i, j, why))
         elif kind == "pair" and v.get("kind") == "avoid":
-            # Two the owner keeps apart on this shift (LEARN-1): all but one
-            # of them trades with somebody of their role on the other half
-            # of the day, or gives the shift to somebody outside the pair.
+            # Two the owner keeps apart on this shift: all but one of them
+            # trades with somebody of their role on the other half of the
+            # day, or gives the shift to somebody outside the pair.
             team = {who} | {state.key(n) for n in (v.get("with") or [])}
             here = [i for i, r in enumerate(state.rows) if r.get("date") == date
                     and state.key(r.get("employee")) in team and sq.present_dayparts(r)[0] == part]
@@ -1275,8 +1272,8 @@ def _moves_for(problem, state: _State) -> list:
         if ratio > 1.02:
             # The longest discretionary shifts that day, trimmed by an hour,
             # or the last-added person on the most-staffed role removed. A
-            # salaried person's hours are not the day's hours (D-3): cutting
-            # them moves nothing here.
+            # salaried person's hours are not the day's hours: cutting them
+            # moves nothing here.
             idxs = sorted([i for i, r in enumerate(state.rows) if r.get("date") == date
                            and i not in state.pinned and not _salaried(state, r)],
                           key=lambda i: -sq._row_hours(state.rows[i]))
@@ -1292,7 +1289,7 @@ def _moves_for(problem, state: _State) -> list:
         # More hours on this daypart than its usual sales carry at the
         # target: an hour off its longest shifts, or its longest shift off,
         # each only where a floor and the coverage still allow the cut. Not a
-        # salaried person's: their hours are not the daypart's (D-3).
+        # salaried person's: their hours are not the daypart's.
         if (facts.get("ratio") or 1) < 1 - sq.SPLH_TOLERANCE:
             idxs = sorted([i for i, r in enumerate(state.rows) if r.get("date") == date
                            and sq.present_dayparts(r)[0] == part and i not in state.pinned
@@ -1316,7 +1313,7 @@ def _moves_for(problem, state: _State) -> list:
 
 
 # The day-level kinds the generation's own repair passes put right; each is
-# offered as one move on the breach's date (SQ-3).
+# offered as one move on the breach's date.
 _MANAGER_KINDS = frozenset({"no_manager", "no_manager_on_duty"})
 _CLOSE_KINDS = frozenset({"keyholder_until_close"})
 _FLOOR_KINDS = frozenset({"coverage_floor", "owner_rule"})
@@ -1349,8 +1346,8 @@ def _sig_rows(rows) -> list:
 
 
 def _hard_rule_moves(state, shift, where, moves, add_person):
-    """Moves aimed at the hard breaches holding `shift` (SQ-3), from the
-    sweep's own violations of the rows: a manager gap is closed by the
+    """Moves aimed at the hard breaches holding `shift`, from the sweep's
+    own violations of the rows: a manager gap is closed by the
     generation's manager pass (a manager runs on, or one is added over the
     stretch); a closer missing by the closer pass; a floor or the owner's
     staffing rule short by one more of the role; nobody at close by the
@@ -1398,17 +1395,17 @@ def _hard_rule_moves(state, shift, where, moves, add_person):
 
 
 def _surplus_moves(state, objective_ctx, limit=None) -> list:
-    """Cuts of hours the week carries above the one objective's need (blind
-    re-audit 10/11/26 LOGIC-23: no pass ever reduced labor where quality is
-    unaffected — a week under its budget but over-staffed against its curve
-    was never tightened): a shift every half hour of which is above the need
-    for its role on its date, removed; else the run of surplus half hours at
-    its end (or start), cut back to no shorter than the shortest shift. Only
-    where the objective HAS a need for the role that date (no need on file
-    is not "nobody needed"); never a salaried person's hours, a pinned row,
-    somebody's only shift or under their minimum (_can_cut). Each is then
-    judged like any move: legal, and kept only where its value — the score
-    with the saved dollars credited (week_value) — rises."""
+    """Cuts of hours the week carries above the one objective's need (no
+    pass ever reduced labor where quality is unaffected — a week under its
+    budget but over-staffed against its curve was never tightened): a shift
+    every half hour of which is above the need for its role on its date,
+    removed; else the run of surplus half hours at its end (or start), cut
+    back to no shorter than the shortest shift. Only where the objective HAS
+    a need for the role that date (no need on file is not "nobody needed");
+    never a salaried person's hours, a pinned row, somebody's only shift or
+    under their minimum (_can_cut). Each is then judged like any move:
+    legal, and kept only where its value — the score with the saved dollars
+    credited (week_value) — rises."""
     if objective_ctx is None:
         return []
     import schedule_rules as _rules
@@ -1509,8 +1506,8 @@ def _retime_move(state, i, new_s, new_e, why):
     start, end = _fmt(new_s), _fmt(new_e)
     # The person's own rules for the new times (window, minor's end, rest,
     # the overtime line when the shift grows) — and the owner's start/end
-    # rule for the role is the last word on times (L-33): a stretch off it is
-    # not offered.
+    # rule for the role is the last word on times: a stretch off it is not
+    # offered.
     c = getattr(state, "constraints", None)
     if c is not None:
         new = dict(row, shift_start=start, shift_end=end)
@@ -1584,7 +1581,7 @@ def _trade_move(state, i, j, why):
 def _swap_moves(state, i, moves, why, want=None, limit=3):
     """Trade row i's person with someone in the same role family on another
     date. `want(name)` limits who may come in (a leader, somebody stronger).
-    Rated and unrated people may trade: the score decides (SQ-19)."""
+    Rated and unrated people may trade: the score decides."""
     if i in state.pinned:
         return
     row = state.rows[i]
@@ -1622,12 +1619,11 @@ def _swap_moves(state, i, moves, why, want=None, limit=3):
 
 def _what_if_moves(state: _State, quality: dict, limit: int = WHAT_IF_CANDIDATES) -> list:
     """The what-if's own candidates (shift_quality.compare_candidates), for
-    the search to take rather than the panel to report (schedule audit
-    10/3/26 P-33): same-role swaps across dates and replacements by
-    somebody in the role who is off that date. Ranked the comparison's way
-    — the widest rating gap first, a stronger person toward the busier
-    shift — with unrated people, who are unknown rather than weak, after
-    the rated."""
+    the search to take rather than the panel to report: same-role swaps
+    across dates and replacements by somebody in the role who is off that
+    date. Ranked the comparison's way — the widest rating gap first, a
+    stronger person toward the busier shift — with unrated people, who are
+    unknown rather than weak, after the rated."""
     demand = {}
     for s in (quality or {}).get("shifts") or []:
         if s.get("scored"):
@@ -1723,9 +1719,9 @@ def learned_worse_days(inputs) -> dict:
 def learned_penalty(worse, before_rows, after_rows):
     """(penalty, note) for a move that takes hours out of a slot whose cuts
     measured worse here, graded by the evidence there (rec_learning.
-    learned_cut_penalty — the trim's own meaning, LOGIC-15): LEARNED_WORSE_MAX
-    times the strongest slot it cuts into, by weekday, daypart and role;
-    (0.0, None) when it cuts nothing the evidence weighs. Pure."""
+    learned_cut_penalty — the trim's own meaning): LEARNED_WORSE_MAX times the
+    strongest slot it cuts into, by weekday, daypart and role; (0.0, None)
+    when it cuts nothing the evidence weighs. Pure."""
     if not worse:
         return 0.0, None
     import rec_learning as _rl
@@ -1775,8 +1771,8 @@ def overtime_created(before_rows, after_rows, c, headroom: dict = None) -> list:
     draft never runs overtime while a same-role teammate has room, and no
     quality move is worth an hour of it. `headroom` ({person key: hours},
     ot_headroom) moves the line in for somebody who habitually runs past
-    their shift (L-16): scheduled to the line, they work overtime. []
-    without Constraints."""
+    their shift: scheduled to the line, they work overtime. [] without
+    Constraints."""
     if c is None:
         return []
     import schedule_rules as _rules
@@ -1808,10 +1804,9 @@ def overtime_created(before_rows, after_rows, c, headroom: dict = None) -> list:
     return out
 
 
-# The moves that change WHO works a shift (schedule audit 10/10/26
-# LOGIC-27): the experiment's "model assignment" arm turns them off with the
-# solver, so its weeks are the model's assignment, not partly the
-# optimizer's.
+# The moves that change WHO works a shift: the experiment's "model
+# assignment" arm turns them off with the solver, so its weeks are the
+# model's assignment, not partly the optimizer's.
 REASSIGN_KINDS = ("replace", "swap", "trade")
 
 
@@ -1822,10 +1817,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
              objective_ctx=None) -> dict:
     """Improve the week's Shift Quality with legal moves, and say what moved.
 
-    `objective_ctx` (schedule_objective.ObjectiveContext — blind re-audit
-    10/11/26 LOGIC-6, ARCH-2, LOGIC-23): every move is valued by week_value
-    against the ONE objective's dollars — what the solver drafted to — the
-    dollars a move saves credited as its adds are charged.
+    `objective_ctx` (schedule_objective.ObjectiveContext): every move is
+    valued by week_value against the ONE objective's dollars — what the
+    solver drafted to — the dollars a move saves credited as its adds are
+    charged.
 
     Returns {rows, changes: [{kind, reason, gain, score_after, dollars}],
     before_score, after_score, quality, evaluations, seconds, stopped,
@@ -1834,8 +1829,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     configured to score, comes back unchanged with the reason. `what_if`
     False keeps to the weak dimensions' own moves. `reassign` False leaves
     out every move that changes who works a shift (REASSIGN_KINDS: replace,
-    swap, trade — LOGIC-27); adds, stretches, retimes, trims and a hard
-    rule's own repair still run.
+    swap, trade); adds, stretches, retimes, trims and a hard rule's own
+    repair still run.
     """
     t0 = _time.monotonic()
     inputs = inputs or {}
@@ -1848,14 +1843,14 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     pricing = pricing_inputs(signals, inputs, c)
     likely = [f for f in (signals.get("likely_edits") or []) if isinstance(f, dict)]
     families = signals.get("role_families") or (getattr(c, "role_families", None) if c is not None else None)
-    # The scheduling memory's overtime headroom and late closes (L-16).
+    # The scheduling memory's overtime headroom and late closes.
     headroom = ot_headroom(signals, c)
     overruns = _overrun_signals(signals)
 
     def sweep_of(rs):
         """(violations, breach profile, the scorer's signals) for `rs`: the
-        rows that will not stand and the hard breaches are THESE rows'
-        (P-28), never the set read before the search began."""
+        rows that will not stand and the hard breaches are THESE rows',
+        never the set read before the search began."""
         if sweep is None:
             return None, None, signals
         try:
@@ -1888,9 +1883,9 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
 
     def value(q, rs):
         """The week's worth: its score (the scheduling memory's measure in
-        it, L-3) less the one objective's dollars it adds over the draft —
-        plus those it saves (LOGIC-6, LOGIC-23; P-32) — and the rows it
-        keeps that the manager is expected to change (L-15)."""
+        it) less the one objective's dollars it adds over the draft — plus
+        those it saves — and the rows it keeps that the manager is
+        expected to change."""
         return week_value(q, rs, pricing, base_dollars, likely, objective_ctx=objective_ctx,
                           base_objective=base_objective)
 
@@ -1925,14 +1920,14 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
 
     def _week_hours(rs):
         # The budget is HOURLY hours: a salaried person's are not spent from
-        # it (schedule audit 10/3/26 P-6) — counting them refused every add
-        # once the managers were on the floor every minute.
+        # it — counting them refused every add once the managers were on the
+        # floor every minute.
         return _rules.hourly_hours(rs, c) if c is not None else _rules.hourly_hours(rs, salaried=salaried or ())
 
     # One server per section (restaurants.section_count): the backstop that
     # enforces it runs before this search, so no move may undo it. The roles
     # it counts are front of house by family, as the sweep counts them
-    # ("Server AM" and "Server PM" are servers, D-13).
+    # ("Server AM" and "Server PM" are servers).
     try:
         cap = int(max_server_overlap if max_server_overlap is not None else (inputs.get("section_count") or 0))
     except (TypeError, ValueError):
@@ -1963,14 +1958,14 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         """(sweep, profile, signals) of a trial that may stand, else None:
         nothing about a person, the manager every minute, the floors and the
         closer, overtime or minimum hours new or worse than the week as it
-        stands after the moves already taken (P-14, E-1); no repaired soft
-        breach back; nobody newly past their overtime line (for somebody
-        who habitually runs past their shift, the line less that headroom —
-        L-16); no close the memory says runs late ended earlier than it
-        really ends; nobody code may not choose newly on a date (P-2).
+        stands after the moves already taken; no repaired soft breach back;
+        nobody newly past their overtime line (for somebody who habitually
+        runs past their shift, the line less that headroom); no close the
+        memory says runs late ended earlier than it really ends; nobody code
+        may not choose newly on a date.
 
         `rule`: the move is one of the generation's own repair passes run
-        for a hard breach (SQ-3). It is held as the generation holds it — no
+        for a hard breach. It is held as the generation holds it — no
         person, manager or coverage breach new or worse — and the overtime
         and lower tiers it may spend are the pass's own call (the manager
         pass takes overtime only when nobody who manages can cover the
@@ -2000,10 +1995,10 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
     evaluations, tabu = 1, set()
     stopped = "no improving move"
     while True:
-        # Never "target reached" with a hard rule broken (SQ-3): the week's
-        # hold (shift_quality.week_held) already keeps the score under any
-        # sane target; a target set at or below the hold still may not stop
-        # the search before the breach's own moves are tried.
+        # Never "target reached" with a hard rule broken: the week's hold
+        # (shift_quality.week_held) already keeps the score under any sane
+        # target; a target set at or below the hold still may not stop the
+        # search before the breach's own moves are tried.
         at_target = (current.get("score") or 0) >= target and not memory_misses(current) \
             and not current.get("held_by")
         if at_target and objective_ctx is None:
@@ -2016,15 +2011,15 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
         state.viols = viols or []
         accepted = False
         # At the score's target only the hours above the objective's need are
-        # still looked at (LOGIC-23): a week scored 100 can still carry two
-        # servers nobody needs.
+        # still looked at: a week scored 100 can still carry two servers
+        # nobody needs.
         for phase in (("surplus",) if at_target else ("weak", "surplus", "what_if")):
             if phase == "what_if" and not what_if:
                 break
             candidates, seen = [], set()
             if phase == "surplus":
-                # The hours above the objective's need (LOGIC-23), with the
-                # saved dollars credited by week_value.
+                # The hours above the objective's need, with the saved
+                # dollars credited by week_value.
                 candidates = [mv for mv in _surplus_moves(state, objective_ctx, limit=MOVES_PER_ROUND)
                               if mv[0] not in tabu]
             elif phase == "weak":
@@ -2054,7 +2049,7 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                     continue
                 # The hours budget is the budget tier: a move that puts a hard
                 # rule right (a manager on the floor, a floor met) outranks it
-                # and is not held to it (SQ-3; schedule_rules tiers).
+                # and is not held to it (schedule_rules tiers).
                 if ceiling is not None and sig_m[0] != "rule" and \
                         _week_hours(trial_rows) > max(ceiling, _week_hours(current_rows)) + 0.01:
                     tabu.add(sig_m)
@@ -2095,8 +2090,8 @@ def optimize(rows: list, inputs: dict = None, signals: dict = None, weights: dic
                 out["changes"].append({"kind": sig_m[0], "reason": desc, "gain": round(gain, 1),
                                        "score_after": trial.get("score"), "dollars": dollars})
                 current_rows, current = trial_rows, trial
-                # The baseline every later move is held to is the week as it
-                # now stands (P-14): a breach this move fixed may not come back.
+                # The baseline every later move is held to is the week as it now
+                # stands: a breach this move fixed may not come back.
                 viols, prof = t_viols, t_prof
                 soft_before = _soft_repaired(viols) if viols is not None else soft_before
                 overrun_before = _overrun_weight(current_rows, overruns, families)
@@ -2176,7 +2171,7 @@ def summary(result: dict, signals: dict = None) -> dict:
                    else "No legal change improved the draft.")
     elif before is not None and after is not None and after < before:
         # Only a change where the managers usually change the draft (the edit
-        # predictor, L-15) is ever worth points of the score.
+        # predictor) is ever worth points of the score.
         verdict = (f"Cavnar AI made {len(changes)} change{'s' if len(changes) != 1 else ''} to the draft where "
                    f"your managers usually change it; Shift Quality moved from {before} to {after}. "
                    "Each is listed with why.")
@@ -2190,7 +2185,7 @@ def summary(result: dict, signals: dict = None) -> dict:
                          "dollars": c.get("dollars")} for c in changes],
             "evaluations": result.get("evaluations"), "seconds": result.get("seconds"),
             "stopped": result.get("stopped"), "verdict": verdict,
-            # What the changes moved in labor dollars, overtime at its premium
-            # (schedule audit 10/3/26 P-32); None with no rate on file.
+            # What the changes moved in labor dollars, overtime at its
+            # premium; None with no rate on file.
             "dollars_before": (labor or {}).get("before"), "dollars_after": (labor or {}).get("after"),
             "unresolved": unresolved(result, signals)}

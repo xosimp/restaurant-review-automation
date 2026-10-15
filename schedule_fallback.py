@@ -1,7 +1,6 @@
 """
 schedule_fallback.py — a week drafted without the model, and the switch that
-says where a draft comes from (scheduler audit 10/10/26: AI-11, AI-26, AI-1,
-AI-8; cross-workstream contract #7).
+says where a draft comes from (cross-workstream contract #7).
 
 The model was a hard dependency: an outage, an AI budget pause, the run's
 cap or a refusal left the owner with no schedule ("No shifts could be
@@ -12,19 +11,17 @@ labelled so; the same drafts are arms of the generation pipeline.
 
 THE SOURCES (draft_source; DRAFT_SOURCES):
 
-  solver          THE DEFAULT (blind re-audit 10/11/26 ARCH-1, AI-1, ARCH-27,
-                  LOGIC-7, ARCH-18): code shapes the week — schedule_shapes
-                  (Stage 1: which shifts) and schedule_cpsat (Stage 2: who
-                  works them, the managers chosen inside the same solve from
-                  the manager plan's candidates, ARCH-23) — then the repair
-                  loop. No model writes or names a shift. The model reads the
-                  owner's words into typed rules (owner_rules), writes Cavnar
-                  AI's note, and — the draft_v1 arm code_critic — may
-                  critique the week, each edit validated by code. Where
-                  OR-Tools is missing or finds nothing, the v0 code draft
-                  (SHIFT REQUIREMENTS laid onto the usual shifts,
-                  shift_templates, people by schedule_engine.
-                  assign_shape_slots) runs instead.
+  solver          THE DEFAULT: code shapes the week — schedule_shapes (Stage 1:
+                  which shifts) and schedule_cpsat (Stage 2: who works them,
+                  the managers chosen inside the same solve from the manager
+                  plan's candidates) — then the repair loop. No model writes
+                  or names a shift. The model reads the owner's words into
+                  typed rules (owner_rules), writes Cavnar AI's note, and —
+                  the draft_v1 arm code_critic — may critique the week, each
+                  edit validated by code. Where OR-Tools is missing or finds
+                  nothing, the v0 code draft (SHIFT REQUIREMENTS laid onto
+                  the usual shifts, shift_templates, people by
+                  schedule_engine. assign_shape_slots) runs instead.
   model           an arm, no longer the default: the model writes the week
                   (labor.generate_optimized_schedule) and the repair loop and
                   CP-SAT correct it
@@ -40,24 +37,24 @@ THE SOURCES (draft_source; DRAFT_SOURCES):
   week's arm of the "draft_v1" experiment (schedule_experiments — a
   restaurant's pin there is its own override; its control is the solver);
   else DEFAULT_SOURCE. A code source (CODE_SOURCES) makes no drafting model
-  call on ANY pass — the week, the quality gate's passes, an owner's redo
-  (BUGSGEN-9): the engine drafts every asked date in code, and the job never
-  sends the gate's rewrite or a redo to the model.
+  call on ANY pass — the week, the quality gate's passes, an owner's redo:
+  the engine drafts every asked date in code, and the job never sends the
+  gate's rewrite or a redo to the model.
 
   The switch was gated on scripts/schedule_benchmark.py (14 archetype
   restaurants, contract #7): the solver arm holds every invariant the
   carry_forward arm holds (MODULE_OVERVIEW.md has the table).
 
 THE FALLBACK (fallback_whys): on the model source, a trading day the model
-could not write — the provider down, the AI budget paused, the run's cap,
-a refusal, the job's time, a call cut short, a day left empty — is drafted
-in code (code_order): by the solver first, which solves against the week's
-SHIFT REQUIREMENTS and every rule, and by carry_forward first only where the
-week has no requirements to solve against (BUGSGEN-21: the same seeded week
-was 15 hard breaches carried forward, 1 solved); never left empty. The review
-says which days were "built without the AI model" and why. A redo's
-unwritten day keeps the owner's rows (the caller puts them back), as before.
-Data that is not current is never papered over: those days stay unwritten.
+could not write — the provider down, the AI budget paused, the run's cap, a
+refusal, the job's time, a call cut short, a day left empty — is drafted in
+code (code_order): by the solver first, which solves against the week's SHIFT
+REQUIREMENTS and every rule, and by carry_forward first only where the week
+has no requirements to solve against (the same seeded week was 15 hard
+breaches carried forward, 1 solved); never left empty. The review says which
+days were "built without the AI model" and why. A redo's unwritten day keeps
+the owner's rows (the caller puts them back), as before. Data that is not
+current is never papered over: those days stay unwritten.
 
 Pure but for the reads of the published week; never raises into a
 generation — a fallback that cannot be built leaves the days as they were.
@@ -72,10 +69,10 @@ from schedule_context import degraded as _degraded  # noqa: E402  (the one degra
 
 DRAFT_SOURCES = ("model", "carry_forward", "solver")
 DRAFT_SOURCE_ENV = "SCHEDULE_DRAFT_SOURCE"
-# Where a week's draft comes from when neither the env nor an arm says
-# (ARCH-1). The model is an arm: draft_v1's model_draft, or the env.
+# Where a week's draft comes from when neither the env nor an arm
+# says. The model is an arm: draft_v1's model_draft, or the env.
 DEFAULT_SOURCE = "solver"
-# The sources that never call the drafting model, on any pass (BUGSGEN-9).
+# The sources that never call the drafting model, on any pass.
 CODE_SOURCES = frozenset({"solver", "carry_forward"})
 EXPERIMENT = "draft_v1"
 # The unwritten reasons (schedule_engine._UNWRITTEN_WHY) a code draft fills.
@@ -107,7 +104,7 @@ _WHY_WORDS = {
 def draft_source(restaurant_id=None, arms=None) -> str:
     """Where this week's draft comes from: SCHEDULE_DRAFT_SOURCE when it
     names a source, else the draft_v1 arm's flag, else DEFAULT_SOURCE (the
-    solver — ARCH-1)."""
+    solver)."""
     env = str(os.getenv(DRAFT_SOURCE_ENV, "") or "").strip().lower()
     if env in DRAFT_SOURCES:
         return env
@@ -119,13 +116,13 @@ def draft_source(restaurant_id=None, arms=None) -> str:
 
 
 def code_order(chosen, has_requirements=True) -> tuple:
-    """The code sources a day is drafted from, in the order they are tried
-    (BUGSGEN-21): the chosen code source first; for the model source's
-    fallback the solver first — it solves against the week's SHIFT
-    REQUIREMENTS and every rule, where a carried week brings last week's
-    breaches and gaps with it — and carry_forward first only when the week
-    has no requirements to solve against. The other is the last resort, so
-    a day is never left empty while either can draft it."""
+    """The code sources a day is drafted from, in the order they are
+    tried: the chosen code source first; for the model source's fallback
+    the solver first — it solves against the week's SHIFT REQUIREMENTS and
+    every rule, where a carried week brings last week's breaches and gaps
+    with it — and carry_forward first only when the week has no
+    requirements to solve against. The other is the last resort, so a day
+    is never left empty while either can draft it."""
     if chosen == "carry_forward" or (chosen == "model" and not has_requirements):
         return ("carry_forward", "solver")
     return ("solver", "carry_forward")
@@ -221,9 +218,9 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             # managers. Only rows with the plan's note used to go, so last
             # week's hand-written or punched manager shifts sat beside the
             # plan's: two closing managers, 51.5h and 11.5h of manager
-            # overtime when the model was down (sched re-audit 10/11/26
-            # BUGSGEN-8). Constraints.manages is the manager role, the
-            # floor-manager certificate, and an acting manager's dates.
+            # overtime when the model was down. Constraints.manages is the
+            # manager role, the floor-manager certificate, and an acting
+            # manager's dates.
             if d in plan_dates and constraints is not None and constraints.manages(name, d):
                 continue
             key = constraints.key(name) if constraints is not None else name.lower()
@@ -238,7 +235,7 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             if not row["shift_start"] or not row["shift_end"]:
                 continue
             if constraints is not None:
-                # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+                # at the restaurant's own lunch/dinner boundary
                 ok, reason = constraints.can_work_row(name, row)
                 why = None if ok else reason
                 if why is None:
@@ -258,12 +255,12 @@ def _legal_clash(constraints, row, carried) -> str:
     """The label of a LEGAL breach `row` would add to its person's week —
     the rows carried so far plus everything fixed elsewhere that the sweep
     reads (Constraints.base_rows: the published tail, and the organisation's
-    other locations' published shifts on these dates, E-26) — else "". A
-    shared person North already has on Friday dinner is never carried onto
-    South's Friday dinner: the repair loop cannot move another location's
-    shift, so the double booking reached the saved week as a hard overlap
-    (schedule benchmark, multi_location_org, 10/11/26). Only the legal tier:
-    the restaurant's own limits are the repair loop's to weigh."""
+    other locations' published shifts on these dates) — else "". A shared
+    person North already has on Friday dinner is never carried onto South's
+    Friday dinner: the repair loop cannot move another location's shift, so
+    the double booking reached the saved week as a hard overlap (schedule
+    benchmark, multi_location_org, 10/11/26). Only the legal tier: the
+    restaurant's own limits are the repair loop's to weigh."""
     import schedule_rules as _rules
     try:
         group = constraints.sweep_key(row.get("employee"))
@@ -335,9 +332,9 @@ def note_line(source, why, dates, base=None, redo=False, basis=None) -> str:
                 "the week your team last worked (" + mdy(base.get("week_start")) + "–" + mdy(base.get("week_end")) + ")")
         how = f"{what} carried forward and checked against every rule"
     else:
-        # Only what was measured is claimed (blind re-audit 10/11/26
-        # STRESS-15, STRESS-20): "your usual crew" was said of a week that
-        # kept 56% of people's usual days, and of a restaurant with none.
+        # Only what was measured is claimed: "your usual crew" was said of
+        # a week that kept 56% of people's usual days, and of a restaurant
+        # with none.
         b = basis or {}
         weeks = int(b.get("history_weeks") or 0)
         pct = (b.get("usual_days") or {}).get("pct")

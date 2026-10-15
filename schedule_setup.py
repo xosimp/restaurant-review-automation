@@ -1,15 +1,15 @@
 """
 schedule_setup.py — the owner's scheduling setup, said back to them
-(schedule audit 10/3/26 F1).
+(F1).
 
 The rules a draft is built and checked to read who runs the floor, who
 closes for which role, which job codes are one role, who is training, the
 days the managers always work, the leader rules and the floors a role never
 goes below. Each of those is the owner's to set, and each was guessed or
-silently off: manager status from a role-name pattern (P-7, E-14), closers
-role-agnostic with 47 of 64 people marked (D-9), AM/PM job codes read as
-separate roles (D-13), leader rules dormant until somebody was rated (D-10)
-and never checked when saved (D-11), no floors set at all (D-42).
+silently off: manager status from a role-name pattern, closers
+role-agnostic with 47 of 64 people marked, AM/PM job codes read as separate
+roles, leader rules dormant until somebody was rated and never checked when
+saved, no floors set at all.
 
 This module is what the owner sees of that setup: the "Managers: …" line to
 confirm, the closer list with its data-quality warning and a suggestion
@@ -30,14 +30,14 @@ log = logging.getLogger(__name__)
 from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 # More of the roster than this marked to close reads as a list nobody
-# reviewed: a closer is the one person chosen to close for their role (D-9).
+# reviewed: a closer is the one person chosen to close for their role.
 CLOSER_SHARE_WARN = 0.30
 # The punches a closer suggestion reads, and how often somebody must have
 # been the last of their role out in them to be suggested as one.
 CLOSER_WINDOW_WEEKS = 8
 CLOSER_KEEP_MIN = 2
 CLOSER_ADD_MIN = 4
-# Floors suggested from history (D-42): the 25th percentile of each role's
+# Floors suggested from history: the 25th percentile of each role's
 # headcount per daypart over the last weeks; a weekday gets its own only
 # with enough dates of its own.
 FLOOR_WEEKS = 8
@@ -93,9 +93,9 @@ def roster_bases(restaurant_id, people) -> dict:
     without building a week's rules."""
     import people as _people_mod
     import staff_settings as _ss
-    # Through people's identity, as build_constraints files them (schedule
-    # audit 10/3/26 D-8): a role held or worked under an alias or an old POS
-    # spelling is the roster person's.
+    # Through people's identity, as build_constraints files them: a role
+    # held or worked under an alias or an old POS spelling is the roster
+    # person's.
     try:
         key_of = (_people_mod.identity_index(restaurant_id, [e["name"] for e in people or []]) or {}).get("key_of") or {}
     except Exception:
@@ -135,7 +135,7 @@ def roster_bases(restaurant_id, people) -> dict:
     return out
 
 
-# ── who runs the floor (P-7, E-14, E-15, E-13, D-5) ────────────────────────
+# ── who runs the floor ────────────────────────
 
 def manager_status(restaurant_id, week_dates=None, c=None) -> dict:
     """{managers, not_counted, acting, line, ask_standing} — who counts as
@@ -172,7 +172,7 @@ def manager_status(restaurant_id, week_dates=None, c=None) -> dict:
             "ask_standing": ask, "missing_standing": no_days, "week_dates": list(c.week_dates)}
 
 
-# ── closers, per role (D-9, L-9) ──────────────────────────────────────────
+# ── closers, per role ──────────────────────────────────────────
 
 def closer_review(restaurant_id, c=None, weeks=CLOSER_WINDOW_WEEKS, today=None) -> dict:
     """The closers as the rules read them, the share of the roster marked
@@ -257,7 +257,7 @@ def _closer_suggestions(restaurant_id, c, weeks, today=None) -> list:
     return sorted(out, key=lambda s: (order[s["action"]], -s["closes"], s["name"].lower()))
 
 
-# ── role families (D-13) ──────────────────────────────────────────────────
+# ── role families ──────────────────────────────────────────────────
 
 def suggest_role_families(restaurant_id, c=None) -> dict:
     """Every job code in use here — the roster's, the POS job list's
@@ -296,7 +296,7 @@ def clean_role_families(raw) -> dict:
     return out
 
 
-# ── floors from history (D-42) ────────────────────────────────────────────
+# ── floors from history ────────────────────────────────────────────
 
 def _percentile(values, pct=FLOOR_PERCENTILE) -> int:
     vals = sorted(values)
@@ -307,19 +307,18 @@ def _percentile(values, pct=FLOOR_PERCENTILE) -> int:
 
 def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) -> dict:
     """{"floors": {role: {"morning", "night", "days"}}} — a "never below"
-    per role family and daypart, pre-filled from history in the unit a
-    floor is held in: people ON AT ONCE through the core of the shift. For
-    each date the restaurant traded that half of the day, the fewest of the
-    role (any of its job codes — a Server AM on at dinner is a server at
-    dinner) on at any half hour of the core window (shift_quality.
-    concurrent_groups — the coverage_floor rule's own test, floor_shortfall;
-    a day the role was missing counts as 0); the 25th percentile of those
-    over the last `weeks` weeks, and a weekday's own figure where it
-    differs. So on three of every four traded days the restaurant's own
-    crew already met the floor at every half hour. It used to take the
-    percentile of the different people who were on for some part of the
-    shift — staggered starts made that a floor the restaurant's own typical
-    night broke (schedule audit 10/10/26 LOGIC-8).
+    per role family and daypart, pre-filled from history in the unit a floor
+    is held in: people ON AT ONCE through the core of the shift. For each
+    date the restaurant traded that half of the day, the fewest of the role
+    (any of its job codes — a Server AM on at dinner is a server at dinner)
+    on at any half hour of the core window (shift_quality. concurrent_groups
+    — the coverage_floor rule's own test, floor_shortfall; a day the role
+    was missing counts as 0); the 25th percentile of those over the last
+    `weeks` weeks, and a weekday's own figure where it differs. So on three
+    of every four traded days the restaurant's own crew already met the
+    floor at every half hour. It used to take the percentile of the
+    different people who were on for some part of the shift — staggered
+    starts made that a floor the restaurant's own typical night broke.
 
     Training codes and manager roles (the manager rule covers them) are
     left out. A floor saved on a role is held on the job code that works
@@ -383,7 +382,7 @@ def suggest_role_floors(restaurant_id, weeks=FLOOR_WEEKS, c=None, today=None) ->
                      "Check each before you save it — a floor is a minimum the schedule is never built below.")}
 
 
-# ── leader rules: checked as they are saved (D-11), loaded always (D-10) ───
+# ── leader rules: checked as they are saved, loaded always ───
 
 def _score_of(scores, name):
     low = " ".join(str(name or "").split()).casefold()
@@ -460,10 +459,10 @@ def leader_rule_warnings(restaurant_id, rules, c=None, scores=None, flags=None) 
     as it stands cannot meet on every shift it covers: "only 1 Bartender AM
     scores 5 or above, so this rule can't be met on 6 of its 7 shifts".
     People are in a rule's role by family (a Bartender PM covers a Bartender
-    AM rule's lunch — D-13), by what they hold or have worked; a shift
-    counts as meetable when enough of them can work that weekday and half
-    of the day, and the week as a whole cannot ask more shifts of them than
-    their days in a row allow."""
+    AM rule's lunch), by what they hold or have worked; a shift counts as
+    meetable when enough of them can work that weekday and half of the day,
+    and the week as a whole cannot ask more shifts of them than their days
+    in a row allow."""
     from models import get_operational_scores, get_leader_flags, get_restaurant, leader_rule_daypart
     c = _constraints(restaurant_id, c=c)
     scores = get_operational_scores(restaurant_id) if scores is None else scores
@@ -525,9 +524,9 @@ def leader_rule_warnings(restaurant_id, rules, c=None, scores=None, flags=None) 
 
 
 def leader_rules_status(restaurant_id, roster_names=None, rules=None) -> dict:
-    """Whether the leader rules can be judged, said on the generate screen
-    (D-10): every rule is loaded whether or not anyone is rated, but a rule
-    in scores judges nobody until someone is rated — and ratings entered
+    """Whether the leader rules can be judged, said on the generate screen:
+    every rule is loaded whether or not anyone is rated, but a rule in
+    scores judges nobody until someone is rated — and ratings entered
     through support count only once the owner takes them as theirs
     (models.adopt_admin_ratings, which takes closer flags too)."""
     from models import (get_shift_leader_rules, get_capabilities, admin_leader_flags, get_leader_flags)
@@ -563,7 +562,7 @@ def leader_rules_status(restaurant_id, roster_names=None, rules=None) -> dict:
             "active": bool(rated) or not score_rules, "can_adopt": bool(admin or admin_closers), "lines": lines}
 
 
-# ── the owner's staffing rules, read back (D-14) ──────────────────────────
+# ── the owner's staffing rules, read back ──────────────────────────
 
 def owner_rule_preview(restaurant_id, text, c=None) -> dict:
     """{"checked", "reads_as", "text"} — how a staffing rule the owner just
@@ -580,15 +579,15 @@ def owner_rule_preview(restaurant_id, text, c=None) -> dict:
     rule = _sr.parse_owner_rule(text, roles, c.role_families)
     if rule is not None and rule.get("unclear"):
         # Read back as a rule Cavnar AI couldn't read, and why — never a
-        # guess held as a floor (schedule re-audit 10/4/26 RULES-8).
+        # guess held as a floor.
         return {"checked": False, "reads_as": None, "unclear": rule["unclear"],
                 "text": f"Cavnar AI couldn't read this rule — {rule['unclear']}. Until then a draft is asked to "
                         "follow it and the review reminds you to check the week against it."}
     if rule is None:
         # A rule about two people ("keep Ana and Ben apart") is held too —
-        # apply_owner_rules reads it into the pairings (D-38) — and was said
-        # back as one Cavnar AI can't check (schedule fix round 10/3/26, UI
-        # W2). A pairing on some days only stays unchecked, as it is there.
+        # apply_owner_rules reads it into the pairings — and was said back
+        # as one Cavnar AI can't check (UI W2). A pairing on some days only
+        # stays unchecked, as it is there.
         pair = _sr.parse_pair_rule(text, list(c.roster_names or []), aliases=getattr(c, "aliases", None),
                                    display=getattr(c, "display", None))
         if pair is not None and not pair.get("days"):
@@ -611,11 +610,11 @@ def staffing_rule_checks(restaurant_id, facts, c=None) -> dict:
     memory's rows) that is an account holder's staffing rule — a constraint
     or preference about labor or the schedule — read against one set of
     rules. Account → memory says beside each one how the schedule checks it,
-    or that it doesn't (schedule audit 10/3/26 D-14, D-38): an owner-only
-    rule the schedule can't read had no surface at all
-    (Constraints.owner_rules_unchecked_private). The caller passes only the
-    facts its viewer may read, as stored (owner_memory.facts_for: the
-    authority that makes a fact a rule, its modules as written)."""
+    or that it doesn't: an owner-only rule the schedule can't read had no
+    surface at all (Constraints.owner_rules_unchecked_private). The caller
+    passes only the facts its viewer may read, as stored
+    (owner_memory.facts_for: the authority that makes a fact a rule, its
+    modules as written)."""
     import owner_memory
 
     def _mods(f):
@@ -632,8 +631,8 @@ def staffing_rule_checks(restaurant_id, facts, c=None) -> dict:
 def salaried_caps(c) -> list:
     """[{name, cap, own}] — each salaried person on the roster and the most
     hours code schedules them for in a week (Constraints.salaried_limit):
-    their own maximum (`own`), else the restaurant's salaried cap (schedule
-    audit 10/3/26 E-12, E-17). The rules screen lists them under the cap."""
+    their own maximum (`own`), else the restaurant's salaried cap. The
+    rules screen lists them under the cap."""
     out = []
     for name in c.roster_names or []:
         if not c.is_salaried(name):
@@ -645,15 +644,15 @@ def salaried_caps(c) -> list:
 
 def strength_crews_view(restaurant_id, thresholds=None, c=None) -> dict:
     """{role: {"target", "crew", "per_person", "source", "known"}} — for each
-    of the owner's strength targets (Team → Shift strength targets), the
-    full crew it is judged against and what that asks of each person: the
-    most of the role any shift the target governs needs, read as the scorer
-    reads it (shift_quality.strength_crews over the same profiles, usual
-    crew, floors, section cap and role families — schedule audit 10/3/26
-    SQ-3/4/5), and the target ÷ that crew on the 1–5 scale. The editor says
-    "8 across your largest bartender crew of 2 — about 4 a person". `known`
-    False: nothing on file says how many of the role work, so the crew is the
-    fewest people who could reach the target. {} with no targets."""
+    of the owner's strength targets (Team → Shift strength targets), the full
+    crew it is judged against and what that asks of each person: the most of
+    the role any shift the target governs needs, read as the scorer reads it
+    (shift_quality.strength_crews over the same profiles, usual crew, floors,
+    section cap and role families/4/5), and the target ÷ that crew on the 1–5
+    scale. The editor says "8 across your largest bartender crew of 2 — about
+    4 a person". `known` False: nothing on file says how many of the role
+    work, so the crew is the fewest people who could reach the target. {}
+    with no targets."""
     import shift_quality as _sq
     from models import (get_role_strength_thresholds, get_shift_profiles, get_shift_leader_rules,
                         get_quality_tuning, get_restaurant)
@@ -702,8 +701,8 @@ def strength_crews_view(restaurant_id, thresholds=None, c=None) -> dict:
 # ── what a generation's review says about the setup ───────────────────────
 
 def close_times_missing(c) -> list:
-    """Weekdays the week trades with no close time on file (D-43): nobody
-    at close, the closers and the stays-after-close rule go unchecked on
+    """Weekdays the week trades with no close time on file: nobody at
+    close, the closers and the stays-after-close rule go unchecked on
     them."""
     out = []
     for d in c.week_dates or []:
@@ -729,7 +728,7 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
     items = []
     ms = manager_status(c.restaurant_id, c=c)
     # Nobody counted as a manager is the highest rule unmet on every shift:
-    # said in the review's lines, not only on the managers card (RULES-13).
+    # said in the review's lines, not only on the managers card.
     items.append({"kind": "managers", "text": ms["line"], "line": not ms["managers"], "managers": ms["managers"]})
     if ms["not_counted"]:
         items.append({"kind": "managers_unconfirmed", "line": True,
@@ -772,8 +771,7 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
                               + (f" with {t['trainer']}" if t.get("trainer") else "")
                               + f" — their {t['target_role']} shifts don't count toward headcount."})
     # A begun payroll week's days still to come, never published here: the
-    # hours toward this week's overtime line are each person's usual ones
-    # (sched audit 10/10/26 BUGSGEN-21).
+    # hours toward this week's overtime line are each person's usual ones.
     pt = getattr(c, "projected_tail", None) or {}
     if pt.get("dates"):
         from time_utils import mdy
@@ -784,9 +782,9 @@ def setup_review(c, leader_status=None, omit=()) -> dict:
                               f"each person's usual hours on them ({pt.get('hours'):g}h across {pt.get('people')} "
                               f"{'person' if pt.get('people') == 1 else 'people'}) count toward this week's "
                               "overtime line — publish that week in Cavnar AI for its real hours."})
-    # The full-time line nobody confirmed (sched audit 10/10/26 LOGIC-29):
-    # typed "full" with no minimum of their own, the people it would hold
-    # are aimed at it as wanted hours until the owner makes it the minimum.
+    # The full-time line nobody confirmed: typed "full" with no minimum of
+    # their own, the people it would hold are aimed at it as wanted hours
+    # until the owner makes it the minimum.
     unconf = sorted((c.full_time_unconfirmed or {}).items())
     if unconf:
         line = unconf[0][1]

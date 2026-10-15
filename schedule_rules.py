@@ -32,14 +32,13 @@ DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 DEFAULTS = {
     # Rest between one shift's end and the next start (a "clopen" is under
     # this). No rule unless a jurisdiction that covers the restaurant, or the
-    # owner, sets one (schedule audit 10/10/26 MARKET-3, LOGIC-21): most US
-    # restaurants are under no rest law, and a global 10h hard ban refused
-    # the clopen a willing closer wanted. Where a law allows a shorter rest
-    # with the employee's written consent and a premium (compliance_packs:
-    # Chicago, Seattle, Oregon, ...), rest_mode is "consent_premium": a
-    # consented clopen is a priced soft flag (rest_premium), an unconsented
-    # one a hard breach. "hard" holds it as a ban (the owner's own policy);
-    # "off", or no hours, turns it off.
+    # owner, sets one: most US restaurants are under no rest law, and a
+    # global 10h hard ban refused the clopen a willing closer wanted. Where a
+    # law allows a shorter rest with the employee's written consent and a
+    # premium (compliance_packs: Chicago, Seattle, Oregon,...), rest_mode is
+    # "consent_premium": a consented clopen is a priced soft flag
+    # (rest_premium), an unconsented one a hard breach. "hard" holds it as a
+    # ban (the owner's own policy); "off", or no hours, turns it off.
     "min_rest_hours": None,
     "rest_mode": None,                # "hard" | "consent_premium" | "off"; None reads as "hard" when hours are set
     "rest_premium_multiplier": None,  # the consent path's pay rate (1.25 Chicago, 1.5 Seattle/Oregon)
@@ -47,15 +46,15 @@ DEFAULTS = {
     "rest_premium_scope": None,       # "hours_inside" the window | the whole "shift" | per "instance"
     # Daily double time (hours past this in one workday at 2x) and the
     # seventh consecutive day of a workweek at premium rates — set by a
-    # jurisdiction (California), priced by schedule_economics.priced_cost
-    # (MARKET-5).
+    # jurisdiction (California), priced by
+    # schedule_economics.priced_cost.
     "daily_dt_hours": None,
     "seventh_day_ot": None,
     "max_shift_hours": 12.0,
     # The shortest shift the owner wants (None = no rule): a shift the code
     # adds is never shorter, and a shorter one is a soft flag. Without it an
     # added shift is as long as the stretch it covers — a 1h manager gap no
-    # longer buys a 4h shift (schedule audit 10/3/26 E-16).
+    # longer buys a 4h shift.
     "min_shift_hours": None,
     "daily_ot_hours": None,          # e.g. 8 where daily overtime applies; None = not tracked
     "meal_break_after_hours": None,  # e.g. 5 or 6; None = not tracked
@@ -71,41 +70,39 @@ DEFAULTS = {
     "notice_days": None,             # predictive-scheduling notice: a week published with less is held (notice_shortfall)
     # A keyholder (can close, or holds a manager/keyholder certification) is
     # on until close every trading day — enforced whenever anyone on the
-    # roster is a keyholder (NS5 M8). The owner can switch it off.
+    # roster is a keyholder. The owner can switch it off.
     "keyholder_until_close": True,
-    # Whether owners and managers set their own hours (blind re-audit
-    # 10/11/26 ARCH-22: a per-restaurant setting, never a rule compiled in
-    # for one client). On (the default): the shift-length maximum holds
-    # neither an owner nor a manager, and the hours rules (the weekly
-    # ceiling, days in a row, rest, daily overtime, minimums) hold neither an
-    # owner nor a salaried manager — the people who run the floor choose how
-    # long they stay, and a salaried leader owes no overtime. Off: they are
-    # held to the restaurant's limits like everyone (a group whose managers
-    # are hourly shift leads, a fine-dining room with a strict 10-hour day).
-    # Overlaps, time off, availability, roles and the minor rules hold
-    # everyone either way.
+    # Whether owners and managers set their own hours (a per-restaurant
+    # setting, never a rule compiled in for one client). On (the default):
+    # the shift-length maximum holds neither an owner nor a manager, and the
+    # hours rules (the weekly ceiling, days in a row, rest, daily overtime,
+    # minimums) hold neither an owner nor a salaried manager — the people who
+    # run the floor choose how long they stay, and a salaried leader owes no
+    # overtime. Off: they are held to the restaurant's limits like everyone
+    # (a group whose managers are hourly shift leads, a fine-dining room with
+    # a strict 10-hour day). Overlaps, time off, availability, roles and the
+    # minor rules hold everyone either way.
     "leaders_set_own_hours": True,
     # The owner's two allowances to the manager-every-minute rule, per
-    # restaurant (sched re-audit 10/11/26 LOGIC-12 — they were Simple EJ's
-    # habits hard-coded for everyone): how long the closing manager stays
-    # after the last person leaves, and how far before the open a manager
-    # must be in for the prep before them not to be a gap. 0 turns each off.
-    # Simple EJ's values (60/60) are the defaults, so no restaurant changes.
+    # restaurant (they were Simple EJ's habits hard-coded for everyone): how
+    # long the closing manager stays after the last person leaves, and how
+    # far before the open a manager must be in for the prep before them not
+    # to be a gap. 0 turns each off. Simple EJ's values (60/60) are the
+    # defaults, so no restaurant changes.
     "closing_manager_stays_minutes": 60,
     "opening_manager_lead_minutes": 60,
-    # A second manager on the floor once this many other people are on
-    # (LOGIC-13: the rule was exactly one manager, so a Friday 7pm with ~17
-    # staff ran one). None: the restaurant's own punches decide
+    # A second manager on the floor once this many other people are on (the
+    # rule was exactly one manager, so a Friday 7pm with ~17 staff ran
+    # one). None: the restaurant's own punches decide
     # (learn_second_manager); 0: never.
     "second_manager_from_staff": None,
     # What "full-time" means when the owner set no minimum for the person
-    # (schedule audit 10/3/26 D-41: employment was only a prompt word, so
-    # the field said nothing): at least this many hours a week. 30 is the
-    # usual US full-time line (the ACA's); 0 or blank turns it off. Only a
-    # line the owner CONFIRMED (full_time_min_confirmed) is a minimum the
-    # passes fill and the trim protects; until then it is a preference — an
-    # employment field a POS import typed "full" silently made a 30h promise
-    # (sched audit 10/10/26 LOGIC-29).
+    # (employment was only a prompt word, so the field said nothing): at
+    # least this many hours a week. 30 is the usual US full-time line (the
+    # ACA's); 0 or blank turns it off. Only a line the owner CONFIRMED
+    # (full_time_min_confirmed) is a minimum the passes fill and the trim
+    # protects; until then it is a preference — an employment field a POS
+    # import typed "full" silently made a 30h promise.
     "full_time_min_hours": 30.0,
 }
 _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hours": (1, 12), "daily_ot_hours": (4, 24),
@@ -115,14 +112,14 @@ _BOUNDS = {"min_rest_hours": (0, 24), "max_shift_hours": (4, 24), "min_shift_hou
            "weekly_hours_ceiling": (10, 80), "max_consecutive_days": (2, 14), "notice_days": (0, 30),
            "full_time_min_hours": (0, 60)}
 
-# The shortest shift, when the owner set none (contract #2 of the 10/11/26
-# fix round, sched re-audit BUGSGEN-6): every pass that cuts or adds — the
-# section-cap trim, the budget and overtime trims, the role-time retime, the
-# manager plan and its gap filler, the shapes and the solver — read their own
-# minimum (none, 30 minutes, 2h, 4h) and left 30-minute servers and a 7:00-
-# 7:30am manager stub. Three hours: below it a shift costs more to staff than
-# it covers, and reporting-time-pay states (CA, NY, ...) pay several hours for
-# a short one anyway. The owner's min_shift_hours replaces it.
+# The shortest shift, when the owner set none (contract #2 of the 10/11/26 fix
+# round): every pass that cuts or adds — the section-cap trim, the budget and
+# overtime trims, the role-time retime, the manager plan and its gap filler,
+# the shapes and the solver — read their own minimum (none, 30 minutes, 2h,
+# 4h) and left 30-minute servers and a 7:00- 7:30am manager stub. Three hours:
+# below it a shift costs more to staff than it covers, and reporting-time-pay
+# states (CA, NY,...) pay several hours for a short one anyway. The owner's
+# min_shift_hours replaces it.
 DEFAULT_MIN_SHIFT_MINUTES = 180
 
 
@@ -142,9 +139,10 @@ def min_shift_minutes(restaurant) -> int:
     elif hasattr(restaurant, "compliance") and isinstance(getattr(restaurant, "compliance"), dict):
         comp = restaurant.compliance
     else:
+        import models as _models_c
         try:
             comp = compliance(restaurant) if hasattr(restaurant, "compliance_json") else \
-                compliance(__import__("models").get_restaurant(int(restaurant)))
+                compliance(_models_c.get_restaurant(int(restaurant)))
         except Exception:
             comp = {}
     try:
@@ -164,49 +162,46 @@ HARD = NO_SHOW | frozenset({"over_max_hours", "shift_too_long", "rest_gap", "min
                             "minor_early", "minor_week_hours", "minor_school_hours",
                             "no_manager_on_duty", "coverage_floor", "keyholder_until_close", "nobody_at_close",
                             "no_manager", "role_not_held", "role_window",
-                            # the owner's own words, confirmed (owner_rules — scheduler
-                            # audit 10/10/26 RM-9): a person kept off, on, or closing
+                            # the owner's own words, confirmed (owner_rules): a person
+                            # kept off, on, or closing
                             "owner_word_off", "owner_word_on", "owner_word_close"})
 SOFT = frozenset({"days_off", "pending_time_off", "daily_ot", "meal_break", "under_min_hours", "over_section_cap",
                   # Past the restaurant's weekly ceiling with no maximum of
                   # their own: overtime, a priced policy limit, never a
-                  # refusal the manager rule or coverage must lose to
-                  # (schedule audit 10/10/26 LOGIC-1). A person's own
-                  # maximum is still the hard over_max_hours.
+                  # refusal the manager rule or coverage must lose to. A
+                  # person's own maximum is still the hard over_max_hours.
                   "over_hours_ceiling",
                   "rest_premium",
                   "ends_before_role_close", "manager_rule_unusable", "minor_age_unknown",
                   "owner_rule", "no_manager_roster", "payroll_tail_full", "shift_too_short",
                   "closer_unavailable", "trainee_unpaired", "role_time", "past_close", "over_role_max",
                   # under TURNAROUND_FLAG_HOURS between two shifts where no
-                  # rest rule is set (sched re-audit 10/11/26 STRESS-19)
+                  # rest rule is set
                   "short_turnaround",
                   # fewer than two managers on at the restaurant's
-                  # second-manager line (LOGIC-13)
+                  # second-manager line
                   "second_manager",
                   # the same words read from the notes, not yet confirmed
                   "owner_ask_on", "owner_ask_close",
                   # a reading of the owner's words nobody confirmed, kept as a
-                  # preference only (blind re-audit 10/11/26 AI-8): never a
-                  # cap, a time, a fill exclusion or a blocked day
+                  # preference only: never a cap, a time, a fill exclusion or
+                  # a blocked day
                   "owner_ask_off", "owner_ask_max", "owner_ask_time", "owner_ask_floor",
-                  # a habit the manager taught by hand, broken (re-audit
-                  # 10/11/26 LEARNING-12): listed in the review, never held
+                  # a habit the manager taught by hand, broken: listed in
+                  # the review, never held
                   "habit_broken"})
 # Soft flags about the roster, not the week, that still hold every publish:
 # with nobody counted as a floor manager the highest rule is unmet on every
 # shift and no draft can mend it, so the week waits until the owner names
-# who runs the floor (schedule re-audit 10/4/26 RULES-13 — it published
-# under a soft note).
+# who runs the floor (it published under a soft note).
 ROSTER_BLOCKERS = frozenset({"no_manager_roster"})
 # Soft flags that still stop an UNATTENDED publish (auto-publish and the
 # delayed run of one): a meal break owed, daily or weekly overtime (past the
-# restaurant's ceiling — a cost the passes take only when nobody else can,
-# sched audit 10/10/26 LOGIC-1) and a time-off request nobody answered are
-# things a person decides, not a week to send unread (NS5 M7). A person
-# publishing may still send them.
+# restaurant's ceiling — a cost the passes take only when nobody else can)
+# and a time-off request nobody answered are things a person decides, not a
+# week to send unread. A person publishing may still send them.
 HOLD_UNATTENDED = frozenset({"meal_break", "daily_ot", "pending_time_off", "over_hours_ceiling", "rest_premium"})
-# A consented short rest (rest_premium) owes its premium: a person decides it too (MARKET-3).
+# A consented short rest (rest_premium) owes its premium: a person decides it too.
 
 LABELS = {
     "off_roster": "not on the staff list", "inactive": "no longer on the roster",
@@ -249,15 +244,15 @@ LABELS = {
     "role_time": "starts or ends off a time rule you set for the role",
     "role_window": "outside the hours your hours & shift rules give the role",
     "over_role_max": "more of a role on at once than your hours & shift rules allow",
-    # A row on a date the restaurant is closed (re-audit 10/4/26 PIPE-4):
-    # nobody is really on it, and it was saved and sent unflagged.
+    # A row on a date the restaurant is closed: nobody is really on it,
+    # and it was saved and sent unflagged.
     "closed_day": "scheduled on a day you're closed",
-    # A shift running past close by more than its role may stay (re-audit
-    # 10/4/26 PIPE-10): the cap the job's parser holds every model row to.
+    # A shift running past close by more than its role may stay: the cap
+    # the job's parser holds every model row to.
     "past_close": "runs past the time after close you allow the role",
-    # The owner's words as typed rules (owner_rules, scheduler audit 10/10/26
-    # RM-9): confirmed — the draft's instruction, or a note the owner made a
-    # rule — and read from the notes, not yet confirmed.
+    # The owner's words as typed rules (owner_rules): confirmed — the draft's
+    # instruction, or a note the owner made a rule — and read from the notes,
+    # not yet confirmed.
     "owner_word_off": "on when your own words keep them off",
     "owner_word_on": "not on when your own words put them on",
     "owner_word_close": "not closing or opening when your own words say they do",
@@ -273,10 +268,10 @@ LABELS = {
 
 # A turnaround (one shift's end to the next start, on different dates)
 # shorter than this is a SOFT quality flag where no rest rule covers the
-# restaurant (min_rest_hours unset — the law-free default, MARKET-3): a
-# 9pm-5am close followed by a 6am open passed review silently (sched
-# re-audit 10/11/26 STRESS-19). Not a rule: an owner who sets a rest rule
-# gets the rule instead; managers and owners keep their own turnarounds.
+# restaurant (min_rest_hours unset — the law-free default): a 9pm-5am
+# close followed by a 6am open passed review silently. Not a rule: an
+# owner who sets a rest rule gets the rule instead; managers and owners
+# keep their own turnarounds.
 TURNAROUND_FLAG_HOURS = 8.0
 
 
@@ -304,8 +299,7 @@ FEDERAL_MINOR_RULES = {
         "max_weekly_school_week": 18.0,
         "max_weekly_other_week": 40.0,
         # Not DURING school hours (29 CFR 570.35(a)(1)): on a school day the
-        # school's hours (school_calendar.school_hours) are off limits
-        # (sched re-audit 10/11/26 STRESS-5).
+        # school's hours (school_calendar.school_hours) are off limits.
         "outside_school_hours": True,
         "source": "federal child-labor rules for 14-15 year olds",
     },
@@ -316,8 +310,7 @@ FEDERAL_MINOR_RULES = {
 # federal floor keeping whichever is STRICTER. A test may put an entry
 # here; the real state tables live in compliance_packs (STATE_MINOR_RULES),
 # each value with the official source it was checked against — never from
-# memory (the product must not state a rule it cannot stand behind;
-# schedule audit 10/10/26 MARKET-5).
+# memory (the product must not state a rule it cannot stand behind).
 JURISDICTION_MINOR_RULES = {}
 
 
@@ -436,7 +429,7 @@ def minor_school_window(c, key, date_str):
     """(start, end) minutes school is in session on `date_str` when the
     minor's age band may not work during school hours (the federal 14-15
     rule, or a state table's outside_school_hours) and the date is a school
-    day by the restaurant's school calendar; else None (STRESS-5)."""
+    day by the restaurant's school calendar; else None."""
     br = minor_rules(c.minor_bands.get(key), c.jurisdiction)
     cal = getattr(c, "school_calendar", None)
     if not br.get("outside_school_hours") or not is_school_day(date_str or "", cal):
@@ -451,8 +444,8 @@ def minor_time_breaches(c, key, row, date_str=None) -> list:
     (minor_early), inside school hours on a school day (minor_school_hours).
     The ONE reading the sweep, the exact solver's and the backtracking
     solver's domains and the passes (through can_add) share, so a minor's
-    legality never depends on which of them asked (sched re-audit 10/11/26
-    STRESS-5: no school-hours rule anywhere). [] for anyone not a minor."""
+    legality never depends on which of them asked (no school-hours rule
+    anywhere). [] for anyone not a minor."""
     if key not in c.minors:
         return []
     d = date_str or row.get("date", "")
@@ -497,7 +490,7 @@ def minor_earliest(c, key):
 
 def minor_daily_cap(c, key, date_str):
     """(hours, detail-maker): the most a minor may work on one date, summed
-    over every leg of it (E-6) — the owner's minor rule or the age band's
+    over every leg of it — the owner's minor rule or the age band's
     school-day / other-day cap, whichever is lower. (None, None) when
     neither applies."""
     band = c.minor_bands.get(key)
@@ -542,9 +535,9 @@ def is_school_day(date_str: str, calendar=None) -> bool:
     restaurant's school calendar where one covers the date, else the safe
     default (school_calendar.is_school_day): every weekday except June 1 to
     July 31. It used to be every weekday outside June 1 to Labor Day, so a
-    district starting mid-August had its first weeks of term read as summer
-    (schedule audit 10/10/26 LEARNING-18). The latest END stays date-based
-    (is_summer), as the federal rule has it."""
+    district starting mid-August had its first weeks of term read as
+    summer. The latest END stays date-based (is_summer), as the federal
+    rule has it."""
     import school_calendar as _sc
     return _sc.is_school_day(date_str, calendar)
 
@@ -590,9 +583,9 @@ def first_publishable_week(today, start_day=0, notice_days=None, publish_lag_day
     Every draft used to target next week, which is 1-7 days out: a
     restaurant under a 14-day predictive-scheduling notice had every
     auto-draft held by notice_shortfall, so the automation sold as the cure
-    for Fair Workweek could never work (schedule audit 10/10/26 MARKET-1).
-    `publish_lag_days` is the days between the draft and its earliest
-    publish (1 for the auto-draft, which auto-publishes the next day)."""
+    for Fair Workweek could never work. `publish_lag_days` is the days
+    between the draft and its earliest publish (1 for the auto-draft, which
+    auto-publishes the next day)."""
     t = _as_date(today)
     sd = int(start_day or 0) % 7
     try:
@@ -727,8 +720,8 @@ def _allowance(v, strict=False) -> int:
 def closing_stay_minutes(c) -> int:
     """How long this restaurant's closing manager stays after the last
     person leaves (compliance closing_manager_stays_minutes; DEFAULTS 60,
-    Simple EJ's — LOGIC-12). Read by the check, the manager plan, the shapes
-    and CP-SAT's manager term alike."""
+    Simple EJ's). Read by the check, the manager plan, the shapes and
+    CP-SAT's manager term alike."""
     comp = getattr(c, "compliance", None) if not isinstance(c, dict) else c
     v = (comp or {}).get("closing_manager_stays_minutes")
     return _allowance(DEFAULTS["closing_manager_stays_minutes"] if v in (None, "") else v)
@@ -737,7 +730,7 @@ def closing_stay_minutes(c) -> int:
 def opening_lead_minutes(c) -> int:
     """How far before the open a manager must arrive for the prep before
     them not to be a gap (compliance opening_manager_lead_minutes; DEFAULTS
-    60, Simple EJ's — LOGIC-12)."""
+    60, Simple EJ's)."""
     comp = getattr(c, "compliance", None) if not isinstance(c, dict) else c
     v = (comp or {}).get("opening_manager_lead_minutes")
     return _allowance(DEFAULTS["opening_manager_lead_minutes"] if v in (None, "") else v)
@@ -764,8 +757,7 @@ def compliance_set_by(restaurant) -> dict:
     """{rule key: "owner" | "pack"} — which of compliance()'s values the
     owner set, and which a jurisdiction pack started them at; a key in
     neither is the code's default. The prompt said "the owner's limit on
-    days in a row" for a DEFAULTS value the owner never set (schedule
-    re-audit 10/4/26 PROMPT-10)."""
+    days in a row" for a DEFAULTS value the owner never set."""
     if restaurant is None:
         return {}
     if not hasattr(restaurant, "compliance_json"):
@@ -803,14 +795,13 @@ def _with_pack(out: dict, restaurant, owner_set: dict) -> dict:
 
 def law_backed(c, setting: str) -> bool:
     """Whether the restaurant's value for compliance `setting` (min_rest_hours,
-    max_consecutive_days, ...) is its jurisdiction's law — a value the
+    max_consecutive_days,...) is its jurisdiction's law — a value the
     restaurant's pack lists as law (compliance_packs, `_pack["law"]`), the
-    pack's own or a stricter one the owner typed over it — rather than a
-    policy default. Law is TIER_LEGAL: nothing outranks it. Anything else
-    (the code's 10h rest, six days in a row, the 12h shift, the 40h
-    ceiling) is the restaurant's policy, TIER_POLICY, below a manager on the
-    floor every minute and the coverage rules (schedule audit 10/10/26
-    LOGIC-1). A Constraints built by hand (no pack) has no law."""
+    pack's own or a stricter one the owner typed over it — rather than a policy
+    default. Law is TIER_LEGAL: nothing outranks it. Anything else (the code's
+    10h rest, six days in a row, the 12h shift, the 40h ceiling) is the
+    restaurant's policy, TIER_POLICY, below a manager on the floor every minute
+    and the coverage rules. A Constraints built by hand (no pack) has no law."""
     comp = getattr(c, "compliance", None) or {}
     pack = comp.get("_pack") or {}
     return setting in set(pack.get("law") or ())
@@ -879,8 +870,7 @@ def stored_compliance(restaurant) -> dict:
 def merged_closures(stored: dict, closed_weekdays=None, closed_dates=None) -> dict:
     """The stored compliance JSON with the closures a save names; the rest
     as it was. Raises ValueError for a week closed every day. Pure — the
-    caller writes, once, after every other field passed (schedule re-audit
-    10/4/26 UI-9)."""
+    caller writes, once, after every other field passed."""
     data = dict(stored or {})
     if closed_weekdays is not None:
         wanted = {str(d).strip().capitalize() for d in closed_weekdays or []}
@@ -945,9 +935,9 @@ def merged_compliance(stored: dict, data: dict, reset=()) -> dict:
     A save used to be the whole object: a rule it did not send fell back to
     the default, so a rules sheet that failed to load and was saved blank
     reset the weekly ceiling, the notice days and daily overtime, and a
-    screen older than a setting cleared it (schedule re-audit 10/4/26 UI-2;
-    the one-key `_KEPT_WHEN_NOT_SENT` patch this replaces covered only the
-    shortest shift). Pure — the caller writes."""
+    screen older than a setting cleared it (the one-key
+    `_KEPT_WHEN_NOT_SENT` patch this replaces covered only the shortest
+    shift). Pure — the caller writes."""
     data = data if isinstance(data, dict) else {}
     clean = dict(stored or {})
     for k in reset or ():
@@ -1047,9 +1037,9 @@ def merge_role_map(stored: dict, sent: dict, clean) -> dict:
     `clean` may raise ValueError, which the caller turns into a refusal
     before anything is written.
 
-    Each map used to be the whole value, so a sheet that failed to load
-    sent {} and wiped every floor, arrival lead, certificate requirement and
-    cross-training target (schedule re-audit 10/4/26 UI-2)."""
+    Each map used to be the whole value, so a sheet that failed to load sent
+    {} and wiped every floor, arrival lead, certificate requirement and
+    cross-training target."""
     out = dict(stored) if isinstance(stored, dict) else {}
     for role, value in (sent or {}).items():
         name = str(role).strip()[:60]
@@ -1174,7 +1164,7 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
             from time_utils import restaurant_now
             day = restaurant_now(restaurant, naive=True).date()
         day = day if isinstance(day, _date) else _date.fromisoformat(str(day)[:10])
-        # The restaurant's own week (restaurants.week_start_day, ARCH-24): a
+        # The restaurant's own week (restaurants.week_start_day): a
         # Monday-anchored week straddled two of Simple EJ's Wednesday weeks,
         # so a one-week note rule never held for either.
         wsd = int(getattr(restaurant, "week_start_day", 0) or 0) % 7
@@ -1197,13 +1187,13 @@ def effective_role_floors(restaurant, day=None, db_path=DB_PATH) -> dict:
         import schedule_note_rules
         schedule_note_rules.apply_note_rules(c, restaurant.id, db_path=db_path)
         # A floor named by a role family is held on the job code for each
-        # half of the day, as build_constraints holds it (D-13, D-14).
+        # half of the day, as build_constraints holds it.
         import staff_settings as _ss
         for e in _ss.roster(restaurant.id, db_path=db_path):
             if (e.get("role") or "").strip():
                 c.role_names.setdefault(e["role"].strip().lower(), " ".join(e["role"].split()))
         c.role_families = role_families(restaurant)
-        # The floors the RESTAURANT HOURS & SHIFT RULES state (PROMPT-1).
+        # The floors the RESTAURANT HOURS & SHIFT RULES state.
         c.close_mins = {}
         apply_hours_rules(c, restaurant)
         _floors_on_job_codes(c)
@@ -1271,9 +1261,9 @@ def cut_policy(restaurant, text: str = "") -> dict:
 
 
 # ── time helpers ───────────────────────────────────────────────────────────
-# The one notion of a row's time is schedule_time's (schedule audit 10/10/26
-# ARCH-12, BUGSGEN-8): these names stay because the passes, the routes and
-# the tests import them, and each is that module's rule, never a copy.
+# The one notion of a row's time is schedule_time's: these names stay
+# because the passes, the routes and the tests import them, and each is that
+# module's rule, never a copy.
 
 import schedule_time as _stime  # noqa: E402
 from schedule_time import window_allows  # noqa: E402,F401  (a shift against a time window; re-exported)
@@ -1285,34 +1275,34 @@ _EARLY_PREP_FROM = _stime.NIGHT_TAIL_BEFORE
 def _night_offset(start_m, end_m=None) -> int:
     """1440 when a shift starting at `start_m` is in the small hours of its
     row's night (schedule_time.night_offset): the start alone decides, so an
-    hour's difference in the end can never move a shift a day (BUGSGEN-8 —
-    1:00-5:30am sat on the next day and 1:00-6:30am on the same one). A
-    12:30am-4:00am porter dated Friday works Saturday 00:30, after Friday's
-    close (E-32); a 4:30am baker is the morning's. `end_m` is ignored and
-    kept for the callers that pass it."""
+    hour's difference in the end can never move a shift a day (1:00-5:30am
+    sat on the next day and 1:00-6:30am on the same one). A 12:30am-4:00am
+    porter dated Friday works Saturday 00:30, after Friday's close; a 4:30am
+    baker is the morning's. `end_m` is ignored and kept for the callers that
+    pass it."""
     return _stime.night_offset(start_m)
 
 
 def start_minutes(row):
     """A row's start as minutes past its own (business) date's midnight —
-    past 1440 for a start in the small hours of its night (E-32)."""
+    past 1440 for a start in the small hours of its night."""
     return _stime.start_of(row)
 
 
 def shift_span(row, tz=None) -> tuple:
     """(start_dt, end_dt) of a row (schedule_time.shift_span): wall clock on
     its business date, or with `tz` (the restaurant's IANA zone) the real
-    instants as naive UTC — the rest rule is about hours actually off
-    (SCHED-32). (None, None) when unreadable."""
+    instants as naive UTC — the rest rule is about hours actually off.
+    (None, None) when unreadable."""
     return _stime.shift_span(row, tz)
 
 
 def span_hours(row, tz=None) -> float:
     """A row's length in hours as actually worked (schedule_time.real_hours):
     with the restaurant's zone a 5pm-2am close on the night the clocks go
-    back (Halloween 10/31/26 at Simple EJ's) is 10 hours, not 9 (E-23). 0.0
-    when unreadable. Every pass that writes a row's times writes its hours
-    from this (retimed / schedule_time.retime — BUGSGEN-6)."""
+    back (Halloween 10/31/26 at Simple EJ's) is 10 hours, not 9. 0.0 when
+    unreadable. Every pass that writes a row's times writes its hours from
+    this (retimed / schedule_time.retime)."""
     return _stime.real_hours(row, tz)
 
 
@@ -1322,9 +1312,8 @@ _zone = _stime.zone
 
 def retimed(row, start_m=None, end_m=None, tz=None) -> dict:
     """`row` re-timed to `start_m`/`end_m` (minutes, any day's) with its
-    scheduled_hours written from its real span in the restaurant's zone —
-    the one way a pass writes a row's times (BUGSGEN-6, BUGSGEN-7). In place;
-    returns the row."""
+    scheduled_hours written from its real span in the restaurant's zone — the
+    one way a pass writes a row's times. In place; returns the row."""
     return _stime.retime(row, start_m, end_m, tz)
 
 
@@ -1369,9 +1358,9 @@ def trading_day(day, open_times=None, close_times=None, trading=None) -> bool:
     with shifts on at least half the weeks on file; None — too little on
     file — has no opinion, so every day trades). The ONE rule the generation
     (which days must carry shifts) and the manager plan (which days to plan)
-    both read (BUGSGEN-5: the generation read the history alone, so a
-    weekday that started opening was never required and an empty one was
-    silently closed). Closures are decided before this."""
+    both read (the generation read the history alone, so a weekday that
+    started opening was never required and an empty one was silently
+    closed). Closures are decided before this."""
     if hours_on_file(day, open_times, close_times):
         return True
     return trading is None or day in trading
@@ -1384,8 +1373,7 @@ def _weekday_of(iso) -> str:
 @lru_cache(maxsize=4096)
 def _weekday_name_of(iso: str) -> str:
     """A date's weekday name, remembered per date: every legality check read
-    it with strptime (188k parses building one 250-person model — blind
-    re-audit 10/11/26 SCALE-20)."""
+    it with strptime (188k parses building one 250-person model)."""
     try:
         return datetime.strptime(iso, "%Y-%m-%d").strftime("%A")
     except (TypeError, ValueError):
@@ -1408,18 +1396,18 @@ def daypart_of(shift_start: str) -> str:
     """The daypart a start time alone falls in (schedule_time.start_daypart):
     before the restaurant's daypart boundary (3pm by default) the morning,
     from it the night, and a start in the small hours the night it belongs
-    to (E-32). For a whole row use schedule_time.primary_daypart /
-    present_dayparts — the one lunch/dinner rule (BUGSGEN-25)."""
+    to. For a whole row use schedule_time.primary_daypart / present_dayparts
+    — the one lunch/dinner rule."""
     return _stime.start_daypart(shift_start)
 
 
 # ── the constraint set ─────────────────────────────────────────────────────
 
 # The most hours code schedules a salaried person for in a week when neither
-# they nor the restaurant set a cap (schedule audit 10/3/26 E-17, E-12: the
-# manager gap filler loaded salaried managers to 60-84h because their hours
-# "cost nothing" — six 11-12 hour days). They owe no overtime, so the 40h
-# line is not theirs; this is a person's week, not a pay line.
+# they nor the restaurant set a cap (the manager gap filler loaded salaried
+# managers to 60-84h because their hours "cost nothing" — six 11-12 hour
+# days). They owe no overtime, so the 40h line is not theirs; this is a
+# person's week, not a pay line.
 SALARIED_HOURS_CAP = 55.0
 # The hard weekly maximum for a salaried person nobody set a limit for:
 # seven 12-hour days. Over SALARIED_HOURS_CAP the owner may put them, as
@@ -1427,7 +1415,7 @@ SALARIED_HOURS_CAP = 55.0
 # does on its own (Constraints.salaried_limit, overtime_line).
 SALARIED_HOURS_MAX = 84.0
 # A payroll week with this many of its days still to come after the
-# schedule week keeps a reserve for them (E-10, Constraints.tail_reserve).
+# schedule week keeps a reserve for them (Constraints.tail_reserve).
 TAIL_RESERVE_MIN_DAYS = 2
 
 
@@ -1442,12 +1430,11 @@ class Constraints:
     active: set = field(default_factory=set)               # lowercase
     inactive: set = field(default_factory=set)             # lowercase, deactivated
     blocked_dates: dict = field(default_factory=dict)      # {lower: {date: reason}}
-    # Part of a date a person can't work (schedule audit 10/3/26 D-39):
-    # {lower: {date: [{"from": min|None, "until": min|None, "daypart":
-    # "morning"|"night"|None, "reason"}]}} — approved time off "until 4pm"
-    # or for dinner, and a held note's lunch or dinner on dates that only
-    # part of the week is inside. can_work reads the daypart ones,
-    # window_ok the timed ones.
+    # Part of a date a person can't work: {lower: {date: [{"from":
+    # min|None, "until": min|None, "daypart": "morning"|"night"|None,
+    # "reason"}]}} — approved time off "until 4pm" or for dinner, and a
+    # held note's lunch or dinner on dates that only part of the week is
+    # inside. can_work reads the daypart ones, window_ok the timed ones.
     blocked_parts: dict = field(default_factory=dict)
     pending_off: dict = field(default_factory=dict)        # {lower: set(dates)}
     unavailable_days: dict = field(default_factory=dict)   # {lower: set(day)}
@@ -1460,15 +1447,15 @@ class Constraints:
     minor_bands: dict = field(default_factory=dict)        # {lower: "14-15"|"16-17"} (MINOR_BANDS)
     jurisdiction: str = ""                                 # the restaurant's STATE code, for JURISDICTION_MINOR_RULES
     # The district calendar the minors' school-day limits read
-    # (school_calendar; LEARNING-18) — {"years": []} is the safe default.
+    # (school_calendar) — {"years": []} is the safe default.
     school_calendar: dict = field(default_factory=dict)
-    # Written, time-stamped consent to a shorter rest (staff_consent, MARKET-3):
-    # {lower: {"standing": bool, "dates": set(iso dates of the later shift)}}.
-    # Read only when the rest rule is consent_premium.
+    # Written, time-stamped consent to a shorter rest (staff_consent): {lower:
+    # {"standing": bool, "dates": set(iso dates of the later shift)}}. Read only
+    # when the rest rule is consent_premium.
     rest_waivers: dict = field(default_factory=dict)
     # The meal and rest breaks in force (breaks.rules_for: the
     # jurisdiction's, else the owner's meal rule) — None reads the owner's
-    # rule from `compliance` (MARKET-6).
+    # rule from `compliance`.
     break_rules: dict = None
     base_hours: dict = field(default_factory=dict)         # {lower: {bucket: hours already published}}
     base_rows: dict = field(default_factory=dict)          # {lower: [published rows outside this week]}
@@ -1488,14 +1475,14 @@ class Constraints:
     close_mins: dict = field(default_factory=dict)         # {role lower: minutes after close the role stays until}
     # The role families whose punches show them on until the restaurant's
     # close, and those they show ending before it (closing_split over the
-    # last weeks): what closer_need holds each role's closer to (RULES-6).
+    # last weeks): what closer_need holds each role's closer to.
     close_roles: set = field(default_factory=set)
     early_close_roles: set = field(default_factory=set)
     # How long each role family's last person stays past the close, and how
     # early its first comes in before the open, as its punches show (else
     # schedule_objective's stated defaults) — the close cap's default where
     # the owner set nothing for the role, so no role is hard-capped at the
-    # close by default (blind re-audit 10/11/26 LOGIC-11). {family: minutes}.
+    # close by default. {family: minutes}.
     learned_stays: dict = field(default_factory=dict)
     learned_leads: dict = field(default_factory=dict)
     # The owner's role weights for the solver (restaurants.role_criticality_
@@ -1509,14 +1496,14 @@ class Constraints:
     close_times: dict = field(default_factory=dict)
     role_buffers: dict = field(default_factory=dict)
     closed_dates: set = field(default_factory=set)         # iso dates the restaurant does not trade this week
-    # The owner's standing rules about staffing (owner_memory rules, memory
-    # re-audit 9/29/26 PROMPTS-1): parsed ones the code checks (owner_rules;
-    # those naming a daypart are also floors, rule_floor_sources says which),
-    # and the schedule rules it could not read, which the review names.
+    # The owner's standing rules about staffing (owner_memory rules): parsed
+    # ones the code checks (owner_rules; those naming a daypart are also
+    # floors, rule_floor_sources says which), and the schedule rules it could
+    # not read, which the review names.
     owner_rules: list = field(default_factory=list)
     owner_rules_unchecked: list = field(default_factory=list)
-    # An owner-only rule the code could not read (D-38): never put on the
-    # shared review; for a surface only the account holders read.
+    # An owner-only rule the code could not read: never put on the shared
+    # review; for a surface only the account holders read.
     owner_rules_unchecked_private: list = field(default_factory=list)
     # The pairings the owner's rules state (parse_pair_rule):
     # [{"kind": "avoid"|"prefer", "a", "b", "text", "private"}].
@@ -1524,32 +1511,32 @@ class Constraints:
     rule_floor_sources: dict = field(default_factory=dict)  # {(role lower, day, daypart): rule text}
     # Floors the owner kept in the Studio's Crew stage that still stand as
     # kept (crew_matrix.floor_sources): {(job code lower, day, daypart):
-    # "M/D/YY"} — a coverage_floor breach names its source (TRUST-9).
+    # "M/D/YY"} — a coverage_floor breach names its source.
     crew_floor_sources: dict = field(default_factory=dict)
-    tz: str = ""                                           # IANA zone: rest is measured in real hours (SCHED-32)
+    tz: str = ""                                           # IANA zone: rest is measured in real hours
     # ── schedule audit 10/3/26: the facts the fix round added ──────────
-    # A per-person setting or a source that could not be read (P-1): one bad
-    # time window used to drop every rule for everyone after it, silently.
+    # A per-person setting or a source that could not be read: one bad time
+    # window used to drop every rule for everyone after it, silently.
     # [{name?, source, error}] — the review and the publish gate name each.
     input_problems: list = field(default_factory=list)
-    # Somebody standing in as the manager on given dates (E-13: the only
+    # Somebody standing in as the manager on given dates (the only
     # manager on vacation): {lower: set(iso dates)}. manages() reads it.
     acting_managers: dict = field(default_factory=dict)
-    # The days and hours a person always works (D-5: the owners' and
-    # managers' real floor days): {lower: [{"day", "start", "end", "role"}]}.
+    # The days and hours a person always works (the owners' and managers'
+    # real floor days): {lower: [{"day", "start", "end", "role"}]}.
     standing_shifts: dict = field(default_factory=dict)
-    work_days: dict = field(default_factory=dict)       # {key: {"Monday", ...}} days worked, hours left to the draft
-    # The restaurant's role families (D-13: "Server AM" and "Server PM" are
-    # one role): {role lower: family lower}; family() reads it with
+    work_days: dict = field(default_factory=dict)       # {key: {"Monday",...}} days worked, hours left to the draft
+    # The restaurant's role families ("Server AM" and "Server PM" are one
+    # role): {role lower: family lower}; family() reads it with
     # shift_quality.role_family as the default.
     role_families: dict = field(default_factory=dict)
     # Roles a person holds beyond their roster role (people.held_roles —
-    # trained, promoted; D-15): {lower: set(role lower)}.
+    # trained, promoted): {lower: set(role lower)}.
     held_roles: dict = field(default_factory=dict)
-    # Who closes for which role (D-9: a closer is chosen to close for their
+    # Who closes for which role (a closer is chosen to close for their
     # role, the last of it to leave): {family lower: set(person lower)}.
     closers_by_role: dict = field(default_factory=dict)
-    # People in training (D-16): {lower: {"target_role", "trainer", "from",
+    # People in training: {lower: {"target_role", "trainer", "from",
     # "until"}} — training_row() says which of their rows are training.
     trainees: dict = field(default_factory=dict)
     # The owner's weekly cap for a salaried person with none of their own
@@ -1559,124 +1546,123 @@ class Constraints:
     # schedule them to SALARIED_HOURS_MAX (max_hours). build_constraints
     # stored the 55h default here, so it became a hard maximum every week
     # and the rebalance moved an owner's own hours onto paid staff "inside
-    # the 55h you set" (schedule re-audit 10/4/26 RULES-5).
+    # the 55h you set".
     salaried_cap: float = None
-    # People on the roster who have not worked in weeks (E-3, D-17):
-    # {lower: last worked iso date}. Still on the roster — a row the owner
-    # writes for them is legal — but never a candidate for a fill.
+    # People on the roster who have not worked in weeks: {lower: last
+    # worked iso date}. Still on the roster — a row the owner writes for
+    # them is legal — but never a candidate for a fill.
     dormant: dict = field(default_factory=dict)
     # The days of a begun payroll week still to come, never published here,
-    # whose hours toward the overtime line are each person's usual ones
-    # (BUGSGEN-21): {"dates", "hours", "people"}, or None.
+    # whose hours toward the overtime line are each person's usual ones:
+    # {"dates", "hours", "people"}, or None.
     projected_tail: dict = None
-    # A person's scheduling note nobody has confirmed as a rule (D-34):
-    # {lower: {"days": set(weekday names), "dates": set(iso), "text": str}}.
-    # The model is told it; the fill passes keep off those days.
+    # A person's scheduling note nobody has confirmed as a rule: {lower:
+    # {"days": set(weekday names), "dates": set(iso), "text": str}}. The
+    # model is told it; the fill passes keep off those days.
     note_caution: dict = field(default_factory=dict)
-    # One person, one key (D-8, E-25): every spelling people's identity
-    # knows for a roster person — an alias, the name before a POS rename,
-    # an owner's "Mike" for the roster's "Michael" — to the key the roster
-    # spells them by ({spelling lower: roster key}); key() reads it. Every
+    # One person, one key: every spelling people's identity knows for a
+    # roster person — an alias, the name before a POS rename, an owner's
+    # "Mike" for the roster's "Michael" — to the key the roster spells
+    # them by ({spelling lower: roster key}); key() reads it. Every
     # per-person input is filed under key(), so a time-off block typed
     # under an old spelling still holds.
     aliases: dict = field(default_factory=dict)
     # Roster people an open "same person?" question joins: one person in
-    # the sweep until the owner answers (E-25). {roster key: group key}.
+    # the sweep until the owner answers. {roster key: group key}.
     linked: dict = field(default_factory=dict)
     # {roster key: the roster's spelling}, deactivated people included.
     display: dict = field(default_factory=dict)
     # Full-timers whose minimum is the restaurant's full-time line, not one
-    # the owner set for them (D-41) — said so wherever the minimum is.
+    # the owner set for them — said so wherever the minimum is.
     full_time_default: set = field(default_factory=set)
     # Full-timers the full-time line would apply to, while the owner has not
-    # confirmed it (LOGIC-29): {key: the line}. Their week aims at it as a
-    # preference (desired hours); nothing fills or protects it as a minimum,
-    # and the setup review asks the owner to confirm the line.
+    # confirmed it: {key: the line}. Their week aims at it as a preference
+    # (desired hours); nothing fills or protects it as a minimum, and the
+    # setup review asks the owner to confirm the line.
     full_time_unconfirmed: dict = field(default_factory=dict)
     # Per-person inputs whose name matches nobody on the roster, active or
-    # not (D-8): [{"source", "name", "detail"}] — the review names each,
-    # so a fact typed under a spelling nobody goes by is never silent.
+    # not: [{"source", "name", "detail"}] — the review names each, so a
+    # fact typed under a spelling nobody goes by is never silent.
     unmatched: list = field(default_factory=list)
-    # What the shift history says about who is who (people.identity_concerns,
-    # schedule re-audit 10/11/26 STRESS-7/8): one name worn by two people,
-    # one person under two names — said in the review; a handoff pair is
-    # also joined in `linked`.
+    # What the shift history says about who is who
+    # (people.identity_concerns/8): one name worn by two people, one person
+    # under two names — said in the review; a handoff pair is also joined in
+    # `linked`.
     identity_concerns: list = field(default_factory=list)
-    # Every role a person can be scheduled in (F1, D-15): their roster role,
-    # the roles they hold (held_roles) and every role they have worked here.
+    # Every role a person can be scheduled in (F1): their roster role, the
+    # roles they hold (held_roles) and every role they have worked here.
     # {lower: set(role lower)}; holds() reads it by family. A role written
     # for somebody outside it is the role_not_held breach.
     known_roles: dict = field(default_factory=dict)
     role_names: dict = field(default_factory=dict)          # {role lower: the spelling in use here}
-    # Why each person counts as a manager or was left out (manager_basis —
-    # P-7, E-14): {lower: {"counts", "basis", "role", "why"}}; the owner's
-    # "Managers: …" confirmation reads it.
+    # Why each person counts as a manager or was left out (manager_basis):
+    # {lower: {"counts", "basis", "role", "why"}}; the owner's "Managers:
+    # …" confirmation reads it.
     manager_basis: dict = field(default_factory=dict)
     # People salaried-style because their role is Owner and the owner has
-    # not marked them paid hourly (E-12): a subset of `salaried` (lower).
+    # not marked them paid hourly: a subset of `salaried` (lower).
     salaried_style: set = field(default_factory=set)
     # Everyone on the roster marked to close, whatever their role (lower) —
-    # the share the closer data-quality warning reads (D-9).
+    # the share the closer data-quality warning reads.
     closer_flags: set = field(default_factory=set)
     # Which roles have the closer rule, and why: "yours" (the owner chose
     # them), "history" (the roles the restaurant's own punches show on until
     # close, until the owner chooses) or "all" (no history yet: every role
     # somebody is marked to close for).
     closer_roles_basis: str = "all"
-    # When a role starts or ends on a daypart, by the owner's rule (L-33 —
-    # a retime the manager kept making, made a rule; schedule_note_rules
+    # When a role starts or ends on a daypart, by the owner's rule (a
+    # retime the manager kept making, made a rule; schedule_note_rules
     # kind start/end): {(role lower, weekday, daypart): {"start": minutes,
     # "end": minutes, "source": {"start"|"end": the rule's words}}}.
     role_times: dict = field(default_factory=dict)
     # Which compliance values the owner set ("owner") or a jurisdiction pack
     # started ("pack"); a key in neither is the code's default
-    # (compliance_set_by, PROMPT-10). None — a Constraints built by hand —
-    # reads every value as the owner's.
+    # (compliance_set_by). None — a Constraints built by hand — reads every
+    # value as the owner's.
     compliance_set: dict = None
     # The owner's RESTAURANT HOURS & SHIFT RULES (restaurants.hours_notes),
-    # read into rules the code holds the week to (apply_hours_rules —
-    # schedule re-audit 10/4/26 PROMPT-1). The floors go into role_floors
-    # (rule_floor_sources names the line) and the stays into close_mins;
-    # here: the hours a role works — {family: {weekday: {"earliest",
-    # "latest", "source"}}} (minutes; None where the rule says nothing) —
-    # the most of a role on at once — {family: [{"max", "days",
-    # "daypart", "source"}]} — each line as the code reads it
-    # ([{"text", "reads_as", "kind", "tag"}]), and the lines it could not
-    # read, which the review names.
+    # read into rules the code holds the week to (apply_hours_rules). The
+    # floors go into role_floors (rule_floor_sources names the line) and
+    # the stays into close_mins; here: the hours a role works — {family:
+    # {weekday: {"earliest", "latest", "source"}}} (minutes; None where the
+    # rule says nothing) — the most of a role on at once — {family:
+    # [{"max", "days", "daypart", "source"}]} — each line as the code reads
+    # it ([{"text", "reads_as", "kind", "tag"}]), and the lines it could
+    # not read, which the review names.
     role_windows: dict = field(default_factory=dict)
     role_caps: dict = field(default_factory=dict)
-    # The restaurant's own lunch/dinner boundary in minutes (restaurants.
-    # daypart_boundary — schedule_time, ARCH-12), or None for 3:00pm: every
-    # sweep of this week reads its dayparts inside it (violations).
+    # The restaurant's own lunch/dinner boundary in minutes
+    # (restaurants.daypart_boundary — schedule_time), or None for 3:00pm:
+    # every sweep of this week reads its dayparts inside it (violations).
     daypart_split: int = None
     hours_rules: list = field(default_factory=list)
     hours_rules_unchecked: list = field(default_factory=list)
-    # The owner's words as typed rules (owner_rules — scheduler audit
-    # 10/10/26 RM-9, AI-9, AI-19, contract #5): a person who must be on
-    # ([{"key", "name", "dates", "daypart", "role", "quote", "hard"}]), who
-    # closes or opens their role ([{... "kind": "close"|"open"}]), a day
-    # lighter or heavier ([{"dates", "daypart", "role", "value", "quote"}]),
-    # and every typed rule applied, with its words (for the review). A rule
-    # of another kind lands in the fields above (floors, caps, times, pairs,
-    # blocked dates, note cautions). "hard" is a rule the owner stands
-    # behind (confirmed, or their own instruction for this draft).
+    # The owner's words as typed rules (owner_rules, contract #5): a person
+    # who must be on ([{"key", "name", "dates", "daypart", "role", "quote",
+    # "hard"}]), who closes or opens their role ([{... "kind":
+    # "close"|"open"}]), a day lighter or heavier ([{"dates", "daypart",
+    # "role", "value", "quote"}]), and every typed rule applied, with its
+    # words (for the review). A rule of another kind lands in the fields
+    # above (floors, caps, times, pairs, blocked dates, note cautions).
+    # "hard" is a rule the owner stands behind (confirmed, or their own
+    # instruction for this draft).
     owner_person_on: list = field(default_factory=list)
     # {"staff", "half_hours", "dates"} — learn_second_manager over the
-    # punches (LOGIC-13), or None.
+    # punches, or None.
     second_manager_learned: dict = None
     owner_person_close: list = field(default_factory=list)
     owner_weights: list = field(default_factory=list)
     typed_rules: list = field(default_factory=list)
-    # The readings of the owner's words nobody confirmed (blind re-audit
-    # 10/11/26 AI-8, contract #6): a preference only — swept as soft
-    # owner_ask_* breaches at the quality rank (owner_rules.
-    # proposal_violations), never a floor, cap, time, blocked day, fill
-    # exclusion or moved target. [typed rule + {"words"}].
+    # The readings of the owner's words nobody confirmed (contract #6):
+    # a preference only — swept as soft owner_ask_* breaches at the
+    # quality rank (owner_rules.proposal_violations), never a floor,
+    # cap, time, blocked day, fill exclusion or moved target. [typed
+    # rule + {"words"}].
     owner_proposals: list = field(default_factory=list)
     # The manager's habits the memory binds (schedule_memory.enforced_signals
-    # entries of tier "bound", re-audit 10/11/26 LEARNING-12, contract #6):
-    # a week that breaks one carries a soft "habit_broken" breach naming it;
-    # each is also in typed_rules with source "habit".
+    # entries of tier "bound", contract #6): a week that breaks one carries a
+    # soft "habit_broken" breach naming it; each is also in typed_rules with
+    # source "habit".
     habits: list = field(default_factory=list)
 
     # ── lookups ────────────────────────────────────────────────────────
@@ -1684,7 +1670,7 @@ class Constraints:
         """The key every map here files `name`'s facts under: the roster's
         own spelling of the one person it means (aliases — people's
         identity), else the name folded (spacing collapsed, lower case).
-        One person, one key (schedule audit 10/3/26 D-8)."""
+        One person, one key."""
         k = " ".join(str(name or "").split()).lower()
         if not self.aliases:
             return k
@@ -1695,8 +1681,8 @@ class Constraints:
 
     def sweep_key(self, name) -> str:
         """key(), with roster people an open "same person?" question joins
-        read as one (E-25): until the owner answers, "Kim T." and "Kimberly
-        Tran" share one week of overlaps, rest, hours and days in a row."""
+        read as one: until the owner answers, "Kim T." and "Kimberly Tran"
+        share one week of overlaps, rest, hours and days in a row."""
         k = self.key(name)
         return self.linked.get(k, k)
 
@@ -1708,12 +1694,11 @@ class Constraints:
             return ""          # a garbled date is flagged elsewhere; it counts toward no payroll week
 
     def bucket_hours(self, row, hours=None) -> dict:
-        """{payroll week: hours} for one row, by the week the hours were
-        WORKED in (schedule_time.week_hours_split): an overnight shift on a payroll
-        week's last night puts its after-midnight hours in the next week —
-        overtime is counted by the workweek the hours fall in (sched
-        re-audit 10/11/26 BUGSGEN-18). Every weekly-hours count here (the
-        sweep, the published tail, the passes' room) reads this."""
+        """{payroll week: hours} for one row, by the week the hours were WORKED in
+        (schedule_time.week_hours_split): an overnight shift on a payroll week's
+        last night puts its after-midnight hours in the next week — overtime is
+        counted by the workweek the hours fall in. Every weekly-hours count here
+        (the sweep, the published tail, the passes' room) reads this."""
         from schedule_time import week_hours_split
         h = row_hours(row) if hours is None else hours
         try:
@@ -1725,7 +1710,7 @@ class Constraints:
         """The dates of payroll week `b` (its start date, bucket()) that fall
         after this schedule week: a Wednesday payroll week touched by a Monday
         week runs on through next Monday and Tuesday, which the next draft
-        schedules (E-10). [] when the payroll week ends inside this one."""
+        schedules. [] when the payroll week ends inside this one."""
         if not b or not self.week_dates:
             return []
         try:
@@ -1739,7 +1724,7 @@ class Constraints:
     def tail_reserve(self, line: float, b: str) -> float:
         """Hours of the overtime line to keep free for payroll week `b`'s
         days after this schedule week — their share of the line (two of
-        seven days: 2/7 of 40h), when two or more are still to come (E-10)."""
+        seven days: 2/7 of 40h), when two or more are still to come."""
         tail = self.bucket_tail(b)
         if len(tail) < TAIL_RESERVE_MIN_DAYS or not line:
             return 0.0
@@ -1748,17 +1733,16 @@ class Constraints:
     def is_salaried(self, name: str) -> bool:
         """Paid the same whatever the hours (models.salaried_staff) — Erik and
         Jim at Simple EJ's work the floor most of the week (owner, 9/30/26).
-        Through the person's identity: a salaried entry typed "Gabriel
-        Huerta" holds for the "Gabe Huerta" he punches as (D-7)."""
+        Through the person's identity: a salaried entry typed "Gabriel Huerta"
+        holds for the "Gabe Huerta" he punches as."""
         k = self.key(name)
         return k in self.salaried or " ".join(str(name or "").lower().split()) in self.salaried
 
     def salaried_limit(self, name: str) -> float:
         """The most hours code schedules a salaried person for in a week:
         their own maximum, else the restaurant's salaried cap, else
-        SALARIED_HOURS_CAP (schedule audit 10/3/26 E-17: the manager gap
-        filler loaded a salaried owner to 66h against an 84h line, because
-        their hours "cost nothing")."""
+        SALARIED_HOURS_CAP (the manager gap filler loaded a salaried owner
+        to 66h against an 84h line, because their hours "cost nothing")."""
         lim = self.hours_limits.get(self.key(name))
         if lim and lim[1]:
             return float(lim[1])
@@ -1769,7 +1753,7 @@ class Constraints:
     def salaried_cap_set(self, name: str) -> bool:
         """Whether the owner set the salaried person's weekly limit — their
         own maximum or the restaurant's salaried cap — so it may be called
-        theirs ("the 50h you set"); the 55h default is not (RULES-5)."""
+        theirs ("the 50h you set"); the 55h default is not."""
         lim = self.hours_limits.get(self.key(name))
         return bool((lim and lim[1]) or self.salaried_cap)
 
@@ -1778,12 +1762,12 @@ class Constraints:
         over_max_hours. The person's own maximum when the owner set one, even
         above the restaurant's weekly ceiling: that is the owner allowing
         this person the hours, overtime included, and the code, the prompt
-        and the review now give one answer (schedule audit 10/3/26 P-12,
-        D-18: a cook set to 40-45h was held to 40 by the sweep, 45 by the
-        prompt). Otherwise the ceiling. A salaried person has no ceiling: the
-        owner's limit for them (their own, else the restaurant's salaried
-        cap), else SALARIED_HOURS_MAX — a default the code never schedules
-        them past on its own (salaried_limit) but the owner may."""
+        and the review now give one answer (a cook set to 40-45h was held to
+        40 by the sweep, 45 by the prompt). Otherwise the ceiling. A salaried
+        person has no ceiling: the owner's limit for them (their own, else
+        the restaurant's salaried cap), else SALARIED_HOURS_MAX — a default
+        the code never schedules them past on its own (salaried_limit) but
+        the owner may."""
         lim = self.hours_limits.get(self.key(name))
         if self.is_salaried(name):
             if lim and lim[1]:
@@ -1799,8 +1783,7 @@ class Constraints:
         the restaurant's weekly ceiling or the salaried default. An own
         limit is hard (over_max_hours, TIER_LEGAL); the restaurant's ceiling
         is a priced policy limit (over_hours_ceiling, TIER_POLICY) that the
-        manager rule and coverage may pass when nobody can cover inside it
-        (schedule audit 10/10/26 LOGIC-1)."""
+        manager rule and coverage may pass when nobody can cover inside it."""
         lim = self.hours_limits.get(self.key(name))
         if lim and lim[1]:
             return True
@@ -1812,9 +1795,9 @@ class Constraints:
         else can. `ok` is True when no teammate — somebody else who holds the
         row's role family, whom code may choose that day (fillable) and for
         whom the row stays inside their own overtime line and every rule
-        about them (can_add, `policy` as given) — could take `row`;
-        otherwise `teammate` names the first who could. Somebody a fill
-        would put past their line is asked this before it does (LOGIC-3)."""
+        about them (can_add, `policy` as given) — could take `row`; otherwise
+        `teammate` names the first who could. Somebody a fill would put past
+        their line is asked this before it does."""
         name = (row.get("employee") or "").strip()
         me = self.sweep_key(name)
         d = row.get("date") or ""
@@ -1852,14 +1835,14 @@ class Constraints:
         scope the caller runs in: the sweep read a restaurant's 5pm boundary
         while the passes, the solvers and the fallback read 3pm, so a
         morning-only person on 3:30-5:15pm was legal to one and refused by
-        the other (sched re-audit 10/11/26 BUGSGEN-12)."""
+        the other."""
         return _stime.touched_dayparts(row, getattr(self, "daypart_split", None))
 
     def can_work_row(self, name: str, row) -> tuple:
         """(ok, reason): can_work for every daypart `row` reaches into, read
         at the restaurant's own boundary (row_dayparts) — the one question
         the sweep, the solvers' domains, carry-forward and the passes ask
-        about a shift (BUGSGEN-12)."""
+        about a shift."""
         d = (row or {}).get("date", "") or ""
         ok, why = True, ""
         for part in self.row_dayparts(row):
@@ -1879,8 +1862,8 @@ class Constraints:
             return False, LABELS["off_roster"]
         if self.week_dates and date_str not in self.week_dates:
             return False, LABELS["outside_week"]
-        # Nobody works a day the restaurant is closed (re-audit 10/4/26
-        # PIPE-4): no pass may put a row there, and a row on it is a breach.
+        # Nobody works a day the restaurant is closed: no pass may put a row
+        # there, and a row on it is a breach.
         if date_str and date_str in (self.closed_dates or ()):
             return False, LABELS["closed_day"]
         blocked = self.blocked_dates.get(key) or {}
@@ -1916,8 +1899,8 @@ class Constraints:
         t = self.trainees.get(key)
         if t and manager_role_kind(t.get("target_role")) in ("owner", "manager", "lead", "trainee") \
                 and self._training_on(t, date_str):
-            # Training to manage: never the floor manager while it lasts
-            # (schedule re-audit 10/4/26 RULES-2).
+            # Training to manage: never the floor manager while it
+            # lasts.
             return False
         if key in self.managers:
             return True
@@ -1930,10 +1913,10 @@ class Constraints:
         return role_family(role, self.role_families)
 
     def holds(self, name: str, role: str, date_str: str = None) -> bool:
-        """Whether `name` may be scheduled in `role` (D-15): a role of its
-        family is one of theirs (roster role, held roles, roles worked
-        here), or the role they are training into, while training lasts.
-        Somebody nothing is known about is not judged."""
+        """Whether `name` may be scheduled in `role`: a role of its family
+        is one of theirs (roster role, held roles, roles worked here), or
+        the role they are training into, while training lasts. Somebody
+        nothing is known about is not judged."""
         key = self.key(name)
         mine = self.known_roles.get(key)
         fam = self.family(role)
@@ -1951,11 +1934,11 @@ class Constraints:
         return (not t.get("from") or date_str >= t["from"]) and (not t.get("until") or date_str <= t["until"])
 
     def training_row(self, row: dict) -> bool:
-        """A training shift (D-16): a training job code, or a trainee in the
-        role they are learning while training lasts. It is never coverage —
+        """A training shift: a training job code, or a trainee in the role
+        they are learning while training lasts. It is never coverage —
         floors, the owner's rules and "somebody at close" do not count it —
         and no pass hands one out. shift_quality.is_training_row, the one
-        test the scorer's floor count asks too (SQ-8)."""
+        test the scorer's floor count asks too."""
         from shift_quality import is_training_row
         return is_training_row(row, self.trainees.get(self.key(row.get("employee"))), self.role_families)
 
@@ -1983,18 +1966,17 @@ class Constraints:
     def can_add(self, row: dict, rows=(), line: float = None, overtime=True, policy: bool = True) -> tuple:
         """(ok, reason): whether `row` can join `rows` without a breach about
         its person — the one question every pass that adds a shift or hands
-        one to somebody asks (schedule audit 10/3/26 P-2). The fill passes
-        used to ask only can_work, so a cloned closing shift landed on a
-        16-17 year old and a seventh day in a row on a dishwasher. Beyond
-        can_work (every daypart the row covers), the window and the
-        certificate, the person's week is swept with the row in: overlaps,
-        a minor's end, start and day and week caps, their own weekly maximum
-        and any rule a jurisdiction makes law (TIER_LEGAL) — anything new or
-        worse refuses it, always. With `policy` (the default) the
-        restaurant's own limits hold too (TIER_POLICY: the weekly ceiling,
-        the longest shift, days in a row, rest); a pass ranked above them —
-        the manager rule, a floor, a closer — passes False only once nobody
-        could take the shift inside them (LOGIC-1).
+        one to somebody asks. The fill passes used to ask only can_work, so a
+        cloned closing shift landed on a 16-17 year old and a seventh day in
+        a row on a dishwasher. Beyond can_work (every daypart the row
+        covers), the window and the certificate, the person's week is swept
+        with the row in: overlaps, a minor's end, start and day and week
+        caps, their own weekly maximum and any rule a jurisdiction makes law
+        (TIER_LEGAL) — anything new or worse refuses it, always. With
+        `policy` (the default) the restaurant's own limits hold too
+        (TIER_POLICY: the weekly ceiling, the longest shift, days in a row,
+        rest); a pass ranked above them — the manager rule, a floor, a closer
+        — passes False only once nobody could take the shift inside them.
 
         `overtime`: True (the default) — the row may not take them past
         their overtime line; False — it may; "teammate" — it may only when
@@ -2016,8 +1998,8 @@ class Constraints:
         if not key:
             return False, "no name"
         d = row.get("date", "")
-        # Any minute in a blocked half of the day is in it (RULES-11), at
-        # the restaurant's own boundary (can_work_row, BUGSGEN-12).
+        # Any minute in a blocked half of the day is in it, at the
+        # restaurant's own boundary (can_work_row).
         ok, why = self.can_work_row(name, row)
         if not ok:
             return False, why
@@ -2027,17 +2009,17 @@ class Constraints:
         ok, why = self.cert_ok(name, row.get("role", ""), d)
         if not ok:
             return False, why
-        # The hours the owner's rules give the role (PROMPT-1): no pass adds
-        # a Wednesday-lunch bartender to an evening-only bar.
+        # The hours the owner's rules give the role: no pass adds a
+        # Wednesday-lunch bartender to an evening-only bar.
         ok, why = self.role_window_ok(row)
         if not ok:
             return False, why
         # A training shift is never coverage, so no pass creates one: the
-        # owner places training beside a trainer (D-16).
+        # owner places training beside a trainer.
         if self.training_row(row):
             return False, "a training shift — not coverage, and placed beside a trainer by the owner"
         # Their week under every spelling that is them, and the roster
-        # person an open "same person?" question joins to them (E-25).
+        # person an open "same person?" question joins to them.
         group = self.sweep_key(name)
         mine = [r for r in (rows or ()) if r is not row and self.sweep_key(r.get("employee")) == group]
         worse = regressions(breach_profile(mine, self, person_only=True),
@@ -2049,12 +2031,12 @@ class Constraints:
         if worse:
             return False, worse[0]["label"]
         if overtime:
-            # A salaried person's line is their weekly cap (E-17): code never
-            # loads them past it, whatever their hours cost.
+            # A salaried person's line is their weekly cap: code never loads
+            # them past it, whatever their hours cost.
             b = self.bucket(d)
             carried = sum(float((per or {}).get(b, 0.0) or 0.0) for k, per in self.base_hours.items()
                           if k == key or self.linked.get(k, k) == group)
-            # By the week each hour is worked in (bucket_hours, BUGSGEN-18).
+            # By the week each hour is worked in (bucket_hours).
             total = (sum(self.bucket_hours(r).get(b, 0.0) for r in mine if r.get("date"))
                      + carried + self.bucket_hours(row).get(b, 0.0))
             ot = overtime_line(self, name, line)
@@ -2066,10 +2048,10 @@ class Constraints:
 
     def limit_maps(self) -> tuple:
         """(role_windows, role_caps) as schedule_requirements.
-        shift_requirements reads them (PROMPT-1): keyed by every job code of
-        a family and by the family, {weekday: {"earliest", "latest"}} and
-        {weekday: {"morning" | "night" | "any": most}}. ({}, {}) when the
-        owner's hours notes state neither."""
+        shift_requirements reads them: keyed by every job code of a family
+        and by the family, {weekday: {"earliest", "latest"}} and {weekday:
+        {"morning" | "night" | "any": most}}. ({}, {}) when the owner's
+        hours notes state neither."""
         if not self.role_windows and not self.role_caps:
             return {}, {}
         codes = {}
@@ -2096,9 +2078,9 @@ class Constraints:
         return windows, caps
 
     def role_window_for(self, role, date_str) -> dict:
-        """The owner's hours for `role` on `date_str`'s weekday
-        ({"earliest", "latest", "source"}, minutes) — read from the RESTAURANT
-        HOURS & SHIFT RULES (apply_hours_rules, PROMPT-1) — or {}."""
+        """The owner's hours for `role` on `date_str`'s weekday ({"earliest",
+        "latest", "source"}, minutes) — read from the RESTAURANT HOURS & SHIFT
+        RULES (apply_hours_rules) — or {}."""
         if not self.role_windows:
             return {}
         try:
@@ -2160,7 +2142,7 @@ class Constraints:
     def cert_ok(self, name: str, role: str, date_str: str = None) -> tuple:
         """Whether `name` holds every certificate `role` needs — on
         `date_str`, when given: a card that expires mid-week is held up to
-        its expiry and not after (cert_expiry, RULES-14)."""
+        its expiry and not after (cert_expiry)."""
         need = self.role_requirements.get((role or "").strip().lower()) or set()
         if not need:
             return True, ""
@@ -2224,7 +2206,7 @@ class Constraints:
         group — in base_rows' own order (the first breach found is the one
         said). Indexed once per base_rows: rest_ok scanned every person's
         tail on every call, 22 million key reads building one 250-person
-        model (blind re-audit 10/11/26 STRESS-11/12)."""
+        model (/12)."""
         base = self.base_rows or {}
         linked = self.linked or {}
         # the links are few (people at two locations): read whole each call
@@ -2246,10 +2228,9 @@ class Constraints:
     def rest_waived(self, name_or_key, date_str, start=None) -> bool:
         """Whether this person agreed in writing to a shorter rest before the
         shift on `date_str` starting at `start` — a standing agreement, or
-        one for that very shift (staff_consent; MARKET-3). A waiver is bound
-        to the shift it was given for (schedule re-audit 10/11/26
-        BUGSLIFE-7): one for Tuesday's 7am never makes another Tuesday
-        turnaround read as consented."""
+        one for that very shift (staff_consent). A waiver is bound to the
+        shift it was given for: one for Tuesday's 7am never makes another
+        Tuesday turnaround read as consented."""
         from staff_consent import waiver_allows
         return waiver_allows((self.rest_waivers or {}).get(self.key(name_or_key)), date_str, start)
 
@@ -2270,7 +2251,7 @@ def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
         from models import _restaurant_today
         # The restaurant's own date, never the server's UTC one: from about
         # 7pm Chicago a card expiring today read as expired for the current
-        # week's regeneration (BUGSGEN-16).
+        # week's regeneration.
         today = _restaurant_today(restaurant_id)
         days = sorted(str(d)[:10] for d in (week_dates or []) if d)
         first = _date.fromisoformat(days[0]) if days else today
@@ -2285,9 +2266,8 @@ def _expired_certs(restaurant_id, week_dates, db_path=None) -> dict:
 def _expiring_certs(restaurant_id, week_dates, db_path=None) -> dict:
     """{person name_key: {cert_key: expires_on}} for the certificates that
     run out during the week (after its first day, before its last):
-    cert_ok holds a row to the card as it stands on the row's date
-    (schedule re-audit 10/4/26 RULES-14 — a card expiring Wednesday
-    counted all week)."""
+    cert_ok holds a row to the card as it stands on the row's date (a card
+    expiring Wednesday counted all week)."""
     days = sorted(str(d)[:10] for d in (week_dates or []) if d)
     if not days:
         return {}
@@ -2311,52 +2291,50 @@ def _load_json(raw, default):
 
 
 # ── roles: families, who manages, who closes, who is training ───────────────
-# (schedule audit 10/3/26 F1). The facts below are the owner's, stored per
-# person in staff_settings and per restaurant on the restaurant row, and read
-# into the Constraints by build_constraints; every rule, pass and screen
-# reads them from there.
+# (F1). The facts below are the owner's, stored per person in staff_settings
+# and per restaurant on the restaurant row, and read into the Constraints by
+# build_constraints; every rule, pass and screen reads them from there.
 
 import re as _re_roles
 
-# A salaried person's weekly cap when the owner set no limit of their own
-# (E-12, E-17): seven 12-hour days (SALARIED_HOURS_CAP) let the manager gap
-# filler load a salaried owner to 66h. restaurants.salaried_cap overrides.
-# One number: the same default Constraints.salaried_limit falls back to.
+# A salaried person's weekly cap when the owner set no limit of their own:
+# seven 12-hour days (SALARIED_HOURS_CAP) let the manager gap filler load a
+# salaried owner to 66h. restaurants.salaried_cap overrides. One number:
+# the same default Constraints.salaried_limit falls back to.
 SALARIED_CAP_DEFAULT = SALARIED_HOURS_CAP
 SALARIED_CAP_BOUNDS = (20.0, 84.0)
 # How far back a manager role someone worked still makes them a manager
-# automatically (E-14: an hourly manager whose last punch was Bartender
+# automatically (an hourly manager whose last punch was Bartender
 # stopped being one for the week).
 MANAGER_RECENT_WEEKS = 8
 
-# The owner-operator titles count as owner (schedule re-audit 10/4/26
-# RULES-13: "Managing Partner", "Operating Partner", "Franchisee" and a bare
-# "Operator" read as nobody, so a week they ran was "no manager"). A bare
-# "Partner" is left alone — some places call every employee one — and so is
-# an "Operator" of a machine.
+# The owner-operator titles count as owner ("Managing Partner", "Operating
+# Partner", "Franchisee" and a bare "Operator" read as nobody, so a week
+# they ran was "no manager"). A bare "Partner" is left alone — some places
+# call every employee one — and so is an "Operator" of a machine.
 _OWNER_ROLE = _re_roles.compile(
     r"\b(?:co-?owners?|owners?|proprietors?|franchisees?|(?:managing|operating|general|founding|owner|"
     r"principal) partners?)\b|^\s*(?:owner[\s/-]*)?(?:franchise\s+)?operators?\s*$", _re_roles.I)
 _MANAGER_WORD = _re_roles.compile(r"\b(?:managers?|mgrs?|supervisors?|supvs?)\b", _re_roles.I)
 # Titles that name whoever runs the shift, whatever else the role says
-# (P-7: "AGM", "MOD" and "Shift Lead" were missed).
+# ("AGM", "MOD" and "Shift Lead" were missed).
 _FLOOR_TITLES = _re_roles.compile(
     r"\b(?:gm|agm|mod|general manager|assistant (?:general )?manager|manager on duty|floor (?:lead|manager|supervisor)|"
     r"shift (?:lead|leader|manager|supervisor)|lead on duty|director of (?:restaurant )?operations|"
     r"operations director)\b", _re_roles.I)
 # A manager title with a department in it is that department's manager, not
-# somebody who runs the floor (P-7: "Kitchen Manager" and "Bar Manager"
+# somebody who runs the floor ("Kitchen Manager" and "Bar Manager"
 # satisfied the floor-manager rule). The owner says yes per person
 # (staff_settings.floor_manager); the confirmation list names them.
 _DEPARTMENT_WORDS = _re_roles.compile(
     r"\b(?:kitchen|km|boh|back of house|bar|beverage|wine|catering|events?|office|marketing|culinary|pastry|prep|"
     r"dish|sous|chef|sales|bakery|banquets?|retail|purchasing|facilities|maintenance)\b", _re_roles.I)
-# "MIT" is a Manager in Training (schedule re-audit 10/4/26 RULES-2); the
-# pattern is shift_quality's, read by the scorer's floor test too (SQ-8).
+# "MIT" is a Manager in Training; the pattern is shift_quality's, read by
+# the scorer's floor test too.
 from shift_quality import _TRAINING_ROLE  # noqa: E402
 # The daypart words and the word split are shift_quality's — one reader of
 # a job code's half of the day for the rules, the scorer, the solver, the
-# prompt and the floors (schedule re-audit 10/4/26 RULES-3, SQ-1).
+# prompt and the floors.
 from shift_quality import _MORNING_WORDS, _NIGHT_WORDS, role_tokens as _role_words  # noqa: E402
 
 
@@ -2364,8 +2342,8 @@ def manager_role_kind(role):
     """"owner", "manager" (runs the floor), "lead" (a bare "Lead"),
     "department" (a manager of a department — not counted on its own),
     "trainee" (a "Manager in Training", "Manager Trainee", "MIT" — never
-    the floor manager: their shift is a training shift, beside a manager,
-    schedule re-audit 10/4/26 RULES-2) or None."""
+    the floor manager: their shift is a training shift, beside a manager)
+    or None."""
     text = " ".join(str(role or "").split())
     if not text:
         return None
@@ -2390,7 +2368,7 @@ def is_owner_role(role) -> bool:
 
 def is_training_role(role) -> bool:
     """A job code for training shifts ("Training", "Server Trainee"): never
-    a role with its own headcount (D-16)."""
+    a role with its own headcount."""
     return bool(_TRAINING_ROLE.search(str(role or "")))
 
 
@@ -2404,7 +2382,7 @@ def role_daypart(role):
 
 def role_families(restaurant) -> dict:
     """{role lower: family lower} — the owner's map of job codes to roles
-    (restaurants.role_families_json, D-13). A role left out takes its name
+    (restaurants.role_families_json). A role left out takes its name
     without the daypart words (shift_quality.role_family)."""
     out = {}
     raw = _load_json(getattr(restaurant, "role_families_json", None), {}) if restaurant is not None else {}
@@ -2416,9 +2394,9 @@ def role_families(restaurant) -> dict:
 
 
 def closer_roles(restaurant) -> list:
-    """The roles the owner chose to have closers (restaurants
-    .closer_roles_json, D-9) as stored; [] means every role somebody is
-    marked to close for."""
+    """The roles the owner chose to have closers
+    (restaurants.closer_roles_json) as stored; [] means every role
+    somebody is marked to close for."""
     raw = _load_json(getattr(restaurant, "closer_roles_json", None), []) if restaurant is not None else []
     return [" ".join(str(x).split()) for x in (raw if isinstance(raw, list) else []) if str(x or "").strip()]
 
@@ -2426,7 +2404,7 @@ def closer_roles(restaurant) -> list:
 def salaried_cap_set(restaurant):
     """The weekly cap the owner set for a salaried person with no limit of
     their own (restaurants.salaried_cap, within SALARIED_CAP_BOUNDS), or
-    None when they set none — Constraints.salaried_cap (RULES-5)."""
+    None when they set none — Constraints.salaried_cap."""
     try:
         v = float(getattr(restaurant, "salaried_cap", None))
     except (TypeError, ValueError):
@@ -2462,8 +2440,8 @@ def _role_minute_map(raw) -> dict:
 
 
 def role_close_stays(restaurant) -> dict:
-    """{role: N} — each role's ONE "stays until close + N minutes" setting
-    (D-43). Two settings overlapped: role_close_min_json (the last of the
+    """{role: N} — each role's ONE "stays until close + N minutes"
+    setting. Two settings overlapped: role_close_min_json (the last of the
     role must stay until N after close) and role_close_buffer_json (it may
     run N past close); owners set one and expected the other. The stay is
     the must-stay value where the owner set one, else the allowance; both
@@ -2498,7 +2476,7 @@ def role_close_caps(restaurant) -> dict:
 
 def role_close_conflicts(restaurant) -> list:
     """[{role, stays, may_run}] where the two stored values differ — said
-    to the owner so the one setting is confirmed (D-43)."""
+    to the owner so the one setting is confirmed."""
     may = {k.lower(): (k, v) for k, v in _role_minute_map(
         _load_json(getattr(restaurant, "role_close_buffer_json", None), {})).items()}
     must = _role_minute_map(_load_json(getattr(restaurant, "role_close_min_json", None), {}))
@@ -2513,7 +2491,7 @@ def role_close_conflicts(restaurant) -> list:
 def role_minutes(mapping, role, families=None, default=0):
     """mapping[role] read the way a schedule names roles: exactly, then
     case-insensitively, then by role family ("Bartender": 30 holds for a
-    "Bartender PM" row — D-13), the largest when a family has several."""
+    "Bartender PM" row), the largest when a family has several."""
     if not mapping:
         return default
     if role in mapping:
@@ -2530,8 +2508,8 @@ def role_minutes(mapping, role, families=None, default=0):
 
 def manager_basis(name, role, settings=None, held=(), recent=(), certs=()) -> dict:
     """Whether a person counts as a manager on the floor, and why — the one
-    answer for the rules and the owner's confirmation list (P-7, E-14,
-    E-15): {"counts", "basis", "role", "why"}.
+    answer for the rules and the owner's confirmation list: {"counts",
+    "basis", "role", "why"}.
 
     The owner's word first (staff_settings.floor_manager: yes or no).
     Otherwise automatic: an owner or manager role on the roster, a role
@@ -2546,7 +2524,7 @@ def manager_basis(name, role, settings=None, held=(), recent=(), certs=()) -> di
     if manager_role_kind(roster_role) == "trainee":
         # A manager in training is never the floor manager — not even on
         # the owner's yes, which is about the person once trained: they
-        # count when their role in Team says they finished (RULES-2).
+        # count when their role in Team says they finished.
         return {"counts": False, "basis": "trainee", "role": roster_role,
                 "why": f"{roster_role} is still training — a trainee runs the floor only beside a manager; "
                        "change their role in Team when they finish"}
@@ -2659,7 +2637,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception as exc:
         c.crew_floor_sources = {}
         _input_problem(c, "crew answers", exc)
-    # The owner's role families and the salaried weekly cap (F1: D-13, E-12).
+    # The owner's role families and the salaried weekly cap.
     c.role_families = role_families(restaurant)
     c.salaried_cap = salaried_cap_set(restaurant)
     try:
@@ -2684,19 +2662,18 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     # roster + per-person settings. One person at a time: a single try
     # around the whole loop meant one malformed setting (a time window that
     # would not parse) silently dropped managers, minors, hours limits and
-    # certificates for everyone after that person (schedule audit 10/3/26
-    # P-1). A person whose settings cannot be read keeps their place on the
-    # roster and is named in input_problems — the review and the publish
-    # gate say so.
+    # certificates for everyone after that person. A person whose settings
+    # cannot be read keeps their place on the roster and is named in
+    # input_problems — the review and the publish gate say so.
     try:
         import staff_settings as _ss
         _people = list(_ss.roster(restaurant_id, db_path=db_path, include_inactive=True))
     except Exception as exc:
         _people = []
         _input_problem(c, "roster", exc)
-    # One person, one key (schedule audit 10/3/26 D-8, E-25): every spelling
-    # people's identity knows for a roster person files their facts under
-    # the roster's spelling, before any fact is read.
+    # One person, one key: every spelling people's identity knows for a
+    # roster person files their facts under the roster's spelling, before
+    # any fact is read.
     _identity(c, restaurant_id, _people, db_path)
     try:
         c.salaried = _salaried_keys(c, restaurant, db_path)
@@ -2725,17 +2702,17 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                                  key=lambda s_: (c.stations.get("stations") or []).index(s_)
                                  if s_ in (c.stations.get("stations") or []) else 99)
         c.stations = dict(c.stations, skills=skills)
-    # Every role each person holds or has worked (F1 — E-14, D-15): who is
-    # a manager and which roles are somebody's read all of them, not only
-    # the roster's most recent one — filed under each person's one key
-    # (D-8), so a role held under an old spelling is still theirs.
+    # Every role each person holds or has worked (F1): who is a manager
+    # and which roles are somebody's read all of them, not only the
+    # roster's most recent one — filed under each person's one key, so a
+    # role held under an old spelling is still theirs.
     held, worked = _roles_on_file(c, restaurant_id, db_path)
     held, worked = _by_person_key(c, held, keep=min), _by_person_key(c, worked, keep=max)
     # An Owner role is salaried-style unless the owner marked them paid by
-    # the hour (E-12): no overtime line, the salaried weekly cap. Read before
-    # each person's settings, so a salaried-style owner is never given the
-    # restaurant's full-time minimum either (D-41: their pay does not follow
-    # their hours).
+    # the hour: no overtime line, the salaried weekly cap. Read before each
+    # person's settings, so a salaried-style owner is never given the
+    # restaurant's full-time minimum either (their pay does not follow their
+    # hours).
     for e in _people:
         if e["active"] and not (e.get("settings") or {}).get("paid_hourly"):
             key = c.key(e["name"])
@@ -2754,13 +2731,13 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             _person_settings(c, e, expired, _ss, held=held, worked=worked)
         except Exception as exc:
             _input_problem(c, "settings", exc, name=e.get("name"))
-    # Closers, per role (D-9, L-9): each marked to close for their role, in
-    # the roles the owner chose — until they choose, the roles their own
-    # punches show on until close, so a cook marked to close (47 of 64 were,
-    # at Simple EJ's) is never held to the bar's 2am.
+    # Closers, per role: each marked to close for their role, in the roles
+    # the owner chose — until they choose, the roles their own punches show
+    # on until close, so a cook marked to close (47 of 64 were, at Simple
+    # EJ's) is never held to the bar's 2am.
     _hist = _closing_history(restaurant_id, c)
-    # The restaurant's own second-manager line, from its punches (LOGIC-13):
-    # the staff count at which it already runs two managers on the floor.
+    # The restaurant's own second-manager line, from its punches: the staff
+    # count at which it already runs two managers on the floor.
     try:
         c.second_manager_learned = learn_second_manager(_hist, c.manages)
     except Exception as exc:
@@ -2774,7 +2751,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             c.closer_roles_basis = "history" if chosen else "all"
         _flags = get_leader_flags(restaurant_id, db_path) or {}
         # A closer flag under a spelling nobody on the roster goes by is
-        # named (D-8); one under an alias is the person's (_closers_by_role
+        # named; one under an alias is the person's (_closers_by_role
         # matches by c.key).
         for _n, _v in _flags.items():
             if _v:
@@ -2783,7 +2760,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception as exc:
         _input_problem(c, "closers", exc)
     # Each role family's stay past the close and lead before the open, from
-    # the same punches (LOGIC-11), else the stated defaults.
+    # the same punches, else the stated defaults.
     try:
         import schedule_objective as _sobj
         c.learned_stays, c.learned_leads = _sobj.shoulder_habits(c, _hist)
@@ -2800,24 +2777,24 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     foh = _load_json(getattr(restaurant, "foh_roles_json", None), [])
     c.foh_roles = {str(x).strip().lower() for x in foh if str(x).strip()} or {"server"}
     c.patio_roles = {str(x).strip().lower() for x in (_load_json(getattr(restaurant, "patio_roles_json", None), []) or []) if str(x).strip()}
-    # Role settings hold for every job code of the role (D-13): the section
-    # cap's default {"server"} matched nobody at a restaurant whose servers
-    # are "Server AM" and "Server PM", and a certificate "Bartender" needs
-    # was never asked of a "Bartender PM".
+    # Role settings hold for every job code of the role: the section cap's
+    # default {"server"} matched nobody at a restaurant whose servers are
+    # "Server AM" and "Server PM", and a certificate "Bartender" needs was
+    # never asked of a "Bartender PM".
     c.foh_roles = _by_family(c, c.foh_roles)
     c.patio_roles = _by_family(c, c.patio_roles)
     for role, certs in list(c.role_requirements.items()):
         for r in _by_family(c, {role}):
             c.role_requirements[r] = set(c.role_requirements.get(r) or set()) | set(certs)
-    # "Stays until close + N", one setting per role (D-43), by family: the
-    # last of the bartenders stays, whichever bartender code they work.
+    # "Stays until close + N", one setting per role, by family: the last
+    # of the bartenders stays, whichever bartender code they work.
     c.close_mins = {}
     for k, v in role_close_stays(restaurant).items():
         fam = c.family(k)
         if fam:
             c.close_mins[fam] = max(int(v), c.close_mins.get(fam, 0))
 
-    _note_parts = []                      # (key, name, text, noted, expires): every note, for D-34
+    _note_parts = []                      # (key, name, text, noted, expires): every note, for the notes reader
     # weekday availability + free-text notes. A weekday blocked for good is
     # a weekday rule; one blocked only between two dates ("Fridays until
     # 12/15", day_bounds — employee audit M5) blocks the dates of this week
@@ -2848,8 +2825,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     except Exception as exc:
         _input_problem(c, "availability", exc)
     # An availability cut a manager approved for a date still ahead: in force
-    # for this week's dates from it on, never before (schedule audit 10/10/26
-    # MARKET-15, availability_changes.overlay).
+    # for this week's dates from it on, never before
+    # (availability_changes.overlay).
     try:
         import availability_changes as _avc
         _avc.overlay(c, restaurant_id, db_path=db_path)
@@ -2869,11 +2846,11 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                                         part.get("noted"), part.get("expires")))
     except Exception as exc:
         _input_problem(c, "staff notes", exc)
-    # Every note nobody has confirmed as a hold, read by the hold reader
-    # (schedule audit 10/3/26 D-34): the days it names are kept clear by the
-    # fill passes (Constraints.fillable) — "Ana can't close Fridays" was
-    # told to the model and nothing stopped a backstop from putting her on
-    # a Friday close. c.notes stays the model's text.
+    # Every note nobody has confirmed as a hold, read by the hold reader:
+    # the days it names are kept clear by the fill passes
+    # (Constraints.fillable) — "Ana can't close Fridays" was told to the
+    # model and nothing stopped a backstop from putting her on a Friday
+    # close. c.notes stays the model's text.
     try:
         _note_cautions(c, restaurant_id, _note_parts, db_path)
     except Exception as exc:
@@ -2883,8 +2860,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     if c.week_dates:
         try:
             import time_off as _to
-            # Part of a day off (D-39) blocks that part only; the rest of the
-            # day stays workable.
+            # Part of a day off blocks that part only; the rest of the day
+            # stays workable.
             for name, by_date in (_to.approved_parts_in_window(restaurant_id, c.week_dates[0], c.week_dates[-1],
                                                                db_path=db_path) or {}).items():
                 key = _file_under(c, "time off", name, "approved time off on " + ", ".join(
@@ -2903,7 +2880,7 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
                 c.blocked_dates.setdefault(key, {}).update({d: LABELS["approved_time_off"] for d in days})
                 if key not in c.display and c.display:
                     # A legal block typed under a name nobody on the roster
-                    # goes by holds for nobody: the gate names it (D-8).
+                    # goes by holds for nobody: the gate names it.
                     c.input_problems.append({"source": "time off", "name": name,
                                              "error": f"approved time off ({', '.join(_mdy_safe(d) for d in days)}) "
                                                       "matches nobody on the roster — check the spelling"})
@@ -2932,9 +2909,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _input_problem(c, "schedule note rules", exc)
     # The RESTAURANT HOURS & SHIFT RULES the owner wrote (hours_notes): the
     # floors, the hours each role works, the ceilings and the stays after
-    # close they state, held like any other (schedule re-audit 10/4/26
-    # PROMPT-1) — after the Studio's rules, so a start the owner confirmed
-    # there stands.
+    # close they state, held like any other — after the Studio's rules, so
+    # a start the owner confirmed there stands.
     try:
         apply_hours_rules(c, restaurant)
     except Exception as exc:
@@ -2949,17 +2925,17 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
         _input_problem(c, "scheduling note holds", exc)
     # A floor set on a role name the restaurant does not use as a job code
     # ("Server" where the codes are "Server AM" and "Server PM") is held on
-    # the code that works that half of the day (D-13, D-14).
+    # the code that works that half of the day.
     try:
         _floors_on_job_codes(c)
     except Exception as exc:
         _input_problem(c, "role floors", exc)
     # The habits the manager taught by hand and the memory now binds
-    # (schedule_memory tier "bound" — re-audit 10/11/26 LEARNING-12,
-    # contract #6): typed rules with source "habit" beside the owner's (the
-    # review lists them), and the signals the sweep reads for a soft
-    # "habit_broken" breach — the solvers price them in their own tier.
-    # A read; a memory that cannot be read binds nothing and blocks nothing.
+    # (schedule_memory tier "bound", contract #6): typed rules with source
+    # "habit" beside the owner's (the review lists them), and the signals
+    # the sweep reads for a soft "habit_broken" breach — the solvers price
+    # them in their own tier. A read; a memory that cannot be read binds
+    # nothing and blocks nothing.
     try:
         import schedule_memory as _smem_h
         _sig = _smem_h.enforced_signals(restaurant_id, list(week_dates or []), roster_names=list(c.roster_names or []),
@@ -2969,17 +2945,16 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
             c.typed_rules.append({k: v for k, v in _h.items() if k != "signal"})
     except Exception as exc:
         _degraded(f"habits unreadable for {restaurant_id}: {exc!r}", exc)
-    # Who has stopped working (schedule audit 10/3/26 E-3, D-17): no shift in
-    # staff_settings.DORMANT_WEEKS weeks, not hand-added since, nothing on
-    # file saying they are still here. Still on the roster — a row the owner
-    # writes for them is legal — but never chosen by a fill (fillable), left
-    # off the model's roster and the open-shift broadcast. Never dormant:
-    # anyone on a published shift in those weeks (dormant_people), managers
-    # of any kind — a floor manager, a department's, an owner, a lead, by
-    # the roles they hold or have worked, or on a published week as one —
-    # salaried people, and anyone with standing shifts, an acting-manager
-    # date or a training: managers barely punch. The LAST step, so every
-    # one of those facts is read first.
+    # Who has stopped working: no shift in staff_settings.DORMANT_WEEKS
+    # weeks, not hand-added since, nothing on file saying they are still
+    # here. Still on the roster — a row the owner writes for them is legal —
+    # but never chosen by a fill (fillable), left off the model's roster and
+    # the open-shift broadcast. Never dormant: anyone on a published shift in
+    # those weeks (dormant_people), managers of any kind — a floor manager, a
+    # department's, an owner, a lead, by the roles they hold or have worked,
+    # or on a published week as one — salaried people, and anyone with
+    # standing shifts, an acting-manager date or a training: managers barely
+    # punch. The LAST step, so every one of those facts is read first.
     try:
         import staff_settings as _ss
         exempt = (set(c.managers) | set(c.salaried) | set(c.standing_shifts or {})
@@ -3015,12 +2990,11 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
         c.linked = dict(idx.get("linked") or {})
     except Exception as exc:
         _input_problem(c, "who is who on the roster", exc)
-    # What the shift history itself says about who is who (schedule
-    # re-audit 10/11/26 STRESS-7, STRESS-8), read every build — not only
-    # once a question was filed: a name that took over another's role and
-    # days is one person to the sweep (hours, overtime, rest, days in a row)
-    # until the owner answers; one name worn by two people is said. Both
-    # reach the review (identity_concerns).
+    # What the shift history itself says about who is who, read every build
+    # — not only once a question was filed: a name that took over another's
+    # role and days is one person to the sweep (hours, overtime, rest, days
+    # in a row) until the owner answers; one name worn by two people is
+    # said. Both reach the review (identity_concerns).
     try:
         import people
         from models import _cached_shifts
@@ -3054,9 +3028,9 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
 def _file_under(c: "Constraints", source: str, name, detail: str = "") -> str:
     """The key a per-person fact is filed under (c.key), and — when the
     name matches nobody on the roster, active or deactivated — a line in
-    c.unmatched for the review (D-8): a fact under a spelling nobody goes
-    by applies to nobody, and the owner is told rather than left to find
-    out on the floor."""
+    c.unmatched for the review: a fact under a spelling nobody goes by
+    applies to nobody, and the owner is told rather than left to find out
+    on the floor."""
     key = c.key(name)
     if key and c.display and key not in c.display:
         shown = " ".join(str(name or "").split())
@@ -3113,8 +3087,8 @@ def _note_cautions(c: "Constraints", restaurant_id, note_parts, db_path=None):
 
 def _salaried_keys(c: "Constraints", restaurant, db_path=None) -> set:
     """The keys of the salaried people (models.salaried_staff) through
-    people's identity (D-7): each entry's own spelling, and the roster key
-    of the one person any of its spellings means. A salaried name that
+    people's identity: each entry's own spelling, and the roster key of
+    the one person any of its spellings means. A salaried name that
     matches nobody on the roster is named in c.unmatched — the model is
     never told about a salaried person the roster check would refuse."""
     from models import salaried_staff, salaried_name_key
@@ -3142,7 +3116,7 @@ def _salaried_keys(c: "Constraints", restaurant, db_path=None) -> set:
 def _by_person_key(c: "Constraints", d: dict, keep=max) -> dict:
     """{person key: {role: date}} from a map kept by any spelling (held and
     worked roles — F1's _roles_on_file, by name_key): every spelling of one
-    person filed under their one key (c.key, D-8), two dates for one role
+    person filed under their one key (c.key), two dates for one role
     combined by `keep` (the earliest since a role was held, the latest it
     was worked)."""
     out = {}
@@ -3194,14 +3168,14 @@ def _by_family(c, roles) -> set:
 
 
 def _closers_by_role(c, people, flags, chosen):
-    """c.closers_by_role and c.keyholders from the closer flags (D-9): a
+    """c.closers_by_role and c.keyholders from the closer flags: a
     person marked to close closes for the roles they were given
     (staff_settings.closes_for), else their own role's family; when the
     owner chose which roles have closers, only those. Only people on the
-    roster count; a flag set through view-as does not (get_leader_flags,
-    L-9)."""
-    # Matched through people's identity (D-8): a flag kept under an alias
-    # or an old spelling is the person's.
+    roster count; a flag set through view-as does not
+    (get_leader_flags)."""
+    # Matched through people's identity: a flag kept under an alias or an
+    # old spelling is the person's.
     flagged = {c.key(n) for n, v in (flags or {}).items() if v}
     keep = {c.family(x) for x in chosen or () if c.family(x)}
     for e in people:
@@ -3224,10 +3198,9 @@ def chosen_closers(restaurant_id, restaurant=None, db_path=DB_PATH) -> dict:
     flags, in the roles the owner chose — until they choose, the roles the
     punches show on until close; _closers_by_role) without the rest of a
     week's constraints: for the readers that have none — the scheduling
-    memory's learned closer and the rotation plan's closing queue (schedule
-    re-audit 10/4/26 LEARN-10, PROMPT-2: both named people who are not
-    chosen closers as the role's closers, beside the hard closer rule). {}
-    when nobody is marked to close."""
+    memory's learned closer and the rotation plan's closing queue (both
+    named people who are not chosen closers as the role's closers, beside
+    the hard closer rule). {} when nobody is marked to close."""
     from models import get_restaurant, get_close_times, get_leader_flags
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     flags = get_leader_flags(restaurant_id, db_path) or {}
@@ -3272,8 +3245,8 @@ def _closing_history(restaurant_id, c) -> list:
 
 
 def closing_families(c, rows) -> set:
-    """The role families the restaurant's own punches show on until close
-    (D-9): a closer rule's default reach until the owner chooses the roles."""
+    """The role families the restaurant's own punches show on until close:
+    a closer rule's default reach until the owner chooses the roles."""
     return closing_split(c, rows)[0]
 
 
@@ -3281,7 +3254,7 @@ def closing_split(c, rows) -> tuple:
     """(closing, early): the role families the punches show on until close,
     and those seen on enough days to say they end before it (a kitchen that
     closes at 11pm when the bar closes at 2am) — closer_need holds only the
-    first to the restaurant's close (RULES-6)."""
+    first to the restaurant's close."""
     by_day, fam_day = {}, {}
     for r in rows or []:
         d, fam, e = str(r.get("date") or "")[:10], c.family(r.get("role")), end_minutes(r)
@@ -3349,9 +3322,9 @@ def _floors_on_job_codes(c):
             out[role] = spec
     c.role_floors = {k: v for k, v in out.items() if v.get("morning") or v.get("night") or v.get("days")}
 def _input_problem(c: "Constraints", source: str, exc, name: str = None):
-    """Record a source or a person's settings the rules could not read
-    (schedule audit 10/3/26 P-1): kept on the Constraints for the review and
-    the publish gate, and captured so it reaches the daily failure digest."""
+    """Record a source or a person's settings the rules could not read: kept
+    on the Constraints for the review and the publish gate, and captured so
+    it reaches the daily failure digest."""
     entry = {"source": source, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
     if name:
         entry["name"] = name
@@ -3366,8 +3339,8 @@ def _input_problem(c: "Constraints", source: str, exc, name: str = None):
 
 # What each source the rules could not read means for the week, in the
 # owner's words — one wording for the generation's review and the publish
-# gate (schedule audit 10/3/26 P-1; client_api.publish_review reads it).
-# A source not named here reads as "<source> couldn't be read".
+# gate (client_api.publish_review reads it). A source not named here
+# reads as "<source> couldn't be read".
 INPUT_PROBLEM_WORDS = {
     "roster": "The team list couldn't be read, so nobody's own rules (hours, minors, availability, certificates) "
               "were checked",
@@ -3393,7 +3366,7 @@ def _unreadable_hours(c: "Constraints") -> None:
     """An opening or closing time on file that no reader can parse ("9",
     "nine-ish") is named as an input problem — the close cap, nobody at
     close, the closer rule and the manager window all silently dropped that
-    day (BUGSGEN-20). The writers normalise every time they save
+    day. The writers normalise every time they save
     (schedule_time.normalise_clock); this catches what was stored before."""
     for which, times in (("opening", c.open_times), ("closing", c.close_times)):
         for day, value in sorted((times or {}).items()):
@@ -3429,12 +3402,12 @@ EVENT_STAND_AFTER_KICKOFF_MIN = 4 * 60
 
 def _event_standing(c: "Constraints", x: dict, role, name):
     """A standing shift that holds only when its event series plays that
-    weekday ({"day": "Sunday", "when_event": "nfl-chicago-bears", ...}): one
+    weekday ({"day": "Sunday", "when_event": "nfl-chicago-bears",...}): one
     dated entry (from = until = the date) for each such date this week, its
     end held to the game's (owner, 10/5/26: "if the Bears play on a Sunday,
     schedule Erik 100% of the time, no exceptions; ONLY if they play"). A
-    calendar that can't be read is a problem on the week, never a quiet
-    week without them."""
+    calendar that can't be read is a problem on the week, never a quiet week
+    without them."""
     from datetime import date as _date
     day = str(x.get("day") or "").strip().capitalize()
     dates = [d for d in (c.week_dates or []) if DAYS[_date.fromisoformat(d).weekday()] == day]
@@ -3469,17 +3442,17 @@ def _event_standing(c: "Constraints", x: dict, role, name):
 
 def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, worked=None):
     """One roster person's settings onto the Constraints (build_constraints'
-    per-person step, each person on their own — see P-1 there). `held` and
+    per-person step, each person on their own — see there). `held` and
     `worked` are every person's held and worked roles (_roles_on_file)."""
-    # Filed under the person's one key (c.key, D-8): `held`, `worked` and
+    # Filed under the person's one key (c.key): `held`, `worked` and
     # `expired` are kept by it too (build_constraints).
     key = c.key(e["name"])
     st = e.get("settings") or {}
     roster_role = " ".join(str(e.get("role") or "").split())
     mine_held = sorted((held or {}).get(key) or {})
     mine_worked = (worked or {}).get(key) or {}
-    # Every role they can be scheduled in (D-15): the roster's, the ones
-    # they hold (trained, promoted, the POS job list), the ones worked here.
+    # Every role they can be scheduled in: the roster's, the ones they hold
+    # (trained, promoted, the POS job list), the ones worked here.
     for r in [roster_role, *mine_held, *mine_worked]:
         if r:
             c.known_roles.setdefault(key, set()).add(r.lower())
@@ -3491,8 +3464,8 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     if st.get("employment_type"):
         c.employment[key] = st["employment_type"]
     # Full-time with no minimum of their own: the restaurant's full-time
-    # line is their minimum (D-41). Never for a salaried person — their
-    # pay does not follow their hours.
+    # line is their minimum. Never for a salaried person — their pay
+    # does not follow their hours.
     ft = c.compliance.get("full_time_min_hours")
     if st.get("employment_type") == "full" and st.get("min_hours") is None and ft and key not in c.salaried:
         mx = st.get("max_hours")
@@ -3501,8 +3474,8 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
                 c.hours_limits[key] = (float(ft), mx)
                 c.full_time_default.add(key)
             else:
-                # Not confirmed (LOGIC-29): a preference, below every rule —
-                # read with the preferred hours below.
+                # Not confirmed: a preference, below every rule — read with
+                # the preferred hours below.
                 c.full_time_unconfirmed[key] = float(ft)
     if st.get("daypart_availability"):
         c.daypart_avail[key] = dict(st["daypart_availability"])
@@ -3526,10 +3499,10 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
         # close, the last of their role to leave), not a key holder
         # (owner, 10/2/26) — a manager or keyholder certificate no
         # longer makes anyone a closer; get_leader_flags below does.
-    # Who runs the floor (P-7, E-14, E-15): the owner's yes or no, else
-    # their role, a role they hold, a manager role worked in the last
-    # weeks, or the floor manager certificate — never a food-safety
-    # manager card, never a department manager's title on its own.
+    # Who runs the floor: the owner's yes or no, else their role, a
+    # role they hold, a manager role worked in the last weeks, or the
+    # floor manager certificate — never a food-safety manager card,
+    # never a department manager's title on its own.
     since = None
     if c.week_dates:
         from datetime import date as _d
@@ -3551,13 +3524,13 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
                                            "desired_hours": None})["desired_hours"] = c.full_time_unconfirmed[key]
     if not e["active"]:
         return
-    # Standing in as the manager on given dates (E-13).
+    # Standing in as the manager on given dates.
     for rng in st.get("acting_manager") or []:
         f, u = str(rng.get("from") or ""), str(rng.get("until") or rng.get("from") or "")
         days = {d for d in c.week_dates if f <= d <= u}
         if days:
             c.acting_managers.setdefault(key, set()).update(days)
-    # The shifts they always work (D-5), in their own role unless the
+    # The shifts they always work, in their own role unless the
     # standing shift names one.
     if st.get("standing_shifts"):
         role_of = lambda x: (x.get("role") or (c.managers.get(key) if key in c.managers else None)  # noqa: E731
@@ -3576,11 +3549,11 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
     # The days they work with no fixed hours (owner, 10/9/26: "any time").
     if st.get("work_days"):
         c.work_days[key] = set(st["work_days"])
-    # Whether they work doubles (LOGIC-19): the owner's word; unset, the
-    # solver reads their own history (schedule_objective.doubles_ok).
+    # Whether they work doubles: the owner's word; unset, the solver
+    # reads their own history (schedule_objective.doubles_ok).
     if st.get("doubles") is not None:
         c.doubles_ok[key] = bool(st["doubles"])
-    # In training (D-16), while it lasts this week.
+    # In training, while it lasts this week.
     t = st.get("trainee") or None
     if isinstance(t, dict) and t.get("target_role"):
         first = min(c.week_dates) if c.week_dates else None
@@ -3590,14 +3563,14 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
                                "from": t.get("from") or None, "until": t.get("until") or None}
 
 
-# ── the owner's standing rules about staffing (memory re-audit 9/29/26) ──────
+# ── the owner's standing rules about staffing ──────
 #
 # "Never cut the host, she's our brand" reached the schedule prompt inside
 # the guest fence the prompt says never to follow, and nothing deterministic
-# checked it (PROMPTS-1). A rule an account holder set about staffing is
-# read here in the common shapes — "never cut the host", "always two
-# servers on Saturday night", "at least 1 bartender every day", "never
-# below 2 cooks at dinner" — against the restaurant's own roles:
+# checked it. A rule an account holder set about staffing is read here in
+# the common shapes — "never cut the host", "always two servers on Saturday
+# night", "at least 1 bartender every day", "never below 2 cooks at dinner"
+# — against the restaurant's own roles:
 #
 #   * with a daypart, it raises that role's floor for those days
 #     (role_floors), so the draft is built to it (_ensure_role_floors) and
@@ -3608,10 +3581,10 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
 #     checks the draft against it — never silently dropped.
 #
 # Every account holder's rule constrains the draft — an owner-only one too
-# (schedule audit 10/3/26 D-38: "never schedule Ana with Ben", kept private,
-# reached neither the prompt nor the checks). An owner-only rule's WORDS
-# never surface where the team reads: its floor reads like any floor, its
-# check names no text, an unreadable one is kept off the shared review
+# ("never schedule Ana with Ben", kept private, reached neither the prompt
+# nor the checks). An owner-only rule's WORDS never surface where the team
+# reads: its floor reads like any floor, its check names no text, an
+# unreadable one is kept off the shared review
 # (owner_rules_unchecked_private), and a private pairing is scored and
 # solved against but never printed (pairs_with_rules' "private").
 #
@@ -3640,7 +3613,7 @@ _DAY_TOKENS = {
 _RANGE_WORDS = frozenset({"-", "\u2013", "\u2014", "to", "through", "thru", "until", "till"})
 _LIST_WORDS = frozenset({",", "and", "or", "&", "/", "on", "the", "for", "nor"})
 # Words that take days OUT of a rule: "except Mondays", "every day but
-# Sunday", "other than Tuesday" (RULES-8: they were read as the only days).
+# Sunday", "other than Tuesday" (they were read as the only days).
 _EXCEPT_WORDS = (("other", "than"), ("apart", "from"), ("not", "on"), ("except",), ("excluding",), ("but",),
                  ("besides",))
 
@@ -3652,7 +3625,7 @@ def _rule_days_read(low: str) -> tuple:
     after "except", "but" or "other than" are taken out ("always 2 servers
     except Mondays" is every day but Monday). Each used to be read as the
     days it named: the exception became the only day and a range its two
-    ends (schedule re-audit 10/4/26 RULES-8)."""
+    ends."""
     import re as _re
     toks = _re.findall(r"[a-z]+|\d+|[-\u2013\u2014,&/]", low)
     incl, excl, i, unclear = [], [], 0, None
@@ -3737,17 +3710,17 @@ def parse_owner_rule(text: str, roles, families=None) -> dict:
     of the shapes above, naming one of `roles` (the restaurant's own role
     names, matched case-insensitively, singular or plural), or None — or
     {"role", "unclear": why, "text"} for one in those shapes that could not
-    be read confidently (RULES-8), which the owner is asked about. `days`
-    None is every trading day; `daypart` None is anywhere in the day — but a
-    rule naming an AM or PM job code keeps to that code's half of the day.
+    be read confidently, which the owner is asked about. `days` None is
+    every trading day; `daypart` None is anywhere in the day — but a rule
+    naming an AM or PM job code keeps to that code's half of the day.
 
     A rule naming a role FAMILY rather than a job code — "always two servers
     Saturday night" where the codes are "Server AM" and "Server PM" — never
-    parsed, and fell to the unchecked list (schedule audit 10/3/26 D-14). It
-    now matches the family (`families`: the owner's map, else the codes
-    with their daypart words taken off), or a family's last word when only
-    one family ends in it ("cooks" for "Line Cook"); such a rule carries
-    "match": "family" and "family" (apply_owner_rules picks the job code)."""
+    parsed, and fell to the unchecked list. It now matches the family
+    (`families`: the owner's map, else the codes with their daypart words
+    taken off), or a family's last word when only one family ends in it
+    ("cooks" for "Line Cook"); such a rule carries "match": "family" and
+    "family" (apply_owner_rules picks the job code)."""
     import re as _re
     from shift_quality import role_family
     low = " ".join(str(text or "").lower().replace("’", "'").split())
@@ -3806,8 +3779,8 @@ def parse_owner_rule(text: str, roles, families=None) -> dict:
     # dinner, 1 at lunch", "1 bartender, 2 on weekends"), both halves of
     # the day, or an exception that isn't days is not guessed at: the
     # first number and the first daypart became a hard lunch floor of 2
-    # with no dinner floor at all (schedule re-audit 10/4/26 RULES-8). It
-    # goes back to the owner as a rule Cavnar AI couldn't read.
+    # with no dinner floor at all. It goes back to the owner as a rule
+    # Cavnar AI couldn't read.
     days, unclear = _rule_days_read(low)
     spans = []
     for r in names:
@@ -3843,7 +3816,7 @@ def _family_name(fam, codes) -> str:
 
 def rule_reads_as(rule) -> str:
     """How a parsed staffing rule is checked, in the owner's words — said
-    back to them so a rule read wrongly is caught (D-14)."""
+    back to them so a rule read wrongly is caught."""
     who = rule.get("floor_role") or rule.get("role")
     days = rule.get("days")
     when = ("every trading day" if not days else
@@ -3868,7 +3841,7 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
     db = None if db_path == DB_PATH else db_path
     facts = owner_memory.facts_for(restaurant_id, viewer=None, surface="schedule",
                                    kinds=list(owner_memory.RULE_KINDS), db_path=db)
-    # Which of them the whole team may read; the rest are owner-only (D-38).
+    # Which of them the whole team may read; the rest are owner-only.
     team = {(f.get("id"), f.get("from_location")) for f in owner_memory.facts_for(
         restaurant_id, viewer=memory_context.team_viewer("schedule"), surface="schedule",
         kinds=list(owner_memory.RULE_KINDS), db_path=db)}
@@ -3882,7 +3855,7 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
         pass
     roles |= {str(r).strip() for r in (c.role_floors or {})}
     # Every job code in use (held and worked roles too), so a rule names a
-    # role family against all of its codes (D-14).
+    # role family against all of its codes.
     roles |= {str(r).strip() for r in (c.role_names or {}).values()}
     roles.discard("")
     for f in facts:
@@ -3903,7 +3876,7 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
         rule = parse_owner_rule(f.get("fact"), roles, c.role_families)
         if rule is None or rule.get("unclear"):
             # A rule that reads as staffing but not confidently is the
-            # owner's to restate — never a guessed floor (RULES-8).
+            # owner's to restate — never a guessed floor.
             if rule is not None or _is_staffing_rule(f):
                 (c.owner_rules_unchecked_private if private else c.owner_rules_unchecked).append(text)
             continue
@@ -3937,7 +3910,7 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
                     c.rule_floor_sources[(key.strip().lower(), day, rule["daypart"])] = rule["text"]
 
 
-# ── the RESTAURANT HOURS & SHIFT RULES, read into rules (PROMPT-1) ─────────
+# ── the RESTAURANT HOURS & SHIFT RULES, read into rules ─────────
 #
 # The owner's hours notes (restaurants.hours_notes — "Bartenders: evening
 # only, no earlier than 3:00pm", "Hosts: minimum 1 whenever the dining room
@@ -3946,7 +3919,7 @@ def apply_owner_rules(c: "Constraints", restaurant_id, db_path=None):
 # punches — said the owner's floors were already inside its numbers. They
 # were not: nothing parsed the notes, the table asked for a Wednesday-lunch
 # bartender the owner forbids and no host at Tuesday lunch, and nothing
-# checked the draft against either (schedule re-audit 10/4/26 PROMPT-1).
+# checked the draft against either.
 #
 # Each line is now read in the shapes owners write, every count through the
 # owner-rule parser (parse_owner_rule: its roles and role families, days,
@@ -3989,7 +3962,7 @@ _HOURS_SIGNAL = re.compile(r"\d|\b(?:cut|stagger\w*|only|never|always|minimum|ma
                            r"no earlier|no later|first|last|close|closes|until|before|after)\b")
 def _hours_cutover() -> int:
     """The schedule's own lunch/dinner split (schedule_time.daypart_split —
-    the restaurant's boundary, 3pm unless set; ARCH-12)."""
+    the restaurant's boundary, 3pm unless set)."""
     return _stime.daypart_split()
 
 
@@ -4200,7 +4173,7 @@ def _window_allows(w, part) -> bool:
 
 def _close_minutes_on(c, day):
     """The day's close on its timeline, read against its open (close_minutes,
-    schedule_time.close_on_timeline — BUGSGEN-22)."""
+    schedule_time.close_on_timeline)."""
     return close_minutes(c, day)
 
 
@@ -4409,12 +4382,12 @@ def parse_pair_rule(text: str, names, aliases=None, display=None) -> dict:
 def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
     """The owner's pairings (staff_settings.pair_sets: {"prefer", "avoid"}
     of frozensets of lowercase names) with the pairings their rules state
-    (c.owner_pairs, D-38) added, and "private": the ones stated in an
-    owner-only rule — scored and solved against, never printed where the
-    team reads (the prompt's PAIRINGS block, the scorer's sentences)."""
+    (c.owner_pairs) added, and "private": the ones stated in an owner-only
+    rule — scored and solved against, never printed where the team reads
+    (the prompt's PAIRINGS block, the scorer's sentences)."""
     def _one(pair):
-        # Each member under the roster's spelling of the person it means
-        # (D-8): a pairing kept under "Mike" holds for the roster's "Michael".
+        # Each member under the roster's spelling of the person it means: a
+        # pairing kept under "Mike" holds for the roster's "Michael".
         if c is None or not getattr(c, "display", None):
             return pair
         return frozenset(c.key(x) for x in pair)
@@ -4425,9 +4398,9 @@ def pairs_with_rules(pairs: dict, c: "Constraints") -> dict:
         out.setdefault(p["kind"], set()).add(pair)
         if p.get("private"):
             out["private"].add(pair)
-        # A reading of the owner's words nobody confirmed (AI-8): scored as
-        # the pairing it reads as, said as not confirmed - never as the
-        # owner's own pairing.
+        # A reading of the owner's words nobody confirmed: scored as the
+        # pairing it reads as, said as not confirmed - never as the owner's
+        # own pairing.
         if p.get("proposed"):
             out["proposed"].add(pair)
     for k in ("private", "proposed"):
@@ -4460,9 +4433,8 @@ def _pending_in_window(restaurant_id, start, end, db_path):
 TAIL_DAYS = 7
 
 # The live copy of each week, and its PUBLISHED rows — the one definition
-# (models.live_where / live_csv_sql, schedule audit 10/10/26 ARCH-11): the
-# tail and the sibling sites read what staff were sent, never an unsent
-# edit.
+# (models.live_where / live_csv_sql): the tail and the sibling sites read
+# what staff were sent, never an unsent edit.
 _LIVE_PUBLISHED = _models_live_where("schedule_history")
 _LIVE_CSV = _models_live_csv("schedule_history")
 
@@ -4473,24 +4445,24 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
     c.base_hours (hours toward the ceiling) — over TAIL_DAYS either side:
 
       1. this site's live published weeks that overlap that window, every
-         one of them (schedule audit 10/3/26 E-11: "the two newest by id"
-         returned next week and this week once both were published, and
-         last week — the one the rest rule, the run and Simple EJ's Wed-Sun
-         payroll hours need — dropped out);
+         one of them ("the two newest by id" returned next week and this
+         week once both were published, and last week — the one the rest
+         rule, the run and Simple EJ's Wed-Sun payroll hours need — dropped
+         out);
       2. for dates no published week covers, the draft in force of that
-         week, each row labelled a draft (E-10: generating two weeks ahead
+         week, each row labelled a draft (generating two weeks ahead
          double-booked hours a draft already gave);
-      3. for past dates neither covers, the punches (shift_facts — D-22:
+      3. for past dates neither covers, the punches (shift_facts:
          with no published week, a Sunday close then a Monday open and a
          run begun last week were invisible), labelled punches;
-      4. the organisation's other sites (E-26: org_sibling_ids — the
+      4. the organisation's other sites (org_sibling_ids — the
          organisation, not a matching owner email, so locations onboarded
-         under their GMs' emails see each other), their live
-         published weeks, each row matched to this site's person through
-         people's identity at both sites and kept as a row of the tail: it
-         is checked by overlap and rest like any other (D-40 — a lunch at
-         one site no longer bars dinner at the other), and its hours count
-         toward the payroll week.
+         under their GMs' emails see each other), their live published
+         weeks, each row matched to this site's person through people's
+         identity at both sites and kept as a row of the tail: it is
+         checked by overlap and rest like any other (a lunch at one site
+         no longer bars dinner at the other), and its hours count toward
+         the payroll week.
 
     Every row carries this site's spelling of the person (c.key/display),
     and `_source` / `_site` / `_week` say where it came from."""
@@ -4514,9 +4486,8 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             "SELECT id, week_start, week_end FROM schedule_history WHERE restaurant_id=? AND "
             "published_at IS NULL AND superseded_by IS NULL AND substr(week_end,1,10) >= ? "
             "AND substr(week_start,1,10) <= ? ORDER BY id DESC", (restaurant_id, lo, hi)).fetchall()
-        # Their rows from the shift table (schedule_shifts — schedule
-        # re-audit 10/11/26 ARCH-7): a live week's published copy, a
-        # draft's working copy.
+        # Their rows from the shift table (schedule_shifts): a live
+        # week's published copy, a draft's working copy.
         pub_rows = schedule_shifts.rows_by_week([w["id"] for w in published], "live", conn=conn)
         draft_rows = schedule_shifts.rows_by_week([w["id"] for w in drafts], "working", conn=conn)
     finally:
@@ -4590,7 +4561,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             if (r.get("date") or "") not in covered:
                 _take(r, "draft", week=ws)
         covered |= span
-    # The time clock for past dates nothing else covers (D-22).
+    # The time clock for past dates nothing else covers.
     gap_days = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, TAIL_DAYS + 1))
                       if d not in covered and d < today)
     if gap_days:
@@ -4604,13 +4575,13 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
                           "punches")
         except Exception as exc:
             _input_problem(c, "last week's punches", exc)
-    # The rest of a payroll week that has begun and was never published here
-    # (sched audit 10/10/26 BUGSGEN-21): its past days read the time clock
-    # above, but its days still to come counted nothing, so next week's
-    # overtime line could not see this Friday to Sunday. Each person's own
-    # usual hours on that weekday (their punches over the last four of
-    # them) stand in, toward the payroll week's hours only — never as rows
-    # a rest, overlap or run of days is judged on — and the review says so.
+    # The rest of a payroll week that has begun and was never published
+    # here: its past days read the time clock above, but its days still to
+    # come counted nothing, so next week's overtime line could not see this
+    # Friday to Sunday. Each person's own usual hours on that weekday (their
+    # punches over the last four of them) stand in, toward the payroll
+    # week's hours only — never as rows a rest, overlap or run of days is
+    # judged on — and the review says so.
     ahead = sorted(d for d in ((first - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 8))
                    if d not in covered and d >= today and c.bucket(d) in buckets)
     if ahead:
@@ -4618,7 +4589,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             _projected_tail(c, restaurant_id, ahead, today, db_path)
         except Exception as exc:
             _input_problem(c, "this payroll week's remaining days", exc)
-    # The organisation's other sites (E-26, D-40).
+    # The organisation's other sites.
     for sib_id, label, sib_rows in _sibling_weeks(restaurant_id, lo, hi, db_path):
         names = sorted({(r.get("employee") or "").strip() for r in sib_rows} - {""})
         try:
@@ -4634,7 +4605,7 @@ def _published_tail(c: Constraints, restaurant_id, db_path):
             k = next(iter(mine)) if mine else c.key(n)
             if (r.get("date") or "") in week_set:
                 # On a date being built, it is still a row of the tail: kept
-                # for overlap and rest, never a whole-date block (D-40).
+                # for overlap and rest, never a whole-date block.
                 row = dict(r, employee=c.display.get(k, n), _site=label)
                 sig = (label, k, row["date"], row.get("shift_start"))
                 if sig in seen:
@@ -4656,8 +4627,7 @@ def _projected_tail(c: Constraints, restaurant_id, ahead, today, db_path) -> Non
     week's days still to come, nothing published covers them): the mean of
     their punched hours over the last PROJECTED_WEEKS same weekdays, a week
     they did not work counted as 0, added to c.base_hours for the payroll
-    week (BUGSGEN-21). c.projected_tail says which dates and how much, for
-    the review."""
+    week. c.projected_tail says which dates and how much, for the review."""
     import shift_facts
     first = datetime.strptime(min(ahead), "%Y-%m-%d") - timedelta(weeks=PROJECTED_WEEKS)
     rows = shift_facts.person_rows(restaurant_id, since=first.strftime("%Y-%m-%d"), until=today,
@@ -4699,14 +4669,13 @@ def _fold_name(name) -> str:
 
 
 def org_sibling_ids(restaurant_id, db_path=DB_PATH) -> list:
-    """The other locations of this one's organisation (schedule audit
-    10/3/26 E-26): every location sharing its organization_id — the
-    organisation, one account's, is the owner check, so locations onboarded
-    under their GMs' emails are siblings once linked to it — else, for a
-    location linked to none, the same group under the same owner email (the
-    old rule; a group name alone is never enough: two unrelated "Syrup"s).
-    Read from the column itself: the Restaurant object carries no
-    organization_id."""
+    """The other locations of this one's organisation: every location
+    sharing its organization_id — the organisation, one account's, is the
+    owner check, so locations onboarded under their GMs' emails are
+    siblings once linked to it — else, for a location linked to none, the
+    same group under the same owner email (the old rule; a group name alone
+    is never enough: two unrelated "Syrup"s). Read from the column itself:
+    the Restaurant object carries no organization_id."""
     conn = get_conn(db_path)
     try:
         me = conn.execute("SELECT organization_id, location_group, owner_email FROM restaurants WHERE id=?",
@@ -4730,8 +4699,8 @@ def org_sibling_ids(restaurant_id, db_path=DB_PATH) -> list:
 
 def _sibling_weeks(restaurant_id, lo, hi, db_path):
     """[(site id, label, rows)] — the live published rows in [lo, hi] at
-    every other location of this one's organisation (org_sibling_ids —
-    E-26), one entry per site."""
+    every other location of this one's organisation (org_sibling_ids),
+    one entry per site."""
     try:
         ids = org_sibling_ids(restaurant_id, db_path)
     except Exception:
@@ -4752,8 +4721,8 @@ def _sibling_weeks(restaurant_id, lo, hi, db_path):
                 "SELECT id FROM schedule_history WHERE restaurant_id=? AND " + _LIVE_PUBLISHED + " AND "
                 "substr(week_end,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY id DESC",
                 (sid, lo, hi)).fetchall()]
-            # Their published rows from the shift table (schedule_shifts,
-            # ARCH-7).
+            # Their published rows from the shift table
+            # (schedule_shifts).
             by_week = schedule_shifts.rows_by_week(sib, "live", conn=conn)
             for hid in sib:
                 rows += [r for r in by_week.get(int(hid)) or [] if lo <= (r.get("date") or "") <= hi]
@@ -4770,8 +4739,8 @@ def violations(rows: list, c: Constraints, person_only: bool = False, day_only: 
                context=()) -> list:
     """The rule sweep (_violations), read inside the restaurant's own
     lunch/dinner boundary (Constraints.daypart_split — schedule_time.
-    daypart_scope, ARCH-12) wherever it runs: the generation, a Studio save,
-    the publish gate, a swap."""
+    daypart_scope) wherever it runs: the generation, a Studio save, the
+    publish gate, a swap."""
     split = getattr(c, "daypart_split", None)
     if split is not None and split != _stime.daypart_split():
         with _stime.daypart_scope(split):
@@ -4787,8 +4756,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     about one person's own rows (can_add sweeps a single person's week with
     it: the day-level rules — floors, a closer, a manager — need everyone);
     `day_only` to the rules about who is on a day (IncrementalSweep sweeps
-    one date's rows with it; `context` is then the neighbouring dates'
-    rows a manager's minutes may reach across midnight from, RULES-10)."""
+    one date's rows with it; `context` is then the neighbouring dates' rows
+    a manager's minutes may reach across midnight from)."""
     out = []
     by_person = {}
     seen_slots = set()
@@ -4797,15 +4766,15 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # One person, one key: every spelling that is them (people's
         # identity), and a roster person an open "same person?" question
         # joins to them, share one week here — overlaps, rest, hours, days
-        # in a row (schedule audit 10/3/26 D-8, E-25).
+        # in a row.
         key = c.key(name)
         if not key:
             continue
         by_person.setdefault(c.sweep_key(name), []).append((i, r))
         # Availability is judged on every daypart the shift reaches into,
         # not its start (a "mornings only" person on 2:30-11:30pm was never
-        # flagged), by any minute of it, not an hour (RULES-11).
-        # At the restaurant's own boundary (can_work_row, BUGSGEN-12).
+        # flagged), by any minute of it, not an hour. At the restaurant's
+        # own boundary (can_work_row).
         ok, why = c.can_work_row(name, r)
         if not ok:
             kind = next((k for k, lab in LABELS.items() if lab == why), None)
@@ -4830,8 +4799,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         if mx and hrs > float(mx) + 0.01 and max_shift_applies(c, key):
             out.append(_v("shift_too_long", i, r, f"{hrs:g}h shift, maximum {float(mx):g}h",
                           severity=round(hrs - float(mx), 2), **_law_tier(c, "max_shift_hours")))
-        # The one shortest shift (min_shift_minutes, contract #2 — BUGSGEN-6),
-        # lowered for a minor to what the law lets them work that day.
+        # The one shortest shift (min_shift_minutes, contract #2), lowered for
+        # a minor to what the law lets them work that day.
         shortest = shortest_for(c, key, r.get("date", "")) / 60.0
         if shortest and 0 < hrs < shortest - 0.01:
             out.append(_v("shift_too_short", i, r,
@@ -4839,18 +4808,17 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                           else f"{hrs:g}h shift — shorter than the {shortest:g}h shortest shift (the default; set "
                                "your own in your scheduling rules)", severity=round(shortest - hrs, 2)))
         if key in c.minors:
-            # Read on the row's business date (E-32): a 12:30am start is the
+            # Read on the row's business date: a 12:30am start is the
             # night's, past any latest end, never a morning start. Late,
-            # early and school hours (STRESS-5) by the one rule.
+            # early and school hours by the one rule.
             for kind_m, detail_m, sev_m in minor_time_breaches(c, key, r):
                 out.append(_v(kind_m, i, r, detail_m, severity=sev_m))
         # A minor's daily cap and daily overtime are about the DAY: they are
-        # summed over every leg of it with the person's other rows below (E-6).
-        # Meal breaks are PLACED inside the shift (breaks.plan_day, by the
-        # jurisdiction's timing, a minor's own rule, else the owner's "after
-        # N hours"): a long shift is no longer a flag by itself. Only a meal
-        # the law requires whose window cannot fit inside the shift is
-        # (schedule audit 10/10/26 MARKET-6).
+        # summed over every leg of it with the person's other rows below. Meal
+        # breaks are PLACED inside the shift (breaks.plan_day, by the
+        # jurisdiction's timing, a minor's own rule, else the owner's "after N
+        # hours"): a long shift is no longer a flag by itself. Only a meal the
+        # law requires whose window cannot fit inside the shift is.
         _bk = getattr(c, "break_rules", None)
         if _bk is None:
             import breaks as _breaks
@@ -4877,7 +4845,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         if not ok:
             out.append(_v("missing_cert", i, r, why))
         # The hours the owner's RESTAURANT HOURS & SHIFT RULES give the role
-        # ("Bartenders: evening only, no earlier than 3:00pm" — PROMPT-1).
+        # ("Bartenders: evening only, no earlier than 3:00pm").
         if c.role_windows:
             ok, why = c.role_window_ok(r)
             if not ok:
@@ -4888,8 +4856,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                 out.append(_v("role_window", i, r, why, severity=round(off / 60.0, 2)))
         # Past close by more than the role may stay: the one cap the job's
         # parser holds every model row to (_enforce_close_time), judged here
-        # so a pass that runs a close past it is seen (re-audit 10/4/26
-        # PIPE-10). Soft: an owner may keep somebody on by hand.
+        # so a pass that runs a close past it is seen. Soft: an owner may
+        # keep somebody on by hand.
         cap = close_cap_minutes(c, r)
         end_m = end_minutes(r) if cap is not None else None
         if cap is not None and end_m is not None and end_m > cap:
@@ -4898,7 +4866,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                           f"you allow {r.get('role') or 'the role'}",
                           severity=round((end_m - cap) / 60.0, 2), floor_role=c.family(r.get("role"))))
         # A role written for somebody who holds no role of its family — the
-        # model's guess treated as theirs (schedule audit 10/3/26 D-15).
+        # model's guess treated as theirs.
         if not c.holds(name, r.get("role", ""), r.get("date")):
             theirs = sorted({c.role_names.get(x, x) for x in (c.known_roles.get(key) or ())}, key=str.lower)
             out.append(_v("role_not_held", i, r,
@@ -4907,8 +4875,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
 
     # a role that stays until N minutes after close: the last of that role
     # each night must end no earlier ("bartenders stay an hour after close"),
-    # whichever of the role's job codes they work (D-13, D-43). A role with
-    # closers is held to it by the closer rule instead (_closer_breaches).
+    # whichever of the role's job codes they work. A role with closers is
+    # held to it by the closer rule instead (_closer_breaches).
     if c.close_mins and c.close_times and not person_only:
         by_date_role = {}
         for i, r in enumerate(rows or []):
@@ -4934,56 +4902,56 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                               f"last {r_last.get('role')} ends {r_last.get('shift_end')}, the rule is until {_fmt_minutes(need % (24 * 60))}",
                               floor_role=fam, day_level=True))
 
-    # a start or end the owner made a rule for a role on a daypart (schedule
-    # audit 10/3/26 L-33): soft — the draft is built to it
-    # (apply_role_times); a row off it is worth a look, never a blocker.
+    # a start or end the owner made a rule for a role on a daypart: soft —
+    # the draft is built to it (apply_role_times); a row off it is worth a
+    # look, never a blocker.
     if getattr(c, "role_times", None) and not person_only:
         out.extend(_role_time_violations(rows, c))
 
     # The owner's own words about one person on a day — on, closing,
-    # opening (owner_rules, scheduler audit 10/10/26 RM-9, AI-9): hard when
-    # the owner stands behind the rule, at the coverage rank, so no pass
-    # below it may undo one; soft while it is a reading of their notes.
+    # opening (owner_rules): hard when the owner stands behind the rule, at
+    # the coverage rank, so no pass below it may undo one; soft while it is
+    # a reading of their notes.
     if (getattr(c, "owner_person_on", None) or getattr(c, "owner_person_close", None)) and not person_only:
         import owner_rules as _owr
         out.extend(_owr.violations(rows, c, only_dates=({r.get("date") for r in rows or []} if day_only else None)))
-    # The readings nobody confirmed, kept as preferences (AI-8): soft, the
+    # The readings nobody confirmed, kept as preferences: soft, the
     # quality rank.
     if getattr(c, "owner_proposals", None) and not person_only:
         import owner_rules as _owr_p
         out.extend(_owr_p.proposal_violations(rows, c, only_dates=({r.get("date") for r in rows or []}
                                                                     if day_only else None)))
 
-    # The manager's habits the memory binds, broken (re-audit 10/11/26
-    # LEARNING-12): soft, one breach per habit missed, named so the review
-    # lists it ("the draft forgot my correction" is seen, not discovered).
+    # The manager's habits the memory binds, broken: soft, one breach per
+    # habit missed, named so the review lists it ("the draft forgot my
+    # correction" is seen, not discovered).
     if getattr(c, "habits", None) and not person_only:
         out.extend(_habit_violations(rows, c))
 
-    # coverage the owner set and the defaults every trading day needs
-    # (NS5 M8): the role floors are hard, a keyholder stays until close
-    # whenever the roster has one, and somebody is on at close.
+    # coverage the owner set and the defaults every trading day needs:
+    # the role floors are hard, a keyholder stays until close whenever
+    # the roster has one, and somebody is on at close.
     facts = None
     if not person_only:
         out.extend(_coverage_violations(rows, c))
         # a manager on the floor every minute anyone is (owner, 10/2/26)
         facts = {}
         out.extend(_manager_violations(rows, c, context=context, facts=facts))
-        # a second manager once enough staff are on (LOGIC-13)
+        # a second manager once enough staff are on
         out.extend(_second_manager_violations(rows, c))
 
     # The per-daypart "manager or keyholder on duty" switch (no_manager_on_
-    # duty, manager_rule_unusable) is gone (schedule audit 10/10/26 LOGIC-22):
-    # superseded by the manager-every-minute rule on 10/2/26 and forced off
-    # by compliance() on every read since, so it could only fire on a
-    # Constraints built by hand — one fact, two hard breaches.
+    # duty, manager_rule_unusable) is gone: superseded by the
+    # manager-every-minute rule on 10/2/26 and forced off by compliance() on
+    # every read since, so it could only fire on a Constraints built by hand —
+    # one fact, two hard breaches.
 
     # more front-of-house on the floor at once than there are sections. A
     # shift past midnight ends on the next day's clock (12:30am is 24:30,
     # end_minutes): skipping every row whose end read as before its start
     # left Friday and Saturday at a 2am close — exactly the nights a cap
-    # matters — unchecked (schedule audit 10/3/26 E-19). The roles count by
-    # family, so "Server AM" and "Server PM" are servers (D-13).
+    # matters — unchecked. The roles count by family, so "Server AM" and
+    # "Server PM" are servers.
     if c.section_cap and not person_only:
         counted = {c.family(x) for x in (c.foh_roles or ()) if str(x).strip()} or {"server"}
         by_date = {}
@@ -5001,8 +4969,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
             # How far over, for how long (people over the cap x half hours):
             # the severity a change is judged by (regressions), so a fill
             # that keeps one more on past the section count for an hour reads
-            # as worse even on a night already over it (schedule audit
-            # 10/10/26 LOGIC-23).
+            # as worse even on a night already over it.
             over_minutes, last_t = 0, None
             cap_n = int(c.section_cap)
             for t, delta, i in events:
@@ -5023,8 +4990,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                               severity=round(max(over_minutes / 30.0, float(peak - cap_n)), 2), peak=peak))
 
     # The most of a role on at once by the owner's RESTAURANT HOURS & SHIFT
-    # RULES ("Servers: maximum 5 at once" — PROMPT-1), per date and family,
-    # in the order of each one's first row (IncrementalSweep phase 7.5).
+    # RULES ("Servers: maximum 5 at once"), per date and family, in the
+    # order of each one's first row (IncrementalSweep phase 7.5).
     if getattr(c, "role_caps", None) and not person_only:
         out.extend(_role_cap_violations(rows, c))
 
@@ -5032,7 +4999,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
     for key, items in by_person.items():
         items.sort(key=lambda ir: (ir[1].get("date", ""), start_minutes(ir[1]) or 0))
         # The keys that are this person: their own, and any roster person an
-        # open "same person?" question joins to them (E-25).
+        # open "same person?" question joins to them.
         members = {c.key(r.get("employee")) for _, r in items} | {key}
         if c.linked:
             members |= {k for k, g in c.linked.items() if g == key}
@@ -5045,9 +5012,9 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         for m in members:
             for b, h in (c.base_hours.get(m) or {}).items():
                 per_bucket[b] = per_bucket.get(b, 0.0) + h
-        # By the payroll week each hour is worked in (bucket_hours,
-        # BUGSGEN-18): a Tuesday 10pm-2am close in a Wednesday-start payroll
-        # puts its 2 after-midnight hours in Wednesday's week.
+        # By the payroll week each hour is worked in (bucket_hours): a
+        # Tuesday 10pm-2am close in a Wednesday-start payroll puts its 2
+        # after-midnight hours in Wednesday's week.
         row_buckets = {}
         for i, r in items:
             row_buckets[i] = c.bucket_hours(r) if r.get("date") else {"": row_hours(r)}
@@ -5061,7 +5028,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # A limit that is the person's own (an owner-set maximum, the
         # salaried cap the owner set) is hard, TIER_LEGAL; the restaurant's
         # weekly ceiling is a priced policy limit — overtime the manager
-        # rule and coverage may need when nobody else can (LOGIC-1).
+        # rule and coverage may need when nobody else can.
         limits = sorted((c.max_hours(n), not c.own_max(n))
                         for n in {(r.get("employee") or "").strip() for _, r in items})
         mx, ceiling_only = limits[0] if limits else (c.max_hours(name), not c.own_max(name))
@@ -5085,9 +5052,9 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # A payroll week that runs on past this schedule week (a Wednesday
         # payroll and a Monday week: next Monday and Tuesday are still in
         # it) and is already at the overtime line by Sunday leaves next
-        # week's draft no room on those days but overtime (schedule audit
-        # 10/3/26 E-10). Soft: a reserve to keep, not a breach — the
-        # rebalance keeps it where a teammate has the room.
+        # week's draft no room on those days but overtime. Soft: a reserve
+        # to keep, not a breach — the rebalance keeps it where a teammate
+        # has the room.
         if hours_held and not c.is_salaried(name):
             for b, total in per_bucket.items():
                 tail = c.bucket_tail(b)
@@ -5111,14 +5078,14 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         if c.key(name) in c.full_time_default else f"{this_week:g}h this week, wants at least {mn:g}h")
                 out.append(_v("under_min_hours", items[0][0], items[0][1], said,
                               severity=round(mn - this_week, 2)))
-        # The day's hours, every leg of it (schedule audit 10/3/26 E-6): a
-        # 16-17 host on 10am-3pm and 4-9pm works ten hours, and a server on
-        # 6h + 6h in a daily-overtime state works twelve — checked one row
-        # at a time, neither was flagged, while the price summed the day.
-        # Counted in time order, so the leg that crosses the cap carries the
-        # flag (moving or cutting it fixes the day); each flag's severity is
-        # the day's excess so far, and the breach is the day's worst. Two
-        # names an open "same person?" question joins share one day (E-25).
+        # The day's hours, every leg of it: a 16-17 host on 10am-3pm and
+        # 4-9pm works ten hours, and a server on 6h + 6h in a daily-overtime
+        # state works twelve — checked one row at a time, neither was
+        # flagged, while the price summed the day. Counted in time order, so
+        # the leg that crosses the cap carries the flag (moving or cutting
+        # it fixes the day); each flag's severity is the day's excess so
+        # far, and the breach is the day's worst. Two names an open "same
+        # person?" question joins share one day.
         dot = None if (c.is_salaried(name) or not hours_held) else c.compliance.get("daily_ot_hours")
         days = {}
         for i, r in items:
@@ -5168,7 +5135,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                                       week=wk, severity=round(week_tot[wk] - float(wcap), 2)))
             # Days a week (New York, Washington, Massachusetts, Michigan: six
             # at most) — the same weekly breach, its own identity (week:days),
-            # charged to the row that makes the day too many (MARKET-5).
+            # charged to the row that makes the day too many.
             if br.get("max_days_week"):
                 cap_days = int(br["max_days_week"])
                 days_by_wk = {}
@@ -5204,7 +5171,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
             need = 0.0
         # The soft turnaround flag, where no rest rule is set: the same people
         # the rest rule would hold (never an owner or a manager — their
-        # turnarounds are their own call), hours rules applying (STRESS-19).
+        # turnarounds are their own call), hours rules applying.
         turnaround = (TURNAROUND_FLAG_HOURS if (hours_held and c.compliance.get("rest_mode") != "off"
                                                  and not float(c.compliance.get("min_rest_hours") or 0)
                                                  and any(rest_rule_applies(c, m) for m in members)) else 0.0)
@@ -5243,7 +5210,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         # Under a consent rule a short rest the person agreed
                         # to in writing is allowed and paid at the premium
                         # for the hours of the later shift inside the rest
-                        # window (MARKET-3, LOGIC-21): a priced soft flag.
+                        # window: a priced soft flag.
                         if _rmode == "consent_premium" and c.rest_waived(r_cur.get("employee") or name,
                                                                          r_cur.get("date"), r_cur.get("shift_start")):
                             inside = round(max(0.0, min(need - gap, (e_cur - s_cur).total_seconds() / 3600)), 2)
@@ -5264,8 +5231,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                         # No rest rule covers the restaurant (the law-free
                         # default): a turnaround under TURNAROUND_FLAG_HOURS
                         # is still worth a look — a soft quality flag, never a
-                        # blocker (sched re-audit 10/11/26 STRESS-19: 9pm-5am
-                        # then a 6am open passed review silently).
+                        # blocker (9pm-5am then a 6am open passed review
+                        # silently).
                         said = ("since " + _whose(other, own_r, "previous shift") if own_r is r_cur
                                 else "before " + _whose(other, own_r, "next shift"))
                         out.append(_v("short_turnaround", own_i, own_r,
@@ -5278,8 +5245,8 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
         # and Sunday already sent plus Monday to Friday here reads as seven.
         # Every run past the rule that this week's rows are part of counts:
         # the severity is the days past it summed over them, so splitting a
-        # nine-day run into two of four is progress the repair can see
-        # (schedule audit 10/3/26 P-30), and the flag names the longest.
+        # nine-day run into two of four is progress the repair can see, and
+        # the flag names the longest.
         max_run = c.compliance.get("max_consecutive_days") if hours_held else None
         if max_run:
             worked_dates = {r.get("date") for _, r in items if r.get("date")}
@@ -5297,7 +5264,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
                            **_law_tier(c, "max_consecutive_days"))
                 # The only person who can manage those days: the manager
                 # rule makes the run unavoidable — a fact about the roster,
-                # named once in setup, not a weekly must-fix (STRESS-18).
+                # named once in setup, not a weekly must-fix.
                 st = manager_structure(c).get(key)
                 if st and v_run.get("policy"):
                     v_run["structural"], v_run["structural_text"] = True, st["text"]
@@ -5310,7 +5277,7 @@ def _violations(rows: list, c: Constraints, person_only: bool = False, day_only:
             # Anyone working at all is checked: Monday/Wednesday/Friday has
             # four days off and no two of them together — and seven shifts
             # have none at all, which a run limit above 6 used to let
-            # through unflagged (SCHED-31).
+            # through unflagged.
             if len(worked) >= 2:
                 best = run = 0
                 prev = None
@@ -5348,7 +5315,7 @@ def _mdy_safe(iso) -> str:
 
 def _whose(prev: dict, cur: dict, what: str = "") -> str:
     """"their " — or "Kim T.'s " when the other row is under a name an open
-    "same person?" question joins to this one (E-25)."""
+    "same person?" question joins to this one."""
     a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
     if a and b and a.lower() != b.lower():
         return f"{a}'s {what + ' ' if what else ''}"
@@ -5356,7 +5323,7 @@ def _whose(prev: dict, cur: dict, what: str = "") -> str:
 
 
 def _maybe_same(prev: dict, cur: dict) -> str:
-    """Why another name's shift counts against this one (E-25), or ""."""
+    """Why another name's shift counts against this one, or ""."""
     a, b = (prev.get("employee") or "").strip(), (cur.get("employee") or "").strip()
     if a and b and a.lower() != b.lower():
         return f" — {a} may be the same person as {b}: answer it on the Team page"
@@ -5388,7 +5355,7 @@ def close_minutes(c: Constraints, day: str):
         return None
     # Read against that day's open (schedule_time.close_on_timeline): a close
     # at or before the open is the next morning, so a 6am-6am diner or a bar
-    # closing at 6am closes at 6am tomorrow, not before it opened (BUGSGEN-22).
+    # closing at 6am closes at 6am tomorrow, not before it opened.
     return _stime.close_on_timeline(m, parse_minutes((getattr(c, "open_times", None) or {}).get(day, "") or ""))
 
 
@@ -5398,8 +5365,7 @@ def close_cap_minutes(c, row):
     (Constraints.role_buffers, role_close_caps — the cap the job's parser
     holds every model row to), or None when that day has no close set. A
     manager on that date may stay as long as any role does — the manager
-    plan keeps one on until the last role leaves (schedule_skeleton) —
-    (re-audit 10/4/26 PIPE-10)."""
+    plan keeps one on until the last role leaves (schedule_skeleton)."""
     if not getattr(c, "close_times", None):
         return None
     day = _weekday_of(row.get("date") or "")
@@ -5408,8 +5374,8 @@ def close_cap_minutes(c, row):
         o_24, cl_24 = open_hours(c, day)
         if o_24 is not None and cl_24 is not None and cl_24 - o_24 >= 23 * 60:
             # Open around the clock: no close to cap at — a graveyard shift
-            # runs across the turnover (STRESS-4); only the longest shift
-            # past the business day's end bounds it.
+            # runs across the turnover; only the longest shift past the
+            # business day's end bounds it.
             return cl_24 + int(float((c.compliance or {}).get("max_shift_hours") or 12) * 60)
     if close_m is None:
         return None
@@ -5421,9 +5387,9 @@ def close_cap_minutes(c, row):
     stay = max(int(role_minutes(buffers, role, getattr(c, "role_families", None)) or 0),
                int(stays.get(c.family(role)) or 0))
     # Where the owner set nothing for the role, how long its last person
-    # really stays (its punches, else the stated default — LOGIC-11): no
-    # role is hard-capped at the close by default. An owner's setting,
-    # even 0, is theirs.
+    # really stays (its punches, else the stated default): no role is
+    # hard-capped at the close by default. An owner's setting, even 0,
+    # is theirs.
     learned = getattr(c, "learned_stays", None) or {}
     if learned and role_minutes(buffers, role, getattr(c, "role_families", None), default=None) is None \
             and c.family(role) not in stays:
@@ -5436,8 +5402,8 @@ def close_cap_minutes(c, row):
 
 
 # The mark the job's final sweep writes on a row it still faults ("— NEEDS
-# REVIEW: why"). One pattern for every path that takes it off (re-audit
-# 10/4/26 PIPE-6): a redo used to carry a stale one on a kept row.
+# REVIEW: why"). One pattern for every path that takes it off: a redo used
+# to carry a stale one on a kept row.
 REVIEW_MARK = _re_roles.compile(r"\s*(?:—\s*)?NEEDS REVIEW\b.*$", _re_roles.S)
 
 
@@ -5449,18 +5415,18 @@ def strip_review_mark(notes) -> str:
 def end_minutes(row):
     """A row's end as minutes past its own date's midnight: an end at or
     before its start crosses midnight, and a row starting in the small hours
-    of its night ends in them too (E-32, _night_offset)."""
+    of its night ends in them too (_night_offset)."""
     return _stime.end_of(row)
 
 
 def role_time_for(c, row) -> dict:
     """The owner's start/end rule for this row's role on its weekday and
-    daypart (Constraints.role_times, L-33), or {}. The row's daypart is the
-    one it serves (schedule_time.primary_daypart — the core window it covers
-    most), never its start's side of 3pm: "servers start Friday dinner at
-    2:30pm" retimed a 4pm row to 2:30pm, which then read as lunch, so the
-    rule could never check or keep the row it had just written, and a
-    model's 2:30pm dinner row was never checked at all (BUGSGEN-14)."""
+    daypart (Constraints.role_times), or {}. The row's daypart is the one it
+    serves (schedule_time.primary_daypart — the core window it covers most),
+    never its start's side of 3pm: "servers start Friday dinner at 2:30pm"
+    retimed a 4pm row to 2:30pm, which then read as lunch, so the rule could
+    never check or keep the row it had just written, and a model's 2:30pm
+    dinner row was never checked at all."""
     times = getattr(c, "role_times", None) or {}
     if not times:
         return {}
@@ -5514,7 +5480,7 @@ def _role_cap_violations(rows: list, c: Constraints) -> list:
 
 def _role_time_violations(rows: list, c: Constraints) -> list:
     """A row of a role whose start or end is off the owner's time rule for
-    that weekday and daypart (schedule audit 10/3/26 L-33), naming the rule."""
+    that weekday and daypart, naming the rule."""
     out = []
     for i, r in enumerate(rows or []):
         if not (r.get("employee") or "").strip():
@@ -5532,18 +5498,17 @@ def _role_time_violations(rows: list, c: Constraints) -> list:
     return out
 
 
-# A rule never makes a shift shorter than the one shortest shift (contract
-# #2, min_shift_minutes — it was its own 2h here, BUGSGEN-6): a 4:30pm start
-# on a shift the draft ended at 5pm is the draft's problem, not a 30-minute row.
+# A rule never makes a shift shorter than the one shortest shift (contract #2,
+# min_shift_minutes — it was its own 2h here): a 4:30pm start on a shift the
+# draft ended at 5pm is the draft's problem, not a 30-minute row.
 
 
 def _into_window(sa, ea, win) -> tuple:
     """(start, end) business minutes of a sa..ea shift moved INSIDE a role's
     window ({earliest, latest}), keeping its length where the window is long
     enough — a 10am-6pm line cook under "no earlier than 2pm" becomes
-    2pm-10pm, never 2pm-6pm (and never, after a trim, 2pm-4pm: sched
-    re-audit 10/11/26 BUGSGEN-5); clamped to the window only when the shift
-    is longer than it."""
+    2pm-10pm, never 2pm-6pm (and never, after a trim, 2pm-4pm:); clamped to
+    the window only when the shift is longer than it."""
     length = ea - sa
     lo, hi = win.get("earliest"), win.get("latest")
     if lo is not None and sa < lo:
@@ -5564,27 +5529,27 @@ def apply_role_windows(rows: list, c: Constraints, editable=None) -> dict:
     its length kept (_into_window). They used to be applied last, at the
     quality rank, after the budget trim had cut a 10am-6pm cook to 10-4: the
     retime then left a 2:00-4:00pm line cook who leaves before dinner, and 4
-    hard breaches where it could not (sched re-audit 10/11/26 BUGSGEN-5).
-    {rows, retimed, left} as apply_role_times."""
+    hard breaches where it could not. {rows, retimed, left} as
+    apply_role_times."""
     return apply_role_times(rows, c, editable=editable, windows_only=True)
 
 
 def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bool = False) -> dict:
     """Retime each row of a role to the owner's start/end rule for its
-    weekday and daypart (schedule audit 10/3/26 L-33 — a retime the manager
-    kept making, made a rule) where that is legal: never a row the owner or
-    the manager plan pinned (`_pinned`), never a date outside `editable` (a
-    partial redo keeps the owner's days), only when the person can work the
-    new times (Constraints.can_add) and the change makes no tier above
-    quality worse (regressions up to TIER_BUDGET, soft breaches included —
-    a manager's coverage, a floor, overtime and the budget all outrank a
-    start time). {rows, retimed: [{index, employee, date, from, to,
-    reason}], left: [{index, employee, date, reason}]}."""
+    weekday and daypart (a retime the manager kept making, made a rule)
+    where that is legal: never a row the owner or the manager plan pinned
+    (`_pinned`), never a date outside `editable` (a partial redo keeps the
+    owner's days), only when the person can work the new times
+    (Constraints.can_add) and the change makes no tier above quality worse
+    (regressions up to TIER_BUDGET, soft breaches included — a manager's
+    coverage, a floor, overtime and the budget all outrank a start time).
+    {rows, retimed: [{index, employee, date, from, to, reason}], left:
+    [{index, employee, date, reason}]}."""
     out_rows = [dict(r) for r in rows or []]
     retimed, left = [], []
     if not getattr(c, "role_windows", None) and (windows_only or not getattr(c, "role_times", None)):
         return {"rows": out_rows, "retimed": retimed, "left": left}
-    sweep = IncrementalSweep(c)          # each retime re-sweeps its person and date only (P-37)
+    sweep = IncrementalSweep(c)          # each retime re-sweeps its person and date only
     for i in range(len(out_rows)):
         r = out_rows[i]
         if not (r.get("employee") or "").strip() or r.get("_pinned"):
@@ -5593,8 +5558,8 @@ def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bo
             continue
         spec = {} if windows_only else role_time_for(c, r)
         # The hours the owner's RESTAURANT HOURS & SHIFT RULES give the
-        # role (PROMPT-1): a row outside them is moved inside, its length
-        # kept (_into_window, BUGSGEN-5).
+        # role: a row outside them is moved inside, its length kept
+        # (_into_window).
         win = c.role_window_for(r.get("role"), r.get("date")) if getattr(c, "role_windows", None) else {}
         if not spec and not win:
             continue
@@ -5611,8 +5576,8 @@ def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bo
             e1 = (s1 + (e0 - s0) % (24 * 60)) % (24 * 60)
         why_win = None
         # Candidates, best first: the row moved inside the role's window with
-        # its length kept (_into_window, BUGSGEN-5); where that is not legal
-        # (past close, the person's hours), the row cut to the window instead.
+        # its length kept (_into_window); where that is not legal (past close,
+        # the person's hours), the row cut to the window instead.
         cands = [(s1, e1)]
         if win:
             probe = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
@@ -5636,7 +5601,7 @@ def apply_role_times(rows: list, c: Constraints, editable=None, windows_only: bo
                 why = f"the rule would leave a {span / 60:g}h shift"
                 continue
             cand = dict(r, shift_start=_fmt_minutes(s1), shift_end=_fmt_minutes(e1 % (24 * 60)))
-            # Its hours from the real span in the restaurant's zone (BUGSGEN-6).
+            # Its hours from the real span in the restaurant's zone.
             cand["scheduled_hours"] = hours_text(span_hours(cand, tz_of(c)))
             trial = out_rows[:i] + [cand] + out_rows[i + 1:]
             ok, why = c.can_add(cand, trial)
@@ -5670,8 +5635,8 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
     day_level, and none is something a different person on that row would
     fix, so the fix pass leaves them for the owner. Only days with shifts on
     them are judged: a day with nobody at all is visibly empty, and a closed
-    day has none. A training shift is nobody's coverage (D-16): it counts
-    toward no floor, no rule and not toward somebody at close."""
+    day has none. A training shift is nobody's coverage: it counts toward no
+    floor, no rule and not toward somebody at close."""
     out = []
     by_date = {}
     for i, r in enumerate(rows or []):
@@ -5684,10 +5649,9 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
             day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
         except (ValueError, TypeError):
             continue
-        # Who is really on: a training shift is nobody's coverage (D-16), and
+        # Who is really on: a training shift is nobody's coverage, and
         # neither is a row its person cannot work that day (time off, off the
-        # roster) — the scorer leaves those out too (schedule re-audit
-        # 10/4/26 SQ-8).
+        # roster) — the scorer leaves those out too.
         counted = [(i, r) for i, r in items if _on_the_floor(c, r)]
         out.extend(_floor_breaches(c, d, day, items, counted))
         # the owner's rules checked per day: those that name no daypart (the
@@ -5704,14 +5668,14 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
             part = rule.get("daypart")
             if part:
                 # A daypart rule counted by family is a floor over that
-                # daypart's service: the one floor test (SQ-8).
+                # daypart's service: the one floor test.
                 held = _floor_test(c, day, [r for _i, r in mine], rule.get("family") or role_low, rule["min"], part)
                 n_on = rule["min"] if held["held"] else int(held["on_at_worst"] or 0)
             else:
                 n_on = len({c.key(r.get("employee")) for _i, r in mine})
             if n_on < rule["min"]:
                 i0, r0 = (mine or counted or items)[0]
-                # An owner-only rule's words stay the owner's (D-38).
+                # An owner-only rule's words stay the owner's.
                 said = ("below a staffing rule you set" if rule.get("private")
                         else f"your rule: “{rule['text'][:120]}”")
                 out.append(_v("owner_rule", i0, r0,
@@ -5733,11 +5697,11 @@ def _coverage_violations(rows: list, c: Constraints) -> list:
                            f"{_fmt_minutes(close_m % (24 * 60))}") if ends else
                           f"nobody but a trainee is on {day} at close ({_fmt_minutes(close_m % (24 * 60))})",
                           severity=close_m - e_last if ends else close_m, day_level=True))
-        # Each role with closers (D-9): its last person out is one of its
+        # Each role with closers: its last person out is one of its
         # closers and stays until close plus the role's minutes.
         if c.compliance.get("keyholder_until_close", True) and c.closers_by_role:
             out.extend(_closer_breaches(c, d, day, items))
-        # A trainee beside nobody who can train them (D-16).
+        # A trainee beside nobody who can train them.
         out.extend(_trainee_breaches(c, day, items))
     return out
 
@@ -5748,7 +5712,7 @@ def _on_the_floor(c, r) -> bool:
     — the day or a daypart it reaches into off, outside their window, a
     certificate the role needs missing that date. The scorer leaves the
     same rows out (the sweep's no-show rows, `flagged`), so the two count
-    one crew (SQ-8)."""
+    one crew."""
     if c.training_row(r):
         return False
     name, d = r.get("employee"), r.get("date") or ""
@@ -5763,12 +5727,11 @@ def _floor_test(c, day, rows, role, need, part) -> dict:
     """shift_quality.floor_shortfall for one date's `rows` — the ONE floor
     test, the scorer's coverage by the hour included: `need` people of
     `role`'s family (its AM/PM job codes one role) on at every half hour of
-    the daypart's core service, clipped to the day's hours (schedule
-    re-audit 10/4/26 SQ-8, RULES-12). The sweep used to count anybody whose
-    row overlapped the core window by an hour, by the exact job code: a
-    5-8pm and a 7-11pm server passed a dinner floor of 2 that the score
-    capped at 33, and two "Bartender PM" bartenders read as 0 against a
-    "Bartender" floor."""
+    the daypart's core service, clipped to the day's hours. The sweep used
+    to count anybody whose row overlapped the core window by an hour, by
+    the exact job code: a 5-8pm and a 7-11pm server passed a dinner floor
+    of 2 that the score capped at 33, and two "Bartender PM" bartenders
+    read as 0 against a "Bartender" floor."""
     from shift_quality import floor_shortfall
     open_m = parse_minutes((c.open_times or {}).get(day, "") or "")
     close_m = parse_minutes((c.close_times or {}).get(day, "") or "")
@@ -5777,12 +5740,11 @@ def _floor_test(c, day, rows, role, need, part) -> dict:
 
 def floor_needs(c, day) -> dict:
     """{(role family, daypart): (people, job code)} \u2014 each family's floors for
-    one weekday, its job codes' floors added up (as the scorer adds them),
-    named by the code with the largest share. The ONE grouping the
-    coverage_floor breach and the floors stage (schedule_engine.
-    _ensure_role_floors) both hold a day to \u2014 the stage counted one code's
-    floor at a time and stopped while the sweep still reported the family
-    short (schedule audit 10/10/26 BUGSGEN-3)."""
+    one weekday, its job codes' floors added up (as the scorer adds them), named by
+    the code with the largest share. The ONE grouping the coverage_floor breach and
+    the floors stage (schedule_engine. _ensure_role_floors) both hold a day to
+    \u2014 the stage counted one code's floor at a time and stopped while the sweep
+    still reported the family short."""
     by_fam = {}
     for role in sorted(c.role_floors or {}, key=str.lower):
         for part in ("morning", "night"):
@@ -5816,8 +5778,8 @@ def _floor_breaches(c, d, day, items, counted) -> list:
     daypart (floor_needs) held by floor_shortfall. Severity is the people
     missing summed over the short half hours, so a change that leaves the
     floor short for longer, or by more, reads as worse and one that closes
-    part of it as better. A floor kept in Crew says so (TRUST-9): the owner
-    reads which minimum is theirs from Crew and where to change it."""
+    part of it as better. A floor kept in Crew says so: the owner reads
+    which minimum is theirs from Crew and where to change it."""
     out = []
     by_fam = floor_needs(c, day)
     if not by_fam:
@@ -5878,10 +5840,10 @@ def _closer_rule_runs(c, fam, d) -> bool:
 
 def closer_need(c, fam, day, role_last_end) -> tuple:
     """(minute, until_close) the closer of role family `fam` stays until on
-    `day` — each role against its own close (schedule re-audit 10/4/26
-    RULES-6). Every role used to be held to the restaurant's close, or with
-    no close on file to the day's last shift of ANY role, so a cook closer
-    was kept on to the bar's 2am and a server to the dishwasher's 1am. In
+    `day` — each role against its own close. Every role used to be held to
+    the restaurant's close, or with no close on file to the day's last
+    shift of ANY role, so a cook closer was kept on to the bar's 2am and a
+    server to the dishwasher's 1am. In
     order:
       1. the owner's end-time rule for the role's night (role_times — "line
          cooks end at 11pm Fridays"): that is the role's close;
@@ -5910,22 +5872,21 @@ CLOSER_MISSING_SEVERITY = 24 * 60
 
 
 def _closer_breaches(c, d, day, items) -> list:
-    """The closer rule for one trading day (schedule audit 10/3/26 D-9): for
-    each role with closers the owner chose, the last of that role to leave
-    is one of its closers, and a role that stays to the close keeps its
-    closer on until close plus the role's minutes (closer_need). It used
-    to be one roster-wide check — a dishwasher staying late satisfied it
-    while the bar closed without a closer, and 47 of 64 people at Simple
-    EJ's were marked. A role that does not work that day is not judged; a
-    day none of its closers can work is a soft notice, not a hard breach
-    nobody can fix.
+    """The closer rule for one trading day: for each role with closers the
+    owner chose, the last of that role to leave is one of its closers, and a
+    role that stays to the close keeps its closer on until close plus the
+    role's minutes (closer_need). It used to be one roster-wide check — a
+    dishwasher staying late satisfied it while the bar closed without a
+    closer, and 47 of 64 people at Simple EJ's were marked. A role that does
+    not work that day is not judged; a day none of its closers can work is a
+    soft notice, not a hard breach nobody can fix.
 
-    Severity is about the close and nothing else (RULES-7): with a closer
-    on, how far before the target they leave or how long a teammate
-    outlasts them; with none, CLOSER_MISSING_SEVERITY plus how far before
-    the target the role's last person leaves. It was measured from the
-    role's EARLIEST start, so adding a lunch server read as making the
-    dinner closer breach worse and the floor fill was refused."""
+    Severity is about the close and nothing else: with a closer on, how
+    far before the target they leave or how long a teammate outlasts
+    them; with none, CLOSER_MISSING_SEVERITY plus how far before the
+    target the role's last person leaves. It was measured from the role's
+    EARLIEST start, so adding a lunch server read as making the dinner
+    closer breach worse and the floor fill was refused."""
     out = []
     for fam, closers in sorted((c.closers_by_role or {}).items()):
         mine = [(end_minutes(r), i, r) for i, r in items
@@ -5970,7 +5931,7 @@ def _closer_breaches(c, d, day, items) -> list:
 
 def _trainee_breaches(c, day, items) -> list:
     """A trainee's training shift with their trainer — or, with none named,
-    somebody who holds the role — on for at least half of it (D-16)."""
+    somebody who holds the role — on for at least half of it."""
     out = []
     if not c.trainees:
         return out
@@ -6026,7 +5987,7 @@ def max_shift_applies(c, name_or_key) -> bool:
     the floor-manager certificate). Someone only standing in as a manager
     on a date is still held to it. Only where the restaurant lets its
     leaders set their own hours (compliance leaders_set_own_hours, on by
-    default — ARCH-22); off, it holds everyone."""
+    default); off, it holds everyone."""
     if not leaders_set_own_hours(c):
         return True
     return c.key(name_or_key) not in (c.managers or {})
@@ -6047,7 +6008,7 @@ def hours_rules_apply(c, name_or_key) -> bool:
     store as long as they choose — where the restaurant's
     leaders_set_own_hours setting is on, the default (it came from Simple
     EJ's, 10/7/26: "erik is always at the store and most managers work over
-    40 hours anyways since they are salaried"; since ARCH-22 a setting, not
+    40 hours anyways since they are salaried"; now a setting, not
     a rule for every restaurant). Overlaps, time off, availability, roles and the
     minor rules still hold them. An hourly manager stays held - their
     overtime is real money - and a cap the owner set is still theirs
@@ -6062,8 +6023,8 @@ def is_manager_role(role) -> bool:
     """A role that names whoever runs the floor (manager_role_kind): an
     owner, a manager or supervisor of no single department, a GM, AGM, MOD
     or shift lead. A pattern over the role name used to decide it — "Kitchen
-    Manager" ran the floor and "AGM", "MOD" and "Shift Lead" did not
-    (schedule audit 10/3/26 P-7); the owner's yes or no now wins over it."""
+    Manager" ran the floor and "AGM", "MOD" and "Shift Lead" did not; the
+    owner's yes or no now wins over it."""
     return manager_role_kind(role) in ("owner", "manager", "lead")
 
 
@@ -6078,7 +6039,7 @@ def hours_label(r) -> str:
 def _span(r):
     """(start, end) in minutes past the row's business date's midnight — a
     12:30am porter is 1470-1680 of the night it works, never a dawn stretch
-    of its date with nobody managing (E-32)."""
+    of its date with nobody managing."""
     s, e = start_minutes(r), end_minutes(r)
     if s is None or e is None or e <= s:
         return None
@@ -6121,10 +6082,10 @@ def open_hours(c: "Constraints", day: str):
     o = parse_minutes((c.open_times or {}).get(day, "") or "")
     cl = close_minutes(c, day)
     # Open around the clock from midnight (12:00am-12:00am, 12:00am-11:59pm):
-    # the business day runs from the small hours' end, so its first hours
-    # are the night before's tail, never a second "open" every midnight —
-    # each date asked for a manager from 12:00am and the plan put every
-    # manager on all seven days (blind re-audit 10/11/26 STRESS-4).
+    # the business day runs from the small hours' end, so its first hours are
+    # the night before's tail, never a second "open" every midnight — each
+    # date asked for a manager from 12:00am and the plan put every manager on
+    # all seven days.
     if o is not None and cl is not None and cl - o >= 23 * 60 and o < _stime.NIGHT_TAIL_BEFORE:
         return _stime.NIGHT_TAIL_BEFORE, _stime.NIGHT_TAIL_BEFORE + 24 * 60
     return o, cl
@@ -6141,8 +6102,7 @@ def _day_offset(d: str, base: str):
 def counts_as_manager(c: "Constraints", row: dict) -> bool:
     """Whether `row` puts a manager on the floor: its person manages that
     date (Constraints.manages), can work it, and it is not a training shift
-    — a manager in training is never the floor manager, alone or not
-    (schedule re-audit 10/4/26 RULES-2)."""
+    — a manager in training is never the floor manager, alone or not."""
     d = row.get("date") or ""
     name = row.get("employee")
     return bool(c.manages(name, d) and not c.training_row(row) and c.can_work(name, d)[0])
@@ -6158,10 +6118,10 @@ def counts_as_manager(c: "Constraints", row: dict) -> bool:
 # last manager scheduled off hours before the end of the night is still one.
 # The "_pinned" value on a manager-plan row (schedule_skeleton.PLAN_SOURCE —
 # the plan is above this module, so it is named here and a test holds the
-# two together): the gap filler may extend such a row (BUGSGEN-17).
+# two together): the gap filler may extend such a row.
 PLAN_PIN = "manager_plan"
 
-CLOSING_MANAGER_STAYS_MINUTES = 60      # the default; each restaurant's own: closing_stay_minutes (LOGIC-12)
+CLOSING_MANAGER_STAYS_MINUTES = 60      # the default; each restaurant's own: closing_stay_minutes
 
 # The opening manager is in about an hour before the doors open (owner,
 # 10/10/26: Erik is Simple EJ's only manager on Tuesdays and "gets there
@@ -6170,7 +6130,7 @@ CLOSING_MANAGER_STAYS_MINUTES = 60      # the default; each restaurant's own: cl
 # start of the day, that ends when a manager arrives at least this long
 # before the open, is prep before the opening manager - not a gap. A
 # manager arriving later than that, or a gap after one has arrived, still is.
-OPENING_MANAGER_LEAD_MINUTES = 60       # the default; each restaurant's own: opening_lead_minutes (LOGIC-12)
+OPENING_MANAGER_LEAD_MINUTES = 60       # the default; each restaurant's own: opening_lead_minutes
 
 
 def opening_prep(gap, manager_starts, open_min, lead=None) -> bool:
@@ -6179,8 +6139,7 @@ def opening_prep(gap, manager_starts, open_min, lead=None) -> bool:
     is at least `lead` minutes (the restaurant's opening_lead_minutes;
     OPENING_MANAGER_LEAD_MINUTES when not given) before the open
     (`open_min`, minutes past midnight; None when no opening time is on
-    file). A lead of 0 turns the allowance off: no prep is ever "not a gap"
-    (LOGIC-12)."""
+    file). A lead of 0 turns the allowance off: no prep is ever "not a gap"."""
     lead = OPENING_MANAGER_LEAD_MINUTES if lead is None else int(lead)
     return (lead > 0 and open_min is not None and gap[1] in set(manager_starts)
             and gap[1] <= open_min - lead)
@@ -6193,9 +6152,9 @@ def manager_need(c: "Constraints", d: str, spans, hours=None) -> list:
     requirement: the check (manager_gaps) passes this week's rows, the
     manager plan (schedule_skeleton.day_window) the spans it expects this
     week to have, so the plan covers exactly what the check will ask
-    (schedule audit 10/10/26 ARCH-13: planned from the usual first start to
-    close plus the longest stay, checked against open hours and the week's
-    rows). `hours` (open, close) stands in for the hours on file."""
+    (planned from the usual first start to close plus the longest stay,
+    checked against open hours and the week's rows). `hours` (open, close)
+    stands in for the hours on file."""
     need = [tuple(sp) for sp in (spans or ()) if sp and sp[1] > sp[0]]
     try:
         day = datetime.strptime(d, "%Y-%m-%d").strftime("%A")
@@ -6239,7 +6198,7 @@ def _manager_days(rows: list, c: "Constraints", dates=None, context=()) -> dict:
         if sp and counts_as_manager(c, r):
             cover.append((d, sp, None, r))
     out = {}
-    # The restaurant's own allowances (LOGIC-12).
+    # The restaurant's own allowances.
     stay_m, lead_m = closing_stay_minutes(c), opening_lead_minutes(c)
     for d, items in sorted(by_date.items()):
         try:
@@ -6266,7 +6225,7 @@ def _manager_days(rows: list, c: "Constraints", dates=None, context=()) -> dict:
             # The closing manager's end-of-night stretch: it opens where a
             # manager's cover ends and runs to the end of the DAY's last
             # staffed block — never a mid-day block end (a lunch manager off
-            # at 2pm with a server to 3pm on a split day is a gap: BUGSGEN-4).
+            # at 2pm with a server to 3pm on a split day is a gap).
             if s in mgr_ends and e == last_end and e - s <= stay_m:
                 who = (ends_by.get(s) or [(None, None)])[0]
                 allow.append({"kind": "closing_stay", "start": s, "end": e, "minutes": e - s,
@@ -6289,20 +6248,19 @@ def manager_gaps(rows: list, c: "Constraints", dates=None, context=(), raw: bool
 
     Judged against the day's open hours as well as its rows: a Monday open
     at 11am whose first shift starts at 12:30pm was 90 minutes open with
-    nobody on and no manager, and nothing said so (schedule re-audit 10/4/26
-    RULES-1). And on one timeline across the week: a Saturday-dated
-    manager's 10pm-6am covers the small hours of Sunday, and a Sunday 6am
-    manager covers a Saturday-dated porter's last hour — per date they read
-    as false gaps at the date boundary (RULES-10). `context` is rows of the
-    neighbouring dates that may cover these dates' minutes but are not
-    judged here (IncrementalSweep's one-date sweep passes them).
+    nobody on and no manager, and nothing said so. And on one timeline
+    across the week: a Saturday-dated manager's 10pm-6am covers the small
+    hours of Sunday, and a Sunday 6am manager covers a Saturday-dated
+    porter's last hour — per date they read as false gaps at the date
+    boundary. `context` is rows of the neighbouring dates that may cover
+    these dates' minutes but are not judged here (IncrementalSweep's
+    one-date sweep passes them).
 
     The owner's two allowances — the closing manager's stay and the prep
-    before the opening manager — are taken out: this is the owner's
-    verdict (the review, the publish gate, what the manager backstop
-    chases). `raw` keeps them in: what no repair pass may grow by shortening
-    a manager (manager_facts, regressions — schedule audit 10/10/26
-    BUGSGEN-4)."""
+    before the opening manager — are taken out: this is the owner's verdict
+    (the review, the publish gate, what the manager backstop chases). `raw`
+    keeps them in: what no repair pass may grow by shortening a manager
+    (manager_facts, regressions)."""
     out = {}
     for d, day in _manager_days(rows, c, dates=dates, context=context).items():
         gaps = day["raw"] if raw else day["owner"]
@@ -6322,7 +6280,7 @@ def manager_facts(rows: list, c: "Constraints", dates=None, context=()) -> dict:
     regressions() holds every repair pass to beside the owner's verdict: a
     change that leaves a day's raw minutes higher AND its manager cover
     lower has shortened a manager into an allowance (the closing stay, the
-    opening prep), which only the owner's verdict may forgive (BUGSGEN-4)."""
+    opening prep), which only the owner's verdict may forgive."""
     return {d: (sum(e - s for s, e in day["raw"]), day["cover"])
             for d, day in _manager_days(rows, c, dates=dates, context=context).items()}
 
@@ -6330,10 +6288,10 @@ def manager_facts(rows: list, c: "Constraints", dates=None, context=()) -> dict:
 def assumed_stays(rows: list, c: "Constraints", tz: str = None) -> list:
     """The closing managers the owner's verdict assumes stay past their
     scheduled end until the last person leaves (CLOSING_MANAGER_STAYS_
-    MINUTES), said and priced (schedule audit 10/10/26 TRUST-21): [{date,
-    day, employee, index, scheduled_end, until, minutes, hours, hourly,
-    text, action}] — `action` the one-tap that writes the stay into the
-    schedule ("Schedule Erik to 11:45pm"), so staff see it too."""
+    MINUTES), said and priced: [{date, day, employee, index,
+    scheduled_end, until, minutes, hours, hourly, text, action}] —
+    `action` the one-tap that writes the stay into the schedule
+    ("Schedule Erik to 11:45pm"), so staff see it too."""
     out = []
     for d, day in sorted(_manager_days(rows, c).items()):
         for a in day["allow"]:
@@ -6362,8 +6320,8 @@ def assumed_stays(rows: list, c: "Constraints", tz: str = None) -> list:
 def with_assumed_stays(rows: list, c: "Constraints", stays: list = None) -> list:
     """`rows` with each hourly closing manager's assumed stay written into
     their row's end — what the week is priced and its overtime judged on
-    (TRUST-21: an hourly manager's 45 unscheduled minutes were missing from
-    the projected labor %). The rows themselves are not changed."""
+    (an hourly manager's 45 unscheduled minutes were missing from the
+    projected labor %). The rows themselves are not changed."""
     stays = assumed_stays(rows, c) if stays is None else stays
     if not stays:
         return list(rows or [])
@@ -6380,14 +6338,13 @@ def with_assumed_stays(rows: list, c: "Constraints", stays: list = None) -> list
 
 
 def _manager_violations(rows: list, c: "Constraints", context=(), facts: dict = None) -> list:
-    """no_manager per unmanaged stretch, and no_manager_roster when nobody on
-    the roster manages — soft to the repair passes (no change to the week
-    can mend the roster), but a blocker at publish (ROSTER_BLOCKERS,
-    schedule re-audit 10/4/26 RULES-13). Each no_manager is about its DAY, not the
-    row it is pinned to (`day_level`): the review shows it on the day, never
-    as "needs review" on whichever server happened to be on at its start
-    (schedule audit 10/3/26 E-13). `facts`, a dict when given, takes each
-    judged date's manager_facts from the same reading."""
+    """no_manager per unmanaged stretch, and no_manager_roster when nobody on the
+    roster manages — soft to the repair passes (no change to the week can mend the
+    roster), but a blocker at publish (ROSTER_BLOCKERS). Each no_manager is about
+    its DAY, not the row it is pinned to (`day_level`): the review shows it on the
+    day, never as "needs review" on whichever server happened to be on at its
+    start. `facts`, a dict when given, takes each judged date's manager_facts from
+    the same reading."""
     out = []
     staffed = [(i, r) for i, r in enumerate(rows or []) if r.get("date") and (r.get("employee") or "").strip()
                and r.get("date") not in (c.closed_dates or set())]
@@ -6395,8 +6352,8 @@ def _manager_violations(rows: list, c: "Constraints", context=(), facts: dict = 
         return out
     only = None
     if not c.managers:
-        # Somebody standing in as the manager on given dates (E-13) holds
-        # those dates to the rule; the rest of the week has nobody who could.
+        # Somebody standing in as the manager on given dates holds those
+        # dates to the rule; the rest of the week has nobody who could.
         only = {d for ds in (c.acting_managers or {}).values() for d in (ds or ())}
         if not c.roster_names and not only:
             return out        # no roster read (a bare rule check): nothing to say who manages
@@ -6439,28 +6396,28 @@ def _manager_violations(rows: list, c: "Constraints", context=(), facts: dict = 
 # breach pinned to the same row as an old one was invisible: two manager
 # gaps on one day share a pin, and the overtime rebalance opened a 7-hour
 # no-manager stretch on a day that already had a 1-hour one; the optimizer
-# compared only counts (schedule audit 10/3/26 E-1, P-14). A breach is now
-# identified by what it is about — the person and the date (or the payroll
-# week, or the run), the role and daypart of a floor, the date of a close —
-# with a severity (hours over, people short, days in the run), and "no
-# manager" is minutes per date. A change may not add a breach, make one
-# worse, or leave any day with more unmanaged minutes than before.
+# compared only counts. A breach is now identified by what it is about —
+# the person and the date (or the payroll week, or the run), the role and
+# daypart of a floor, the date of a close — with a severity (hours over,
+# people short, days in the run), and "no manager" is minutes per date. A
+# change may not add a breach, make one worse, or leave any day with more
+# unmanaged minutes than before.
 #
-# The ranked priorities every repair is held to (P-47): a change made for a
-# lower tier may never worsen a higher one.
+# The ranked priorities every repair is held to: a change made for a lower
+# tier may never worsen a higher one.
 #
 # The person tier used to hold every limit on a person's week, the
 # restaurant's own defaults among them: the 40h weekly ceiling, the 12h
 # shift, six days in a row and ten hours' rest all ranked as "the person
 # can't legally work it", above a manager on the floor every minute — so an
 # hourly manager could never pass 40h to close a gap nobody else could, and
-# a Friday floor went short rather than give a cook 2h of overtime (sched
-# audit 10/10/26 LOGIC-1, LOGIC-3). A person's own limits and the law stay
-# at the top (TIER_LEGAL); the restaurant's policy defaults rank below the
-# manager rule and the coverage rules (TIER_POLICY), where a jurisdiction
-# pack does not make them law (law_backed). Overtime is a cost with the
-# teammate test (Constraints.overtime_ok): no overtime while a same-role
-# teammate has room, and overtime when nobody else can.
+# a Friday floor went short rather than give a cook 2h of overtime. A
+# person's own limits and the law stay at the top (TIER_LEGAL); the
+# restaurant's policy defaults rank below the manager rule and the coverage
+# rules (TIER_POLICY), where a jurisdiction pack does not make them law
+# (law_backed). Overtime is a cost with the teammate test
+# (Constraints.overtime_ok): no overtime while a same-role teammate has
+# room, and overtime when nobody else can.
 TIER_LEGAL = 0        # the person can't legally or physically work it: availability, time off, overlap,
                       # minors, certificates, their own owner-set maximum, a jurisdiction's law
 TIER_PERSON = TIER_LEGAL   # the name every pass and test knew it by
@@ -6474,16 +6431,16 @@ TIER_MIN_HOURS = 5
 # above the hours budget whichever way a pass moves: the trim never cuts
 # under them and the top-up fills to them past the budget, the overrun said
 # in the review — one order, so the week no longer depends on whether the
-# model drafted heavy or light (LOGIC-4).
+# model drafted heavy or light.
 TIER_REQUIREMENT = 6
 TIER_BUDGET = 7
 TIER_QUALITY = 8
 
 # The one ranked table: what each tier is, in the words the model reads —
 # schedule_prompt.PRIORITIES is built from it, item by item (PRIORITY_LAYOUT),
-# so the prompt can never rank a rule differently from the code (LOGIC-20:
-# it put requirements and leadership above the hours ceiling while the code
-# stopped the top-up at the budget and held leadership to it). Order is rank.
+# so the prompt can never rank a rule differently from the code (it put
+# requirements and leadership above the hours ceiling while the code stopped
+# the top-up at the budget and held leadership to it). Order is rank.
 TIER_TABLE = (
     (TIER_LEGAL, "legal", "Employee availability and approved time off (the person cannot be there), STAFF "
      "CONSTRAINTS, closed dates, and each person's own limits in the ROSTER and the rules — the roles they may "
@@ -6506,19 +6463,18 @@ TIER_TABLE = (
      "same role has room: overtime is a cost the owner does not want — only for a shift nobody else in the role "
      "can legally work. It outranks SHIFT REQUIREMENTS (3c): a shift is left short before it is filled with "
      "overtime a teammate could have avoided."),
-    # Bounds, never a fill order (scheduler audit 10/10/26 AI-12): the
-    # min-hours and overtime stages hold them; the model was told to fill
-    # "from the people still under their minimum hours first", a running
-    # total across the week that code keeps and re-does anyway.
+    # Bounds, never a fill order: the min-hours and overtime stages hold
+    # them; the model was told to fill "from the people still under their
+    # minimum hours first", a running total across the week that code
+    # keeps and re-does anyway.
     (TIER_MIN_HOURS, "min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
      "full-time line) and their room before the overtime line are held by code after you write — bounds, never "
      "a fill order to work out."),
-    # Only the FIRM part of a requirement ranks here (blind re-audit 10/11/26
-    # LOGIC-3, LOGIC-6, P): the solver, the trim and the top-up hold the
-    # first person of a role the restaurant is never without above the
-    # budget, and price the rest of the demand against it — the prompt says
-    # the same thing, so the model and code no longer draft to different
-    # weeks (LOGIC-4).
+    # Only the FIRM part of a requirement ranks here (P): the solver, the
+    # trim and the top-up hold the first person of a role the restaurant is
+    # never without above the budget, and price the rest of the demand
+    # against it — the prompt says the same thing, so the model and code no
+    # longer draft to different weeks.
     (TIER_REQUIREMENT, "requirement", "SHIFT REQUIREMENTS' firm part: a role this restaurant is never without "
      "(on at that hour on almost every one of its weekdays) keeps its first person even when that costs more "
      "than the hours budget (4), and the floors are the hard minimum (2a). The rest of the people each shift "
@@ -6561,44 +6517,44 @@ BREACH_TIER = {**{k: TIER_PERSON for k in PERSON_KINDS},
                "under_min_hours": TIER_MIN_HOURS,
                # Soft (an owner may keep somebody on by hand), but ranked with
                # the close rules, so no pass below them runs a shift past the
-               # owner's after-close allowance (re-audit 10/4/26 PIPE-10).
+               # owner's after-close allowance.
                "past_close": TIER_COVERAGE,
-               # the owner's start/end rule for a role (L-33): below every
-               # tier that keeps people legal, managed, covered and paid right
+               # the owner's start/end rule for a role: below every tier that
+               # keeps people legal, managed, covered and paid right
                "role_time": TIER_QUALITY,
-               # a short turnaround with no rest rule set (STRESS-19): a look,
-               # never a reason a pass may not cover a floor
+               # a short turnaround with no rest rule set: a look, never a
+               # reason a pass may not cover a floor
                "short_turnaround": TIER_QUALITY,
-               # a second manager at the rush (LOGIC-13): a requirement,
-               # below the one-manager rule, the floors and the limits
+               # a second manager at the rush: a requirement, below the
+               # one-manager rule, the floors and the limits
                "second_manager": TIER_REQUIREMENT,
                # shorter than the one shortest shift (contract #2): soft, a look
                "shift_too_short": TIER_QUALITY,
                # the hours a role works and the most of it on at once, by the
-               # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1): the
-               # owner's staffing rules, ranked with the floors
+               # owner's RESTAURANT HOURS & SHIFT RULES: the owner's staffing
+               # rules, ranked with the floors
                "role_window": TIER_COVERAGE, "over_role_max": TIER_COVERAGE,
-               # The owner's own words (owner_rules, scheduler audit 10/10/26
-               # RM-9, AI-9): confirmed, ranked with the owner's staffing
-               # rules, so no pass below them — the overtime rebalance, the
-               # minimum hours, the trim, the solver, the optimizer — may
-               # undo one; a proposal from the notes ranks with quality.
+               # The owner's own words (owner_rules): confirmed, ranked with
+               # the owner's staffing rules, so no pass below them — the
+               # overtime rebalance, the minimum hours, the trim, the solver,
+               # the optimizer — may undo one; a proposal from the notes
+               # ranks with quality.
                "owner_word_off": TIER_COVERAGE, "owner_word_on": TIER_COVERAGE,
                "owner_word_close": TIER_COVERAGE,
                "owner_ask_on": TIER_QUALITY, "owner_ask_close": TIER_QUALITY,
-               # A reading nobody confirmed (AI-8): a preference, the quality rank.
+               # A reading nobody confirmed: a preference, the quality rank.
                "owner_ask_off": TIER_QUALITY, "owner_ask_max": TIER_QUALITY, "owner_ask_time": TIER_QUALITY,
                "owner_ask_floor": TIER_QUALITY,
-               # A broken habit (LEARNING-12): the review names it; the
-               # solvers price it in its own tier above quality.
+               # A broken habit: the review names it; the solvers price
+               # it in its own tier above quality.
                "habit_broken": TIER_QUALITY,
-               # More servers on at once than there are sections — the
-               # owner's own "most on at once", ranked with over_role_max:
-               # with no tier no stage's judge saw a pass push a night past
-               # the section count, and the section-cap trim later cut some
-               # other row (schedule audit 10/10/26 LOGIC-23). Soft, so a
-               # floor or close fill (same rank) may still need it; every pass
-               # ranked below the floors is refused one that makes it worse.
+               # More servers on at once than there are sections — the owner's
+               # own "most on at once", ranked with over_role_max: with no
+               # tier no stage's judge saw a pass push a night past the
+               # section count, and the section-cap trim later cut some other
+               # row. Soft, so a floor or close fill (same rank) may still
+               # need it; every pass ranked below the floors is refused one
+               # that makes it worse.
                "over_section_cap": TIER_COVERAGE}
 # Breaches named on several rows that are one breach at its worst row.
 _WORST_OF = frozenset({"over_max_hours", "over_hours_ceiling", "long_run", "under_min_hours", "minor_week_hours", "minor_hours",
@@ -6618,7 +6574,7 @@ LEARN_ALLOWANCE_MIN_DATES = 4
 
 def learn_manager_allowances(rows, manages, open_times=None) -> dict:
     """What a restaurant's own worked shifts (punches) say about its two
-    manager allowances (LOGIC-12 — "learned from punches where possible"):
+    manager allowances ("learned from punches where possible"):
 
     - closing_stay: on the nights a manager is the last one out, how long
       after the last other person they stay (the median, to 15 minutes);
@@ -6667,8 +6623,8 @@ SECOND_MANAGER_MIN_DATES = 4
 SECOND_MANAGER_MIN_HALF_HOURS = 8
 SECOND_MANAGER_SHARE = 0.75
 # A salaried manager's week the second-manager fill uses before any hourly
-# lead: hours already paid for (LOGIC-13 — three salaried managers were
-# planned 24-29h while peaks ran one manager). Their own minimum wins.
+# lead: hours already paid for (three salaried managers were planned
+# 24-29h while peaks ran one manager). Their own minimum wins.
 SALARIED_EXPECTED_HOURS = 40.0
 
 
@@ -6691,8 +6647,8 @@ def learn_second_manager(rows, manages) -> dict:
     from which this restaurant's own punches run TWO managers on the floor
     at least SECOND_MANAGER_SHARE of the time (over at least
     SECOND_MANAGER_MIN_HALF_HOURS half hours on SECOND_MANAGER_MIN_DATES
-    dates); None when its history never does (LOGIC-13: the learned default
-    of the second-manager line)."""
+    dates); None when its history never does (the learned default of the
+    second-manager line)."""
     by_date = {}
     for r in rows or []:
         d = str(r.get("date") or "")[:10]
@@ -6721,7 +6677,7 @@ def second_manager_from(c):
     """(staff, basis): the second-manager line — the owner's
     second_manager_from_staff (0 turns it off), else what the punches show
     (learn_second_manager), else (None, None): exactly one manager, the rule
-    as it was (LOGIC-13)."""
+    as it was."""
     v = (getattr(c, "compliance", None) or {}).get("second_manager_from_staff")
     if v not in (None, ""):
         try:
@@ -6756,9 +6712,9 @@ def second_manager_short(rows, c, d) -> list:
 
 def _second_manager_violations(rows, c) -> list:
     """second_manager: one soft breach per date with stretches the line asks
-    a second manager for and fewer than two are on (LOGIC-13), its severity
-    the half hours short — ranked with the requirements (TIER_REQUIREMENT),
-    below the one-manager rule, the floors and every person's limits."""
+    a second manager for and fewer than two are on, its severity the half
+    hours short — ranked with the requirements (TIER_REQUIREMENT), below the
+    one-manager rule, the floors and every person's limits."""
     out = []
     line, basis = second_manager_from(c)
     if not line or not (c.managers or c.acting_managers):
@@ -6784,14 +6740,14 @@ def _second_manager_violations(rows, c) -> list:
 
 
 def cover_second_manager(rows: list, c: "Constraints", editable=None, line: float = None) -> dict:
-    """The second-manager fill (LOGIC-13): for each stretch with the line's
-    staff on and one manager, a manager already on that day runs on or comes
-    in earlier, else a manager off that day takes a shift over it — SALARIED
-    managers under their expected week first (SALARIED_EXPECTED_HOURS or
-    their own minimum: hours already paid for), then hourly ones inside their
-    overtime line and the restaurant's limits. Never overtime, never past a
-    policy limit, never a shift under the shortest (min_shift_minutes), and
-    nothing above the requirements tier made worse. {rows, added, extended}."""
+    """The second-manager fill: for each stretch with the line's staff on and
+    one manager, a manager already on that day runs on or comes in earlier,
+    else a manager off that day takes a shift over it — SALARIED managers
+    under their expected week first (SALARIED_EXPECTED_HOURS or their own
+    minimum: hours already paid for), then hourly ones inside their overtime
+    line and the restaurant's limits. Never overtime, never past a policy
+    limit, never a shift under the shortest (min_shift_minutes), and nothing
+    above the requirements tier made worse. {rows, added, extended}."""
     rep = _Repair(rows, c, upto=TIER_MIN_HOURS, soft_upto=TIER_MIN_HOURS, max_sweeps=60, tier=TIER_REQUIREMENT)
     added, extended = [], []
     if not second_manager_from(c)[0] or not c.managers:
@@ -6889,10 +6845,10 @@ def manager_structure(c) -> dict:
     manages those dates, that person works every one of them — the run is
     the roster's shape, not the draft's choice. A one-manager cafe open
     seven days got a MUST-FIX "7 days in a row" from the engine's own plan
-    every week, to be overridden with a typed reason (sched re-audit
-    10/11/26 STRESS-18). The rules screen says it once, with the ways out
-    (an acting manager, the owner role — owners set their own hours — or a
-    closed day); the week names it as a note. Remembered on `c`."""
+    every week, to be overridden with a typed reason. The rules screen says
+    it once, with the ways out (an acting manager, the owner role — owners
+    set their own hours — or a closed day); the week names it as a note.
+    Remembered on `c`."""
     memo = getattr(c, "_manager_structure", None)
     if memo is not None:
         return memo
@@ -6962,7 +6918,7 @@ def breach_id(v) -> tuple:
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower(), v.get("daypart") or "")
     if kind in ("owner_rule", "ends_before_role_close", "past_close"):
         # past_close is about a role's stay that night, not who works it: a
-        # swap of people is no change, a later end is worse (PIPE-10).
+        # swap of people is no change, a later end is worse.
         return (kind, d, v.get("floor_role") or (v.get("role") or "").strip().lower())
     if kind == "over_role_max":
         return (kind, d, v.get("floor_role") or "")
@@ -7001,7 +6957,7 @@ def breach_profile(rows: list, c: "Constraints", viols: list = None, person_only
         sev = v.get("severity")
         sev = float(sev) if isinstance(sev, (int, float)) else 1.0
         # A breach repeated across rows (over_max_hours names every row of
-        # the payroll week; a day's cap names every leg past it, E-6) counts
+        # the payroll week; a day's cap names every leg past it) counts
         # once, at its worst; any other repeat (two overlaps the same day)
         # adds up.
         if v.get("kind") in _WORST_OF:
@@ -7038,10 +6994,10 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
     range, any day with more unmanaged minutes by the owner's verdict — or
     more unmanaged minutes before the owner's allowances AND less of the
     day under a manager: a manager shortened into the closing stay or the
-    opening prep, which only the owner's verdict may forgive, never a pass
-    (schedule audit 10/10/26 BUGSGEN-4). Soft kinds count only when they
-    carry a tier in range and `hard_only` is False. [{id, before, after,
-    label, tier}], most important first."""
+    opening prep, which only the owner's verdict may forgive, never a
+    pass. Soft kinds count only when they carry a tier in range and
+    `hard_only` is False. [{id, before, after, label, tier}], most
+    important first."""
     out = []
     tiers = after.get("tiers") or {}
     for bid, sev in (after.get("by_id") or {}).items():
@@ -7078,17 +7034,17 @@ def regressions(before: dict, after: dict, upto: int = TIER_COVERAGE, hard_only:
     return out
 
 
-# ── one legality question for a change to a live week (sched audit 10/10/26) ──
+# ── one legality question for a change to a live week ──
 #
 # Every change a person or a manager makes to a week staff already have — a
 # claim, a named cover, an offer accepted, a swap, a drop let go, time off
 # over a published shift — is judged here, and only here: the week as it is
-# against the week as it would be, by the whole rule sweep (ARCH-14: the
-# replacement check used to run the sweep and then shift_quality's own swap
-# index, two engines in two data shapes that disagreed). A swap is ONE
-# change (BUGSLIFE-1): judging each side against a week with both rows
-# blanked put the manager gap the swap creates into the "before", so a
-# manager trading her Saturday close to a non-manager passed.
+# against the week as it would be, by the whole rule sweep (the replacement
+# check used to run the sweep and then shift_quality's own swap index, two
+# engines in two data shapes that disagreed). A swap is ONE change: judging
+# each side against a week with both rows blanked put the manager gap the
+# swap creates into the "before", so a manager trading her Saturday close
+# to a non-manager passed.
 
 PENDING_OFF_LABEL = "has a time-off request waiting on you that day — answer it first"
 
@@ -7099,7 +7055,7 @@ def taker_problem(c: "Constraints", name: str, row: dict):
     restaurant closed, a day or half-day they can't work) and a time-off
     request for that day nobody has answered — or None."""
     d = row.get("date", "")
-    ok, why = c.can_work_row(name, row)          # the restaurant's own boundary (BUGSGEN-12)
+    ok, why = c.can_work_row(name, row)          # the restaurant's own boundary
     if not ok:
         return why
     if d and d in (c.pending_off.get(c.key(name)) or ()):
@@ -7157,7 +7113,7 @@ def overtime_added(c: "Constraints", name: str, row: dict, rows: list, line: flo
     return round(max(0.0, now - was), 2)
 
 
-# ── the sweep, kept by person and by date (schedule audit 10/3/26 P-37) ────
+# ── the sweep, kept by person and by date ────
 #
 # Every trial change a pass weighs used to copy the week and run the whole
 # rule sweep over it: up to 300 sweeps in the overtime rebalance, 120 a run
@@ -7212,10 +7168,10 @@ def _sweep_sig(r) -> tuple:
 
 class IncrementalSweep:
     """violations(rows, c) for one week's trials, re-sweeping only the people
-    and the dates whose rows differ from a sweep already run (P-37). Build
-    one per pass (or per week being edited) over its Constraints; reuse it
-    for every trial. `violations(rows)` and `profile(rows)` are the sweep's
-    and breach_profile's answers for `rows`."""
+    and the dates whose rows differ from a sweep already run. Build one per
+    pass (or per week being edited) over its Constraints; reuse it for every
+    trial. `violations(rows)` and `profile(rows)` are the sweep's and
+    breach_profile's answers for `rows`."""
 
     def __init__(self, c: "Constraints"):
         self.c = c
@@ -7238,7 +7194,7 @@ class IncrementalSweep:
         for i, r in enumerate(rows):
             # People grouped exactly as violations() groups them: one person,
             # one key, and a roster person an open "same person?" question
-            # joins read as one (Constraints.key / sweep_key — D-8, E-25).
+            # joins read as one (Constraints.key / sweep_key).
             name = (r.get("employee") or "").strip()
             if c.key(name):
                 by_person.setdefault(c.sweep_key(name), []).append((i, r))
@@ -7257,8 +7213,8 @@ class IncrementalSweep:
         firsts, facts = {}, {}
         for d, items in by_date.items():
             # A manager on the dates either side reaches across midnight
-            # (manager_gaps' one timeline, RULES-10): their rows are part of
-            # what this date's answer depends on.
+            # (manager_gaps' one timeline): their rows are part of what this
+            # date's answer depends on.
             ctx = [r for nd in _neighbour_dates(d) for _i, r in by_date.get(nd, ())
                    if counts_as_manager(c, r)] if (c.managers or c.acting_managers) else []
             sig = (tuple(_sweep_sig(r) for _i, r in items), tuple(_sweep_sig(r) for r in ctx))
@@ -7317,12 +7273,11 @@ class IncrementalSweep:
 
 def hourly_hours(rows: list, c: "Constraints" = None, salaried=None) -> float:
     """Hours of the rows worked by hourly people — the hours an hourly budget
-    is spent from. A salaried person's hours are not (schedule audit
-    10/3/26 P-6, E-7, D-3): counting them made a week the review called
-    within budget a publish blocker "over the ceiling" by about the
-    salaried hours, and the optimizer refuse every add once managers were on.
-    `salaried` (an iterable of names) stands in for `c` where no
-    Constraints exist."""
+    is spent from. A salaried person's hours are not: counting them made a
+    week the review called within budget a publish blocker "over the ceiling"
+    by about the salaried hours, and the optimizer refuse every add once
+    managers were on. `salaried` (an iterable of names) stands in for `c`
+    where no Constraints exist."""
     if c is not None:
         paid_same = c.is_salaried
     else:
@@ -7335,8 +7290,7 @@ def hours_split(rows: list, c: "Constraints" = None, salaried=None) -> dict:
     """{"hourly", "salaried", "total"} hours of `rows`: the hourly part is
     hourly_hours (the one hourly-hours sum), the salaried part the rest.
     What schedule_history keeps (hours_hourly / hours_salaried) and what
-    the publish gate holds against the hourly budget (schedule audit
-    10/3/26 E-7, P-6)."""
+    the publish gate holds against the hourly budget."""
     total = sum(row_hours(r) for r in (rows or []))
     hourly = hourly_hours(rows, c=c, salaried=salaried)
     return {"hourly": round(hourly, 1), "salaried": round(max(0.0, total - hourly), 1), "total": round(total, 1)}
@@ -7378,25 +7332,24 @@ def _v(kind, index, row, detail, **extra):
     # between shifts — POLICY_KINDS, law_backed false): held by every pass
     # at TIER_POLICY (`hard` stays its engine meaning), but to the OWNER it
     # is "over your limit", never a hard breach — the manager rule and the
-    # floors outrank it and a pass may cross it to cover them (sched
-    # re-audit 10/11/26 LOGIC-20). owner_hard() is the owner's reading.
+    # floors outrank it and a pass may cross it to cover them. owner_hard()
+    # is the owner's reading.
     out["policy"] = bool(kind in POLICY_KINDS and out["hard"] and not out.get("law"))
     return out
 
 
 def owner_hard(v) -> bool:
     """Whether a breach is a HARD breach to the owner — the review's ⚠ and
-    a publish MUST-FIX: hard, and not a policy limit that is not law
-    (LOGIC-20). A policy one reads "over your limit" and is acknowledged,
-    never overridden with a typed reason."""
+    a publish MUST-FIX: hard, and not a policy limit that is not law. A
+    policy one reads "over your limit" and is acknowledged, never
+    overridden with a typed reason."""
     return bool(isinstance(v, dict) and v.get("hard") and not v.get("policy"))
 
 
 def policy_text(v) -> str:
-    """The owner's line for a policy limit crossed (LOGIC-20): "Over your
-    limit — Bea C. — Sunday 10:30am: 7 days in a row, the rule is at most 6
-    (a manager on the floor, the staffing floors and the closers outrank
-    it)"."""
+    """The owner's line for a policy limit crossed: "Over your limit — Bea
+    C. — Sunday 10:30am: 7 days in a row, the rule is at most 6 (a manager
+    on the floor, the staffing floors and the closers outrank it)"."""
     who = (v.get("employee") or "").strip()
     where = f"{v.get('day') or v.get('date') or ''} {v.get('shift_start') or ''}".strip()
     head = f"{who} — {where}: " if who else (f"{where}: " if where else "")
@@ -7443,10 +7396,10 @@ def role_cross_training(restaurant) -> dict:
 
 
 # Soft breaches a repair pass acts on, and that no later pass (the solver)
-# may bring back once repaired: a missed run of days off (shift_quality.
-# apply_fixes hands one of the person's shifts to a legal teammate), and a
-# person under the minimum the owner set for them (fill_min_hours gives them
-# legal shifts — schedule audit 10/3/26 P-4: Erik's full-time cook, set to
+# may bring back once repaired: a missed run of days off
+# (shift_quality.apply_fixes hands one of the person's shifts to a legal
+# teammate), and a person under the minimum the owner set for them
+# (fill_min_hours gives them legal shifts: Erik's full-time cook, set to
 # 40-45h, got 7h and only a soft line said so). Both stay soft — they never
 # block publishing — but neither is a warning nothing acts on.
 FIXABLE_SOFT = frozenset({"days_off", "under_min_hours"})
@@ -7462,8 +7415,7 @@ def breach_text(v) -> str:
     """One breach as the owner reads it: "Ann — Wednesday 5:00pm: <detail>"
     for a breach about a person's row, and "10/7/26 — <detail>" for one about
     a DAY (`day_level`: no manager on, a floor short, nobody at close), which
-    is never charged to whoever's row it happens to be pinned to (schedule
-    audit 10/3/26 E-13)."""
+    is never charged to whoever's row it happens to be pinned to."""
     if v.get("day_level"):
         return f"{_mdy(v.get('date')) or v.get('day') or ''} — {v.get('detail')}".strip(" —")
     where = f"{v.get('day') or v.get('date')} {v.get('shift_start') or ''}".strip()
@@ -7472,11 +7424,11 @@ def breach_text(v) -> str:
 
 def summarize(viols: list) -> dict:
     """The review's counts and lines. `hard_rows` are the rows a hard breach
-    is about — never the row a day-level breach is pinned to (E-13); those
-    are `hard_days` [{date, day, kind, detail}], one per breach, for the
-    review to show on the day."""
+    is about — never the row a day-level breach is pinned to; those are
+    `hard_days` [{date, day, kind, detail}], one per breach, for the review
+    to show on the day."""
     # The owner's hard: a policy limit that is not law is "over your limit"
-    # (owner_hard, LOGIC-20), counted apart as `over_limit`.
+    # (owner_hard), counted apart as `over_limit`.
     hard = [v for v in viols if owner_hard(v)]
     policy = [v for v in viols if v.get("policy")]
     soft = [v for v in viols if not v["hard"]]
@@ -7508,23 +7460,22 @@ def rule_tag(kind) -> str:
     """"[HARD]" for a breach kind the sweep holds hard (HARD), "[SOFT]" for
     any other — the same sets violations() marks each breach by, so a rule
     line can never call itself something the checker does not hold it to
-    (schedule audit 10/3/26 PR-5: every rule used to be a flat "- …" line
-    under one header that said each was "verified … a breach is flagged",
-    daily overtime beside the longest shift). A prompt rule with no breach
-    kind of its own (a station the backstop fills) is [SOFT]: nothing about
-    it ever blocks a week."""
+    (every rule used to be a flat "- …" line under one header that said
+    each was "verified … a breach is flagged", daily overtime beside the
+    longest shift). A prompt rule with no breach kind of its own (a station
+    the backstop fills) is [SOFT]: nothing about it ever blocks a week."""
     return "[HARD]" if kind in HARD else "[SOFT]"
 
 
 def _rule(kind, text, why=None) -> str:
     """One rule line: its tag, the rule, and for a hard rule why it is hard
-    (PR-27: reasons let the model carry a rule to a case it does not name)."""
+    (reasons let the model carry a rule to a case it does not name)."""
     return f"- {rule_tag(kind)} {text}" + (f" — {why}." if why else "")
 
 
 def _iso_day(d) -> str:
-    """"Wed 2026-10-07": the one date the model reads (PR-20). An owner's
-    M/D/YY (a trainee's "until 12/1/26") reads the same way."""
+    """"Wed 2026-10-07": the one date the model reads. An owner's M/D/YY
+    (a trainee's "until 12/1/26") reads the same way."""
     text = str(d or "").strip()
     for fmt, part in (("%Y-%m-%d", text[:10]), ("%m/%d/%y", text), ("%m/%d/%Y", text)):
         try:
@@ -7541,7 +7492,7 @@ def _iso_days(dates) -> str:
 
 
 def _acting_prompt_lines(c) -> list:
-    """Who stands in as the manager, on which dates (E-13)."""
+    """Who stands in as the manager, on which dates."""
     bits = []
     for key, days in sorted(c.acting_managers.items()):
         if days:
@@ -7571,14 +7522,14 @@ def _role_window_text(c, fam, by_day) -> str:
 
 
 def _closer_prompt_lines(c) -> list:
-    """The closers, by role (D-9): who may close each role, and what
+    """The closers, by role: who may close each role, and what
     closing means."""
     bits = []
     for fam, keys in sorted(c.closers_by_role.items()):
         mins = int((c.close_mins or {}).get(fam, 0) or 0)
-        # Each role's own close (closer_need, RULES-6): a role that stays to
-        # the restaurant's close is told so; the rest close when their role
-        # is done — a kitchen closer is not kept on to the bar's close.
+        # Each role's own close (closer_need): a role that stays to the
+        # restaurant's close is told so; the rest close when their role is
+        # done — a kitchen closer is not kept on to the bar's close.
         stays = bool(c.close_times) and fam not in (c.early_close_roles or set())
         bits.append(f"{_family_label(c, fam)}: " + ", ".join(sorted(_display_name(c, k) for k in keys))
                     + (f" (on until {mins} min after close)" if stays and mins else
@@ -7591,7 +7542,7 @@ def _closer_prompt_lines(c) -> list:
 
 
 def _trainee_prompt_lines(c) -> list:
-    """Who is training, for what, with whom (D-16)."""
+    """Who is training, for what, with whom."""
     out = []
     for key, t in sorted(c.trainees.items()):
         who = _display_name(c, key)
@@ -7664,9 +7615,9 @@ def _weekday_of_iso(d) -> str:
 
 
 def _whose_limit(c, key, owner_words, default_words) -> str:
-    """Why a limit holds, said as whose it is (PROMPT-10): the owner's only
-    when the owner set it; a jurisdiction pack's starting value; else the
-    code's default — never an invented owner rule."""
+    """Why a limit holds, said as whose it is: the owner's only when the
+    owner set it; a jurisdiction pack's starting value; else the code's
+    default — never an invented owner rule."""
     by = getattr(c, "compliance_set", None)
     if by is None or by.get(key) == "owner":
         return owner_words
@@ -7676,14 +7627,13 @@ def _whose_limit(c, key, owner_words, default_words) -> str:
 
 
 def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
-    """The rules the week is checked against, as the model reads them —
-    the same facts the code checks afterwards, each line marked [HARD] or
-    [SOFT] from the sweep's own sets (rule_tag, PR-5), a hard rule with why.
-    Each person's own limits, windows, time off, certificates and band are
-    their ROSTER line (labor, from person_facts — PR-33); this block says
-    the rule once. `manager_plan` (schedule_skeleton.plan_manager_coverage)
-    — when the managers' shifts were planned, the manager line points at
-    them."""
+    """The rules the week is checked against, as the model reads them — the
+    same facts the code checks afterwards, each line marked [HARD] or [SOFT]
+    from the sweep's own sets (rule_tag), a hard rule with why. Each
+    person's own limits, windows, time off, certificates and band are their
+    ROSTER line (labor, from person_facts); this block says the rule once.
+    `manager_plan` (schedule_skeleton.plan_manager_coverage) — when the
+    managers' shifts were planned, the manager line points at them."""
     from schedule_time import OVERTIME_THRESHOLD_HOURS as _OT
     comp = c.compliance
     lines = []
@@ -7692,9 +7642,9 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                                if c.key(n) in c.managers))
         # The same rule PRIORITIES 1a states, in the same rank: it used to
         # call itself "above every other rule" — above the availability and
-        # time off PRIORITIES puts first (schedule audit 10/3/26 PR-1).
-        # The rule itself is PRIORITIES 1a's (re-audit 10/11/26 AI-15: it was
-        # restated here at length, a third time); this line names who.
+        # time off PRIORITIES puts first. The rule itself is PRIORITIES 1a's
+        # (it was restated here at length, a third time); this line names
+        # who.
         lines.append(_rule("no_manager",
                            "NON-NEGOTIABLE — PRIORITIES 1a: at least ONE manager on at every minute anybody is on. "
                            f"The managers: {_mg}."
@@ -7727,18 +7677,17 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     if comp.get("max_shift_hours"):
         lines.append(_rule("shift_too_long", f"No shift longer than {float(comp['max_shift_hours']):g} hours, "
                            "except an owner's or a manager's: how long they stay is their own call"))
-    # The one shortest shift every pass holds (contract #2, BUGSGEN-6): said
-    # whether the owner set it or it is the default — a minor may be given
-    # less where the law caps their day lower (STRESS-6).
+    # The one shortest shift every pass holds (contract #2): said whether
+    # the owner set it or it is the default — a minor may be given less
+    # where the law caps their day lower.
     lines.append(_rule("shift_too_short", f"No shift shorter than {min_shift_minutes(comp) / 60.0:g} hours"
                        + ("" if comp.get("min_shift_hours") else " (the default; the owner has set none)")
                        + (", except a minor whose legal hours that day are fewer" if c.minors else "") + "."))
     # One weekly limit per person — their MAX, which is the code's
-    # max_hours (P-12, D-18): the ceiling, or their own maximum when the
-    # owner set it — above the overtime line a ceiling, not their overtime
-    # line (schedule re-audit 10/4/26 RULES-9). The literal 40 the prompt
-    # used to state beside a person's own 45h is gone (PR-3); their ROSTER
-    # line says "OT 40h" beside the maximum.
+    # max_hours: the ceiling, or their own maximum when the owner set it —
+    # above the overtime line a ceiling, not their overtime line. The
+    # literal 40 the prompt used to state beside a person's own 45h is
+    # gone; their ROSTER line says "OT 40h" beside the maximum.
     _ceiling = float(comp.get("weekly_hours_ceiling") or DEFAULTS["weekly_hours_ceiling"])
     lines.append(_rule("over_max_hours",
                        "Nobody past their weekly maximum in a payroll week"
@@ -7749,8 +7698,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                          "published in the same payroll week count toward it",
                        why=_whose_limit(c, "weekly_hours_ceiling", "the most hours the owner allows anyone",
                                         "the default ceiling: the owner has set none")))
-    # A payroll week that runs on into next week's days (E-10): next week's
-    # draft schedules them inside the same overtime line.
+    # A payroll week that runs on into next week's days: next week's draft
+    # schedules them inside the same overtime line.
     _tails = [c.bucket_tail(b) for b in sorted({c.bucket(d) for d in (c.week_dates or [])})]
     _tail = next((t for t in _tails if len(t) >= TAIL_RESERVE_MIN_DAYS), None)
     if _tail:
@@ -7782,7 +7731,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         lines.extend(_minor_band_lines(c))
     if c.salaried:
         # Each one's weekly cap — their own, the restaurant's, or the
-        # default — is their MAX in the ROSTER (E-17).
+        # default — is their MAX in the ROSTER.
         lines.append(_rule("over_max_hours", "Salaried people (marked salaried in the ROSTER, the same pay whatever "
                            "the hours): at most their weekly cap; no overtime and no hourly ceiling for them, and their "
                            "hours are not spent from the hourly hours budget. Never move an hourly person's shift onto "
@@ -7806,7 +7755,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         lines.append(_rule("coverage_floor", "The staffing floors below are hard: a day under a floor is flagged to the "
                            "owner", why="the fewest people the owner says a shift can run with"))
     # The hours each role works and the most of it on at once, by the
-    # owner's RESTAURANT HOURS & SHIFT RULES (PROMPT-1).
+    # owner's RESTAURANT HOURS & SHIFT RULES.
     if getattr(c, "role_windows", None):
         lines.append(_rule("role_window", "Hours by role — no shift of the role starts before or ends after them: "
                            + "; ".join(_role_window_text(c, fam, by_day)
@@ -7820,9 +7769,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
                     {"morning": " at lunch/day", "night": " at dinner/night"}.get(cap.get("daypart") or "", "")
                 bits.append(f"{_family_label(c, fam)} at most {int(cap['max'])} on at once{when}")
         lines.append(_rule("over_role_max", "Most of a role on at once: " + "; ".join(bits) + "."))
-    # A bound code holds, never a fill order (AI-12 10/10/26; re-audit
-    # 10/11/26 AI-15 — this line still said "fill from the people below
-    # theirs first" beside PRIORITIES 3b saying the opposite).
+    # A bound code holds, never a fill order (PRIORITIES 3b says the same).
     lines.append(_rule("under_min_hours", "Each person's minimum hours (MIN in the ROSTER; a full-timer's is the "
                        "full-time line)."))
     if c.stations:
@@ -7845,7 +7792,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     # together ("1 lunch/day, 1 dinner/night on Mon/Tue/Wed/Fri/Sun; 1
     # lunch/day, 2 dinner/night on Thu/Sat") — the hours notes' floors are
     # set per day, and seven "Monday: 1 morning, 1 night" groups said one
-    # thing (schedule re-audit 10/4/26 PROMPT-1).
+    # thing.
     floors = []
     for role, spec in (c.role_floors or {}).items():
         groups = {}
@@ -7864,8 +7811,8 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     if floors:
         block += (f"\n\nSTAFFING FLOORS BY ROLE AND DAYPART {rule_tag('coverage_floor')} (never below these, whatever "
                   "the hours ceiling says):\n" + "\n".join(floors))
-    # The owner's start and end rules (schedule audit 10/3/26 L-33): the
-    # code retimes the draft to them afterwards, so the model is told them.
+    # The owner's start and end rules: the code retimes the draft to them
+    # afterwards, so the model is told them.
     times = []
     grouped = {}
     for (role, day, part), spec in sorted((getattr(c, "role_times", None) or {}).items(),
@@ -7875,7 +7822,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
         if bits:
             grouped.setdefault((role, part, " and ".join(bits)), []).append(day)
     for (role, part, bits), ds in grouped.items():
-        # The days with the same rule said once (PROMPT-1).
+        # The days with the same rule said once.
         when = "every day" if len(ds) == 7 else "on " + "/".join(d[:3] for d in ds)
         times.append(f"  {role.title()} {when} at {'lunch/day' if part == 'morning' else 'dinner/night'}: {bits}")
     if times:
@@ -7884,7 +7831,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
     return block
 
 
-# ── each person's facts, for the ROSTER (schedule audit 10/3/26 PR-33) ─────
+# ── each person's facts, for the ROSTER ─────
 #
 # What the checker holds each person to, as plain data — the one source of
 # the ROSTER table's availability and hours columns (labor._roster_people
@@ -7892,7 +7839,7 @@ def prompt_block(c: Constraints, manager_plan: dict = None) -> str:
 # same facts used to reach the model in five blocks (PER-PERSON LIMITS,
 # EMPLOYEE AVAILABILITY, the salaried line, the minors lines, the closers
 # line), with "Xh already published in this payroll week" summed over every
-# payroll week the schedule week touches (E-9, D-19).
+# payroll week the schedule week touches.
 
 def person_facts(c: Constraints, names=None) -> dict:
     """{display name: facts} for `names` (default the roster): manager role,
@@ -7993,7 +7940,7 @@ def person_facts(c: Constraints, names=None) -> dict:
         skills = (c.stations or {}).get("skills") or {}
         f["stations"] = list(skills.get(name) or skills.get(key) or [])
         # The roles they hold beyond their roster role (people.held_roles —
-        # trained or promoted, D-15): part of CAN WORK (PR-21).
+        # trained or promoted): part of CAN WORK.
         f["held"] = sorted(c.role_names.get(r, r) for r in (c.held_roles.get(key) or ()))
         out[name] = f
     return out
@@ -8017,14 +7964,13 @@ def person_facts(c: Constraints, names=None) -> dict:
 #      never below the shortest shift) where the role's family covers the
 #      trimmed stretch;
 #   4. otherwise leave it and say so.
-# Every change is judged by what it is about (breach_profile/regressions,
-# schedule audit 10/3/26 E-1): nothing about a person's legality, the
-# manager rule or coverage may get new or worse, and no new daily overtime.
-# A receiver keeps the reserve their payroll week owes its days in next week
-# (E-10) where anybody has the room. The line is 40h
+# Every change is judged by what it is about (breach_profile/regressions): nothing
+# about a person's legality, the manager rule or coverage may get new or worse, and
+# no new daily overtime. A receiver keeps the reserve their payroll week owes its
+# days in next week where anybody has the room. The line is 40h
 # (schedule_time.OVERTIME_THRESHOLD_HOURS), or the person's own weekly maximum when
-# the owner set it higher: that is the owner saying this one may work
-# overtime. A minor's age-band weekly cap is a line too (E-27).
+# the owner set it higher: that is the owner saying this one may work overtime. A
+# minor's age-band weekly cap is a line too.
 
 OT_TRIM_MAX_HOURS = 2.5
 OT_MAX_SWEEPS = 300
@@ -8037,17 +7983,16 @@ _SPLIT_JOIN_MIN = 60
 
 
 def overtime_line(c: "Constraints", name: str, line: float = None) -> float:
-    """The most hours in a payroll week code gives a person: the legal
-    overtime line (40h, schedule_time.OVERTIME_THRESHOLD_HOURS, or the line passed
-    in), or their own maximum when the owner set it LOWER. An owner's
-    maximum above the line is a ceiling (max_hours), not a line: a cook
-    allowed 45h was drafted to 45h and the rebalance left the five hours of
-    overtime while a same-role teammate had room (schedule re-audit 10/4/26
-    RULES-9; owner, 10/2/26 — a draft never creates overtime a teammate
-    could take). The rebalance moves what is past the line wherever a
-    teammate can take it, and keeps it, up to the maximum, only where
-    nobody can. A salaried person owes no overtime: their line is the
-    salaried cap (Constraints.salaried_limit, E-17)."""
+    """The most hours in a payroll week code gives a person: the legal overtime
+    line (40h, schedule_time.OVERTIME_THRESHOLD_HOURS, or the line passed in), or
+    their own maximum when the owner set it LOWER. An owner's maximum above the
+    line is a ceiling (max_hours), not a line: a cook allowed 45h was drafted to
+    45h and the rebalance left the five hours of overtime while a same-role
+    teammate had room (owner, 10/2/26 — a draft never creates overtime a teammate
+    could take). The rebalance moves what is past the line wherever a teammate can
+    take it, and keeps it, up to the maximum, only where nobody can. A salaried
+    person owes no overtime: their line is the salaried cap
+    (Constraints.salaried_limit)."""
     from schedule_time import OVERTIME_THRESHOLD_HOURS
     if c.is_salaried(name):
         return c.salaried_limit(name)
@@ -8062,7 +8007,7 @@ def _hard_keys(rows: list, c: "Constraints") -> set:
     return {(v.get("index"), v.get("kind")) for v in violations(rows, c) if v.get("hard")}
 
 
-# ── what every repair pass shares (schedule audit 10/3/26 E-1, P-2) ────────
+# ── what every repair pass shares ────────
 #
 # A pass changes rows only through _Repair.judge: the change is swept whole
 # and refused when anything at or above the pass's tier is new or worse —
@@ -8084,7 +8029,7 @@ def _is_pinned(row) -> bool:
 def shortest_shift_hours(c: "Constraints", default=None) -> float:
     """The shortest shift a pass may leave or make, in hours — the one rule
     (min_shift_minutes). `default` is ignored: every pass used to bring its
-    own (0, 30 minutes, 2h, 4h — sched re-audit 10/11/26 BUGSGEN-6)."""
+    own (0, 30 minutes, 2h, 4h)."""
     return min_shift_minutes(c) / 60.0
 
 
@@ -8092,8 +8037,7 @@ def shortest_for(c: "Constraints", name_or_key, date_str) -> int:
     """The shortest shift `name_or_key` may be given on `date_str`, in
     minutes: the one rule (min_shift_minutes), lowered to what the law lets
     a minor work that day — a 14-15 year old's 3h school-day cap is a legal
-    after-school shift under a 4h rule, never no shift at all (sched
-    re-audit 10/11/26 STRESS-6)."""
+    after-school shift under a 4h rule, never no shift at all."""
     m = min_shift_minutes(c)
     key = c.key(name_or_key) if c is not None else None
     if key and key in (getattr(c, "minors", None) or ()):
@@ -8108,10 +8052,10 @@ class _Repair:
     the test every change it tries must pass. `upto`: the hard tiers that
     may not get new or worse (TIER_POLICY by default: every hard rule; a
     pass ranked above the policy limits passes TIER_COVERAGE in its last
-    round, once nobody could do it inside them — LOGIC-1); `soft_upto`:
-    soft kinds of the tiers after TIER_COVERAGE through it (the weekly
-    ceiling, daily overtime, the payroll reserve) may not either; `ignore`:
-    kinds the pass weighs itself instead."""
+    round, once nobody could do it inside them); `soft_upto`: soft kinds of
+    the tiers after TIER_COVERAGE through it (the weekly ceiling, daily
+    overtime, the payroll reserve) may not either; `ignore`: kinds the pass
+    weighs itself instead."""
 
     def __init__(self, rows, c, upto=TIER_POLICY, soft_upto=None, max_sweeps=OT_MAX_SWEEPS, ignore=(),
                  tier=None):
@@ -8119,11 +8063,10 @@ class _Repair:
         # The rank the pass serves (its engine stage's): the soft rules of
         # every tier above it — the owner's standing rule, the stay after
         # close — are held as the engine holds the stage (_judge), so a move
-        # that breaks one is refused here, not the whole stage after
-        # (schedule re-audit 10/4/26 RULES-4).
+        # that breaks one is refused here, not the whole stage after.
         self.tier = tier
         self.rows = [dict(r) for r in (rows or [])]
-        # Each trial re-sweeps only the people and dates it moved (P-37).
+        # Each trial re-sweeps only the people and dates it moved.
         self.sweep = IncrementalSweep(c)
         self.viols = self.sweep.violations(self.rows)
         self.prof = breach_profile(self.rows, c, viols=self.viols)
@@ -8176,9 +8119,9 @@ def _display(c: "Constraints", rows, roster_roles=None) -> dict:
 
 def _role_families(c: "Constraints", roster_roles=None) -> dict:
     """{lower: set(role family)}: the roles a pass may hand a person — their
-    roster role's family ("Server AM" and "Server PM" are one role, D-13),
-    and every role they hold (c.held_roles: trained or promoted, D-15), so a
-    server trained on bar is a teammate for a bar shift (P-30, P-31)."""
+    roster role's family ("Server AM" and "Server PM" are one role), and
+    every role they hold (c.held_roles: trained or promoted), so a server
+    trained on bar is a teammate for a bar shift."""
     fam = {}
     for n, role in (roster_roles or {}).items():
         if n and str(role or "").strip():
@@ -8201,7 +8144,7 @@ def _takes(c: "Constraints", fam: dict, rows, low: str, role) -> bool:
 
 
 def _bucket_hours(c: "Constraints", rows, low: str, b: str) -> float:
-    # By the payroll week each hour is worked in (bucket_hours, BUGSGEN-18).
+    # By the payroll week each hour is worked in (bucket_hours).
     return (float((c.base_hours.get(low) or {}).get(b, 0.0) or 0.0)
             + sum(c.bucket_hours(r).get(b, 0.0) for r in rows or () if _low(r.get("employee")) == low
                   and r.get("date")))
@@ -8213,7 +8156,7 @@ def _day_hours(rows, low: str, d: str) -> float:
 
 def _run_through(c: "Constraints", rows, low: str, d: str) -> int:
     """Days in a row `low` works with `d` among them (this week and the
-    published tail) — the fatigue a pass ranks who takes on more by (E-17)."""
+    published tail) — the fatigue a pass ranks who takes on more by."""
     worked = {r.get("date") for r in rows or () if _low(r.get("employee")) == low and r.get("date")}
     worked |= {r.get("date") for r in (c.base_rows.get(low) or []) if r.get("date")}
     try:
@@ -8232,13 +8175,13 @@ def _run_through(c: "Constraints", rows, low: str, d: str) -> int:
 def _fatigue_rank(c: "Constraints", rows, low: str, d: str, add_hours: float = 0.0) -> tuple:
     """(days in a row, hours in the payroll week) once `low` takes on
     `add_hours` on `d`: the least tired first, then the fewest hours — never
-    "salaried first" (E-17)."""
+    "salaried first"."""
     return (_run_through(c, rows, low, d), round(_bucket_hours(c, rows, low, c.bucket(d)) + add_hours, 2))
 
 
 def _retimed(row: dict, start_m: int, end_m: int, c: "Constraints") -> dict:
     """`row` running start_m..end_m (minutes past its business date's
-    midnight), its hours the real length (E-23)."""
+    midnight), its hours the real length."""
     out = dict(row)
     out["shift_start"] = _fmt_minutes(start_m % (24 * 60))
     out["shift_end"] = _fmt_minutes(end_m % (24 * 60))
@@ -8280,10 +8223,10 @@ def _receivers(c: "Constraints", rows, display: dict, fam: dict, row: dict, othe
     the role (its family or a role they hold), whom code may choose that day
     (fillable), for whom the row is legal with their week swept (can_add,
     their overtime line included), and whose day stays inside the longest
-    shift when it is a second leg. Ranked least tired, then fewest hours
-    (E-17); with `reserve`, those who keep their payroll week's reserve for
-    next week's days first (E-10). `salaried` False keeps hours moved to
-    spare overtime off a salaried person's fixed week."""
+    shift when it is a second leg. Ranked least tired, then fewest hours;
+    with `reserve`, those who keep their payroll week's reserve for next
+    week's days first. `salaried` False keeps hours moved to spare overtime
+    off a salaried person's fixed week."""
     d = row.get("date") or ""
     max_shift = float(max_shift or c.compliance.get("max_shift_hours") or DEFAULTS["max_shift_hours"])
     ranked = []
@@ -8351,7 +8294,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
             return f"a minor's {e['limit']:g}h week"
         if not e.get("salaried"):
             return "no overtime"
-        # "you set" only for a limit the owner set (RULES-5).
+        # "you set" only for a limit the owner set.
         return (f"inside the {e['limit']:g}h you set for them" if c.salaried_cap_set(name_of(e["low"]))
                 else f"inside {e['limit']:g}h")
 
@@ -8361,7 +8304,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
 
     # What is over: a person's payroll week past their overtime line, and a
     # minor's week past their age band's cap — the rebalance uses that cap
-    # as their line (schedule audit 10/3/26 E-27).
+    # as their line.
     entries, totals = [], {}
     for low, per in (c.base_hours or {}).items():
         for b, h in (per or {}).items():
@@ -8431,7 +8374,7 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
     def split(e):
         """Hand part of a shift over: a teammate runs their own shift on
         into its tail, or takes the tail (or head) as a shift of their own
-        — never leaving either shorter than the shortest shift (P-31)."""
+        — never leaving either shorter than the shortest shift."""
         name = name_of(e["low"])
         need = math.ceil((total(e) - e["limit"]) * 4) / 4.0
         m = int(round(need * 60))
@@ -8557,12 +8500,12 @@ def rebalance_overtime(rows: list, c: "Constraints", roster_roles: dict = None, 
 
 def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
                    max_sweeps: int = 60) -> dict:
-    """The deterministic backstop for the closer rule, per role (schedule
-    audit 10/3/26 D-9): on a trading day where a role with closers has no
-    closer staying until close plus the role's minutes, or a teammate
-    outlasting its closer, a closer of that role already working that night
-    runs on to close (and past the last of the role to leave). The model
-    reads "Close: 12:00am Thu-Sat" and still ends the night at 11:30pm.
+    """The deterministic backstop for the closer rule, per role: on a
+    trading day where a role with closers has no closer staying until close
+    plus the role's minutes, or a teammate outlasting its closer, a closer
+    of that role already working that night runs on to close (and past the
+    last of the role to leave). The model reads "Close: 12:00am Thu-Sat"
+    and still ends the night at 11:30pm.
 
     Each extension is asked of the person first (Constraints.can_add: rest,
     the shift-length rule, a minor's limits, the hours maximum, the overtime
@@ -8577,7 +8520,7 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
     extended = []
     if not c.closers_by_role or not c.compliance.get("keyholder_until_close", True):
         return {"rows": rows, "extended": extended}
-    # Each trial re-sweeps only the person and the date it moved (P-37).
+    # Each trial re-sweeps only the person and the date it moved.
     sweep = IncrementalSweep(c)
     before = sweep.profile(rows)
     sweeps = 0
@@ -8598,8 +8541,8 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
             if not mine:
                 continue
             last_e = max(e for e, _i, _r in mine)
-            # The role's own target (closer_need, RULES-6): the close for a
-            # role that stays to it, else the last of the role out.
+            # The role's own target (closer_need): the close for a role
+            # that stays to it, else the last of the role out.
             need, _until = closer_need(c, fam, day, last_e)
             target = max(need, last_e)
             closers = c.closers_by_role.get(fam) or set()
@@ -8608,9 +8551,9 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
                            key=lambda t: -t[0])
             done = False
             # A closer until close outranks overtime and the restaurant's own
-            # limits: inside both first, then past the line only when no
-            # closer can run on inside it (the teammate test), then past the
-            # policy limits only when nobody can inside them (LOGIC-1, LOGIC-3).
+            # limits: inside both first, then past the line only when no closer
+            # can run on inside it (the teammate test), then past the policy
+            # limits only when nobody can inside them.
             for mode in FILL_ROUNDS:
                 for e, i, r in cands:
                     if sweeps >= max_sweeps:
@@ -8621,7 +8564,7 @@ def close_out_gaps(rows: list, c: "Constraints", editable=None, line: float = No
                     new = dict(r, shift_end=_fmt_minutes(target % (24 * 60)))
                     # Its hours from the real span in the restaurant's zone: a
                     # closer run on to a 2am close on 10/31/26 works 10 hours,
-                    # not the wall clock's 9 (BUGSGEN-6).
+                    # not the wall clock's 9.
                     new["scheduled_hours"] = hours_text(span_hours(new, tz_of(c)))
                     ok, _why = c.can_add(new, [x for j, x in enumerate(rows) if j != i], line=line,
                                          overtime=mode[0], policy=mode[1])
@@ -8667,15 +8610,15 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                         line: float = None, max_sweeps: int = PERSON_FIX_MAX_SWEEPS) -> dict:
     """The person breaches the replace-the-person pass kept leaving in a
     draft (Erik's first week, 10/2/26: a 16-17 minor until 11pm three nights,
-    two cooks seven days in a row; schedule audit 10/3/26 P-5, E-27, P-30),
+    two cooks seven days in a row),
     repaired where the repair is legal:
 
     - a minor past their latest end, before their earliest start, over the
-      day's cap (summed over every leg, E-6) or the week's: the shift is cut
-      to the limit when two hours or more are left of it, and the stretch
-      cut off is covered again by the role's family — a teammate already on
-      that day runs on, or takes it as a shift of their own — so a cut minor
-      no longer leaves a hole at close; else the shift goes to a legal
+      day's cap (summed over every leg) or the week's: the shift is cut to
+      the limit when two hours or more are left of it, and the stretch cut
+      off is covered again by the role's family — a teammate already on that
+      day runs on, or takes it as a shift of their own — so a cut minor no
+      longer leaves a hole at close; else the shift goes to a legal
       teammate; a minor over the week's cap hands the shift that crosses it
       to a teammate first. Only when nobody can, the cut stands alone: the
       minor's own legality comes before coverage (owner's rule), and the
@@ -8686,11 +8629,11 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
       another (counting the published tail: an 8-9 day run needs two or
       three days moved).
 
-    Every change is judged by breach identity (E-1): no new or worse breach
-    about a person, the manager rule or coverage; a minor's cut with no
-    teammate to cover its stretch is the one change held only to the
-    person rules. Pinned rows are never touched. Returns {rows, fixes:
-    [{index, from, to, kind, reason}], sweeps}."""
+    Every change is judged by breach identity: no new or worse breach about
+    a person, the manager rule or coverage; a minor's cut with no teammate
+    to cover its stretch is the one change held only to the person rules.
+    Pinned rows are never touched. Returns {rows, fixes: [{index, from, to,
+    kind, reason}], sweeps}."""
     rep = _Repair(rows, c, upto=TIER_COVERAGE, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   tier=TIER_PERSON)
     fixes = []
@@ -8725,7 +8668,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
             # A teammate ending as the stretch starts runs on through it, or
             # one starting as it ends comes in earlier — whichever side of
             # the minor's shift the stretch was cut from (a school-hours cut
-            # is at the front, a late cut at the end: STRESS-5).
+            # is at the front, a late cut at the end).
             if xs[0] < cs and cs - _ADJACENT_MIN <= xs[1] < ce:
                 ns, ne = xs[0], ce
             elif xs[1] > ce and cs < xs[0] <= ce + _ADJACENT_MIN:
@@ -8770,7 +8713,7 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
         elif kind == "minor_school_hours":
             # The part of the shift outside school hours is kept — after the
             # bell (the usual after-school shift), else before it — and the
-            # school-hours stretch is covered by the role (STRESS-5).
+            # school-hours stretch is covered by the role.
             win = minor_school_window(c, low, d)
             if win is None:
                 return False
@@ -8898,8 +8841,8 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
                     for i, nm in plan:
                         trial[i] = _with_note(dict(rep.rows[i], employee=nm),
                                               f"(was {first.get('employee')} — too many days in a row)")
-                    # Six days in a row is policy unless a pack makes it law
-                    # (LOGIC-1): a policy repair may not cost another policy
+                    # Six days in a row is policy unless a pack makes it
+                    # law: a policy repair may not cost another policy
                     # limit; the law may.
                     worse, after = rep.judge(trial, upto=TIER_POLICY if tier_of(v) == TIER_POLICY else None)
                     if worse or not improved(bid, after):
@@ -8925,23 +8868,23 @@ def fix_person_breaches(rows: list, c: "Constraints", roster_roles: dict = None,
 # ── a manager on the floor every minute anyone is: the backstop ───────────
 #
 # Each stretch somebody is on and nobody managing is covered, cheapest and
-# least tiring first (schedule audit 10/3/26 E-12, E-13, E-16, E-17):
+# least tiring first:
 #   * a manager already on that day runs on, or comes in earlier (their
 #     shift within three hours of the stretch);
 #   * a manager already on that day takes a second, separate leg over it —
-#     a split or a double, rest and the day's length checked (E-16);
+#     a split or a double, rest and the day's length checked;
 #   * a manager off that day comes in, for a shift as long as the stretch,
-#     or the owner's shortest shift when they set one (E-16: a 1h gap no
+#     or the owner's shortest shift when they set one (a 1h gap no
 #     longer buys a 4h shift);
-# and somebody standing in as the manager on that date (acting_managers,
-# E-13) covers what no manager can. Candidates are ranked by fatigue — days
-# in a row — then hours this payroll week, never "salaried first" (E-17); a
-# salaried person is never taken past their weekly cap (salaried_limit),
-# and an hourly one past their overtime line only when no manager could
-# cover the stretch inside it (the manager rule outranks overtime; it yields
-# only to a person's own legality — owner, 10/2/26). A stretch nobody can
-# legally cover stays a hard, day-level no_manager, returned in `left` with
-# why each manager could not, and the week's `shortfall` says so once.
+# and somebody standing in as the manager on that date (acting_managers)
+# covers what no manager can. Candidates are ranked by fatigue — days in a
+# row — then hours this payroll week, never "salaried first"; a salaried
+# person is never taken past their weekly cap (salaried_limit), and an
+# hourly one past their overtime line only when no manager could cover the
+# stretch inside it (the manager rule outranks overtime; it yields only to a
+# person's own legality — owner, 10/2/26). A stretch nobody can legally
+# cover stays a hard, day-level no_manager, returned in `left` with why each
+# manager could not, and the week's `shortfall` says so once.
 
 MANAGER_FILL_MAX_SWEEPS = 120
 # The rounds every pass ranked above the policy limits fills in — the
@@ -8953,11 +8896,11 @@ MANAGER_FILL_MAX_SWEEPS = 120
 # limits (the weekly ceiling, the longest shift, six days in a row and rest
 # where a pack does not make them law) only when nobody can inside them —
 # the manager on the floor and the staffing rules outrank them, never the
-# law or a person's own maximum (schedule audit 10/10/26 LOGIC-1, LOGIC-3).
+# law or a person's own maximum.
 FILL_ROUNDS = ((True, True), (False, True), (False, False))
 # The gap filler's and the manager plan's shortest shift is the one rule
 # (min_shift_minutes, contract #2): the plan held 4h and the filler 0, so a
-# 7:00-7:30am manager stub was written beside a pinned plan row (BUGSGEN-6).
+# 7:00-7:30am manager stub was written beside a pinned plan row.
 
 
 def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float = None,
@@ -8967,7 +8910,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
     from, to, reasons: [{employee, why}], could_act: [names]}], shortfall:
     {unmanaged_hours, dates, text} or None}. A change is kept only when the
     day's unmanaged minutes fall and nothing about a person's legality or
-    coverage gets new or worse (E-1)."""
+    coverage gets new or worse."""
     rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   tier=TIER_MANAGER)
     extended, added, left = [], [], []
@@ -8995,7 +8938,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             return False, why
         # A salaried person's 55h DEFAULT cap gives way to the manager rule
         # in the last round (nobody could cover inside the limits — the tier
-        # order, STRESS-18); a cap the owner set never does.
+        # order); a cap the owner set never does.
         if c.is_salaried(nm) and (mode[1] or c.salaried_cap_set(nm)):
             cap = c.salaried_limit(nm)
             have = _bucket_hours(c, others, _low(nm), c.bucket(d)) + row_hours(new)
@@ -9044,8 +8987,8 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             # times: the plan's window is a prediction (the usual first
             # start), so when the draft has somebody in earlier the planned
             # manager comes in earlier — never a 7:00-7:30am stub abutting
-            # their own 7:30am plan row (sched re-audit 10/11/26 BUGSGEN-17).
-            # An owner's locked or kept row stays exactly as it is.
+            # their own 7:30am plan row. An owner's locked or kept row stays
+            # exactly as it is.
             plan_row = (x.get("_pinned") == PLAN_PIN and (editable is None or x.get("date") in editable))
             if low not in mgrs or not (free(x) or plan_row) or not c.can_work(x.get("employee"), d)[0]:
                 continue
@@ -9090,11 +9033,11 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
             out.append((low not in c.managers, run, 1 if mine else 2, hours, 0 if c.is_salaried(nm) else 1, nm,
                         kind, None, new))
         # A manager before somebody only standing in as one (an acting
-        # manager covers a date no manager can, E-13); then least tired
-        # first (days in a row), the least disruption — a shift run on, then
-        # a second leg, then a new shift — and the fewest hours this payroll
+        # manager covers a date no manager can); then least tired first
+        # (days in a row), the least disruption — a shift run on, then a
+        # second leg, then a new shift — and the fewest hours this payroll
         # week. Being salaried only breaks a tie (their hours cost nothing
-        # more); it never puts them first (E-17).
+        # more); it never puts them first.
         out.sort(key=lambda t: t[:6])
         return out
 
@@ -9145,7 +9088,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                         trial.append(new)
                     # Inside the policy limits every hard rule holds; the last
                     # round (nobody could inside them) holds the law, the
-                    # manager rule and coverage only (LOGIC-1).
+                    # manager rule and coverage only.
                     worse, after = rep.judge(trial, upto=TIER_POLICY if strict[1] else TIER_COVERAGE,
                                              soft_upto=TIER_OVERTIME if strict == FILL_ROUNDS[0] else None)
                     if worse or int((after[1].get("manager") or {}).get(d, 0)) >= before:
@@ -9159,7 +9102,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
                 # The stretch's own minutes on the business timeline beside
                 # its words: a stretch after midnight (1470-1560) re-read from
                 # "12:30am"-"2:00am" was 30-120 and never matched the gap
-                # again (BUGSGEN-10, refresh_review).
+                # again (refresh_review).
                 left.append({"date": d, "day": day, "from": _fmt_minutes(gs % (24 * 60)),
                              "to": _fmt_minutes(ge % (24 * 60)), "minutes": ge - gs,
                              "gap_start": int(gs), "gap_end": int(ge),
@@ -9203,7 +9146,7 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
     return {"rows": rep.rows, "extended": extended, "added": added, "left": left, "shortfall": shortfall}
 
 
-# ── owner-set minimum hours, filled (schedule audit 10/3/26 P-4) ───────────
+# ── owner-set minimum hours, filled ───────────
 #
 # A minimum the owner set for somebody was only ever a soft line: Erik's
 # full-time cook, set to 40-45h, got 7h. This pass gives a person under
@@ -9211,14 +9154,13 @@ def cover_manager_gaps(rows: list, c: "Constraints", editable=None, line: float 
 # teammate who stays at or above their own target (their minimum or the
 # hours they asked for), the furthest above it first; else a shift of the
 # kind the role already works that day. A minimum outranks the hours budget
-# whichever way a pass moves (sched audit 10/10/26 LOGIC-4: the trim never
-# cut anyone under it, but this fill stopped at the budget, so the week
-# depended on the draft): the shift is added past the budget when it has
-# to be, and the review says so. Nothing about a person's legality, the
-# manager rule, coverage, the restaurant's limits or overtime (weekly,
-# daily, the payroll reserve) may get new or worse, and the receiver is
-# never taken past their overtime line. What it cannot fill stays the soft
-# under_min_hours, with why.
+# whichever way a pass moves (the trim never cut anyone under it, but this
+# fill stopped at the budget, so the week depended on the draft): the shift
+# is added past the budget when it has to be, and the review says so.
+# Nothing about a person's legality, the manager rule, coverage, the
+# restaurant's limits or overtime (weekly, daily, the payroll reserve) may
+# get new or worse, and the receiver is never taken past their overtime
+# line. What it cannot fill stays the soft under_min_hours, with why.
 
 MIN_HOURS_MAX_SWEEPS = 200
 
@@ -9228,8 +9170,8 @@ def fill_min_hours(rows: list, c: "Constraints", roster_roles: dict = None, edit
                    max_sweeps: int = MIN_HOURS_MAX_SWEEPS) -> dict:
     """Returns {rows, moves: [{index, from, to, hours, kind, reason}], added:
     [{index, employee, hours, kind, reason}], left: [{employee, hours, min,
-    short_by, reason}], sweeps}. `hours_budget` (the week's hourly hours)
-    is only said: an added shift past it is named as past it (LOGIC-4)."""
+    short_by, reason}], sweeps}. `hours_budget` (the week's hourly hours) is
+    only said: an added shift past it is named as past it."""
     rep = _Repair(rows, c, upto=TIER_POLICY, soft_upto=TIER_OVERTIME, max_sweeps=max_sweeps,
                   tier=TIER_MIN_HOURS)
     moves, added, left = [], [], []
@@ -9393,7 +9335,7 @@ def _changeable(row, only_dates=None) -> bool:
 def _role_key(role, c=None) -> str:
     """A role's family (shift_quality.role_family, the restaurant's own map
     first): "Server AM" and "Server PM" are one role to every count the
-    passes make (D-13)."""
+    passes make."""
     from shift_quality import role_family
     return role_family(role, getattr(c, "role_families", None) if c is not None else None)
 
@@ -9420,17 +9362,16 @@ def _span_minutes(row):
 
 
 def change_regressions(before_rows, after_rows, c, date, people=(), upto=None, hard_only=True) -> list:
-    """scheduleregressions between two versions of the week that
-    differ only on `date` and in `people`'s rows, swept over what such a
-    change can touch: every row of that date (floors, a closer, a manager on
-    the floor and somebody at close are rules about the day) and each named
-    person's whole week (their hours, rest, run of days). Nothing else in the
-    week moved, so this finds exactly what the change made new or worse, at
-    a fraction of a whole-week sweep. `upto` is the lowest rank still
-    protected (scheduleTIER_POLICY by default: no new hard breach —
-    the restaurant's policy limits are hard too, ranked below the manager
-    and coverage rules, sched audit 10/10/26 LOGIC-1); [] when nothing got
-    worse, or with no Constraints to judge by."""
+    """scheduleregressions between two versions of the week that differ only
+    on `date` and in `people`'s rows, swept over what such a change can
+    touch: every row of that date (floors, a closer, a manager on the floor
+    and somebody at close are rules about the day) and each named person's
+    whole week (their hours, rest, run of days). Nothing else in the week
+    moved, so this finds exactly what the change made new or worse, at a
+    fraction of a whole-week sweep. `upto` is the lowest rank still protected
+    (scheduleTIER_POLICY by default: no new hard breach — the restaurant's
+    policy limits are hard too, ranked below the manager and coverage rules);
+    [] when nothing got worse, or with no Constraints to judge by."""
     if c is None:
         return []
     keys = {_name_key(p) for p in people or () if _name_key(p)}
@@ -9581,8 +9522,8 @@ def _peak_server_overlap(day_rows: list) -> tuple:
     A shift past midnight ends on the next day's clock (12:30am is 24:30,
     schedule_rules.end_minutes): every row whose end read as before its
     start used to be skipped, so Friday and Saturday at a 2am-close bar were
-    exactly the nights the cap went unenforced (schedule audit 10/3/26
-    E-19). peak_time can therefore be 24:00 or later."""
+    exactly the nights the cap went unenforced. peak_time can therefore be
+    24:00 or later."""
     events = []
     for r in day_rows:
         sp = _span_minutes(r)

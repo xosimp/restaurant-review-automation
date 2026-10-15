@@ -1,9 +1,6 @@
 """
 schedule_shapes.py — which shifts the week has, and a first answer to who
-can work each: Stage 1 of the solver-first draft (scheduler audit 10/10/26
-LOGIC-24, RM-8; rebuilt person-aware in the blind re-audit fix round,
-10/11/26 — STRESS-1/-2/-4/-9/-15/-20/-22, LOGIC-1/-2/-3/-5/-11/-17/-18/-19/
--24).
+can work each: Stage 1 of the solver-first draft (person-aware).
 
 Patterns P(role, date) — enumerated, best first:
   - the restaurant's own start/end pairs for the role family on that
@@ -14,21 +11,20 @@ Patterns P(role, date) — enumerated, best first:
     longest, ends where the curve falls, at the close and at the close plus
     the role's stay,
   - with no history of the family: the open-to-mid and mid-to-close
-    templates (STRESS-20),
+    templates,
   kept to the day's opening (a role's lead before it), the close plus the
   role's stay (the owner's, else learned from punches, else the stated
-  default — never a hard cap at the close, LOGIC-11), and the planned
-  managers' span. A restaurant open 24 hours has no close: its business day
-  turns over at DAY_START and a shift may run across it (STRESS-4).
+  default — never a hard cap at the close), and the planned managers' span.
+  A restaurant open 24 hours has no close: its business day turns over at
+  DAY_START and a shift may run across it.
 
 Variables z[p, d, role, k] — person p works pattern k of `role` on date d —
 for the people who may legally work it (the role they hold, availability by
 daypart and personal window, approved time off, a minor's band and caps,
 certificates, whom code may choose), and n[d, role, k] = how many work it.
-So capacity is per person, per daypart and per week (LOGIC-2, LOGIC-18,
-STRESS-2): a lunch-only server is capacity for lunch shapes only, nobody
-works two shifts a day (or two legs with a break where they work doubles,
-LOGIC-19), and nobody passes their own maximum.
+So capacity is per person, per daypart and per week: a lunch-only server is
+capacity for lunch shapes only, nobody works two shifts a day (or two legs
+with a break where they work doubles), and nobody passes their own maximum.
 
 The objective is schedule_objective's, in dollars (contract #1), with the
 owner's rank order above it as constraints and tier-sized costs:
@@ -40,22 +36,22 @@ owner's rank order above it as constraints and tier-sized costs:
   demand     each person-half-hour short of the half-hour need x its
              slot_value (the half hour's share of the week's demand x the
              role's criticality — a busy Friday dinner's hole costs far
-             more than a quiet Monday afternoon's: LOGIC-1, LOGIC-24);
+             more than a quiet Monday afternoon's);
   budget     dollars past the hourly budget x BUDGET_OVER_FACTOR — so the
-             LOWEST-value half hours are the ones cut when the budget binds
-             (LOGIC-3);
+             LOWEST-value half hours are the ones cut when the budget
+             binds;
   dollars    each person's own rate, a shift's overhead, past the role's
-             usual length squared and a double where the history has none
-             (STRESS-1, LOGIC-5), a day past somebody's usual days, their
-             usual weekday and daypart credited (STRESS-15), hours under
-             their usual week, last published week's person on the same
-             slot (stability), the restaurant's own shapes.
+             usual length squared and a double where the history has
+             none, a day past somebody's usual days, their usual weekday
+             and daypart credited, hours under their usual week, last
+             published week's person on the same slot (stability), the
+             restaurant's own shapes.
 The requirement's count of different people is priced only where no
-half-hour curve exists (the curve is the requirement, LOGIC-17).
+half-hour curve exists (the curve is the requirement).
 
 Deterministic: everything iterated in sorted order, a fixed seed and worker
-count and a deterministic work budget (LOGIC-9); the wall clock only an
-emergency cap. Nothing here calls a model, reads the database or writes.
+count and a deterministic work budget; the wall clock only an emergency
+cap. Nothing here calls a model, reads the database or writes.
 """
 import math
 from datetime import datetime
@@ -149,7 +145,7 @@ def history_patterns(rows, family) -> dict:
 def is_24h(c, day) -> bool:
     """Whether the restaurant is open around the clock on `day` (open and
     close on file, 23 hours or more apart — 12:00am-12:00am, 12:00am-11:59pm,
-    6:00am-6:00am): no close to cap a shift at (STRESS-4)."""
+    6:00am-6:00am): no close to cap a shift at."""
     if c is None:
         return False
     o, cl = _rules.open_hours(c, day)
@@ -168,10 +164,9 @@ def _window(c, role, d, day, plan_bounds, stay=0, max_minutes=12 * 60):
     """(earliest start, latest end) a pattern of `role` on date `d` may use:
     four hours before the open, to the close plus the most the role may stay
     (the owner's cap, else `stay` — what the role's punches show, else the
-    stated default: never a hard cap at the close, LOGIC-11), inside the
-    owner's role window and the planned managers' span. Open 24 hours: the
-    business day from day_start, a shift ending up to `max_minutes` past
-    its last start."""
+    stated default: never a hard cap at the close), inside the owner's role
+    window and the planned managers' span. Open 24 hours: the business day
+    from day_start, a shift ending up to `max_minutes` past its last start."""
     if c is not None and is_24h(c, day):
         lo = day_start(c, day)
         hi = lo + 24 * 60 + max_minutes
@@ -279,8 +274,8 @@ def patterns_for(role, d, demand, hist, c, bounds, min_h, max_h, role_times=None
         if cl is not None and lo < cl <= hi:
             ends.add(cl)
     if templates and c is not None:
-        # open-to-mid and mid-to-close (STRESS-20): a new restaurant's first
-        # week is drafted on the shifts a GM would write, not 4h fragments
+        # open-to-mid and mid-to-close: a new restaurant's first week is
+        # drafted on the shifts a GM would write, not 4h fragments
         o, _c2 = _rules.open_hours(c, day)
         if o is not None and cl is not None and cl - o >= 2 * min_h * 60:
             mid = _q(o + (cl - o) / 2.0)
@@ -390,14 +385,13 @@ SHOULDER_HISTORY_MAX_MINUTES = 6 * 60      # how far before the open / after the
 def history_shoulders(hist_rows, c) -> dict:
     """{(role lower, weekday): {minute: people}} — the median, over the
     restaurant's own history dates of that weekday, of how many of each role
-    were on at each half hour BEFORE the open and AFTER the close (blind
-    re-audit 10/11/26, P — found by the schedule benchmark once SP let the
-    solver run at 120+ people): the staffing baseline is read between the
-    open and the close, so a prep crew of five on from 7am for an 11am open
-    was "measured" as nobody and drafted as half the first service hour's
-    count from at most three hours out (8am, three cooks), 94 of 132 hours
-    short of the usual crew. By role, never family: a prep cook's 7am is
-    not a line cook's."""
+    were on at each half hour BEFORE the open and AFTER the close (P — found
+    by the schedule benchmark once SP let the solver run at 120+ people):
+    the staffing baseline is read between the open and the close, so a prep
+    crew of five on from 7am for an 11am open was "measured" as nobody and
+    drafted as half the first service hour's count from at most three hours
+    out (8am, three cooks), 94 of 132 hours short of the usual crew. By
+    role, never family: a prep cook's 7am is not a line cook's."""
     if c is None or not hist_rows:
         return {}
     by_date = defaultdict(list)
@@ -440,16 +434,15 @@ def history_shoulders(hist_rows, c) -> dict:
 
 
 def _shoulders(curves, c, concurrent, requirements, profile, family, measured_history=None):
-    """The half hours either side of service each role really works
-    (LOGIC-11, STRESS-22), in place on `curves`: the measured people on
-    before the open and after the close — the concurrent baseline's slots
-    outside service, and the restaurant's own history at each such half
-    hour (history_shoulders, `measured_history`) — else the family's learned
-    lead or stay (its punches), else the stated default (cooks an hour before
-    the doors, servers half an hour, the dish pit and the closers 45 minutes
-    after the close); and a role on in the last service hour is on until the
-    close (a dishwasher no longer leaves at 9:30 on a 10pm close).
-    {(date, role): stay minutes}."""
+    """The half hours either side of service each role really works, in place
+    on `curves`: the measured people on before the open and after the close —
+    the concurrent baseline's slots outside service, and the restaurant's own
+    history at each such half hour (history_shoulders, `measured_history`) —
+    else the family's learned lead or stay (its punches), else the stated
+    default (cooks an hour before the doors, servers half an hour, the dish
+    pit and the closers 45 minutes after the close); and a role on in the
+    last service hour is on until the close (a dishwasher no longer leaves at
+    9:30 on a 10pm close). {(date, role): stay minutes}."""
     stays = {}
     if c is None:
         return stays
@@ -513,12 +506,12 @@ def _shoulders(curves, c, concurrent, requirements, profile, family, measured_hi
 
 def _round_the_clock(curves, c, dates, hist_rows, family):
     """A 24-hour day's people on at once over its whole business day, from
-    the restaurant's own shifts (STRESS-4): the staffing baseline is read
-    between the open and midnight, so the graveyard after midnight had no
-    need and one person was drafted on 10pm-6am. For each 24-hour date and
-    role, the median over the history's same weekdays of the people on at
-    each half hour from day_start for 24 hours, a shift from the night
-    before counted into its small hours. In place on `curves`."""
+    the restaurant's own shifts: the staffing baseline is read between the
+    open and midnight, so the graveyard after midnight had no need and one
+    person was drafted on 10pm-6am. For each 24-hour date and role, the
+    median over the history's same weekdays of the people on at each half
+    hour from day_start for 24 hours, a shift from the night before
+    counted into its small hours. In place on `curves`."""
     if c is None or not hist_rows:
         return
     by_date = defaultdict(list)
@@ -566,15 +559,15 @@ def _round_the_clock(curves, c, dates, hist_rows, family):
 def _presence(hist_rows, family) -> dict:
     """{(family, weekday, minute): share of that weekday's history dates the
     family had somebody on at that half hour} — where the restaurant is
-    never without a role (its firm part, LOGIC-3). A shift past midnight
-    counts on its own date's timeline. One reading with every pass after
-    the draft: schedule_objective.presence."""
+    never without a role (its firm part). A shift past midnight counts on
+    its own date's timeline. One reading with every pass after the draft:
+    schedule_objective.presence."""
     return _obj.presence(hist_rows, family=family)
 
 
 def _assumed_roles(dates, curves, c, roster_roles, profile, family, open_times, close_times):
-    """Roles on the roster with no history and no requirement (STRESS-20): a
-    new restaurant's dishwasher was never staffed. Each gets one person on
+    """Roles on the roster with no history and no requirement: a new
+    restaurant's dishwasher was never staffed. Each gets one person on
     through each daypart it is open, said in `assumed` so the owner sets its
     floor. [(family, role)]; in place on `curves`."""
     if c is None:
@@ -640,7 +633,7 @@ def _holds_family(c, name, role, d, roster_roles) -> bool:
 
 def _nobody_reason(c, role, d, roster_roles) -> str:
     """Why nobody may work `role` on `d`: the reasons of the people who hold
-    it, counted (STRESS-9)."""
+    it, counted."""
     why = Counter()
     holders = 0
     for name in sorted(c.roster_names or []):
@@ -663,10 +656,9 @@ def _nobody_reason(c, role, d, roster_roles) -> str:
 def uncovered_roles(rows, requirements, c, roster_roles=None) -> list:
     """[{date, day, role, needed, why}] — each open date a role the week's
     requirements need (people or a floor) has NOBODY of its family on at
-    all, with why nobody can work it (STRESS-9: a week with no server any
-    day and no cook on four read as complete because a role nobody could
-    work dropped out of the model). Any draft source; the rows as they
-    stand."""
+    all, with why nobody can work it (a week with no server any day and no
+    cook on four read as complete because a role nobody could work dropped
+    out of the model). Any draft source; the rows as they stand."""
     if c is None:
         return []
     fam = c.family
@@ -868,11 +860,11 @@ def _fits(c, p, d, role, s, e, parts_ok, txt):
 
 def _length_bounds(c, role, d, roster_roles, min_h, max_h) -> tuple:
     """(shortest, longest) hours a shape of `role` on `d` may be, from the
-    people who may legally work it (STRESS-6): the one shortest shift
-    lowered to a minor's legal day (a 14-15 year old's 3h school-day cap is
-    a shift, not nothing — schedule_rules.shortest_for), and no shape longer
-    than the longest day anybody available may work (three 16-17 servers
-    capped at 8h got 0h when every shape was 11am-10pm)."""
+    people who may legally work it: the one shortest shift lowered to a
+    minor's legal day (a 14-15 year old's 3h school-day cap is a shift, not
+    nothing — schedule_rules.shortest_for), and no shape longer than the
+    longest day anybody available may work (three 16-17 servers capped at 8h
+    got 0h when every shape was 11am-10pm)."""
     if c is None:
         return min_h, max_h
     lo, hi = min_h, None
@@ -907,12 +899,12 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     "stats": {...}}. `context_rows` (the manager plan, a redo's kept days,
     locked rows) count toward coverage, bound the span and keep their people
     busy. `staffing_value` — {(family, daypart): {"per_hour", "lo", "hi"}}
-    (staffing_elasticity.marginal_values, MARKET-23): one person over the
-    demand earns that net value back where it is measurably clear of zero.
-    `objective` a schedule_objective.ObjectiveContext (built here from the
-    same inputs when not passed); `exclude` people code may not choose (an
-    unread note). `max_seconds` is a deterministic work budget; `wall_cap`
-    the emergency wall-clock cap."""
+    (staffing_elasticity.marginal_values): one person over the demand earns
+    that net value back where it is measurably clear of zero. `objective` a
+    schedule_objective.ObjectiveContext (built here from the same inputs
+    when not passed); `exclude` people code may not choose (an unread note).
+    `max_seconds` is a deterministic work budget; `wall_cap` the emergency
+    wall-clock cap."""
     c = constraints
     out = {"rows": [], "short": [], "assumed": [], "stats": {"status": "nothing_to_solve"}}
     if not available() or not dates:
@@ -934,7 +926,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     prof = ctx.profile
     # The one shortest shift (contract #2, schedule_rules.min_shift_minutes); per
     # role and date it is lowered to what the people who may work it can
-    # legally work (a 14-15 year old's 3h school day — STRESS-6, R).
+    # legally work (a 14-15 year old's 3h school day).
     min_h = _rules.min_shift_minutes(c) / 60.0
     max_h = min(float(comp.get("max_shift_hours") or DEFAULT_MAX_SHIFT), DEFAULT_MAX_SHIFT + 2)
     hist = history_patterns(hist_rows, family)
@@ -954,7 +946,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     def absm(d, t):
         return ((week_ords.get(d) or base_ord) - base_ord) * 1440 + int(t)
 
-    # A 24-hour day's small hours are the night before's (STRESS-4).
+    # A 24-hour day's small hours are the night before's.
     for (d, role), cur in list(curves.items()):
         day = sq._day_name(d)
         if c is not None and is_24h(c, day):
@@ -982,11 +974,11 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     for k in [k for k in curves if _rules.manager_role_kind(k[1]) in ("owner", "manager")]:
         curves.pop(k)
     # The demand Stage 1 shapes to, half hour by half hour — the one
-    # objective's need for this week (blind re-audit 10/11/26 LOGIC-6): the
-    # trim, the top-up and the optimizer price a hole against the same
-    # people-on-at-once the shifts were drawn for, never only the
-    # requirement rows' smaller need (the trim used to cut 24-hour-diner
-    # coverage Stage 1 had bought at the same prices).
+    # objective's need for this week: the trim, the top-up and the
+    # optimizer price a hole against the same people-on-at-once the shifts
+    # were drawn for, never only the requirement rows' smaller need (the
+    # trim used to cut 24-hour-diner coverage Stage 1 had bought at the
+    # same prices).
     out["need"] = {(d, role): {int(t): int(n) for t, n in cur.items() if n}
                    for (d, role), cur in curves.items() if d not in closed and cur}
     roles_by_date = defaultdict(set)
@@ -1150,10 +1142,10 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             m.add(sh >= gap)
         shorts[(fam, a)] = (sh, d, t, role)
         obj.append((max(1, _cents(_obj.slot_value(ctx, d, t, role))), sh))
-        # The firm part (LOGIC-3): where the restaurant is never without the
-        # role at this half hour (on in FIRM_PRESENCE of its same weekdays),
-        # its first person is the requirement tier — above the budget — and
-        # only the rest of the demand is priced against it.
+        # The firm part: where the restaurant is never without the role at
+        # this half hour (on in FIRM_PRESENCE of its same weekdays), its
+        # first person is the requirement tier — above the budget — and only
+        # the rest of the demand is priced against it.
         if fixed_on[fam].get(a, 0) == 0 and presence.get((fam, sq._day_name(d), t), 0.0) >= FIRM_PRESENCE:
             first = m.new_bool_var(f"fm{fam}_{a}")
             m.add(sh <= gap - 1 + first)
@@ -1170,7 +1162,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
             w_ = wage(None, role)
             obj.append((-_cents((net + w_) / 2.0), extra))
     # the requirement's distinct count — only where no half-hour curve
-    # exists (LOGIC-17), and only shapes mainly in that daypart (STRESS-1)
+    # exists, and only shapes mainly in that daypart
     for row in requirements or []:
         d = row.get("date")
         if row.get("daypart") not in ("morning", "night") or d not in roles_by_date:
@@ -1402,8 +1394,7 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     # The deterministic budget scaled to the model (schedule_cpsat.work_budget
     # — a fixed 7.5 s found no week at all at 250 people), the memory-bounded
     # portfolio on a large model, and the solve in a child process whose
-    # memory goes back to the OS when it returns (schedule_cpsat.run; blind
-    # re-audit 10/11/26 STRESS-11, SCALE-18, SCALE-19).
+    # memory goes back to the OS when it returns (schedule_cpsat.run).
     import schedule_cpsat_runtime as _rt
     n_vars = len(m.proto.variables)
     budget = _rt.work_budget(max(0.5, float(max_seconds)), n_vars)
@@ -1474,16 +1465,15 @@ USUAL_HINT_MIN_WEEKS = 2             # a weekday is somebody's usual once it rec
 
 
 def _usual_hint(m, z, z_by_pd, people, pats, hist_rows, c, family) -> int:
-    """A starting week for Stage 1's search (blind re-audit 10/11/26, P):
-    each person on the pattern nearest their own usual shift on each weekday
-    they usually work (their punches and published weeks, USUAL_HINT_MIN_
-    WEEKS of them), nobody else on. On a 120-person week the model with no
-    hint spent its whole deterministic budget without a first solution, so
-    the solver-first draft silently gave way to the v0 code draft (large_120
-    and high_volume_250 in the schedule benchmark); with the usual week as
-    the hint the search starts from a week the restaurant really works.
-    Only a hint: every rule and price still decides. Returns the number of
-    choices hinted on."""
+    """A starting week for Stage 1's search (P): each person on the pattern
+    nearest their own usual shift on each weekday they usually work (their
+    punches and published weeks, USUAL_HINT_MIN_ WEEKS of them), nobody else
+    on. On a 120-person week the model with no hint spent its whole
+    deterministic budget without a first solution, so the solver-first draft
+    silently gave way to the v0 code draft (large_120 and high_volume_250 in
+    the schedule benchmark); with the usual week as the hint the search
+    starts from a week the restaurant really works. Only a hint: every rule
+    and price still decides. Returns the number of choices hinted on."""
     if c is None or not z:
         return 0
     seen = defaultdict(set)                 # (key, weekday, family) -> weeks
@@ -1557,7 +1547,7 @@ def _mark_floor(rows, floor_codes, family, open_times, close_times, fixed_on, ab
                 # id(): a memory address chose which of two equal shifts
                 # was the floor's, so the same inputs priced a different
                 # shift at the coverage tier and drafted a different week
-                # (blind re-audit 10/11/26 ARCH-19's property test).
+                # ('s property test).
                 scored.append((-k, i, r))
         scored.sort(key=lambda t: (t[0], t[1]))
         for _k, _i, r in scored[:want]:

@@ -1,7 +1,6 @@
 """
 schedule_shifts.py — one row per shift of each copy of a stored week, in the
-primary database, and THE read of a stored week's rows (schedule re-audit
-10/11/26 ARCH-7, contract #5).
+primary database, and THE read of a stored week's rows (contract #5).
 
 The week is stored as text: schedule_history.schedule_csv (the WORKING copy
 — the draft, or a sent week with the manager's unsent edits) and
@@ -50,7 +49,7 @@ Rows (`schedule_shifts`), one per shift per copy of a week:
 One revision of each copy is kept — the current one. Every older state is
 schedule_versions' (a full or delta snapshot); a row per shift per version
 would have multiplied the table by every save of every week, the cost the
-version deltas were built to stop (SCALE-34).
+version deltas were built to stop.
 
 THE DOUBLE-BOOKING GUARD. One person on two overlapping shifts in the
 PUBLISHED copy of a week is refused by the database: a trigger

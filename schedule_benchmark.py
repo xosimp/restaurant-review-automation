@@ -1,7 +1,6 @@
 """
 schedule_benchmark.py — the schedule generator run end to end on restaurants
-that are not Simple EJ's (blind re-audit 10/11/26 ARCH-22, AI-28, ARCH-19;
-cross-workstream contract #7).
+that are not Simple EJ's (cross-workstream contract #7).
 
 Why it exists. Every default and heuristic of the scheduler was tuned on one
 client — a sports bar whose owners are on the floor most of the week — and
@@ -94,7 +93,7 @@ RUNS = 3
 # arms at full size are the script's (scripts/schedule_benchmark.py).
 FAST_PLAN = (("cafe_6", ARMS, 3, 1.0), ("daypart_limited", ARMS, 2, 0.5), ("qsr_teens", ARMS, 1, 0.5),
              ("single_manager", ARMS, 1, 1.0))
-# Opt-in in the script (--heavy): one generation needs gigabytes (STRESS-11).
+# Opt-in in the script (--heavy): one generation needs gigabytes.
 HEAVY = ("mega_500",)
 # The gate's thresholds (INVARIANTS).
 USUAL_DAYS_KEPT_MIN = 70.0
@@ -417,8 +416,8 @@ def qsr_teens(scale=1.0):
 
 def single_manager(scale=1.0):
     """An owner-operator who is the only manager, closed Mondays, open
-    11am-9pm; a crew of eleven. Reproduces STRESS-18 (the single-manager
-    week's permanent blocker) and the opening-prep allowance (STRESS-3)."""
+    11am-9pm; a crew of eleven. Reproduces the single-manager week's
+    permanent blocker and the opening-prep allowance."""
     o = {d: "11:00am" for d in DAYS}
     c = {d: "9:00pm" for d in DAYS}
     crew = [("Sam Cole", "Server"), ("Tia Gray", "Server"), ("Uma Bell", "Server"), ("Vic Lane", "Server"),
@@ -533,8 +532,8 @@ def next_week_start(week_start_day=0, today=None, avoid_holidays=True) -> str:
     time (at most three) past any week holding a holiday on the engine's
     own calendar (schedule_economics), so the same benchmark run in late
     November measures an ordinary week, not Thanksgiving. A generation must
-    run on today's clock (sales on file are judged against today, D-33), so
-    the week cannot be pinned to a date; it can be kept ordinary."""
+    run on today's clock (sales on file are judged against today), so the
+    week cannot be pinned to a date; it can be kept ordinary."""
     t = today or _date.today()
     start = t + _td(days=(int(week_start_day or 0) - t.weekday()) % 7 or 7)
     for _ in range(3 if avoid_holidays else 0):

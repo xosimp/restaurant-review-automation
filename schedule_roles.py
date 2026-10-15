@@ -39,9 +39,9 @@ def role_words(role, count: int = 1, default: str = "") -> str:
 # codes a POS splits by shift ("Server AM", "Server PM", "PM Bartender",
 # "Host - Lunch") are one role to every rule that counts people in a role —
 # requirements, floors, the section cap, leader rules, cross-training, the
-# owner's "two servers Saturday" (schedule audit 10/3/26 D-13, D-14, SQ-10).
-# The restaurant's own map (restaurants.role_families_json, {role: family})
-# wins; a role the words would empty keeps its name.
+# owner's "two servers Saturday". The restaurant's own map
+# (restaurants.role_families_json, {role: family}) wins; a role the words
+# would empty keeps its name.
 _DAYPART_WORDS = frozenset({"am", "pm", "a.m.", "p.m.", "a.m", "p.m", "lunch", "dinner", "brunch", "breakfast", "day", "night",
                             "morning", "evening", "late", "overnight", "weekend", "weekday", "wknd", "open",
                             "opening", "opener", "close", "closing", "closer"})
@@ -70,11 +70,11 @@ def _family_words(low: str) -> str:
 
 
 # The one reading of the words in a job code, for its family and for its
-# half of the day. role_family split on "( ) / - _" while the daypart reader
+# half of the day. role_family split on " / - _" while the daypart reader
 # took only a last word of exactly "am"/"pm", so "Server-AM", "Server (PM)",
 # "AM Server", "Lunch Server" and "Dinner Host" were servers and hosts with
 # no half of the day: a leader rule or strength target on them bound lunch
-# and dinner both (schedule re-audit 10/4/26 RULES-3, SQ-1).
+# and dinner both.
 _ROLE_SPLIT = str.maketrans({c: " " for c in "()[]/-_\u2013\u2014"})
 _MORNING_WORDS = frozenset({"am", "a.m", "lunch", "brunch", "breakfast", "morning", "day", "open", "opening",
                             "opener"})
@@ -95,7 +95,7 @@ def role_tokens(role) -> list:
 
 
 # A training job code ("Training", "Server Trainee", "Manager in Training",
-# "MIT"): its shifts are never coverage (D-16). The one pattern the rules
+# "MIT"): its shifts are never coverage. The one pattern the rules
 # (schedule_rules.is_training_role) and the scorer's floor test read.
 _TRAINING_ROLE = re.compile(r"\b(?:train(?:ing|ees?)|mits?)\b", re.I)
 
@@ -105,12 +105,11 @@ def is_training_role(role) -> bool:
 
 
 def is_training_row(row: dict, trainee: dict = None, families: dict = None) -> bool:
-    """A training shift (D-16): a training job code, or the row of a trainee
+    """A training shift: a training job code, or the row of a trainee
     (`trainee`: their {target_role, from, until}) in the role they are
     learning while training lasts — Constraints.training_row and the
-    scorer's floor test ask this one question (schedule re-audit 10/4/26
-    SQ-8: the score counted a training shift toward a floor the sweep did
-    not)."""
+    scorer's floor test ask this one question (the score counted a training
+    shift toward a floor the sweep did not)."""
     if is_training_role(row.get("role")):
         return True
     t = trainee or {}

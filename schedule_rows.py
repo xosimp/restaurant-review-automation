@@ -1,6 +1,5 @@
 """
-schedule_rows.py — the one format of a week's rows (schedule audit 10/10/26
-ARCH-6, ARCH-31, SCALE-31).
+schedule_rows.py — the one format of a week's rows.
 
 A week was an 8-column positional CSV written by four writers and read by
 nine parsers, none of which quoted anything: a comma in a note became ";",

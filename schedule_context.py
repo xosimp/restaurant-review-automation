@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 class ScheduleGenerationError(ValueError):
     """A generation that must not be saved, with a sentence the owner can
     read. Anything else that fails a job is logged and shown as a plain
-    "try again" — never its exception text or a traceback (DATA-46)."""
+    "try again" — never its exception text or a traceback."""
 
 
 class ScheduleStopped(ScheduleGenerationError):
@@ -53,7 +53,7 @@ def current_clock():
     return _CLOCK.get()
 
 
-# ── One frozen context per generation (schedule audit 10/3/26 P-36) ───────
+# ── One frozen context per generation ───────
 #
 # A generation read the same inputs again and again: the Shift Quality
 # signals five times (about a dozen reads each, 56 days of hourly sales among
@@ -63,12 +63,12 @@ def current_clock():
 # through frozen_read happens once and is handed out as a copy after that, so
 # the prompt, the repair loop and the score see one snapshot of the inputs.
 # The rules the week is checked against are deliberately not frozen: they are
-# rebuilt after the model call (P-41), so time off approved while the model
-# was writing is in the draft. Outside a generation — the Studio's rescore, a
+# rebuilt after the model call, so time off approved while the model was
+# writing is in the draft. Outside a generation — the Studio's rescore, a
 # script — frozen_read is simply the read.
 #
 # The same store collects the inputs that could not be read (_soft_fail), so
-# the review names what the draft was made without (P-17).
+# the review names what the draft was made without.
 _FROZEN = contextvars.ContextVar("schedule_generation_frozen", default=None)
 
 
@@ -84,15 +84,14 @@ def frozen_inputs():
     store = {"reads": {}, "failed": []}
     token = _FROZEN.set(store)
     # And one read of the client_data row and one parse of the shift history
-    # for the whole generation (models.read_scope — scheduler audit 10/10/26,
-    # SCALE-6): every stage re-parsed it, ~25 times per inputs build. The
-    # restaurant row and the roster reads (capabilities, staff settings, the
-    # hand-added team, the held roles) are read once too (blind re-audit
-    # 10/11/26 SCALE-24: 207 reads of the row and 132 of the capabilities in
-    # one 60-person generation) — and read again, once, where the generation
-    # must see what the owner changed while it ran: the rules after the
-    # model (_rules_after_the_model → models.refresh_scope, P-41). A write
-    # through this process drops what it changed (models._note_write).
+    # for the whole generation (models.read_scope): every stage re-parsed it,
+    # ~25 times per inputs build. The restaurant row and the roster reads
+    # (capabilities, staff settings, the hand-added team, the held roles) are
+    # read once too (207 reads of the row and 132 of the capabilities in one
+    # 60-person generation) — and read again, once, where the generation must
+    # see what the owner changed while it ran: the rules after the model
+    # (_rules_after_the_model → models.refresh_scope). A write through this
+    # process drops what it changed (models._note_write).
     import models as _m_frozen
     try:
         with _m_frozen.read_scope(restaurant_rows=True, roster=True):
@@ -117,12 +116,12 @@ def frozen_read(key, fn):
 
 def degraded(message, exc=None, *, restaurant_id=None, record=True) -> None:
     """The one event a schedule failure that is caught and gone on without
-    becomes (blind re-audit 10/11/26 ARCH-20): a structured warning on every
-    occurrence — `event: schedule_degraded`, `where` (module.function), the
-    error — with the restaurant, the job and the stage from the bound log
-    context (schedule_job binds them), so each stage's degradations can be
-    counted from the logs; and, inside a generation, the exception recorded
-    once per place it happened (ops.capture), never once per row."""
+    becomes: a structured warning on every occurrence — `event:
+    schedule_degraded`, `where` (module.function), the error — with the
+    restaurant, the job and the stage from the bound log context
+    (schedule_job binds them), so each stage's degradations can be counted
+    from the logs; and, inside a generation, the exception recorded once per
+    place it happened (ops.capture), never once per row."""
     try:
         frame = sys._getframe(1)
         where = f"{frame.f_globals.get('__name__', '?')}.{frame.f_code.co_name}"
@@ -153,7 +152,7 @@ def degradations() -> list:
 
 
 def _note_input_failure(what) -> None:
-    """An input the draft went ahead without, for the review (P-17)."""
+    """An input the draft went ahead without, for the review."""
     store = _FROZEN.get()
     if store is not None and what not in store["failed"]:
         store["failed"].append(what)
@@ -221,14 +220,14 @@ def _pinned_route():
                      effort=SCHEDULE_EFFORT if schedule_model_thinks(model) else None)
 
 
-# No case for the $10/$50 tier on the schedule (scheduler audit 10/10/26
-# AI-30): on the 10/7/26 eval every medium-or-higher arm ended at 0 hard
-# breaches after the repair, and Opus high (62k tokens, $1.39) scored 83 to
-# Sonnet medium's 78 at $0.41 — a few unverified points for multiplying the
-# dominant cost. A route that would put the week on Claude Fable or Mythos
-# (an env pin, a tier override) runs on Opus 5.5 instead, said in the run's
-# steps, unless SCHEDULE_ALLOW_TOP_TIER=1 — set only once the eval
-# (schedule_eval) shows a measured ceiling below it.
+# No case for the $10/$50 tier on the schedule: on the 10/7/26 eval every
+# medium-or-higher arm ended at 0 hard breaches after the repair, and Opus
+# high (62k tokens, $1.39) scored 83 to Sonnet medium's 78 at $0.41 — a few
+# unverified points for multiplying the dominant cost. A route that would
+# put the week on Claude Fable or Mythos (an env pin, a tier override) runs
+# on Opus 5.5 instead, said in the run's steps, unless
+# SCHEDULE_ALLOW_TOP_TIER=1 — set only once the eval (schedule_eval) shows
+# a measured ceiling below it.
 SCHEDULE_BARRED_MODELS = ("claude-fable", "claude-mythos")
 
 
@@ -250,7 +249,7 @@ def start_route(start=None):
     """The route a generation starts on: the pin when SCHEDULE_MODEL is set;
     else the policy's rung `start` (a pre-routed tier on its ladder) or its
     first. A "default" rung (a console override) is the call site's own.
-    Never a barred model (AI-30, _route_allowed)."""
+    Never a barred model (_route_allowed)."""
     import ai_workflows as _wf
     if schedule_pinned():
         return _route_allowed(_pinned_route())
@@ -279,7 +278,7 @@ def week_start_day_for(restaurant, week_start=None) -> int:
     already saved under `week_start` keeps the week it was built on (a
     restaurant that moved its week start — Simple EJ's, Monday to Wednesday
     on 10/10/26 — still redoes and reopens its older drafts on their own
-    dates; blind re-audit 10/11/26), else the restaurant's own week start."""
+    dates), else the restaurant's own week start."""
     if week_start:
         try:
             from models import get_conn as _gc_anchor
@@ -311,8 +310,8 @@ def week_start_day_of(restaurant) -> int:
 def check_week_start(restaurant_id, raw):
     """(week_start or None, error or None) for a Generate request. An
     unreadable date used to fall back silently to next Monday, and a week
-    that had already happened generated and could be published (SCHED-37).
-    Any date in the wanted week is accepted, as _week_monday reads it."""
+    that had already happened generated and could be published. Any date
+    in the wanted week is accepted, as _week_monday reads it."""
     from datetime import date as _date, timedelta as _t
     raw = (raw or "").strip()[:10]
     if not raw:
@@ -327,9 +326,9 @@ def check_week_start(restaurant_id, raw):
     except Exception:
         today = _date.today()
     # A draft already saved under this week keeps the week it was built on
-    # (week_start_day_for — blind re-audit 10/11/26 BUGSGEN-2): a redo of a
-    # Monday-week draft after the move to Wednesday was read as the week
-    # before and refused as already happened.
+    # (week_start_day_for): a redo of a Monday-week draft after the move to
+    # Wednesday was read as the week before and refused as already
+    # happened.
     monday = d - _t(days=(d.weekday() - week_start_day_for(restaurant_id, raw)) % 7)
     if monday + _t(days=6) < today:
         return None, "That week has already happened — pick this week or a later one."
@@ -355,32 +354,31 @@ def get_week_start_day(restaurant_id: int) -> int:
         return 0
 
 
-# The schedule call's thinking (schedule audit 10/3/26 PR-6, PR-30). Opus
-# 5.5 (the default, ai_utils.MODELS["schedule"]) thinks adaptively and
-# cannot be turned off; it is run at medium effort. High (to 10/6/26) spent
-# 62,353 of the 64,000 output tokens on Simple EJ's first week - nearly all
-# thinking, eight minutes, a hair from a cut answer - while the repair, the
-# manager plan, the solver and the quality gate do the rule-keeping after it
-# (owner, 10/6/26: "yes switch to medium"). Watch the drafts' quality score
-# and seconds (schedule_model_calls) before changing it back. A
-# SCHEDULE_MODEL override to an older model keeps the old call shape.
-# Since 10/7/26 the model and effort are the route's (AI orchestration,
-# owner decision 3): the ai_workflows "labor_schedule" ladder's T3 (Sonnet
-# 5.5) or T4 (Opus 5.5), both adaptive thinking at medium — both in
-# SCHEDULE_THINKING_MODELS (a test holds the tier table to it).
-# SCHEDULE_EFFORT is the effort of the pinned route: a SCHEDULE_MODEL env
-# pin skips the ladder and runs that model at this effort
-# (schedule_engine.schedule_route).
+# The schedule call's thinking. Opus 5.5 (the default,
+# ai_utils.MODELS["schedule"]) thinks adaptively and cannot be turned off;
+# it is run at medium effort. High (to 10/6/26) spent 62,353 of the 64,000
+# output tokens on Simple EJ's first week - nearly all thinking, eight
+# minutes, a hair from a cut answer - while the repair, the manager plan,
+# the solver and the quality gate do the rule-keeping after it (owner,
+# 10/6/26: "yes switch to medium"). Watch the drafts' quality score and
+# seconds (schedule_model_calls) before changing it back. A SCHEDULE_MODEL
+# override to an older model keeps the old call shape. Since 10/7/26 the
+# model and effort are the route's (AI orchestration, owner decision 3): the
+# ai_workflows "labor_schedule" ladder's T3 (Sonnet 5.5) or T4 (Opus 5.5),
+# both adaptive thinking at medium — both in SCHEDULE_THINKING_MODELS (a
+# test holds the tier table to it). SCHEDULE_EFFORT is the effort of the
+# pinned route: a SCHEDULE_MODEL env pin skips the ladder and runs that
+# model at this effort (schedule_engine.schedule_route).
 SCHEDULE_THINKING_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable", "claude-mythos")
 
 
 SCHEDULE_EFFORT = "medium"
 
 
-# 128K, streamed (scheduler audit 10/10/26 AI-17): both schedule models write
-# up to 128,000 output tokens. At 64K, Opus 5.5 medium's measured ~48k of
-# thinking left ~16k for rows and a summary, so a large roster's week was
-# cut into three to five calls, each paying the thinking again.
+# 128K, streamed: both schedule models write up to 128,000 output tokens. At
+# 64K, Opus 5.5 medium's measured ~48k of thinking left ~16k for rows and a
+# summary, so a large roster's week was cut into three to five calls, each
+# paying the thinking again.
 SCHEDULE_MAX_TOKENS_THINKING = 128000
 
 
@@ -391,24 +389,24 @@ def schedule_model_thinks(model) -> bool:
     return str(model or "").lower().startswith(SCHEDULE_THINKING_MODELS)
 
 
-# The paired metric the router decides on (scheduler re-audit 10/11/26
-# AI-3, AI-4): an OUTCOME of the arm's own rows, read BEFORE the repair loop
-# and the gate's fill touch them — the hard breaches the model wrote plus
-# the requirement items its week left unmet. It was agreement with the week
-# the owner published (F1), which is an edit of whatever production drafted
-# (or of last week, carried forward): the arm that drafted it and the
-# carry-forward arm won by anchoring, and a better-than-habit week scored
-# worse. And it was read after the repair, which flattened Sonnet and Opus
-# to the same week (78 v 79, 0 hard after repair, 10/7/26) — the eval could
-# only say whether repair could fix a model, never whether a model was
-# better. Agreement with the published week is kept as a SECONDARY metric,
-# read only on weeks a third arm drafted (ANCHORED_METRICS, anchored).
+# The paired metric the router decides on: an OUTCOME of the arm's own rows,
+# read BEFORE the repair loop and the gate's fill touch them — the hard
+# breaches the model wrote plus the requirement items its week left unmet.
+# It was agreement with the week the owner published (F1), which is an edit
+# of whatever production drafted (or of last week, carried forward): the arm
+# that drafted it and the carry-forward arm won by anchoring, and a
+# better-than-habit week scored worse. And it was read after the repair,
+# which flattened Sonnet and Opus to the same week (78 v 79, 0 hard after
+# repair, 10/7/26) — the eval could only say whether repair could fix a
+# model, never whether a model was better. Agreement with the published week
+# is kept as a SECONDARY metric, read only on weeks a third arm drafted
+# (ANCHORED_METRICS, anchored).
 ROUTE_METRIC = "pre_repair_defects"
 
 
 # A verdict names a winner only from at least this many weeks from at least
-# this many learning-eligible restaurants in its band or tag (AI-5) — the
-# live experiments' own floor (schedule_experiments.MIN_WEEKS_PER_ARM,
+# this many learning-eligible restaurants in its band or tag — the live
+# experiments' own floor (schedule_experiments.MIN_WEEKS_PER_ARM,
 # MIN_RESTAURANTS_PER_ARM). cluster_mean_ci gives an interval from two
 # restaurants, so Simple EJ's and its demo copy (the same data) could have
 # sent a whole roster band to Opus.
@@ -454,7 +452,7 @@ def _evidence_text(v, what) -> str:
 
 
 def route_evidence(roster_size, db_path=None):
-    """Why a week of this roster size starts on T4, or None (AI-3: route by
+    """Why a week of this roster size starts on T4, or None (route by
     measured evidence). A reason only when the newest stored verdict of T4
     against T3 for the roster's size band named T4 the winner at 90% on
     ROUTE_METRIC, from the floors (_decisive). Never raises: a store that
@@ -472,9 +470,9 @@ def route_evidence(roster_size, db_path=None):
 
 def tag_evidence(tag, db_path=None):
     """Why a week carrying `tag` (ROUTE_TAGS) starts on T4, or None — the
-    same rule as route_evidence, for a kind of week (AI-27: holidays, first
-    weeks, many rules and a week whose last draft escalated were sent to
-    Opus on assertion). Never raises."""
+    same rule as route_evidence, for a kind of week (holidays, first weeks,
+    many rules and a week whose last draft escalated were sent to Opus on
+    assertion). Never raises."""
     try:
         v = latest_verdict(ROUTE_METRIC, "T4", "T3", tag=tag, db_path=db_path)
     except Exception as e:

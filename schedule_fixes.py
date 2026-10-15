@@ -19,7 +19,7 @@ def _people_by_family(rows: list, roster: list, signals: dict, families: dict = 
     """{family: names} who may take a shift of the family: anybody working
     it this week, the roster by role, held roles and the roles their
     history shows (cross_trained) — "Server AM" and "Server PM" are one
-    family (D-13). Without a roster, only the people working the family."""
+    family. Without a roster, only the people working the family."""
     out = {}
     roster_low = {n.strip().lower() for n in roster}
     for r in rows:
@@ -48,21 +48,20 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
     candidates it actually tried, never about the whole space.
 
     With `rule_constraints` (schedule_rules.Constraints) every candidate is
-    held to every rule the week is: the person-level rules for whoever
-    gains a shift (Constraints.can_add, the overtime line for the side whose
-    hours go up, fillable), then the whole week swept and compared by
-    breach identity (schedule_rules.regressions to the budget tier — days
-    in a row, the manager every minute, the closer, overtime, minimum
-    hours). The swap index alone knew none of the day's rules, so the panel
-    could offer an arrangement that broke one (schedule audit 10/3/26 P-33).
-    A row the manager plan or the owner pinned is never offered. Rated and
-    unrated people may trade: the score judges an unrated person as unknown,
-    not as nothing, so it decides (SQ-19); rated pairs, where a gap can be
-    seen, are tried first. Candidates are ranked with the local scorer and
-    the one taken is confirmed by the full score (P-25: sixty whole-week
-    scores per drag). `max_seconds` bounds the search in time as well as in
-    evaluations (a generation's deadline); the verdict speaks only of what
-    was tried."""
+    held to every rule the week is: the person-level rules for whoever gains
+    a shift (Constraints.can_add, the overtime line for the side whose hours
+    go up, fillable), then the whole week swept and compared by breach
+    identity (schedule_rules.regressions to the budget tier — days in a row,
+    the manager every minute, the closer, overtime, minimum hours). The swap
+    index alone knew none of the day's rules, so the panel could offer an
+    arrangement that broke one. A row the manager plan or the owner pinned
+    is never offered. Rated and unrated people may trade: the score judges
+    an unrated person as unknown, not as nothing, so it decides; rated
+    pairs, where a gap can be seen, are tried first. Candidates are ranked
+    with the local scorer and the one taken is confirmed by the full score
+    (sixty whole-week scores per drag). `max_seconds` bounds the search in
+    time as well as in evaluations (a generation's deadline); the verdict
+    speaks only of what was tried."""
     import time as _time
     t0 = _time.monotonic()
     timed = []
@@ -211,9 +210,9 @@ def compare_candidates(rows: list, profiles: list = None, weights: dict = None,
         # Whether each swap was held to every rule the week is, or only to the
         # swap index's person checks (no rule set given).
         "checked_with": "every rule" if c is not None else "availability and hours",
-        # The clock (max_seconds — a request thread's bound, blind re-audit
-        # 10/11/26 SCALE-21), not the evaluations, ended the search: the
-        # verdict speaks only of what was tried.
+        # The clock (max_seconds — a request thread's bound), not the
+        # evaluations, ended the search: the verdict speaks only of what
+        # was tried.
         "cut_short": bool(timed),
         "seconds": round(_time.monotonic() - t0, 2),
         "verdict": _candidate_verdict(baseline, current, swaps, evaluated, legal_total)
@@ -271,7 +270,7 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     Only breaches a different person can clear are attempted (PERSON_FIXABLE).
     A breach about a DAY (no manager on, a floor short — `day_level`) is the
     day's, shown on the day by the review, never an "unfixed" line on whoever
-    the sweep pinned it to (E-13). A row the manager plan or the owner pinned
+    the sweep pinned it to. A row the manager plan or the owner pinned
     ("_pinned") is never handed to somebody else.
 
     With `rule_constraints` (schedule_rules.Constraints) each candidate is
@@ -280,15 +279,15 @@ def apply_fixes(rows: list, violations: list, profiles: list = None, weights: di
     who stay under their overtime line, and only when nobody can, someone
     past it but never past their maximum: a person's legality outranks
     overtime, the owner's rule is that overtime goes to nobody while a
-    teammate has room; schedule audit 10/3/26 P-2). The fix is kept only when
-    the whole week, swept (incrementally — P-37) and compared by breach
-    identity, shows the row's breach gone or smaller and nothing else new or
-    worse: nothing about anybody, no minute without a manager, no floor or
-    closer, and — taking somebody under their line — no overtime or minimum
-    hours either (schedule_rules.regressions; it used to compare (row index,
-    kind) sets, blind to a new breach pinned to the same row — E-1). Rows the
-    evaluation budget (or `max_seconds`, a generation's deadline) did not
-    reach are reported as not tried, never as impossible.
+    teammate has room). The fix is kept only when the whole week, swept
+    (incrementally) and compared by breach identity, shows the row's breach
+    gone or smaller and nothing else new or worse: nothing about anybody, no
+    minute without a manager, no floor or closer, and — taking somebody under
+    their line — no overtime or minimum hours either
+    (schedule_rules.regressions; it used to compare (row index, kind) sets,
+    blind to a new breach pinned to the same row). Rows the evaluation budget
+    (or `max_seconds`, a generation's deadline) did not reach are reported as
+    not tried, never as impossible.
 
     A missed day off (schedule_rules "days_off": fewer consecutive days off
     than the rule) is fixable too, after the hard breaches: one of the
@@ -473,11 +472,11 @@ def _fix_days_off(rows: list, violations: list, profiles, weights, rule_constrai
     that costs the week the least score (LocalScorer). A window is kept only
     when the rule sweep then shows the person's days off met, nothing new or
     worse by breach identity (schedule_rules.regressions — the manager every
-    minute, the floors, the closer; it compared (row, kind) sets — E-1), and
+    minute, the floors, the closer; it compared (row, kind) sets), and
     nobody newly short of their own days off; of the windows that pass, the
     best-scoring one wins. Each teammate is somebody code may choose that
-    day for whom the row is legal (Constraints.fillable, can_add — P-2); a
-    pinned row never moves.
+    day for whom the row is legal (Constraints.fillable, can_add); a pinned
+    row never moves.
 
     Returns (rows, fixes, unfixed, evaluations)."""
     fixes, unfixed, used = [], [], 0

@@ -1,6 +1,5 @@
 """
-schedule_publish.py — sending a week to staff (schedule audit 10/10/26
-ARCH-15, ARCH-19, ARCH-20, ARCH-21, BUGSLIFE-2, -6, -7, -9, -10, -11).
+schedule_publish.py — sending a week to staff (-6, -7, -9, -10, -11).
 
 The publish state machine used to live in the route module (client_api),
 imported lazily by the delayed run, the auto-publish job and the engine; it
@@ -13,21 +12,20 @@ find. Here, with no Flask import, routes and jobs call one service:
 1. the gate (`publish_review`) — the rule sweep against today's data;
 2. the claim — one Send at a time per week (`publishing_at`);
 3. the STAMP, in one write transaction: the copy still in force and still
-   the rows the sender reviewed (`version`, BUGSLIFE-11) and the gate read
-   (ARCH-21, BUGSLIFE-6); published_at and the PUBLISHED copy
-   (published_csv) set from exactly those rows; any older published copy of
-   the week retired; the `published` version appended; and one outbox row
-   per person to tell (`schedule_notices`) — everyone on a first send; on a
-   replacement or a changes send only the people whose shifts differ, the
-   people taken off the week included (BUGSLIFE-7);
+   the rows the sender reviewed (`version`) and the gate read; published_at
+   and the PUBLISHED copy (published_csv) set from exactly those rows; any
+   older published copy of the week retired; the `published` version
+   appended; and one outbox row per person to tell (`schedule_notices`) —
+   everyone on a first send; on a replacement or a changes send only the
+   people whose shifts differ, the people taken off the week included;
 4. DELIVERY from the outbox, after the commit: inline for at most
    INLINE_SECONDS, the rest by the `schedule_notices` job; each person's
    result is kept (sent / unreachable / failed), a failure is retried with
    backoff and never counted as told, and "Send again" re-queues the people
-   who have not got it — or everyone, when asked (BUGSLIFE-9).
+   who have not got it — or everyone, when asked.
 
 client_api re-exports the old names (`publish_review`, `publish_blockers`,
-`_publish_schedule`, `send_schedule_changes`, ...) so callers and tests keep
+`_publish_schedule`, `send_schedule_changes`,...) so callers and tests keep
 working.
 """
 import json
@@ -45,8 +43,8 @@ log = logging.getLogger(__name__)
 from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 # A Send delivers inline for at most this long, so a publish to a large
-# staff on email or text never holds a request thread for minutes (ARCH-20);
-# the rest go out from the outbox job within the minute.
+# staff on email or text never holds a request thread for minutes; the rest
+# go out from the outbox job within the minute.
 INLINE_SECONDS = 8.0
 # A failed notice is tried again after these minutes, then left failed (the
 # owner's "Send again" re-queues it).
@@ -150,9 +148,8 @@ def _local_today(restaurant_id):
 
 
 # What each source the rules could not read means for the week, in the
-# owner's words (schedule_rules._input_problem — schedule audit 10/3/26 P-1):
-# one wording, schedule_rules.INPUT_PROBLEM_WORDS, shared with the
-# generation's review.
+# owner's words (schedule_rules._input_problem): one wording,
+# schedule_rules.INPUT_PROBLEM_WORDS, shared with the generation's review.
 def _input_problem_text(p) -> str:
     """One blocker line for a setting or source the rules could not read
     (Constraints.input_problems) — schedule_rules.input_problem_text, the
@@ -163,9 +160,9 @@ def _input_problem_text(p) -> str:
 
 def _notice_text(short, week_start, law=None) -> str:
     """The notice-rule blocker. A week already under way said "starts in -2
-    days" (schedule audit 10/3/26 E-22): it says when it started. Where the
-    notice is a jurisdiction's law (`law`, its place) the line says so
-    (TRUST-8: "your N-day schedule notice rule" hid that it was a law)."""
+    days": it says when it started. Where the notice is a jurisdiction's
+    law (`law`, its place) the line says so ("your N-day schedule notice
+    rule" hid that it was a law)."""
     from time_utils import mdy as _mdy_n
     given = int(short["days_given"])
     when = (f"starts in {given} day{'s' if given != 1 else ''}" if given > 0 else "starts today" if given == 0
@@ -186,11 +183,11 @@ def _law_label(c) -> str:
 
 
 def _notice_legal(short, law) -> dict:
-    """What the owner acknowledges to send a week past a posting-notice law
-    (TRUST-4, TRUST-8): the law, what it asks and what is known about the
-    cost. A late posting's fine is set by the city and not priced here —
-    said so, never a made-up figure; changes after posting are priced by
-    predictability pay where the law has it."""
+    """What the owner acknowledges to send a week past a posting-notice
+    law: the law, what it asks and what is known about the cost. A late
+    posting's fine is set by the city and not priced here — said so, never
+    a made-up figure; changes after posting are priced by predictability
+    pay where the law has it."""
     return {"law": law, "notice_days": int(short["notice_days"]), "days_given": int(short["days_given"]),
             "cost": None,
             "text": (f"I understand {law} law requires posting {int(short['notice_days'])} days ahead, that this "
@@ -201,8 +198,8 @@ def _notice_legal(short, law) -> dict:
 def _live_week(restaurant_id, week_start, not_id):
     """The copy of `week_start` staff have now — its live copy
     (models.live_week_row), with its PUBLISHED rows as `rows` (read from the
-    shift table on the same connection — schedule_shifts, schedule re-audit
-    10/11/26 ARCH-7) — when that is another row than `not_id`; else None."""
+    shift table on the same connection — schedule_shifts) — when that is
+    another row than `not_id`; else None."""
     import schedule_shifts
     conn = get_conn()
     try:
@@ -218,7 +215,7 @@ def _live_week(restaurant_id, week_start, not_id):
 
 def _in_restaurant_dayparts(fn):
     """schedule_engine.in_restaurant_dayparts, read at call time (the gate
-    runs inside the restaurant's own lunch/dinner boundary, ARCH-12)."""
+    runs inside the restaurant's own lunch/dinner boundary)."""
     import functools
 
     @functools.wraps(fn)
@@ -228,24 +225,24 @@ def _in_restaurant_dayparts(fn):
     return wrapper
 
 
-# Each blocker's tier (schedule audit 10/10/26 TRUST-3, ARCH-30): MUST_FIX —
-# illegal, the owner's non-negotiable (a manager on the floor every minute),
-# or a week nobody could vouch for — is acknowledged only by an override of
-# its own with a reason (a manager gap only by naming who runs the floor);
-# DECIDE — the owner's own number or a choice (the hourly budget, the notice
-# rule, a late change, a week Shift Quality could not score, a line of the
-# draft's own) — by one tap; nothing else holds a send.
+# Each blocker's tier: MUST_FIX — illegal, the owner's non-negotiable (a
+# manager on the floor every minute), or a week nobody could vouch for — is
+# acknowledged only by an override of its own with a reason (a manager gap
+# only by naming who runs the floor); DECIDE — the owner's own number or a
+# choice (the hourly budget, the notice rule, a late change, a week Shift
+# Quality could not score, a line of the draft's own) — by one tap; nothing
+# else holds a send.
 MUST_FIX, DECIDE = "must_fix", "decide"
 # Ranks inside MUST_FIX, before any rule's own tier (schedule_rules.TIER_*):
 # a roster with no manager at all, then a day nobody drafted, then the checks
 # that could not vouch for the week.
 _RANK = {"roster": -3, "unwritten": -2, "sweep_failed": -1, "input": 0, "stage": 0, "needs_review": 3,
-         # A send that undoes a cover or swap staff were told about (BUGSLIFE-1).
+         # A send that undoes a cover or swap staff were told about.
          "reverts": 4}
-# The keys whose override must name who runs the floor (ARCH-30).
+# The keys whose override must name who runs the floor.
 COVER_KINDS = ("rule:no_manager", "roster:no_manager_roster")
-# What each blocker is, by where its rule comes from (schedule re-audit
-# 10/11/26 TRUST-4, TRUST-8) — the tier and how it may be sent past follow:
+# What each blocker is, by where its rule comes from — the tier and how it
+# may be sent past follow:
 #   law      a jurisdiction's law or a minor's legal limits: never typed past
 #            — fixed, or the week is not sent. The one law no edit can fix
 #            (a jurisdiction's posting notice: time has passed) is sent past
@@ -254,17 +251,17 @@ COVER_KINDS = ("rule:no_manager", "roster:no_manager_roster")
 #            never automation.
 #   manager  a manager on the floor every minute: sent past only by naming a
 #            real manager or owner on the roster who can work that day, or
-#            the account owner reading it — never a free-text name (TRUST-5).
+#            the account owner reading it — never a free-text name.
 #   person   the person can't work it (time off, availability, their own
 #            maximum, an overlap): a reason of MIN_REASON words.
 #   coverage the floors and closers: a reason.
 #   policy   the restaurant's own limits that are not law (days in a row,
 #            the longest shift, rest the law doesn't require): a DECISION,
-#            one tap — the owner's own number (TRUST-8).
+#            one tap — the owner's own number.
 #   check    a check that could not vouch for the week: a reason.
 LAW, MANAGER, PERSON, COVERAGE, POLICY, CHECK = "law", "manager", "person", "coverage", "policy", "check"
 MINOR_KINDS = frozenset({"minor_late", "minor_hours", "minor_early", "minor_week_hours", "minor_school_hours"})
-# Who may send past the one law no edit can fix (TRUST-4).
+# Who may send past the one law no edit can fix.
 LEGAL_ACK_AUTHORITIES = ("principal", "admin")
 
 
@@ -286,10 +283,10 @@ def breach_class(v) -> str:
 
 def cover_candidates(c, rows, date=None) -> list:
     """Who may be named as running the floor through a manager gap on
-    `date` (TRUST-5): the roster's managers and owners (Constraints.manages
-    — an acting manager that day included), active, and not on time off
-    that date. The reader counts too when they are the account owner — added
-    at the gate (_override_ok), never here. Display names."""
+    `date`: the roster's managers and owners (Constraints.manages — an
+    acting manager that day included), active, and not on time off that
+    date. The reader counts too when they are the account owner — added at
+    the gate (_override_ok), never here. Display names."""
     if c is None:
         return []
     names, seen = [], set()
@@ -348,35 +345,34 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     against today's date (NS5 H2 notice_short).
 
     Blockers are what must be read before the week goes out: hard rule
-    breaches, a setting or source the rules could not read (P-1), the rule
-    check or the quality engine failing to run (P-16), the notice rule, a
-    change inside the notice window to a week staff already have (E-22),
-    and hourly hours past the hourly budget (E-7). The quality verdict —
-    a weak week, low confidence, shifts below the bar — is a note, never a
-    blocker (SQ-29): the scorer's structural caps put one on nearly every
-    week, which taught owners to acknowledge without reading. Notes ride in
-    `notes` (with keys) and `soft`.
+    breaches, a setting or source the rules could not read, the rule check
+    or the quality engine failing to run, the notice rule, a change inside
+    the notice window to a week staff already have, and hourly hours past
+    the hourly budget. The quality verdict — a weak week, low confidence,
+    shifts below the bar — is a note, never a blocker: the scorer's
+    structural caps put one on nearly every week, which taught owners to
+    acknowledge without reading. Notes ride in `notes` (with keys) and
+    `soft`.
 
     `unattended` is automation (auto-publish, its delayed run): the soft
     flags schedule_rules.HOLD_UNATTENDED names stop it too, and every other
-    soft flag is returned in `soft` for the owner's notice (NS5 M7). Each
-    blocker carries a stable `key` so an acknowledgement given for one set
-    does not carry to a blocker that appeared later.
+    soft flag is returned in `soft` for the owner's notice. Each blocker
+    carries a stable `key` so an acknowledgement given for one set does not
+    carry to a blocker that appeared later.
 
     Each blocker also carries `tier` (MUST_FIX | DECIDE), `rank` (severity
     inside its tier: the law and the manager rule first, never the date) and
-    `date` (schedule audit 10/10/26 TRUST-3). Rule breaches come only from
-    the live sweep: a saved review line is read only for what the sweep
-    cannot recompute — the generation's own notes — and a day it could not
-    write is read against the rows as they stand (TRUST-5: a breach fixed in
-    Team settings stayed a blocker until the week was saved again).
-    `held_unattended` lists what would hold an unattended send whatever
-    `unattended` is, so one run answers a person's Send and the one-tap
-    verdict both (TRUST-33).
+    `date`. Rule breaches come only from the live sweep: a saved review line
+    is read only for what the sweep cannot recompute — the generation's own
+    notes — and a day it could not write is read against the rows as they
+    stand (a breach fixed in Team settings stayed a blocker until the week
+    was saved again). `held_unattended` lists what would hold an unattended
+    send whatever `unattended` is, so one run answers a person's Send and
+    the one-tap verdict both.
 
     `rows` checks the rows on screen instead of the stored ones (the
-    pre-publish screen with unsaved edits, TRUST-4); `keep`, a dict, is
-    filled with what the run read ({"row", "rows", "constraints",
+    pre-publish screen with unsaved edits); `keep`, a dict, is filled
+    with what the run read ({"row", "rows", "constraints",
     "violations", "review", "quality"}) for prepublish.review."""
     _ensure_history_columns = _models_mod._ensure_history_columns
     conn = get_conn()
@@ -389,16 +385,16 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             row = conn.execute(cols + "WHERE id=? AND restaurant_id=?", (int(schedule_id), restaurant_id)).fetchone()
         else:
             # The week in force (models.newest_draft), never simply the
-            # newest row — a discarded rewrite or a replaced draft (ARCH-11).
+            # newest row — a discarded rewrite or a replaced draft.
             row = conn.execute(cols + "WHERE restaurant_id=? AND superseded_by IS NULL ORDER BY id DESC LIMIT 1",
                                (restaurant_id,)).fetchone()
         stored_rows = []
         if row is not None:
             # The week's WORKING rows from the shift table, read beside the
-            # row (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+            # row (schedule_shifts).
             import schedule_shifts as _ss_pr
             stored_rows = _ss_pr.rows_of(row["id"], "working", conn=conn) if rows is None else []
-            # The whole review and evaluation, whatever is inline (SCALE-13).
+            # The whole review and evaluation, whatever is inline.
             import models as _m_sp
             row = dict(row)
             row["review_json"] = json.dumps(_m_sp.history_review(conn, row), default=str)
@@ -408,7 +404,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     if not row:
         return {"blockers": [], "soft": [], "notes": [], "hours": None, "schedule_id": None, "held_unattended": []}
     out, soft, notes, seen = [], [], [], set()
-    held_unattended = []   # what would hold an unattended send (TRUST-33)
+    held_unattended = []   # what would hold an unattended send
     pp_out = None          # the priced late changes (predictability_pay.preview), when a law covers it
 
     def add(key, text, tier=MUST_FIX, rank=None, date=None, **meta):
@@ -417,13 +413,13 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             b = {"key": key, "text": text, "tier": tier,
                  "rank": _RANK.get(str(key).split(":", 1)[0], 5) if rank is None else rank, "date": date,
                  # A check that could not vouch for the week, unless the
-                 # caller says what it is (TRUST-4).
+                 # caller says what it is.
                  "cls": CHECK if tier == MUST_FIX else POLICY, "law": False}
             b.update(meta)
             out.append(b)
 
     def note(key, text):
-        # Acknowledge-able, never holding a publish (SQ-29).
+        # Acknowledge-able, never holding a publish.
         if text and text not in seen:
             seen.add(text)
             notes.append({"key": key, "text": text})
@@ -442,9 +438,8 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     except Exception:
         review = {}
     # A repair stage of a hard rule or the manager rule that did not run on
-    # this draft (schedule audit 10/3/26 P-3, P-17): its breaches were never
-    # repaired, so the week is read before it goes out — wherever its line
-    # sits in the review.
+    # this draft: its breaches were never repaired, so the week is read
+    # before it goes out — wherever its line sits in the review.
     stage_lines = set()
     for f in review.get("stage_failures") or []:
         if f.get("blocks_publish"):
@@ -453,7 +448,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             add(f"stage:{f.get('stage')}", t or f"A repair step ({f.get('stage')}) didn't run on this draft")
     # A day the generation could not write, or nobody could work, read
     # against the rows as they stand: one the owner has since filled is not
-    # said as empty (TRUST-5; refresh_review does the same on a save).
+    # said as empty (refresh_review does the same on a save).
     on = {r.get("date") for r in rows if (r.get("employee") or "").strip()}
     said_days = set()
     try:
@@ -472,15 +467,16 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 add(_unwritten_key(left), line_of(left).lstrip("⚠ ").strip(), date=left[0].get("date"))
     except Exception as _ux:
         _degraded(f"unwritten days unreadable: {_ux!r}", _ux)
-    # A role the requirements need with nobody of it on all day (STRESS-9),
-    # read against the rows as they stand: one the owner has since covered
-    # is not said.
+    # A role the requirements need with nobody of it on all day, read
+    # against the rows as they stand: one the owner has since covered is
+    # not said.
     try:
         import schedule_shapes as _shp_pr
         items = [u for u in (review.get("uncovered_roles") or []) if isinstance(u, dict)]
         if items:
             said_days.add(_shp_pr.uncovered_line(items).lstrip("⚠ ").strip())
-            fam = __import__("shift_quality").role_family
+            import shift_quality as _sq_pub
+            fam = _sq_pub.role_family
             on_now = {(r.get("date"), fam(r.get("role"))) for r in rows if (r.get("employee") or "").strip()}
             left = [u for u in items if (u.get("date"), fam(u.get("role"))) not in on_now]
             if left:
@@ -489,11 +485,11 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                     date=left[0].get("date"))
     except Exception as _ucx:
         _degraded(f"uncovered roles unreadable: {_ucx!r}", _ucx)
-    # The generation's own lead lines (re-audit 10/4/26 PIPE-7) — only what
-    # the live sweep cannot recompute (TRUST-5): the sweep's rule lines, the
-    # budget's, the stage failures, the settings the rules could not read
-    # and the empty days above are each read fresh, never from the save. A
-    # review saved before its lines were told apart keeps only its lead.
+    # The generation's own lead lines — only what the live sweep cannot
+    # recompute: the sweep's rule lines, the budget's, the stage failures,
+    # the settings the rules could not read and the empty days above are
+    # each read fresh, never from the save. A review saved before its lines
+    # were told apart keeps only its lead.
     rule_lines = {x.lstrip("⚠ ").strip() for x in (review.get("rule_lines") or []) + (review.get("budget_lines") or [])
                   if isinstance(x, str)}
     input_lines = set()
@@ -522,15 +518,15 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         c = _sr.build_constraints(restaurant_id, dates, days, restaurant=get_restaurant(restaurant_id))
         # A setting or source the rules could not read checked this week
         # without it — a person's managers, minors, hours limits or
-        # certificates silently gone (P-1). Named, never passed over.
+        # certificates silently gone. Named, never passed over.
         for p in (getattr(c, "input_problems", None) or []):
             add(f"input:{p.get('source')}:{(p.get('name') or '').strip().lower()}", _input_problem_text(p))
-        # The week as it will really run (schedule re-audit 10/11/26
-        # STRESS-16): a holder a manager let off a shift — an approved drop
-        # nobody has claimed, a shift posted open before it began — is not on
-        # it, so the only manager's approved drop is the manager gap it opens,
-        # never a covered week read from the stored rows. Approved time off
-        # stays on the row: the sweep names it as the breach it is.
+        # The week as it will really run: a holder a manager let off a shift —
+        # an approved drop nobody has claimed, a shift posted open before it
+        # began — is not on it, so the only manager's approved drop is the
+        # manager gap it opens, never a covered week read from the stored
+        # rows. Approved time off stays on the row: the sweep names it as the
+        # breach it is.
         import shift_requests as _srq_eff
         swept = _srq_eff.effective_rows(restaurant_id, rows, include_time_off=False)
         viols = _sr.violations(swept, c)
@@ -550,17 +546,17 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         breaches = {}
         for v in sorted(hard, key=lambda x: (x.get("date") or "", x.get("employee") or "")):
             # Ranked by the rule's tier — the law and the manager rule first
-            # (schedule_rules.tier_of), never by date (TRUST-3).
+            # (schedule_rules.tier_of), never by date.
             t = _sr.tier_of(v)
             rank = 10 + (t if t is not None else 9)
-            # Tiered by where the rule comes from (TRUST-4, TRUST-8): the
-            # law is never typed past, the restaurant's own limits that are
-            # not law are a decision — not the other way round.
+            # Tiered by where the rule comes from: the law is never typed
+            # past, the restaurant's own limits that are not law are a
+            # decision — not the other way round.
             cls = breach_class(v)
             tier = DECIDE if cls == POLICY else MUST_FIX
             meta = {"cls": cls, "law": cls == LAW, "fixable": True}
             # A breach about a day is named on the day, never charged to
-            # whoever's row it is pinned to (schedule_rules.breach_text, E-13).
+            # whoever's row it is pinned to (schedule_rules.breach_text).
             if v.get("day_level"):
                 k = f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}"
                 if cls == MANAGER:
@@ -573,14 +569,13 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if v.get("structural"):
                 # A limit the roster cannot keep at all (one manager open
                 # every day): named once in setup, here only as a note —
-                # never a weekly decision about the engine's own choice
-                # (sched re-audit 10/11/26 STRESS-18).
+                # never a weekly decision about the engine's own choice.
                 note(f"structural:{v['kind']}:{(v.get('employee') or '').strip().lower()}",
                      v.get("structural_text") or _sr.policy_text(v))
                 breaches.setdefault(k, v)
                 continue
             # The restaurant's own limit, not law, crossed to cover a higher
-            # rule reads "over your limit" (LOGIC-20), a decision (TRUST-4).
+            # rule reads "over your limit", a decision.
             text = _sr.policy_text(v) if v.get("policy") else f"{v['employee']} — {where}: {v['detail']}"
             add(k, text, tier=tier, rank=rank, date=v.get("date"), **meta)
             breaches.setdefault(k, v)
@@ -593,15 +588,15 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if v["kind"] == "over_hours_ceiling":
                 # One overtime line per person and payroll week, never one per
                 # shift of it (it names every row of the week, like the hard
-                # maximum above — sched audit 10/10/26 LOGIC-1).
+                # maximum above).
                 ck = ((v.get("employee") or "").strip().lower(), v.get("bucket"))
                 if ck in ceiling_seen:
                     continue
                 ceiling_seen.add(ck)
             if v["kind"] in _sr.ROSTER_BLOCKERS:
-                # Nobody counted as a floor manager: the highest rule is
-                # unmet on every shift, so the week waits for the owner to
-                # name who runs the floor (schedule re-audit 10/4/26 RULES-13).
+                # Nobody counted as a floor manager: the highest rule is unmet
+                # on every shift, so the week waits for the owner to name who
+                # runs the floor.
                 add(f"roster:{v['kind']}", v["detail"][:1].upper() + v["detail"][1:], cls=MANAGER, law=False,
                     fixable=True, cover_candidates=[])
                 continue
@@ -620,16 +615,16 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         import predictability_pay as _pp_pb
         live = None if row["published_at"] else _live_week(restaurant_id, row["week_start"], row["id"])
         # What staff have now: the live copy this draft replaces, or this
-        # week's own published copy (ARCH-1) — the base every late change,
-        # its predictability pay and the access-to-hours note are read from.
+        # week's own published copy — the base every late change, its
+        # predictability pay and the access-to-hours note are read from.
         told = (live["rows"] if live is not None else
                 (_sv_pb.published_rows(row["id"], restaurant_id) if row["published_at"] else None))
         if live is not None:
             # A regenerated draft of a week staff already have: what moves
             # is the shifts that differ, and inside the notice window that
             # is the predictability-pay warning — not "the week starts in
-            # -2 days" from the notice rule (E-22). Where a law covers the
-            # restaurant it is priced per changed shift (MARKET-2).
+            # -2 days" from the notice rule. Where a law covers the
+            # restaurant it is priced per changed shift.
             changed = _sv_pb.shift_changes(told, rows)["dates"]
             warn = _sr.late_change_warning(c.compliance, changed, now)
             pp = _pp_pb.preview(restaurant_id, told, rows)
@@ -644,7 +639,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         elif not row["published_at"]:
             short = _sr.notice_shortfall(c.compliance, row["week_start"], now)
             if short:
-                # Tiered by where the notice rule comes from (TRUST-8): a
+                # Tiered by where the notice rule comes from: a
                 # jurisdiction's posting notice is the law — must-fix, said
                 # as the law, sent past only with the owner's legal
                 # acknowledgement (no edit can give back the days); the
@@ -667,13 +662,12 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                     add("late_change:" + ",".join(pending.get("dates") or []), pp["text"], tier=DECIDE, rank=21)
             elif warn:
                 add("late_change:" + ",".join(pending.get("dates") or []), warn, tier=DECIDE, rank=21)
-        # The staff changes on the week staff have that this send would undo
-        # (schedule re-audit 10/11/26 BUGSLIFE-1): a cover, claim or swap that
-        # went through after the draft was made, or a manager's working copy
-        # still holding the shift as it was. Each is a must-fix line naming
-        # it — sent past only with a reason, and the send closes the request
-        # and tells both people (_stamp). A replacement that keeps them says
-        # which it carried.
+        # The staff changes on the week staff have that this send would undo:
+        # a cover, claim or swap that went through after the draft was made,
+        # or a manager's working copy still holding the shift as it was. Each
+        # is a must-fix line naming it — sent past only with a reason, and the
+        # send closes the request and tells both people (_stamp). A
+        # replacement that keeps them says which it carried.
         if told is not None:
             import shift_requests as _srq_sc
             sc = _srq_sc.staff_changes_vs(restaurant_id, told, rows, dates=dates)
@@ -689,8 +683,8 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             if keep is not None:
                 keep["staff_changes"] = sc
         # Hours added straight to someone's week while a law asks for them to
-        # be offered to the current staff first (access to hours, MARKET-4):
-        # a note, never a hold.
+        # be offered to the current staff first (access to hours): a note,
+        # never a hold.
         try:
             import fair_workweek as _fww_pb
             if told is not None:
@@ -701,7 +695,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
             _ops_ax.capture(_ax, job="publish_access_hours", context=f"restaurant_id={restaurant_id}")
         # A roster with minors and no school calendar for this school year:
         # the default holds them to school-day limits on every weekday but
-        # June 1 to July 31 — said once a year (LEARNING-18).
+        # June 1 to July 31 — said once a year.
         try:
             import school_calendar as _sc_pb
             ask = _sc_pb.needs_prompt(c.school_calendar, now, bool(c.minors))
@@ -718,11 +712,10 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     # below a floor); a week still over it — the trim off, floors that need
     # more, or hours added since — is not trimmed here: it is named, so the
     # owner sends it knowing, or takes hours out first (this comment used to
-    # say no week was ever trimmed; schedule audit 10/3/26 P-45). It is an
-    # HOURLY budget, so the week's hourly hours are held against it, as they
-    # stand now: salaried people's hours are never spent from it, and counting
-    # them put a spurious "over the ceiling" of about the salaried hours on
-    # every week (E-7, P-6).
+    # say no week was ever trimmed). It is an HOURLY budget, so the week's
+    # hourly hours are held against it, as they stand now: salaried people's
+    # hours are never spent from it, and counting them put a spurious "over
+    # the ceiling" of about the salaried hours on every week.
     hours = None
     try:
         hours = (_sr.hours_split(rows, c) if c is not None else
@@ -732,11 +725,10 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         hb = float(row["hours_budget"] or 0)
     except (TypeError, ValueError, KeyError, IndexError):
         hb = 0.0
-    # Held in dollars when the week can be priced (sched audit 10/10/26
-    # LOGIC-13): each person at their own rate, overtime at its premium and
-    # an hourly closing manager's assumed stay, against the hourly budget's
-    # dollars — the one measure the generation's trim and judge use; hours
-    # stay the view beside it.
+    # Held in dollars when the week can be priced: each person at their own
+    # rate, overtime at its premium and an hourly closing manager's assumed
+    # stay, against the hourly budget's dollars — the one measure the
+    # generation's trim and judge use; hours stay the view beside it.
     dollars = None
     try:
         econ = json.loads(row["economics_json"] or "null") or {}
@@ -770,8 +762,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         quality = {}
     if "checked" in quality and not quality.get("checked"):
         # The quality engine failed on this week: said, with the cause, so
-        # a week nobody could score never goes out as if it had passed
-        # (P-16).
+        # a week nobody could score never goes out as if it had passed.
         cause = str(quality.get("error") or quality.get("reason") or "").strip()
         add("quality_unchecked", "Shift Quality couldn't check this week" + (f" ({cause[:160]})" if cause else "")
             + " — read it yourself before it goes to staff", tier=DECIDE, rank=24)
@@ -784,14 +775,14 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
         if below:
             note("below_profile",
                  f"{len(below)} shift{'s' if len(below) != 1 else ''} below the bar set for {'it' if len(below) == 1 else 'them'}")
-    # What the owner has sent past before, by key (schedule audit 10/10/26
-    # TRUST-28): each blocker's record beside it, the ones they always send
-    # past ranked last, a demotable one they always override (the hourly
-    # budget, the draft's own review lines — never a rule) moved to a note,
-    # and the review of the warnings they always override.
+    # What the owner has sent past before, by key: each blocker's record
+    # beside it, the ones they always send past ranked last, a demotable
+    # one they always override (the hourly budget, the draft's own review
+    # lines — never a rule) moved to a note, and the review of the warnings
+    # they always override.
     import schedule_overrides as _so_pr
-    # Severity first, never the date (TRUST-3): the must-fix tier, then each
-    # tier by rank — annotate keeps this order inside its own ranking.
+    # Severity first, never the date: the must-fix tier, then each tier by
+    # rank — annotate keeps this order inside its own ranking.
     out.sort(key=lambda b: (b.get("tier") != MUST_FIX, b.get("rank") or 0, b.get("date") or ""))
     if keep is not None:
         keep.update(row=dict(row), rows=rows, constraints=c, violations=viols, review=review, quality=quality,
@@ -799,9 +790,9 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     return _so_pr.annotate(restaurant_id, {"blockers": out, "soft": soft, "notes": notes, "hours": hours,
                                            "schedule_id": row["id"], "held_unattended": held_unattended,
                                            # Each changed shift inside a predictive-scheduling
-                                           # law's notice window, priced, and the total
-                                           # (MARKET-2) — None when no law covers the
-                                           # restaurant or nothing changed.
+                                           # law's notice window, priced, and the total — None
+                                           # when no law covers the restaurant or nothing
+                                           # changed.
                                            "predictability_pay": (
                                                {k: pp_out[k] for k in ("law", "code", "total", "owed_count",
                                                                        "unknown_count", "text", "rows")}
@@ -811,7 +802,7 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
 def _drop_share(token, schedule_id):
     """Remove a share link made for a send that did not go out, so the
     status list never shows someone as sent who was not. By the token's
-    hash — the only form the row keeps (SEC-09)."""
+    hash — the only form the row keeps."""
     _models_mod.drop_schedule_share(token, schedule_id)
 
 
@@ -843,11 +834,11 @@ def _final_item(name, ch, channel, shifts, box=None) -> dict:
 
 
 def _notice_outcome(notice_id, item, db_path=None):
-    """Write a delivery chain's late answer onto its outbox row (BUGSLIFE-3):
-    a push Apple accepted is delivered, a fallback that went is sent on that
-    channel, a chain that reached nobody is failed (retried on the outbox's
-    backoff; never counted as told). Only a row still sending or sent is
-    touched — a notice a newer one cancelled stays cancelled. Never raises."""
+    """Write a delivery chain's late answer onto its outbox row: a push Apple
+    accepted is delivered, a fallback that went is sent on that channel, a
+    chain that reached nobody is failed (retried on the outbox's backoff;
+    never counted as told). Only a row still sending or sent is touched — a
+    notice a newer one cancelled stays cancelled. Never raises."""
     try:
         conn = get_conn(db_path)
         try:
@@ -877,26 +868,25 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
     """Tell one person about one week, on the channel they signed up with
     (Friction audit #17): the app when their phone has it, a text when they
     ticked "text me when my schedule is posted", email as the fallback —
-    people.deliver, the one rule (employee audit C4/M8). Their own share
-    link either way; the portal has the week regardless. `kind`: posted |
-    changed | removed (taken off the week: "no shifts"). Returns (status,
-    item): "sent" | "unreachable" | "failed", and the line the response and
-    the outbox keep.
+    people.deliver, the one rule (/M8). Their own share link either way;
+    the portal has the week regardless. `kind`: posted | changed | removed
+    (taken off the week: "no shifts"). Returns (status, item): "sent" |
+    "unreachable" | "failed", and the line the response and the outbox
+    keep.
 
     Only a delivery that happened counts as sent: deliver() never raises —
     a missing key, a suppressed address, the flood guard and a Resend
     failure all come back as SendResult(ok=False) — and only an exception
-    used to count as a failure (F2-1). A share row made for a send that did
-    not go out is removed, so the status list never shows that person as
-    sent. deliver() records the real outcome in email_log itself.
+    used to count as a failure. A share row made for a send that did not go
+    out is removed, so the status list never shows that person as sent.
+    deliver() records the real outcome in email_log itself.
 
     A push is "sent" with delivery "pending" when it is queued; what Apple
-    (or the fallback chain) answers later is the notice's final word
-    (schedule re-audit 10/11/26 BUGSLIFE-3): delivered, the text or email
-    the chain sent instead, or failed when the chain reached nobody — kept on
-    the outbox row `notice_id` (_notice_outcome). A stale device token with
-    no text consent or email used to stay "sent", and "Send again to
-    missing" skipped the person."""
+    (or the fallback chain) answers later is the notice's final word:
+    delivered, the text or email the chain sent instead, or failed when the
+    chain reached nobody — kept on the outbox row `notice_id`
+    (_notice_outcome). A stale device token with no text consent or email
+    used to stay "sent", and "Send again to missing" skipped the person."""
     import threading as _threading
     from labor import employee_shifts_from_csv, employee_shifts_from_rows
     import people as _people
@@ -907,7 +897,7 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
     if not (ch.get("push_user_id") or ch.get("sms") or email):
         return "unreachable", {"employee_name": name, "reason": "no app, text consent or email address on file"}
     # The week's rows (the outbox's context reads them from the shift table —
-    # schedule_shifts, ARCH-7); the old direct-send shape passes its text.
+    # schedule_shifts); the old direct-send shape passes its text.
     shifts = employee_shifts_from_rows(csv_text, name) if isinstance(csv_text, list) else \
         employee_shifts_from_csv(csv_text, name)
     updated = kind != "posted"
@@ -945,14 +935,14 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
     lock = _threading.Lock()
 
     def _outcome(channel):
-        # The app's share row only once the push reached a phone (COM-12).
+        # The app's share row only once the push reached a phone.
         if channel == "push":
             try:
                 create_schedule_share(rid, schedule_id, name, sent_to="app")
             except Exception as e:
                 _degraded(f"app share not recorded for {name}: {e}", e)
-        # The chain's final word (BUGSLIFE-3): read below when it came before
-        # deliver() returned; written to the outbox row when it came after.
+        # The chain's final word: read below when it came before deliver()
+        # returned; written to the outbox row when it came after.
         with lock:
             box["final"], late = channel, box.get("returned", False)
         if late and notice_id:
@@ -1160,7 +1150,7 @@ def _notice_context(restaurant_id, history_id, db_path=None):
         row = conn.execute("SELECT id, week_start, week_end, published_at "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?",
                            (history_id, restaurant_id)).fetchone()
-        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        # The copy staff have, from the shift table (schedule_shifts).
         rows = schedule_shifts.rows_of(row["id"], "live", conn=conn) if row else []
     finally:
         conn.close()
@@ -1211,8 +1201,8 @@ def week_copy_ids(restaurant_id, history_id, db_path=None) -> list:
     """Every copy of `history_id`'s week staff were sent, up to and including
     it, oldest first — a replacement publish tells only the people whose
     shifts changed, so "who has it" for the live copy is read across the
-    copies before it (schedule re-audit 10/11/26 BUGSLIFE-8). [history_id]
-    when it is a draft nobody was sent or its week cannot be read."""
+    copies before it. [history_id] when it is a draft nobody was sent or its
+    week cannot be read."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT week_start, published_at FROM schedule_history WHERE id=? AND restaurant_id=?",
@@ -1229,7 +1219,7 @@ def week_copy_ids(restaurant_id, history_id, db_path=None) -> list:
 
 def _confirmed(p) -> bool:
     """A notice that reached the person: sent, and not a push still waiting
-    on Apple's answer (BUGSLIFE-3)."""
+    on Apple's answer."""
     return p.get("status") == "sent" and not (p.get("channel") == "push" and p.get("delivery") == "pending")
 
 
@@ -1239,11 +1229,11 @@ def notice_status(restaurant_id, history_id, db_path=None) -> dict:
     error, attempts, next_attempt_at, sent_at, history_id, carried}] (each
     person's newest notice), "sending": n, "failed": n, "unreachable": n}.
 
-    Read across every copy of the week staff were sent (week_copy_ids,
-    BUGSLIFE-8): a replacement publish tells only the people whose shifts
-    changed, so the others' notice is the one from the copy before —
-    `carried` True, `history_id` that copy's. A push Apple has not answered
-    yet is `delivery` "pending" (BUGSLIFE-3)."""
+    Read across every copy of the week staff were sent (week_copy_ids): a
+    replacement publish tells only the people whose shifts changed, so the
+    others' notice is the one from the copy before — `carried` True,
+    `history_id` that copy's. A push Apple has not answered yet is
+    `delivery` "pending"."""
     ids = week_copy_ids(restaurant_id, history_id, db_path=db_path)
     conn = get_conn(db_path)
     try:
@@ -1272,10 +1262,10 @@ def notice_status(restaurant_id, history_id, db_path=None) -> dict:
 
 def week_share_status(restaurant_id, history_id, db_path=None) -> list:
     """models.get_schedule_share_status across every copy of the week staff
-    were sent (week_copy_ids, BUGSLIFE-8): one entry per person — the newest
-    send's channel and time, the first open, every open counted — so a
-    replacement copy does not read everyone it left alone as never sent, and
-    nobody's opens start again from zero."""
+    were sent (week_copy_ids): one entry per person — the newest send's
+    channel and time, the first open, every open counted — so a replacement
+    copy does not read everyone it left alone as never sent, and nobody's
+    opens start again from zero."""
     out = {}
     kw = {"db_path": db_path} if db_path else {}
     for hid in week_copy_ids(restaurant_id, history_id, db_path=db_path):
@@ -1306,14 +1296,13 @@ class _Refused(Exception):
 def _recipients(old_live, new_rows, restaurant_id=None, db_path=None) -> list:
     """[(name, kind)] to tell when `new_rows` replace what staff have
     (`old_live`, None on a first send): everyone on a first send; else only
-    the people whose shifts differ — "removed" for those taken off the week
-    (BUGSLIFE-7), "posted" for those new to it, "changed" for the rest.
+    the people whose shifts differ — "removed" for those taken off the
+    week, "posted" for those new to it, "changed" for the rest.
 
-    Compared by the PERSON, not the spelling (schedule re-audit 10/11/26
-    BUGSLIFE-6): both copies' names read as the one person each means now
-    (people.canonical_names, as unsent_changes reads them), so a rename
-    between two Sends is never "you have no shifts" to the old spelling and
-    "is posted" to the new one."""
+    Compared by the PERSON, not the spelling: both copies' names read as
+    the one person each means now (people.canonical_names, as
+    unsent_changes reads them), so a rename between two Sends is never "you
+    have no shifts" to the old spelling and "is posted" to the new one."""
     import schedule_rows as _srows
     from labor import employees_in_rows
     if old_live is None:
@@ -1330,9 +1319,9 @@ def _recipients(old_live, new_rows, restaurant_id=None, db_path=None) -> list:
 
 
 def stale_payload(restaurant_id, schedule_id, version):
-    """A Send of rows the sender no longer has on screen (BUGSLIFE-11): who
-    changed the week since `version` and how — the save conflict's shape.
-    None when the rows are still the rows of `version`."""
+    """A Send of rows the sender no longer has on screen: who changed the
+    week since `version` and how — the save conflict's shape. None when the
+    rows are still the rows of `version`."""
     import schedule_versions as _sv
     conn = get_conn()
     try:
@@ -1384,12 +1373,12 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
             raise _Refused({"ok": False, "stale": True, "schedule_id": schedule_id}, 409)
         if gate_sig is not None and _sv._rows_sig(row["schedule_csv"]) != gate_sig:
             # A save landed between the gate and the stamp: what would go
-            # out is not what was checked (ARCH-21, BUGSLIFE-6).
+            # out is not what was checked.
             raise _Refused({"ok": False, "changed": True, "schedule_id": schedule_id,
                             "error": "The week changed while it was being checked, so it wasn't sent. "
                                      "Look at it again, then send."}, 409)
         # The rows from the shift table, inside this transaction (schedule_
-        # shifts — schedule re-audit 10/11/26 ARCH-7).
+        # shifts).
         import schedule_shifts as _ss_st
         rows = _ss_st.rows_of(schedule_id, "working", conn=conn)
         if mode == "publish":
@@ -1404,14 +1393,14 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
             old_live, _rebuilt = _sv._live_rows_of(conn, schedule_id, restaurant_id, row)
             old_live = _srows.carry_ids(old_live, rows, known_ids=[r.get("shift_id") for r in old_live])
             text = _srows.to_csv(rows)
-        # Who to tell, by the PERSON (schedule re-audit 10/11/26 BUGSLIFE-6):
-        # a rename between the last Send and this one is the same person.
+        # Who to tell, by the PERSON: a rename between the last Send and this
+        # one is the same person.
         items = _recipients(old_live, rows, restaurant_id=restaurant_id, db_path=db_path)
         if mode == "changes" and not items:
             raise _Refused({"ok": True, "already_published": True, "schedule_id": schedule_id}, 200)
         # The version first, then the week's text through the one week write
-        # (schedule_versions.store_week, ARCH-24) — so its shift projection
-        # carries this revision. One transaction.
+        # (schedule_versions.store_week) — so its shift projection carries
+        # this revision. One transaction.
         _row_id, new_version = _sv._insert_version(conn, restaurant_id, schedule_id, "published", text,
                                                    saved_by=actor_name, saved_authority=authority)
         if mode == "publish":
@@ -1421,7 +1410,7 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                            sets=("published_at=datetime('now')", "published_by=?", "publishing_at=NULL"),
                            args=(actor_name,), allow_overlaps=True)
             # One live version of a week: an older published copy is retired,
-            # or both fed outcomes, fairness, hours and claims (SCHED-10).
+            # or both fed outcomes, fairness, hours and claims.
             conn.execute("UPDATE schedule_history SET superseded_by=? WHERE restaurant_id=? AND week_start=? "
                          "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL",
                          (schedule_id, restaurant_id, row["week_start"], schedule_id))
@@ -1437,8 +1426,8 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                     raise
         # The live requests on the week's dates follow the copy staff now
         # have, in this same transaction — a retimed shift carries its
-        # request, a removed or reassigned one closes it (ARCH-9); the
-        # requesters are told after the commit (_after_send).
+        # request, a removed or reassigned one closes it; the requesters
+        # are told after the commit (_after_send).
         week_dates = _sv._week_dates(row["week_start"], row["week_end"] or row["week_start"])
         reverted = []
         try:
@@ -1446,8 +1435,7 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
             # A cover or swap staff were told about that this send undoes —
             # sent past the gate's must-fix line with a reason — is closed
             # here, so nothing reads it as covered any more, and both people
-            # are told after the commit (schedule re-audit 10/11/26
-            # BUGSLIFE-1).
+            # are told after the commit.
             if old_live is not None:
                 reverted = _srq_f.staff_changes_vs(restaurant_id, old_live, rows, dates=week_dates)["reverted"]
                 if reverted:
@@ -1484,9 +1472,9 @@ def _rows_sig_now(restaurant_id, schedule_id):
 
 
 def _claim(restaurant_id, schedule_id, mode):
-    """Take the week's Send claim (SCHED-29, DATA-12): one Send at a time.
-    A claim older than PUBLISH_CLAIM_MINUTES belongs to a Send that died.
-    Returns whether this Send holds it."""
+    """Take the week's Send claim: one Send at a time. A claim older than
+    PUBLISH_CLAIM_MINUTES belongs to a Send that died. Returns whether
+    this Send holds it."""
     cond = "AND published_at IS NULL " if mode == "publish" else ""
     conn = get_conn()
     try:
@@ -1505,7 +1493,7 @@ def _claim(restaurant_id, schedule_id, mode):
 def send_in_progress(restaurant_id, week_start=None, history_id=None) -> bool:
     """Whether a Send holds this week right now (its copy's publishing_at
     claim is fresh) — `history_id`'s copy, else the week's working copy.
-    Generate waits for it (BUGSLIFE-2). Never raises (False)."""
+    Generate waits for it. Never raises (False)."""
     try:
         conn = get_conn()
         try:
@@ -1529,8 +1517,8 @@ def send_in_progress(restaurant_id, week_start=None, history_id=None) -> bool:
 def _release(restaurant_id, schedule_id):
     """Let the week's claim go. A Send that ended without publishing leaves
     the copy as it was — and when a generation landed while the claim held
-    it off (BUGSLIFE-2), the newer draft is the week's draft now: this copy
-    is superseded by it, as the generation would have done."""
+    it off, the newer draft is the week's draft now: this copy is
+    superseded by it, as the generation would have done."""
     conn = get_conn()
     try:
         conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=? AND restaurant_id=?",
@@ -1571,16 +1559,16 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
         _degraded(f"implementation not recorded for {rid}: {_rle}", _rle)
     # What the week's first publish says, into the observation log: every
     # change from the original draft by origin (the manager's, Cavnar AI's
-    # kept ones, an admin's), and whether a person sent it (schedule audit
-    # 10/3/26 L-4, L-5, L-7). Never blocks the publish.
+    # kept ones, an admin's), and whether a person sent it. Never blocks
+    # the publish.
     try:
         import schedule_versions as _sv_obs
         _sv_obs.observe_publish(rid, schedule_id, authority=authority, editor=actor_name)
     except Exception as _obx:
         _ops.capture(_obx, job="schedule_publish_observe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # What the restaurant did with the generated week, on the labor_schedule
-    # run that wrote it: the share of its shifts that went out untouched
-    # (re-audit 10/7/26 #4). Never blocks the publish.
+    # run that wrote it: the share of its shifts that went out untouched.
+    # Never blocks the publish.
     try:
         import schedule_versions as _sv_out
         _sv_out.record_week_outcome(rid, schedule_id, actor=actor, published=True)
@@ -1606,12 +1594,12 @@ def _after_publish(rid, schedule_id, row, actor, actor_name, authority):
 
 
 def _after_send(rid, schedule_id, version, review, acked, override_reasons, actor, authority):
-    """What every stamped Send records — none of it can hold the send:
-    the warnings it went out past, by key, with the published version and
-    any reason (schedule audit 10/10/26 TRUST-28 — what lets the list learn
-    which ones this owner always overrides); and the live requests on the
-    week's dates follow the copy staff now have — a retimed shift carries
-    its request, a removed one closes it and its requester is told (ARCH-9)."""
+    """What every stamped Send records — none of it can hold the send: the
+    warnings it went out past, by key, with the published version and any
+    reason (what lets the list learn which ones this owner always
+    overrides); and the live requests on the week's dates follow the copy
+    staff now have — a retimed shift carries its request, a removed one
+    closes it and its requester is told."""
     try:
         import schedule_overrides as _so_pub
         _so_pub.record_overridden(rid, schedule_id, version, review.get("blockers") or [], acked or [],
@@ -1625,17 +1613,16 @@ def _after_send(rid, schedule_id, version, review, acked, override_reasons, acto
     except Exception as _fx:
         _ops.capture(_fx, job="shift_requests_follow", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # How firm each published shift is, recorded with the send (commitment_
-    # ladder, scheduler audit 10/10/26 MARKET-27): staff see firm / likely /
-    # tentative, and a changes send marks the committed rows it changed. The
-    # nightly schedule_bench pass records any week this missed.
+    # ladder): staff see firm / likely / tentative, and a changes send marks
+    # the committed rows it changed. The nightly schedule_bench pass records
+    # any week this missed.
     try:
         import commitment_ladder as _cl_pub
         _cl_pub.ensure(rid, schedule_id)
     except Exception as _clx:
         _ops.capture(_clx, job="commitment_ladder", context=f"restaurant_id={rid} schedule_id={schedule_id}")
     # The week to the POS time clock where the owner turned that on — queued
-    # for the pos_schedule_push job, never waited on, never raising
-    # (schedule audit 10/10/26 MARKET-7).
+    # for the pos_schedule_push job, never waited on, never raising.
     import pos_schedule_push as _psp
     _psp.after_publish(rid, schedule_id, actor=actor)
 
@@ -1645,11 +1632,10 @@ def _record_pay(rid, schedule_id, rows, sent_by, before_rows=None, replacement=F
     predictive-scheduling law's notice window, priced, against what staff
     had (`before_rows`: the live copy a replacement retires, or this week's
     published copy before a changes send), and any consented short rest's
-    premium (MARKET-2, MARKET-3). A first send with nothing replaced records
-    only the rest premiums. Every row carries `version`, the published
-    version the Send stamped, so payroll or an auditor can tie a premium to
-    the copy that caused it (schedule re-audit 10/11/26 BUGSLIFE-19). Never
-    stops the send."""
+    premium. A first send with nothing replaced records only the rest
+    premiums. Every row carries `version`, the published version the Send
+    stamped, so payroll or an auditor can tie a premium to the copy that
+    caused it. Never stops the send."""
     try:
         import predictability_pay as _pp_pub
         if before_rows is not None:
@@ -1675,11 +1661,11 @@ def _delivered_payload(rid, schedule_id, got) -> dict:
 def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, version=None, override_reasons=None):
     """Send a week to staff for the first time — the route, the mobile twin,
     the delayed run and auto-publish. Returns (payload, http_status).
-    `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR;
-    `version` the version of the rows the sender reviewed (a Send of rows
-    somebody changed since is refused with their changes, BUGSLIFE-11).
-    `override_reasons` ({key: reason}) are kept with the keys the send went
-    out past (schedule_overrides, TRUST-28).
+    `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR; `version`
+    the version of the rows the sender reviewed (a Send of rows somebody
+    changed since is refused with their changes). `override_reasons` ({key:
+    reason}) are kept with the keys the send went out past
+    (schedule_overrides).
 
     A schedule with blockers (publish_blockers) is refused with
     needs_ack=True until the caller says acknowledge — a human reading the
@@ -1711,7 +1697,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
         return {"ok": False, "error": "Generate a schedule first — there's nothing to send yet."}, 400
     # A copy of the week a newer one replaced is never sent — by a person,
     # a stale phone, or the delayed run of a Send queued before the newer
-    # draft (schedule re-audit 10/4/26 UI-3).
+    # draft.
     _replaced = _sv.replaced_error(row)
     if _replaced:
         return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"],
@@ -1732,17 +1718,16 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
     if unacked:
         # Each blocker with its key, so the client acknowledges exactly the
-        # list it showed (F2-9).
+        # list it showed.
         return _needs_ack(review, unacked, schedule_id)
 
     # What staff read in the push, the text and the email subject: M/D/YY,
-    # never the ISO the row stores (F2-15).
+    # never the ISO the row stores.
     week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
 
     # Claim the week before anything is written. Nothing stopped a second
     # publish (a double tap, a second device, the 11am auto-publish after a
-    # 10am manual one) from emailing every member of staff again (SCHED-29,
-    # DATA-12).
+    # 10am manual one) from emailing every member of staff again.
     if not _claim(rid, schedule_id, "publish"):
         conn = get_conn()
         try:
@@ -1765,7 +1750,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     actor_name = _actor_name(actor)
     authority = _sv.authority_of(actor)
     # The copy this one replaces, read before the stamp retires it: its
-    # changes go on the predictability-pay record (MARKET-2).
+    # changes go on the predictability-pay record.
     _replacing = _live_week(rid, row["week_start"], schedule_id)
     regates = 0
     while True:
@@ -1774,9 +1759,9 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
             break
         except _Refused as r:
             if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
-                # A save landed while the gate ran (BUGSLIFE-6, ARCH-21): what
-                # goes out is the week as saved — checked again, the claim
-                # still held, never the rows read before the save.
+                # A save landed while the gate ran: what goes out is the week
+                # as saved — checked again, the claim still held, never the
+                # rows read before the save.
                 regates += 1
                 gate_sig = _rows_sig_now(rid, schedule_id)
                 review = publish_review(rid, schedule_id, unattended=unattended)
@@ -1821,21 +1806,21 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                 acknowledged=bool(blockers), portal_only=not got["sent"] and not got["pending"], note=note,
                 version=stamped["version"], error=None,
                 # The covers and swaps this send undid, past the gate's line
-                # with a reason: each closed, both people told (BUGSLIFE-1).
+                # with a reason: each closed, both people told.
                 staff_changes_undone=[it["text"] for it in stamped.get("reverted") or []],
                 **_delivered_payload(rid, schedule_id, got)), 200
 
 
 def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, version=None, override_reasons=None):
     """Tell the people whose shifts changed on a week staff already have —
-    the explicit second step after a save (F2-2). Returns (payload, status).
+    the explicit second step after a save. Returns (payload, status).
 
     A save only records the edit on the working copy; this runs the publish
     gate, then — in one transaction — sets the published copy to the saved
-    week (the version the sender reviewed, BUGSLIFE-11), appends a
-    `published` version and queues a notice for each person whose shifts
-    differ from what they were told, the people taken off the week
-    included. The caller checks SCHEDULE_PUBLISH and the undo window
+    week (the version the sender reviewed), appends a `published` version
+    and queues a notice for each person whose shifts differ from what they
+    were told, the people taken off the week included. The caller checks
+    SCHEDULE_PUBLISH and the undo window
     (client_api._publish_schedule_request)."""
     import schedule_versions as _sv
     from time_utils import mdy_range as _mdy_range
@@ -1852,7 +1837,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
         conn.close()
     if not row:
         return {"ok": False, "error": "That week is gone — reload the schedule."}, 404
-    # Changes to a copy a newer one replaced reach nobody's live week (UI-3).
+    # Changes to a copy a newer one replaced reach nobody's live week.
     if _sv.replaced_error(row):
         return {"ok": False, "replaced": True, "superseded_by": row["superseded_by"], "schedule_id": row["id"],
                 "error": _sv.replaced_error(row)}, 409
@@ -1881,7 +1866,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                 "error": "This week is being sent to staff right now."}, 409
     who = _actor_name(actor)
     # What staff had before this send — the published copy — for the
-    # predictability-pay record (MARKET-2); covers and swaps since are in it.
+    # predictability-pay record; covers and swaps since are in it.
     _told_before = _sv.published_rows(row["id"], rid)
     regates = 0
     try:
@@ -1892,7 +1877,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
             except _Refused as r:
                 if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
                     # A save landed while the gate ran: the changes that go
-                    # are the saved ones, checked again (BUGSLIFE-6).
+                    # are the saved ones, checked again.
                     regates += 1
                     gate_sig = _rows_sig_now(rid, row["id"])
                     review = publish_review(rid, row["id"])
@@ -1930,7 +1915,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
                 **_delivered_payload(rid, row["id"], got)), 200
 
 
-# ── one live change, sent on its own (schedule re-audit 10/11/26 BUGSLIFE-4, -5) ──
+# ── one live change, sent on its own (-5) ──
 #
 # Live labor's "cut Maria at 9" saved the new end through the Studio save and
 # then sent the WHOLE week's changes: every unsent Studio edit of any day went
@@ -1965,8 +1950,8 @@ def _live_target(old_live, working, only) -> list:
 
 def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=None, why="live labor"):
     """Send one live change of a week staff have — the shifts `shift_ids`
-    name, as the working copy holds them now — and nothing else (BUGSLIFE-4).
-    Returns (payload, status).
+    name, as the working copy holds them now — and nothing else. Returns
+    (payload, status).
 
     No whole-week gate: the change was judged by the one legality engine when
     it was made (shift_edits.plan) and is judged again here as the change it
@@ -1975,10 +1960,10 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
     predictability pay are acknowledged as the employer's knowing change —
     kept with the send (schedule_overrides) and the premium on the ledger
     with the version (predictability_pay.record_send) — never a refusal that
-    leaves it unsent (BUGSLIFE-5). `version` is the working copy's version it
-    was saved at: a person's edit since voids it (edited_since). The caller
-    applies the owner's undo window (labor_live.act queues it through
-    delayed, like any Send)."""
+    leaves it unsent. `version` is the working copy's version it was saved
+    at: a person's edit since voids it (edited_since). The caller applies the
+    owner's undo window (labor_live.act queues it through delayed, like any
+    Send)."""
     import schedule_rows as _srows
     import schedule_versions as _sv
     import schedule_rules as _rules
@@ -1995,7 +1980,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
     try:
         row = conn.execute("SELECT id, week_start, week_end, schedule_csv, published_csv, published_at, superseded_by "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
-        # The working rows, read beside the row (schedule_shifts, ARCH-7).
+        # The working rows, read beside the row (schedule_shifts).
         working = _ss_lc.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
@@ -2032,7 +2017,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
         return {"ok": False, "illegal": True, "schedule_id": row["id"],
                 "problems": [w.get("label") for w in worse][:4],
                 "error": "That change breaks a rule on the week staff have: " + (worse[0].get("label") or "a hard rule")}, 409
-    # What it may owe, acknowledged with the send (BUGSLIFE-5).
+    # What it may owe, acknowledged with the send.
     late = None
     try:
         import predictability_pay as _pp_lc
@@ -2064,7 +2049,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
                         "error": "The week changed while this was being checked, so it wasn't sent — try again."}, 409
             text = _srows.to_csv(target)
             # Through the one week write (store_week: the shift projection
-            # with it — ARCH-7, ARCH-24).
+            # with it).
             _sv.store_week(conn, rid, row["id"], published=text, sets=("republished_at=datetime('now')",))
             try:
                 _models_mod.carry_shift_sections(conn, rid, old_live, target)
@@ -2089,7 +2074,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
             conn.close()
     finally:
         _release(rid, row["id"])
-    # The late change, kept as sent past knowingly (TRUST-28's record).
+    # The late change, kept as sent past knowingly (the record).
     late_key = "late_change:" + ",".join(_sv.shift_changes(old_live, target)["dates"])
     if late:
         try:
@@ -2117,9 +2102,9 @@ RESEND_SCOPES = ("missing", "all")
 
 
 def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
-    """Send a week staff already have again (BUGSLIFE-9): `scope`
-    "missing" — the people who have not got it (their notice failed, they
-    were unreachable then, or none went) — or "all", everyone on it (the
+    """Send a week staff already have again: `scope` "missing" — the
+    people who have not got it (their notice failed, they were
+    unreachable then, or none went) — or "all", everyone on it (the
     owner's explicit "Send again to everyone"). Nothing on the week
     changes, so there is no gate; the caller checks SCHEDULE_PUBLISH.
     Returns (payload, status)."""
@@ -2132,7 +2117,7 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     try:
         row = conn.execute("SELECT id, week_start, week_end, published_at, superseded_by "
                            "FROM schedule_history WHERE id=? AND restaurant_id=?", (int(schedule_id), rid)).fetchone()
-        # The copy staff have, from the shift table (schedule_shifts, ARCH-7).
+        # The copy staff have, from the shift table (schedule_shifts).
         import schedule_shifts as _ss_rs
         rows = _ss_rs.rows_of(row["id"], "live", conn=conn) if row else []
     finally:
@@ -2148,10 +2133,10 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
     from labor import employees_in_rows
     names = employees_in_rows(rows)
     if scope == "missing":
-        # Only a delivery that happened (BUGSLIFE-3): a push still waiting on
-        # Apple's answer is not "has it"; and across every copy of the week
-        # staff were sent (BUGSLIFE-8: a replacement tells only the people
-        # whose shifts changed, the rest have it from the copy before).
+        # Only a delivery that happened: a push still waiting on Apple's
+        # answer is not "has it"; and across every copy of the week staff
+        # were sent (a replacement tells only the people whose shifts
+        # changed, the rest have it from the copy before).
         told = {_fold(p["employee_name"]) for p in notice_status(rid, row["id"])["people"] if _confirmed(p)}
         told |= {_fold(s["employee_name"]) for s in week_share_status(rid, row["id"])}
         names = [n for n in names if _fold(n) not in told]
@@ -2194,10 +2179,9 @@ def edited_since(restaurant_id, schedule_id, version=None, since=None, db_path=N
     pressed: a version past `version` that changed rows and is not a staff
     swap, a Send's own marker or a roster rename (a cover both people were
     told about changes nothing the sender saw; a rename changes a spelling,
-    not a shift — rows_changed_since reads it the same way, schedule re-audit
-    10/11/26 BUGSLIFE-15) — or, for a send queued without a version
-    (auto-publish, an older row), an edit stamped at or after `since` (a
-    rename never stamps edited_at)."""
+    not a shift — rows_changed_since reads it the same way) — or, for a send
+    queued without a version (auto-publish, an older row), an edit stamped at
+    or after `since` (a rename never stamps edited_at)."""
     import schedule_versions as _sv
     conn = get_conn(db_path)
     try:
@@ -2234,12 +2218,11 @@ send_schedule_changes = send_changes
 
 
 def override_policy(b) -> dict:
-    """How one MUST-FIX blocker may be sent past (TRUST-4, TRUST-5, TRUST-8):
-    {allowed, needs ("reason" | "covered_by" | "legal_ack" | None), why} —
-    a law that an edit can fix never (fix it, or the week does not go); the
-    posting-notice law only with the owner's legal acknowledgement and a
-    reason; a manager gap by naming a real manager or owner; anything else
-    with a reason."""
+    """How one MUST-FIX blocker may be sent past: {allowed, needs ("reason" |
+    "covered_by" | "legal_ack" | None), why} — a law that an edit can fix
+    never (fix it, or the week does not go); the posting-notice law only with
+    the owner's legal acknowledgement and a reason; a manager gap by naming a
+    real manager or owner; anything else with a reason."""
     if b.get("law"):
         if b.get("fixable", True):
             return {"allowed": False, "needs": None,
@@ -2266,12 +2249,11 @@ def _reader(actor) -> dict:
 
 
 def override_problem(b, reasons, actor=None):
-    """Why a MUST-FIX blocker's override is not enough, in the owner's
-    words — None when it carries the override of its own the gate asks for
-    (schedule audit 10/10/26 TRUST-3, ARCH-30; re-audit 10/11/26 TRUST-4/5/8):
-    a reason of a few words (schedule_overrides.reason_problem, never "x");
-    a manager gap names a real manager or owner on the roster who can work
-    that day (`cover_candidates`), or the account owner sending it; the
+    """Why a MUST-FIX blocker's override is not enough, in the owner's words —
+    None when it carries the override of its own the gate asks for (/5/8): a
+    reason of a few words (schedule_overrides.reason_problem, never "x"); a
+    manager gap names a real manager or owner on the roster who can work that
+    day (`cover_candidates`), or the account owner sending it; the
     posting-notice law the owner's explicit `legal_ack`; a law an edit can
     fix, nothing."""
     import schedule_overrides as _so_ok
@@ -2318,14 +2300,14 @@ def _ack_gate(review, acknowledge, reasons=None, actor=None):
     is a list of blocker keys (what the person was shown) or a bool (an
     older client's "yes to whatever the gate finds now").
 
-    Tiered (schedule audit 10/10/26 TRUST-3, ARCH-30): a DECIDE blocker is
-    acknowledged by its key (or the bool); a MUST-FIX one only by an
-    override of its own in `reasons` ({key: reason | {reason, covered_by}})
-    — never by a bare `true` or a key list alone, so a manager gap and "2%
-    over budget" no longer share one acknowledgement. A blocker from before
-    the tiers (no `tier`) is read as must-fix.
+    Tiered: a DECIDE blocker is acknowledged by its key (or the bool); a
+    MUST-FIX one only by an override of its own in `reasons` ({key: reason
+    | {reason, covered_by}}) — never by a bare `true` or a key list alone,
+    so a manager gap and "2% over budget" no longer share one
+    acknowledgement. A blocker from before the tiers (no `tier`) is read as
+    must-fix.
 
-    Since the re-audit (10/11/26 TRUST-4/5/8) a must-fix override is
+    A must-fix override is
     checked, not just present (override_problem): `actor` is who is
     sending — a manager gap may name them when they are the account owner,
     and only they may send past the posting-notice law. Each refused
@@ -2356,7 +2338,7 @@ def _ack_gate(review, acknowledge, reasons=None, actor=None):
 
 
 def _needs_ack(review, unacked, schedule_id):
-    # Every blocker a person is shown is kept by key (TRUST-28): the
+    # Every blocker a person is shown is kept by key: the
     # denominator of "you sent past this 9 of 9 times".
     try:
         import schedule_overrides as _so_na
@@ -2372,22 +2354,23 @@ def _needs_ack(review, unacked, schedule_id):
     except Exception as _nax:
         _degraded(f"shown blockers not recorded for {schedule_id}: {_nax}", _nax)
     return {"ok": False, "needs_ack": True, "blockers": [b["text"] for b in review["blockers"]],
-            # The keys, parallel to `blockers` (and as {key, text} items):
-            # the client sends back `acknowledge: [the keys it showed]` (F2-9).
+            # The keys, parallel to `blockers` (and as {key, text} items): the
+            # client sends back `acknowledge: [the keys it showed]`.
             "blocker_keys": [b["key"] for b in review["blockers"]],
             "blocker_items": review["blockers"], "new_blockers": [b["text"] for b in unacked],
-            # Worth a look, never holding the send (the quality verdict,
-            # SQ-29): shown beside the blockers, nothing to acknowledge.
+            # Worth a look, never holding the send (the quality
+            # verdict): shown beside the blockers, nothing to
+            # acknowledge.
             "notes": review.get("notes") or [],
-            # The warnings this owner always sends past (TRUST-28).
+            # The warnings this owner always sends past.
             "always_overridden": review.get("always_overridden") or [],
-            # The tiers (TRUST-3, ARCH-30): each must-fix key needs its own
-            # override with a reason — a manager gap names who runs the
-            # floor — and is never covered by a key list or `true`.
+            # The tiers: each must-fix key needs its own override with a
+            # reason — a manager gap names who runs the floor — and is
+            # never covered by a key list or `true`.
             "must_fix_keys": [b["key"] for b in review["blockers"] if blocker_tier(b) == MUST_FIX],
             "needs_reason": [{"key": b["key"], "needs": override_needs(b["key"])} for b in unacked
                              if blocker_tier(b) == MUST_FIX and override_policy(b)["allowed"]],
-            # The re-audit's gate (10/11/26 TRUST-4/5/8): the must-fix keys
+            # The publish gate: the must-fix keys
             # no override sends past (a law an edit can fix), and each
             # override given that was refused, with why ("x" is not a
             # reason; a name that is not a manager on the roster).

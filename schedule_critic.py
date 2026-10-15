@@ -1,7 +1,7 @@
 """
 schedule_critic.py — the model as a critic of a week code built: a few
-judged edits, each kept only when code finds it breaks nothing (scheduler
-audit 10/10/26 AI-8, AI-1; the "deterministic+critic" arm).
+judged edits, each kept only when code finds it breaks nothing (the
+"deterministic+critic" arm).
 
 The solver-first draft (schedule_cpsat.solver_draft) holds every rule and
 prices every cost it can state. What it cannot state is judgement — a
@@ -9,10 +9,10 @@ regular's night, a pairing that works, a hard week. The critic reads the
 finished week as a table of its rows — a few whole days a call, never cut
 short (chunks) — with THE PEOPLE facts that judgement needs (people_facts:
 each person's usual days and dayparts, the pairings the owner marked, their
-watched attendance and what they asked for — scheduler re-audit 10/11/26
-AI-18: it was asked for "a regular's usual night" and shown none of it),
-what the week does not meet, last published week and the owner's words, and
-proposes at most MAX_EDITS typed edits a call:
+watched attendance and what they asked for: it was asked for "a regular's
+usual night" and shown none of it), what the week does not meet, last
+published week and the owner's words, and proposes at most MAX_EDITS typed
+edits a call:
 
     {"op": "reassign" | "remove" | "add", "date", "role", "shift_start",
      "shift_end", "from_employee", "to_employee", "reason"}
@@ -45,10 +45,10 @@ CRITIC_ACTION = "schedule_critic"
 # Edits one call may propose; a week reviewed in several day-chunks takes
 # up to this many from each, every one validated against the whole week.
 MAX_EDITS = 6
-# The critic thinks (scheduler re-audit 10/11/26 AI-18): Sonnet 5.5 at
-# medium effort. It ran with thinking off (default_thinking gives Sonnet 5.5
-# "between_tools") on a judgement call, which is the one thing it is for.
-# Thinking shares max_tokens, so the answer's room is raised with it.
+# The critic thinks: Sonnet 5.5 at medium effort. It ran with thinking off
+# (default_thinking gives Sonnet 5.5 "between_tools") on a judgement call,
+# which is the one thing it is for. Thinking shares max_tokens, so the
+# answer's room is raised with it.
 CRITIC_EFFORT = "medium"
 CRITIC_MAX_TOKENS = 16000
 CRITIC_TIMEOUT_SECONDS = 300.0
@@ -99,8 +99,8 @@ def _name(n) -> str:
 
 def people_facts(names, signals=None, constraints=None) -> dict:
     """{name: [fact]} — what a general manager would know about each person
-    in the week and the rules cannot see (AI-18): their usual days and
-    dayparts (signals["prior_pattern"]), the pairings the owner marked
+    in the week and the rules cannot see: their usual days and dayparts
+    (signals["prior_pattern"]), the pairings the owner marked
     (signals["pairs"] — never an owner-only "private" one), their watched
     attendance (signals["reliability"], only past its own floor) and what
     they asked for (Constraints.preferred). A person with nothing known has
@@ -294,13 +294,13 @@ def review(restaurant_id, rows, constraints, unmet=None, last_week_rows=None, ow
            call=None, signals=None) -> dict:
     """The critic's edits, validated: {"rows", "kept", "refused", "called",
     "error", "calls", "usage", "model", "cost"}. The week is reviewed a few
-    whole days a call (chunks — AI-18: never a truncated table), each call
+    whole days a call (chunks — never a truncated table), each call
     shown THE PEOPLE facts (people_facts from `signals` and the
     Constraints), the owner's words and, through `score`, held to Shift
     Quality not falling; every edit of every call is validated against the
     whole week. `usage` and `cost` are what the calls were metered at (the
-    eval's critic arm reports its real cost — AI-6). `call` replaces the
-    model (tests, the eval's injected model)."""
+    eval's critic arm reports its real cost). `call` replaces the model
+    (tests, the eval's injected model)."""
     out = {"rows": [dict(r) for r in rows or []], "kept": [], "refused": [], "called": False, "error": None,
            "calls": 0, "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
                                  "cache_write_tokens": 0}, "model": None, "cost": 0.0}

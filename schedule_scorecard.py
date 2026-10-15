@@ -1,8 +1,7 @@
 """
 schedule_scorecard.py — the Schedule Learning Scorecard: one frozen row per
-published week that says whether the drafts are getting better, measured
-on what happened rather than on how much of the draft was left untouched
-(schedule audit 10/10/26 RM-4, LEARNING-7, AI-29, LEARNING-25).
+published week that says whether the drafts are getting better, measured on
+what happened rather than on how much of the draft was left untouched.
 
 The only "is it improving" figure used to be the share of drafted rows
 that went out unchanged, monthly, two weeks minimum, no interval: a 15-
@@ -46,9 +45,9 @@ FREEZE_AFTER_DAYS after it ended — never recomputed after that):
   forecast            the frozen week projection's error beside the naive
                       8-week mean's (forecast_log revenue_week), and the skill
   attribution         the code commit and experiment arms that made the
-                      draft; per row ORIGIN (AI-29: the model, the managers'
-                      plan, a repair stage that added or changed it, a pass
-                      after the loop) and how many of each survived to the
+                      draft; per row ORIGIN (the model, the managers' plan,
+                      a repair stage that added or changed it, a pass after
+                      the loop) and how many of each survived to the
                       published week untouched; the generation's model cost;
                       the owner's rules the draft honoured; and the LEARNING
                       ABLATION — the same repair loop run again over the
@@ -101,14 +100,13 @@ RUN_MAX_SECONDS = 15 * 60
 RUN_WORKERS = 3
 CURSOR_KEY = "schedule_scorecard_cursor"
 ADMIN_MAX_RESTAURANTS = 500
-# Engagement (blind re-audit 10/11/26 LEARNING-16): a week sent with no
-# edit counts as reviewed only when a person of the restaurant had the draft
-# open (the week's detail or the pre-publish review — schedule_draft_views)
-# at least ENGAGED_MIN_SECONDS before it went out. A week published before
-# the restaurant's first recorded view (views were not recorded yet) reads
-# unknown (None), as it always did.
+# Engagement: a week sent with no edit counts as reviewed only when a person
+# of the restaurant had the draft open (the week's detail or the pre-publish
+# review — schedule_draft_views) at least ENGAGED_MIN_SECONDS before it went
+# out. A week published before the restaurant's first recorded view (views
+# were not recorded yet) reads unknown (None), as it always did.
 ENGAGED_MIN_SECONDS = 90
-# The owner's trend (LEARNING-17): at least this many scored weeks, a
+# The owner's trend: at least this many scored weeks, a
 # serial-correlation-robust interval (learning_stats.trend_slope_ci).
 TREND_MIN_WEEKS = 8
 
@@ -177,8 +175,8 @@ def init_schedule_scorecard(db_path=None):
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sched_scores_week ON schedule_learning_scores(restaurant_id, "
                      "week_start)")
-        # Who of the restaurant had a draft open, and when (LEARNING-16): one
-        # row per draft, a person's first and last view and how many.
+        # Who of the restaurant had a draft open, and when: one row per
+        # draft, a person's first and last view and how many.
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_draft_views (
             history_id      INTEGER PRIMARY KEY,
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
@@ -208,7 +206,7 @@ def distance(draft_rows, final_rows) -> dict:
     return learning_stats.weighted_rate_ci(weights, len(draft_rows or []))
 
 
-# ── the row origins (AI-29) ─────────────────────────────────────────────────
+# ── the row origins ─────────────────────────────────────────────────
 
 def _sig(r) -> str:
     import schedule_versions as sv
@@ -251,8 +249,8 @@ def classify_rows(pre_rows, final_rows, info=None) -> dict:
       added:<st>          a row a repair stage added
       post_loop           added or changed after the repair loop (the gate,
                           a restore) — unattributed
-    (schedule audit 10/10/26 AI-29: nobody could say whether owners edit
-    what the model wrote or what code added)."""
+    (nobody could say whether owners edit what the model wrote or what
+    code added)."""
     import schedule_skeleton
     model, plan, model_days = set(), set(), set()
     for r in pre_rows or []:
@@ -309,7 +307,7 @@ def survival(origins, base_rows, published_rows) -> dict:
 def ablation_wanted(learned, clock=None) -> bool:
     """Whether the generation queues the learning ablation: something learned
     binds this week and the switch is not off (`clock`, when given, must
-    have room — the ablation now runs off the owner's wait, ARCH-14, so the
+    have room — the ablation now runs off the owner's wait, so the
     job passes none)."""
     if not learned or (os.environ.get(ABLATION_ENV) or "1").strip() in ("0", "off", "false"):
         return False
@@ -324,13 +322,12 @@ ABLATION_KIND = "schedule_ablation"
 
 def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned, reassign_on=True,
                      db_path=None) -> dict:
-    """The learning ablation as a bulk job_queue row, after the save (blind
-    re-audit 10/11/26 ARCH-14): the rows that came into the repair loop and
-    the rows it made, packed; the context it re-runs in is the one stored
-    with this week's metrics (schedule_metrics.snapshot, its `kind`). What
-    the generation tags carry until it runs: {"queued": True, ...} — never
-    inline (the queue is the one path since ARCH-10; there is no "queue
-    off")."""
+    """The learning ablation as a bulk job_queue row, after the save: the
+    rows that came into the repair loop and the rows it made, packed; the
+    context it re-runs in is the one stored with this week's metrics
+    (schedule_metrics.snapshot, its `kind`). What the generation tags carry
+    until it runs: {"queued": True,...} — never inline (the queue is the
+    one path; there is no "queue off")."""
     import job_queue
     import schedule_context as _pk
     payload = {"restaurant_id": restaurant_id, "history_id": int(history_id), "kind": kind,
@@ -339,7 +336,6 @@ def enqueue_ablation(restaurant_id, history_id, kind, pre_rows, rows_on, learned
     qid, _created = job_queue.enqueue(ABLATION_KIND, payload, restaurant_id=restaurant_id, priority_class="bulk",
                                       idempotency_key=f"{ABLATION_KIND}:{int(history_id)}", db_path=db_path)
     return {"ran": False, "queued": True, "job": qid, "learned": int(learned or 0)}
-
 
 
 def record_ablation(history_id, ablation, db_path=None) -> bool:
@@ -461,8 +457,8 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
         h = conn.execute("SELECT id, week_start, week_end, published_at, economics_json FROM "
                          "schedule_history WHERE id=? AND restaurant_id=?", (int(history_id), restaurant_id)).fetchone()
         # The week staff were sent — its PUBLISHED copy — from the shift
-        # table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7). This
-        # read the working copy, which carries a manager's unsent edits.
+        # table (schedule_shifts). This read the working copy, which
+        # carries a manager's unsent edits.
         import schedule_shifts
         published = schedule_shifts.rows_of(h["id"], "live", conn=conn) if h is not None and h["published_at"] else []
     finally:
@@ -486,9 +482,9 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
     if rec is not None:
         out["rows_drafted"] = len(rec["base"])
         d = drr(rec) if rec["looked_at"] else None
-        # A week sent unread is not a draft that needed no edits (LEARNING-16:
-        # "pressed Publish" counted as looked at, so disengagement read as
-        # better drafts): its rate is kept apart and counts nowhere.
+        # A week sent unread is not a draft that needed no edits ("pressed
+        # Publish" counted as looked at, so disengagement read as better
+        # drafts): its rate is kept apart and counts nowhere.
         out["engaged"] = engagement(restaurant_id, history_id, h["published_at"], bool(rec.get("edited")),
                                     bool(rec.get("published_by_person")), db_path=db_path) if rec["looked_at"] else None
         if d is not None and out["engaged"] is False:
@@ -594,8 +590,8 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
             if row and row["s"]:
                 out["labor_pct"] = round(float(row["w"]) / float(row["s"]), 2)
                 try:
-                    # The ONE read of the target (thresholds.target_for,
-                    # re-audit #10): the owner's goal first, then the setting.
+                    # The ONE read of the target (thresholds.target_for): the
+                    # owner's goal first, then the setting.
                     import thresholds as _thr
                     import schedule_economics as _econ
                     _t = _thr.target_for(restaurant, "labor")
@@ -667,10 +663,10 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
         except Exception:
             continue
     out["model_cost_usd"] = round(cost, 4) if cost is not None else None
-    # Did the week run the way the draft said (LEARNING-16: the planned and
-    # as-run scores the outcomes job keeps, sq_planned / sq_as_run, read
-    # here): the mean as-run minus planned Shift Quality over the shifts with
-    # both — a plan-adherence check, never an outcome.
+    # Did the week run the way the draft said (the planned and as-run scores
+    # the outcomes job keeps, sq_planned / sq_as_run, read here): the mean
+    # as-run minus planned Shift Quality over the shifts with both — a
+    # plan-adherence check, never an outcome.
     try:
         import schedule_memory as _sm
         obs = _sm.observations(restaurant_id, kinds=("sq_as_run", "sq_planned"), db_path=db_path)
@@ -705,20 +701,19 @@ def compute_week(restaurant_id, history_id, today=None, db_path=None) -> dict:
 def influence(ab) -> dict:
     """What the learned memory CHANGED in a draft (the ablation's two
     drafts, memory on and off, over the same model answer): the edit items
-    between them per 100 drafted rows. Never an effect (blind re-audit
-    10/11/26 LEARNING-13): the manager edited the memory-on draft, so
-    "which of the two is closer to the week they sent" favours the one they
-    started from by construction — +5.6 edits/100 rows of "effect" when the
-    memory added nothing. Whether learning makes weeks better is the
-    learning_v2 switchback's question (schedule_experiments), judged on
-    outcomes."""
+    between them per 100 drafted rows. Never an effect: the manager edited
+    the memory-on draft, so "which of the two is closer to the week they
+    sent" favours the one they started from by construction — +5.6
+    edits/100 rows of "effect" when the memory added nothing. Whether
+    learning makes weeks better is the learning_v2 switchback's question
+    (schedule_experiments), judged on outcomes."""
     moved = distance(ab.get("rows_off") or [], ab.get("rows_on") or [])
     return {"learned": ab.get("learned"), "changed_per_100": moved.get("rate"), "rows": moved.get("n"),
             "seconds": ab.get("seconds"), "effect": None,
             "note": "how much the learned memory changed the draft - not whether it helped"}
 
 
-# ── engagement: did a person look at the draft (LEARNING-16) ──────────────
+# ── engagement: did a person look at the draft ──────────────
 
 def record_view(restaurant_id, history_id, user=None, surface=None, db_path=None) -> bool:
     """A person of the restaurant opened a draft (the week's detail, the
@@ -849,8 +844,8 @@ def score_restaurant(restaurant_id, today=None, db_path=None, weeks=SCORE_WEEKS)
 
 def score_one(restaurant_id, db_path=None, today=None) -> dict:
     """One restaurant's Monday scoring — the `learner` queue row's body
-    (strategy_jobs.LEARNERS "schedule_scorecard"; blind re-audit 10/11/26
-    SCALE-26). A restaurant that may not teach is skipped."""
+    (strategy_jobs.LEARNERS "schedule_scorecard"). A restaurant that may
+    not teach is skipped."""
     import models
     r = models.get_restaurant(restaurant_id, db_path or models.DB_PATH)
     if r is None or not getattr(r, "module_labor", 0) or not models.learns_for_itself(r, db_path=db_path):
@@ -864,7 +859,7 @@ def run_scorecard(db_path=None, today=None) -> dict:
     RUN_MAX_SECONDS and resumable from CURSOR_KEY (scheduler.
     resumable_sweep); a pass that hits its bound is captured. With the job
     queue on, the scheduler fans it out as one `learner` row per restaurant
-    instead (strategy_jobs.learner_pass — SCALE-26). The standard counts."""
+    instead (strategy_jobs.learner_pass). The standard counts."""
     import models
     import scheduler as _sched
     ids = []
@@ -984,8 +979,8 @@ def owner_view(restaurant_id, weeks=12, db_path=None) -> dict:
             "unreviewed_weeks": sum(1 for w in out_weeks if w.get("engaged") is False)}
 
 
-# The outcomes a "fewer edits" claim is paired with (LEARNING-16): each
-# lower is better.
+# The outcomes a "fewer edits" claim is paired with: each lower is
+# better.
 TREND_OUTCOMES = (("unmanaged_minutes", "minutes with no manager"), ("shortfall_hours", "hours short of the ask"),
                   ("uncovered_no_shows", "uncovered no-shows"), ("labor_vs_target", "labor against the target"))
 
@@ -994,11 +989,11 @@ def owner_trend(restaurant_id, out_weeks, db_path=None):
     """(trend, sentence, outcomes, settings_changed) for the owner's own
     weeks (newest first): the rework rate's slope over the weeks with a
     serial-correlation-robust interval (learning_stats.trend_slope_ci, t on
-    n - 2) from TREND_MIN_WEEKS weeks (blind re-audit 10/11/26 LEARNING-17:
-    a z interval from 4 weeks told 11-17% of owners with no trend that
-    their drafts were improving); "fewer edits" is said only when no paired
-    outcome measurably worsened over the same weeks (LEARNING-16), and the
-    sentence says when the rules or settings changed inside the window."""
+    n - 2) from TREND_MIN_WEEKS weeks (a z interval from 4 weeks told
+    11-17% of owners with no trend that their drafts were improving);
+    "fewer edits" is said only when no paired outcome measurably worsened
+    over the same weeks, and the sentence says when the rules or settings
+    changed inside the window."""
     import learning_stats
     series = [w.get("drr") for w in reversed(out_weeks)]
     n = sum(1 for v in series if v is not None)
@@ -1063,8 +1058,8 @@ def admin_view(db_path=None) -> dict:
     by = {}
     for r in rows:
         by.setdefault(r["restaurant_id"], []).append(r)
-    # A stratified sample across the fleet, rotated weekly (LEARNING-23):
-    # the first ADMIN_MAX_RESTAURANTS by id were the oldest customers only.
+    # A stratified sample across the fleet, rotated weekly: the first
+    # ADMIN_MAX_RESTAURANTS by id were the oldest customers only.
     y_, w_, _d = date.today().isocalendar()
     rids = learning_stats.fleet_sample(by, ADMIN_MAX_RESTAURANTS, key=f"scorecard|{y_}-W{w_:02d}")
     trend = {}
@@ -1078,7 +1073,7 @@ def admin_view(db_path=None) -> dict:
         trend[fig] = learning_stats.fe_slope_ci(pts)
         trend[fig]["mean"] = learning_stats.mean_ci([p[2] for p in pts])["mean"] if pts else None
     # The learned memory's INFLUENCE (rows it changed per 100), never an
-    # effect (LEARNING-13): the effect is the learning_v2 switchback's.
+    # effect: the effect is the learning_v2 switchback's.
     import schedule_experiments as sx
     infl = [(r["restaurant_id"], (r["metrics"].get("ablation") or {}).get("changed_per_100"))
             for rid in rids for r in by[rid]]
@@ -1122,7 +1117,7 @@ def admin_view(db_path=None) -> dict:
                        f"{ADMIN_MAX_RESTAURANTS} restaurants")}
 
 
-# ── the week as it ran, scored (moved from schedule_intel, ARCH-3: the learner
+# ── the week as it ran, scored (moved from schedule_intel: the learner
 # imported the engine's signal builder; the scorecard sits above it) ──
 # A week whose POS days are not marked final in labor_daily_history is read
 # as run this many days after it ended (an upload with no daily history).
@@ -1166,7 +1161,7 @@ def _planned_quality(conn, history_id):
                        "reason='published' AND quality_json IS NOT NULL ORDER BY version LIMIT 1",
                        (history_id,)).fetchone()
     if row is not None:
-        # The whole evaluation (its detail is stored by reference — SCALE-4).
+        # The whole evaluation (its detail is stored by reference).
         return version_quality(conn, row["quality_json"], row["quality_ref"])
     import models as _m_si
     _m_si._ensure_history_columns(conn)
@@ -1206,12 +1201,12 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
     so a re-read replaces them), the week-level measures too. Returns the
     shifts recorded; a week with no punch records nothing.
 
-    `only_changed` (the daily outcomes job — scheduler audit 10/10/26,
-    SCALE-16): a week is scored once its last POS day is final, and again
-    only when its punches or its plan change (week_fingerprint) — it was
-    re-scored on four Mondays in a row with the same inputs. Every week of
-    one restaurant reads one inputs snapshot (models.read_scope, SCALE-6)
-    and its observations are written in one transaction (SCALE-26)."""
+    `only_changed` (the daily outcomes job): a week is scored once its
+    last POS day is final, and again only when its punches or its plan
+    change (week_fingerprint) — it was re-scored on four Mondays in a row
+    with the same inputs. Every week of one restaurant reads one inputs
+    snapshot (models.read_scope) and its observations are written in one
+    transaction."""
     import schedule_memory as _sm
     import models as _models_rq
     today = today or date.today()
@@ -1233,8 +1228,8 @@ def record_as_run_quality(restaurant_id, db_path=DB_PATH, today=None, weeks=AS_R
                     marks[h["id"]] = fp
             hist = kept
         planned = {h["id"]: _planned_quality(conn, h["id"]) for h in hist}
-        # Each week's published rows from the shift table (schedule_shifts,
-        # ARCH-7).
+        # Each week's published rows from the shift table
+        # (schedule_shifts).
         import schedule_shifts
         week_rows = schedule_shifts.rows_by_week([h["id"] for h in hist], "live", conn=conn)
     finally:

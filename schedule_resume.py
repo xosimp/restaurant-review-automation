@@ -1,7 +1,6 @@
 """
 schedule_resume.py — a generation the queue runs again after a deploy picks
-up where its earlier try stopped (scheduler audit 10/10/26: SCALE-2,
-SCALE-22, RM-7).
+up where its earlier try stopped.
 
 A deploy used to kill every generation in flight: the boot sweep failed its
 job ("Generation was interrupted — please try again"), the owner pressed
@@ -12,16 +11,14 @@ handed back at once — job_queue.shutdown), and the next consumer claims it
 again. This module is what that next try does differently:
 
   * THE SAVED STAGE. Once the draft is saved its job row's checkpoint holds
-    the finished answer (checkpoint_saved: the payload the owner's poll
-    reads, compressed). A try that finds it finishes the job with that
-    payload — nothing is generated again. Since scheduler fix round 10/10/26
-    (C2, ARCH-17) the quality gate's passes are held in memory and only the
-    winner is saved, once, so the saved checkpoint is the job's last stage
-    before its finish; a try that died before it saved nothing and runs
-    again (below). The saved draft is NOT put back in force over a newer
-    one: the job saved nothing after it, so any later draft is somebody's
-    newer work (blind re-audit 10/11/26 BUGSGEN-11 — it used to supersede
-    them), and an owner's Stop after the save is honoured
+    the finished answer (checkpoint_saved: the payload the owner's poll reads,
+    compressed). A try that finds it finishes the job with that payload — nothing
+    is generated again. Since the quality gate's passes are held in memory and only
+    the winner is saved, once, so the saved checkpoint is the job's last stage
+    before its finish; a try that died before it saved nothing and runs again
+    (below). The saved draft is NOT put back in force over a newer one: the job
+    saved nothing after it, so any later draft is somebody's newer work (it used to
+    supersede them), and an owner's Stop after the save is honoured
     (schedule_engine._finish_stopped, through schedule_job.finish_from_checkpoint).
   * EACH MODEL ANSWER. Every schedule call is recorded with its queue job
     and call key (schedule_output.record_call: model, dates, output schema —

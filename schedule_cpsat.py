@@ -1,12 +1,11 @@
 """
 schedule_cpsat.py — who works each shift, solved exactly (OR-Tools CP-SAT).
 
-Stage 2 of the solver-first draft (scheduler audit 10/10/26 LOGIC-24, RM-11):
-schedule_shapes decides which shifts the week has (Stage 1); this module
-decides who works each of them, as one joint model with no pass order
-(LOGIC-28). The repair loop's solver stage uses it to re-solve a draft's
-assignment, and the Studio's re-solve (MARKET-13) uses it to answer "Maria
-is out, re-solve Friday" in seconds. schedule_rules.violations() stays the
+Stage 2 of the solver-first draft: schedule_shapes decides which shifts the
+week has (Stage 1); this module decides who works each of them, as one joint
+model with no pass order. The repair loop's solver stage uses it to re-solve
+a draft's assignment, and the Studio's re-solve uses it to answer "Maria is
+out, re-solve Friday" in seconds. schedule_rules.violations() stays the
 independent oracle: whatever this returns is swept by it like any draft.
 
 Variables: x[u, p] — person p works unit u (a shift, or the rows one person
@@ -33,7 +32,7 @@ far above everything below it:
   closer       a role's close without one of its closers
   policy       hours past the restaurant's weekly ceiling, rest shorter
                than its rule, a day past its days-in-a-row rule (where they
-               are policy, not law — LOGIC-1)
+               are policy, not law)
   overtime     hours past a person's overtime line, priced at 1.5x their
                rate on top — so it happens only where no teammate with room
                can take the shift (the owner's teammate rule falls out of
@@ -43,19 +42,18 @@ far above everything below it:
   budget       dollars past the hourly labor budget
   quality      labor dollars at each person's rate; STABILITY against the
                last PUBLISHED week per slot (same person, weekday, daypart,
-               role family, start within 30 min — RM-3, about a tenth of
-               the quality objective, LOGIC-18); stated and learned
-               preferences; fairness of closes, weekends and busy shifts;
-               leader rules; strength (one rating measure — LOGIC-30); the
-               scheduling memory's per-slot costs; reliability; the role's
-               own people first
+               role family, start within 30 min — about a tenth of
+               the quality objective); stated and learned preferences;
+               fairness of closes, weekends and busy shifts; leader rules;
+               strength (one rating measure); the scheduling memory's
+               per-slot costs; reliability; the role's own people first
 
-Shift Quality is the owner's report, not this objective (LOGIC-19): its
-caps and renormalisation plateau a search; every term here is a separable
-linear piece, so each assignment's reason is its marginal cost ("Kim, not
-Lee: Lee would hit overtime +$27" — RM-12), and when a requirement cannot
-be met the smallest set of the owner's rules that conflict is found with
-assumption literals (explain_conflicts, LOGIC-32).
+Shift Quality is the owner's report, not this objective: its caps and
+renormalisation plateau a search; every term here is a separable linear
+piece, so each assignment's reason is its marginal cost ("Kim, not Lee:
+Lee would hit overtime +$27"), and when a requirement cannot be met the
+smallest set of the owner's rules that conflict is found with assumption
+literals (explain_conflicts).
 
 Deterministic: a fixed seed, a deterministic time budget and interleaved
 workers (SCHEDULE_CPSAT_DETERMINISTIC, on by default) — same inputs, same
@@ -113,21 +111,21 @@ W_OT_HOUR = 10 ** 8                 # an hour past a person's overtime line (plu
 W_MIN_HOUR = 3 * 10 ** 7            # an hour under someone's minimum
 W_REQ_HOUR = 10 ** 7                # an hour of a requirement shift left unfilled, at an average half hour
 REQ_VALUE_BOUNDS = (0.1, 8.0)       # its demand x criticality against average: kept below the overtime tier
-# The lexicographic order of the solve (LOGIC-22, LOGIC-1, LOGIC-10): every
-# rule tier and the owner's words first; then keeping last published week's
-# (else the usual) person on each slot; then every quality tie-break —
-# fairness can never again decide which shift goes empty.
+# The lexicographic order of the solve: every rule tier and the owner's
+# words first; then keeping last published week's (else the usual) person
+# on each slot; then every quality tie-break — fairness can never again
+# decide which shift goes empty.
 PHASE_RULES = frozenset({"manager", "floor", "closer", "policy_hours", "policy_rest", "policy_run", "overtime",
                          "min_hours", "requirement", "budget", "habit", "leadership", "pending", "memory",
                          "commitment", "starved"})
 PHASE_STABILITY = frozenset({"stability", "change", "usual"})
 PHASE_SHARES = (0.6, 0.15, 0.25)    # each phase's share of the deterministic work budget
-# A habit the manager taught by hand, broken (schedule_memory tier "bound" —
-# re-audit 10/11/26 LEARNING-12): its own tier, lexicographically above every
-# soft quality term (a whole week's quality is ~10^6 units at most: a hundred
-# shifts of 100 points at Q) and below the requirement tier, so coverage,
-# overtime and the minimums still win. It used to be a soft cost scaled by
-# the habit's confidence, tradeable for a modest fairness or preference gain.
+# A habit the manager taught by hand, broken (schedule_memory tier "bound"):
+# its own tier, lexicographically above every soft quality term (a whole
+# week's quality is ~10^6 units at most: a hundred shifts of 100 points at Q)
+# and below the requirement tier, so coverage, overtime and the minimums
+# still win. It used to be a soft cost scaled by the habit's confidence,
+# tradeable for a modest fairness or preference gain.
 W_HABIT = 2 * 10 ** 6
 W_CHANGE_RESOLVE = 5 * 10 ** 6      # a re-solve changing a person on a shift that stays
 BUDGET_OVER_FACTOR = 3              # a dollar past the budget costs this many dollars of quality
@@ -174,7 +172,7 @@ _STATIC_TERMS = {"pending": "pending", "reliability": "reliability", "rotation_w
                  "rotation_close": "fairness", "preference": "preferences", "learned_preference": "preferences",
                  "role": "role", "learned": "memory", "likely_edit": "memory",
                  # a published shift handed to somebody else, at its commitment
-                 # level (J3's commitment ladder, MARKET-27)
+                 # level (J3's commitment ladder)
                  "commitment": "commitment"}
 
 
@@ -288,7 +286,7 @@ class CpProblem(_solver.Problem):
             if not ok:
                 return why
         for r in u.rows:
-            # at the restaurant's own lunch/dinner boundary (BUGSGEN-12)
+            # at the restaurant's own lunch/dinner boundary
             ok, why = c.can_work_row(name, dict(r, date=u.date))
             if not ok:
                 return why
@@ -303,7 +301,7 @@ class CpProblem(_solver.Problem):
             if not drafted and c.training_row(dict(r, employee=name)):
                 return "would be a training shift"
             # a minor's time-of-day limits — late, early, school hours — by
-            # the sweep's one rule (sched re-audit 10/11/26 STRESS-5)
+            # the sweep's one rule
             why = _rules.minor_row_breach(c, low, r, u.date)
             if why:
                 return why
@@ -365,12 +363,12 @@ class CpProblem(_solver.Problem):
         self.components = []
 
 
-# ── last published week, slot by slot (RM-3) ─────────────────────────────
+# ── last published week, slot by slot ─────────────────────────────
 
 def last_week_slots(prob, last_rows) -> dict:
     """{unit id: set(person)} — who worked each unit's slot in the last
     PUBLISHED week: the same weekday, the same role family, the same
-    daypart, and a start within STABILITY_START_MINUTES (LOGIC-18, RM-3)."""
+    daypart, and a start within STABILITY_START_MINUTES."""
     by = {}
     for r in last_rows or []:
         name = (r.get("employee") or "").strip()
@@ -439,7 +437,7 @@ class _Model:
         self.unf = {}
         self.last = last_week or {}
         # {unit id: set(person)} — who USUALLY works the slot (their own
-        # history), where there is no published week to keep (STRESS-15)
+        # history), where there is no published week to keep
         self.usual = usual or {}
         self.budget = float(budget_dollars or 0)
         self.change_cost = change_cost
@@ -447,7 +445,7 @@ class _Model:
         self.manages = {}
         self.notes = []
         self.ctx = objective
-        # people who work doubles: two legs a date with a break (LOGIC-19)
+        # people who work doubles: two legs a date with a break
         self.doubles = set(doubles or ())
 
     def mgr(self, p, d) -> bool:
@@ -530,16 +528,16 @@ class _Model:
                 self.book.add("standby", self.unf[u.id], max(1.0, 2 * cents * per_cent), {"unit": u.id})
                 continue
             if any(r.get("_mgr_extra") for r in u.rows):
-                # a manager candidate for a stretch the plan could not cover
-                # (ARCH-23): no cost of its own — the manager tier prices the
-                # minutes it would cover, so it is staffed only where it
-                # covers a stretch nobody else does
+                # a manager candidate for a stretch the plan could not cover:
+                # no cost of its own — the manager tier prices the minutes it
+                # would cover, so it is staffed only where it covers a
+                # stretch nobody else does
                 continue
             if self.mode == "draft":
                 floor = any(r.get("_floor") for r in u.rows)
                 # a requirement shift's hole weighs its half hours' demand
-                # and the role's criticality (LOGIC-1, LOGIC-24): a Friday
-                # dinner dishwasher is never the cheap one to leave empty
+                # and the role's criticality: a Friday dinner dishwasher
+                # is never the cheap one to leave empty
                 rel = 1.0 if floor else self.value_rel(u)
                 self.book.add("floor" if floor else "requirement", self.unf[u.id],
                               hours * (W_COVER_HOUR if floor else W_REQ_HOUR * rel), {"unit": u.id, "rel": rel})
@@ -556,7 +554,7 @@ class _Model:
             name = prob.names[p]
             rules_apply = c is None or _rules.hours_rules_apply(c, name)
             # one shift a date — or, for somebody who works doubles, two legs
-            # that never overlap with a break between them (LOGIC-19)
+            # that never overlap with a break between them
             dbl = p in self.doubles
             by_date = {}
             for u, v in items:
@@ -645,10 +643,10 @@ class _Model:
                 m.add(dev >= lo - wexpr)
                 m.add(dev >= wexpr - hi)
                 book.add("hours_wanted", dev, item / max(1.0, want * H) * 2, {"person": p})
-            # Under half the week somebody lives on (schedule_objective.
-            # starved_hour_usd — one objective, blind re-audit 10/11/26 P):
-            # priced in the budget's own currency and phase, so no dollar the
-            # budget saves ever pays for it (price_week says the same).
+            # Under half the week somebody lives on
+            # (schedule_objective.starved_hour_usd — one objective P): priced
+            # in the budget's own currency and phase, so no dollar the budget
+            # saves ever pays for it (price_week says the same).
             if self.ctx is not None:
                 uh = float(self.ctx.usual_hours(name) or 0.0)
                 half = int(round(uh * _obj.STARVED_SHARE * H))
@@ -748,16 +746,16 @@ class _Model:
         # Each date's kept manager spans, so a stretch past midnight is
         # judged with the NEXT date's manager on (and the small hours with
         # the night before's): a 10pm-6am crew was left unfilled because its
-        # 4-6am looked unmanaged from its own date (STRESS-4).
+        # 4-6am looked unmanaged from its own date.
         fixed_by = {}
         for d0, units0 in by_date.items():
             fixed_by[d0] = [(s, e) for u in units0 if u.fixed and u.draft is not None
                             and any(_rules.counts_as_manager(c, dict(r, employee=prob.names[u.draft])) for r in u.rows)
                             for s, e in u.bspans]
-        # The live units a manager may take, by date (ARCH-23: the manager
-        # plan's shifts are solved here, not pinned) — read across midnight
-        # like the kept ones: a 10pm-6am cook is managed past 4am by the next
-        # business day's opening manager whether that shift is kept or solved.
+        # The live units a manager may take, by date (the manager plan's
+        # shifts are solved here, not pinned) — read across midnight like the
+        # kept ones: a 10pm-6am cook is managed past 4am by the next business
+        # day's opening manager whether that shift is kept or solved.
         live_by = {}
         for d0, units0 in by_date.items():
             live_by[d0] = [(min(s for s, _e in u.bspans), max(e for _s, e in u.bspans), u) for u in units0
@@ -788,12 +786,12 @@ class _Model:
             last_end = max(e for _s, e, _u in items)
             mgr_end = max((e for _s, e in fixed_mgr), default=None)
             mgr_starts = {s for s, _e in fixed_mgr}
-            # The managers inside the solve (blind re-audit 10/11/26
-            # ARCH-23): a live unit a manager may take earns the owner's two
-            # allowances exactly as a kept manager shift does — the stay
-            # after its end, the prep before its start — when a manager takes
-            # it. Without this, a solved 10am-9pm close left every 9:30pm
-            # crew shift empty (the stay was only ever read off pinned rows).
+            # The managers inside the solve: a live unit a manager may take
+            # earns the owner's two allowances exactly as a kept manager
+            # shift does — the stay after its end, the prep before its start
+            # — when a manager takes it. Without this, a solved 10am-9pm
+            # close left every 9:30pm crew shift empty (the stay was only
+            # ever read off pinned rows).
             mlive = live_by.get(d) or []
             for a, b in zip(cuts, cuts[1:]):
                 if b <= a:
@@ -808,7 +806,7 @@ class _Model:
                     continue
                 # the owner's two allowances (the closing manager's stay,
                 # the prep before an opening manager) — the verdict's own
-                # — each restaurant's own (LOGIC-12)
+                # — each restaurant's own
                 stay_m, lead_m = _rules.closing_stay_minutes(c), _rules.opening_lead_minutes(c)
                 if mgr_end is not None and a >= mgr_end and b <= last_end and last_end - mgr_end <= stay_m:
                     continue
@@ -873,8 +871,8 @@ class _Model:
                     m.add(sum(lits) + gap + self.unf[u.id] >= 1)
 
     def _leaders(self):
-        """Leader rules and strength (one rating measure — LOGIC-30) on each
-        shift, as linear shortfalls."""
+        """Leader rules and strength (one rating measure) on each shift, as
+        linear shortfalls."""
         prob, m, book = self.prob, self.m, self.book
         for key, g in prob.groups.items():
             if g.get("kind") != "S":
@@ -938,7 +936,7 @@ class _Model:
                 per = prob.weights.get("operational_strength", 0) / 100.0 * dw * (100.0 / bar) / 100.0 / max(1, crew)
                 book.add("strength", short, per * Q / 100.0 * 100, {"shift": key, "role": role})
             # the level this restaurant's own ratings want for a shift this
-            # busy (the former demand match, folded into strength — LOGIC-30)
+            # busy (the former demand match, folded into strength)
             every = list(prob.ratings.get("*") or [])
             if len(every) < sq.DEMAND_MIN_RATED:
                 continue
@@ -1027,7 +1025,7 @@ class _Model:
                 stab, ref = unit_stab, self.last[u.id]
             elif u.id in self.usual:
                 # no published week: the person who usually works the slot
-                # (their own punches) is kept the same way (STRESS-15)
+                # (their own punches) is kept the same way
                 stab, ref, term_s = unit_stab, self.usual[u.id], "usual"
             if stab:
                 book.constant(term_s, stab * Q)
@@ -1046,7 +1044,7 @@ class _Model:
                     else:
                         term = None if k in _OWN_TERMS else _STATIC_TERMS.get(k, k)
                     if term == "habit" and val:
-                        # Its own tier (LEARNING-12): misses x W_HABIT.
+                        # Its own tier: misses x W_HABIT.
                         book.add("habit", v, round(val / _solver.K_HABIT) * W_HABIT, {"unit": u.id, "person": p})
                     elif term and val:
                         book.add(term, v, val * Q, {"unit": u.id, "person": p})
@@ -1119,8 +1117,8 @@ class _Model:
 
     def _days(self):
         """A day in past somebody's usual days a week (their history, else
-        schedule_objective.DEFAULT_DAYS_A_WEEK) at EXTRA_DAY_USD (LOGIC-5):
-        six 4h days are not a part-timer's four 6h ones."""
+        schedule_objective.DEFAULT_DAYS_A_WEEK) at EXTRA_DAY_USD: six 4h
+        days are not a part-timer's four 6h ones."""
         prob, m, book = self.prob, self.m, self.book
         per_cent = getattr(self, "per_cent", 0.0) or 0.0
         if not per_cent:
@@ -1259,8 +1257,8 @@ def _solver_for(max_seconds, seed=SEED, workers=None, deterministic=None, wall_c
         # Same inputs, same week: a deterministic work budget instead of the
         # wall clock, workers interleaved in a fixed order. The wall clock is
         # only the emergency cap — 4x the budget, or `wall_cap` (what the
-        # repair loop has left) when that is less (scheduler audit 10/10/26
-        # ARCH-26); _wall_capped says when it, not the budget, ended a solve.
+        # repair loop has left) when that is less; _wall_capped says when it,
+        # not the budget, ended a solve.
         s.parameters.interleave_search = s.parameters.num_workers > 1
         s.parameters.max_deterministic_time = secs
         cap = secs * 4
@@ -1293,18 +1291,18 @@ def _phase_values(mdl, solver) -> list:
 
 
 def _solve_phases(mdl, max_seconds, seed, workers, deterministic, wall_left=None, start=None):
-    """Solve `mdl` phase by phase (LOGIC-22): each phase minimised with
-    its share of the deterministic budget (PHASE_SHARES of work_budget —
-    the stated budget scaled to the model's size; what a phase did not use
-    carries to the next, read from the solver's own deterministic time — so
-    still the same on every run), then held at what it reached while the
-    next one is optimised from that week. A phase whose warm start (`start`,
-    a value per variable, then each phase's answer) already sits at the
-    phase's least possible cost is proved there and not searched
-    (_at_bound) — its whole share carries on. (solver, status, [{phase,
-    status, value, seconds, budget}], wall capped, proved, status name, {how
-    the solves ran: isolated, peak_mb, memory_capped}); solver None when
-    the first phase found nothing."""
+    """Solve `mdl` phase by phase: each phase minimised with its share of
+    the deterministic budget (PHASE_SHARES of work_budget — the stated
+    budget scaled to the model's size; what a phase did not use carries to
+    the next, read from the solver's own deterministic time — so still the
+    same on every run), then held at what it reached while the next one is
+    optimised from that week. A phase whose warm start (`start`, a value per
+    variable, then each phase's answer) already sits at the phase's least
+    possible cost is proved there and not searched (_at_bound) — its whole
+    share carries on. (solver, status, [{phase, status, value, seconds,
+    budget}], wall capped, proved, status name, {how the solves ran:
+    isolated, peak_mb, memory_capped}); solver None when the first phase
+    found nothing."""
     exprs = _phase_exprs(mdl)
     det = DETERMINISTIC if deterministic is None else deterministic
     n_vars = len(mdl.m.proto.variables)
@@ -1373,8 +1371,8 @@ def _set_hints(m, values) -> None:
 
 
 def usual_week(history_rows, key, family, share=None) -> list:
-    """The restaurant's usual week as rows (STRESS-15): for each person, each
-    weekday, role family and daypart they worked in at least `share`
+    """The restaurant's usual week as rows: for each person, each weekday,
+    role family and daypart they worked in at least `share`
     (schedule_objective.USUAL_SHARE) of the history's weeks — with at least
     USUAL_MIN_WEEKS of them — one row at their median start. The stability
     reference when no week has been published."""
@@ -1431,9 +1429,9 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
     mode: "draft" (Stage 2 of the solver-first draft: an unfilled slot is
     left out, at the floor's or the requirement's cost), "improve" (the
     repair loop's solver stage: the draft's people are a tie-break, a shift
-    nobody legal can take stays as drafted) or "resolve" (MARKET-13: the
-    week as it stands, a person changed on a shift priced so only what has
-    to move moves).
+    nobody legal can take stays as drafted) or "resolve" (the week as it
+    stands, a person changed on a shift priced so only what has to move
+    moves).
 
     Returns {status, proved_optimal, seconds, rows, unfilled, kept_as_drafted,
     terms: {name: {label, cost, count}}, objective, bound, assignment,
@@ -1461,7 +1459,7 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
         return out
     last = last_week_slots(prob, last_week) if last_week else {}
     # No published week to keep: the person who usually works each slot,
-    # from their own punches, is the reference instead (STRESS-15).
+    # from their own punches, is the reference instead.
     usual = last_week_slots(prob, usual_week(history_rows, prob.key, prob.family)) \
         if (history_rows and not last) else {}
     if doubles is None:
@@ -1490,10 +1488,9 @@ def assign(rows, constraints, signals=None, weights=None, profiles=None, only_da
         start = list(first.response_proto.solution)
         _set_hints(mdl.m, start)
     # The whole deterministic budget, whatever building the model took on the
-    # wall clock (ARCH-26: the same inputs, the same week), spent phase by
-    # phase — the rule tiers, then stability, then quality, each holding the
-    # one before at its optimum (LOGIC-22); what the wall clock has left is
-    # only the emergency cap.
+    # wall clock (the same inputs, the same week), spent phase by phase — the
+    # rule tiers, then stability, then quality, each holding the one before
+    # at its optimum; what the wall clock has left is only the emergency cap.
     solver, st, phases, capped, proved, name, runs = _solve_phases(
         mdl, max_seconds, seed, workers, deterministic,
         (lambda: max(0.2, float(wall_cap) - (_time.monotonic() - t0))) if wall_cap else None, start=start)
@@ -1613,7 +1610,7 @@ def _unfilled_entry(prob, u) -> dict:
             "mgr_extra": any(rr.get("_mgr_extra") for rr in u.rows)}
 
 
-# ── why each assignment (RM-12) ─────────────────────────────────────────────
+# ── why each assignment ─────────────────────────────────────────────
 
 def _money(cents) -> str:
     return f"${int(round(cents / 100.0)):,}"
@@ -1626,8 +1623,8 @@ def assignment_reasons(prob, mdl, assignment, limit=400) -> list:
     of the next-best person who could legally take it — "Kim, not Lee: Lee
     would hit overtime (+$27)". `facts` are only what speaks FOR the pick;
     what speaks for the runner-up is its own `facts`; the text never argues
-    against the pick (TRUST-1) — where nothing named favours the pick it
-    says the rest of the week decided. Read from the solution, term by term."""
+    against the pick — where nothing named favours the pick it says the rest
+    of the week decided. Read from the solution, term by term."""
     hours = {}
     for u in prob.units:
         p = assignment[u.id] if u.id < len(assignment) else None
@@ -1673,9 +1670,9 @@ def assignment_reasons(prob, mdl, assignment, limit=400) -> list:
         else:
             alts.sort(key=lambda t: (t[0], t[1]))
             total, qn, q, m = alts[0]
-            # Only what speaks FOR the pick is said (contract #4, TRUST-1):
-            # a reason the runner-up is the better fit is never the reason
-            # the pick was made.
+            # Only what speaks FOR the pick is said (contract #4): a reason
+            # the runner-up is the better fit is never the reason the pick
+            # was made.
             pro = sorted((x for x in m["parts"] if x[0] > 0 and x[3]), key=lambda x: (-x[0], x[1]))
             con = sorted((x for x in m["parts"] if x[0] < 0 and x[3]), key=lambda x: (x[0], x[1]))
             facts = [{"key": k, "value": v} for _c, k, v, _t in pro]
@@ -1775,7 +1772,7 @@ def _marginal(prob, mdl, u, p, q, hours, on_date) -> dict:
     return {"parts": parts, "total": sum(x[0] for x in parts)}
 
 
-# ── the smallest set of rules that conflict (LOGIC-32, RM-12) ───────────────
+# ── the smallest set of rules that conflict ───────────────
 
 def explain_conflicts(prob, assignment, unfilled, mdl=None, seed=SEED, max_items=6, seconds=2.0) -> list:
     """For each floor shift the solve left unfilled, and each stretch left
@@ -1844,8 +1841,8 @@ def _blocker(prob, u, q, week_hours=None) -> tuple:
         return ("max_hours", f"{name}'s {mx:g}h maximum")
     if why == _rules.LABELS.get("unavailable_daypart"):
         # Free for part of the day only: the shift's length, not their whole
-        # day, is what is in the way (blind re-audit 10/11/26 STRESS-21 —
-        # "Cook B unavailable Mondays" while Cook B works Monday lunches).
+        # day, is what is in the way ("Cook B unavailable Mondays" while
+        # Cook B works Monday lunches).
         choice = ((getattr(prob.c, "daypart_avail", None) or {}).get(prob.key(name)) or {}).get(u.day) \
             if prob.c is not None else None
         if choice in ("morning", "night"):
@@ -1996,7 +1993,7 @@ def _conflict_for_manager(prob, d, spans):
                     + "; ".join(r["text"] for r in relax[:6]) + ". Relax one of them."}
 
 
-# ── a re-solve in seconds: "Maria is out, re-solve Friday" (MARKET-13) ──────
+# ── a re-solve in seconds: "Maria is out, re-solve Friday" ──────
 
 RESOLVE_SECONDS = _env_float("SCHEDULE_RESOLVE_SECONDS", 6.0)
 
@@ -2097,7 +2094,7 @@ def resolve(rows, constraints, dates, out=(), add=(), signals=None, weights=None
     return res
 
 
-# ── the quality gate, exactly (LOGIC-26) ────────────────────────────────────
+# ── the quality gate, exactly ────────────────────────────────────
 
 def _probe_row(c, v, rows):
     """The shift that would put hard breach `v` right — a manager over the
@@ -2136,16 +2133,16 @@ def _probe_row(c, v, rows):
 
 
 def gate_exact(rows, constraints, dates, signals=None, weights=None, viols=None, max_seconds=8.0) -> dict:
-    """The quality gate's days solved exactly before any model call
-    (scheduler audit 10/10/26 LOGIC-26): for each hard breach on `dates` an
-    added shift could answer (a stretch with no manager, a floor short),
-    the shift is offered to the solver over the week as it stands. Filled:
-    it is a fix ({"fixes": [rows]}) the gate's code fill takes in. Not
-    filled: no legal arrangement of these people exists, and the smallest
-    set of the owner's rules in the way is said ({"conflicts": [...]}) —
-    a sampled rewrite by the model cannot change that, so none is paid
-    for. {"fixes", "conflicts", "probed", "unprobed"} — `unprobed` the
-    breaches no added shift answers (left to the fill and the rewrite)."""
+    """The quality gate's days solved exactly before any model call: for
+    each hard breach on `dates` an added shift could answer (a stretch with
+    no manager, a floor short), the shift is offered to the solver over the
+    week as it stands. Filled: it is a fix ({"fixes": [rows]}) the gate's
+    code fill takes in. Not filled: no legal arrangement of these people
+    exists, and the smallest set of the owner's rules in the way is said
+    ({"conflicts": [...]}) — a sampled rewrite by the model cannot change
+    that, so none is paid for. {"fixes", "conflicts", "probed", "unprobed"}
+    — `unprobed` the breaches no added shift answers (left to the fill and
+    the rewrite)."""
     out = {"fixes": [], "conflicts": [], "probed": 0, "unprobed": 0}
     if not available() or constraints is None or not dates:
         return out
@@ -2203,13 +2200,13 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
             max_seconds=None, min_gain=0.0, hours_budget=None, last_week=None, wall_cap=None,
             objective=None) -> dict:
     """schedule_solver.improve's contract, solved with CP-SAT over the joint
-    objective (LOGIC-19: the objective is the model's separable costs, never
-    the Shift Quality score — the score is computed for the owner's report
-    only). Kept only when the model's own cost of the answer is lower than
-    the draft's under the same model and it puts nothing above the budget
-    tier new or worse (schedule_rules.regressions — the repair loop's judge
-    holds it again). Falls back to the backtracking solver when CP-SAT is
-    unavailable or finds nothing in time."""
+    objective (the objective is the model's separable costs, never the Shift
+    Quality score — the score is computed for the owner's report only). Kept
+    only when the model's own cost of the answer is lower than the draft's
+    under the same model and it puts nothing above the budget tier new or
+    worse (schedule_rules.regressions — the repair loop's judge holds it
+    again). Falls back to the backtracking solver when CP-SAT is unavailable
+    or finds nothing in time."""
     inputs = inputs or {}
     signals = dict(signals or {})
     constraints = constraints if constraints is not None else inputs.get("constraints")
@@ -2230,7 +2227,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
                     explain=False, wall_cap=wall_cap, objective=objective)
     if solved["status"] not in ("optimal", "time_limit"):
         # The backtracking fallback on its own work budget (WorkClock); the
-        # wall clock still left is its emergency cap (ARCH-26).
+        # wall clock still left is its emergency cap.
         res = _solver.improve(rows, inputs, signals=signals, weights=weights, constraints=constraints,
                               only_dates=only_dates, max_seconds=_solver.DEFAULT_SECONDS, hours_budget=hours_budget,
                               wall_cap=(max(0.5, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None))
@@ -2295,7 +2292,7 @@ def improve(rows, inputs=None, signals=None, weights=None, constraints=None, onl
     stats["kept"] = "solver"
     out.update(applied=True, rows=rows_out, changes=[head] + lines)
     # Shift Quality before and after, for the owner's report only — it chose
-    # nothing here (LOGIC-19)
+    # nothing here
     try:
         def _q(rs):
             viols = _rules.violations(rs, constraints)
@@ -2352,7 +2349,7 @@ def summary(result: dict) -> dict:
     return out
 
 
-# ── the solver-first draft: shapes, then people (RM-8 + RM-11) ──────────────
+# ── the solver-first draft: shapes, then people ──────────────────────────
 
 
 def solver_draft(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
@@ -2367,24 +2364,24 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
     shift, a redo's kept days, locked rows) held as they are. Both price the
     week from one schedule_objective.ObjectiveContext (contract #1).
 
-    `manager_slots` (blind re-audit 10/11/26 ARCH-23): the manager plan's
-    shifts that are NOT the owner's word — schedule_engine.manager_slots —
-    solved here, not pinned: each is a shift Stage 2 staffs with whichever
-    manager it chooses (the planned one is only the hint), held by the
-    manager tier per minute (W_MANAGER_MIN, with the owner's allowances) in
-    the same model as coverage, overtime, the minimums and cost — so a
-    manager's week is traded against everybody else's, never fixed before
-    it. A slot marked `_mgr_extra` (a stretch the plan could not cover) is
-    a candidate only: unfilled at no cost of its own, its minutes priced by
-    the manager tier. Stage 1 still sees them with their planned people (it
-    shapes everybody else around the managers). They come back in "rows"
-    marked `_mgr_plan` (the caller re-pins them as the week's manager rows),
-    and an unfilled one in "unassigned".
+    `manager_slots`: the manager plan's shifts that are NOT the owner's word
+    — schedule_engine.manager_slots — solved here, not pinned: each is a
+    shift Stage 2 staffs with whichever manager it chooses (the planned one
+    is only the hint), held by the manager tier per minute (W_MANAGER_MIN,
+    with the owner's allowances) in the same model as coverage, overtime,
+    the minimums and cost — so a manager's week is traded against everybody
+    else's, never fixed before it. A slot marked `_mgr_extra` (a stretch the
+    plan could not cover) is a candidate only: unfilled at no cost of its
+    own, its minutes priced by the manager tier. Stage 1 still sees them
+    with their planned people (it shapes everybody else around the
+    managers). They come back in "rows" marked `_mgr_plan` (the caller
+    re-pins them as the week's manager rows), and an unfilled one in
+    "unassigned".
 
     `max_seconds` is a DETERMINISTIC work budget, split by size and never by
-    the clock (LOGIC-9: Stage 2 used to get whatever the wall clock had
-    left, so the same inputs drafted different weeks on a busy box);
-    `wall_cap` the emergency wall-clock cap.
+    the clock (Stage 2 used to get whatever the wall clock had left, so the
+    same inputs drafted different weeks on a busy box); `wall_cap` the
+    emergency wall-clock cap.
 
     {"rows" (staffed shifts — the context rows are NOT among them),
     "unassigned" (shifts nobody could legally take, left out), "short"
@@ -2419,9 +2416,9 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
 
     def wall_left():
         return max(0.5, float(wall_cap) - (_time.monotonic() - t0)) if wall_cap else None
-    # The manager plan's shifts as Stage 2 slots (ARCH-23): Stage 1 shapes
-    # everybody else around them with their planned people; Stage 2 decides
-    # who works each, in the same model as the rest.
+    # The manager plan's shifts as Stage 2 slots: Stage 1 shapes everybody
+    # else around them with their planned people; Stage 2 decides who works
+    # each, in the same model as the rest.
     mgr_slots = []
     for r in manager_slots or []:
         x = {k: v for k, v in dict(r).items() if k not in ("_pinned",)}
@@ -2440,13 +2437,13 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
              "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic",
                         # what each stage's model size raised it to (work_budget)
                         "shapes_scaled": (shaped["stats"] or {}).get("budget")}}
-    # The objective's need is the demand Stage 1 shaped to (LOGIC-6): the
-    # week is priced, and every pass after the draft prices a hole, against
-    # the same people on at once — summed by role family, as Stage 1 sums it.
+    # The objective's need is the demand Stage 1 shaped to: the week is
+    # priced, and every pass after the draft prices a hole, against the same
+    # people on at once — summed by role family, as Stage 1 sums it.
     need = objective_need(shaped.get("need"), constraints)
     if need:
         ctx.need = need
-    # A standby on a busy shift likely to come up short (RM-18, G2's
+    # A standby on a busy shift likely to come up short (G2's
     # attendance_risk.standby_needed): one more of the role over the
     # daypart's core window, staffed only while the budget has room.
     slots = shaped["rows"] + mgr_slots + [dict(r, _standby=True, employee="") for r in standby_slots or []]
@@ -2529,7 +2526,7 @@ def usual_days_kept(rows, ctx) -> dict:
     weekdays (worked in at least schedule_objective.USUAL_SHARE of their
     history's weeks), how many this week keeps, and the days placed on a
     weekday they almost never work: measured, for the review line, never
-    claimed without it (STRESS-15). pct None without history."""
+    claimed without it. pct None without history."""
     people = (getattr(ctx, "profile", None) or {}).get("people") or {}
     worked = {}
     for r in rows or []:

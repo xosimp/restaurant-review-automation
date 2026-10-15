@@ -59,14 +59,14 @@ def _row_end(row):
     return _stime.end_of(row)
 
 
-# Openers (L-22): everyone who clocked in within this of the role's first
+# Openers: everyone who clocked in within this of the role's first
 # clock-in that day opened it.
 OPENER_TIE_MINUTES = 15
 
 
 def _week_of(iso, start_day=0) -> str:
     """The first date of the schedule week holding `iso` — the restaurant's
-    own week (restaurants.week_start_day, 0 = Monday; ARCH-24): a Wednesday-
+    own week (restaurants.week_start_day, 0 = Monday): a Wednesday-
     to-Tuesday week read as two Monday weeks counted one published week of
     evidence twice, and a redo's week_start (a Wednesday) never matched a
     Monday key."""
@@ -106,11 +106,11 @@ def _row_part(r) -> str:
 
 
 def _miss_weight(m) -> float:
-    """What breaking one learned signal weighs (re-audit 10/11/26
-    LEARNING-12): a bound habit HABIT_MISS_WEIGHT whatever its confidence —
-    the manager taught it by hand, and a habit at 0.6 used to be half as
-    expensive to break as one at 0.9 — anything else its confidence (a
-    learning habit's lean is already scaled in enforced_signals)."""
+    """What breaking one learned signal weighs: a bound habit
+    HABIT_MISS_WEIGHT whatever its confidence — the manager taught it by
+    hand, and a habit at 0.6 used to be half as expensive to break as one
+    at 0.9 — anything else its confidence (a learning habit's lean is
+    already scaled in enforced_signals)."""
     if m.get("tier") == "bound":
         return HABIT_MISS_WEIGHT
     try:
@@ -173,9 +173,9 @@ def misses(rows, learned, families=None, line=None, bucket=None) -> list:
                 if mine and who not in _edge_of([x[:5] for x in g], kind):
                     hit.append(mine[0][5])
         elif kind == "pair":
-            # Its polarity is its meaning (schedule re-audit 10/4/26 LEARN-1:
-            # every pair was read as "together", so the owner's Keep on a
-            # learned keep-apart charged the week for keeping them apart).
+            # Its polarity is its meaning (every pair was read as "together",
+            # so the owner's Keep on a learned keep-apart charged the week
+            # for keeping them apart).
             polarity = v.get("kind")
             if polarity not in ("prefer", "avoid"):
                 continue
@@ -268,7 +268,7 @@ def slot_cost(person, date_str, daypart, role, learned, families=None) -> float:
 
 
 def _short(m) -> str:
-    """One short line for a fact the passes also hold (L-28: anything
+    """One short line for a fact the passes also hold (anything
     enforced in code needs no paragraph)."""
     kind, v = m.get("kind"), m.get("value") or {}
     who, day, meal = m.get("person") or "", m.get("day") or "", _MEAL.get(m.get("daypart"), m.get("daypart") or "")
@@ -289,7 +289,7 @@ def _short(m) -> str:
         return f"{who} closes {v.get('role') or role} on {day}s" + (
             f", until about {v.get('end')}" if v.get("end") else "")
     if kind == "pair" and v.get("kind") == "avoid":
-        # The owner's own keep-apart: never named where it is read (LEARN-6).
+        # The owner's own keep-apart: never named where it is read.
         return "two people the owner keeps apart, on the same shift"
     if kind == "pair":
         return f"{who} with {' and '.join(v.get('with') or [])} on the same shifts"

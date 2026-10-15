@@ -32,23 +32,23 @@ DEFAULT_BUSY = (("Friday", "night"), ("Saturday", "night"))
 FOCUS_MAX_ITEMS = 12
 FOCUS_MAX_CHARS = 240
 # How far a date's measured demand (and the sales-per-labor-hour hold) may
-# move the usual crew (schedule audit 10/3/26 D-23, P-19): a +80% holiday
-# does not need 80% more of every role, and a quiet day never takes the
-# crew below three quarters of its usual. The owner's floors still hold
-# under it and the section cap over it.
+# move the usual crew: a +80% holiday does not need 80% more of every
+# role, and a quiet day never takes the crew below three quarters of its
+# usual. The owner's floors still hold under it and the section cap over
+# it.
 DEMAND_SCALE_BOUNDS = (0.75, 1.4)
-# The late segment (D-32): from 10pm to close, on a day that closes past
-# 11pm — shift_quality.LATE_WINDOW_START / LATE_CLOSE_AFTER.
+# The late segment: from 10pm to close, on a day that closes past 11pm —
+# shift_quality.LATE_WINDOW_START / LATE_CLOSE_AFTER.
 LATE_PART = "late"
 
 
 def window_allows(w, part) -> bool:
     """Whether a role whose hours are `w` ({"earliest", "latest"} minutes,
-    either None) can be on the floor for `part` — present for the
-    daypart's core window as the scorer counts presence (shift_quality.
+    either None) can be on the floor for `part` — present for the daypart's
+    core window as the scorer counts presence (shift_quality.
     present_dayparts): "evening only, no earlier than 3:00pm" rules out
-    lunch, "first arrives 10:30am" does not (schedule re-audit 10/4/26
-    PROMPT-1). The late segment needs an hour of it after LATE_WINDOW_START."""
+    lunch, "first arrives 10:30am" does not. The late segment needs an hour
+    of it after LATE_WINDOW_START."""
     if not w:
         return True
     if part == LATE_PART:
@@ -87,15 +87,15 @@ def _role_cap(role_caps, role, day, part):
 def _apply_limits(need, day, part, role_windows, role_caps, idx_name=0, idx_req=1, idx_floor=2, idx_why=5,
                   concurrent=False):
     """Hold one shift's numbers to the owner's RESTAURANT HOURS & SHIFT
-    RULES (PROMPT-1): a role outside the hours they give it is asked for
-    only its floor (none, normally — a floor is never set outside them).
-    Their "most on at once" ceiling cuts a number only when it is itself
-    people on at once (`concurrent` — the late segment's crew); a daypart's
-    count of different people is never cut to it (staggered starts fit more
-    people than the most on at once — schedule audit 10/10/26, LOGIC-7's
-    rule for the section cap, the same for the owner's ceiling): the row
-    says the ceiling instead, and the half-hour needs are held to it.
-    `need` is {key: [display, required, floor, ...]}, changed in place."""
+    RULES: a role outside the hours they give it is asked for only its
+    floor (none, normally — a floor is never set outside them). Their "most
+    on at once" ceiling cuts a number only when it is itself people on at
+    once (`concurrent` — the late segment's crew); a daypart's count of
+    different people is never cut to it (staggered starts fit more people
+    than the most on at once's rule for the section cap, the same for the
+    owner's ceiling): the row says the ceiling instead, and the half-hour
+    needs are held to it. `need` is {key: [display, required, floor,...]},
+    changed in place."""
     for k in list(need):
         v = need[k]
         w = _limit_for(role_windows, v[idx_name], day)
@@ -123,7 +123,7 @@ def demand_factor(ratio=1.0, hold=1.0, measured=False) -> float:
     DEMAND_SCALE_BOUNDS — or, where the figure is the owner's own budget or
     measured here (`measured`: schedule_economics.MEASURED_SCALE_BOUNDS),
     the wider bounds: an +80% festival the owner budgeted, a measured -50%
-    snow day (scheduler audit 10/10/26 LOGIC-9). 1.0 when nothing moves it."""
+    snow day. 1.0 when nothing moves it."""
     try:
         r = float(ratio if ratio is not None else 1.0) * float(hold if hold is not None else 1.0)
     except (TypeError, ValueError):
@@ -144,8 +144,8 @@ def part_demand(dd: dict, part: str, busy: bool = False) -> tuple:
     of one date from schedule_economics.date_demand's entry: the meal's own
     figure (`parts`) where the entry carries one — its busy-shift quantile
     when `busy` (demand_model.BUSY_QUANTILE: a busy shift is staffed to the
-    upper forecast, not the median — LEARNING-19) — else the date's one
-    ratio (an older stored entry)."""
+    upper forecast, not the median) — else the date's one ratio (an older
+    stored entry)."""
     dd = dd or {}
     pd = (dd.get("parts") or {}).get(part)
     if not pd:
@@ -235,12 +235,11 @@ def _rule_applies(rule: dict, day: str, part: str, runs: dict = None, close_time
     """Whether a leader rule binds this shift: the scorer's own test
     (shift_quality.leader_rule_applies over shift_quality.role_runs), so a
     rule naming no daypart is asked only where its role works — the table
-    used to tell the model to add a bartender to a lunch with no bar
-    (schedule audit 10/3/26 SQ-2). A closing rule binds the daypart the
-    day's close falls in (closing_part): asked with the closing shift "not
-    known", it was printed on every morning row too — a closing bartender
-    at lunch, the rule said twice a day (schedule re-audit 10/4/26
-    PROMPT-6)."""
+    used to tell the model to add a bartender to a lunch with no bar. A
+    closing rule binds the daypart the day's close falls in
+    (closing_part): asked with the closing shift "not known", it was
+    printed on every morning row too — a closing bartender at lunch, the
+    rule said twice a day."""
     return _sq.leader_rule_applies(rule, day, part, is_closing=part == closing_part(day, close_times), runs=runs)
 
 
@@ -293,10 +292,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
     the floor is kept alongside so the prompt can mark which part is a hard
     minimum. Role names match case-insensitively and the owner's spelling
     wins. Every row carries `reasons` [str] — why its numbers moved off the
-    usual — and `factor`. The number used to be the usual
-    crew whatever the date: a +30% measured event Friday was asked for a
-    typical Friday's people, and the demand changed only the label
-    (schedule audit 10/3/26 D-23, P-19, PR-7).
+    usual — and `factor`. The number used to be the usual crew whatever the
+    date: a +30% measured event Friday was asked for a typical Friday's
+    people, and the demand changed only the label.
 
     roles     — lowercase roles the people in this request can work; a role
                 nobody here can fill is left to the request that can (a
@@ -318,7 +316,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 cap_requirement). The whole-shift number is different people
                 across the daypart, a unit the cap does not limit (staggered
                 starts fit more people than sections), so it is never cut to
-                the cap (schedule audit 10/10/26 LOGIC-7).
+                the cap.
     crew_answers — {(weekday, daypart): {role: {"people", "was", "since"}}}
                 (staffing_baseline's `crew_answers`, crew_matrix.bind_answers):
                 the shifts the owner said "leaner is fine" about in Crew,
@@ -332,79 +330,74 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 sales-per-labor-hour target.
     adjustments — [{date, daypart|None, role, delta, reason, firm}]: asks
                 folded into the number with their reason (a nightly report's
-                or the reviews' +1 — PR-7); `firm` False keeps it out of
-                `firm`, so the score never marks a shift short of a soft ask.
+                or the reviews' +1); `firm` False keeps it out of `firm`, so
+                the score never marks a shift short of a soft ask.
     late_headcount — {weekday: {role: people}} on the floor from 10pm
                 (labor.historical_patterns' `late_headcount`): on a date that
-                closes past 11pm a `late` row follows the night's (D-32),
-                scaled by the same demand.
+                closes past 11pm a `late` row follows the night's, scaled by
+                the same demand.
     standard_needs — {(date, daypart): {role lower: {"people", "reason"}}}:
                 the owner's own labor standard for a role (labor_standards),
-                which replaces the usual crew for it on that shift (D-25).
+                which replaces the usual crew for it on that shift.
     role_windows / role_caps — the owner's RESTAURANT HOURS & SHIFT RULES
                 read by the code (schedule_rules.apply_hours_rules,
-                Constraints.limit_maps — schedule re-audit 10/4/26 PROMPT-1):
-                {role or family lower: {weekday: {"earliest", "latest"}}}
-                and {role or family lower: {weekday: {daypart | "any":
-                most}}}. A role is asked for nothing outside its hours (only
-                a floor stands there) and never more than its ceiling. The
-                usual crew from punches used to ask for an evening-only
-                bartender at Wednesday lunch.
+                Constraints.limit_maps): {role or family lower: {weekday:
+                {"earliest", "latest"}}} and {role or family lower: {weekday:
+                {daypart | "any": most}}}. A role is asked for nothing
+                outside its hours (only a floor stands there) and never more
+                than its ceiling. The usual crew from punches used to ask for
+                an evening-only bartender at Wednesday lunch.
     staffing_model — staffing_model.measure(): where a role's family has a
                 labor standard (the owner's, or measured at the rush and
                 shrunk toward a prior), its number is the forecast work of
                 the meal at each half hour ÷ that standard, plus the meal's
-                fixed crew — people on at once, mapped to different people
-                by the restaurant's own stagger — never the usual crew x a
-                ratio (scheduler audit 10/10/26 RM-17, LEARNING-4, LOGIC-10,
-                LOGIC-12). Without a standard the usual crew stands, moved by
-                the meal's and the role's own demand (LOGIC-9, LEARNING-20).
-                Its `lags` shift each role along the curve (LOGIC-11).
+                fixed crew — people on at once, mapped to different people by
+                the restaurant's own stagger — never the usual crew x a
+                ratio. Without a standard the usual crew stands, moved by the
+                meal's and the role's own demand. Its `lags` shift each role
+                along the curve.
     concurrent — the staffing baseline's people on at once ({(weekday,
                 daypart): {role: {"peak"}}}, contract #2): each role's
                 half-hour peak is its usual most on at once, demand-scaled —
-                no longer 0.75 x its different people (LOGIC-11).
+                no longer 0.75 x its different people.
     half_curve — {weekday: {minute: share}}, the curve measured at the half
                 hour from the ticket archive (schedule_economics.
                 measured_half_hours), used over the hourly one.
     elasticity — {(role family, daypart): {"move": +1 | -1, "reason",
                 "target", "weekdays"}} (staffing_elasticity.moves): one person
                 more or fewer where what one more person is worth here was
-                measured with an interval clear of zero (RM-20, LEARNING-6,
-                MARKET-23) — never past `target` (the level it was measured
-                above plus the move) and only on `weekdays` when given
-                (blind re-audit 10/11/26 LEARNING-6, -7); entered in the
-                ledger like every lever, and held by the arbiter where the
-                manager's own learned level already moved the role.
+                measured with an interval clear of zero — never past `target`
+                (the level it was measured above plus the move) and only on
+                `weekdays` when given (-7); entered in the ledger like every
+                lever, and held by the arbiter where the manager's own learned
+                level already moved the role.
     learned — {(weekday, daypart): {role: {"delta", "settled", "base",
                 "applied"}}} (labor.apply_learned_to_patterns): what the
                 manager's learned headcount added to the usual crew. It is
                 taken back out of the baseline and applied as a LEVEL after
                 the driver, the standard and the demand — headcount_to_apply
                 on the figure the table reached — so a labor standard's
-                stagger never amplifies it (re-audit 10/11/26 LEARNING-18:
-                settled 5 read as required 8).
+                stagger never amplifies it (settled 5 read as required 8).
     Each row also carries `half_need` — {minute: {role: people on}}, every
     half hour's full need after the caps — the one the score judges
     (half_hours_map).
 
-    THE LEDGER (re-audit 10/11/26 LEARNING-27): every lever that moves a
-    role's number — the usual crew, the date's demand, the labor standard
-    (driver or the owner's), the manager's learned level, the measured
-    elasticity, the owner's floors and minimums, the asks (events, reviews,
-    reports), the owner's hours and ceilings — proposes its move here, in
-    this one function, and each role entry carries `ledger`: [{lever, delta,
-    to, evidence, provenance, applied, held_by}] in the order applied. One
-    arbiter rule holds across them: an automatic lever (elasticity) never
-    moves a slot the manager's own learned level already moved the same way
-    (the two used to stack), and explain_role() says why a shift asks for
-    what it asks.
+    THE LEDGER: every lever that moves a role's number — the usual crew, the
+    date's demand, the labor standard (driver or the owner's), the manager's
+    learned level, the measured elasticity, the owner's floors and minimums,
+    the asks (events, reviews, reports), the owner's hours and ceilings —
+    proposes its move here, in this one function, and each role entry
+    carries `ledger`: [{lever, delta, to, evidence, provenance, applied,
+    held_by}] in the order applied. One arbiter rule holds across them: an
+    automatic lever (elasticity) never moves a slot the manager's own
+    learned level already moved the same way (the two used to stack), and
+    explain_role() says why a shift asks for what it asks.
     """
     import staffing_curve as _curve
     from shift_quality import shift_role_requirements
     skip = set(skip_dates or ())
     # Where each role works, by the same requirements the scorer reads: a
-    # leader rule naming no daypart is asked only there (SQ-2).
+    # leader rule naming no daypart is asked only there.
     runs = _sq.role_runs(typical_headcount, role_floors, role_minimums, profiles or None)
     out = []
     for d in dates or []:
@@ -425,7 +418,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # each per role.
             profile_here = shift_profile(day, part, d, profiles, demand_by_day, demand_by_date)
             # The usual crew less what the manager's learned headcount added
-            # to it (LEARNING-18): that comes back as a level at the end.
+            # to it: that comes back as a level at the end.
             learned_here = {str(k).strip().lower(): v for k, v in ((learned or {}).get((day, part)) or {}).items()
                             if isinstance(v, dict)}
 
@@ -440,8 +433,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     {"lever": lever, "delta": int(after) - int(before), "to": int(after), "evidence": evidence,
                      "provenance": provenance, "applied": applied, "held_by": held_by})
             hold = ((splh_hold or {}).get(day) or {}).get(part)
-            # The meal's own demand and each role's (LOGIC-9, LEARNING-20):
-            # a dinner game never lifts lunch, a bar night never the dish pit.
+            # The meal's own demand and each role's: a dinner game never lifts
+            # lunch, a bar night never the dish pit.
             busy_here = _sq.DEMAND_RANK.get(profile_here.demand, 1) >= _sq.DEMAND_RANK[_sq.HARD_DEMAND]
             p_ratio, role_ratios, measured, why_part = part_demand(dd, part, busy_here)
             factor = demand_factor(p_ratio, hold, measured)
@@ -458,9 +451,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     _log(r, "demand", int(n or 0), typical_here[r],
                          "; ".join(why_date + [w for w in why_part if w not in why_date]) or
                          f"this date's demand x{_role_factor(r):.2f}", "forecast")
-            # Driver-based (RM-17): a family with a labor standard is asked
-            # for the work it will carry, not its habit. The hold is not
-            # applied — the budget is priced in dollars elsewhere (LOGIC-10).
+            # Driver-based: a family with a labor standard is asked for the
+            # work it will carry, not its habit. The hold is not applied —
+            # the budget is priced in dollars elsewhere.
             driven = {}
             if staffing_model and typical_raw:
                 import staffing_model as _sm
@@ -487,8 +480,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     _log(r, "standard", typical_here[r], int(std["people"]), str(std.get("reason") or ""), "owner")
                     typical_here[r] = int(std["people"])
             # The manager's learned headcount, as a LEVEL on the figure the
-            # table reached (LEARNING-18): only while that figure is short of
-            # (an add) or over (a cut) the level they settled on.
+            # table reached: only while that figure is short of (an add) or
+            # over (a cut) the level they settled on.
             _h2a = headcount_to_apply
             learned_moved = {}
             for key_l, e_l in learned_here.items():
@@ -513,10 +506,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 if not typical_here[r_l]:
                     typical_here.pop(r_l, None)
             # What one more (or one fewer) of a role on this meal measured
-            # here, where its interval cleared zero (staffing_elasticity,
-            # RM-20): one person, on the role of the family the restaurant
-            # runs most of; never the last of a role, and the owner's floors
-            # still hold over it.
+            # here, where its interval cleared zero (staffing_elasticity):
+            # one person, on the role of the family the restaurant runs most
+            # of; never the last of a role, and the owner's floors still
+            # hold over it.
             moved_by = {}
             if elasticity:
                 from intelligence.staffing import family_of as _fo_e
@@ -524,8 +517,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     if part_e != part or not int((mv or {}).get("move") or 0):
                         continue
                     # Only the weekdays at the demand it was measured at
-                    # (blind re-audit 10/11/26 LEARNING-7: a move measured
-                    # on the busy dinners added a person to all seven).
+                    # (a move measured on the busy dinners added a person
+                    # to all seven).
                     if mv.get("weekdays") is not None and day not in set(mv.get("weekdays") or ()):
                         continue
                     cands = [r for r in typical_here if _fo_e(r) == fam_e and int(typical_here[r] or 0) > 0]
@@ -535,16 +528,16 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     step = int(mv["move"])
                     if step < 0 and int(typical_here[r_e]) <= 1:
                         continue
-                    # The arbiter (LEARNING-27): an automatic lever never
-                    # stacks on the manager's own level moving the same way.
+                    # The arbiter: an automatic lever never stacks on the
+                    # manager's own level moving the same way.
                     if learned_moved.get(r_e.strip().lower()) == (1 if step > 0 else -1):
                         _log(r_e, "elasticity", typical_here[r_e], typical_here[r_e], str(mv.get("reason") or ""),
                              "measured", applied=False, held_by="the manager's own learned level already moved it")
                         continue
-                    # A target LEVEL (LEARNING-6, like schedule_learning.
-                    # headcount_to_apply): the level one more was measured
-                    # above plus the move — a baseline that already absorbed
-                    # it is not moved again.
+                    # A target LEVEL (like
+                    # schedule_learning.headcount_to_apply): the level one
+                    # more was measured above plus the move — a baseline
+                    # that already absorbed it is not moved again.
                     if mv.get("target") is not None:
                         gap = int(mv["target"]) - int(typical_here[r_e])
                         step = max(0, min(step, gap)) if step > 0 else min(0, max(step, gap))
@@ -593,7 +586,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                                 "the shift profile": "critical"}.get(str(_src), "minimum"), had, int(n),
                          str(_src), "owner")
                 need[key] = [role.strip(), int(n), floor, typ, 0, why]
-            # Asks folded in (PR-7): +1 of a role, with its reason.
+            # Asks folded in: +1 of a role, with its reason.
             for key, word, a in _adjust_for(adjustments, d, part, need, raw_by_part):
                 try:
                     delta = int(a["delta"]) if a.get("delta") is not None else 1
@@ -607,8 +600,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 v[1] += delta
                 if not a.get("firm", False):
                     v[4] += delta
-                # A position that is one of the usual crew (schedule_dedicated,
-                # LOGIC-16): no +1 on top, but never fewer than it.
+                # A position that is one of the usual crew
+                # (schedule_dedicated): no +1 on top, but never fewer than it.
                 try:
                     at_least = int(a.get("at_least") or 0)
                 except (TypeError, ValueError):
@@ -617,7 +610,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                     v[1] = at_least
                 if a.get("reason"):
                     v[5].append(f"{delta:+d} {a['reason']}" if delta else str(a["reason"]))
-            # Held to the owner's hours and ceilings by role (PROMPT-1).
+            # Held to the owner's hours and ceilings by role.
             _before_lim = {k: v[1] for k, v in need.items()}
             _apply_limits(need, day, part, role_windows, role_caps)
             for k, v in need.items():
@@ -637,9 +630,9 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
             # daypart — six staggered servers who are never more than five on
             # at once fit five sections, and holding the six to five left the
             # sixth never asked for and told the owner the cap was "probably
-            # wrong" when it was not (schedule audit 10/10/26 LOGIC-7). The
-            # cap holds over the half-hour needs below, which ARE people on
-            # at once, and the sweep's over_section_cap holds the draft.
+            # wrong" when it was not. The cap holds over the half-hour needs
+            # below, which ARE people on at once, and the sweep's
+            # over_section_cap holds the draft.
             held = {}
             if roles is not None:
                 need = {k: v for k, v in need.items() if k in roles}
@@ -658,8 +651,8 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 # The roles on the usual crew: each one's half-hour peak is
                 # its usual most ON AT ONCE (the baseline's concurrent peak),
                 # moved by its demand — not 0.75 x its different people — and
-                # its curve shifted by its family's measured lead or lag
-                # (LOGIC-11). A role with a labor standard brings its own.
+                # its curve shifted by its family's measured lead or lag. A
+                # role with a labor standard brings its own.
                 hist_roles = {r: n for r, n in typical_here.items() if r not in driven}
                 conc = (concurrent or {}).get((day, part)) or {}
                 peaks, offs = {}, {}
@@ -731,7 +724,7 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                 leader.append(bit)
             if profile.requires_leader and leadership_known and not leader:
                 # A manager on the floor runs the shift, as the scorer counts
-                # it (SQ-13).
+                # it.
                 leader.append(f"a manager, somebody scoring {profile.leader_min_score:g}+ or "
                               "somebody authorized to close")
             roles_out = []
@@ -756,10 +749,10 @@ def shift_requirements(dates: list, typical_headcount: dict = None, role_floors:
                                + " by the labor standard at the busiest half hour")
             row = {"date": d, "day": day, "daypart": part, "roles": roles_out,
                    "target_hours": (daily_targets or {}).get(d), "demand": demand,
-                   # Whether that level rests on anything (re-audit 10/11/26
-                   # AI-11): the restaurant's own sales, the owner's word for
-                   # the date, a profile the owner configured, or the date's
-                   # measured demand — never the built-in guess alone.
+                   # Whether that level rests on anything: the restaurant's
+                   # own sales, the owner's word for the date, a profile the
+                   # owner configured, or the date's measured demand — never
+                   # the built-in guess alone.
                    "demand_measured": _demand_measured(profile, measured),
                    "leader": leader, "factor": factor, "reasons": reasons}
             if abs(float(p_ratio or 1.0) - float(ratio or 1.0)) >= 0.005:
@@ -789,9 +782,9 @@ LEVER_WORDS = {"usual": "usual", "demand": "demand", "driver": "the work at the 
 
 def explain_role(entry: dict) -> str:
     """The owner's sentence for why one role on one shift asks for what it
-    asks (LEARNING-27), from its ledger: "8: usual 6; demand +1 (game
-    night); the manager's own level +1 (added 1 by hand, settling on 8)".
-    The requirement's own number with no ledger."""
+    asks, from its ledger: "8: usual 6; demand +1 (game night); the
+    manager's own level +1 (added 1 by hand, settling on 8)". The
+    requirement's own number with no ledger."""
     entry = entry or {}
     parts = []
     for e in entry.get("ledger") or []:
@@ -842,8 +835,8 @@ def _row_reasons(factor, ratio, hold, why_date, held, bounded_by=None) -> list:
 
 def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, section_cap, cap_roles,
               target_hours, role_windows=None, role_caps=None):
-    """The late segment's row (D-32): from LATE_WINDOW_START to close, on a
-    date whose close is past LATE_CLOSE_AFTER — its own usual crew from the
+    """The late segment's row: from LATE_WINDOW_START to close, on a date
+    whose close is past LATE_CLOSE_AFTER — its own usual crew from the
     history, scaled by the date's demand like the others. None otherwise."""
     if not late_typical:
         return None
@@ -858,7 +851,7 @@ def _late_row(d, day, late_typical, close_times, ratio, hold, why_date, roles, s
         if v > 0 and (roles is None or r.strip().lower() in roles):
             need[r.strip()] = [v, int(n or 0)]
     if role_windows or role_caps:
-        # [display, required, floor] for the shared limits (PROMPT-1).
+        # [display, required, floor] for the shared limits.
         view = {r: [r, v[0], 0] for r, v in need.items()}
         # The late crew is people on across the window (labor's late_headcount
         # is the median on at each half hour): the ceiling's own unit.
@@ -889,8 +882,8 @@ def _close_minutes(day: str, close_times: dict = None):
 
 def requirements_map(rows: list, firm: bool = True) -> dict:
     """{(date, daypart): {role: people}} — the numbers the coverage score
-    judges a draft against (P-19), the same ones the model is given. `firm`
-    leaves a soft ask out: it is asked for, never marked short."""
+    judges a draft against, the same ones the model is given. `firm` leaves
+    a soft ask out: it is asked for, never marked short."""
     out = {}
     for r in rows or []:
         slot = out.setdefault((r["date"], r["daypart"]), {})
@@ -909,10 +902,10 @@ def requirements_map(rows: list, firm: bool = True) -> dict:
 def half_hours_map(rows: list) -> dict:
     """{(date, daypart): {minute: {role: people on}}} — each shift's full
     half-hour need (the rows' `half_need`): what the coverage score judges
-    every half hour against, the same numbers the passes fill to (scheduler
-    audit 10/10/26 LOGIC-11 — the scorer used to rebuild them as 0.75 x
-    the requirement's different people). Keys read back from JSON as
-    strings are turned back into minutes."""
+    every half hour against, the same numbers the passes fill to (the
+    scorer used to rebuild them as 0.75 x the requirement's different
+    people). Keys read back from JSON as strings are turned back into
+    minutes."""
     out = {}
     for r in rows or []:
         hn = r.get("half_need") if isinstance(r, dict) else None
@@ -944,7 +937,7 @@ def _service_window(day: str, part: str, open_times: dict = None, close_times: d
     whole half of the day when they are not."""
     split = _stime.daypart_split()
     # A close at or before the open, or in the small hours, is after
-    # midnight (schedule_time.close_on_timeline, BUGSGEN-22).
+    # midnight (schedule_time.close_on_timeline).
     open_m, close_m = _stime.day_hours((open_times or {}).get(day), (close_times or {}).get(day))
     if part == "morning":
         return (open_m if open_m is not None and open_m < split else 0), split
@@ -973,12 +966,11 @@ def requirements_block(rows: list, unread_rules: bool = False) -> str:
     """The SHIFT REQUIREMENTS table: one line per shift. How coverage is
     counted, the half-hour ramp and the late-night line are standing
     instructions (schedule_prompt, the same on every call); the table is
-    this request's numbers and why they moved, each said once (schedule
-    audit 10/3/26 PR-7, PR-8, PR-24). It carries the owner's floors, hours
-    and ceilings the code read; `unread_rules` — a line of the owner's
-    RESTAURANT HOURS & SHIFT RULES it could not read — says that line wins
-    over the table, never that the table already holds it (schedule
-    re-audit 10/4/26 PROMPT-1)."""
+    this request's numbers and why they moved, each said once. It carries
+    the owner's floors, hours and ceilings the code read; `unread_rules` —
+    a line of the owner's RESTAURANT HOURS & SHIFT RULES it could not read
+    — says that line wins over the table, never that the table already
+    holds it."""
     if not rows:
         return ""
     lines = []
@@ -994,9 +986,9 @@ def requirements_block(rows: list, unread_rules: bool = False) -> str:
         if r.get("target_hours") and r["daypart"] != LATE_PART:
             bits.append(f"day target {float(r['target_hours']):g}h")
         if r.get("demand"):
-            # A level nothing measured is not said as one (AI-11): it sat
-            # beside "NO DEMAND HISTORY — do not describe any day as busy,
-            # slow, peak" as "peak demand", from the built-in profile's guess.
+            # A level nothing measured is not said as one: it sat beside "NO
+            # DEMAND HISTORY — do not describe any day as busy, slow, peak" as
+            # "peak demand", from the built-in profile's guess.
             bits.append(f"{r['demand']} demand" if r.get("demand_measured", True) else "demand not measured")
         if r.get("leader"):
             bits.append("leader: " + "; ".join(r["leader"]))
@@ -1005,7 +997,7 @@ def requirements_block(rows: list, unread_rules: bool = False) -> str:
             bits.append("by the half hour: " + ramp_text(r["half_hours"]))
         # Why a number moved off the usual crew (the date's measured demand,
         # the sales-per-labor-hour hold, the section cap) — said once, here,
-        # in the row it moved (schedule audit 10/3/26 PR-7, PR-8).
+        # in the row it moved.
         if r.get("reasons"):
             bits.append("why: " + "; ".join(_model_words(x) for x in r["reasons"]))
         lines.append(" | ".join(bits))
@@ -1073,8 +1065,8 @@ def presence_rule() -> str:
     lo_n, hi_n = _sq.CORE_WINDOWS["night"]
     need = _sq.PRESENCE_MIN_OVERLAP
     split = _clock(_stime.daypart_split())
-    # schedule_time.present_dayparts in words (BUGSGEN-25): presence decides,
-    # the start only when a shift covers neither core window.
+    # schedule_time.present_dayparts in words: presence decides, the start
+    # only when a shift covers neither core window.
     return (f"A shift counts toward each daypart whose core window it covers for at least {need} minutes "
             f"(lunch {_clock(lo_m)}-{_clock(hi_m)}, dinner {_clock(lo_n)}-{_clock(hi_n)}); one that covers "
             f"neither counts toward the daypart it starts in (morning before {split}, night from {split}). So an "
@@ -1100,11 +1092,10 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
     of a redo) already gave them: hours, days, their last shift, and the
     closes, weekend shifts and busy shifts that fairness is scored on across
     the whole week — and, with `limits` ({name: {min, ot, salaried, cap,
-    carried {payroll week: hours already published}}}), what they still
-    need to reach their minimum and the room left before overtime in each
-    payroll week the week touches (`payroll_weeks` {date: payroll week};
-    schedule audit 10/3/26 PR-4, PR-16, E-9, D-19: the seam said "Xh so
-    far" and nothing about what that left).
+    carried {payroll week: hours already published}}}), what they still need
+    to reach their minimum and the room left before overtime in each payroll
+    week the week touches (`payroll_weeks` {date: payroll week}: the seam
+    said "Xh so far" and nothing about what that left).
 
     A close is a shift ending within 30 minutes of the latest end that day
     (the rotation ledger's tolerance). busy is {(date, daypart)}; without it
@@ -1187,7 +1178,7 @@ def seam_lines(prior_rows: list, busy: set = None, limits: dict = None, payroll_
 
 def _dates_named(dates: list) -> str:
     """'Sat 2026-10-10 and Sun 2026-10-11' — the dates as the rest of the
-    prompt writes them, weekday and ISO (schedule audit 10/3/26 PR-20)."""
+    prompt writes them, weekday and ISO."""
     named = [f"{_day_name(d, d)[:3]} {d}" for d in sorted(set(dates or []))]
     if len(named) <= 1:
         return "".join(named)
@@ -1197,10 +1188,10 @@ def _dates_named(dates: list) -> str:
 def focus_block(focus: list, dates: list = None) -> str:
     """What the previous draft of these days was scored weak on, named, so
     a regeneration of chosen dates fixes those things rather than
-    reshuffling at random — with the dates it is about (schedule audit
-    10/3/26 PR-18: the header said "THESE DAYS" and never named them). The
-    owner's own reason for a redo is their `instruction` (labor), said once
-    at priority 5, never here as well."""
+    reshuffling at random — with the dates it is about (the header said
+    "THESE DAYS" and never named them). The owner's own reason for a redo
+    is their `instruction` (labor), said once at priority 5, never here as
+    well."""
     items = []
     for f in focus or []:
         text = " ".join(str(f or "").split())[:FOCUS_MAX_CHARS]
@@ -1276,9 +1267,9 @@ def _role_minimums_dict(raw) -> dict:
 
 def headcount_to_apply(base, delta, settled) -> int:
     """How many of a learned headcount `delta` a requirement whose own
-    baseline is `base` still needs (LEARNING-3, RM-5): an add only while the
-    baseline is below the level the manager settled on — never past it — and
-    a cut only while it is above. With no settled level read, the delta."""
+    baseline is `base` still needs: an add only while the baseline is below
+    the level the manager settled on — never past it — and a cut only while
+    it is above. With no settled level read, the delta."""
     try:
         base, delta = int(base or 0), int(round(float(delta or 0)))
     except (TypeError, ValueError):

@@ -1,7 +1,6 @@
 """
 schedule_overrides.py — which publish warnings the owner sends past, kept
-by key, and what the warning list learns from it (schedule audit 10/10/26
-TRUST-28).
+by key, and what the warning list learns from it.
 
 client_api._publish_schedule used to compute the acknowledged blocker keys
 and keep only the account event's "— acknowledged blockers": nothing could
@@ -33,9 +32,9 @@ week", or stop asking about a warning the owner always overrides.
 A warning's KIND is its key's stable head: "rule:<kind>", "input:<source>",
 "stage:<stage>", "roster:<kind>", "soft:<kind>", "saved:<line class>" (a line
 the generation's own review wrote, by its normalised wording — saved_class:
-numbers, times and dates out — never one bucket for every line, schedule
-re-audit 10/11/26 TRUST-9, BUGSLIFE-12), "hours_over", "late_change",
-"notice_short", "quality_unchecked", "needs_review", "sweep_failed".
+numbers, times and dates out — never one bucket for every line),
+"hours_over", "late_change", "notice_short", "quality_unchecked",
+"needs_review", "sweep_failed".
 
 Only DEMOTABLE kinds may stop holding a send: the hourly budget's ceiling
 (the owner's own number, which they may choose to spend past) and the
@@ -46,23 +45,23 @@ however often they are overridden they keep holding the send — the record is
 shown beside them, never used to quiet them. Nothing is demoted for an
 unattended send (the automation's gate is unchanged).
 
-Demotion is by CONTENT and MAGNITUDE (TRUST-9): a saved line only quiets
-lines of its own class, and the hourly budget's overage only while it is
-within the largest overage the owner sent past (DEMOTE_MAGNITUDE_SLACK over
-it) — a $4,000 overage still holds the send after six $40 ones. "Shown" is
-recorded wherever a person is shown the warning — the pre-publish review
-renders it (prepublish.review), the 409 lists it, a send goes out past it —
-so a week the owner FIXED counts against the rate (BUGSLIFE-12).
+Demotion is by CONTENT and MAGNITUDE: a saved line only quiets lines of its
+own class, and the hourly budget's overage only while it is within the
+largest overage the owner sent past (DEMOTE_MAGNITUDE_SLACK over it) — a
+$4,000 overage still holds the send after six $40 ones. "Shown" is recorded
+wherever a person is shown the warning — the pre-publish review renders it
+(prepublish.review), the 409 lists it, a send goes out past it — so a week
+the owner FIXED counts against the rate.
 
 An override's reason is checked (reason_problem): at least
 MIN_REASON_CHARS characters and MIN_REASON_WORDS words — "x" is not a
-reason (TRUST-4).
+reason.
 
 The owner's "not this week" / "keep it" answers to the review's suggestions
 (a regular left off, a floor kept) are kept by key in
-`schedule_review_dismissals` (dismiss / dismissals, TRUST-17): a week's
-answer until the week ends, a standing one until the evidence behind the
-suggestion changes (its `evidence` signature) or DISMISS_MAX_DAYS pass.
+`schedule_review_dismissals` (dismiss / dismissals): a week's answer until
+the week ends, a standing one until the evidence behind the suggestion
+changes (its `evidence` signature) or DISMISS_MAX_DAYS pass.
 """
 import hashlib
 import logging
@@ -76,12 +75,12 @@ WINDOW_DAYS = 180
 # kind; each class is learned on its own).
 DEMOTABLE_KINDS = ("hours_over", "saved")
 # Demoted only while the warning's size is within the largest one the owner
-# sent past, plus this share of it (TRUST-9).
+# sent past, plus this share of it.
 DEMOTE_MAGNITUDE_SLACK = 0.10
-# An override's reason (TRUST-4): "x" is not one.
+# An override's reason: "x" is not one.
 MIN_REASON_CHARS = 8
 MIN_REASON_WORDS = 2
-# The longest a standing "keep it" answer quiets a suggestion (TRUST-17).
+# The longest a standing "keep it" answer quiets a suggestion.
 DISMISS_MAX_DAYS = 180
 DISMISS_SCOPES = ("week", "every")
 # A demotable kind stops holding a send once it was sent past in at least
@@ -131,8 +130,8 @@ def init_schedule_overrides(db_path=None):
             covered_by     TEXT,
             UNIQUE(restaurant_id, history_id, key)
         )""")
-        # Who runs the floor through a manager gap the send went out past
-        # (schedule audit 10/10/26 ARCH-30) — typed, kept with the version.
+        # Who runs the floor through a manager gap the send went out past —
+        # typed, kept with the version.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_publish_overrides)").fetchall()}
         if "covered_by" not in cols:
             conn.execute("ALTER TABLE schedule_publish_overrides ADD COLUMN covered_by TEXT")
@@ -142,12 +141,12 @@ def init_schedule_overrides(db_path=None):
         # which the (restaurant_id, kind, shown_at) index cannot serve.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_publish_overrides_shown "
                      "ON schedule_publish_overrides(shown_at)")
-        # How big the warning was when shown / sent past (TRUST-9): the
-        # hourly budget's overage in dollars ("$") or hours ("h").
+        # How big the warning was when shown / sent past: the hourly
+        # budget's overage in dollars ("$") or hours ("h").
         for col, typ in (("magnitude", "REAL"), ("magnitude_unit", "TEXT")):
             if col not in cols:
                 conn.execute(f"ALTER TABLE schedule_publish_overrides ADD COLUMN {col} {typ}")
-        # The owner's answers to the review's suggestions (TRUST-17).
+        # The owner's answers to the review's suggestions.
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_review_dismissals (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
@@ -169,10 +168,10 @@ def init_schedule_overrides(db_path=None):
         conn.close()
 
 
-# The publish gate's DECIDE heads (schedule audit 10/10/26 TRUST-3): the
-# hourly budget, the notice rule, a late change, a week Shift Quality could
-# not score, a line of the draft's own, a flag held for automation. Every
-# other blocker is MUST_FIX (schedule_publish.MUST_FIX).
+# The publish gate's DECIDE heads: the hourly budget, the notice rule, a
+# late change, a week Shift Quality could not score, a line of the draft's
+# own, a flag held for automation. Every other blocker is MUST_FIX
+# (schedule_publish.MUST_FIX).
 DECIDE_HEADS = ("hours_over", "notice_short", "late_change", "quality_unchecked", "saved", "soft")
 
 
@@ -189,9 +188,8 @@ def saved_class(text) -> str:
     """A saved line's class: its wording casefolded with the numbers, money,
     times and dates taken out and the punctuation folded — "3 shifts nobody
     could work were left out" and "5 shifts …" are one class; a line about
-    an uncovered day and one about the budget never are (TRUST-9). Short
-    and readable, with a hash of the whole so two long lines never
-    collide."""
+    an uncovered day and one about the budget never are. Short and readable,
+    with a hash of the whole so two long lines never collide."""
     t = _NUM.sub("#", str(text or "").casefold())
     t = re.sub(r"[^a-z#' ]+", " ", t)
     words = [w for w in t.split() if w]
@@ -219,8 +217,8 @@ def hard(kind) -> bool:
 
 
 def reason_problem(text):
-    """Why an override's reason is not one (TRUST-4: "x" sent a week past
-    the gate), else None: at least MIN_REASON_CHARS characters and
+    """Why an override's reason is not one ("x" sent a week past the
+    gate), else None: at least MIN_REASON_CHARS characters and
     MIN_REASON_WORDS words of letters."""
     t = " ".join(str(text or "").split())
     if not t:
@@ -285,7 +283,7 @@ def record_overridden(restaurant_id, history_id, version, blockers, acked_keys, 
     """Keep the keys a send went out past, with the published version, who
     sent it, their authority and any reason (`reasons` {key: text}). The
     blockers are recorded as shown too. A reason may be {reason, covered_by}
-    — a manager gap's override names who runs the floor (ARCH-30), kept in
+    — a manager gap's override names who runs the floor, kept in
     `covered_by`. Never raises into the publish."""
     acked = {str(k) for k in (acked_keys or [])}
     if not acked or not history_id:
@@ -301,8 +299,8 @@ def record_overridden(restaurant_id, history_id, version, blockers, acked_keys, 
                 o = reasons.get(k)
                 why = (o.get("reason") if isinstance(o, dict) else o) or ""
                 cover = (o.get("covered_by") if isinstance(o, dict) else None) or ""
-                # The size it went out at (TRUST-9): the band a later
-                # demotion is held to.
+                # The size it went out at: the band a later demotion
+                # is held to.
                 mag, unit = sized.get(k) or (None, None)
                 conn.execute("UPDATE schedule_publish_overrides SET overridden_at=COALESCE(overridden_at, "
                              "datetime('now')), version=COALESCE(?, version), actor=?, authority=?, "
@@ -327,8 +325,7 @@ def stats(restaurant_id, days=WINDOW_DAYS, db_path=None) -> dict:
     largest size sent past}}} over the last `days` — counted in WEEKS (a
     warning shown on one week is one, however many people or dates it
     named). Each row's kind is read from its KEY (kind_of), so a saved line
-    kept under the old single "saved" bucket is learned in its own class
-    (TRUST-9)."""
+    kept under the old single "saved" bucket is learned in its own class."""
     import learning_stats
     from time_utils import mdy
     since = (datetime.utcnow() - timedelta(days=int(days))).strftime("%Y-%m-%d %H:%M:%S")
@@ -393,18 +390,18 @@ def annotate(restaurant_id, review, unattended=False, db_path=None) -> dict:
     for b in review.get("blockers") or []:
         kind = kind_of(b.get("key"))
         s = st.get(kind)
-        # `demotable` (schedule re-audit 10/11/26 TRUST-24, formerly `hard`):
-        # whether the owner's record may quiet this kind — never its tier.
-        # The tier (`tier`: must_fix / decide) is the colour both clients
-        # draw; the old `hard` read as "red" on the phone and painted a
-        # notice, a late change or an unscored week as a must-fix.
+        # `demotable` (formerly `hard`): whether the owner's record may quiet
+        # this kind — never its tier. The tier (`tier`: must_fix / decide) is
+        # the colour both clients draw; the old `hard` read as "red" on the
+        # phone and painted a notice, a late change or an unscored week as a
+        # must-fix.
         b = dict(b, kind=kind, demotable=not hard(kind),
                  overridden_before=({"weeks": s["overridden"], "of": s["shown"], "last": s["last_overridden"]}
                                     if s and s["overridden"] else None))
         beyond = _beyond_accepted(b, s)
         if beyond:
             # Bigger than any the owner sent past: it holds the send
-            # however often the smaller ones went out (TRUST-9).
+            # however often the smaller ones went out.
             b["beyond_accepted"] = beyond
         if s and s.get("demoted") and not unattended and not beyond:
             text = (f"{b.get('text')} — you've sent past this in {s['overridden']} of {s['shown']} weeks, so it "
@@ -413,8 +410,8 @@ def annotate(restaurant_id, review, unattended=False, db_path=None) -> dict:
             soft.append(text)
             continue
         blockers.append(b)
-    # The must-fix tier first (TRUST-3), then the ones owners always send past
-    # last, then the gate's own severity rank — never the date.
+    # The must-fix tier first, then the ones owners always send past last,
+    # then the gate's own severity rank — never the date.
     blockers.sort(key=lambda b: ((b.get("tier") or tier_of_key(b.get("key"))) != "must_fix",
                                  ((st.get(b["kind"]) or {}).get("rate") or 0.0), b["demotable"], b.get("rank") or 0))
     always = sorted((dict(s) for s in st.values()
@@ -443,7 +440,7 @@ def _beyond_accepted(b, s):
     return None
 
 
-# ── the owner's answers to the review's suggestions (TRUST-17) ─────────────
+# ── the owner's answers to the review's suggestions ─────────────
 
 def dismiss(restaurant_id, key, scope="week", history_id=None, until=None, evidence=None, answer=None,
             actor=None, authority=None, db_path=None) -> bool:
@@ -544,10 +541,9 @@ def _capture(e, what, restaurant_id):
 def reasons_from(payload) -> dict:
     """{key: reason} from a request's `overrides: [{key, reason, covered_by?,
     legal_ack?}]` (the pre-publish screen's contract, prepublish). An
-    override naming who runs the floor through a manager gap (ARCH-30) is
-    {key: {reason, covered_by}}; one that acknowledges a law it goes out
-    past (TRUST-4, TRUST-8 — the notice a jurisdiction requires) carries
-    `legal_ack: True`."""
+    override naming who runs the floor through a manager gap is {key:
+    {reason, covered_by}}; one that acknowledges a law it goes out past (the
+    notice a jurisdiction requires) carries `legal_ack: True`."""
     out = {}
     for o in (payload or []) if isinstance(payload, (list, tuple)) else []:
         if isinstance(o, dict) and o.get("key"):

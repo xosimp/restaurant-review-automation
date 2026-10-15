@@ -21,8 +21,8 @@ from schedule_context import degraded as _degraded  # noqa: E402  (the one degra
 
 
 def _unstaffable_line(items) -> str:
-    """The review's warning for days nobody can work (E-20) — a "⚠" line, so
-    the publish gate holds the week until the owner has seen it."""
+    """The review's warning for days nobody can work — a "⚠" line, so the
+    publish gate holds the week until the owner has seen it."""
     from time_utils import mdy
     days = [f"{it['day']} {mdy(it['date'])}" for it in items]
     which = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
@@ -72,8 +72,8 @@ def _gap_groups(items) -> list:
 def _unwritten_line(items) -> str:
     """The review's warning for days the generation could not write — a "⚠"
     line, so the publish gate holds the week until they are redone. The
-    rest of the week is kept (P-34): the days already paid for are not
-    thrown away for the ones that failed."""
+    rest of the week is kept: the days already paid for are not thrown away
+    for the ones that failed."""
     groups = _gap_groups(items)
     one = len(items) == 1
     tail = f" The rest of the week is here; redo {'that day' if one else 'those days'} before you publish."
@@ -104,8 +104,8 @@ def _safe_hours_sum(rows: list) -> float:
 
 def _unfixed_from(viols, rows, editable, why) -> list:
     """What the week still breaks on a row after the loop, from the FINAL
-    sweep (P-15: it came from the first fix pass and was reported after
-    later passes had changed the rows), each with why it was left."""
+    sweep (it came from the first fix pass and was reported after later
+    passes had changed the rows), each with why it was left."""
     import shift_quality as _sq
     out = []
     for v in viols or []:
@@ -126,7 +126,7 @@ def _unfixed_from(viols, rows, editable, why) -> list:
     return out
 
 
-# ── A Studio save keeps the generation's review (schedule audit 10/3/26 P-26) ──
+# ── A Studio save keeps the generation's review ──
 #
 # The Studio's save overwrote the week's review with a bare summarize() of
 # the edited rows, so what the generation did and found — the fix lines, the
@@ -145,15 +145,14 @@ def _fix_sig(r) -> tuple:
 def _span_of(frm, to):
     """(start, end) of a stored stretch's clock words on the business
     timeline (schedule_time.place): a stretch starting in the small hours is
-    that night's, as manager_gaps reads it (BUGSGEN-10). For a review saved
-    before its entries carried their minutes."""
+    that night's, as manager_gaps reads it. For a review saved before its
+    entries carried their minutes."""
     return _stime.place(_rules.parse_minutes(frm or ""), _rules.parse_minutes(to or ""))
 
 
 def _left_span(entry):
     """(start, end) minutes of a manager stretch the backstop left: its own
-    gap_start/gap_end when it carries them (BUGSGEN-10), else read from its
-    words."""
+    gap_start/gap_end when it carries them, else read from its words."""
     try:
         if entry.get("gap_start") is not None and entry.get("gap_end") is not None:
             return int(entry["gap_start"]), int(entry["gap_end"])
@@ -207,9 +206,9 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
         if not still:
             mc["shortfall"] = None
         out["manager_coverage"] = mc
-    # The closing stays the owner's verdict assumes, as the rows now stand
-    # (TRUST-21): an edit that wrote a manager to the last person out, or
-    # moved the last person, changes them.
+    # The closing stays the owner's verdict assumes, as the rows now
+    # stand: an edit that wrote a manager to the last person out, or moved
+    # the last person, changes them.
     old_stay_lines = list(saved.get("stay_lines") or [])
     if constraints is not None:
         try:
@@ -284,11 +283,11 @@ def refresh_review(saved, violations, rows, constraints=None, hours_budget=None,
 
 
 def binding_budget(cost, dollar_budget, hours, hours_budget, overtime_premium=0.0) -> dict:
-    """Which budget binds when the dollar budget is over (blind re-audit
-    10/11/26 BUGSGEN-22). The dollar budget prices each person at their own
-    rate; the hours budget is the same dollars at the blended rate. So a week
-    can be dollars over with its hours exactly at budget, and "$298 over
-    (988h scheduled against 988h)" read as a contradiction. Pure.
+    """Which budget binds when the dollar budget is over. The dollar budget
+    prices each person at their own rate; the hours budget is the same
+    dollars at the blended rate. So a week can be dollars over with its hours
+    exactly at budget, and "$298 over (988h scheduled against 988h)" read as
+    a contradiction. Pure.
 
     {"binds": "both" | "dollars" | None, "over_dollars", "paid_rate",
     "assumed_rate", "overtime_premium", "note"} — `note` the words that go in
@@ -330,8 +329,8 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
     """One sentence for the review when the trim stopped above the budget:
     what holds the remaining hours — the shifts' own requirement, days and
     dayparts kept from cuts, the rules — and what the owner can change
-    (schedule audit 10/3/26 SQ-7: the requirement and the budget disagree,
-    said once). "" when there is no conflict."""
+    (the requirement and the budget disagree, said once). "" when there is
+    no conflict."""
     if not conflict:
         return ""
     over = conflict.get("over_by") if over_by is None else over_by
@@ -355,7 +354,7 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
                     + (f" at {x['at']}" if x.get("at") else ""))
         bits.append("what the shifts need (your usual staffing, floors and demand" + what + ")")
     if held.get("objective"):
-        # LOGIC-6: the cut would lose more, at the stated value of a person
+        # The cut would lose more, at the stated value of a person
         # short on that half hour, than the dollars it saves past the budget.
         from shift_quality import role_words
         x = _first("objective")
@@ -388,10 +387,9 @@ def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = 
     if not bits:
         return ""
     if conflict.get("over_by_dollars") is not None and conflict.get("budget_dollars"):
-        # The budget is held in dollars (LOGIC-13): said that way, the
-        # hours beside it.
-        # Which budget binds, never "(988h against 988h)" beside a dollar
-        # overrun (BUGSGEN-22).
+        # The budget is held in dollars: said that way, the hours beside
+        # it. Which budget binds, never "(988h against 988h)" beside a
+        # dollar overrun.
         _bd = float(conflict["budget_dollars"])
         _bb = binding_budget(_bd + float(conflict["over_by_dollars"]), _bd, conflict.get("scheduled"),
                              conflict.get("budget"), conflict.get("overtime_premium"))

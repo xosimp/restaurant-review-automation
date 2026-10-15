@@ -14,14 +14,14 @@ fixed-week evaluations).
     and the same solve run here on the same budget;
   * whether a solve was cut by the wall clock (_wall_capped).
 
-Split out of schedule_cpsat (ARCH-3) so the shapes (Stage 1) and the
-assignment (Stage 2) both sit above it: schedule_shapes imported the solver
-module that imports it back. schedule_cpsat re-exports every name. Layer S4
-of the schedule modules (ARCHITECTURE_MANIFEST.md §3a); it imports no
-schedule module. Kill switch: SCHEDULE_CPSAT_ISOLATE=0 (every solve
-in-process).
+Split out of schedule_cpsat so the shapes (Stage 1) and the assignment
+(Stage 2) both sit above it: schedule_shapes imported the solver module
+that imports it back. schedule_cpsat re-exports every name. Layer S4 of the
+schedule modules (ARCHITECTURE_MANIFEST.md §3a); it imports no schedule
+module. Kill switch: SCHEDULE_CPSAT_ISOLATE=0 (every solve in-process).
 """
 import os
+import threading
 import time as _time
 
 try:
@@ -37,8 +37,7 @@ def _env_float(name, default):
         return float(default)
 
 
-# ── what one solve may use: work, memory, the process (blind re-audit 10/11/26
-# STRESS-11, STRESS-12, SCALE-16, SCALE-18, SCALE-19) ─────────────────────────
+# ── what one solve may use: work, memory, the process ────────────────────────
 #
 # Work: a deterministic budget scaled to the model — DET_PER_KVAR
 # deterministic seconds per thousand variables, never below the caller's
@@ -153,7 +152,7 @@ sys.stdout.buffer.flush()
 _SPARE = []
 
 
-_SPARE_LOCK = __import__("threading").Lock()
+_SPARE_LOCK = threading.Lock()
 
 
 _SECRET_ENV = ("_KEY", "_TOKEN", "_SECRET", "PASSWORD", "DATABASE_URL", "_DSN")

@@ -1,8 +1,6 @@
 """
 owner_rules.py — the owner's words as typed rules that code enforces
-(scheduler audit 10/10/26: RM-9, AI-9, AI-19, AI-10; cross-workstream
-contract #5; blind re-audit 10/11/26: AI-7, AI-8, AI-9, AI-10, AI-22, AI-23,
-AI-24, AI-25, AI-29, ARCH-16, BUGSGEN-23 — contract #6).
+(cross-workstream contracts #5 and #6).
 
 The owner's draft instruction ("Maria closes Friday"), the notes on how they
 like the week built ("keep Monday light", "Jen and Tom never together") and
@@ -12,9 +10,9 @@ the optimizer, the budget trim, the repair stages — never read them, so a
 draft that honoured "Maria closes Friday" could be re-solved away ("I typed
 something and it didn't do what I said").
 
-ONE READER (ARCH-16). Every sentence of the owner's words — the notes, the
-draft's instruction, a staff note the hold reader cannot hold, an Ask Cavnar
-request — is read here (read_items), into typed rules (`KINDS`):
+ONE READER. Every sentence of the owner's words — the notes, the draft's
+instruction, a staff note the hold reader cannot hold, an Ask Cavnar request
+— is read here (read_items), into typed rules (`KINDS`):
 
   floor       at least `value` of `role` (on `days`/`dates`, at `daypart`)
   max         at most `value` of `role` on at once
@@ -25,9 +23,9 @@ request — is read here (read_items), into typed rules (`KINDS`):
   avoid       `person` and `person2` never on the same shift
   close, open `person` is the last (first) of their role out (in) that day
   weight      a day or daypart lighter or heavier: a DIRECTION the model
-              reads; code moves the day's hours target by WEIGHT_STEP (AI-9 —
-              the extractor is told never to guess a number), the other days
-              giving or taking it so the week's total stays (BUGSGEN-23)
+              reads; code moves the day's hours target by WEIGHT_STEP (the
+              extractor is told never to guess a number), the other days
+              giving or taking it so the week's total stays
 
 or none — a sentence that states no rule is said to the owner as "not
 enforced", and reaches the drafting model labelled so (prompt_lines). The
@@ -35,12 +33,12 @@ plain minimum stays schedule_note_rules.read_sentence's (deterministic);
 everything else is read by a small model (Claude Haiku 5.5 inside the T1
 canary, `ai_utils.model_for_run("schedule_rules", rid)`; structured output, through
 ai_utils.create_with_retry — workflow `schedule_rule_extract`) and EVERY rule
-it proposes is validated in code for its SHAPE and its MEANING (validate,
-AI-7, AI-29):
+it proposes is validated in code for its SHAPE and its MEANING
+(validate):
   * shape — a person only from the roster (by its own identity), a role only
     one the restaurant uses (a role family the owner named — "servers" where
-    the codes are Server AM / PM — is the family, never its first code,
-    AI-24), a date only in the week, a count a whole number in range;
+    the codes are Server AM / PM — is the family, never its first code), a
+    date only in the week, a count a whole number in range;
   * the quote — the owner's own words, inside the sentence; a rule naming a
     person or a role its quote does not name is refused ("Jen off Sat" never
     blocks Jenna by a misread);
@@ -52,24 +50,24 @@ AI-7, AI-29):
     must be in the sentence.
 
 Each reading is cached (owner_rule_extractions) under the sentence and only
-the roster names and roles the sentence MENTIONS (AI-23): a hire elsewhere
-never re-reads it, so a reading the owner already reviewed stays the same
-until a person or role it names changes. The notes and staff notes are read
-when they are SAVED (queue_read → the job queue's `owner_words_read`, one
+the roster names and roles the sentence MENTIONS: a hire elsewhere never
+re-reads it, so a reading the owner already reviewed stays the same until a
+person or role it names changes. The notes and staff notes are read when
+they are SAVED (queue_read → the job queue's `owner_words_read`, one
 batched call for every person's notes, each sentence carrying whose note it
-is — AI-22), never in the generation's critical path; the generation reads
-only what no save reached, in the same one batch.
+is), never in the generation's critical path; the generation reads only
+what no save reached, in the same one batch.
 
 CONFIRMING (contract #6). A reading is a HARD rule only once the owner
 confirmed it, seeing it said back ("I read: Maria closes Fri"): a sentence of
 their notes made a rule in the note-rules screen, or — the draft's
 instruction — the readings shown on the Generate sheet (or on Ask Cavnar's
-card, read from the owner's OWN words, one model hop — AI-25) that they
-ticked before generating (confirm_for_week: stored as one-week rules,
-removable). Everything else is a PROPOSAL — a scored preference at the
-quality rank, never a cap, a time, a fill exclusion or a blocked day (AI-8):
-apply() keeps it in Constraints.owner_proposals, swept as soft `owner_ask_*`
-breaches (proposal_violations) and named in the review and the prompt as not
+card, read from the owner's OWN words, one model hop) that they ticked before
+generating (confirm_for_week: stored as one-week rules, removable).
+Everything else is a PROPOSAL — a scored preference at the quality rank,
+never a cap, a time, a fill exclusion or a blocked day: apply() keeps it in
+Constraints.owner_proposals, swept as soft `owner_ask_*` breaches
+(proposal_violations) and named in the review and the prompt as not
 confirmed. A reading the owner says is wrong is dismissed (dismiss): it is
 then neither held nor proposed.
 
@@ -103,7 +101,7 @@ KINDS = ("floor", "max", "person_off", "person_on", "start", "end", "pair", "avo
 PERSON_KINDS = ("person_off", "person_on", "pair", "avoid", "close", "open")
 ROLE_KINDS = ("floor", "max", "start", "end")
 # Kinds that say somebody IS on, together, at least so many — never what a
-# sentence saying "not / never / don't" means (AI-7 polarity).
+# sentence saying "not / never / don't" means (polarity).
 POSITIVE_KINDS = ("floor", "person_on", "close", "open", "pair", "start", "end", "weight")
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DAYPARTS = ("morning", "night")
@@ -111,8 +109,8 @@ EXTRACT_ACTION = "schedule_rule_extract"
 # A count the owner may set (schedule_note_rules.MIN_MAX).
 COUNT_MAX = 10
 # A lighter or heavier day moves its hours target by this share — a fixed,
-# stated step, never a number the model guessed (AI-9). Said to the owner in
-# the rule's words ("Monday lighter (10% fewer hours)").
+# stated step, never a number the model guessed. Said to the owner in the
+# rule's words ("Monday lighter (10% fewer hours)").
 WEIGHT_STEP = 0.10
 # Sentences read in one call, at most.
 EXTRACT_BATCH = 30
@@ -123,7 +121,7 @@ EXTRACT_MAX_TOKENS = 4000
 # deterministic reader still hold): the test suite's default, an operator's
 # kill switch.
 READ_ENV = "OWNER_RULES_READ"
-# The job queue's kind for the read made when the notes are saved (AI-22).
+# The job queue's kind for the read made when the notes are saved.
 READ_JOB_KIND = "owner_words_read"
 
 _DDL = (
@@ -141,7 +139,7 @@ _DDL = (
     )""",
     "CREATE INDEX IF NOT EXISTS idx_owner_rule_extractions_rid ON owner_rule_extractions(restaurant_id, source)",
 )
-# A reading the owner set aside as not what they meant (AI-10's dismiss):
+# A reading the owner set aside as not what they meant (the dismiss):
 # neither held nor proposed while the row stands.
 _COLUMNS = (("dismissed_at", "TEXT"), ("dismissed_by", "TEXT"))
 
@@ -271,7 +269,7 @@ def _role_forms(role) -> set:
 
 def _mentions(sentence, names, roles, c=None) -> str:
     """The roster names and roles `sentence` names, as the cache's
-    signature (AI-23): a hire who is not named never changes it."""
+    signature: a hire who is not named never changes it."""
     low = _norm(sentence).lower().replace("’", "'")
     who = sorted({str(n).lower() for n in names or () if any(_word_in(low, f) for f in _name_forms(n, c))})
     what = sorted({str(r).lower() for r in roles or () if any(_word_in(low, f) for f in _role_forms(r))})
@@ -314,8 +312,8 @@ def _resolve_role(role, roles):
     """The restaurant's role `role` means: the code itself; else, for a role
     family ("Server" where the codes are Server AM and Server PM), its one
     code — or, with several, the FAMILY as the restaurant spells it, which
-    every pass reads by family (AI-24: it was the family's first code, so a
-    floor the owner meant for all servers held one job code only)."""
+    every pass reads by family (it was the family's first code, so a floor
+    the owner meant for all servers held one job code only)."""
     r = _norm(role)
     if not r:
         return None
@@ -368,9 +366,9 @@ def _plain(sentence) -> str:
 
 
 def meaning_refusal(rule, sentence, raw_person=None, raw_person2=None, c=None, about=None):
-    """Why `rule` is not what `sentence` says, or None (AI-7, AI-29): the
-    polarity check, the quote naming whom and what the rule names, and no
-    guessed count, day or hour."""
+    """Why `rule` is not what `sentence` says, or None: the polarity
+    check, the quote naming whom and what the rule names, and no guessed
+    count, day or hour."""
     kind = rule["kind"]
     low = _norm(sentence).lower().replace("’", "'")
     plain = _plain(sentence)
@@ -434,9 +432,9 @@ def validate(raw, sentence, names, roles, week_dates=None, c=None, about=None):
     restaurant does not use, a date outside the week, a count out of range,
     a time that does not read — or a reading that is not what the sentence
     says (meaning_refusal: polarity, whom the quote names, a guessed count,
-    day or hour — AI-7). The quote is the owner's own words — a quote the
-    sentence does not contain becomes the sentence. `about` is whose note
-    the sentence is (a staff note names nobody: "can't work Tue")."""
+    day or hour). The quote is the owner's own words — a quote the sentence
+    does not contain becomes the sentence. `about` is whose note the
+    sentence is (a staff note names nobody: "can't work Tue")."""
     if not isinstance(raw, dict):
         return None
     kind = str(raw.get("kind") or "").strip().lower()
@@ -484,7 +482,7 @@ def validate(raw, sentence, names, roles, week_dates=None, c=None, about=None):
             return None
         out["value"] = int(v)
     if kind == "weight":
-        # A direction, never a size (AI-9): the step is code's.
+        # A direction, never a size: the step is code's.
         try:
             v = float(raw.get("value"))
         except (TypeError, ValueError):
@@ -551,8 +549,8 @@ def rule_key(rule) -> str:
 
 
 def reads_as(rule) -> str:
-    """The round trip the owner sees before a reading is held (AI-29):
-    "I read: Maria Lopez closes, Fri"."""
+    """The round trip the owner sees before a reading is held: "I
+    read: Maria Lopez closes, Fri"."""
     return "I read: " + words(rule)
 
 
@@ -568,8 +566,8 @@ def _model_call(request):
 def build_request(restaurant_id, sentences, names, roles, week_dates=None, about=None) -> dict:
     """The extractor's request: the sentences fenced as the owner's words
     (each marked with whose note it is when it is a person's — `about`, one
-    per sentence: every person's notes go in ONE call, AI-22), the people and
-    roles to name, the week's dates."""
+    per sentence: every person's notes go in ONE call), the people and roles
+    to name, the week's dates."""
     import ai_guard
     import ai_utils
     about = list(about or [None] * len(sentences))
@@ -631,9 +629,9 @@ def _store(restaurant_id, key, source, sentence, rules, model, person=None, db_p
 
 
 def _item_key(sentence, source, person, names, roles, week_dates=None, c=None) -> str:
-    """The cache key of one item (AI-23): the sentence, the names and roles
-    it mentions, whose note it is, and — for a draft's instruction — its
-    week (dates are read against it)."""
+    """The cache key of one item: the sentence, the names and roles it
+    mentions, whose note it is, and — for a draft's instruction — its week
+    (dates are read against it)."""
     sig = _mentions(sentence, names, roles, c) + "|" + str(person or "").lower()
     if source == "instruction" and week_dates:
         sig += "|" + str(sorted(week_dates)[0])[:10]
@@ -642,7 +640,7 @@ def _item_key(sentence, source, person, names, roles, week_dates=None, c=None) -
 
 def _mentioned(sentences, names, roles, c=None, about=()):
     """(people, roles) the sentences name — what the model is shown, so the
-    reading depends on exactly what the cache key holds (AI-23)."""
+    reading depends on exactly what the cache key holds."""
     who, what = set(), set()
     for s in sentences:
         low = _norm(s).lower().replace("’", "'")
@@ -658,11 +656,11 @@ def read_items(restaurant_id, items, names, roles, week_dates=None, c=None, call
     the deterministic reader's floor where it holds one, else the cached
     reading, else — when `extract` — ONE model call per EXTRACT_BATCH items
     still unread, every person's notes together, each sentence marked with
-    whose note it is (AI-22), each rule validated (shape and meaning), each
-    reading cached (a sentence with no rule is cached as [] so it is never
-    asked again). A reading the owner dismissed is left out (with
-    `dismissed`, returned as None). `call` replaces the model (tests). Never
-    raises: a failed call leaves those sentences unread."""
+    whose note it is, each rule validated (shape and meaning), each reading
+    cached (a sentence with no rule is cached as [] so it is never asked
+    again). A reading the owner dismissed is left out (with `dismissed`,
+    returned as None). `call` replaces the model (tests). Never raises: a
+    failed call leaves those sentences unread."""
     import schedule_note_rules as _snr
     items = [(s, src, p) for s, src, p in items or [] if _norm(s)]
     keys = {(s, p): _item_key(s, src, p, names, roles, week_dates, c) for s, src, p in items}
@@ -811,8 +809,8 @@ def saved_items(restaurant_id, db_path=None) -> list:
 
 def read_saved(restaurant_id, call=None, db_path=None) -> int:
     """Read every saved sentence no model has read yet, all in one batched
-    call (AI-22) — the job a save queues, and the generation's fallback for
-    what no save reached. Returns how many items were looked at."""
+    call — the job a save queues, and the generation's fallback for what no
+    save reached. Returns how many items were looked at."""
     names, roles = _roster(restaurant_id, db_path=db_path)
     items = saved_items(restaurant_id, db_path=db_path)
     if items:
@@ -829,12 +827,12 @@ def unread_count(restaurant_id, db_path=None) -> int:
 
 
 def queue_read(restaurant_id, user=None, db_path=None) -> bool:
-    """Queue the read of the saved words (AI-22: notes are read when they
-    are saved, never in the generation's critical path): one job-queue row
-    per distinct set of unread sentences (its idempotency key), so two saves
-    of the same notes queue one read. The queue is the one path (job_queue,
-    ARCH-10). False when there is nothing to read or the model's reading is
-    switched off. Never raises."""
+    """Queue the read of the saved words (notes are read when they are
+    saved, never in the generation's critical path): one job-queue row per
+    distinct set of unread sentences (its idempotency key), so two saves of
+    the same notes queue one read. The queue is the one path (job_queue).
+    False when there is nothing to read or the model's reading is switched
+    off. Never raises."""
     try:
         if str(os.getenv(READ_ENV, "1")).strip() == "0":
             return False
@@ -895,8 +893,8 @@ def instruction_readings(restaurant_id, week_dates, instruction, extract=False, 
     "confirmed"}], "state": "rules"|"none"|"unread", "waiver"?}] — each
     sentence of a draft's instruction as Cavnar AI reads it (the model only
     with `extract`: the owner's own press), each rule said back for the owner
-    to confirm before the draft holds it (AI-7, contract #6). A sentence
-    waiving a standing position carries `waiver` {"words", "confirmed"}."""
+    to confirm before the draft holds it (contract #6). A sentence waiving a
+    standing position carries `waiver` {"words", "confirmed"}."""
     names, roles = _roster(restaurant_id, db_path=db_path)
     sents = _sentences(instruction or "")
     got = read(restaurant_id, sents, "instruction", names, roles, week_dates=week_dates, call=call, extract=extract,
@@ -919,7 +917,7 @@ def instruction_readings(restaurant_id, week_dates, instruction, extract=False, 
 
 def _instruction_waivers(restaurant_id, sents, week_dates, db_path=None) -> dict:
     """{sentence: {"words", "confirmed"}} for the instruction's sentences
-    that waive a standing position (schedule_dedicated, BUGSGEN-4)."""
+    that waive a standing position (schedule_dedicated)."""
     out = {}
     try:
         import schedule_dedicated as _ded
@@ -981,11 +979,11 @@ def prepare(restaurant_id, week_dates, instruction=None, call=None, db_path=None
     """Read every sentence the generation's rules will need: the draft's
     instruction (the owner's own press usually read it already — this is
     the same cached reading), and whatever of the notes and staff notes no
-    save-time read reached, in ONE batched call (AI-22). Run by the
-    generation job before the rules are built. {"instruction": [rule with
-    `confirmed` — a reading matching a rule the owner confirmed for the
-    week], "read": n}: an instruction reading the owner did not confirm is
-    a proposal (AI-7), never hard."""
+    save-time read reached, in ONE batched call. Run by the generation job
+    before the rules are built. {"instruction": [rule with `confirmed` — a
+    reading matching a rule the owner confirmed for the week], "read": n}:
+    an instruction reading the owner did not confirm is a proposal, never
+    hard."""
     names, roles = _roster(restaurant_id, db_path=db_path)
     n = 0
     inst = []
@@ -1005,9 +1003,9 @@ def prepare(restaurant_id, week_dates, instruction=None, call=None, db_path=None
 def note_proposals(restaurant_id, db_path=None) -> dict:
     """{sentence: [rule]} — the readings of the notes' sentences the owner
     has neither made a rule of nor dismissed (no model call): what the notes
-    screen offers to confirm, held meanwhile as preferences only (AI-8). A
-    plain minimum the deterministic reader holds is one of them too: until
-    the owner confirms it, it is a preference like any reading."""
+    screen offers to confirm, held meanwhile as preferences only. A plain
+    minimum the deterministic reader holds is one of them too: until the
+    owner confirms it, it is a preference like any reading."""
     names, roles = _roster(restaurant_id, db_path=db_path)
     got = read(restaurant_id, _open_notes(restaurant_id, db_path=db_path), "notes", names, roles, extract=False,
                db_path=db_path)
@@ -1033,10 +1031,10 @@ def notes_state(restaurant_id, extract=False, call=None, db_path=None) -> dict:
 
 
 def dismiss(restaurant_id, sentence, dismissed=True, user=None, db_path=None) -> bool:
-    """The owner's "not what I meant" on a reading of a notes sentence
-    (AI-10): it is neither held nor proposed — the sentence is guidance,
-    not enforced — until they restore it (`dismissed` False). True when the
-    sentence is one of the notes."""
+    """The owner's "not what I meant" on a reading of a notes sentence: it
+    is neither held nor proposed — the sentence is guidance, not enforced —
+    until they restore it (`dismissed` False). True when the sentence is
+    one of the notes."""
     names, roles = _roster(restaurant_id, db_path=db_path)
     s = next((x for x in _sentences(_notes_text(restaurant_id, db_path=db_path)) if _norm(x) == _norm(sentence)),
              None)
@@ -1079,8 +1077,8 @@ def staff_note_rules(restaurant_id, db_path=None) -> list:
 def staff_notes_read(restaurant_id, db_path=None) -> set:
     """The people (lower case) every one of whose open note parts is read —
     held by the hold reader, confirmed, or typed by the extractor: the solver
-    may choose them again (AI-10: on the shape contract anyone with a note
-    was never given a slot)."""
+    may choose them again (on the shape contract anyone with a note was never
+    given a slot)."""
     try:
         from models import get_staff_notes
         names, roles = _roster(restaurant_id, db_path=db_path)
@@ -1131,11 +1129,11 @@ def from_row(r) -> dict:
 
 
 def typed_rules(restaurant_id, week_dates, instruction=None, db_path=None, call=None) -> list:
-    """The contract (#5, #6): every typed rule in force for the week — the
-    ones the owner confirmed (hard), and as proposals (soft, a preference
-    only): the draft's instruction's readings the owner did not confirm, the
-    notes' and the staff notes' readings. Reads the cache; reads the
-    instruction with the model only when `call` is given."""
+    """The contract: every typed rule in force for the week — the ones the
+    owner confirmed (hard), and as proposals (soft, a preference only): the
+    draft's instruction's readings the owner did not confirm, the notes' and
+    the staff notes' readings. Reads the cache; reads the instruction with
+    the model only when `call` is given."""
     out = list(confirmed_rules(restaurant_id, week_dates, db_path=db_path))
     if instruction and str(instruction).strip():
         names, roles = _roster(restaurant_id, db_path=db_path)
@@ -1285,7 +1283,7 @@ def apply(c, rules) -> None:
 
 def _role_codes(c, role) -> list:
     """The job codes `role` covers: itself, or — a family name — every code
-    of the family in use here (AI-24)."""
+    of the family in use here."""
     low = str(role or "").strip().lower()
     in_use = {str(x).strip().lower() for x in (getattr(c, "role_names", None) or {}).values()} | \
         {str(x).strip().lower() for x in (getattr(c, "role_names", None) or {})}
@@ -1307,8 +1305,8 @@ def _apply_one(c, rule, week, _r):
     if not hard and kind not in ("person_on", "close", "open", "pair", "avoid"):
         # A reading nobody confirmed is a scored preference at the quality
         # rank — never a floor, a cap, a time, a blocked day, a fill
-        # exclusion or a moved target (AI-8): swept as a soft owner_ask_*
-        # breach (proposal_violations) and named as not confirmed.
+        # exclusion or a moved target: swept as a soft owner_ask_* breach
+        # (proposal_violations) and named as not confirmed.
         props = getattr(c, "owner_proposals", None)
         if props is not None:
             props.append(dict(rule, words=words(rule), quote=quote, dates=dates))
@@ -1471,7 +1469,7 @@ def violations(rows, c, only_dates=None) -> list:
 
 def proposal_violations(rows, c, only_dates=None) -> list:
     """The readings nobody confirmed that the week does not keep to, as SOFT
-    breaches at the quality rank (AI-8: a preference, never a cap or a fill
+    breaches at the quality rank (a preference, never a cap or a fill
     exclusion): `owner_ask_off` (on when a reading keeps them off),
     `owner_ask_max` (more of a role on at once than a reading's at-most),
     `owner_ask_time` (a start or end off a reading's time), `owner_ask_floor`
@@ -1585,14 +1583,14 @@ def chips(rows, c, rules) -> list:
 # ── putting them right (the repair loop's owner_words stage) ───────────────
 
 def repair(rows, c, editable=None) -> dict:
-    """{"rows", "fixed": [{"index", "from", "to", "kind", "reason"}],
-    "left": [what]}: each missed CONFIRMED person_on / close / open rule,
-    put right where it legally can be — the row the rule is about (that
-    date, daypart and role family; for a close or an open the role's edge
-    row) handed to the person when they can take it (Constraints.can_add over
-    the week without that row), never a pinned row, never off an editable
-    date. A reading nobody confirmed is never moved for at the coverage rank
-    (AI-8). A rule nobody can put right is left, named."""
+    """{"rows", "fixed": [{"index", "from", "to", "kind", "reason"}], "left":
+    [what]}: each missed CONFIRMED person_on / close / open rule, put right
+    where it legally can be — the row the rule is about (that date, daypart
+    and role family; for a close or an open the role's edge row) handed to
+    the person when they can take it (Constraints.can_add over the week
+    without that row), never a pinned row, never off an editable date. A
+    reading nobody confirmed is never moved for at the coverage rank. A rule
+    nobody can put right is left, named."""
     rows = [dict(r) for r in rows or []]
     fixed, left = [], []
     for m, d, what in misses(rows, c, hard_only=True):
@@ -1634,9 +1632,9 @@ def apply_weights(daily_targets, c) -> dict:
     / heavier days): {date: hours}. A weighted day moves by WEIGHT_STEP (half
     of it for a role- or daypart-specific weight); the days no weight names
     give or take the difference in proportion to their own targets, so the
-    week's total stays what the budget set (BUGSGEN-23: a heavier Friday took
-    its hours from nowhere, and the trim cut wherever it could). With every
-    day weighted, all are scaled back to the week's total."""
+    week's total stays what the budget set (a heavier Friday took its hours
+    from nowhere, and the trim cut wherever it could). With every day
+    weighted, all are scaled back to the week's total."""
     out = {}
     for d, v in (daily_targets or {}).items():
         try:
@@ -1678,16 +1676,16 @@ def apply_weights(daily_targets, c) -> dict:
     return out
 
 
-# ── what the drafting model is told (ARCH-16, AI-10) ───────────────────────
+# ── what the drafting model is told ───────────────────────
 
 def prompt_lines(restaurant_id, text, source="notes", week_dates=None, db_path=None) -> list:
     """The owner's words as the drafting model receives them — the one
-    reader's output, never the prose beside it (ARCH-16): each sentence as
-    "HELD BY CODE: <rule>" (the owner confirmed it), "NOT CONFIRMED — a
-    preference, not enforced: <rule>" (Cavnar AI's reading the owner has not
-    confirmed) or "NOT ENFORCED — guidance: <the sentence>" (no rule read,
-    or the owner dismissed the reading). Cache only; never raises (the
-    sentences as guidance when anything fails)."""
+    reader's output, never the prose beside it: each sentence as "HELD BY
+    CODE: <rule>" (the owner confirmed it), "NOT CONFIRMED — a preference,
+    not enforced: <rule>" (Cavnar AI's reading the owner has not confirmed)
+    or "NOT ENFORCED — guidance: <the sentence>" (no rule read, or the owner
+    dismissed the reading). Cache only; never raises (the sentences as
+    guidance when anything fails)."""
     from ai_guard import _neutralise_markers as _neut
     sents = _sentences(text or "")
     if not sents:

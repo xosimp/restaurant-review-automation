@@ -1,7 +1,5 @@
 """
-schedule_batch.py — the unattended auto-draft through Message Batches (scheduler
-audit 10/10/26: RM-10, AI-15, SCALE-12, SCALE-22; blind re-audit 10/11/26
-ARCH-15).
+schedule_batch.py — the unattended auto-draft through Message Batches.
 
 The auto-draft (strategy_jobs.run_auto_draft_schedules) is written while the
 owner is not looking — they review it later that day — yet it paid list price
@@ -35,7 +33,7 @@ while they wait:
   a stored answer reads it — the same resume mechanism a deploy uses — and
   any other call (a retry, a split, a later round, the gate's rewrite) goes
   out as usual. Answers written from inputs that have since moved are said
-  on the draft (schedule_resume.inputs_moved, ARCH-25).
+  on the draft (schedule_resume.inputs_moved).
 
   NO ANSWER (errored, expired, past its cutoff — BatchItemFailed): that
   call goes out synchronously when the draft runs. A gate's refusal
@@ -74,7 +72,7 @@ def plan_requests(restaurant_id, week_start=None) -> list:
     import schedule_engine as se
     import learning_stats as _ls_scope
     try:
-        # The week's learning_v2 arm holds for this build only (LEARNING-14).
+        # The week's learning_v2 arm holds for this build only.
         with planning() as plan, _ls_scope.learning_scope():
             out = se._build_schedule_result(restaurant_id, week_start=week_start)
     except Exception as e:
@@ -204,9 +202,8 @@ def _run_group(rid, ctx, group):
                 return
         finally:
             conn.close()
-    # The draft is a job_queue row like any auto-draft (RM-7; the one path
-    # since blind re-audit 10/11/26 ARCH-10), keyed so the group's last two
-    # callbacks never queue it twice.
+    # The draft is a job_queue row like any auto-draft (the one path
+    # since), keyed so the group's last two callbacks never queue it twice.
     try:
         sj.enqueue_auto_draft(r, period=ctx.get("period"), target=ctx.get("target"), attempt=ctx.get("attempt"),
                               batch=False, answers_job=group)
@@ -215,7 +212,7 @@ def _run_group(rid, ctx, group):
 
 
 def _on_legacy_item(rid, ctx, message, error):
-    """An item submitted before ARCH-15 (one per draft, no group): its
+    """An item submitted before the batched answers (one per draft, no group): its
     answer rides the queue row as it did."""
     import ai_batches
     import ops

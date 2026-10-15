@@ -1,7 +1,6 @@
 """
 schedule_objective.py — one objective for a schedule week, in dollars
-(scheduler re-audit 10/11/26, cross-workstream contract #1; LOGIC-1,
-LOGIC-3, LOGIC-24, STRESS-1, LOGIC-5, STRESS-15, LOGIC-10).
+(cross-workstream contract #1).
 
 The solver's two stages (schedule_shapes: which shifts; schedule_cpsat: who
 works them) price a week from here, and the optimizer, the quality gate and
@@ -80,14 +79,14 @@ RARE_SHARE = 0.15          # at most this share: a day they almost never work
 USUAL_HOURS_USD = 3.0
 USUAL_HOURS_BAND = 0.2
 # Each hour under STARVED_SHARE of somebody's usual week, for a person who
-# usually works STARVED_MIN_USUAL_HOURS or more (blind re-audit 10/11/26, P):
-# a person given under half the week they live on is the one who leaves —
-# replacing an hourly employee costs far more than any one week's hours. At
-# STARVED_HOURS_USD on top of (1 + BUDGET_OVER_FACTOR) x their own rate an
-# hour, no budget saving ever pays for it: a cut is spread across the crew
-# or the week stays over its budget, said — a 40-hour cook is never taken
-# to 12 to fit a budget (the schedule benchmark's 24-hour diner). Never
-# enough to buy a breach: the rules are constraints, not prices.
+# usually works STARVED_MIN_USUAL_HOURS or more (P): a person given under
+# half the week they live on is the one who leaves — replacing an hourly
+# employee costs far more than any one week's hours. At STARVED_HOURS_USD on
+# top of (1 + BUDGET_OVER_FACTOR) x their own rate an hour, no budget saving
+# ever pays for it: a cut is spread across the crew or the week stays over
+# its budget, said — a 40-hour cook is never taken to 12 to fit a budget (the
+# schedule benchmark's 24-hour diner). Never enough to buy a breach: the
+# rules are constraints, not prices.
 STARVED_SHARE = 0.5
 STARVED_MIN_USUAL_HOURS = 15.0
 STARVED_HOURS_USD = 15.0
@@ -102,10 +101,10 @@ FAIRNESS_USD = 4.0
 # Overtime pay over the line (shift_quality.OVERTIME_PREMIUM).
 OVERTIME_PREMIUM = 0.5
 # The one exchange rate between Shift Quality's week points and these
-# dollars (blind re-audit 10/11/26 LOGIC-6): this many points for each 1% of
-# the draft's labor dollars — CP-SAT's quality tier, the optimizer's moves
-# (charged for dollars added AND credited for dollars saved, LOGIC-23) and
-# the quality gate's judge all convert at it.
+# dollars: this many points for each 1% of the draft's labor dollars —
+# CP-SAT's quality tier, the optimizer's moves (charged for dollars added
+# AND credited for dollars saved) and the quality gate's judge all convert
+# at it.
 POINTS_PER_PCT_OF_LABOR = 0.5
 # A half hour of demand nobody measured (prep before the doors, the close
 # after them): this demand weight.
@@ -123,16 +122,16 @@ ROLE_CRITICALITY = (
 )
 CRITICALITY_BOUNDS = (0.3, 3.0)
 # "Never without": a role on at a half hour on this share of its same
-# weekdays — its first person there is the requirement's FIRM part (LOGIC-3),
-# above the budget; the rest of the demand is priced (one definition: Stage 1
-# and every pass after it).
+# weekdays — its first person there is the requirement's FIRM part, above the
+# budget; the rest of the demand is priced (one definition: Stage 1 and every
+# pass after it).
 FIRM_PRESENCE = 0.8
 # How far the restaurant's own record moves a role's default (0: not at all).
 LEARNED_CRITICALITY_SHARE = 0.5
 # Typical lead before the doors and stay after the close by family words,
-# where the restaurant's punches say nothing (LOGIC-11): cooks in an hour
-# before open, servers half an hour, the dish pit and the closers 45
-# minutes after the close.
+# where the restaurant's punches say nothing: cooks in an hour before
+# open, servers half an hour, the dish pit and the closers 45 minutes
+# after the close.
 DEFAULT_LEAD_MINUTES = (("cook", 60), ("chef", 60), ("kitchen", 60), ("line", 60), ("prep", 90),
                         ("barista", 30), ("server", 30), ("bar", 30))
 DEFAULT_STAY_MINUTES = (("dish", 45), ("porter", 45), ("steward", 45))
@@ -193,9 +192,9 @@ def shoulder_habits(c, rows) -> tuple:
     its punches (`rows`) show it (at least SHOULDER_MIN_DAYS), else the
     stated default (DEFAULT_STAY_MINUTES / CLOSER_STAY_MINUTES for a family
     with closers, DEFAULT_LEAD_MINUTES) for every family the roster works
-    (LOGIC-11: with no setting a role was hard-capped at the close and the
-    kitchen opened cold). A family the owner set a stay or a close
-    allowance for is the owner's, never these."""
+    (with no setting a role was hard-capped at the close and the kitchen
+    opened cold). A family the owner set a stay or a close allowance for is
+    the owner's, never these."""
     import schedule_time as _st
     if c is None:
         return {}, {}
@@ -249,7 +248,6 @@ def shoulder_habits(c, rows) -> tuple:
             if v:
                 leads[f] = max(leads.get(f, 0), v)
     return stays, leads
-
 
 
 # ── what the history says ─────────────────────────────────────────────────
@@ -489,10 +487,10 @@ class ObjectiveContext:
 
     def firm(self, date, minute, role) -> bool:
         """Whether the role's first person at this half hour is the FIRM part
-        of the requirement (LOGIC-3): the restaurant is never without the
-        role then — on in FIRM_PRESENCE of its same weekdays. The firm part
-        ranks above the budget (the requirement tier); the rest of the
-        demand is priced against it (slot_value)."""
+        of the requirement: the restaurant is never without the role then —
+        on in FIRM_PRESENCE of its same weekdays. The firm part ranks above
+        the budget (the requirement tier); the rest of the demand is priced
+        against it (slot_value)."""
         t = int(minute) - int(minute) % SLOT
         return self.presence.get((self.fam(role), _weekday(date), t), 0.0) >= FIRM_PRESENCE
 
@@ -524,9 +522,8 @@ class ObjectiveContext:
         return float(fp.get("doubles_share") or 0) >= DOUBLES_USUAL_SHARE
 
     def length_usd(self, role, start, end) -> float:
-        """The shape cost of one shift (STRESS-1, LOGIC-5): its overhead,
-        past the role's usual length squared, a double where the history
-        works none."""
+        """The shape cost of one shift: its overhead, past the role's
+        usual length squared, a double where the history works none."""
         mins = max(0, int(end) - int(start))
         fp = (self.profile.get("families") or {}).get(self.fam(role)) or {}
         top = int(fp["median_minutes"]) if fp.get("median_minutes") else int(DEFAULT_SHIFT_HOURS * 60) + 120
@@ -542,7 +539,7 @@ class ObjectiveContext:
 
     def usual_slot_usd(self, person, date, parts) -> float:
         """Negative: a credit for a weekday and daypart they usually work;
-        positive: a weekday they almost never work (STRESS-15). 0 without
+        positive: a weekday they almost never work. 0 without
         USUAL_MIN_WEEKS of their history."""
         pu = self.person_usual(person)
         if (pu.get("seen_weeks") or 0) < USUAL_MIN_WEEKS:
@@ -604,9 +601,9 @@ def starved_hour_usd(ctx, person) -> float:
 def presence(rows, family=None) -> dict:
     """{(family, weekday, minute): share of that weekday's history dates the
     family had somebody on at that half hour} — where the restaurant is
-    never without a role (the firm part of a requirement, LOGIC-3). One
-    reading for Stage 1 (schedule_shapes) and every pass after it. A shift
-    past midnight counts on its own date's timeline."""
+    never without a role (the firm part of a requirement). One reading for
+    Stage 1 (schedule_shapes) and every pass after it. A shift past midnight
+    counts on its own date's timeline."""
     fam_of = family or _family
     on = defaultdict(set)
     dates_by_day = defaultdict(set)
@@ -712,7 +709,7 @@ def price_week(rows, ctx) -> dict:
       shape        each shift's overhead and length, a day past somebody's
                    usual days, a weekday they never work less one they do,
                    hours under their usual week — and, past STARVED_SHARE of
-                   it, STARVED_HOURS_USD an hour (blind re-audit 10/11/26, P);
+                   it, STARVED_HOURS_USD an hour (P);
       fairness     closes and weekend shifts past an even share.
     {"total", "parts", "by_slot": {(date, minute): {"need", "on",
     "short_usd"}}, "rates": the stated rates used}. One implementation
@@ -725,14 +722,13 @@ def price_week(rows, ctx) -> dict:
 
 
 class WeekPricer:
-    """price_week, kept up to date one change at a time (blind re-audit
-    10/11/26 LOGIC-6, ARCH-2): the trim, the top-up and the optimizer judge
-    each candidate move by the ONE objective without pricing the whole week
-    again — a change re-prices the person, the date and the week-level sums
-    it touches. `try_change(old, new)` is the total with row `old` replaced
-    by `new` (None: removed; `old` None: `new` added), the week untouched;
-    `apply(old, new)` makes it so. Rows are known by identity (the object
-    the caller holds)."""
+    """price_week, kept up to date one change at a time: the trim, the
+    top-up and the optimizer judge each candidate move by the ONE objective
+    without pricing the whole week again — a change re-prices the person,
+    the date and the week-level sums it touches. `try_change(old, new)` is
+    the total with row `old` replaced by `new` (None: removed; `old` None:
+    `new` added), the week untouched; `apply(old, new)` makes it so. Rows
+    are known by identity (the object the caller holds)."""
 
     def __init__(self, rows, ctx):
         self.ctx = ctx
@@ -1064,8 +1060,7 @@ def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_ra
                        role_typical: dict = None) -> tuple:
     """(rate, source) for one shift — _shift_rate's one chain, saying which
     link priced the hour (RATE_SOURCES), so the budget's divisor can say how
-    much of it rests on a wage nobody entered (schedule audit 10/3/26 D-2,
-    E-24)."""
+    much of it rests on a wage nobody entered."""
     # What the POS's payroll pays this person (rpower.normalise_entries'
     # pay_rate) is what the hour cost - it beats any rate set for the role.
     # Simple EJ's was costed at the $26 default while RPOWER sent cooks at

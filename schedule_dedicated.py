@@ -18,19 +18,19 @@ How it is held, the way the managers' shifts are (schedule_skeleton):
     restaurant writes that daypart's shifts of the family in (its history),
     at its usual times for that weekday, given to a person who holds the
     role — the family itself, never a name that merely contains it ("Server
-    Assistant" is not a server, BUGSGEN-24) — and may legally take it
+    Assistant" is not a server) — and may legally take it
     (Constraints.fillable / can_add): last week's person in that slot
     first, then whoever usually works it, then the fewest hours in the
     payroll week (the managers' plan and every row already fixed counted),
-    so the same bartender keeps bar tables week to week (LOGIC-17); never
-    into overtime while somebody else can take it without, and past the
+    so the same bartender keeps bar tables week to week; never into
+    overtime while somebody else can take it without, and past the
     restaurant's own limits only when nobody can inside them (FILL_ROUNDS);
   * the position is one of the role's usual crew when the restaurant has
     been running it — its punches already count that person — so the
     shift's requirement is the usual crew, at least the position; only a
-    position newer than the history (the rule's "since") is one MORE on
-    top of it (LOGIC-16: EJ's three usual Friday bartenders already include
-    bar tables; a +1 on top asked for a fourth the bar never runs);
+    position newer than the history (the rule's "since") is one MORE on top
+    of it (EJ's three usual Friday bartenders already include bar tables; a
+    +1 on top asked for a fourth the bar never runs);
   * the rows carry "_pinned": DEDICATED_SOURCE and merge into the model's
     answer by code (labor.generate_optimized_schedule, restore_pinned), so
     no trim, fill or redo pass removes, re-times or re-assigns one;
@@ -41,12 +41,12 @@ How it is held, the way the managers' shifts are (schedule_skeleton):
     the slots it names (its days and dayparts; none named = the whole
     week). A sentence that insists ("never", "always", "keep", "must", "no
     matter what", "somebody else must take…") is never one, and a negation
-    anywhere else in the sentence is not an allowance (blind re-audit
-    10/11/26 BUGSGEN-4: "Bar tables are never off — always staff them"
-    waived all nine slots). A waiver holds only once the owner CONFIRMED it
-    (schedule_note_rules.add_waiver — the AI tab, or the Generate sheet for
-    a draft's own instruction); until then the position is staffed and the
-    review says the note was read but not applied.
+    anywhere else in the sentence is not an allowance ("Bar tables are
+    never off — always staff them" waived all nine slots). A waiver holds
+    only once the owner CONFIRMED it (schedule_note_rules.add_waiver — the
+    AI tab, or the Generate sheet for a draft's own instruction); until
+    then the position is staffed and the review says the note was read but
+    not applied.
 
 The row's note is "<label> — Cavnar AI: standing position": the staff read
 the label (labor.staff_facing_note strips the Cavnar AI mark).
@@ -74,7 +74,7 @@ IN_USUAL_DAYS = 28
 _ALLOW_RX = re.compile(r"\b(no|skip|skipping|without|waive|waived|don'?t need|do not need|not needed|no need|"
                        r"drop|leave off|off|optional)\b", re.I)
 # Words that insist on the position, or on somebody taking it — never an
-# allowance, whatever negation sits beside them (BUGSGEN-4).
+# allowance, whatever negation sits beside them.
 _KEEP_RX = re.compile(r"\b(never|always|keep|keeps|kept|must|make sure|ensure|require|requires|"
                       r"required|no matter|regardless|non-?negotiable|still|staff them|staff it|cover|covers|"
                       r"covered|somebody else|someone else|anyone else|take the|takes the|instead)\b", re.I)
@@ -120,7 +120,7 @@ def in_usual(rule, week_start) -> bool:
     the restaurant has been staffing (Simple EJ's: "every night one more
     bartender is on") — or one started IN_USUAL_DAYS or more before the
     week. Then the usual crew counts it and it is one of them; otherwise it
-    is one more on top (LOGIC-16)."""
+    is one more on top."""
     since = (rule or {}).get("since")
     if not since:
         return True
@@ -148,7 +148,7 @@ def describe(rule) -> str:
 def allows(low, words) -> bool:
     """Whether the sentence `low` (lower case) lets the position off: an
     allowance construction about the position itself (one of its waive
-    `words`), and no word that insists on it (BUGSGEN-4)."""
+    `words`), and no word that insists on it."""
     if not _ALLOW_RX.search(low) or _KEEP_RX.search(low):
         return False
     for w in words or ():
@@ -229,7 +229,7 @@ def split_waivers(text, rules, confirmed) -> tuple:
 
 def _part_of(row):
     """The daypart a past row is, by the one rule (schedule_time.
-    primary_daypart, BUGSGEN-25) — None when its times cannot be read."""
+    primary_daypart) — None when its times cannot be read."""
     part = _stime.primary_daypart(row)
     return part if part in PARTS else None
 
@@ -248,8 +248,8 @@ def _usual(history, family, day, part, c=None):
     `part` shifts in on `day` — the most common role, the median start and
     end — falling back to every weekday of that daypart. None with no
     history of the family in that daypart. A row is the family's by its
-    role's family, never by the name containing it (BUGSGEN-24: "server"
-    matched "Server Assistant", "cook" matched "Prep Cook")."""
+    role's family, never by the name containing it ("server" matched
+    "Server Assistant", "cook" matched "Prep Cook")."""
 
     def pick(rows):
         if not rows:
@@ -289,7 +289,7 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     def week_hours(n, d):
         """Hours `n` has in `d`'s payroll week: published or worked already
         (base_hours), every row fixed so far (the managers' plan, kept days)
-        and this plan's rows — never only this plan's (LOGIC-17)."""
+        and this plan's rows — never only this plan's."""
         k = c.key(n)
         b = c.bucket(d)
         h = float(((getattr(c, "base_hours", None) or {}).get(k) or {}).get(b, 0.0) or 0.0)
@@ -299,7 +299,7 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     for i, rule in enumerate(rules):
         fam = rule["family"]
         # Who holds the role: its family, by the restaurant's own families —
-        # never a role whose name merely contains it (BUGSGEN-24).
+        # never a role whose name merely contains it.
         people = [n for n in names
                   if _family_of(c, (roster_roles or {}).get(n)) == fam
                   or any(_family_of(c, r) == fam for r in (getattr(c, "known_roles", {}) or {}).get(c.key(n), ()))]
@@ -327,13 +327,13 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
                        "notes": f"{rule['label']} — {NOTE_MARK}", "_pinned": DEDICATED_SOURCE,
                        "_pin_reason": rule["label"], "_in_usual": keep}
                 # As every row carries it — a string, from the real span in
-                # the restaurant's zone (BUGSGEN-6): it was a float of the
-                # wall-clock span.
+                # the restaurant's zone: it was a float of the wall-clock
+                # span.
                 row["scheduled_hours"] = _stime.row_hours_text(row, getattr(c, "tz", None))
                 chosen, why_not = None, []
                 last, usual_n = slot_people.get((day, part), (None, {}))
                 # Last week's person in this slot, then whoever usually works
-                # it, then the fewest hours in the payroll week (LOGIC-17).
+                # it, then the fewest hours in the payroll week.
                 order = sorted(people, key=lambda n: (0 if last and c.key(n) == last else 1,
                                                       -usual_n.get(c.key(n), 0), week_hours(n, d), n))
                 for mode in _rules.FILL_ROUNDS:
@@ -369,7 +369,7 @@ def _slot_people(history, family, rule, c) -> dict:
     """{(weekday, daypart): (last person key or None, {person key: times})}
     from the history: who took the position in that slot most recently (a
     row marked as the position), and who works the family's shift there
-    most often — the stable choice a GM makes (LOGIC-17)."""
+    most often — the stable choice a GM makes."""
     out = {}
     marked = {}
     for r in history or []:
@@ -399,7 +399,7 @@ def requirement_adjustments(dplan) -> list:
     `adjustments`). A position the restaurant has been running is one of
     its role's usual crew (`_in_usual`): the requirement is the usual crew,
     at least this one (delta 0) — never a +1 on top of a crew that already
-    counts it (LOGIC-16). A position newer than the history is one more."""
+    counts it. A position newer than the history is one more."""
     out = []
     for r in (dplan or {}).get("rows") or []:
         part = _part_of(r)

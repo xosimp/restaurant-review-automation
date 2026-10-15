@@ -1,12 +1,12 @@
 """
 schedule_state.py — the state one schedule generation carries from its draft
-to its save, declared (blind re-audit 10/11/26 ARCH-5).
+to its save, declared.
 
 A pass's result was an untyped dict that thirty modules wrote and read by
 string key (~130 of them): a misspelt key read None and a safeguard was
 skipped without a word, and no stage said what it needed or produced.
 GenerationResult is still a dict — the job serialises it at the save, the
-queue's checkpoints and the Studio keep reading it with .get, and an old
+queue's checkpoints and the Studio keep reading it with.get, and an old
 checkpoint resumes as it was — but every key it may hold is declared below,
 grouped by the stage that writes it, with its type:
 
@@ -62,7 +62,7 @@ STAGES = {
         # written by no stage: the pricing then uses its own blended rate (a hand-built
         # result in the tests may carry one).
         "blended_rate": float,
-        # Read as a fallback, written by no stage (ARCH-5 found them): the payload's gate
+        # Read as a fallback, written by no stage: the payload's gate
         # starts as not run and the gate writes it there (schedule_job._stage_payload); the
         # optimizer's section cap is the pass's own (RepairContext.section_count).
         "gate": dict, "section_count": int,

@@ -1,7 +1,6 @@
 """
 schedule_calibration.py — the Shift Quality weights calibrated where nobody
-presses Apply (schedule audit 10/10/26 LEARNING-9), honestly held out
-(blind re-audit 10/11/26 LEARNING-1, -2, -3).
+presses Apply, honestly held out (-2, -3).
 
 schedule_learning.calibrate_weights (v2: as-run dimensions, weekday ×
 daypart and demand fixed effects, per-outcome fits combined in dollars,
@@ -23,9 +22,9 @@ Weekly (strategy_jobs.run_quality_calibration):
                          more and as anonymous ratios (intelligence.privacy)
   shadow_run(rid)        three gates, each a fresh test:
     1. new evidence      nothing runs unless the restaurant has a published
-                         week it did not have at the last run (LEARNING-3:
-                         the same evidence used to re-promote every Sunday,
-                         walking a weight to its cap on one week of data)
+                         week it did not have at the last run (the same
+                         evidence used to re-promote every Sunday, walking
+                         a weight to its cap on one week of data)
     2. retrospective     the candidate is FITTED ON THE OLDER WEEKS ONLY
                          (schedule_learning's split — it used to be fitted on
                          every week, the held-out ones included, so a check
@@ -130,11 +129,11 @@ def init_schedule_calibration(db_path=None):
 
 
 def _autopromote() -> bool:
-    # OFF unless set (blind re-audit 10/11/26: the shadow run's hold-out
-    # reused weeks it was fitted on, so noise promoted). The split is honest
-    # now (fitted on older weeks, held-out weeks, then new weeks); the switch
-    # stays off until fleet_readout() shows a gain. SCHEDULE_CALIBRATION_
-    # AUTOPROMOTE=1 turns it on.
+    # OFF unless set (the shadow run's hold-out reused weeks it was fitted
+    # on, so noise promoted). The split is honest now (fitted on older weeks,
+    # held-out weeks, then new weeks); the switch stays off until
+    # fleet_readout() shows a gain. SCHEDULE_CALIBRATION_ AUTOPROMOTE=1 turns
+    # it on.
     return (os.environ.get(AUTOPROMOTE_ENV) or "0").strip().lower() in ("1", "on", "true", "yes")
 
 
@@ -187,7 +186,7 @@ def cohort_evidence(db_path=None, today=None, store=True) -> dict:
     week_key = f"{y}-W{w:02d}"
     rows = models.get_all_restaurants(db_path) if db_path else models.get_all_restaurants()
     eligible = [r.id for r in rows if r.id not in excluded and getattr(r, "module_labor", 0)]
-    # Read across the whole fleet, rotated weekly (LEARNING-23): the first
+    # Read across the whole fleet, rotated weekly: the first
     # COHORT_MAX_RESTAURANTS by id were the oldest customers only. Twice the
     # sample is read so restaurants not ready yet do not shrink it.
     pick = learning_stats.fleet_sample(eligible, 2 * COHORT_MAX_RESTAURANTS, key=f"calibration|{week_key}")
@@ -275,7 +274,7 @@ def _compare_on(test, against, candidate, usd) -> dict:
     the score under `against` and under `candidate` with what the shifts
     were worth in dollars, and the one-sided test that the candidate's is
     the higher (Williams' t for dependent correlations, schedule_learning.
-    better_correlation — LEARNING-1: the bootstrap it replaces confirmed
+    better_correlation — the bootstrap it replaces confirmed
     noise): p_value, and p_better = 1 − p_value."""
     import schedule_learning as sl
     vals, a_, b_, groups, weeks = [], [], [], [], []
@@ -374,9 +373,9 @@ def _evidence_mark(samples) -> dict:
 
 def _anchor(stored, runs):
     """The weights before the unbroken chain of automatic promotions now in
-    force (the cumulative move is tested against them — LEARNING-3): walk
-    the promotions back while each one's result is the weights the next one
-    started from. The weights now when nothing automatic is in force."""
+    force (the cumulative move is tested against them): walk the promotions
+    back while each one's result is the weights the next one started from.
+    The weights now when nothing automatic is in force."""
     cur = {k: round(float(v), 1) for k, v in (stored or {}).items()}
     anchor = dict(stored or {})
     for r in runs:
@@ -394,7 +393,7 @@ def _anchor(stored, runs):
 
 def weights_without_promotions(restaurant_id, stored=None, db_path=None) -> dict:
     """The weights in force with the automatic promotions taken back — the
-    owner's own (learning_v2's off week reads these, LEARNING-14)."""
+    owner's own (learning_v2's off week reads these)."""
     import models
     if stored is None:
         stored = models.get_quality_weights(restaurant_id) or {}
@@ -416,8 +415,8 @@ def shadow_run(restaurant_id, cohort=None, db_path=None) -> dict:
         return {"status": "not_ready"}
     mark = _evidence_mark(samples)
     runs = _runs(restaurant_id, db_path)
-    # 1. New evidence only (LEARNING-3): a run reads the same published weeks
-    # as the last one says nothing new — nothing is recorded or moved.
+    # 1. New evidence only: a run reads the same published weeks as the last
+    # one says nothing new — nothing is recorded or moved.
     last = next((r for r in runs if (r.get("holdout") or {}).get("newest_week") is not None), None)
     if last is not None and (last["holdout"].get("newest_week"), last["holdout"].get("weeks_seen")) == \
             (mark["newest_week"], mark["weeks_seen"]):
@@ -552,18 +551,18 @@ def _prospective(restaurant_id, pending, samples, current, anchor, mark, cohort,
     return dict(base, status="promoted", reason=why, run_id=run_id, moves=moves)
 
 
-# ── Does the score predict better weeks here? (blind re-audit 10/11/26
-# TRUST-31, STRESS-14) ──────────────────────────────────────────────────────
-# The ring compared a score with the restaurant's last twelve scores only:
-# graded against itself, its meaning asserted, never shown. Here the
-# restaurant's own published weeks are split by the score their draft got —
-# OUTCOME_HIGH and over (the "good" band) against under OUTCOME_LOW — and
-# each side's measured outcomes stated: the coverage and no-show issues a
-# week on the nights the coverage check watched (a night nobody watched is
-# not a clean one), and the share of the draft's shifts managers changed
-# before sending (schedule_versions.acceptance — the score calibrated
-# against the managers' own edits). Each figure needs OUTCOME_MIN_WEEKS weeks
-# on BOTH sides, else it is "—" with how many there are so far.
+# ── Does the score predict better weeks here? ───────────────────────────────
+# The ring
+# compared a score with the restaurant's last twelve scores only: graded
+# against itself, its meaning asserted, never shown. Here the restaurant's
+# own published weeks are split by the score their draft got — OUTCOME_HIGH
+# and over (the "good" band) against under OUTCOME_LOW — and each side's
+# measured outcomes stated: the coverage and no-show issues a week on the
+# nights the coverage check watched (a night nobody watched is not a clean
+# one), and the share of the draft's shifts managers changed before sending
+# (schedule_versions.acceptance — the score calibrated against the managers'
+# own edits). Each figure needs OUTCOME_MIN_WEEKS weeks on BOTH sides, else
+# it is "—" with how many there are so far.
 OUTCOME_HIGH = 78
 OUTCOME_LOW = 65
 OUTCOME_MIN_WEEKS = 3
@@ -666,13 +665,13 @@ def _outcome_note(out) -> str:
 
 
 def fleet_readout(db_path=None, days=365) -> dict:
-    """The fleet-level evaluation behind the promotion switch (LEARNING-1:
-    "keep autopromote off until a fleet-level eval shows gain"): every
-    prospective check in the last `days` — candidates read on weeks that did
-    not exist when they were proposed — with the restaurant-cluster mean
-    gain in correlation and its 90% interval, and how many were confirmed
-    and refuted. `recommend_on` only when that interval is above zero over
-    at least intelligence.privacy.MIN_COHORT restaurants."""
+    """The fleet-level evaluation behind the promotion switch ("keep
+    autopromote off until a fleet-level eval shows gain"): every prospective
+    check in the last `days` — candidates read on weeks that did not exist
+    when they were proposed — with the restaurant-cluster mean gain in
+    correlation and its 90% interval, and how many were confirmed and
+    refuted. `recommend_on` only when that interval is above zero over at
+    least intelligence.privacy.MIN_COHORT restaurants."""
     import schedule_experiments as sx
     from intelligence import privacy
     since = (datetime.utcnow() - timedelta(days=int(days))).strftime("%Y-%m-%d %H:%M:%S")

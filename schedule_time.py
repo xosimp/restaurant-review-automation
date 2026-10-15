@@ -1,26 +1,26 @@
 """schedule_time.py — the one notion of time a schedule row has (pure, L0).
 
-A schedule row is ``{date, shift_start, shift_end, ...}``. Its ``date`` is the
+A schedule row is ``{date, shift_start, shift_end,...}``. Its ``date`` is the
 BUSINESS date the shift belongs to, and its times are wall-clock strings
 ("5:00pm", "17:00", "noon"). Every question about when a shift is — where it
 sits on its night, how long it really is, which daypart it serves, when a day
-closes — is answered here, once (schedule audit 10/10/26 ARCH-12, BUGSGEN-8,
-BUGSGEN-25). About fifteen private copies of these rules had grown up across
-the rules, the scorer, the optimizer, the manager plan, the station check, the
-crew grid and the learners, and they disagreed: a 12:30am-4:00am porter was
-minutes 1470-1680 to the rules and 30-240 to the optimizer; a 1:00-5:30am
-shift sat on the next day while 1:00-6:30am sat on the same one; a 10am-3:15pm
-cook covered the DINNER grill station; five different "dinners" were counted.
+closes — is answered here, once. About fifteen private copies of these rules
+had grown up across the rules, the scorer, the optimizer, the manager plan,
+the station check, the crew grid and the learners, and they disagreed: a
+12:30am-4:00am porter was minutes 1470-1680 to the rules and 30-240 to the
+optimizer; a 1:00-5:30am shift sat on the next day while 1:00-6:30am sat on
+the same one; a 10am-3:15pm cook covered the DINNER grill station; five
+different "dinners" were counted.
 
 The business-day timeline
 -------------------------
-Minutes are counted from midnight at the start of the row's business date.
-A start before ``NIGHT_TAIL_BEFORE`` (4:00am) is the small hours of that date's
-night — minute 1440 and on (a 12:30am porter dated Friday works Saturday
-00:30, after Friday's close). From 4:00am a start is the date's own early prep
-(a 4:30am baker is the morning's, owner/lead 10/3/26). The START alone places
-a shift — never its end, so an hour's difference in when it ends can never
-move it a day (BUGSGEN-8). An end at or before its start runs past midnight.
+Minutes are counted from midnight at the start of the row's business date. A
+start before ``NIGHT_TAIL_BEFORE`` (4:00am) is the small hours of that date's
+night — minute 1440 and on (a 12:30am porter dated Friday works Saturday 00:30,
+after Friday's close). From 4:00am a start is the date's own early prep (a
+4:30am baker is the morning's, owner/lead 10/3/26). The START alone places a
+shift — never its end, so an hour's difference in when it ends can never move
+it a day. An end at or before its start runs past midnight.
 
 ``time_utils.BUSINESS_DAY_START_HOUR`` (5am) is when "today" turns over for
 close-outs and the POS's business day; a shift starting 4:00-4:59am is a
@@ -32,9 +32,9 @@ Real hours
 ``real_hours(row, tz)`` is the time actually worked between the two instants
 in the restaurant's zone: a 5pm-2am close on the night the clocks go back
 (10/31/26 into 11/1/26) is 10 hours, not 9, and a 5pm-3am close on the night
-they go forward (3/13/27 into 3/14/27) is 9, not 10. Every
-writer of a row's ``scheduled_hours`` writes ``hours_text(real_hours(row,
-tz))``: two decimals, never banker's rounding to a tenth (BUGSGEN-6, -7).
+they go forward (3/13/27 into 3/14/27) is 9, not 10. Every writer of a row's
+``scheduled_hours`` writes ``hours_text(real_hours(row, tz))``: two
+decimals, never banker's rounding to a tenth (-7).
 
 Dayparts — the one lunch/dinner rule
 ------------------------------------
@@ -55,7 +55,7 @@ Closing times
 ``close_on_timeline(close, open)`` reads a day's close relative to its open:
 a close at or before the open is after midnight (a 6am-6am diner closes at
 6am the NEXT morning, a 4pm-2am bar at 2am); with no open on file a close
-before ``SMALL_HOURS_BEFORE`` (6am) is after midnight (BUGSGEN-22).
+before ``SMALL_HOURS_BEFORE`` (6am) is after midnight.
 
 Pure: no database, no clock read, no network. Module-scope imports: stdlib
 and ``time_utils`` (L0) only.
@@ -87,10 +87,10 @@ DAYPART_SPLIT_MAX = 18 * 60
 # cover to count as on the floor for it.
 CORE_WINDOWS = {"morning": (11 * 60, 14 * 60 + 30), "night": (17 * 60 + 30, 20 * 60 + 30)}
 # The ONE pair of words an owner reads for the two dayparts, on every
-# surface and in every server sentence (schedule audit 10/10/26 TRUST-31:
-# Setup said Daytime/Night, Crew Lunch/Dinner, Intel day/night and a Fix
-# line morning/night — four names for one 3pm split). The web's
-# SCHED_PART_WORD and iOS read the same pair.
+# surface and in every server sentence (Setup said Daytime/Night, Crew
+# Lunch/Dinner, Intel day/night and a Fix line morning/night — four names
+# for one 3pm split). The web's SCHED_PART_WORD and iOS read the same
+# pair.
 PART_WORDS = {"morning": "Lunch", "night": "Dinner"}
 
 
@@ -122,9 +122,9 @@ def parse_minutes(value):
     "9:30 PM", "9pm", "9:30p", "9:30 p.m.", "12:00 a.m.", "21:30", "21:30:00",
     "noon", "midnight", "24:00" (midnight). A bare hour is read only when it
     cannot be a 12-hour time ("0", "13"-"23"); a bare "9" is ambiguous — 9am
-    or 9pm — and reads as None, so the caller says it could not read it
-    rather than guess (BUGSGEN-20). Remembered per spelling: the sweep reads
-    the same few dozen times on every trial (schedule audit 10/3/26 P-37)."""
+    or 9pm — and reads as None, so the caller says it could not read it rather
+    than guess. Remembered per spelling: the sweep reads the same few dozen
+    times on every trial."""
     if value is None:
         return None
     raw = str(value).strip().lower().replace(" ", "")
@@ -171,7 +171,7 @@ def fmt_minutes(minutes) -> str:
 def normalise_clock(value):
     """A stored hours value as the one spelling every reader parses
     ("4:00pm"), or None when it cannot be read — for the writers of
-    open/close times and closures (BUGSGEN-20: normalised at write)."""
+    open/close times and closures (normalised at write)."""
     m = parse_minutes(value)
     return None if m is None else fmt_minutes(m)
 
@@ -180,8 +180,7 @@ def normalise_clock(value):
 
 def night_offset(start_m) -> int:
     """1440 when a start (minutes past midnight) is in the small hours of the
-    row's night — before NIGHT_TAIL_BEFORE — else 0. The start alone decides
-    (BUGSGEN-8)."""
+    row's night — before NIGHT_TAIL_BEFORE — else 0. The start alone decides."""
     return DAY if start_m is not None and 0 <= start_m < NIGHT_TAIL_BEFORE else 0
 
 
@@ -191,8 +190,8 @@ def place(start_m, end_m):
     before the start past midnight. None when either is None — and when the
     two are the SAME time: "5:00pm-5:00pm" is a typo, not a 24-hour shift
     (25h on the fall-back night); read as one it became a day-long shift
-    before the close cap re-timed it (sched re-audit 10/11/26 BUGSGEN-19).
-    The parser drops such a row and counts it, like any unreadable line."""
+    before the close cap re-timed it. The parser drops such a row and
+    counts it, like any unreadable line."""
     if start_m is None or end_m is None or start_m % DAY == end_m % DAY:
         return None
     off = night_offset(start_m)
@@ -283,7 +282,7 @@ def wall_hours(row) -> float:
 
 def hours_text(hours) -> str:
     """Hours as the rows carry them: "9", "7.5", "6.25" — two decimals at
-    most, never a tenth's banker's rounding (6.25 stays 6.25, BUGSGEN-7)."""
+    most, never a tenth's banker's rounding (6.25 stays 6.25)."""
     try:
         h = round(float(hours or 0) + 0.0, 2)
     except (TypeError, ValueError):
@@ -293,8 +292,8 @@ def hours_text(hours) -> str:
 
 def row_hours_text(row, tz=None) -> str:
     """hours_text(real_hours(row, tz)) — what every pass that writes a row's
-    times writes as its scheduled_hours (BUGSGEN-6); the wall clock when the
-    row has no readable date."""
+    times writes as its scheduled_hours; the wall clock when the row has no
+    readable date."""
     h = real_hours(row, tz)
     return hours_text(h if h or span(row) is None else wall_hours(row))
 
@@ -318,7 +317,7 @@ def close_on_timeline(close_m, open_m=None):
     is after midnight), read relative to the day's open: at or before the
     open is the next morning (a 6am-6am diner, a 4pm-6am bar); with no open
     on file, before SMALL_HOURS_BEFORE is the small hours. None when the
-    close is None (BUGSGEN-22)."""
+    close is None."""
     if close_m is None:
         return None
     if open_m is not None:
@@ -337,7 +336,7 @@ def business_minute(clock_m) -> int:
     """A clock minute (0-1439) on the business day's timeline: before the
     business day's first hour it is the small hours of the night, past 1440
     — for a sales curve keyed by clock hour, whose 1am sales are the night's
-    tail, not the start of the day (BUGSGEN-19)."""
+    tail, not the start of the day."""
     m = int(clock_m) % DAY
     return m + DAY if m < BUSINESS_DAY_START_HOUR * 60 else m
 
@@ -389,7 +388,7 @@ def restaurant_split(restaurant):
 
 # The restaurant whose boundary is in force (restaurant_scope), so a learner
 # entered from inside the generation's own scope, or twice over, reads the
-# restaurant once (schedule re-audit 10/11/26 ARCH-11).
+# restaurant once.
 _SCOPE_RID = contextvars.ContextVar("schedule_daypart_rid", default=None)
 
 
@@ -413,14 +412,14 @@ def split_for(restaurant_id, db_path=None):
 
 @contextmanager
 def restaurant_scope(restaurant_id, db_path=None):
-    """daypart_scope for one restaurant's own boundary (schedule re-audit
-    10/11/26 ARCH-11): the nightly learners — outcomes, the memory, the
-    standing patterns, the edit learners, the attendance and the people
-    passes — used to read every daypart on the 3pm default while the
-    generation read the restaurant's, so a 2:30pm start was filed under
-    "morning" by the learners and asked for as "night" by the generation.
-    Entered by every per-restaurant job and by the learners' own entry
-    points (`scoped`); a no-op inside the same restaurant's scope."""
+    """daypart_scope for one restaurant's own boundary: the nightly
+    learners — outcomes, the memory, the standing patterns, the edit
+    learners, the attendance and the people passes — used to read every
+    daypart on the 3pm default while the generation read the
+    restaurant's, so a 2:30pm start was filed under "morning" by the
+    learners and asked for as "night" by the generation. Entered by every
+    per-restaurant job and by the learners' own entry points (`scoped`);
+    a no-op inside the same restaurant's scope."""
     if restaurant_id and _SCOPE_RID.get() == restaurant_id:
         yield daypart_split()
         return
@@ -434,11 +433,11 @@ def restaurant_scope(restaurant_id, db_path=None):
 
 
 def scoped(fn):
-    """Decorator: run `fn(restaurant_id, ..., db_path=...)` inside
+    """Decorator: run `fn(restaurant_id,..., db_path=...)` inside
     restaurant_scope of its restaurant — the first positional argument, or
     the `restaurant_id` keyword; `db_path` read from the keyword when given.
     A learner called from any job, route or test files its dayparts on the
-    restaurant's own boundary (ARCH-11)."""
+    restaurant's own boundary."""
     import functools
 
     @functools.wraps(fn)
@@ -604,10 +603,10 @@ def week_hours_split(row: dict, week_start_day: int = 0, hours: float = None) ->
     were WORKED in (FLSA): a shift dated the last night of a payroll week
     that runs past midnight puts its after-midnight hours in the next week —
     a Tuesday 10pm-2am row in a Wednesday-start week is 2h Tuesday's week, 2h
-    Wednesday's (sched re-audit 10/11/26 BUGSGEN-18); a small-hours row
-    (12:30am-4am dated Tuesday) is all the next week's. `hours` defaults to
-    the row's scheduled_hours (its real hours), shared in proportion to the
-    clock minutes either side of midnight. {} when the date is unreadable."""
+    Wednesday's; a small-hours row (12:30am-4am dated Tuesday) is all the
+    next week's. `hours` defaults to the row's scheduled_hours (its real
+    hours), shared in proportion to the clock minutes either side of
+    midnight. {} when the date is unreadable."""
     d = str((row or {}).get("date") or "")[:10]
     try:
         b0 = _week_key(d, week_start_day)
@@ -674,13 +673,13 @@ def window_allows(lo, hi, start_m, end_m) -> tuple:
     """(ok, which) for a shift from start_m to end_m (minutes past
     midnight) against a window lo..hi (either may be None). A window whose
     latest is before its earliest, or a bare latest in the small hours,
-    runs past midnight; so does a shift whose end is not after its start
-    (SCHED-13). `which` is 'early' or 'late' when refused. Pure — the swap
-    index in shift_quality applies the same rule."""
+    runs past midnight; so does a shift whose end is not after its start.
+    `which` is 'early' or 'late' when refused. Pure — the swap index in
+    shift_quality applies the same rule."""
     if start_m is None or end_m is None:
         return True, ""
-    # A start in the small hours is that night's (E-32): a 12:30am porter is
-    # after a "from 6pm" window opens, not eighteen hours before it, and the
+    # A start in the small hours is that night's: a 12:30am porter is after
+    # a "from 6pm" window opens, not eighteen hours before it, and the
     # window's own small-hours bounds are read in the same night.
     night = night_offset(start_m)
     if night:
@@ -711,7 +710,7 @@ def holiday_names(year: int) -> dict:
 
     Two can fall on one night: Super Bowl Sunday on 2/14/27 is Valentine's
     Day, and the one-name calendar let whichever was written last overwrite
-    the other (schedule audit 10/3/26 E-8)."""
+    the other."""
     from datetime import date as _date
     fixed = {(1, 1): "New Year's Day", (2, 14): "Valentine's Day", (3, 17): "St. Patrick's Day",
              (5, 5): "Cinco de Mayo", (7, 4): "Fourth of July", (10, 31): "Halloween",
