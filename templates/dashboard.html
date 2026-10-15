@@ -45554,6 +45554,9 @@ function sfw2RuleCheck(chk) {
    (preserveAspectRatio none, non-scaling strokes) and every dot and label is
    HTML placed by percentage. */
 #bar{--br-range:var(--ember);--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
+/* The Bar's top bar has no edges (owner, 10/15/26: "we dont need lines on the header
+   perimeter"): no hairline under it and no tinted band to draw one above. */
+#bar .dn-bar{border-bottom:0;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none}
 [data-theme="dark"] #bar{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
 /* --br-red-text: red for SMALL text (V31) — --red is 3.85:1 on the dark
    surface; mixed 70% into the ink it is ~5.3:1. --red stays for dots,
@@ -45793,7 +45796,7 @@ function sfw2RuleCheck(chk) {
 .br-li .n>span.br-tagx:not(.hb-num){display:inline-block;font-size:12.5px;color:var(--ember2);margin-top:6px}.br-li .n>span.br-tagx.q:not(.hb-num){color:var(--ink3)}
 .br-li .m{font-size:14.5px;color:var(--ink2);line-height:1.45}
 .br-li .r{text-align:right;font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--ink);white-space:nowrap}
-.br-li .r>span:not(.hb-num){display:block;font-family:inherit;font-size:13px;font-weight:400;color:var(--ink3)}
+.br-li .r>span:not(.hb-num){display:block;font-family:'Apfel Grotezk',sans-serif;font-size:13px;font-weight:400;color:var(--ink3)}
 .br-li .r.good{color:var(--hb-good)}.br-li .r.bad{color:var(--br-red-text)}
 .br-li.vm{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto;padding:10px 18px}
 .br-li.vm .m{font-size:13.5px;color:var(--ink3)}
@@ -46455,7 +46458,7 @@ function sfw2RuleCheck(chk) {
       + '<div class="m">Bought ' + units(x.bought_units, w) + ' · rung ' + units(x.rung_units, w)
       + (x.comped_units ? ' · ' + units(x.comped_units, w) + ' poured, not paid' : '')
       + (x.waste_units ? ' · ' + units(x.waste_units, w) + ' logged as waste' : '')
-      + ((x.assumes || []).length ? '<br><span class="br-note" style="margin:0">' + numify(x.assumes.join(' · ')) + '</span>' : '') + '</div>'
+      + '</div>'
       + '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not rung' : (gap < 0 ? 'rung beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>';
   }
   function varUnmapped(u) {
@@ -46529,16 +46532,22 @@ function sfw2RuleCheck(chk) {
     return '<div class="br-sub" id="br-specs"><div class="br-k">Recipe cards</div><h3>Confirm what each cocktail pours</h3><div class="br-list">' + h + '</div>'
       + (more ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-specall="1">Show all ' + hn(v.suggestions_total) + '</button></div>' : '') + '</div>';
   }
-  function opsSec(d) {
+  /* opsSec(d): what was used (bought vs rung, keg yield, comps); opsSec(d, 'waste'):
+     the waste log, an input, which sits with the counts (owner, 10/15/26: the page
+     flows from the figures to what explains them to what you enter). */
+  function opsSec(d, part) {
     var o = d.bar_ops || {}, w = o.waste || {}, ky = o.keg_yield || [], h = '', i;
-    var kh = '';
+    var kh = '', krest = '';
     for (i = 0; i < ky.length; i++) {
-      var k = ky[i];
-      kh += '<div class="br-card br-li"><div class="n"><b>' + esc2(k.product) + '</b><span>' + esc2(k.keg_label || 'keg') + ' · ' + hn(k.kegs_bought) + ' bought · ' + hn(k.pints_rung) + ' pints rung' + (k.pints_comped ? ', ' + hn(k.pints_comped) + ' poured, not paid' : '') + '</span></div>'
-        + '<div class="m">' + hn(k.pints_per_keg) + ' pints a keg against ' + hn(k.theoretical_pints_per_keg) + ' in it' + ((k.assumes || []).length ? '<br><span class="br-note" style="margin:0">Assumes ' + numify(k.assumes.join('; ')) + '</span>' : '') + '</div>'
+      var k = ky[i], kr = '';
+      kr += '<div class="br-card br-li"><div class="n"><b>' + esc2(k.product) + '</b><span>' + esc2(k.keg_label || 'keg') + ' · ' + hn(k.kegs_bought) + ' bought · ' + hn(k.pints_rung) + ' pints rung' + (k.pints_comped ? ', ' + hn(k.pints_comped) + ' poured, not paid' : '') + '</span></div>'
+        + '<div class="m">' + hn(k.pints_per_keg) + ' pints a keg against ' + hn(k.theoretical_pints_per_keg) + ' in it</div>'
         + '<div class="r">' + (k.yield_pct == null ? '—' : hn(k.yield_pct + '%')) + '<span>yield · ' + hn((k.expected_yield_pct || 90) + '%') + ' expected</span></div></div>';
+      if (i < SHOW_FIRST) kh += kr; else krest += kr;
     }
-    if (kh) h += '<div class="br-sub"><div class="br-k">Keg yield</div><h3>Pints rung per keg bought</h3><div class="br-list">' + kh + '</div></div>';
+    // Three kegs show; the rest fold (owner, 10/15/26, as bought vs rung).
+    if (kh) h += '<div class="br-sub" id="br-keg"><div class="br-k">Keg yield</div><h3>Pints rung per keg bought</h3><div class="br-list">' + kh + '</div>'
+      + (krest ? '<details class="br-more" id="br-kegrest"' + (ST.det['br-kegrest'] ? ' open' : '') + '><summary>' + hn(ky.length - SHOW_FIRST) + ' more ' + plural(ky.length - SHOW_FIRST, 'keg') + '</summary><div class="br-list">' + krest + '</div></details>' : '') + '</div>';
     var rec = w.recent || [], wl = '', br = w.by_reason || [], bs = [];
     for (i = 0; i < br.length; i++) bs.push(br[i].label + ' ' + br[i].entries);
     for (i = 0; i < rec.length; i++) {
@@ -46549,7 +46558,7 @@ function sfw2RuleCheck(chk) {
     var ro = '', uo = '', j;
     for (j = 0; j < WREASONS.length; j++) ro += '<option value="' + WREASONS[j][0] + '">' + esc2(WREASONS[j][1]) + '</option>';
     for (j = 0; j < WUNITS.length; j++) uo += '<option value="' + WUNITS[j][0] + '">' + esc2(WUNITS[j][1]) + '</option>';
-    h += '<div class="br-sub" id="br-waste"><div class="br-k">Waste log</div><h3>Spills, breakage and line cleaning</h3>'
+    var wh = '<div class="br-sub" id="br-waste"><div class="br-k">Waste log</div><h3>Spills, breakage and line cleaning</h3>'
       + '<div class="br-card br-cnt" style="margin-top:0"><div class="st">' + (w.entries ? hn(w.entries) + ' ' + plural(w.entries, 'entry', 'entries') + (w.span ? ' ' + hn(w.span.from_mdy) + ' – ' + hn(w.span.to_mdy) : '') + (bs.length ? ' · ' + numify(bs.join(' · ')) : '') : 'Nothing logged yet.') + ' ' + esc2(w.note || 'Logged waste is shown beside the gap, never taken out of it.') + '</div>'
       + (wl ? '<div class="br-ch-h">' + wl + '</div>' : '')
       + '<div class="br-form" id="br-wform"><label>Date<input class="br-in2 date" type="date" id="br-wdate" value="' + esc2(todayIso()) + '" max="' + esc2(todayIso()) + '"></label>'
@@ -46559,6 +46568,7 @@ function sfw2RuleCheck(chk) {
       + '<label>Why<select class="br-sel" id="br-wreason">' + ro + '</select></label>'
       + '<label>Note<input class="br-in2" type="text" id="br-wnote" maxlength="300" style="width:200px"></label>'
       + '<button type="button" class="cbtn cbtn-secondary" data-br-wlog="1">Log it</button></div><span class="br-err" id="br-werr" role="alert"></span></div></div>';
+    if (part === 'waste') return '<section class="br-sec" id="br-wastes">' + wh + '</section>';
     return '<section class="br-sec" id="br-ops">' + varSec(d) + h + compsHtml(o.comps) + '</section>';
   }
   /* Comps and voids by bartender shift: the account holder's alone, and in
@@ -47054,7 +47064,10 @@ function sfw2RuleCheck(chk) {
     else h += '<div class="dn-k">Bar · invoices ' + hn((d.invoices || {}).from_mdy) + '–' + hn((d.invoices || {}).to_mdy) + '</div><h1 class="dn-read" style="font-size:32px">Prices first; bought vs sold once sales are on file.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>' + alerts(d, pc);
     h += insights(d.insights);
     if (pc.available) h += trendSec(pc);
-    h += countsSec(d) + opsSec(d) + priceSec(d) + distributors(d) + mappingSec(d)
+    // The figures, then what explains them - prices, where the money goes,
+    // what was used - then what you enter and set up (owner, 10/15/26).
+    h += priceSec(d) + distributors(d) + opsSec(d)
+      + countsSec(d) + opsSec(d, 'waste') + mappingSec(d)
       + '<section class="br-sec">' + products(d) + '</section>'
       + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
     return h;

@@ -551,7 +551,8 @@ def test_variance_waste_keg_yield_and_comps_render_from_the_payload(full):
     assert "Bought vs rung" in text and "Bud Light Btl" in text and "never counted as zero" in text
     assert "poured, not paid" in text and 'data-br-vmap="B9"' in html
     assert 'data-br-spec="1" data-act="confirm"' in html
-    assert "80.6%" in text and "Assumes every keg" in text
+    # No assumption text under a row (owner, 10/15/26): the figures say it.
+    assert "80.6%" in text and "Assumes" not in text and "assumes" not in text
     assert 'data-br-wlog="1"' in html and 'data-br-wdel="7"' in html and "3 bottles or cans" in text
     assert "Comps &amp; voids" not in html, "owner-only: nothing for anyone else"
     p["bar_ops"]["comps"] = {"owner_only": False, "available": True, "span": {"from_mdy": "8/11/26", "to_mdy": "10/5/26"},
@@ -882,3 +883,32 @@ def test_each_card_chart_box_spans_its_line_lowest_to_highest():
     assert flat["band"] == [7, 7] and flat["min"] < 7 < flat["max"]
     src = _src()
     assert "band: fit.band" in src and "band: c.range, bandCss: 'var(--ink3)'" not in src
+
+
+def test_keg_yield_shows_three_and_folds_the_rest_and_the_page_flows(full):
+    """Owner, 10/15/26: no "assumes" text, keg yield three rows with the rest in
+    a dropdown, the page in order - the figures, what explains them (prices,
+    where the money goes, what was used), then what you enter and set up."""
+    p = json.loads(json.dumps(full, default=str))
+    p["bar_ops"] = {"waste": {"entries": 0}, "comps": {"owner_only": True},
+                    "keg_yield": [{"product": "Keg %d" % i, "keg_label": "1/2 barrel", "kegs_bought": 2, "pints_rung": 200,
+                                   "pints_per_keg": 100, "theoretical_pints_per_keg": 124, "yield_pct": 80.0 + i,
+                                   "expected_yield_pct": 90, "assumes": ["every keg bought in the span was poured in it"]}
+                                  for i in range(5)]}
+    html = _render(p)
+    keg = html[html.index('id="br-keg"'):]
+    keg = keg[:keg.index('id="br-waste"')] if 'id="br-waste"' in keg else keg
+    shown, folded = keg.split('id="br-kegrest"', 1)
+    assert len(re.findall(r"<b>Keg \d", shown)) == 3 and len(re.findall(r"<b>Keg \d", folded)) == 2
+    assert "2 more kegs" in _text(folded)
+    assert "ssumes" not in _text(html)
+    order = [html.index(m) for m in ('class="br-card br-hero', 'What deserves a look', 'id="br-prices"' if 'id="br-prices"' in html
+                                     else 'Price watch', 'id="br-ops"', 'id="br-counts"' if 'id="br-counts"' in html
+                                     else 'Count the bar', 'id="br-waste"')]
+    assert order == sorted(order), order
+
+
+def test_the_bar_header_has_no_edges_and_the_row_label_reads_in_the_body_face():
+    src = open(DASHBOARD, encoding="utf-8").read()
+    assert "#bar .dn-bar{border-bottom:0;background:transparent;" in src
+    assert ".br-li .r>span:not(.hb-num){display:block;font-family:'Apfel Grotezk',sans-serif;" in src
