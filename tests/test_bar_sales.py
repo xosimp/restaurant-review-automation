@@ -690,6 +690,10 @@ def test_pmix_lines_take_the_category_header_above_them(db):
                        {"plu": "2123", "bo_name": "Miller Lite", "bo_category": "White Wine", "item_id": "m2",
                         "how": "name"}], source="pmix", db_path=db)
     plu_map.set_manual(rid, "3001", "Gl Chardonnay", "m3", db_path=db)
+    c = _conn(db)
+    c.execute("UPDATE pos_item_plus SET bo_category='House Pours' WHERE plu='3001'")
+    c.commit()
+    c.close()
     out = plu_map.recategorise(rid, PMIX, db_path=db)
     assert (out["changed"], out["manual"]) == (2, 1)
     assert plu_map.recategorise(rid, PMIX, db_path=db)["changed"] == 0, "idempotent"
@@ -697,6 +701,7 @@ def test_pmix_lines_take_the_category_header_above_them(db):
     cats = {r["bo_name"]: r["bo_category"] for r in c.execute("SELECT bo_name, bo_category FROM pos_item_plus")}
     c.close()
     assert cats["Coors Light"] == "Bottled Beer" and cats["Miller Lite"] == "Bottled Beer"
+    assert cats["Gl Chardonnay"] == "House Pours", "a manual row is never re-saved from the P-Mix"
 
 
 # ── R25: the record says what was verified ───────────────────────────────────
