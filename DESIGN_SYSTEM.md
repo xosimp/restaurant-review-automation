@@ -2466,3 +2466,9 @@ its button reads "A reply is drafted: read and post it".
 - A raw `resend.Emails.send` for client mail — `emails.deliver()` owns retry,
   suppression, the flood guard and `email_log`.
 - A restaurant's name as the display name on Will's address.
+
+### Account → Targets & pay rates, grouped (10/15/26)
+The owner's targets sit in four closed `details.co-more.tg-grp` groups on the one card — **Labor & food** (labor, food cost, waste), **Bar** (alcohol overall, beer & seltzer, liquor, wine), **Sales & losses** (monthly / weekly revenue, comps & voids), **Payroll** (blended hourly rate, payroll week) — then Hourly pay and Salaried staff as before. Each summary says what is set in the number face ("Labor 35% · Food 30% · Waste 3.5%", "not set" for a blank) and refreshes on every save (`tgGroupSums`); a field that refuses a save opens its group. Groups are divided by a hairline, 14px apart.
+
+The week-to-date hero's budget bar (`kxBar`, hero): the marker's name is a legend above the track, flush with the card's left edge (`.kx-bar .lg`, a 2px ink tick and "Budget to date"), never a label centred on the marker — it sat inset wherever the marker fell.
+

@@ -7197,11 +7197,13 @@ svg:hover .hb-xh{opacity:1}
 .kx-bar{width:100%}
 .kx-bar .tr{position:relative;height:12px;border-radius:999px;background:var(--hb-line2);box-shadow:inset 0 1px 2px rgba(14,12,10,.08)}
 .kx-bar.hero .tr{height:18px;margin-top:22px}
+.kx-bar.hero .lg+.tr{margin-top:0}
 .kx-bar .tr i{position:absolute;left:0;top:0;bottom:0;width:var(--f);border-radius:999px;overflow:hidden;background:linear-gradient(90deg,var(--ember),var(--ember2));box-shadow:0 6px 18px -6px var(--ember)}
 .kx-bar .tr i s{position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,var(--hb-sheen) 50%,transparent 70%);transform:translateX(-100%);opacity:0}
 .kx-bar .tr b{position:absolute;top:-6px;bottom:-6px;width:2px;margin-left:-1px;border-radius:2px;background:var(--ink)}
-.kx-bar .tr b em{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);font-style:normal;font-size:11.5px;font-weight:600;color:var(--ink3);white-space:nowrap}
-.kx-bar.hero .tr b em{display:block}
+.kx-bar .lg{display:none;align-items:center;gap:7px;margin:0 0 8px;font-size:11.5px;font-weight:600;color:var(--ink3);white-space:nowrap}
+.kx-bar .lg b{display:inline-block;width:2px;height:12px;border-radius:2px;background:var(--ink)}
+.kx-bar.hero .lg{display:flex}
 .kx-bar .cap{margin-top:12px;font-size:13px;color:var(--ink3)}
 .kx-gauge{display:block;width:96px;height:56px}
 .kx-gauge.hero{width:min(280px,100%);height:auto}
@@ -8654,8 +8656,12 @@ svg:hover .hb-xh{opacity:1}
   function kxBar(b,hero){
     if(!b||!isNum(b.value)||!isNum(b.max)||b.max<=0)return '';
     var f=Math.max(0,Math.min(1,b.value/b.max)),mk=isNum(b.marker)?Math.max(0,Math.min(1,b.marker/b.max)):null;
-    return '<div class="kx-bar'+(hero?' hero':'')+'" role="img" aria-label="'+esc(b.label||'')+'"><div class="tr"><i style="--f:'+(f*100).toFixed(1)+'%"><s></s></i>'
-      +(mk!==null?'<b style="left:'+(mk*100).toFixed(1)+'%"><em>Budget to date</em></b>':'')+'</div><div class="cap">'+hn(esc(b.label||''))+'</div></div>';
+    // The marker's name is a legend flush with the card's left edge (owner,
+    // 10/15/26): centred on the marker it sat inset wherever the marker fell.
+    return '<div class="kx-bar'+(hero?' hero':'')+'" role="img" aria-label="'+esc(b.label||'')+'">'
+      +(mk!==null?'<div class="lg"><b></b>Budget to date</div>':'')
+      +'<div class="tr"><i style="--f:'+(f*100).toFixed(1)+'%"><s></s></i>'
+      +(mk!==null?'<b style="left:'+(mk*100).toFixed(1)+'%"></b>':'')+'</div><div class="cap">'+hn(esc(b.label||''))+'</div></div>';
   }
   function kxGauge(g,hero){
     if(!g||!isNum(g.value)||!isNum(g.target)||g.target<=0)return '';
@@ -15658,6 +15664,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .tg-pay{margin-top:16px}
 .tg-pay summary{font-size:15px;color:var(--ink)}
 .tg-pay #as-tg-roles{margin-top:8px}
+.tg-grp>.ac-rows{margin-top:8px}
+.tg-grp+.tg-grp,.tg-grp+.tg-pay{margin-top:14px;padding-top:14px;border-top:1px solid var(--ac-line)}
 .tg-need{display:block;font-size:12.5px;color:var(--amber);margin-top:2px}
 #panel-account .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
 .ac-card-h h3{font-size:16px;font-weight:700;color:var(--ink);margin:0;letter-spacing:-.005em}
@@ -16159,33 +16167,48 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ac-card" id="as-tg-card" style="margin-top:14px" hidden>
         <div class="ac-card-h"><div><h3>Targets &amp; pay rates</h3><p>What labor and food cost are judged against, and what each hour costs. Every labor figure and every drafted week&rsquo;s budget uses these.</p></div>
           <div class="r"><span class="ac-status" id="as-tg-status"></span></div></div>
+        {# The targets in four closed groups, each summary saying what is set (owner, 10/15/26: "theres so many of them now"). #}
+        <details class="co-more tg-pay tg-grp" id="as-tg-g-cost"><summary>Labor &amp; food <small id="as-tg-g-cost-sum"></small></summary>
         <div class="ac-rows">
-          <div class="ac-row"><div class="l"><b>Labor target</b><span>Labor as a % of sales. The schedule is drafted to it.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-labor_target_pct" min="5" max="80" step="0.5" style="width:96px" aria-label="Labor target %" data-tg="labor_target_pct"></div></div>
-          <div class="ac-row"><div class="l"><b>Food cost target</b><span>Food cost as a % of food sales.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar AI&rsquo;s starting 4.5%.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
-          {# Alcohol targets (bar fix round 10/15/26, V1/V47): one name with the Bar page - bought vs sold until two bar counts bracket a window, then pour cost (counted). Blank shows the published range as context, never a verdict. #}
-          <div class="ac-row"><div class="l"><b>Alcohol cost target</b><span>What the Bar page judges beer, liquor and wine against &mdash; bought vs sold, or pour cost once the bar is counted. Blank shows the range for your mix as context.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-bar_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Alcohol cost target %" data-tg="bar_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Beer &amp; seltzer target</b><span>Blank shows Cavnar AI&rsquo;s starting 20&ndash;26% as context.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-beer_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Beer and seltzer cost target %" data-tg="beer_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Liquor target</b><span>Blank shows the published 14&ndash;20% for counted pour cost as context.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-liquor_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Liquor cost target %" data-tg="liquor_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Wine target</b><span>Blank shows the published 30&ndash;40% for counted pour cost as context.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-wine_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Wine cost target %" data-tg="wine_cost_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Comps &amp; voids target</b><span>The most comps and voided lines may be, as a % of gross sales. Discounts aren&rsquo;t counted &mdash; they&rsquo;re prices. Blank means no target.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-comp_void_target_pct" min="0.1" max="25" step="0.1" style="width:96px" placeholder="Not set" aria-label="Comps and voids target %" data-tg="comp_void_target_pct"></div></div>
-          <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>Your weekly target &times; 4.33 (52 weeks over 12 months). Blank or 0 means no target.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target" data-tg-pair="weekly_revenue_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Weekly revenue target</b><span>In dollars. Type either one and the other fills in &mdash; it&rsquo;s one target.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-weekly_revenue_target" min="0" step="100" style="width:130px" aria-label="Weekly revenue target" data-tg="weekly_revenue_target" data-tg-pair="monthly_revenue_target"></div></div>
-          <div class="ac-row"><div class="l"><b>Blended hourly rate</b><span>What an hour costs when nobody in its role has a rate. Everyone else is costed at their own pay.</span></div>
-            <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-hourly_rate" min="2" max="250" step="0.25" style="width:96px" aria-label="Blended hourly rate" data-tg="hourly_rate"></div></div>
-          <div class="ac-row"><div class="l"><b>Payroll week starts</b><span>Overtime is counted over this week.</span></div>
-            <div class="c"><select class="ac-select" id="as-tg-week_start_day" aria-label="Payroll week starts" data-tg="week_start_day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
+            <div class="ac-row"><div class="l"><b>Labor target</b><span>Labor as a % of sales. The schedule is drafted to it.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-labor_target_pct" min="5" max="80" step="0.5" style="width:96px" aria-label="Labor target %" data-tg="labor_target_pct"></div></div>
+            <div class="ac-row"><div class="l"><b>Food cost target</b><span>Food cost as a % of food sales.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar AI&rsquo;s starting 4.5%.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
         </div>
+        </details>
+        {# Alcohol targets (bar fix round 10/15/26, V1/V47): one name with the Bar page - bought vs sold until two bar counts bracket a window, then pour cost (counted). Blank shows the published range as context, never a verdict. #}
+        <details class="co-more tg-pay tg-grp" id="as-tg-g-bar"><summary>Bar <small id="as-tg-g-bar-sum"></small></summary>
+        <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Alcohol cost target</b><span>What the Bar page judges beer, liquor and wine against &mdash; bought vs sold, or pour cost once the bar is counted. Blank shows the range for your mix as context.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-bar_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Alcohol cost target %" data-tg="bar_cost_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Beer &amp; seltzer target</b><span>Blank shows Cavnar AI&rsquo;s starting 20&ndash;26% as context.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-beer_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Beer and seltzer cost target %" data-tg="beer_cost_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Liquor target</b><span>Blank shows the published 14&ndash;20% for counted pour cost as context.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-liquor_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Liquor cost target %" data-tg="liquor_cost_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Wine target</b><span>Blank shows the published 30&ndash;40% for counted pour cost as context.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-wine_cost_target" min="5" max="60" step="0.5" style="width:96px" placeholder="Not set" aria-label="Wine cost target %" data-tg="wine_cost_target"></div></div>
+        </div>
+        </details>
+        <details class="co-more tg-pay tg-grp" id="as-tg-g-sales"><summary>Sales &amp; losses <small id="as-tg-g-sales-sum"></small></summary>
+        <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Monthly revenue target</b><span>Your weekly target &times; 4.33 (52 weeks over 12 months). Blank or 0 means no target.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-monthly_revenue_target" min="0" step="100" style="width:130px" aria-label="Monthly revenue target" data-tg="monthly_revenue_target" data-tg-pair="weekly_revenue_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Weekly revenue target</b><span>In dollars. Type either one and the other fills in &mdash; it&rsquo;s one target.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-weekly_revenue_target" min="0" step="100" style="width:130px" aria-label="Weekly revenue target" data-tg="weekly_revenue_target" data-tg-pair="monthly_revenue_target"></div></div>
+            <div class="ac-row"><div class="l"><b>Comps &amp; voids target</b><span>The most comps and voided lines may be, as a % of gross sales. Discounts aren&rsquo;t counted &mdash; they&rsquo;re prices. Blank means no target.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-comp_void_target_pct" min="0.1" max="25" step="0.1" style="width:96px" placeholder="Not set" aria-label="Comps and voids target %" data-tg="comp_void_target_pct"></div></div>
+        </div>
+        </details>
+        <details class="co-more tg-pay tg-grp" id="as-tg-g-pay"><summary>Payroll <small id="as-tg-g-pay-sum"></small></summary>
+        <div class="ac-rows">
+            <div class="ac-row"><div class="l"><b>Blended hourly rate</b><span>What an hour costs when nobody in its role has a rate. Everyone else is costed at their own pay.</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-hourly_rate" min="2" max="250" step="0.25" style="width:96px" aria-label="Blended hourly rate" data-tg="hourly_rate"></div></div>
+            <div class="ac-row"><div class="l"><b>Payroll week starts</b><span>Overtime is counted over this week.</span></div>
+              <div class="c"><select class="ac-select" id="as-tg-week_start_day" aria-label="Payroll week starts" data-tg="week_start_day"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select></div></div>
+        </div>
+        </details>
         <!-- Hourly pay, per person (owner, 9/30/26): one closed section; each
              role shows what its people are paid and opens to them. A rate
              box appears only for someone the POS has no rate for. -->
@@ -41090,6 +41113,7 @@ window.cavPalette = cavPalette;
     }
     tgPaintRevenue(t);
     tgNotes(t);
+    tgGroupSums(t);
     var roles = t.roles || [], rates = t.role_rates || {}, pay = t.role_pay || {}, h = '', i;
     var nPpl = 0, nPos = 0, nNeed = 0;
     if (!roles.length) h = '<div class="sr-note">No roles yet \u2014 they come from your shifts and the roster.</div>';
@@ -41150,6 +41174,20 @@ window.cavPalette = cavPalette;
     var row = inp && inp.closest ? inp.closest('.ac-row') : null, b = row ? row.querySelector('.l b') : null;
     return b ? b.textContent : 'This target';
   }
+  // Each closed group says what it holds (owner, 10/15/26): the set figures
+  // in the number face, "not set" where the owner left one blank.
+  function tgGroupSums(t) {
+    function p(v) { return (v === null || v === undefined || v === '') ? null : '<span class="hb-num">' + e(String(+v)) + '%</span>'; }
+    function line(parts) { var o = [], i; for (i = 0; i < parts.length; i++) o.push(e(parts[i][0]) + ' ' + (parts[i][1] || 'not set')); return o.join(' · '); }
+    var put = function (id, h) { var el = $id('as-tg-g-' + id + '-sum'); if (el) el.innerHTML = h; };
+    put('cost', line([['Labor', p(t.labor_target_pct)], ['Food', p(t.food_cost_target)], ['Waste', p(t.waste_target_pct)]]));
+    put('bar', line([['Overall', p(t.bar_cost_target)], ['Beer', p(t.beer_cost_target)], ['Liquor', p(t.liquor_cost_target)], ['Wine', p(t.wine_cost_target)]]));
+    var wk = +t.weekly_revenue_target > 0 ? '<span class="hb-num">$' + Math.round(+t.weekly_revenue_target).toLocaleString('en-US') + '</span> a week' : null;
+    put('sales', line([['Revenue', wk], ['Comps & voids', p(t.comp_void_target_pct)]]));
+    var days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    put('pay', line([['Blended', isFinite(+t.hourly_rate) && t.hourly_rate ? '<span class="hb-num">' + tgRate(t.hourly_rate) + '</span>/h' : null],
+                     ['week starts', days[+t.week_start_day || 0]]]));
+  }
   function tgUnit(inp) { return /%$/.test(inp.getAttribute('aria-label') || '') ? '%' : ''; }
   function tgFieldErr(inp, msg) {
     var row = inp && inp.closest ? inp.closest('.ac-row') : null, l = row ? row.querySelector('.l') : null;
@@ -41158,6 +41196,7 @@ window.cavPalette = cavPalette;
     if (!box) { box = document.createElement('span'); box.className = 'tg-err'; box.setAttribute('role', 'alert'); l.appendChild(box); }
     box.textContent = msg || ''; box.hidden = !msg;
     if (msg) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+    var g = msg && inp.closest ? inp.closest('details') : null; if (g) g.open = true;
   }
   function tgRate(v) { var n = +v; return '$' + (n % 1 ? n.toFixed(2) : String(n)); }
   function tgNotes(t) {
@@ -41282,6 +41321,7 @@ window.cavPalette = cavPalette;
           _tg.targets = d.targets;
           if (rev) tgPaintRevenue(d.targets);   /* both boxes as stored */
           tgNotes(d.targets);                   /* "Set by you on ..." now */
+          tgGroupSums(d.targets);
           if (f) tgFieldErr(t, '');
           status('as-tg-status', 'Saved');
         }

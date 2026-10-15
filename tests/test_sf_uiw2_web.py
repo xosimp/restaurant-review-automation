@@ -377,7 +377,11 @@ def test_the_forecast_tab_and_par_say_the_hourly_budget(page):
     assert "Labor budget (<span class=\"hb-num\">" not in page
     par = page[page.index("var par = document.getElementById('sw-par')"):]
     par = par[:par.index("swLive();")]
-    assert "hourly budget" in par and "data.budget_basis" in par and "</span> at <span" not in par
+    assert "swParHtml(data)" in par
+    # Two figures and one line (owner, 10/15/26): the hourly budget named,
+    # its basis read from the draft, never "$X at 35%".
+    body = _fn(page, "swParHtml")
+    assert "Hourly budget" in body and "data.budget_basis" in body and "</span> at <span" not in body
 
 
 def test_events_import_a_booking_export_and_say_what_it_read(page):
