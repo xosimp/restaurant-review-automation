@@ -36,8 +36,17 @@ module has one owner in a fix round):
              facade)
 - targets    owner_targets, target_details: the owner's own alcohol cost
              targets through thresholds.bar_target_for
-- prices     _price_watch
-- spend      _distributors, _products
+- prices     analyse, _price_watch: credit pairs, quantity tiers and
+             ladders, price regimes, deals, forward money, floors,
+             tier flags, split case (10/15/26, V2/V3/V15/V23/V24/V34/F8)
+- spend      _distributors, _products, deposits, rebates_and_free_goods,
+             mixers (F7, V33, Decision 3)
+- products   the canonical product (valid UPC, codes, owner links), the pack
+             parser, unit_costs (per bottle / oz / pour), reorder_hints, the
+             owner's bar_settings / packs / links / deal sheet / drink map
+             (init_bar_products, boot only, from init_bar_cost; F3, F8, F13)
+- margins    the drink margin check (F11): drink_margin, margins,
+             set_drink_map
 - insights   _insights
 - counts     bar_counts (init_bar_counts), save/delete/history, true_pour_cost,
              counted, latest_counted, the Back Office valuation reader, the

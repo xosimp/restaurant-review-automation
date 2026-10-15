@@ -104,7 +104,16 @@ def test_price_watch_names_the_latest_change_and_what_it_costs(db):
     assert len(pw["increases"]) == 1 and not pw["decreases"]
     up = pw["increases"][0]
     assert (up["from"], up["to"], up["change"], up["unit"]) == (150.0, 160.0, 10.0, "case")
-    assert up["since"] == "2026-09-01" and up["impact_90d"] == 10.0 * 7
+    assert up["kind"] == "increase" and up["persistent"] is True
+    # V23 (10/15/26): this test pinned impact_90d == 10 x 7, the 2 cases bought
+    # at the old price counted as if they cost more. The money is now a
+    # forward run-rate (the change x the cases bought a month: 7 over the 62
+    # days since 8/1) and, apart, what was already paid at the new price
+    # (10 x the 5 cases bought since 9/1).
+    assert up["since"] == "2026-09-01"
+    assert up["forward_monthly_usd"] == round(10.0 * 7 / 62 * 30.44, 2)
+    assert up["already_paid_usd"] == 50.0
+    assert up["regime"] == {"reference": 160.0, "since": "2026-09-01", "since_mdy": "9/1/26"}
 
 
 def test_the_owner_sorts_a_product_once_and_it_holds(db):
@@ -188,9 +197,13 @@ def test_the_insights_say_only_what_was_measured(db):
     csv = ""
     for i, (code, desc, p1, p2, q) in enumerate((("1", "TITOS VDK 1L", 150, 170, 6), ("2", "KETEL ONE VDK 1L", 290, 309, 6),
                                                  ("3", "ST GERMAIN LIQUEUR 750ML", 180, 198, 7),
-                                                 ("4", "CASAMIGOS TEQ BL 1L", 400, 402, 2))):
-        csv += _row("Breakthru Beverage", f"A{i}", "08/10/2026", str(p1), code, desc, "CA", 1, str(p1))
+                                                 ("4", "CASAMIGOS TEQ BL 1L", 400, 412, 2))):
+        # The old price twice and the new one twice: a change that persisted
+        # against a price seen twice (V2), so each is a headline.
+        csv += _row("Breakthru Beverage", f"A{i}", "07/30/2026", str(p1), code, desc, "CA", 1, str(p1))
+        csv += _row("Breakthru Beverage", f"Z{i}", "08/10/2026", str(p1), code, desc, "CA", 1, str(p1))
         csv += _row("Breakthru Beverage", f"B{i}", "09/10/2026", str(p2 * (q - 1)), code, desc, "CA", q - 1, str(p2))
+        csv += _row("Breakthru Beverage", f"C{i}", "09/20/2026", str(p2 * (q - 1)), code, desc, "CA", q - 1, str(p2))
     fi.ingest_file(rid, "x.csv", (HEAD + csv).encode(), db_path=db)
     out = bc.build(rid, db_path=db, today=date(2026, 10, 1))
     keys = [i["key"] for i in out["insights"]]

@@ -1,18 +1,26 @@
 """
 bar/build.py — the Bar page's payload, assembled from the package's reads.
 """
-from datetime import date
+from datetime import date, timedelta
 
 from bar.common import LABELS, _mdy
 from bar.counts import counted as _counted
 from bar.counts import latest_counted
 from bar.insights import _insights
 from bar.judge import owner_stopped
+from bar.margins import margins as _margins
 from bar.pour_cost import _pour_cost, window_span
-from bar.prices import _price_watch
+from bar.prices import analyse as _analyse_prices
+from bar.products import deal_sheet as _deal_sheet
+from bar.products import pack_overrides as _pack_overrides
+from bar.products import product_links as _product_links
+from bar.products import reorder_hints as _reorder_hints
+from bar.products import settings as _settings
 from bar.purchases import _lines
 from bar.sales import bar_sales, window_basis
 from bar.spend import _distributors, _products
+from bar.spend import deposits as _deposits
+from bar.spend import mixers as _mixers
 from bar.targets import _restaurant, target_details
 
 
@@ -72,9 +80,17 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
         pour["sales_gaps"] = sales_basis["gaps"]
         if sales_basis["gaps"]:
             pour["complete"] = False
-    prices = _price_watch(lines, today)
+    # The price watch reads the owner's packs, links, deal sheet and pours
+    # (bar.products); its per-product analysis feeds the drink margins.
+    cfg = _settings(restaurant_id, db_path)
+    analysis = _analyse_prices(lines, today, deal_sheet=_deal_sheet(restaurant_id, db_path),
+                               packs=_pack_overrides(restaurant_id, db_path), pour=cfg,
+                               links=_product_links(restaurant_id, db_path))
+    prices = analysis["payload"]
     to_check = sum(1 for p in products if not (p["sure"] or p["owner_set"]))
     fresh = pour.get("freshness") or {}
+    mix_to = (win or {}).get("to") or inv_dates[-1]
+    mix_from = (win or {}).get("from") or (date.fromisoformat(mix_to) - timedelta(days=27)).isoformat()
     return {"ok": True, "available": True,
             "as_of": inv_dates[-1], "as_of_mdy": _mdy(inv_dates[-1]),
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
@@ -90,6 +106,17 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
             "price_watch": prices,
             "insights": _insights(pour, prices, to_check),
             "distributors": _distributors(lines),
+            # Keg deposits each distributor holds (F7): charged, credited, balance.
+            "deposits": _deposits(lines),
+            # Cocktail mixers bought in the pour-cost window (Decision 3),
+            # shown beside liquor; `counted` is the owner's switch.
+            "mixers": _mixers(lines, mix_from, mix_to, counted=cfg["count_mixers"]),
+            # The drink margin check (F11), owner-confirmed pairs only.
+            "margins": _margins(restaurant_id, analysis, pour=cfg, db_path=db_path),
+            # Products past their usual reorder rhythm (F13): an insight input.
+            "reorder": _reorder_hints(lines, today, canon=analysis["canon"]),
+            "bar_settings": {k: cfg[k] for k in ("count_mixers", "liquor_oz", "wine_oz", "draft_oz",
+                                                 "draft_yield_pct")},
             "products": products,
             "to_check": to_check,
             "other_spend": other_spend,

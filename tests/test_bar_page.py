@@ -57,14 +57,17 @@ def _render(payload):
 def payload(db_path):
     rid = models.create_restaurant(models.Restaurant(name="EJ's", owner_email="o@x.test"), db_path=db_path)
     csv = HEAD
-    # Ten products whose price went up (a bigger change times more cases
-    # down the list), one that came down, and a tax line that is no product.
+    # Ten products whose price went up and held for two orders (a bigger
+    # change times more cases down the list; a change counts only once it
+    # persists, V2), one that came down, and a tax line that is no product.
     for k in range(10):
         csv += _row("Breakthru Beverage", f"A{k}", "08/10/2026", f"{100 + k}", f"VODKA NUMBER {k} 1L", "CA", 1, 100.0)
-        csv += _row("Breakthru Beverage", f"B{k}", "09/10/2026", f"{100 + k}", f"VODKA NUMBER {k} 1L", "CA", 2 + k,
-                    100.0 + (k + 1))
+        for inv, day in (("B", "09/10/2026"), ("D", "09/20/2026")):
+            csv += _row("Breakthru Beverage", f"{inv}{k}", day, f"{100 + k}", f"VODKA NUMBER {k} 1L", "CA", 2 + k,
+                        100.0 + 3 * (k + 1))
     csv += _row("Chicago Beverage", "C1", "08/12/2026", "900", "DAISY CUTTER K 1/2BB", "KE", 2, 229.0)
     csv += _row("Chicago Beverage", "C2", "09/12/2026", "900", "DAISY CUTTER K 1/2BB", "KE", 2, 219.0)
+    csv += _row("Chicago Beverage", "C3", "09/19/2026", "900", "DAISY CUTTER K 1/2BB", "KE", 2, 219.0)
     csv += _row("Elgin Beverage", "E1", "08/12/2026", "99901", "SALES TAX", "EA", 1, 5.25)
     csv += _row("Elgin Beverage", "E2", "09/12/2026", "99901", "SALES TAX", "EA", 1, 1.58)
     fi.ingest_file(rid, "x.csv", csv.encode(), db_path=db_path)
