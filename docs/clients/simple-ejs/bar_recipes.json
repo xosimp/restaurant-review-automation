@@ -912,6 +912,161 @@
    "flags": [
     "vodka oz per pour unknown"
    ]
+  },
+  {
+   "name": "Vegas Bomb",
+   "alcoholic": true,
+   "rpower_item": "Vegas Bomb",
+   "ingredients": [
+    {
+     "item": "Crown Royal whisky",
+     "amount": 0.75,
+     "unit": "oz"
+    },
+    {
+     "item": "Peach schnapps",
+     "amount": 0.75,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "White Tea Shot",
+   "alcoholic": true,
+   "rpower_item": "White Tea Shot",
+   "ingredients": [
+    {
+     "item": "Vodka",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Peach schnapps",
+     "amount": 0.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "Green Tea Shot",
+   "alcoholic": true,
+   "rpower_item": "Green Tea Shot",
+   "ingredients": [
+    {
+     "item": "Jameson Irish Whiskey",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Peach schnapps",
+     "amount": 0.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "Rocquete Refreshr",
+   "alcoholic": true,
+   "rpower_item": "Rocquete Refreshr",
+   "ingredients": [
+    {
+     "item": "Nolets gin",
+     "amount": 1.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands.",
+   "flags": [
+    "Anthony: 'House recipe needs verification' - a suggested recipe, not confirmed"
+   ]
+  },
+  {
+   "name": "Long Island Iced Tea",
+   "alcoholic": true,
+   "rpower_item": "Longisland",
+   "ingredients": [
+    {
+     "item": "Vodka",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Gin",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "White rum",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Tequila",
+     "amount": 0.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Triple sec",
+     "amount": 0.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "Chocolate Martini",
+   "alcoholic": true,
+   "rpower_item": "Chocolate Martini",
+   "ingredients": [
+    {
+     "item": "Vanilla vodka",
+     "amount": 1.5,
+     "unit": "oz"
+    },
+    {
+     "item": "Godiva chocolate liqueur",
+     "amount": 1,
+     "unit": "oz"
+    },
+    {
+     "item": "Baileys Irish Cream",
+     "amount": 0.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "Strawberry Bourbon Buck",
+   "alcoholic": true,
+   "rpower_item": "Strawbry Burb Bck",
+   "ingredients": [
+    {
+     "item": "Old Forester bourbon",
+     "amount": 2,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony (Simple EJ's), by text 10/15/26 (numbers 11-16 and the strawberry bourbon buck). Named brands confirmed in production; generic spirits (vodka, gin, white rum, tequila) left as suggestions for the well brands."
+  },
+  {
+   "name": "Espresso Shot",
+   "alcoholic": true,
+   "rpower_item": "Espresso Shot",
+   "ingredients": [
+    {
+     "item": "Ketel One espresso machine pour",
+     "amount": 1.5,
+     "unit": "oz"
+    }
+   ],
+   "source_note": "Anthony 10/15/26: 1 1/2 oz from the Ketel One espresso machine. NOT LOADED: the vodka per oz of the machine's batch is unknown (same question as the Affogato).",
+   "flags": [
+    "vodka per oz of machine batch unknown"
+   ]
   }
  ],
  "_answers_1013": [
