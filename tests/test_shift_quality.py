@@ -1171,13 +1171,18 @@ def test_ios_shows_what_the_generator_is_doing_rather_than_a_spinner():
     # The first step names last year's same days only when that input
     # exists (never-say C, NS1 #21), so the view passes the payload's flag.
     assert "ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true," in view
-    # The step clock runs from the job's start, stretched to the draft time
-    # measured here — never a fixed 62-second model (iOS parity #15).
-    assert "startedAt: viewModel.generationStartedAt" in view and "typical: viewModel.generationTypical" in view
+    # A step ticks only when the job reported it (re-audit 10/11/26
+    # TRUST-21: no timed checkmarks), and the time line runs from the job's
+    # start against the draft time measured here (iOS parity #15).
+    assert "progress: viewModel.generationProgress" in view
+    assert "if let started = viewModel.generationStartedAt" in view and "typical: viewModel.generationTypical" in view
+    # The steps are the job's own reported stages (schedule_engine.
+    # GENERATION_STAGES via schedule-status progress.stages), never a timed
+    # script of stages the pipeline may not run (re-audit 10/11/26 TRUST-21).
     steps = _source("ios/CavnarAI/CavnarAI/Features/Labor/ScheduleProgressSteps.swift")
-    for stage in ("available", "labor target", "operational scores",
-                  "leadership", "strongest team", "quality"):
-        assert stage in steps, stage
+    assert "progress?.stages" in steps and "progress?.currentIndex" in steps
+    import schedule_engine
+    assert [k for k, _label in schedule_engine.GENERATION_STAGES][0] == "inputs"
 
 
 def test_ios_lets_a_manager_move_somebody_and_see_the_score_change():

@@ -54,7 +54,16 @@ WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MON, TUE, WED, THU, FRI, SAT, SUN = WEEK
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-EXP = sx.EXPERIMENTS[0]
+# The arm mechanics (the hash, the power gate, the pins) are tested on a
+# two-arm, 1:1 copy of assign_v1: production weights its model arm 0 since
+# the solver became the draft (10/14/26), which leaves nothing to flip.
+_LIVE_EXPERIMENTS = sx.EXPERIMENTS
+EXP = dict(_LIVE_EXPERIMENTS[0], arms=tuple(dict(a, weight=1) for a in _LIVE_EXPERIMENTS[0]["arms"]))
+
+
+@pytest.fixture(autouse=True)
+def _two_arm_assign(monkeypatch):
+    monkeypatch.setattr(sx, "EXPERIMENTS", (EXP,) + tuple(_LIVE_EXPERIMENTS[1:]))
 
 
 @pytest.fixture(autouse=True)

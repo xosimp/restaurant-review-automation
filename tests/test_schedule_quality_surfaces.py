@@ -49,7 +49,9 @@ def test_ios_shows_what_cavnar_changed_and_what_still_needs_the_owner():
     # The kicker is CavnarKicker now (re-audit 10/8/26 L10); the optimizer
     # sits behind "See the evidence" (M28).
     assert "optimizerBlock(" in panel and 'CavnarKicker("Still needs you"' in panel
-    assert "optimizerSummary" in panel and "gate?.reason" in panel
+    # The gate's line: its reason when it ran, or why it was owed and did
+    # not run (re-audit 10/11/26 BUGSGEN-16, the web's sq-gate rule).
+    assert "optimizerSummary" in panel and "gate.line" in panel
     model = _swift("LaborViewModel.swift")
     assert "struct ScheduleOptimizer" in model and 'case beforeScore = "before_score"' in model
     assert "Cavnar AI improved this draft from" in model

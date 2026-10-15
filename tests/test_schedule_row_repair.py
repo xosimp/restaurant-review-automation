@@ -319,9 +319,11 @@ def test_shift_start_already_past_close_is_flagged_not_fabricated(monkeypatch):
     result = _run(monkeypatch, csv_text, close_times={"Friday": "9:00pm"})
 
     row = result["preview_rows"][0]
-    assert row.get("needs_review") is True
-    # Left as the model wrote it — not silently rewritten to something wrong.
+    # Left as the model wrote it — not silently rewritten to something wrong —
+    # and judged by the rule sweep, not a parser flag (re-audit 10/11/26
+    # BUGSGEN-14: the cap's NEEDS REVIEW outlived the sweep's soft verdict).
     assert row["shift_end"] == "11:00pm"
+    assert not row.get("needs_review")
 
 
 # ── Facts the model cannot be trusted to respect on its own ────────────────

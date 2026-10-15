@@ -176,11 +176,12 @@ def test_the_outcomes_job_keeps_a_cursor_and_resumes_after_it(db, monkeypatch):
     conn.commit()
     conn.close()
     seen.clear()
+    # One worker, so the order visited is the order the pass resumes in: with
+    # OUTCOMES_WORKERS (2) one worker could finish its restaurant and append
+    # the wrapped-around first one before the other appended its own.
+    monkeypatch.setattr(strategy_jobs, "OUTCOMES_WORKERS", 1)
     strategy_jobs.run_schedule_outcomes()
-    # The pass resumes after the cursor; it runs OUTCOMES_WORKERS at once, so
-    # the two after it start together in either order (each now reads its
-    # restaurant's daypart boundary first — re-audit 10/11/26 ARCH-11).
-    assert seen and set(seen[:2]) == {rids[1], rids[2]}
+    assert seen[:2] == [rids[1], rids[2]]
 
 
 def test_the_outcomes_job_only_visits_labor_restaurants(db, monkeypatch):

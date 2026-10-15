@@ -108,7 +108,11 @@ def test_engagement_is_summarised_per_login_before_its_rows_go(monkeypatch):
     rid = _rid()
     _x("INSERT INTO users (id, restaurant_id, username, email, password_hash) VALUES (77, ?, 'eng', 'e@x.test', 'x')",
        (rid,))
-    when = _ago(45)
+    # The 10th of a month well past the rollup's window: the "+1 day" login
+    # stays in the same month whatever today's date (45 days back from a UTC
+    # date landed on the 31st, and the next day fell in the next month).
+    back = datetime.utcnow().replace(day=1) - timedelta(days=40)
+    when = back.replace(day=10, hour=12, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
     for d in (0, 0, 1):
         _x("INSERT INTO login_history (user_id, restaurant_id, created_at) VALUES (77, ?, datetime(?, ?))",
            (rid, when, f"+{d} days"))

@@ -112,7 +112,12 @@ EXPERIMENTS = (
      "control": "model",
      # Every week runs the solver until the experiment can conclude.
      "until_powered": "solver",
-     "arms": ({"key": "model", "label": "Model assignment", "weight": 1,
+     # The model arm is off the hash (weight 0) since the solver became the
+     # draft (10/14/26): there is no model assignment by default to compare,
+     # and turning the solver and reassignments off on half of all weeks once
+     # the fleet powers the experiment would undo the default. A pin still
+     # reaches it.
+     "arms": ({"key": "model", "label": "Model assignment", "weight": 0,
                "flags": {"solver": False, "reassign": False}},
               {"key": "solver", "label": "Solver assignment", "weight": 1,
                "flags": {"solver": True, "reassign": True}})},
@@ -178,7 +183,11 @@ EXPERIMENTS = (
      "control": "code_shaped",
      "until_powered": "code_shaped",
      "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 1, "flags": {"draft_source": "model"}},
-              {"key": "carried", "label": "Last published week, carried forward", "weight": 1,
+              # Off the hash (weight 0, 10/14/26): the schedule benchmark
+              # shows the carried week leaves people with no hours where the
+              # solver starves nobody — not a week to give a restaurant on a
+              # coin flip. A pin still reaches it.
+              {"key": "carried", "label": "Last published week, carried forward", "weight": 0,
                "flags": {"draft_source": "carry_forward"}},
               {"key": "code_shaped", "label": "Shaped in code and solved", "weight": 1,
                "flags": {"draft_source": "solver"}},
