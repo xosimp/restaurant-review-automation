@@ -865,7 +865,8 @@ def _watch_one(restaurant_id, since, db_path=None, today=None) -> bool:
     from time_utils import local_iso, mdy, restaurant_now
     conn = get_conn(db_path)
     try:
-        f = conn.execute("SELECT MAX(created_at) AS at FROM fintech_files WHERE restaurant_id=?",
+        f = conn.execute("SELECT MAX(created_at) AS at FROM fintech_files WHERE restaurant_id=? "
+                         "AND status<>'purged'",
                          (int(restaurant_id),)).fetchone()
         tzr = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (int(restaurant_id),)).fetchone()
     finally:
