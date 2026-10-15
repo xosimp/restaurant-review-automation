@@ -70,6 +70,10 @@ EXPORT = (
 )
 
 ROUTE = "fintech-abc123def4@intake.resend.app"
+# The route's senders (bar fix round 10/15/26, V12) and Resend's verdict on
+# a genuine email (the Received-emails API's `authentication`).
+SENDERS = "will@cavnar.ai\n@fintech.net\nforwarding-noreply@google.com"
+PASSED = {"spf": "pass", "dkim": "pass", "dmarc": "pass"}
 
 
 @pytest.fixture
@@ -86,8 +90,8 @@ def _rid(db_path):
 
 def _route(db_path, rid):
     conn = models.get_conn(db_path)
-    conn.execute("INSERT INTO email_intake_routes (address, restaurant_id, kind, active, created_at) "
-                 "VALUES (?,?, 'fintech', 1, '2026-10-14 12:00:00')", (ROUTE, rid))
+    conn.execute("INSERT INTO email_intake_routes (address, restaurant_id, kind, active, created_at, allowed_senders) "
+                 "VALUES (?,?, 'fintech', 1, '2026-10-14 12:00:00', ?)", (ROUTE, rid, SENDERS))
     conn.commit()
     conn.close()
 
@@ -245,8 +249,9 @@ def test_an_unsigned_received_event_is_refused(db, monkeypatch):
 def test_the_job_fetches_the_attachment_and_stores_the_invoices(db, monkeypatch):
     rid = _rid(db)
     _route(db, rid)
-    email_intake.receive({"email_id": "em_4", "to": [ROUTE]}, db_path=db)
-    api = {"/emails/receiving/em_4": {"from": "Fintech <noreply@fintech.net>", "subject": "Daily file"},
+    email_intake.receive({"email_id": "em_4", "to": [ROUTE], "from": "noreply@fintech.net"}, db_path=db)
+    api = {"/emails/receiving/em_4": {"from": "Fintech <noreply@fintech.net>", "subject": "Daily file",
+                                      "authentication": PASSED},
            "/emails/receiving/em_4/attachments": {"data": [{"id": "a1", "filename": "daily.txt",
                                                             "download_url": "https://x.test/a1", "size": 900}]}}
     monkeypatch.setattr(email_intake, "_api_get", lambda path: api[path])
@@ -261,9 +266,10 @@ def test_the_job_fetches_the_attachment_and_stores_the_invoices(db, monkeypatch)
 def test_gmails_forwarding_confirmation_is_kept_for_a_person_to_confirm(db, monkeypatch):
     rid = _rid(db)
     _route(db, rid)
-    email_intake.receive({"email_id": "em_5", "to": [ROUTE]}, db_path=db)
+    email_intake.receive({"email_id": "em_5", "to": [ROUTE], "from": "forwarding-noreply@google.com"}, db_path=db)
     api = {"/emails/receiving/em_5": {"from": "Gmail Team <forwarding-noreply@google.com>",
-                                      "subject": "(#123456789) Gmail Forwarding Confirmation", "text": "click"},
+                                      "subject": "(#123456789) Gmail Forwarding Confirmation", "text": "click",
+                                      "authentication": PASSED},
            "/emails/receiving/em_5/attachments": {"data": []}}
     monkeypatch.setattr(email_intake, "_api_get", lambda path: api[path])
     assert email_intake.process("em_5", db_path=db)["status"] == "gmail_confirmation"
@@ -275,7 +281,7 @@ def test_gmails_forwarding_confirmation_is_kept_for_a_person_to_confirm(db, monk
 def test_a_failed_fetch_marks_the_row_and_raises_for_the_queue_to_retry(db, monkeypatch):
     rid = _rid(db)
     _route(db, rid)
-    email_intake.receive({"email_id": "em_6", "to": [ROUTE]}, db_path=db)
+    email_intake.receive({"email_id": "em_6", "to": [ROUTE], "from": "noreply@fintech.net"}, db_path=db)
 
     def boom(path):
         raise RuntimeError("Resend receiving answered 503")

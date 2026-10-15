@@ -5752,6 +5752,14 @@ def scheduler_loop():
             if _due(now, 8) and _ops.claim_period("rec_ledger", str(today)):
                 _ops.run_job("rec_ledger", run_rec_ledger_pass)
 
+            # 11am — the Fintech invoice feed: a restaurant with an active
+            # intake address and no file for two business days gets a failure
+            # on its `invoices` source, which the admin console raises as an
+            # issue (email_intake.watch_feeds, bar fix round 10/15/26 V22).
+            if _due(now, 11) and _ops.claim_period("invoice_feed_watch", str(today)):
+                import email_intake as _email_intake
+                _ops.run_job("invoice_feed_watch", _email_intake.watch_feeds)
+
             # 9am local, per restaurant — what is waiting on each manager
             # before the next shifts: requests close to their date, a drafted
             # week not sent (strategy_jobs.run_labor_reminders).
@@ -5932,6 +5940,13 @@ def scheduler_loop():
             if _ops.claim_period("provider_probes", f"{today}-{now.hour}"):
                 import provider_health as _provider_health
                 _ops.run_job("provider_probes", _provider_health.run_probes)
+
+            # Hourly — received intake mail still queued after an hour with
+            # no live job is queued again, or marked failed after three
+            # (email_intake.reconcile_stale, bar fix round 10/15/26 V13).
+            if _ops.claim_period("intake_reconcile", f"{today}-{now.hour}"):
+                import email_intake as _email_intake
+                _ops.run_job("intake_reconcile", _email_intake.reconcile_stale)
 
             # Hourly — dunning's safety net: owe the email for a failed
             # invoice attempt the webhook could not, stand down dunning for

@@ -37,6 +37,8 @@ module has one owner in a fix round):
              counted, latest_counted, the Back Office valuation reader, the
              month-end count reminder (10/15/26, F1; not on the facade)
 - build      build: the page's payload
+- feed       feed_status (the payload's `feed`: invoices through, drink sales
+             through, the last Fintech file, stale_days) and invoices_through
 
 `bar_cost.py` stays as the facade every caller imports (`client_api`,
 `models.init_db`, the tests): it re-exports every name above. Modules here

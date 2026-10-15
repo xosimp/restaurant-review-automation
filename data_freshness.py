@@ -81,6 +81,11 @@ SOURCES = {
     # 7am read works; Search Console runs 2-3 days behind on Google's side,
     # so the newest day of either is what is dated.
     "website":    {"label": "Website",        "expected_lag": 1.0,  "grace": 1.0, "horizon": 7},
+    # The Bar's distributor invoices (Fintech's daily file by email —
+    # email_intake; bar fix round 10/15/26, V22): dated by the newest
+    # invoice date; a business day behind when it works, three days of grace
+    # (a weekend and a quiet delivery day) before recency falls.
+    "invoices":   {"label": "Bar invoices",   "expected_lag": 1.0,  "grace": 3.0, "horizon": 14},
 }
 # How often each source is refreshed when everything works, in hours, and
 # the owner's word for it. "Live" is said only of a source refreshed more
@@ -97,6 +102,7 @@ CADENCE = {
     "dsr": (24, "nightly, after close"), "depletion": (24, "nightly"),
     "cohort": (24, "nightly"),
     "website": (24, "every morning"),
+    "invoices": (24, "daily, by email from Fintech"),
 }
 LIVE_WITHIN_HOURS = 1
 
@@ -147,6 +153,9 @@ MODULE_SOURCES = {
     "ops": ("dsr", "sales"),
     "dsr": ("dsr", "sales"),
     "daily report": ("dsr", "sales"),       # Ask's label for the DSR tools
+    # The Bar page (Food Cost → Bar): purchases from the invoices against
+    # the nightly report's drink sales.
+    "bar": ("invoices", "dsr", "sales"),
 }
 
 # The source a module's advice cannot stand without (DH5 §2.4). Down —
@@ -1153,6 +1162,31 @@ def _depletion(r, conn, today, now, ctx, db_path=None):
     return _data_date_state("depletion", max(dates), today, "Depleted through")
 
 
+def _invoices(r, conn, today, now, ctx, db_path=None):
+    """The Bar's distributor invoices (Fintech by email): dated by the newest
+    invoice date on file (bar.feed.invoices_through — never one past
+    tomorrow). Applies to a restaurant with an active Fintech intake address
+    or invoices on file; one with an address and no invoice yet is unknown
+    with pct None (no figure rests on it yet). A feed that stopped reaches
+    it through _with_health (the daily feed watch's failure)."""
+    rid = _rid(r)
+    try:
+        route = conn.execute("SELECT 1 FROM email_intake_routes WHERE restaurant_id=? AND kind='fintech' "
+                             "AND active=1 LIMIT 1", (rid,)).fetchone()
+        from bar.feed import invoices_through
+        d = _as_date(invoices_through(rid, today, conn=conn))
+    except Exception:
+        # A database without the intake's tables (an old copy, a test's
+        # partial schema) has no invoices to date.
+        return _result("invoices", None, None, "No distributor invoices by email", state="not_connected")
+    if d is None:
+        if not route:
+            return _result("invoices", None, None, "No distributor invoices by email", state="not_connected")
+        return _result("invoices", None, None, "No Fintech invoice has arrived yet", state="unknown",
+                       never_synced=True)
+    return _data_date_state("invoices", d, today, "Bar invoices through")
+
+
 def depletion_behind(restaurant, max_days_behind=0, db_path=None, now=None):
     """None when depletion is current (or at most `max_days_behind` business
     days behind) or does not apply; else the owner-safe reason — for the
@@ -1229,7 +1263,7 @@ _READERS = {"pos": _pos, "labor": _labor, "sales": _sales, "reviews": _reviews, 
             "purchases": _purchases, "waste": _waste, "prices": _prices,
             "marketing": _marketing, "visibility": _visibility,
             "competitor": _competitor, "weather": _weather, "dsr": _dsr, "depletion": _depletion,
-            "cohort": _cohort, "website": _website}
+            "cohort": _cohort, "website": _website, "invoices": _invoices}
 
 
 def source_state(restaurant, key, db_path=None, now=None, context=None) -> dict:

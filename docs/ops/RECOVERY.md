@@ -208,7 +208,8 @@ Both off-site copies are **scrubbed** (sessions, 2FA backup codes — an
 internal login's own too — trusted devices, device tokens, staff-portal
 links, view-as sessions, admin job results (`async_jobs`), the link-signing
 secrets in `app_secrets`, and every OAuth / POS / reservation / back-office
-credential, webhook secret and Stripe customer id — `DATABASE_SCHEMA.md` →
+credential, webhook secret and Stripe customer id, and every invoice intake
+address — `DATABASE_SCHEMA.md` →
 *What leaves the server in a backup*; the backup email lists what that
 night's scrub did) and **Fernet-encrypted** with
 `BACKUP_ENCRYPTION_KEY`, one token per 3 MB chunk, one per line.
@@ -252,7 +253,10 @@ a restored LOCAL snapshot holds credentials encrypted with it.
 5. Verify it (step 3 below) — `integrity_check` first.
 6. Put it on the volume (`/app/data/…`) and restore it with `RESTORE_FROM`
    (step 4 below). Then work through [After any restore](#after-any-restore):
-   an off-site copy is scrubbed, so expect to redo every integration.
+   an off-site copy is scrubbed, so expect to redo every integration — and
+   to make each restaurant's invoice intake address again (Customers → the
+   client → Data & integrations → Invoice intake → Make an intake address;
+   the old one is not in the copy) and give it to Fintech and any forward.
 
 The quarterly drill does steps 2–5 automatically where object storage is
 configured, so a failed drill email is the early warning (see [Drill](#drill)).

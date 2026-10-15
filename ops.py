@@ -3022,6 +3022,11 @@ _RETENTION_DAYS = {
     "good_faith_estimates":  int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
     "fww_requests":          int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
     "fww_access_offers":     int(os.getenv("RETAIN_COMPLIANCE_RECORDS_DAYS", "1095")),
+    # Received mail (email_intake, bar fix round 10/15/26 R24): one row per
+    # email to the receiving domain — spam to no address included, with its
+    # sender and subject. 180 days; `no_route` rows go at 30 (the special
+    # "email_intake_unrouted" below).
+    "email_intake":          int(os.getenv("RETAIN_EMAIL_INTAKE_DAYS", "180")),
 }
 
 # Three years: how long a restaurant a predictive-scheduling law covers keeps
@@ -3086,6 +3091,7 @@ _RETENTION_COLUMN = {
     "schedule_review_dismissals": "dismissed_at",
     "schedule_calibration_runs": "run_at",
     "offer_response_platforms": "answered_at",
+    "email_intake": "received_at",
 }
 # Rows a table's retention never deletes, whatever their age: the owner's
 # ANSWERS to recommendations are kept for good (memory audit 9/29/26,
@@ -3238,6 +3244,9 @@ _RETENTION_FLOOR_DAYS = {
     # The compliance records: three years, never less (RM-15, MARKET-4).
     "staff_consents": 1095, "compliance_pay_ledger": 1095, "good_faith_estimates": 1095,
     "fww_requests": 1095, "fww_access_offers": 1095,
+    # The admin's Invoice intake card reads the newest 20 rows, whatever
+    # their age; a quarter keeps a feed's history for a question about it.
+    "email_intake": 90,
 }
 _RETENTION_ROLLUP = {
     "ai_usage": "ai_utils:rollup_usage",
@@ -3415,6 +3424,12 @@ DRAFT_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_DRAFT_DETAIL_DAYS", "30"))
 VERSION_DETAIL_KEEP_DAYS = int(os.getenv("RETAIN_VERSION_DETAIL_DAYS", "30"))
 # Removed reviews keep their words this long, then they are erased.
 REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
+# Mail to no intake address of ours (email_intake `no_route` — mostly spam),
+# and a received invoice file's kept text (fintech_files.content, and its
+# object-store copy): the invoice lines hold the history, so past a year the
+# file is only its row (bar fix round 10/15/26, R5, R24).
+EMAIL_INTAKE_UNROUTED_DAYS = int(os.getenv("RETAIN_EMAIL_INTAKE_UNROUTED_DAYS", "30"))
+FINTECH_FILE_CONTENT_DAYS = int(os.getenv("RETAIN_FINTECH_FILE_CONTENT_DAYS", "365"))
 
 # The prunes that are not one table's rows by one stamp, with the same
 # floor rule: {name: (current days, floor)}. The schedule learners read the
@@ -3436,6 +3451,10 @@ def _special_retention():
         # soft delete is a month's undo window, then the guest text is
         # erased (history_rollups.erase_removed_reviews). Floor 7 days.
         "reviews_erase": (REVIEW_ERASE_DAYS, 7),
+        # Received mail to no address (floor 7) and a received file's text
+        # (floor 90: a re-read of a file is asked for within weeks).
+        "email_intake_unrouted": (EMAIL_INTAKE_UNROUTED_DAYS, 7),
+        "fintech_file_content": (FINTECH_FILE_CONTENT_DAYS, 90),
     }
 
 
@@ -3516,6 +3535,8 @@ def _ensure_retention_indexes(conn):
         ("alert_storm_caps", "CREATE INDEX IF NOT EXISTS idx_alert_storm_caps_started ON alert_storm_caps(started_at)"),
         ("ask_topics", "CREATE INDEX IF NOT EXISTS idx_ask_topics_created ON ask_topics(created_at)"),
         ("ask_feedback", "CREATE INDEX IF NOT EXISTS idx_ask_feedback_created ON ask_feedback(created_at)"),
+        # A received file's text past its year (ops "fintech_file_content").
+        ("fintech_files", "CREATE INDEX IF NOT EXISTS idx_fintech_files_created ON fintech_files(created_at)"),
     ):
         if table in have:
             try:
@@ -3981,6 +4002,27 @@ def _erase_removed_reviews(conn, deadline=None, refused=None):
                                                  max_rows=RETENTION_PASS_MAX_ROWS, chunk=RETENTION_CHUNK_ROWS)
 
 
+def _prune_intake(conn, deadline=None, refused=None) -> dict:
+    """The intake's two special prunes (email_intake.prune_unrouted,
+    email_intake.expire_file_content), each under the floor rule. Returns
+    {name: rows} for the ones that did something."""
+    import email_intake
+    out = {}
+    for name, fn in (("email_intake_unrouted", email_intake.prune_unrouted),
+                     ("fintech_file_content", email_intake.expire_file_content)):
+        st = retention_state(name)
+        if st["state"] == "disabled":
+            continue
+        if st["state"] == "below_floor":
+            if refused is not None:
+                refused.append(st)
+            continue
+        n = fn(conn, st["days"], deadline=deadline, max_rows=RETENTION_PASS_MAX_ROWS)
+        if n:
+            out[name] = n
+    return out
+
+
 def _optimize(conn):
     """Planner statistics after the nightly prune (#72): no ANALYZE ran
     anywhere, and on a large copy it cut one admin query from 1,364 ms to
@@ -4137,6 +4179,20 @@ def prune_ledgers(db_path=None):
                 counts["failed"] += 1
                 log.error(f"prune_ledgers could not erase removed reviews: {e}")
                 capture(e, job="prune_ledgers", context="reviews_erase", db_path=db_path)
+        try:
+            deleted.update(_prune_intake(conn, deadline, refused=refused))
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            if _missing(e):
+                log.debug(f"prune_ledgers skipped the intake prunes: {e}")
+            else:
+                counts["attempted"] += 1
+                counts["failed"] += 1
+                log.error(f"prune_ledgers could not prune the intake: {e}")
+                capture(e, job="prune_ledgers", context="intake", db_path=db_path)
         _optimize(conn)
     finally:
         conn.close()

@@ -1774,8 +1774,12 @@ def resend_webhook():
     if etype == "email.received":
         # Mail TO an intake address (email_intake): recorded and queued,
         # never anything to do with a send of ours.
+        # Recorded or not: a receive that failed (the database locked, the
+        # enqueue refused) answers 503 so Resend delivers it again — a 200
+        # here lost the email for good (bar fix round 10/15/26, V13).
         import email_intake
-        email_intake.receive(data)
+        if email_intake.receive(data) == "error":
+            return jsonify(ok=False, error="not recorded; deliver again"), 503
         return jsonify(ok=True)
     message_id = data.get("email_id") or data.get("id") or ""
     to = data.get("to") or []

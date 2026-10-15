@@ -78,6 +78,15 @@ CHARGE_MAX = 5.0
 UNIT_PRICE_RATIO = 1.5
 
 _FEE_RE = re.compile(r"\b(fuel|service fee|delivery|freight|surcharge)\b", re.I)
+
+# One file is read up to these (bar fix round 10/15/26, R5): a daily file is
+# tens of invoices, a year's export a few thousand lines. Past them the file
+# is refused whole (`too_many_rows`, its text not kept): a 15 MB export was
+# 148,545 lines in one 3.2 s write. Invoices are committed in batches of
+# COMMIT_EVERY, the file staying `reading` until the last one is written.
+MAX_FILE_LINES = 20000
+MAX_FILE_INVOICES = 2000
+COMMIT_EVERY = 500
 _ADJ_RE = re.compile(r"\b(summary\s+level\s+adjust\w*|adjustments?|rounding)\b", re.I)
 _KEG_CREDIT_RE = re.compile(r"\bempt(y|ies)\b", re.I)
 # A keg by its description (bar.classify._KEG_RE says the same for the
@@ -607,9 +616,42 @@ def _export_kept(text):
 # ── reading a file ─────────────────────────────────────────────────────────
 
 def _pdf_text(content):
-    import pypdf
-    reader = pypdf.PdfReader(io.BytesIO(content))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
+    """An untrusted PDF's text, read in a child process with a page cap and a
+    time budget (email_intake.pdf_text, bar fix round 10/15/26 R20); raises
+    email_intake.FileRefused past either."""
+    import email_intake
+    return email_intake.pdf_text(content)
+
+
+# ── a stored file's text (R5) ──────────────────────────────────────────────
+#
+# fintech_files.content is the kept text inline, or — with BLOB_STORE set —
+# a string pointer to its copy in the object store ("fintech-files/<rid>/
+# <sha256>"). Every reader goes through _content; every writer _keep.
+
+def _content(value):
+    """The kept text a fintech_files.content value holds (inline, or read
+    from the object store)."""
+    import blob_store
+    return blob_store.resolve_text(value) if value else value
+
+
+def _keep(restaurant_id, key, text):
+    """What fintech_files.content stores for `text`: the text, or its
+    object-store pointer."""
+    import blob_store
+    return blob_store.store_text("fintech-files", f"{int(restaurant_id)}/{key}", text)
+
+
+def _replace_content(conn, restaurant_id, file_id, old_value, text):
+    """A stored file's kept text rewritten (an export cut to today's column
+    allow-list): the new text kept as a new file would be, the old object
+    deleted."""
+    import blob_store
+    new = _keep(restaurant_id, f"file-{int(file_id)}-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}", text)
+    conn.execute("UPDATE fintech_files SET content=? WHERE id=?", (new, int(file_id)))
+    if old_value != new:
+        blob_store.delete_text(old_value)
 
 
 def _decode(content):
@@ -992,13 +1034,19 @@ def _route(conn, rid, invoices):
 
 # ── reading, re-reading and taking a file out ──────────────────────────────
 
-def _write(conn, rid, fmt, invoices, file_id) -> dict:
-    """Route and store a file's parsed invoices; the counts ingest reports."""
+def _write(conn, rid, fmt, invoices, file_id, commit_every=None) -> dict:
+    """Route and store a file's parsed invoices; the counts ingest reports.
+    With `commit_every` (a new file's read, R5) the work is committed in
+    batches of that many invoices — never one long write lock for a big
+    file; a re-read leaves the commit to its caller (reread_all's dry run
+    rolls back)."""
     routed, skipped = _route(conn, rid, invoices)
     res = {"invoices": 0, "lines": 0, "kept": 0, "conflicts": [], "near_duplicates": [], "unbalanced": [],
            "skipped_locations": skipped, "routed": {}}
     touched = {}
-    for target, inv in routed:
+    for n, (target, inv) in enumerate(routed, 1):
+        if commit_every and n % int(commit_every) == 0:
+            conn.commit()
         o = _store_invoice(conn, target, inv, fmt, file_id)
         if o.get("near_duplicate"):
             res["near_duplicates"].append(inv["invoice_number"])
@@ -1044,27 +1092,48 @@ def ingest_file(restaurant_id, filename, content, intake_id=None, db_path=None):
     rid = int(restaurant_id)
     conn = get_conn(db_path)
     try:
-        seen = conn.execute("SELECT id FROM fintech_files WHERE restaurant_id=? AND sha256=?", (rid, sha)).fetchone()
+        seen = conn.execute("SELECT id, status FROM fintech_files WHERE restaurant_id=? AND sha256=?",
+                            (rid, sha)).fetchone()
     finally:
         conn.close()
-    if seen:
+    if seen and seen["status"] != "reading":
         return {"status": "duplicate", "file_id": seen["id"]}
-    fmt, kept, invoices = read(filename, content)
+    # An untrusted file is refused, never half-read (R5, R20): a PDF past its
+    # page cap or time budget, a file past MAX_FILE_LINES / MAX_FILE_INVOICES.
+    import email_intake
+    refused = None
+    try:
+        fmt, kept, invoices = read(filename, content)
+    except email_intake.FileRefused as e:
+        fmt, kept, invoices, refused = None, None, [], (e.status, e.detail)
+    n_lines = sum(len(i["lines"]) for i in invoices)
+    if refused is None and (len(invoices) > MAX_FILE_INVOICES or n_lines > MAX_FILE_LINES):
+        refused = ("too_many_rows", f"{len(invoices)} invoices and {n_lines} lines; a file is read up to "
+                                    f"{MAX_FILE_INVOICES} invoices and {MAX_FILE_LINES} lines")
+        fmt, kept, invoices = None, None, []
     undated = sum(1 for i in invoices if not i.get("invoice_date"))
     readable = bool(fmt and invoices and undated < len(invoices))
+    kept = _keep(rid, sha, kept)
     conn = get_conn(db_path)
     try:
-        cur = conn.execute("INSERT INTO fintech_files (restaurant_id, intake_id, filename, format, sha256, content, "
-                           "invoices, lines, status, detail, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                           (rid, intake_id, str(filename)[:200], fmt, sha, kept, 0, 0,
-                            "reading" if readable else "unrecognized",
-                            None if readable or not invoices else "no invoice dates", _now()))
-        file_id = cur.lastrowid
+        if seen:                       # a read a crash cut short: read again, whole
+            file_id = seen["id"]
+        else:
+            cur = conn.execute("INSERT INTO fintech_files (restaurant_id, intake_id, filename, format, sha256, "
+                               "content, invoices, lines, status, detail, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                               (rid, intake_id, str(filename)[:200], fmt, sha, kept, 0, 0,
+                                "reading" if readable else (refused[0] if refused else "unrecognized"),
+                                refused[1] if refused else (None if readable or not invoices else "no invoice dates"),
+                                _now()))
+            file_id = cur.lastrowid
+        conn.commit()
+        if refused:
+            return {"status": refused[0], "detail": refused[1], "format": None, "file_id": file_id, "invoices": 0,
+                    "parsed": 0, "lines": 0, "undated": 0, "unbalanced": []}
         if not readable:
-            conn.commit()
             return {"status": "unrecognized", "format": fmt, "file_id": file_id, "invoices": 0,
                     "parsed": len(invoices), "lines": 0, "undated": undated, "unbalanced": []}
-        res = _write(conn, rid, fmt, invoices, file_id)
+        res = _write(conn, rid, fmt, invoices, file_id, commit_every=COMMIT_EVERY)
         status = _status(res, len(invoices))
         detail = {k: res[k] for k in ("kept", "conflicts", "near_duplicates", "skipped_locations", "routed") if res[k]}
         if undated:
@@ -1084,6 +1153,7 @@ def ingest_file(restaurant_id, filename, content, intake_id=None, db_path=None):
 
 
 def _parse_kept(fmt, content):
+    content = _content(content)            # inline, or the object store's copy (R5)
     return parse_export(content) if fmt == "export" else parse_printout(content)
 
 
@@ -1098,11 +1168,11 @@ def reread_file(restaurant_id, file_id, db_path=None) -> dict:
                          (int(file_id), int(restaurant_id))).fetchone()
         if not f or not f["content"] or f["status"] == "purged":
             return {"ok": False, "error": "no such file"}
-        content = f["content"]
+        content = _content(f["content"])
         if f["format"] == "export":
             trimmed = _export_kept(content)
             if trimmed != content:
-                conn.execute("UPDATE fintech_files SET content=? WHERE id=?", (trimmed, int(file_id)))
+                _replace_content(conn, int(restaurant_id), int(file_id), f["content"], trimmed)
                 content = trimmed
         invoices = _parse_kept(f["format"], content)
         dated = [i for i in invoices if i.get("invoice_date")]
@@ -1267,11 +1337,12 @@ def reread_all(restaurant_id, apply=False, db_path=None) -> dict:
         for f in conn.execute("SELECT id, format, content, status FROM fintech_files WHERE restaurant_id=? "
                               "AND format IS NOT NULL AND content IS NOT NULL AND status<>'purged' ORDER BY id",
                               (rid,)).fetchall():
-            content, trimmed = f["content"], False
+            content, trimmed = _content(f["content"]), False
             if f["format"] == "export":
                 cut = _export_kept(content)
                 if cut != content:
-                    conn.execute("UPDATE fintech_files SET content=? WHERE id=?", (cut, f["id"]))
+                    if apply:          # a dry run never writes to the object store
+                        _replace_content(conn, rid, int(f["id"]), f["content"], cut)
                     content, trimmed = cut, True
             invoices = [i for i in _parse_kept(f["format"], content) if i.get("invoice_date")]
             res = _write(conn, rid, f["format"], invoices, int(f["id"]))

@@ -30,13 +30,20 @@ moves old inline rows in bounded chunks (the `blob_offload` job). A
 quality blob the prune collects is deleted from the store with it;
 model-call blobs are expired by the bucket's own lifecycle rule on
 "model-calls/" (set it to the table's retention, 90 days, plus a margin).
+
+Text columns (fintech_files.content, bar fix round 10/15/26, R5): a TEXT
+column cannot hold the pointer's bytes on Postgres, so store_text() /
+resolve_text() keep the same pointer as a string ("cavnar-blob:s3:...") —
+the received invoice files' kept text goes to the store under
+"fintech-files/<restaurant>/<sha256>", and email_intake.expire_file_content
+deletes the object when the row's text passes its 365 days.
 """
 import os
 import time
 import uuid
 
 POINTER = b"cavnar-blob:"
-KINDS = ("model-calls", "quality")
+KINDS = ("model-calls", "quality", "fintech-files")
 
 
 def backend() -> str:
@@ -109,6 +116,32 @@ def store(kind, key, data):
         except Exception:
             pass
         return data
+
+
+def store_text(kind, key, text):
+    """store() for a TEXT column: the text itself (inline), or the pointer
+    as a string. None stays None."""
+    if text is None:
+        return None
+    out = store(kind, key, str(text).encode("utf-8"))
+    return bytes(out).decode("utf-8") if is_pointer(out) else str(text)
+
+
+def is_text_pointer(value) -> bool:
+    return isinstance(value, str) and value.startswith(POINTER.decode("ascii"))
+
+
+def resolve_text(value):
+    """The text a TEXT column holds: itself, or what its string pointer
+    names (read from the store)."""
+    if not is_text_pointer(value):
+        return value
+    return bytes(resolve(value.encode("utf-8"))).decode("utf-8")
+
+
+def delete_text(value) -> bool:
+    """delete() for a string pointer (inline text: nothing to do)."""
+    return delete(value.encode("utf-8")) if is_text_pointer(value) else False
 
 
 def resolve(value):

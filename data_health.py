@@ -69,6 +69,8 @@ OWNER_LABEL = {
     # Benchmarking audit BM3-9 (Top-50 #22): the peer bands comparisons rest on.
     "cohort": "Peer comparison",
     "website": "Website analytics",
+    # The Bar's distributor invoices (Fintech by email, 10/15/26).
+    "invoices": "Bar invoices",
 }
 
 # The module flags an owner sees, and the modules each one turns on. Intel

@@ -249,6 +249,7 @@ A single `scheduler_loop()` running in a background thread, ticking every five m
 | `onboarding_nudges` | hourly → 11am *local* | `run_onboarding_nudges(local_hour=11)` — one email per missing setup step (Google, brand voice, first approval, the app), each step once |
 | `contract_chase` | 10am | `billing_jobs.run_contract_chase` — the pay link again on days 2, 5 and 9 after signing to a client who has not paid |
 | `provider_probes`, `dunning` | hourly | `provider_health.run_probes` (one authenticated, non-sending call per provider — Resend, Twilio, Anthropic, Stripe, Places, APNs; a provider that starts failing pages once), `billing_jobs.run_dunning` (owes the dunning email for a failed invoice attempt the webhook missed, stands down dunning for invoices since paid, then sends) |
+| `intake_reconcile`, `invoice_feed_watch` | hourly; 11am CT daily | `email_intake.reconcile_stale` (received intake mail still `queued` after an hour with no live job is queued again; marked failed after three jobs), `email_intake.watch_feeds` (a restaurant with an active Fintech address and no file for two business days gets a failure on its `invoices` source — an admin issue at once; bounded, resumable). Bar fix round 10/15/26 (V13, V22) |
 | `issue_scan` | hourly → 10am *local* | `run_issue_scan` |
 | `review_request_followups` | hourly | `run_review_request_followups` |
 | `stale_inventory` | Mon 10am | `check_stale_inventory` |

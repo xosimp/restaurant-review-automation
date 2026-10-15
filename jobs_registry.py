@@ -352,6 +352,19 @@ JOBS = {
         description="One authenticated, non-sending call per provider (Resend, Twilio, Anthropic, Stripe, Places, "
                     "APNs); pages Will when one starts failing",
         target=("provider_health", "run_probes"), max_minutes=10),
+    # The email intake (bar fix round 10/15/26, V13 / V22).
+    "intake_reconcile": dict(
+        cadence="hourly", sla_minutes=_H, sends=False, runnable=True,
+        label="Intake reconcile",
+        description="Queue again every received intake email still queued after an hour with no live job "
+                    "(marked failed after three jobs)",
+        target=("email_intake", "reconcile_stale"), max_minutes=5),
+    "invoice_feed_watch": dict(
+        cadence="11am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Invoice feed watch",
+        description="Record a failure on the invoices source of each restaurant with an active Fintech address "
+                    "and no file for two business days (bounded, resumable)",
+        target=("email_intake", "watch_feeds"), max_minutes=5, retry=True),
     "business_metrics": dict(
         cadence="11:50pm CT nightly (a missed night is taken before 6am)", sla_minutes=_D, sends=False,
         runnable=True, label="Business metrics",

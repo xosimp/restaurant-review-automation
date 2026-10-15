@@ -2019,6 +2019,11 @@ SIGNED_UNPAID_WARN_DAYS = int(os.getenv("ADMIN_SIGNED_UNPAID_WARN_DAYS", "7"))
 SIGNED_UNPAID_CRIT_DAYS = int(os.getenv("ADMIN_SIGNED_UNPAID_CRIT_DAYS", "30"))
 # Consecutive failures of a data source before it is an issue (#46).
 SOURCE_FAIL_ISSUE = int(os.getenv("ADMIN_SOURCE_FAIL_ISSUE", "3"))
+# Sources whose failure is an issue sooner. The invoice feed's failure is
+# recorded once a day, and only after two business days with no file
+# (email_intake.watch_feeds) — it is already late when it is first recorded
+# (bar fix round 10/15/26, V22).
+SOURCE_FAIL_ISSUE_AT = {"invoices": 1}
 
 
 def _issue_category(key):
@@ -2424,7 +2429,7 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
         labels = {}
     for s in (d.get("source_health") or {}).get(rid, []):
         n = int(s.get("consecutive_failures") or 0)
-        if n < SOURCE_FAIL_ISSUE or s.get("source") in ("pos", "gbp"):
+        if n < SOURCE_FAIL_ISSUE_AT.get(s.get("source"), SOURCE_FAIL_ISSUE) or s.get("source") in ("pos", "gbp"):
             continue        # POS and Business Profile are the integration issues above
         auth = s.get("error_class") == "auth"
         add(f"source:{s['source']}", f"{labels.get(s['source'], s['source'])} sync failing ({n} in a row)",

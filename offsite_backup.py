@@ -499,6 +499,11 @@ SCRUB_COLUMNS = {
     # The share link itself, encrypted under CREDENTIAL_KEY so the admin can
     # copy it again (fix round B2): a working public link once decrypted.
     ("sales_audit_shares", "token_enc"),
+    # An intake address is a write capability: whoever has it can mail files
+    # into a restaurant's invoices (bar fix round 10/15/26, R24). A restore
+    # from an off-site copy issues new addresses (the admin's Invoice intake
+    # card, Rotate). The ledger's copy of it goes too.
+    ("email_intake_routes", "address"), ("email_intake", "address"),
 }
 
 # Rows whose words never leave the server (memory re-audit 9/29/26,
