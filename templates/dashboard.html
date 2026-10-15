@@ -45562,7 +45562,12 @@ function sfw2RuleCheck(chk) {
 .br-card{position:relative;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 86%,var(--bg-base)));border:1px solid var(--hb-line2);border-radius:22px;box-shadow:var(--elev-1);transition:transform .28s var(--br-ease),box-shadow .28s var(--br-ease),border-color .28s ease}
 .br-card.lift:hover{transform:translateY(-2px);box-shadow:var(--elev-2);border-color:var(--line-hi)}
 .br-k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
-.br-hero{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:40px;align-items:center;padding:36px 38px 34px;overflow:hidden;margin-top:6px}
+.br-hero{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:40px;align-items:stretch;padding:36px 38px 34px;overflow:hidden;margin-top:6px}
+/* The trend runs the full height of the figures beside it, its heading on
+   the same line as theirs (owner, 10/15/26). */
+.br-hr{display:flex;flex-direction:column;min-width:0}
+.br-hr>.br-chart.br-hc{flex:1 1 auto;height:auto;min-height:220px}
+.br-hr>.br-empty{margin:auto 0}
 .br-hero::before{content:"";position:absolute;left:-18%;top:-55%;width:72%;height:150%;background:radial-gradient(closest-side,color-mix(in srgb,var(--ember) 15%,transparent),transparent 74%);pointer-events:none}
 .br-hero>*{position:relative}
 .br-hero .dn-k{margin-bottom:14px}
@@ -45588,7 +45593,7 @@ function sfw2RuleCheck(chk) {
 .br-fig .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
 .br-fig .l{font-size:14px;color:var(--ink3);margin-top:2px}
 .br-sb{font-size:14px;color:var(--ink2);margin-top:16px;line-height:1.55}
-.br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:34px 0 30px}
+.br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:34px 0 44px}
 .br-meter .band{position:absolute;top:-1px;bottom:-1px;border-radius:999px;background:linear-gradient(90deg,color-mix(in srgb,var(--br-range) 22%,transparent),color-mix(in srgb,var(--br-range) 34%,transparent));border:1px solid color-mix(in srgb,var(--br-range) 55%,transparent);box-shadow:0 0 10px color-mix(in srgb,var(--br-range) 22%,transparent)}
 /* A purchase ratio's range is context, never a verdict: the same ember band,
    fainter and dashed (owner, 10/15/26: ember, never green). */
@@ -46076,7 +46081,7 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="br-k" style="margin-bottom:16px">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})
+      ? '<div class="dn-k">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
@@ -46113,7 +46118,7 @@ function sfw2RuleCheck(chk) {
       + '<div class="br-fig"><div class="v">' + cnt(t.sales, 0, '$') + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
       + sales + '</div>'
-      + '<div>' + right + '</div></section>';
+      + '<div class="br-hr">' + right + '</div></section>';
   }
   /* Why a trend can't draw yet (V45): measured readings, not points. */
   function thinTrend(pc, measured) {
