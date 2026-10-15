@@ -221,3 +221,32 @@ def test_the_food_cost_card_says_bought_vs_sold_and_loads_beside_the_cfo_read():
     assert "food cost" not in fn.lower().replace("/api/food-cost", ""), "a purchase ratio is never called food cost"
     assert '<div id="fc2-bo" class="fc2-cfo" hidden></div>' in src
     assert src.count("fc2LoadBo();") >= 2, "loads where the CFO read loads"
+
+
+def test_a_payment_net_of_a_credit_and_a_shortened_name_still_match_fintech(db):
+    """EJ's 10/15/26: Winebow paid $1,259.34 for a $1,646.34 invoice and a
+    -$387.00 credit; 'SCHAMBERGER BROTHERS INC' is Fintech's 'Schamberger
+    Bros., Inc.' - neither is alcohol bought outside Fintech."""
+    rid = _rid(db)
+    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1138699", (TODAY - timedelta(days=50)).isoformat(),
+             [("W1", "WHISPERING ANGEL ROSE 750ML", "CA", 1, 1646.34)])
+    _invoice(db, rid, "Winebow Inc (CT, IL, NJ, NY)", "IL1138940", (TODAY - timedelta(days=49)).isoformat(),
+             [("W1", "WHISPERING ANGEL ROSE 750ML", "CA", -1, 387.0)])
+    _invoice(db, rid, "Schamberger Bros., Inc.", "1000217253", (TODAY - timedelta(days=60)).isoformat(),
+             [("S1", "REVOLUTION ANTI HERO 1/2BBL", "KE", 1, 201.5)])
+    bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
+    txt = "\n".join([
+        "Back Office - Invoices By Vendor", f"{NB} Invoice # ItemizedDate Amount",
+        f"{B}WINEBOW{NB} $1,259.34", f"{NB} CM Entry {NB} {_d(20)} {NB}$1,259.34 {NB} GL: 4330 {NB} , {NB}",
+        f"{B}SCHAMBERGER BROTHERS INC{NB} $201.50", f"{NB} CM Entry {NB} {_d(20)} {NB}$201.50 {NB} GL: 4320 {NB} , {NB}"])
+    bo.read_file(rid, "ibv.txt", txt.encode(), db_path=db)
+    out = bo.outside_fintech(rid, db_path=db)
+    assert out["entries"] == [] and out["matched"] == 2
+
+
+def test_a_month_compares_only_the_days_both_sides_cover():
+    """EJ's August read 243.5%: a month of food invoices against six nights of
+    sales. Months start where sales do and need MONTH_MIN_NIGHTS nights."""
+    import inspect
+    src = inspect.getsource(bo.food_bought_vs_sold)
+    assert "sales_from" in src and "MONTH_MIN_NIGHTS" in src and bo.MONTH_MIN_NIGHTS >= 14

@@ -54,6 +54,7 @@ POUR = ("beer", "wine", "liquor")
 MATCH_DAYS_AFTER = 90
 MATCH_DAYS_BEFORE = 10
 WINDOW_DAYS = 28
+MONTH_MIN_NIGHTS = 14
 
 
 def get_conn(db_path=None):
@@ -385,6 +386,12 @@ def _match_fintech_vendor(vk, fin_keys):
         n = min(len(a), len(b), 2)
         if n and a[:n] == b[:n]:
             return k
+    # A distinctive first word one Fintech distributor alone has
+    # ('schamberger brothers' / 'schamberger bros', EJ's 10/15/26).
+    first = (vk.split() or [""])[0]
+    same = [k for k in fin_keys if (k.split() or [""])[0] == first]
+    if len(first) >= 4 and len(same) == 1:
+        return same[0]
     return None
 
 
@@ -528,6 +535,18 @@ def outside_fintech(restaurant_id, db_path=None) -> dict:
                          and -MATCH_DAYS_AFTER <= (date.fromisoformat(f["invoice_date"]) - d).days <= MATCH_DAYS_BEFORE]
                 if cands:
                     hit = min(cands, key=lambda f: abs((date.fromisoformat(f["invoice_date"]) - d).days))
+                else:
+                    # One payment for an invoice and its credit memo (Winebow
+                    # $1,259.34 = $1,646.34 - $387.00, EJ's 10/15/26): two
+                    # Fintech invoices of the distributor that add up to it.
+                    near = [f for f in fins if f["distributor_key"] == fk and f["id"] not in used
+                            and -MATCH_DAYS_AFTER <= (date.fromisoformat(f["invoice_date"]) - d).days <= MATCH_DAYS_BEFORE]
+                    pair = next(((x, y) for i, x in enumerate(near) for y in near[i + 1:]
+                                 if abs(float(x["total"] or 0) + float(y["total"] or 0) - float(r["amount"])) < 0.01),
+                                None)
+                    if pair:
+                        used.add(pair[1]["id"])
+                        hit = pair[0]
         if hit is not None:
             used.add(hit["id"])
             matched += 1
@@ -597,6 +616,7 @@ def food_bought_vs_sold(restaurant_id, today=None, db_path=None) -> dict:
     vendors, unknown_vendors, note}. Purchase-based (Back Office shows no
     submitted count): what was bought as a % of what the POS sold as food —
     never called food cost."""
+    from time_utils import mdy
     today = today or date.today()
     es = [e for e in entries(restaurant_id, db_path=db_path) if e["category"] == "food"]
     unknown = sorted({e["vendor"] for e in entries(restaurant_id, db_path=db_path) if e["category"] == "unknown"})
@@ -616,22 +636,27 @@ def food_bought_vs_sold(restaurant_id, today=None, db_path=None) -> dict:
         return round(p, 2), round(s, 2), (round(100.0 * p / s, 1) if s > 0 else None), \
             sum(1 for d in sales if a <= d <= b and sales[d] > 0)
     p, s, pct, n = _window(start, end)
+    # A month compares only the days both sides cover (EJ's August read 243%:
+    # a month of invoices against six nights of sales), and a month with
+    # fewer than MONTH_MIN_NIGHTS nights of sales is not shown.
     months = []
-    m0 = date.fromisoformat(first).replace(day=1)
+    sales_from = min(d for d, v in sales.items() if v > 0)
+    m0 = date.fromisoformat(max(first, sales_from)).replace(day=1)
     while m0 <= date.fromisoformat(end):
         m1 = (m0.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-        a, b = m0.isoformat(), min(m1, date.fromisoformat(end)).isoformat()
+        a = max(m0.isoformat(), sales_from)
+        b = min(m1, date.fromisoformat(end)).isoformat()
         mp, ms, mpct, mn = _window(a, b)
-        if ms > 0:
+        if ms > 0 and mn >= MONTH_MIN_NIGHTS:
             months.append({"month": m0.strftime("%Y-%m"), "label": m0.strftime("%B %Y"), "purchases": mp,
-                           "sales": ms, "pct": mpct, "nights": mn, "partial": b < m1.isoformat() or mn < 20})
+                           "sales": ms, "pct": mpct, "nights": mn, "partial": a > m0.isoformat() or b < m1.isoformat(),
+                           "from_mdy": mdy(a), "to_mdy": mdy(b)})
         m0 = m1 + timedelta(days=1)
     by_c, by_v = Counter(), Counter()
     for e in es:
         if start <= e["date"] <= end:
             by_c[e.get("gl_name") or "Food (by vendor)"] += float(e["amount"])
             by_v[e["vendor"]] += float(e["amount"])
-    from time_utils import mdy
     return {"available": True, "basis": "purchases", "label": "Food bought vs sold",
             "window": {"from": start, "to": end, "from_mdy": mdy(start), "to_mdy": mdy(end), "days": WINDOW_DAYS,
                        "purchases": p, "sales": s, "pct": pct, "nights": n},
