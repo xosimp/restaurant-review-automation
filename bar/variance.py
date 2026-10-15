@@ -297,7 +297,8 @@ def _pos_lines(conn, restaurant_id, start, end) -> list:
         "department, sales_category, category_id, parent_line_id, mod_level, item_at FROM pos_ticket_lines "
         "WHERE restaurant_id=? AND business_date>=? AND business_date<=? AND kind IN ('sale','comp','void')",
         (int(restaurant_id), start, end)).fetchall()
-    return [dict(r) for r in rows]
+    names = list(rows[0].keys()) if rows else []
+    return [dict(zip(names, r)) for r in rows]
 
 
 def _alt_units(conn, restaurant_id) -> dict:
@@ -318,8 +319,9 @@ def _f(v) -> float:
 
 def _span(lines, nights, today, counted=None) -> dict:
     """{from, to, days, basis, period} or {why}: the span both sides cover."""
-    inv = sorted({str(l["invoice_date"])[:10] for l in lines if str(l["invoice_date"])[:10] <= today.isoformat()})
-    pos = sorted(d for d in nights if d < today.isoformat())
+    t = today.isoformat()
+    inv = sorted({d for d in (str(l["invoice_date"])[:10] for l in lines) if d <= t})
+    pos = sorted(d for d in nights if d < t)
     if not inv:
         return {"why": "No distributor invoices yet."}
     if not pos:
@@ -391,9 +393,11 @@ def _pour_target(m, prod, cfg, item_name):
 
 
 def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, cfg=None, mapping=None,
-            sales=None) -> dict:
+            sales=None, canon=None) -> dict:
     """{variance, keg_yield, span, products} — the payload's `variance` and
-    `bar_ops.keg_yield`, and the internals the waste block reads."""
+    `bar_ops.keg_yield`, and the internals the waste block reads. `canon`
+    is the price watch's canonical-product map when the caller has it
+    (bar.build: the same lines and the owner's links), else read here."""
     today = today or date.today()
     if lines is None:
         from bar.purchases import _lines
@@ -423,11 +427,12 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                                      f"{int(ARCHIVE_COVERAGE_FLOOR * 100)}% so a missing night never reads as "
                                      "drinks gone missing.")},
                 "keg_yield": [], "span": span_out, "products": {}}
-    links = product_links(restaurant_id, db_path)
-    canon = canonical_keys(lines, links)
+    if canon is None:
+        canon = canonical_keys(lines, product_links(restaurant_id, db_path))
     packs = pack_overrides(restaurant_id, db_path)
     # Purchases in the span, per canonical product.
     prods = {}
+    newest = {}
     for l in lines:
         d = str(l["invoice_date"])[:10]
         if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES:
@@ -436,19 +441,11 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         p = prods.get(ck)
         if p is None:
             p = prods[ck] = _Product(ck)
-        # The newest line names the product and its pack.
-        if p.name is None or d >= p._last:
+        # The newest line names the product and its pack (read once per
+        # product below, not once per line: V17).
+        if ck not in newest or d >= p._last:
             p._last = d
-            p.name = display_name(l["description"])
-            p.category = l["category"]
-            p.pack = parse_pack(l["description"], l.get("uom"), l["category"])
-            ov = packs.get(l["product_key"]) or packs.get(ck)
-            if ov:
-                if ov.get("units_per_case") and str(l.get("uom") or "").upper() in ("CA", "CS"):
-                    p.pack.update(units_per_case=int(ov["units_per_case"]), units_source="owner")
-                if ov.get("container_ml"):
-                    p.pack.update(container_ml=float(ov["container_ml"]),
-                                  container_oz=round(float(ov["container_ml"]) / _ML_PER_OZ, 2), size_source="owner")
+            newest[ck] = l
         if not (start <= d <= end):
             continue
         pk = parse_pack(l["description"], l.get("uom"), l["category"])
@@ -473,6 +470,18 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             p.assumes.add(f"assumes {pk['units_per_case']} a case")
         if pk["size_source"] == "assumed":
             p.assumes.add("assumes a 1/2 barrel" if pk.get("each") == "keg" else f"assumes {pk['container_oz']:g} oz")
+    for ck, l in newest.items():
+        p = prods[ck]
+        p.name = display_name(l["description"])
+        p.category = l["category"]
+        p.pack = parse_pack(l["description"], l.get("uom"), l["category"])
+        ov = packs.get(l["product_key"]) or packs.get(ck)
+        if ov:
+            if ov.get("units_per_case") and str(l.get("uom") or "").upper() in ("CA", "CS"):
+                p.pack.update(units_per_case=int(ov["units_per_case"]), units_source="owner")
+            if ov.get("container_ml"):
+                p.pack.update(container_ml=float(ov["container_ml"]),
+                              container_oz=round(float(ov["container_ml"]) / _ML_PER_OZ, 2), size_source="owner")
     # The owner's map and confirmed specs: (provider, item_id) → [(ck, mode, oz, basis, assumption)].
     targets = defaultdict(list)
     dmap = drink_map(restaurant_id, db_path)
@@ -784,13 +793,13 @@ def attach_waste(result, restaurant_id, db_path=None) -> dict:
 
 
 def bar_blocks(restaurant_id, today=None, db_path=None, lines=None, counted=None, cfg=None, mapping=None,
-               sales=None) -> dict:
+               sales=None, canon=None) -> dict:
     """{variance, bar_ops} for bar.build: the variance, and the bar's
     operations — waste, keg yield and (owner-only, filled at the route by
     bar.comps.for_viewer) comps by bartender shift."""
     try:
         res = compute(restaurant_id, today=today, db_path=db_path, lines=lines, counted=counted, cfg=cfg,
-                      mapping=mapping, sales=sales)
+                      mapping=mapping, sales=sales, canon=canon)
         attach_waste(res, restaurant_id, db_path=db_path)
     except Exception:
         log.exception("[bar.variance] unread for %s", restaurant_id)

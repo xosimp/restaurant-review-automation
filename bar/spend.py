@@ -108,44 +108,50 @@ def rebates_and_free_goods(lines, canon=None) -> list:
     cost a unit once the free units are counted, when the same product was
     paid for on that invoice)."""
     canon = canon or {}
+    # One pass: each paid product line's latest price and each invoice's paid
+    # units, and the few lines that are ledger rows (V17 — this read every
+    # line three times and built a row for each).
     known = {}
-    for l in lines:
-        if l.get("kind") == "item" and float(l.get("unit_price") or 0) >= 1 and float(l.get("qty") or 0) > 0:
-            known[(canon.get(l["product_key"], l["product_key"]), str(l.get("uom") or ""))] = float(l["unit_price"])
     paid = defaultdict(lambda: [0.0, 0.0])
+    picked = []
     for l in lines:
-        if l.get("kind") == "item" and float(l.get("unit_price") or 0) >= 1 and float(l.get("qty") or 0) > 0:
-            k = (l["invoice_number"], canon.get(l["product_key"], l["product_key"]), str(l.get("uom") or ""))
+        q, up = float(l.get("qty") or 0), float(l.get("unit_price") or 0)
+        if l.get("kind") == "item" and up >= 1 and q > 0:
+            ck, u = canon.get(l["product_key"], l["product_key"]), str(l.get("uom") or "")
+            known[(ck, u)] = up
+            k = (l["invoice_number"], ck, u)
             paid[k][0] += float(l.get("cost") or 0) - float(l.get("deposit") or 0)
-            paid[k][1] += float(l["qty"])
+            paid[k][1] += q
+        if l.get("rebate"):
+            picked.append((l, "rebate"))
+        elif (l.get("kind") in ("item", "charge") and q > 0 and abs(up) < 0.005
+              and abs(float(l.get("cost") or 0)) < 0.005 and l.get("category") in _POUR_CATS):
+            picked.append((l, "free_goods"))
     out = []
-    for l in lines:
+    for l, kind in picked:
         unit = _UOM_WORD.get(str(l.get("uom") or "").upper(), "unit")
         base = {"distributor": l["distributor"], "product_key": l["product_key"],
                 "name": display_name(l["description"]), "uom": l.get("uom"), "unit": unit,
                 "date": str(l["invoice_date"])[:10], "date_mdy": _mdy(l["invoice_date"]),
                 "invoice_number": l["invoice_number"], "ref_invoice_number": l.get("ref_invoice_number"),
                 "category": l.get("category")}
-        if l.get("rebate"):
+        if kind == "rebate":
             out.append(dict(base, kind="rebate", units=abs(float(l.get("qty") or 0)),
                             original_price=None, rebilled_price=None,
                             credit_usd=round(-float(l.get("cost") or 0), 2)))
             continue
-        if (l.get("kind") in ("item", "charge") and float(l.get("qty") or 0) > 0
-                and abs(float(l.get("unit_price") or 0)) < 0.005 and abs(float(l.get("cost") or 0)) < 0.005
-                and l.get("category") in _POUR_CATS):
-            ck = canon.get(l["product_key"], l["product_key"])
-            q = float(l["qty"])
-            price = known.get((ck, str(l.get("uom") or "")))
-            pk = paid.get((l["invoice_number"], ck, str(l.get("uom") or "")))
-            deal = None
-            if pk and pk[1]:
-                deal = {"paid_units": round(pk[1], 2), "free_units": round(q, 2),
-                        "cost_per_unit": round(pk[0] / (pk[1] + q), 2),
-                        "billed_per_unit": round(pk[0] / pk[1], 2)}
-            out.append(dict(base, kind="free_goods", units=round(q, 2), original_price=price,
-                            rebilled_price=0.0, credit_usd=round(price * q, 2) if price else None,
-                            deal=deal))
+        ck = canon.get(l["product_key"], l["product_key"])
+        q = float(l["qty"])
+        price = known.get((ck, str(l.get("uom") or "")))
+        pk = paid.get((l["invoice_number"], ck, str(l.get("uom") or "")))
+        deal = None
+        if pk and pk[1]:
+            deal = {"paid_units": round(pk[1], 2), "free_units": round(q, 2),
+                    "cost_per_unit": round(pk[0] / (pk[1] + q), 2),
+                    "billed_per_unit": round(pk[0] / pk[1], 2)}
+        out.append(dict(base, kind="free_goods", units=round(q, 2), original_price=price,
+                        rebilled_price=0.0, credit_usd=round(price * q, 2) if price else None,
+                        deal=deal))
     out.sort(key=lambda e: e["date"], reverse=True)
     return out
 

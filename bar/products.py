@@ -291,8 +291,13 @@ _PLACEHOLDER_GTINS = {"00111111111117"}
 def valid_gtin(code):
     """A UPC/EAN/GTIN as 14 digits when its check digit is valid and it is
     not a placeholder, else None ('<null>', blanks, Euclid's 111111111117,
-    a run of one digit, mostly zeros)."""
-    s = re.sub(r"\D", "", str(code or ""))
+    a run of one digit, mostly zeros). Kept per code (V17: once per line)."""
+    return _valid_gtin(str(code or ""))
+
+
+@functools.lru_cache(maxsize=8192)
+def _valid_gtin(code):
+    s = re.sub(r"\D", "", code)
     if len(s) not in (8, 12, 13, 14):
         return None
     g = s.zfill(14)

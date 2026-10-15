@@ -40,30 +40,31 @@ def _lines(restaurant_id, db_path=None) -> list:
     from bar.products import settings
     count_mixers = settings(restaurant_id, db_path)["count_mixers"]
     out = Lines()
-    # The sorting is a pure function of a line's words: read once per
-    # distinct product line, not once per line (V17 — 45k lines ran the
-    # regexes 90k times).
-    memo = {}
-
-    def once(fn, *args):
-        k = (fn, args)
-        v = memo.get(k, memo)
-        if v is memo:
-            v = memo[k] = fn(*args)
-        return v
     # A per-unit charge line ("charge") belongs to the item it charges on: it
     # takes that item's category, never one of its own — wherever the item
     # line sits (a charge is now recognised against the code's price on any
     # invoice, so it can come first).
-    rows = [dict(r) for r in rows]
-    item_cat = {}
+    # Rows read by position against the first row's names: dict(row) asks
+    # the row for each name, a third of this read at 45k lines (V17).
+    names = list(rows[0].keys()) if rows else []
+    rows = [dict(zip(names, r)) for r in rows]
+    # The sorting is a pure function of a line's words: read once per
+    # distinct product line (one lookup a line), not once per line (V17 —
+    # 45k lines ran the regexes 90k times).
+    sorted_as, item_cat, info = {}, {}, []
     for r in rows:
-        r["product_key"] = once(product_key, r["distributor"], r["item_code"], r["description"])
+        sig = (r["distributor"], r["item_code"], r["description"], r["uom"], r["kind"])
+        v = sorted_as.get(sig)
+        if v is None:
+            v = sorted_as[sig] = (product_key(r["distributor"], r["item_code"], r["description"]),
+                                  classify(r["distributor"], r["description"], r["uom"], r["kind"]),
+                                  is_rebate(r["description"], r["kind"]))
+        info.append(v)
         if r["kind"] == "item":
-            item_cat[r["product_key"]] = once(classify, r["distributor"], r["description"], r["uom"], r["kind"])
-    for r in rows:
-        key = r["product_key"]
-        cat, sure = once(classify, r["distributor"], r["description"], r["uom"], r["kind"])
+            item_cat[v[0]] = v[1]
+    mixers = {}
+    for r, (key, cls, rebate) in zip(rows, info):
+        cat, sure = cls
         if r["kind"] == "charge" and key in item_cat:
             cat, sure = item_cat[key]
         if key in overrides and r["kind"] not in ("fee", "adjustment", "keg_credit") and r["uom"] != "DS":
@@ -71,8 +72,12 @@ def _lines(restaurant_id, db_path=None) -> list:
         # A product's own discount or rebate lowers its category's cost (V33);
         # a cocktail mixer is non-alcoholic unless the owner counts it as
         # liquor (Decision 3: bar.products.settings count_mixers).
-        rebate = once(is_rebate, r["description"], r["kind"])
-        mixer = cat == "na" and r["kind"] in ("item", "charge") and once(is_mixer, r["description"])
+        mixer = cat == "na" and r["kind"] in ("item", "charge")
+        if mixer:
+            d = r["description"]
+            if d not in mixers:
+                mixers[d] = is_mixer(d)
+            mixer = mixers[d]
         if mixer and count_mixers and key not in overrides:
             cat = "liquor"
         # A keg's $30 deposit inside its cost comes back with the empty: it is

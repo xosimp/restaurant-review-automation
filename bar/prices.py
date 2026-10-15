@@ -36,8 +36,9 @@ across its codes, bar.products) and purchase unit:
    gives the price an order's quantity earns; a line billed at a smaller
    tier's price is flagged and kept out of the price series.
 """
+import functools
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 
 from bar.common import LABELS, PRICE_LOOKBACK_DAYS, _UOM_WORD, _mdy, display_name
@@ -80,13 +81,24 @@ def _material(old, new) -> bool:
 
 def _family(description) -> str:
     """A brand family for mix-and-match: the description's first word, or
-    its first two when the first is short (SURFSIDE; HIGH NOON; CH ESCLANS)."""
-    w = re.sub(r"[^A-Z0-9 ]", " ", str(description or "").upper()).split()
+    its first two when the first is short (SURFSIDE; HIGH NOON; CH ESCLANS).
+    Kept per description: a 3-year history asks ~90k times for ~400 names."""
+    return _family_of(str(description or ""))
+
+
+@functools.lru_cache(maxsize=8192)
+def _family_of(description) -> str:
+    w = re.sub(r"[^A-Z0-9 ]", " ", description.upper()).split()
     return " ".join(w[:1] if w and len(w[0]) >= 4 else w[:2])
 
 
 def _d(s) -> date:
-    return date.fromisoformat(str(s)[:10])
+    return _day(str(s)[:10])
+
+
+@functools.lru_cache(maxsize=8192)
+def _day(iso) -> date:
+    return date.fromisoformat(iso)
 
 
 # ── 1. credits ─────────────────────────────────────────────────────────────
@@ -100,14 +112,19 @@ def credit_events(lines, canon) -> tuple:
         return (l.get("kind") == "item" and l.get("category") not in ("fee", "deposit")
                 and not l.get("rebate") and float(l.get("qty") or 0) != 0)
 
-    pos = defaultdict(list)
+    # One pass over the lines: the positive ones indexed by product, the
+    # negative ones kept in line order (V17 — the second pass was over all).
+    pos, negs = defaultdict(list), []
     for i, l in enumerate(lines):
-        if eligible(l) and float(l["qty"]) > 0:
-            pos[(l["distributor"], canon.get(l["product_key"], l["product_key"]), str(l.get("uom") or ""))].append(i)
+        if eligible(l):
+            if float(l["qty"]) > 0:
+                pos[(l["distributor"], canon.get(l["product_key"], l["product_key"]),
+                     str(l.get("uom") or ""))].append(i)
+            else:
+                negs.append(i)
     used, events = set(), []
-    for i, l in enumerate(lines):
-        if not eligible(l) or float(l["qty"]) >= 0:
-            continue
+    for i in negs:
+        l = lines[i]
         key = (l["distributor"], canon.get(l["product_key"], l["product_key"]), str(l.get("uom") or ""))
         q = -float(l["qty"])
         ref = str(l.get("ref_invoice_number") or "").strip()
@@ -261,10 +278,12 @@ def _monthly(pts) -> bool:
     """A distributor posting monthly: every month with two or more purchases
     has one price, at least two such months, and those months at two or
     more prices (Lite 1/2 BBL at Euclid: $122, $124, $122, $124, $120)."""
-    by = defaultdict(set)
+    by, n = defaultdict(set), Counter()
     for p in pts:
-        by[p["date"][:7]].add(round(p["price"], 2))
-    multi = [m for m in by if sum(1 for p in pts if p["date"][:7] == m) >= 2]
+        m = p["date"][:7]
+        by[m].add(round(p["price"], 2))
+        n[m] += 1
+    multi = [m for m in by if n[m] >= 2]
     if len(multi) < 2 or any(len(by[m]) > 1 for m in multi):
         return False
     # The price held within months at two or more different levels.
@@ -474,38 +493,44 @@ def analyse(lines, today, deal_sheet=None, packs=None, pour=None, links=None) ->
     cutoff = (today - timedelta(days=PRICE_LOOKBACK_DAYS)).isoformat()
     since90 = (today - timedelta(days=VOLUME_DAYS)).isoformat()
     # Eligible purchases, with their tier quantity (a mix-and-match family's
-    # total on the invoice when its lines share one price).
+    # total on the invoice when its lines share one price). Two passes over
+    # the eligible lines, each line's keys read once (V17).
     elig = []
+    fam = defaultdict(lambda: {"qty": 0.0, "keys": set()})
     for i, l in enumerate(lines):
         if i in used or l.get("kind") != "item" or l.get("category") in ("fee", "deposit") or l.get("rebate"):
             continue
         q, p = float(l.get("qty") or 0), float(l.get("unit_price") or 0)
         if q <= 0 or p < 1:
             continue
-        elig.append(i)
-    fam = defaultdict(lambda: {"qty": 0.0, "keys": set()})
-    for i in elig:
-        l = lines[i]
-        k = (l["distributor"], l["invoice_number"], str(l.get("uom") or ""), _family(l["description"]),
-             round(float(l["unit_price"]), 2))
-        fam[k]["qty"] += float(l["qty"])
-        fam[k]["keys"].add(canon.get(l["product_key"], l["product_key"]))
+        ck = canon.get(l["product_key"], l["product_key"])
+        u = str(l.get("uom") or "")
+        f = fam[(l["distributor"], l["invoice_number"], u, _family(l["description"]), round(p, 2))]
+        f["qty"] += q
+        f["keys"].add(ck)
+        elig.append((i, l, q, p, ck, u, f))
     series = defaultdict(list)
     meta = {}
     partners = defaultdict(set)
-    for i in elig:
-        l = lines[i]
-        ck = canon.get(l["product_key"], l["product_key"])
-        f = fam[(l["distributor"], l["invoice_number"], str(l.get("uom") or ""), _family(l["description"]),
-                 round(float(l["unit_price"]), 2))]
+    # Each product's prices per invoice, and its invoices in order: the
+    # partners below compare on the invoices they share.
+    inv_price = {}
+    invs_of = defaultdict(list)
+    for i, l, q, p, ck, u, f in elig:
         pooled = len(f["keys"]) > 1
-        sk = (ck, str(l.get("uom") or ""))
+        sk = (ck, u)
         if pooled:
             partners[sk].update((k, sk[1]) for k in f["keys"] if k != ck)
-        series[sk].append({"i": i, "date": str(l["invoice_date"])[:10], "q": float(l["qty"]),
-                           "tq": f["qty"] if pooled else float(l["qty"]), "price": float(l["unit_price"]),
-                           "pooled": pooled, "invoice": l["invoice_number"], "key": l["product_key"]})
+        inv = l["invoice_number"]
+        series[sk].append({"i": i, "date": str(l["invoice_date"])[:10], "q": q,
+                           "tq": f["qty"] if pooled else q, "price": p,
+                           "pooled": pooled, "invoice": inv, "key": l["product_key"]})
         meta[sk] = l
+        ip = inv_price.get((sk, inv))
+        if ip is None:
+            ip = inv_price[(sk, inv)] = set()
+            invs_of[sk].append(inv)
+        ip.add(round(p, 2))
     returns = defaultdict(float)
     for e in credits:
         if e["kind"] == "return" and e["date"] >= since90:
@@ -513,9 +538,12 @@ def analyse(lines, today, deal_sheet=None, packs=None, pour=None, links=None) ->
     # A distributor proven to price by quantity on one product is believed on
     # another with fewer orders to show it.
     houses, posting = set(), set()
+    first_read = {}
     for sk, obs in series.items():
-        if len(obs) >= 2 and _learn_breaks(obs, False, [o for p in partners[sk] for o in series.get(p, [])])[1]:
-            houses.add(meta[sk]["distributor"])
+        if len(obs) >= 2:
+            first_read[sk] = _learn_breaks(obs, False, [o for p in partners[sk] for o in series.get(p, [])])
+            if first_read[sk][1]:
+                houses.add(meta[sk]["distributor"])
         by_day = {}
         for o in obs:
             by_day.setdefault(o["date"], o["price"])
@@ -523,15 +551,13 @@ def analyse(lines, today, deal_sheet=None, packs=None, pour=None, links=None) ->
             posting.add(meta[sk]["distributor"])
     # Partners that share this product's price on every invoice they share:
     # their purchases say when the family's price moved.
-    inv_price = defaultdict(set)
-    for sk, obs in series.items():
-        for o in obs:
-            inv_price[(sk, o["invoice"])].add(round(o["price"], 2))
     same_price_mates = {}
     for sk in series:
         ok = []
         for p in partners[sk]:
-            shared = [inv for (k2, inv) in list(inv_price) if k2 == sk and (p, inv) in inv_price]
+            # This product's own invoices, not every (product, invoice) pair
+            # on file per partner (V17: that was quadratic in products).
+            shared = [inv for inv in invs_of[sk] if (p, inv) in inv_price]
             if shared and all(inv_price[(sk, inv)] == inv_price[(p, inv)] for inv in shared):
                 ok.append(p)
         same_price_mates[sk] = ok
@@ -547,8 +573,17 @@ def analyse(lines, today, deal_sheet=None, packs=None, pour=None, links=None) ->
         fills = [o for p in same_price_mates[sk] for o in series.get(p, [])]
         # A mix-and-match family shares one ladder: its partners' orders
         # count toward this product's tiers.
-        learn = obs + [o for o in fills if o["date"] not in {x["date"] for x in obs}]
-        breaks, proven = _learn_breaks(learn, l["distributor"] in houses, mates) if len(learn) >= 2 else ([], False)
+        own_dates = {x["date"] for x in obs}
+        extra = [o for o in fills if o["date"] not in own_dates]
+        learn = obs + extra
+        if len(learn) < 2:
+            breaks, proven = [], False
+        elif not extra and l["distributor"] not in houses:
+            # The same reading the house pass made (the same orders and
+            # partners, no proven house): kept, not repeated.
+            breaks, proven = first_read[sk]
+        else:
+            breaks, proven = _learn_breaks(learn, l["distributor"] in houses, mates)
         posts = l["distributor"] in posting
         tiers = _series_rows(obs, breaks, today, cutoff, unit, fills, posts)
         # F8: a line billed at a smaller tier's price than its quantity

@@ -36,8 +36,15 @@ def get_conn(db_path=None):
 
 
 def _mdy(iso) -> str:
+    """M/D/YY from an ISO date (or a datetime's string), "" when unreadable.
+    Kept per day: a build formats the same few hundred days ~50k times."""
+    return _mdy10(str(iso)[:10])
+
+
+@functools.lru_cache(maxsize=4096)
+def _mdy10(iso) -> str:
     try:
-        d = date.fromisoformat(str(iso)[:10])
+        d = date.fromisoformat(iso)
     except ValueError:
         return ""
     return f"{d.month}/{d.day}/{str(d.year)[2:]}"
