@@ -691,9 +691,10 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
             else:
                 last = engine.last_like(restaurant_id, e, db_path=db_path, tz=tz)
                 if last and last.get("net") and last.get("lift_pct") is not None:
-                    parts.append(f"No pattern measured yet: your last {side} game, {last['describe']}, sold "
-                                 f"{_money(last['net'])}, {float(last['lift_pct']):+.0f}% against a usual "
-                                 f"{_d(last['event']['event_date']).strftime('%A')} — one night, not enough to plan on.")
+                    parts.append(f"Your last {side} game, {last['describe']}, sold {_money(last['net'])}, "
+                                 f"{float(last['lift_pct']):+.0f}% against a usual "
+                                 f"{_d(last['event']['event_date']).strftime('%A')}. One night is not a pattern "
+                                 f"yet, so don't plan on it.")
                 else:
                     parts.append(f"No {side} game measured here yet, so plan a usual {weekday}.")
                 # Other restaurants' nights, behind the privacy floor (phase
@@ -745,6 +746,12 @@ def alert(restaurant_id, today, sees_sales=True, sees_labor=True, marketing=Fals
                 # line already carried left an "inference" on a line with none).
                 "claim_kind": "inferred" if staffed else claim,
                 "outside": True, "text": " ".join(parts),
+                # The same line as the game and one row per point, for a screen
+                # that lists them (Home's Before service, owner 10/15/26: "too
+                # many adjacent long sentences", as the today line, 10/5/26).
+                # `text` stays the one paragraph for a text, an email or a push.
+                "head": parts[0] if len(parts) > 1 else None,
+                "rows": [p for p in parts[1:] if p.strip()] or None,
                 "ask": gameday.ask_for(e, tz=tz)}
         if staffed:
             line["staffing"] = {k: st[k] for k in ("recommend", "basis", "n")}

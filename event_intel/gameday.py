@@ -105,7 +105,11 @@ def _items_by_date(restaurant_id, dates, db_path) -> dict:
     out = {}
     for r in rows:
         if (r["u"] or 0) > 0:
-            out.setdefault(r["business_date"], {})[r["item_name"]] = float(r["u"])
+            # RPOWER joins a variant to its item with a backtick ("Miller Lite`
+            # Bucket"); an owner reads the words (10/15/26).
+            name = " ".join(str(r["item_name"]).replace("`", " ").split())
+            day = out.setdefault(r["business_date"], {})
+            day[name] = day.get(name, 0.0) + float(r["u"])
     return out
 
 

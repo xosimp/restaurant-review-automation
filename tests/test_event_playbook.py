@@ -219,8 +219,8 @@ def test_an_unmeasured_game_is_said_as_the_last_one_never_as_a_lift(db):
     _world(db, r.id, lifts=(20.0, None))
     line = playbook.alert(r.id, date(2026, 11, 21), db_path=db)
     assert line["text"].startswith("Tomorrow: Bears vs New Orleans Saints") and line["tone"] == "neutral"
-    assert ("No pattern measured yet: your last home game, Bears vs Minnesota Vikings · Sun 9/20/26 · 12pm"
-            in line["text"]) and "$11,000, +20% against a usual Sunday — one night, not enough to plan on." in line["text"]
+    assert ("Your last home game, Bears vs Minnesota Vikings · Sun 9/20/26 · 12pm"
+            in line["text"]) and "$11,000, +20% against a usual Sunday. One night is not a pattern yet" in line["text"]
     assert "Staff above" not in line["text"] and "action" not in line
 
 
@@ -453,3 +453,31 @@ def test_the_catalog_editor_is_admin_only_audited_and_moves_every_follower(db, m
             if s.get("ref") == f"event:{wk18['id']}"]
     rows = [e for e in admin_events.recent(limit=10) if e.get("event_type") == "event_catalog.edit"]
     assert [x["result"] for x in rows] == ["ok", "refused"]
+
+
+def test_the_game_line_is_its_game_and_one_row_per_point_for_home(db):
+    """Owner, 10/15/26 (Home's Before service): the game line was "too many
+    adjacent long sentences" - Home lists the game as its head and each point
+    on its own row; `text` stays the one paragraph for a text or an email."""
+    r = _restaurant(db)
+    _world(db, r.id, lifts=(20.0, None))
+    line = playbook.alert(r.id, date(2026, 11, 21), marketing=True, db_path=db)
+    assert line["head"] == "Tomorrow: " + line["text"][len("Tomorrow: "):].split(". ")[0] + "."
+    assert line["rows"] and all(len(x) < 260 for x in line["rows"])
+    assert " ".join([line["head"]] + line["rows"]) == line["text"]
+    assert not any(x.startswith("Tomorrow") for x in line["rows"])
+
+
+def test_a_pos_item_name_reads_without_its_variant_backtick(tmp_path):
+    """RPOWER writes a variant as "Miller Lite` Bucket"; the game line read it
+    out with the backtick (Home, 10/15/26). Both spellings are one item."""
+    import sqlite3
+    from event_intel import gameday
+    path = str(tmp_path / "lines.db")
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE pos_ticket_lines (restaurant_id, business_date, item_name, qty, kind, item_kind, voided)")
+    c.executemany("INSERT INTO pos_ticket_lines VALUES (99, '2026-10-11', ?, ?, 'sale', 'dish', 0)",
+                  [("Miller Lite` Bucket", 30), ("Miller Lite Bucket", 2)])
+    c.commit()
+    c.close()
+    assert gameday._items_by_date(99, {"2026-10-11"}, path) == {"2026-10-11": {"Miller Lite Bucket": 32.0}}
