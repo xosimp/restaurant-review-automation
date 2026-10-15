@@ -640,6 +640,54 @@ def test_build_scales_linearly(monkeypatch):
     assert reads_per_line[36] < 1.5 * reads_per_line[6], reads_per_line
 
 
+def _product_lines(months):
+    """`months` of weekly invoices of 12 products at two houses — a price
+    change every quarter, a credit now and then, a $0 case, a rebate line."""
+    out, end = [], date(2026, 10, 1)
+    start = end - timedelta(days=30 * months)
+    d, n = start, 0
+    while d <= end:
+        if (d - start).days % 7 == 0:
+            for house, cat in (("Breakthru", "liquor"), ("Euclid", "beer")):
+                n += 1
+                for i in range(6):
+                    price = 100.0 + 10 * i + 5 * ((d - start).days // 90)
+                    qty = -1.0 if (n + i) % 37 == 0 else float(1 + (n + i) % 3)
+                    out.append({"distributor": house, "invoice_number": str(n), "invoice_date": d.isoformat(),
+                                "product_key": f"{house.lower()}|{i}", "description": f"{house.upper()} ITEM {i} 1L",
+                                "uom": "CA", "qty": qty, "unit_price": price, "cost": qty * price, "net": qty * price,
+                                "deposit": None, "kind": "item", "category": cat, "sure": True, "owner_set": False,
+                                "rebate": False, "mixer": False, "upc": None, "ref_invoice_number": None})
+                out.append(dict(out[-1], product_key=f"{house.lower()}|free", description="FREE CASE 1L", qty=1.0,
+                                unit_price=0.0, cost=0.0, net=0.0))
+                out.append(dict(out[-1], product_key=f"{house.lower()}|reb", description="AB 2 PRODUCT DISCOUNT",
+                                qty=1.0, unit_price=-5.0, cost=-5.0, net=-5.0, rebate=True))
+        d += timedelta(days=1)
+    return out, end
+
+
+def test_the_price_watch_and_spend_read_each_line_a_constant_number_of_times():
+    """V17's other half (barfix W10): bar.prices.analyse, the spend reads and
+    the reorder hints cost the same per line at 6, 18 and 36 months — the
+    cold build's hot spots after W7 (credit pairing, mix-and-match partners,
+    the monthly-posting check, the rebate ledger) re-scanned the lines."""
+    import bar.prices as bpr
+    import bar.products as bprod
+    import bar.spend as bsp
+    reads = {}
+    for months in (6, 18, 36):
+        raw, end = _product_lines(months)
+        lines = Lines(_Counted(l) for l in raw)
+        _Counted.reads = 0
+        a = bpr.analyse(lines, end + timedelta(days=1))
+        bsp._products(lines), bsp._distributors(lines), bsp.deposits(lines), bsp.mixers(lines)
+        bprod.reorder_hints(lines, end + timedelta(days=1), canon=a["canon"])
+        assert a["payload"]["events"] and a["payload"]["credits"]
+        reads[months] = _Counted.reads / len(lines)
+    assert max(reads.values()) < 100, reads
+    assert reads[36] < 1.25 * reads[6], reads
+
+
 def test_price_kinds_filter_as_a_comma_list():
     rows = [{"product_key": f"d|{i}", "name": f"Item {i}", "kind": k, "change": 1, "since": "2026-10-01"}
             for i, k in enumerate(["increase", "deal", "deal_ended", "tier", "decrease"])]

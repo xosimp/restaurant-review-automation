@@ -25,6 +25,20 @@ def test_the_count_sheet_asks_about_a_delivery_that_arrived_mid_count():
     assert 'save(deliveries: "counted")' in src and 'save(deliveries: "after")' in src
 
 
+def test_the_phone_reads_the_bar_and_counts_it_through_the_mobile_twins():
+    """F6 (bar fix round 10/15/26): the iOS Bar card reads the web page's
+    payload through its mobile twin, and the count sheet posts to the
+    counts route the web uses — both routes exist on the server."""
+    card = _swift("Features/FoodCost/FoodCostBarCard.swift")
+    sheet = _swift("Features/FoodCost/FoodCostBarCountSheet.swift")
+    assert 'client.send("/mobile/api/food-cost/bar"' in card
+    assert '"/mobile/api/food-cost/bar/counts", method: .post' in sheet
+    mobile = open(os.path.join(ROOT, "mobile_api.py"), encoding="utf-8").read()
+    for route in ('@mobile_bp.route("/food-cost/bar", methods=["GET"])',
+                  '@mobile_bp.route("/food-cost/bar/counts", methods=["POST"])'):
+        assert route in mobile, route
+
+
 def test_the_phone_logs_waste():
     src = _swift("Features/FoodCost/WasteLogForm.swift")
     assert '"/mobile/api/food-cost/waste"' in src
