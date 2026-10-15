@@ -824,3 +824,28 @@ def test_margins_suggest_only_drinks_with_the_same_beer_and_towers_at_100_oz():
     page = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     mg = page[page.index("  function margins(d) {"):page.index("  function reorder(d) {")]
     assert "'What each drink costs'" in mg and "'Matches to confirm'" in mg and "data-oz=" in mg
+
+
+def test_every_pours_from_list_is_grouped_by_category_and_strictly_a_to_z():
+    # Will, 10/15/26: "alphabetize that drop down bc there is so many" — the
+    # recipe card's list was in invoice order, the drink's own category-first.
+    payload = {"ok": True, "available": True, "products": [
+        {"product_key": "z", "product": "Zubrowka Vodka 1L", "category": "liquor"},
+        {"product_key": "a", "product": "Absolut Vodka 1L", "category": "liquor"},
+        {"product_key": "m", "product": "Miller Lite 1/2 BBL", "category": "beer"},
+        {"product_key": "c", "product": "Coors Light 24NR", "category": "beer"},
+        {"product_key": "d", "product": "AB 2 Product Discount", "category": "beer"},
+        {"product_key": "w", "product": "Bogle Chardonnay 750ML", "category": "wine"}]}
+    out = _run(payload, "console.log(window._bar.prodOptions('beer', 'Pours from…', 'm'));"
+                        "console.log(window._bar.prodOptions('', 'Pick the product'));")
+    beer, plain = out.strip().split("\n")[-2:]
+    groups = re.findall(r'<optgroup label="([^"]+)">(.*?)</optgroup>', beer)
+    assert [g[0] for g in groups] == ["Suggested", "Beer &amp; seltzer · A to Z", "Liquor · A to Z", "Wine · A to Z"]
+    names = lambda h: re.findall(r">([^<]+)</option>", h)
+    assert names(groups[0][1]) == ["Miller Lite 1/2 BBL"] and 'value="m" selected' in groups[0][1]
+    assert names(groups[1][1]) == ["Coors Light 24NR"]                       # no discount line, no repeat
+    assert names(groups[2][1]) == ["Absolut Vodka 1L", "Zubrowka Vodka 1L"]
+    assert "Suggested" not in plain and plain.index("Liquor · A to Z") < plain.index("Beer &amp; seltzer · A to Z")
+    src = _src()
+    body = src[src.index("  function specRow(s) {"):src.index("  function prodName(key)")]
+    assert "prodOptions(" in body and "<option" not in body              # the recipe card uses the same picker

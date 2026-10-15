@@ -46402,20 +46402,36 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < ps.length; i++) if ((cat ? ps[i].category === cat : LABELS[ps[i].category])) out.push(ps[i]);
     return out;
   }
-  // The products a drink can pour from: never a discount, deposit or fee
-  // line; the drink's own category first, each group A to Z, so the right
-  // bottle is quick to find (owner, 10/15/26). pick is pre-selected.
+  // The products a drink can pour from, one picker everywhere: never a
+  // discount, deposit or fee line; the suggestion on top; then one labelled
+  // group per category, the drink's own first, each strictly A to Z (owner,
+  // 10/15/26: the list was too long to read unsorted). pick is pre-selected;
+  // a picked key no longer on the invoices stays as its own option.
   var NOT_ITEM = /discount|deposit|empties|\bfee\b|charge|credit|handle/i;
-  function prodOptions(cat, first, pick) {
-    var ps = barProducts(null), own = [], rest = [], o = '<option value="">' + esc2(first) + '</option>', i;
+  var CAT_ORDER = ['liquor', 'wine', 'beer'];
+  function prodSortKey(p) { return String(p.product || '').toLowerCase().replace(/^[^a-z0-9]+/, ''); }
+  function prodOptions(cat, first, pick, pickName) {
+    var ps = barProducts(null), groups = {}, order = [], o = '<option value="">' + esc2(first) + '</option>', i, g, k, found = null;
     for (i = 0; i < ps.length; i++) {
       if (NOT_ITEM.test(ps[i].product || '')) continue;
-      (cat && ps[i].category === cat ? own : rest).push(ps[i]);
+      if (pick && ps[i].product_key === pick) found = ps[i];
+      g = ps[i].category || 'other';
+      if (!groups[g]) { groups[g] = []; order.push(g); }
+      groups[g].push(ps[i]);
     }
-    var by = function (a, b) { return String(a.product).toLowerCase() < String(b.product).toLowerCase() ? -1 : 1; };
-    own.sort(by); rest.sort(by);
-    var all = cat ? own.concat(rest) : own.concat(rest).sort(by);
-    for (i = 0; i < all.length && i < 400; i++) o += '<option value="' + esc2(all[i].product_key) + '"' + (pick && all[i].product_key === pick ? ' selected' : '') + '>' + esc2(all[i].product) + '</option>';
+    order.sort(function (a, b) {
+      var ra = a === cat ? -1 : (CAT_ORDER.indexOf(a) < 0 ? 9 : CAT_ORDER.indexOf(a));
+      var rb = b === cat ? -1 : (CAT_ORDER.indexOf(b) < 0 ? 9 : CAT_ORDER.indexOf(b));
+      return ra - rb || (a < b ? -1 : 1);
+    });
+    if (pick) o += '<optgroup label="Suggested"><option value="' + esc2(pick) + '" selected>' + esc2(found ? found.product : (pickName || pick)) + '</option></optgroup>';
+    for (k = 0; k < order.length; k++) {
+      g = groups[order[k]];
+      g.sort(function (a, b) { var x = prodSortKey(a), y = prodSortKey(b); return x < y ? -1 : (x > y ? 1 : 0); });
+      o += '<optgroup label="' + esc2((LABELS[order[k]] || order[k]) + ' · A to Z') + '">';
+      for (i = 0; i < g.length; i++) if (g[i].product_key !== pick) o += '<option value="' + esc2(g[i].product_key) + '">' + esc2(g[i].product) + '</option>';
+      o += '</optgroup>';
+    }
     return o;
   }
   function varItem(x) {
@@ -46446,19 +46462,14 @@ function sfw2RuleCheck(chk) {
   // had no Confirm at all — Girls Deserve's gin, the dirty martini).
   function specRow(s) {
     var name = s.product || (s.product_key ? prodName(s.product_key) : null), can = OWNER && s.status !== 'confirmed';
-    var opts = '<option value="">Pick the product…</option>', ps = barProducts(null), i, have = false;
-    for (i = 0; i < ps.length && i < 400; i++) {
-      var sel = ps[i].product_key === s.product_key;
-      if (sel) have = true;
-      opts += '<option value="' + esc2(ps[i].product_key) + '"' + (sel ? ' selected' : '') + '>' + esc2(ps[i].product) + '</option>';
-    }
-    if (s.product_key && !have) opts += '<option value="' + esc2(s.product_key) + '" selected>' + esc2(name || s.product_key) + '</option>';
+    var opts = prodOptions(prodCat(s.product_key) || 'liquor', 'Pick the product…', s.product_key, name);
     return '<div class="br-card br-li vm"><div class="n"><b>' + esc2(s.item_name) + '</b><span>Recipe card: ' + (s.oz != null ? hn(s.oz + ' oz') + ' ' : '') + esc2(s.ingredient) + '</span></div>'
       + '<div class="m">' + (s.status === 'confirmed' ? 'Poured from ' + esc2(name || '—') + ' · confirmed' : (s.product_key ? 'Suggested: ' + esc2(name || s.product_key) : 'No product on the invoices matches it yet — pick it')) + '</div>'
       + '<div class="r">' + (can ? '<div class="br-form br-vmf"><select class="br-sel" data-br-specp="' + esc2(s.id) + '" aria-label="Product ' + esc2(s.item_name) + ' pours for ' + esc2(s.ingredient) + '">' + opts + '</select>'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="confirm">Confirm</button>'
         + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="remove">Not this</button></div>' : '') + '</div></div>';
   }
+  function prodCat(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; key && i < ps.length; i++) if (ps[i].product_key === key) return ps[i].category; return null; }
   function prodName(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
   function varSec(d) {
     var v = d.variance;
@@ -47511,7 +47522,7 @@ function sfw2RuleCheck(chk) {
   /* For the preview harness and tests: the page from a payload, no fetch. */
   window._barRender = function (d) { DATA = d && d.ok ? d : DATA; if (d && d.ok) ST.dir = null; return page(d); };
   window._barSettle = settle;
-  window._bar = {state: ST, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
+  window._bar = {state: ST, prodOptions: prodOptions, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
                  focusKey: focusKey, refocus: refocus, verdict: verdict, mapBody: mapBody, countsBody: countsBody, prodBody: prodBody,
                  listState: listState, redrawList: redrawList, rerender: rerender, send: send, refusal: refusal, inertApp: inertApp,
                  saveMapping: saveMapping, saveCount: saveCount, setStopped: setStopped, page: page,
