@@ -1775,6 +1775,7 @@ function cData(c, d){
       ${canOn?`<button class="btn s p w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',true)">Turn on review fetching</button>`:''}${g.source==='places_sampled'?`<button class="btn s g w" onclick="reviewsFetching(${c.id},'${jsq(c.name)}',false)">Turn off</button>`:''}</section>
     <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each feed's own sync health</span></div>
       ${srcs.length ? table([{h:'Source',key:'source',cell:r=>`<b>${esc(r.source)}</b>${r.provider?' <span class="dim">'+esc(r.provider)+'</span>':''}`},{h:'Last good',key:'last_ok_at',cell:r=>`<span class="num">${r.last_ok_at?fmtDT(r.last_ok_at):'never'}</span>`},{h:'Failing',key:'consecutive_failures',r:true,cell:r=>r.consecutive_failures?`<span class="chip ${r.error_class==='auth'?'bad':'warn'}">${r.consecutive_failures} in a row</span>${r.first_failed_at?' <span class="dim">since '+fmtD(r.first_failed_at)+'</span>':''}`:'<span class="chip ok">ok</span>'},{h:'Next try',key:'next_retry_at',cell:r=>`<span class="num">${r.next_retry_at?fmtDT(r.next_retry_at):'—'}</span>`},{h:'Data through',key:'data_through',cell:r=>`<span class="num">${r.data_through?fmtD(r.data_through):'—'}</span>`},{h:'Last error',key:'last_error',wrap:true,cell:r=>r.last_error?`<span style="color:var(--red-t)">${esc(String(r.last_error).slice(0,160))}</span>`:''}], srcs, {id:'csrc-t'}) : `<div class="cb">${readFailed(d,['source_health'])?unknownV(readFailed(d,['source_health'])):'<span class="muted">No data-source history yet.</span>'}</div>`}</section>
+    <section class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-intake"><h2>Invoice intake</h2>${skel(3)}</section>
     <section class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><h2>Modules</h2><a class="w" href="/admin/client-settings/${c.id}" style="font-size:12.5px;font-weight:700">Turn modules on or off</a></div><div class="lst" style="border-top:1px solid var(--line)">${c.modules.map(m=>`<div class="li"><div class="tt"><b>${esc(m.label)}</b><span>${m.enabled?'on':'off'} · ${m.configured?'configured':'not configured'} · ${m.receiving?'receiving data':'no data coming in'}</span></div><span class="chip ${MOD[m.state]}">${MODL[m.state]}</span><span class="n muted" style="font-size:12.5px;width:140px;text-align:right">${m.last_data?fmtDT(m.last_data):'—'}</span></div>`).join('')}</div></section>
     <section class="grid g2">
       <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px" id="cd-contacts"><h2>Alert contacts</h2>${skel(2)}</div>
@@ -1791,7 +1792,67 @@ function cData(c, d){
       ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Job',key:'job'},{h:'Error',key:'error',wrap:true,cell:r=>`<span style="color:var(--red-t)">${esc(r.error||'')}</span>`}], d.jobs, {id:'cjobs-t', limit:10, empty:'No job failures mention this client.'})}
       ${(d.ai_quality||[]).length ? table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'AI check',key:'job'},{h:'Finding',key:'error',wrap:true,cell:r=>`<span class="dim">${esc(r.error||'')}</span>`}], d.ai_quality, {id:'caiq-t', limit:10}) : ''}
       ${table([{h:'When',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'Event',key:'event_type'},{h:'Result',cell:r=>r.ok?'<span class="b ok nodot">ok</span>':`<span class="b bad nodot">${esc(r.status||'failed')}</span>`},{h:'Error',key:'error',wrap:true,cell:r=>esc(r.error||'')}], d.webhook_deliveries, {id:'chook-t', limit:10, empty:'No webhook configured or no deliveries yet.'})}</div></details>`,
-    after: () => { lazy('cd-contacts', () => contactsHtml(c)); lazy('cd-templates', () => templatesHtml(c)); lazy('cd-menunotes', () => menuNotesHtml(c)); }};
+    after: () => { lazy('cd-intake', () => intakeHtml(c)); lazy('cd-contacts', () => contactsHtml(c)); lazy('cd-templates', () => templatesHtml(c)); lazy('cd-menunotes', () => menuNotesHtml(c)); }};
+}
+// ── Invoice intake (bar fix round 10/15/26, F10): the restaurant's Fintech
+// address and the senders it takes mail from, the feed, the last 20 emails
+// and files. Rotate and purge ask for the password (step-up); every action
+// is audited on the server (record_admin_action).
+const INTAKE_ST = {done:'ok', queued:'info', held_sender:'warn', held_auth:'warn', failed:'bad', ignored:'warn', no_files:'off', no_route:'off', gmail_confirmation:'info'};
+const INTAKE_LABEL = {done:'read', queued:'queued', held_sender:'held · sender', held_auth:'held · not verified', failed:'failed', ignored:'nothing read', no_files:'no attachment', no_route:'retired address', gmail_confirmation:'Gmail confirmation'};
+const FILE_ST = {stored:'ok', unrecognized:'warn', too_many_rows:'bad', too_many_pages:'bad', too_slow:'bad', unreadable_pdf:'bad', reading:'info'};
+async function intakeHtml(c){
+  const d = await need('/admin/api/client/' + c.id + '/intake');
+  const live = (d.routes || []).filter(r => r.active), old = (d.routes || []).filter(r => !r.active), f = d.feed || {}, sh = d.source_health || null, n = jsq(c.name);
+  const r0 = live[0] || null, senders = r0 ? (r0.allowed_senders || []).join('\n') : '';
+  const feed = [f.invoices_through ? 'invoices through <span class="n">' + esc(f.invoices_through_mdy) + '</span>' : 'no invoices yet', f.sales_through ? 'drink sales through <span class="n">' + esc(f.sales_through_mdy) + '</span>' : 'no drink sales yet', f.last_file ? 'last file <span class="n">' + esc(f.last_file_mdy) + '</span>' : 'no file yet'].join(' · ');
+  const failing = sh && sh.consecutive_failures ? `<div class="warnline" role="status" style="background:var(--amber-bg);color:var(--amber-t)">${ico('alert','xs')} ${esc(sh.last_error || 'The invoice feed is failing')}${sh.first_failed_at ? ' · since ' + fmtD(sh.first_failed_at) : ''}</div>` : '';
+  const stale = f.stale_days ? `<div class="warnline" role="status" style="background:var(--red-bg);color:var(--red-t)">${ico('alert','xs')} The newest invoice is ${f.stale_days} days old — the feed looks stopped.</div>` : '';
+  const addr = r0 ? `<div class="kv"><span class="k">Address</span><span class="mono" style="user-select:all;word-break:break-all">${esc(r0.address)}</span><span class="k">Made</span><span class="n">${fmtD(r0.created_at)}${r0.created_by ? ' <span class="dim">by ' + esc(r0.created_by) + '</span>' : ''}</span></div>` : `<span class="muted" style="font-size:13px">No intake address yet. One is made on ${esc(d.domain || 'the receiving domain (set INTAKE_EMAIL_DOMAIN)')}; give it to Fintech's daily file and any forward.</span>`;
+  const sendersBox = `<label class="lbl" for="intake-senders">Senders it takes mail from — one per line; @domain for any address there. Anyone else is held.</label><textarea id="intake-senders" rows="4" style="width:100%" placeholder="processor@fintech.net">${esc(senders)}</textarea>`;
+  const buttons = r0 ? `<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="intakeSenders(${c.id},'${n}','${jsq(r0.address)}')">Save senders</button><button class="btn s g w" onclick="intakeRotate(${c.id},'${n}')">Rotate address…</button></span>` : `<button class="btn s p w" style="align-self:flex-start" onclick="intakeCreate(${c.id},'${n}')">Make an intake address</button>`;
+  const emails = table([{h:'Received',key:'received_at',cell:r=>`<span class="num">${fmtDT(r.received_at)}</span>`},{h:'From',key:'sender',wrap:true,cell:r=>`<span class="dim">${esc(r.sender||'')}</span>`},{h:'Subject',key:'subject',wrap:true,cell:r=>esc(r.subject||'')},{h:'Status',key:'status',cell:r=>`<span class="chip ${INTAKE_ST[r.status]||''}">${esc(INTAKE_LABEL[r.status]||r.status)}</span>`},{h:'Verified',cell:r=>r.auth?`<span class="dim" title="SPF ${esc(r.auth.spf||'—')} · DKIM ${esc(r.auth.dkim||'—')} · DMARC ${esc(r.auth.dmarc||'—')}">${esc(r.auth.dmarc||'—')}</span>`:'<span class="dim">—</span>'},{h:'Detail',key:'detail',wrap:true,cell:r=>`<span class="dim">${esc(String(r.detail||'').slice(0,200))}</span>`},{h:'',cell:r=>r.releasable?`<button class="btn s w" onclick="intakeRelease(${c.id},'${n}','${jsq(r.email_id)}','${jsq(r.sender||'')}')">Release…</button>`:''}], d.emails || [], {id:'cint-e', sort:'received_at', limit:20, empty:'No email has reached this restaurant\'s address yet.'});
+  const files = table([{h:'Received',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'File',key:'filename',wrap:true,cell:r=>esc(r.filename||'')},{h:'Format',key:'format',cell:r=>`<span class="dim">${esc(r.format||'—')}</span>`},{h:'Invoices',key:'invoices',r:true,cell:r=>`<span class="num">${fmtN(r.invoices)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="chip ${FILE_ST[r.status]||''}" title="${esc(r.detail||'')}">${esc(String(r.status||'').replace(/_/g,' '))}</span>`},{h:'',cell:r=>`<span style="display:flex;gap:6px">${r.has_content?`<button class="btn s g w" onclick="intakeReread(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}')">Re-read</button>`:''}<button class="btn s g w dz" onclick="intakePurge(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}',${r.invoices||0})">Purge…</button></span>`}], d.files || [], {id:'cint-f', sort:'created_at', limit:20, empty:'No file stored yet.'});
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Invoice intake</h2><span class="muted" style="font-size:12.5px">Fintech's daily file, by email</span></div>
+    ${stale}${failing}<span class="muted" style="font-size:12.5px">${feed}</span>${addr}${sendersBox}${buttons}
+    <div class="lbl">Last 20 emails</div>${emails}<div class="lbl">Last 20 files</div>${files}
+    ${old.length ? `<details class="more-d" style="margin:0 -18px -16px"><summary>Retired addresses · <span class="n">${old.length}</span></summary><div style="padding:0 18px 16px" class="kv">${old.map(r=>`<span class="k">${fmtD(r.retired_at || r.created_at)}</span><span class="mono dim" style="word-break:break-all">${esc(r.address)}</span>`).join('')}</div></details>` : ''}`;
+}
+function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name})); }
+async function intakeCreate(rid, name){
+  const v = $('intake-senders').value.trim();
+  if(!v){ toast('Name at least one sender — mail from anyone else is held', 'bad'); return; }
+  if(!confirm('Make an invoice intake address for ' + name + '? Mail to it from these senders is read into the Bar page:\n\n' + v)) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/create', {allowed_senders: v});
+  if(say(d, 'Address made')) intakeReload(rid, name);
+}
+async function intakeSenders(rid, name, address){
+  const v = $('intake-senders').value.trim();
+  if(!confirm('Save the senders for ' + name + '\'s intake address? Mail from anyone not listed is held for you to release.')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/senders', {address: address, allowed_senders: v});
+  if(say(d, 'Senders saved')) intakeReload(rid, name);
+}
+async function intakeRotate(rid, name){
+  if(!confirm('Rotate ' + name + '\'s intake address? A new address is made with the same senders and the old one takes no more mail — Fintech\'s daily file and any Gmail forward have to be pointed at the new one, or invoices stop.')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/rotate', {});
+  if(say(d, 'Address rotated')) intakeReload(rid, name);
+}
+async function intakeRelease(rid, name, emailId, sender){
+  if(!confirm('Read this held email into ' + name + '\'s invoices after all? It is from ' + (sender || 'an unknown sender') + ' and is read without the sender or verification checks — only release mail you trust.')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/release', {email_id: emailId});
+  if(say(d, 'Released')) intakeReload(rid, name);
+}
+async function intakeReread(rid, name, fileId, fname){
+  if(!confirm('Read ' + (fname || 'this file') + ' again for ' + name + ' with today\'s reader? Its invoices are written again.')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/reread', {file_id: fileId});
+  if(!okRes(d)){ toast(errText(d), 'bad'); return; }
+  const r = d.job_id ? await pollJob(jobUrl(d.job_id)) : d;
+  jobSaid(r, 'Re-read'); intakeReload(rid, name);
+}
+async function intakePurge(rid, name, fileId, fname, invoices){
+  if(!confirm('Purge ' + (fname || 'this file') + ' from ' + name + '? What it wrote (' + invoices + ' invoice' + (invoices === 1 ? '' : 's') + ') is removed from the Bar page.\n\nThis cannot be undone.')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/purge', {file_id: fileId});
+  if(say(d, 'Purged')) intakeReload(rid, name);
 }
 async function reviewsFetching(id, name, on){
   if(!confirm((on ? 'Turn on review fetching for ' : 'Turn off review fetching for ') + name + '?' + (on ? ' Reviews are fetched at 8am, noon, 4pm and 8pm Central.' : ' No new reviews arrive until it is turned back on.'))) return;

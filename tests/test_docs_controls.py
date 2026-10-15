@@ -158,6 +158,10 @@ _STEP_UP_TODAY = {
     "/admin/api/ai-routes/<workflow>/revert",
     "/admin/api/ai-routes/recommendations/<int:rec_id>",
     "/admin/api/ai-costs/invoices",
+    # Invoice intake (bar fix round 10/15/26, F10): rotating an address,
+    # purging a received file.
+    "/admin/api/client/<int:restaurant_id>/intake/rotate",
+    "/admin/api/client/<int:restaurant_id>/intake/purge",
 }
 
 # Routes that need the step-up for only PART of what they do, through

@@ -6740,3 +6740,196 @@ def admin_api_client_settings(restaurant_id, current_user):
                  "inventory_frequency": list(SETTINGS_INVENTORY_FREQUENCIES),
                  "digest_day": list(SETTINGS_DIGEST_DAYS)},
         save_url=f"/admin/client-settings/{restaurant_id}")
+
+
+# ── Invoice intake (bar fix round 10/15/26, F10 / V12) ───────────────────────
+# Customers → restaurant → Data & integrations → Invoice intake: the
+# restaurant's intake addresses and the senders each takes mail from, the
+# last 20 emails and files, and the actions — create or rotate an address,
+# change its senders, release a held email, re-read a file, purge a file.
+# Each one audits itself through record_admin_action; rotate and purge take
+# the step-up. None of them emails or texts anyone (a release only queues
+# the email's read from Resend), so none is gated by scheduling_allowed().
+
+def _intake_restaurant(restaurant_id):
+    r = get_restaurant(restaurant_id)
+    if not r:
+        return None, (jsonify(ok=False, error="Restaurant not found"), 404)
+    return r, None
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake")
+@admin_required
+def admin_api_intake(restaurant_id, current_user):
+    import email_intake
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    return jsonify(ok=True, restaurant_id=restaurant_id, **email_intake.admin_view(restaurant_id))
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/create", methods=["POST"])
+@admin_required
+def admin_api_intake_create(restaurant_id, current_user):
+    """{allowed_senders, note?}: the restaurant's first Fintech address (409
+    when it has one — rotate it)."""
+    import email_intake
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    try:
+        out = email_intake.create_route(restaurant_id, "fintech", allowed_senders=data.get("allowed_senders"),
+                                        note=(str(data.get("note") or "").strip()[:300] or None),
+                                        created_by=current_user.get("username"))
+    except ValueError as e:
+        _audit_admin_action(current_user, "intake.route_created", restaurant_id=restaurant_id,
+                            target=f"restaurant:{restaurant_id}", result="refused", summary=str(e)[:300])
+        return jsonify(ok=False, error=str(e)), (409 if "already" in str(e) else 400)
+    _audit_admin_action(current_user, "intake.route_created", restaurant_id=restaurant_id,
+                        target=f"intake:{out['address']}", before=out["before"], after=out["after"])
+    return jsonify(ok=True, address=out["address"], message=f"New intake address: {out['address']}")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/rotate", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_intake_rotate(restaurant_id, current_user):
+    """Retire the active Fintech address (active=0) and issue a new one with
+    the same senders. Mail to the old one is no_route from now on."""
+    import email_intake
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    try:
+        out = email_intake.rotate_route(restaurant_id, "fintech", created_by=current_user.get("username"))
+    except ValueError as e:
+        _audit_admin_action(current_user, "intake.route_rotated", restaurant_id=restaurant_id,
+                            target=f"restaurant:{restaurant_id}", result="refused", summary=str(e)[:300])
+        return jsonify(ok=False, error=str(e)), 409
+    _audit_admin_action(current_user, "intake.route_rotated", restaurant_id=restaurant_id,
+                        target=f"intake:{out['address']}", before=out["before"], after=out["after"])
+    return jsonify(ok=True, address=out["address"], retired=out["old"],
+                   message=f"New address {out['address']} — give it to Fintech and any forward; the old one "
+                           "takes no more mail")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/senders", methods=["POST"])
+@admin_required
+def admin_api_intake_senders(restaurant_id, current_user):
+    """{address, allowed_senders}: replace that address's allow-list."""
+    import email_intake
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    address = str(data.get("address") or "").strip().lower()
+    try:
+        out = email_intake.set_allowed_senders(restaurant_id, address, data.get("allowed_senders"))
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    _audit_admin_action(current_user, "intake.senders_set", restaurant_id=restaurant_id,
+                        target=f"intake:{address}", before={"allowed_senders": out["before"]},
+                        after={"allowed_senders": out["after"]})
+    return jsonify(ok=True, allowed_senders=out["after"], message="Senders saved")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/release", methods=["POST"])
+@admin_required
+def admin_api_intake_release(restaurant_id, current_user):
+    """{email_id}: read a held email after all (its sender and Resend's
+    verdict are not checked again — the admin vouched for it)."""
+    import email_intake
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    email_id = str((request.get_json(silent=True) or {}).get("email_id") or "").strip()
+    try:
+        out = email_intake.release(restaurant_id, email_id, released_by=current_user.get("username"))
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    _audit_admin_action(current_user, "intake.email_released", restaurant_id=restaurant_id,
+                        target=f"email_intake:{email_id}", before=out["before"], after=out["after"])
+    return jsonify(ok=True, message="Released — it is read in the next minute or two")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/reread", methods=["POST"])
+@admin_required
+def admin_api_intake_reread(restaurant_id, current_user):
+    """{file_id}: read a stored file again with today's reader, on the admin
+    job pool (its text may be in object storage)."""
+    import uuid
+    import fintech_invoices
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    try:
+        file_id = int((request.get_json(silent=True) or {}).get("file_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which file?"), 400
+    job_id, joined = _ops.claim_async_job(str(uuid.uuid4()), "intake_reread", restaurant_id)
+    if joined:
+        return jsonify(ok=False, job_id=job_id, error="A re-read is already running for this restaurant."), 409
+
+    def _job():
+        res = fintech_invoices.reread_file(restaurant_id, file_id) or {}
+        _audit_admin_action(current_user, "intake.file_reread", restaurant_id=restaurant_id,
+                            target=f"fintech_file:{file_id}", after=res,
+                            result="ok" if res.get("ok") else "failed")
+        msg = (f"Read again: {res.get('invoices', 0)} invoice(s) written" if res.get("ok")
+               else (res.get("error") or "Not read"))
+        _ops.finish_async_job(job_id, "done" if res.get("ok") else "error",
+                              dict(res, message=msg) if res.get("ok") else {"ok": False, "error": msg})
+    err = _submit_admin_job(job_id, _job)
+    if err:
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": err})
+        return jsonify(ok=False, error=err), 503
+    return jsonify(ok=True, job_id=job_id, status="pending")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/purge", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_intake_purge(restaurant_id, current_user):
+    """{file_id}: undo a bad file — fintech_invoices.purge_file (the ingest
+    workstream's) removes what it wrote; the file's text in object storage
+    is deleted too."""
+    import blob_store
+    import fintech_invoices
+    _r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    try:
+        file_id = int((request.get_json(silent=True) or {}).get("file_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which file?"), 400
+    conn = get_conn()
+    try:
+        f = conn.execute("SELECT id, filename, format, invoices, status, content FROM fintech_files "
+                         "WHERE id=? AND restaurant_id=?", (file_id, restaurant_id)).fetchone()
+    finally:
+        conn.close()
+    if not f:
+        return jsonify(ok=False, error="No such file for this restaurant"), 404
+    before = {"file_id": f["id"], "filename": f["filename"], "format": f["format"], "invoices": f["invoices"],
+              "status": f["status"]}
+    purge = getattr(fintech_invoices, "purge_file", None)
+    if purge is None:                  # written by the ingest workstream (W1)
+        return jsonify(ok=False, error="Purging a file isn't available on this build yet."), 501
+    try:
+        res = purge(restaurant_id, file_id) or {}
+    except Exception as e:
+        _ops.capture(e, job="admin_intake_purge", context=f"restaurant_id={restaurant_id} file_id={file_id}")
+        _audit_admin_action(current_user, "intake.file_purged", restaurant_id=restaurant_id,
+                            target=f"fintech_file:{file_id}", before=before, result="error",
+                            summary=f"purge of file {file_id} failed")
+        return jsonify(ok=False, error="The file couldn't be purged — nothing was changed."), 500
+    done = bool(res.get("ok", True))
+    if done:
+        blob_store.delete_text(f["content"])
+    _audit_admin_action(current_user, "intake.file_purged", restaurant_id=restaurant_id,
+                        target=f"fintech_file:{file_id}", before=before, after=res,
+                        result="ok" if done else "failed")
+    if not done:
+        return jsonify(ok=False, error=res.get("error") or "Not purged"), 400
+    return jsonify(ok=True, result=res, message=f"Purged {f['filename'] or 'the file'}")
