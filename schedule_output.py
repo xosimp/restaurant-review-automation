@@ -1196,8 +1196,16 @@ def check_snapshot(history_id, restaurant_id=None, db_path=None):
 
 
 def _hashable(x):
+    """`x` as a set member or a map key: a list is a tuple, and a set — a
+    frozenset that went in (a pair of names), decoded as a set — is a
+    frozenset again, all the way down. A set of pairs used to fail every
+    replay with "unhashable type: 'set'" (the learning ablation, 10/15/26)."""
     if isinstance(x, list):
         return tuple(_hashable(i) for i in x)
+    if isinstance(x, tuple):
+        return tuple(_hashable(i) for i in x)
+    if isinstance(x, (set, frozenset)):
+        return frozenset(_hashable(i) for i in x)
     return x
 
 

@@ -271,3 +271,11 @@ def test_a_saved_generation_leaves_its_metrics_row_with_its_context(db, monkeypa
     assert row["final_rows"] == 7 and row["context_z"]
     ctx = sm.load_context(row["context_z"])
     assert ctx["result"]["week_dates"] == tr.WEEK
+
+
+def test_a_stored_context_with_a_set_of_pairs_replays():
+    # The learning ablation failed every week with "unhashable type: 'set'"
+    # (10/15/26): a set of frozensets came back as a set of sets.
+    v = {"pairs": {frozenset({"Ana", "Bo"}), frozenset({"Cy", "Di"})}, ("Mon", 1): {("x", frozenset({1}))}}
+    back = so.decode(json.loads(json.dumps(so.encode(v))))
+    assert back == v
