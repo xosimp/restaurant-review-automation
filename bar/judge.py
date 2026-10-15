@@ -30,6 +30,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
 from bar.common import POUR_CATEGORIES, _mdy, _money, get_conn
+from bar.ledger import ledger_of, sales_index
 
 # Four weeks of invoices and sales together before anything is judged.
 MIN_DAYS = 28
@@ -95,19 +96,14 @@ def _d(iso):
 
 def open_days(sales, start, end) -> set:
     """The days in [start, end] with any bar sale on file: the bar was open."""
-    out = set()
-    for c in POUR_CATEGORIES:
-        for d, v in (sales.get(c) or {}).items():
-            if start <= d <= end and (v or 0) > 0:
-                out.add(d)
-    return out
+    return set(sales_index(sales).open_between(start, end))
 
 
 def usual_open_share(sales, start):
     """The share of days the bar was open over the HISTORY_DAYS before
     `start` (from its first sales day), or None with under four weeks of
     history: what "open as usual" is measured against."""
-    days = sorted({d for c in POUR_CATEGORIES for d, v in (sales.get(c) or {}).items() if (v or 0) > 0 and d < start})
+    days = sales_index(sales).open_before(start)
     if not days:
         return None
     lo = max(_d(days[0]), _d(start) - timedelta(days=HISTORY_DAYS))
@@ -126,31 +122,8 @@ def houses(lines, end) -> dict:
     between invoices (median step; None with one date), the pour categories
     it supplied in the HISTORY_DAYS before its own last invoice, and its
     median pour-category spend per delivery."""
-    dates = defaultdict(set)
-    spend = defaultdict(lambda: defaultdict(float))
-    by_cat = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
-    for l in lines:
-        d = str(l["invoice_date"])[:10]
-        if d > end:
-            continue
-        dist = l["distributor"]
-        dates[dist].add(d)
-        if l["category"] in POUR_CATEGORIES:
-            spend[dist][d] += l["net"]
-            by_cat[dist][l["category"]][d] += l["net"]
-    out = {}
-    for dist, ds in dates.items():
-        ds = sorted(ds)
-        steps = sorted((_d(b) - _d(a)).days for a, b in zip(ds, ds[1:]))
-        typical = (steps[len(steps) // 2] or 1) if steps else None
-        last = ds[-1]
-        since = (_d(last) - timedelta(days=HISTORY_DAYS)).isoformat()
-        cats = sorted((c for c, per in by_cat[dist].items() if sum(v for d, v in per.items() if d >= since) > 0),
-                      key=lambda c: -sum(by_cat[dist][c].values()))
-        amounts = sorted(v for v in spend[dist].values() if v > 0)
-        out[dist] = {"dates": ds, "first": ds[0], "last": last, "typical": typical, "cats": cats,
-                     "amount": amounts[len(amounts) // 2] if amounts else 0.0}
-    return out
+    return ledger_of(lines).houses(end, HISTORY_DAYS, _d,
+                                   lambda iso, n: (_d(iso) - timedelta(days=n)).isoformat())
 
 
 def stopped(lines, end, owner_stopped=()) -> list:
@@ -160,6 +133,7 @@ def stopped(lines, end, owner_stopped=()) -> list:
     (silent over 4x its rhythm and at least four weeks, with another house
     supplying each of its categories since) or "dormant" (no invoice in
     HISTORY_DAYS). A stopped house is never a gap."""
+    lg = ledger_of(lines)
     hs = houses(lines, end)
     owner = {" ".join(str(x).split()).lower() for x in (owner_stopped or ())}
     out = []
@@ -175,8 +149,8 @@ def stopped(lines, end, owner_stopped=()) -> list:
             takers = set()
             covered = True
             for c in h["cats"]:
-                who = {l["distributor"] for l in lines if l["category"] == c and l["distributor"] != dist
-                       and h["last"] < str(l["invoice_date"])[:10] <= end and l["net"] > 0}
+                who = {l["distributor"] for l in lg.in_cat(c, h["last"], end, lo_open=True)
+                       if l["distributor"] != dist and l["net"] > 0}
                 if not who:
                     covered = False
                     break
@@ -199,8 +173,8 @@ def freshness(lines, sales, today, feed=None) -> dict:
     more than FEED_GRACE_DAYS behind today, or more than the slowest active
     house's rhythm if that is longer (capped at FEED_GRACE_MAX_DAYS)."""
     today_iso = today.isoformat()
-    inv = sorted({str(l["invoice_date"])[:10] for l in lines if str(l["invoice_date"])[:10] <= today_iso})
-    sal = sorted({d for c in sales.values() for d in c if d <= today_iso})
+    inv = ledger_of(lines).days_through(today_iso)
+    sal = [d for d in sales_index(sales).all_days if d <= today_iso]
     through = (feed or {}).get("invoices_through") or (inv[-1] if inv else None)
     hs = houses(lines, today_iso)
     active = [h["typical"] for h in hs.values()
@@ -236,9 +210,7 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
     since = (_d(end) - timedelta(days=HISTORY_DAYS)).isoformat()
     deliveries = defaultdict(float)
     weeks = defaultdict(lambda: defaultdict(float))
-    for l in lines:
-        if l["category"] != cat:
-            continue
+    for l in ledger_of(lines).in_cat(cat, min(start, since), end):
         d = str(l["invoice_date"])[:10]
         if start <= d <= end:
             deliveries[(l["distributor"], d)] += l["net"]

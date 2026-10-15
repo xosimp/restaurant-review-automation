@@ -19,12 +19,14 @@ The ranges are for COUNTED pour cost, from benchmark_registry with their
 source and year; a category with no citable range (beer & seltzer as one
 category) carries Cavnar AI's starting range, said as such.
 """
+from bisect import bisect_left, bisect_right
 from datetime import date, timedelta
 
 import benchmark_registry as _br
 from bar.common import LABELS, POUR_CATEGORIES, TREND_POINTS, WINDOW_DAYS, _mdy, _money
 from bar.judge import (HISTORY_DAYS, MIN_DAYS, REASONS, freshness, houses, judge, open_days, stock_up,
                        stopped, usual_open_share)
+from bar.ledger import as_lines, as_sales, ledger_of, sales_index
 
 # ── ranges ────────────────────────────────────────────────────────────────
 # Where each category's range comes from (benchmark_registry, definition
@@ -101,10 +103,10 @@ def _window(lines, sales, start, end) -> dict:
     positive. Net credits over purchases are `credits_exceed`, never "no
     invoices" (V37)."""
     out = {}
+    lg, si = ledger_of(lines), sales_index(sales)
     for cat in POUR_CATEGORIES:
-        bought = sum(l["net"] for l in lines
-                     if l["category"] == cat and start <= str(l["invoice_date"])[:10] <= end)
-        sold_days = {d: v for d, v in (sales.get(cat) or {}).items() if start <= d <= end and (v or 0) > 0}
+        bought = sum(l["net"] for l in lg.in_cat(cat, start, end))
+        sold_days = dict(si.positive(cat, start, end))
         sold = sum(sold_days.values())
         ratio = bought / sold if sold > 0 and bought > 0 else None
         out[cat] = {"key": cat, "label": LABELS[cat], "purchases": round(bought, 2), "sales": round(sold, 2),
@@ -120,9 +122,8 @@ def _unbalanced(lines, start, end) -> set:
     not add up to its total (`balanced` exposed per line by the ingest; a
     line without the key is taken as balanced)."""
     out = set()
-    for l in lines:
-        if l.get("balanced") in (0, False) and l["category"] in POUR_CATEGORIES \
-                and start <= str(l["invoice_date"])[:10] <= end:
+    for l in ledger_of(lines).between(start, end):
+        if l.get("balanced") in (0, False) and l["category"] in POUR_CATEGORIES:
             out.add(l["category"])
     return out
 
@@ -133,8 +134,8 @@ def _cat_short(lines, cat, start, end, n_days, open_set=None) -> bool:
     house that took over the category covers a quiet one. With under four
     weeks of history it cannot be told, and counts as short."""
     hist_lo = (_d(start) - timedelta(days=HISTORY_DAYS)).isoformat()
-    hist = [(str(l["invoice_date"])[:10], l["net"]) for l in lines
-            if l["category"] == cat and hist_lo <= str(l["invoice_date"])[:10] < start]
+    lg = ledger_of(lines)
+    hist = [(str(l["invoice_date"])[:10], l["net"]) for l in lg.cat_before(cat, hist_lo, start)]
     if not hist:
         return True
     first = min(d for d, _v in hist)
@@ -142,7 +143,7 @@ def _cat_short(lines, cat, start, end, n_days, open_set=None) -> bool:
     if span < MIN_DAYS:
         return True
     rate = sum(v for _d0, v in hist) / span
-    on_file = sum(l["net"] for l in lines if l["category"] == cat and start <= str(l["invoice_date"])[:10] <= end)
+    on_file = sum(l["net"] for l in lg.in_cat(cat, start, end))
     return on_file < SHORT_SHARE * rate * n_days
 
 
@@ -160,6 +161,8 @@ def _gaps(lines, start, end, sales=None, owner_stopped=()) -> list:
     (V9). Simple EJ's history came from Fintech's payment-activity export
     (10/14/26) — only PAID invoices — so liquor read 7%: a window with a gap
     is said, never judged."""
+    lines = as_lines(lines)
+    lg = lines.ledger
     hs = houses(lines, end)
     gone = {r["distributor"] for r in stopped(lines, end, owner_stopped)}
     has_sales = bool(sales) and any(sales.get(c) for c in POUR_CATEGORIES)
@@ -169,15 +172,17 @@ def _gaps(lines, start, end, sales=None, owner_stopped=()) -> list:
         if dist in gone or not h["cats"] or not h["typical"]:
             continue
         ds = h["dates"]
-        before = [d for d in ds if d < start]
-        inside = [d for d in ds if start <= d <= end]
+        # ds is sorted: the last date before the window (all _gaps reads of
+        # `before`) and the dates inside it, by bisect.
+        k = bisect_left(ds, start)
+        before = ds[k - 1:k]
+        inside = ds[k:bisect_right(ds, end)]
         if not before and not inside:
             continue
         span_start = start if before else inside[0]
         n_days = (len([d for d in window_open if d >= span_start]) if has_sales else _days(span_start, end))
         expected = h["amount"] * n_days / h["typical"]
-        on_file = sum(l["net"] for l in lines if l["distributor"] == dist and l["category"] in POUR_CATEGORIES
-                      and span_start <= str(l["invoice_date"])[:10] <= end)
+        on_file = sum(l["net"] for l in lg.in_dist(dist, span_start, end) if l["category"] in POUR_CATEGORIES)
         if expected <= 0 or on_file >= SHORT_SHARE * expected:
             continue
         limit = max(10, OVERDUE_MULTIPLE * h["typical"])
@@ -237,6 +242,7 @@ def _read(lines, sales, start, end, owner_stopped=()) -> dict:
     """One window read the same way everywhere (the four weeks, each trend
     point, each month row, the 13-week context): categories with their
     incomplete / unbalanced flags, the gaps, and the total."""
+    lines, sales = as_lines(lines), as_sales(sales)
     cats = _window(lines, sales, start, end)
     gaps = _gaps(lines, start, end, sales, owner_stopped)
     missing = {c for g in gaps for c in g["categories"]}
@@ -357,8 +363,8 @@ def window_span(lines, sales, today) -> dict:
     {why_not} when there is none. bar.build asks bar.counts for a counted
     period over this window before the reading is built."""
     today_iso = today.isoformat()
-    inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines if str(l["invoice_date"])[:10] <= today_iso})
-    sale_dates = sorted({d for c in sales.values() for d in c if d <= today_iso})
+    inv_dates = ledger_of(lines).days_through(today_iso)
+    sale_dates = [d for d in sales_index(sales).all_days if d <= today_iso]
     if not inv_dates or not sale_dates:
         return {"why_not": ("No distributor invoices on file yet." if not inv_dates
                             else "No sales by category on file yet — they come from the nightly report.")}
@@ -380,6 +386,8 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
     The basis is "counted" when every measured category rests on
     two counts, else "purchases" (each category says its own `basis`)."""
     head = {"basis": "purchases", "label": BASIS_LABELS["purchases"], "sub": BASIS_SUBS["purchases"]}
+    # Every window below is a slice of one index (bar.ledger, V17).
+    lines, sales = as_lines(lines), as_sales(sales)
     span = window_span(lines, sales, today)
     if "why_not" in span:
         return dict(head, available=False, why_not=span["why_not"])
@@ -524,8 +532,8 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
     return dict(head, available=True,
                 window={"from": start, "to": end, "from_mdy": _mdy(start), "to_mdy": _mdy(end), "days": days,
                         "open_days": len(win_open),
-                        "invoices": len({(l["distributor"], l["invoice_number"]) for l in lines
-                                         if start <= str(l["invoice_date"])[:10] <= end}),
+                        "invoices": len({(l["distributor"], l["invoice_number"])
+                                         for l in lines.ledger.between(start, end)}),
                         "coverage_pct": round(len(win_open) / days * 100) if days else None,
                         "min_days": MIN_DAYS},
                 judged=bool(total["judged"]), not_judged=total["not_judged"],
@@ -543,6 +551,7 @@ def _trend(lines, sales, lo, hi, owner_stopped=()) -> list:
     invoices are missing in a window is a gap (None) there, never a low
     reading; the total is _total's — the same figure the page's total gives
     for the same window (`total_partial` when a category was left out)."""
+    lines, sales = as_lines(lines), as_sales(sales)
     first = _d(lo)
     end = _d(hi)
     pts = []

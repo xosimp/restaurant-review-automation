@@ -50,6 +50,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 
 from bar.common import LABELS, POUR_CATEGORIES, _mdy, get_conn
+from bar.ledger import as_lines, ledger_of
 
 COUNT_CATEGORIES = POUR_CATEGORIES               # beer, liquor, wine
 METHODS = ("category_value", "items", "import")
@@ -335,6 +336,8 @@ def true_pour_cost(restaurant_id, start, end, db_path=None, lines=None, sales=No
         return out
     out["begin_date"], out["end_date"] = begin_d, end_d
     lines, sales = _read_inputs(restaurant_id, db_path, lines, sales)
+    # One index for every span read below (bar.ledger, V17).
+    lines = as_lines(lines)
     # The distributors whose invoices stop inside the widest span read, and
     # the trading days with sales by category, once.
     from bar.pour_cost import _gaps
@@ -347,7 +350,7 @@ def true_pour_cost(restaurant_id, start, end, db_path=None, lines=None, sales=No
         if s > e:
             x["missing"].append(_missing("a span", "the counts are on consecutive days with nothing between"))
             continue
-        span_lines = [l for l in lines if s <= str(l["invoice_date"])[:10] <= e]
+        span_lines = ledger_of(lines).between(s, e)
         if not span_lines:
             x["missing"].append(_missing("purchases", f"no distributor invoices dated {_mdy(s)} to {_mdy(e)}"))
         for g in gaps:
@@ -424,6 +427,7 @@ def counted(restaurant_id, today=None, db_path=None, lines=None, sales=None) -> 
                                    "bracket a span")]
         return out
     lines, sales = _read_inputs(restaurant_id, db_path, lines, sales)
+    lines = as_lines(lines)
     pairs = list(zip(dates, dates[1:]))[-MAX_PERIODS:]
     for a, b in pairs:
         p = true_pour_cost(restaurant_id, a, b, db_path=db_path, lines=lines, sales=sales, rows=rows)

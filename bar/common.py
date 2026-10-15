@@ -4,6 +4,7 @@ their labels, the windows and limits the reads use, the call-time get_conn,
 and the small formatters (M/D/YY dates, whole dollars, readable product
 names). No reads of its own beyond get_conn.
 """
+import functools
 from datetime import date
 
 import models as _models
@@ -45,7 +46,13 @@ def _mdy(iso) -> str:
 def display_name(description) -> str:
     """A distributor's all-caps description, easier to read: words of four
     or more letters in title case; short words (VDK, TEQ, BBL, IPA), sizes
-    (750ML, 1/2) and codes stay as written."""
+    (750ML, 1/2) and codes stay as written. Kept per description (a string:
+    the Bar asks for the same names tens of thousands of times a build)."""
+    return _display_name(str(description or ""))
+
+
+@functools.lru_cache(maxsize=8192)
+def _display_name(description) -> str:
     out = []
     for w in str(description or "").split():
         out.append(w[:1].upper() + w[1:].lower() if len(w) >= 4 and w.isalpha() else w)

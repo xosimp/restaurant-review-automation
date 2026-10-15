@@ -8,6 +8,7 @@ from bar.counts import counted as _counted
 from bar.counts import latest_counted
 from bar.insights import _insights
 from bar.judge import owner_stopped
+from bar.ledger import Lines, Sales
 from bar.margins import margins as _margins
 from bar.pour_cost import _pour_cost, window_span
 from bar.prices import analyse as _analyse_prices
@@ -47,7 +48,9 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     # An invoice dated after today is a typo or a mis-read: held for a date
     # check, never the page's "as of" or the latest price (V35).
     today_iso = today.isoformat()
-    lines = [l for l in all_lines if str(l["invoice_date"])[:10] <= today_iso]
+    # One index over the lines and one over the sales serve every window the
+    # page reads (bar.ledger, V17).
+    lines = Lines(l for l in all_lines if str(l["invoice_date"])[:10] <= today_iso)
     held = sorted({(l["distributor"], l["invoice_number"], str(l["invoice_date"])[:10])
                    for l in all_lines if str(l["invoice_date"])[:10] > today_iso})
     held_rows = [{"distributor": d, "invoice_number": n, "date": x, "date_mdy": _mdy(x)} for d, n, x in held]
@@ -58,7 +61,7 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     # as it stands (bar.sales); a night with a sales gap is left out of the
     # per-day figures and keeps the window from being judged (V5).
     sales_detail = bar_sales(restaurant_id, db_path)
-    sales = {k: v for k, v in sales_detail["by_category"].items() if k in ("beer", "liquor", "wine")}
+    sales = Sales({k: v for k, v in sales_detail["by_category"].items() if k in ("beer", "liquor", "wine")})
     sales_gaps = sorted(d for d, n in (sales_detail.get("nights") or {}).items() if n.get("gap"))
     restaurant = _restaurant(restaurant_id, db_path)
     feed = _feed_status(restaurant_id, db_path, today)

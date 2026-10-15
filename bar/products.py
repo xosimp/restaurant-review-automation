@@ -20,6 +20,7 @@ init_bar_products, called from init_bar_cost).
 - Per pour uses the owner's pour sizes (bar_settings; defaults 1.5 oz
   spirits, 5 oz wine, 16 oz draft at a stated 90% keg yield).
 """
+import functools
 import re
 from collections import defaultdict
 from datetime import date, datetime, timezone
@@ -364,7 +365,15 @@ def parse_pack(description, uom=None, category=None) -> dict:
     parsed|assumed|none, container_ml, container_oz, size_source
     parsed|assumed|none, keg_oz, keg_label, vintage, proof, each
     bottle|can|keg|unit}. Never a guess presented as read: what is assumed
-    says so."""
+    says so. A pure reading of the words, kept per (description, uom,
+    category) — the price watch and variance read it once per invoice line,
+    48k times at three years (V17) — and handed out as a fresh dict each
+    time, since callers lay the owner's pack over it."""
+    return dict(_parse_pack(str(description or ""), str(uom or ""), str(category or "")))
+
+
+@functools.lru_cache(maxsize=8192)
+def _parse_pack(description, uom, category) -> dict:
     d = " " + re.sub(r"\s+", " ", str(description or "").upper()) + " "
     u = str(uom or "").upper()
     cat = str(category or "")
