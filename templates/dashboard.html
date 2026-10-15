@@ -46546,9 +46546,15 @@ function sfw2RuleCheck(chk) {
     return '<div class="br-own">' + h + '</div>';
   }
   function catControl(p) {
-    var cs = (DATA && DATA.categories) || [], o = '', i;
+    // The owner sorts into the categories the server accepts (owner_categories);
+    // a product sitting elsewhere (a guess of "other") shows it, not choosable.
+    var cs = (DATA && (DATA.owner_categories || DATA.categories)) || [], o = '', i, found = false;
     if (!OWNER) return esc2(p.category_label || p.category || '');
-    for (i = 0; i < cs.length; i++) o += '<option value="' + esc2(cs[i].key) + '"' + (cs[i].key === p.category ? ' selected' : '') + '>' + esc2(cs[i].label) + '</option>';
+    for (i = 0; i < cs.length; i++) {
+      if (cs[i].key === p.category) found = true;
+      o += '<option value="' + esc2(cs[i].key) + '"' + (cs[i].key === p.category ? ' selected' : '') + '>' + esc2(cs[i].label) + '</option>';
+    }
+    if (!found) o = '<option value="" selected disabled>' + esc2(p.category_label || 'Not sorted yet') + '</option>' + o;
     return '<select class="br-sel" data-br-cat="' + esc2(p.product_key) + '" aria-label="Category for ' + esc2(p.product) + '">' + o + '</select>';
   }
   function tile(l, v, s, cls, delay) { return '<div class="br-card br-st br-rise" style="animation-delay:' + delay + 's"><div class="l">' + l + '</div><div class="v' + (cls ? ' ' + cls : '') + '">' + v + '</div><div class="s">' + s + '</div></div>'; }
@@ -46753,7 +46759,7 @@ function sfw2RuleCheck(chk) {
     var s = prodState(), h = '', i;
     for (i = 0; i < s.rows.length; i++) {
       var p = s.rows[i];
-      h += '<tr><td><b>' + esc2(p.product) + '</b>' + (p.owner_set ? '<span class="br-tag">set by you</span>' : (p.sure ? '' : '<span class="br-tag">a guess</span>')) + (p.mixer ? '<span class="br-tag">mixer</span>' : '') + '<span class="m">' + esc2(p.distributor) + '</span></td><td class="n">' + hn(money(p.spend)) + '</td><td class="n">' + catControl(p) + '</td></tr>';
+      h += '<tr><td><b>' + esc2(p.product) + '</b>' + (p.owner_set ? '<span class="br-tag">' + (p.set_by_you === false && p.set_by_name ? 'set by ' + esc2(p.set_by_name) : 'set by you') + '</span>' : (p.sure ? '' : '<span class="br-tag">a guess</span>')) + (p.mixer ? '<span class="br-tag">mixer</span>' : '') + '<span class="m">' + esc2(p.distributor) + '</span></td><td class="n">' + hn(money(p.spend)) + '</td><td class="n">' + catControl(p) + '</td></tr>';
     }
     if (!s.rows.length) return '<div class="br-empty">Nothing matches “' + esc2(ST.prodQ) + '”.</div>';
     return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Spend</th><th class="n">Category</th></tr></thead><tbody>' + h + '</tbody></table></div>'

@@ -616,3 +616,12 @@ def test_account_targets_say_the_error_under_the_row_and_keep_the_typed_value():
     assert "tgFieldErr(t, tgLabel(t) + ' must be between ' + lo + tgUnit(t)" in h
     assert "else if (f) { tgFieldErr(t, d.error" in h, "a refused target keeps its typed value (no tgRender)"
     assert "Blank uses the industry 16" not in s, "the liquor range is the published 14–20%"
+
+
+def test_the_owners_category_choices_are_the_ones_the_server_accepts():
+    """W7/W8 hand-off (10/15/26): the server refuses "other" from an owner, so the
+    page offers owner_categories, and a product someone else sorted says who."""
+    src = open(DASHBOARD, encoding="utf-8").read()
+    body = src[src.index("function catControl(p)"):src.index("function catControl(p)") + 900]
+    assert "DATA.owner_categories" in body
+    assert "set_by_name" in src[src.index("set by you") - 200:src.index("set by you") + 200]
