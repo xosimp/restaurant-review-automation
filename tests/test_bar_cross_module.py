@@ -411,6 +411,9 @@ def test_sales_copy_says_bar_tracking_is_partly_live_and_no_more():
     assert "no pour-cost" not in note and "pour cost only from the bar's own counts" in note
     reg = open(os.path.join(ROOT, "models.py"), encoding="utf-8").read()
     assert "live INSIDE Food Cost" in reg and "partly" in reg
+    assert "`module_bar` gates nothing" in reg and "read nowhere until the gating is decided" not in reg
+    hb = open(os.path.join(ROOT, "home_brief.py"), encoding="utf-8").read()
+    assert 'if m["key"] == "bar" else "Coming soon."' in hb and "are in Food Cost → Bar" in hb
     # The printed one-sheet (its builder and the HTML it writes) agrees:
     # bar purchases and prices under Food Cost, bar pour cost and variance
     # arriving — never the whole Bar "coming soon".
@@ -430,3 +433,20 @@ def test_the_price_card_names_the_price_before_the_change():
     from bar import insights as bi
     card = bi._insights({"available": False}, {"increases": [_row_w5("a", 40.0, purchases=4)]}, 0)[0]
     assert "from a usual $300" in card["metric"] and "from a usual $330" not in card["metric"]
+
+
+def test_an_unreadable_bar_payload_is_captured_for_every_reader(monkeypatch):
+    """R17: Ask, the DSR line, the digest, Home and the push read the Bar
+    through bar_signals.payload — a failure there was a print; it is now an
+    ops capture (and still None, never a raise)."""
+    import bar.cache
+    import ops
+
+    def boom(*a, **k):
+        raise RuntimeError("no such table: bar_settings")
+    got = []
+    monkeypatch.setattr(bar.cache, "full", boom)
+    monkeypatch.setattr(ops, "capture", lambda e, **k: got.append((str(e), k)))
+    assert bar_signals.payload(7, db_path="/nowhere.db") is None
+    assert got == [("no such table: bar_settings", {"job": "bar_signals", "context": "restaurant_id=7",
+                                                    "db_path": "/nowhere.db", "restaurant_id": 7, "kind": "job"})]

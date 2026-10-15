@@ -2402,8 +2402,12 @@ def _build(current_user, present=True, reads=None):
     # ── coming-soon modules (compact, never data) ──────────────────────────
     for m in active:
         if m["status"] == "coming_soon":
+            # The Bar ships partly inside Food Cost (barfix Decision 6): its
+            # tile says so rather than "Coming soon." (R12).
+            say = ("Bar purchases and price changes are in Food Cost → Bar. Counted pour cost and variance are arriving."
+                   if m["key"] == "bar" else "Coming soon.")
             snapshot.append({"key": m["key"], "label": m["label"], "status": "coming_soon", "value": "", "unit": "", "delta": None, "secondary": [],
-                             "interpretation": "Coming soon.", "state": "neutral", "spark": [], "spark_label": None, "attention": False, "sample": False, "last_data": None})
+                             "interpretation": say, "state": "neutral", "spark": [], "spark_label": None, "attention": False, "sample": False, "last_data": None})
 
     # ── alerts (unresolved = still needing action) ──────────────────────────
     alert_items = []

@@ -39,7 +39,7 @@ def build(audit, results):
             {"h": "5 numbers and concepts to have cold", "items": [
                 "Labor % = labor cost ÷ sales. NRA 2025 full-service median 36.5% (profitable operators 34.2%). A sports bar with a heavy bar mix usually runs lower — " + owner + "'s own target beats any benchmark.",
                 "Food cost % = food cost ÷ FOOD sales (not total). Full-service median 32%. Always ask: actual or theoretical, food-only or combined.",
-                "Pour cost = beverage cost ÷ beverage sales. Blended 18–24%; spirits 18–22, draft ~20–24, bottled 24–28, wine 30–40. Mix changes everything.",
+                "Pour cost = beverage cost ÷ beverage sales. Blended 18–24%; liquor 14–20, draft 15–18, bottled 24–28, wine 30–40 (counted pour cost, vendor guides). Mix changes everything.",
                 "Prime cost = labor + all COGS. Under 60–65% of sales is the operator target. It is the one number that says whether the model works.",
                 "Variance = what the count says you used minus what the POS says you sold. Under 3–5% is tight; over 10% is systemic.",
             ]},

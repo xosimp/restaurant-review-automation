@@ -59,7 +59,14 @@ def payload(restaurant_id, today=None, db_path=None):
         import bar.cache as _bcache
         return _bcache.full(int(restaurant_id), db_path=db_path, today=today)
     except Exception as e:
-        print(f"[bar_signals] bar payload unreadable for {restaurant_id}: {e!r}")
+        # Ask, the DSR line, the digest, Home and the push all read through
+        # here: a failure is captured once for ops, never silent (R17).
+        try:
+            import ops as _ops
+            _ops.capture(e, job="bar_signals", context=f"restaurant_id={restaurant_id}",
+                         db_path=db_path, restaurant_id=int(restaurant_id), kind="job")
+        except Exception:
+            print(f"[bar_signals] bar payload unreadable for {restaurant_id}: {e!r}")
         return None
 
 

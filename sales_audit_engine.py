@@ -57,9 +57,11 @@ BENCHMARKS = {
         "combined":     {"band": (28, 32), "source": "Blended food + beverage COGS for full-service with a meaningful bar.", "note": "Used when the owner's number combines food and beverage."},
     },
     "bar": {
-        "blended": {"band": (18, 24), "source": "Bar-industry consensus (Backbar, Sculpture Hospitality, DoorDash for Merchants guides): blended pour cost 18–24%; spirits 18–22%, draft beer ~20–24%, bottled 24–28%, wine 30–40%.",
+        "blended": {"band": (18, 24), "source": "Bar-industry consensus (Backbar, Sculpture Hospitality, DoorDash for Merchants guides): blended pour cost 18–24%. By category, for counted pour cost: liquor 14–20% (Provi 2021), draft beer 15–18% and bottled 24–28% (Provi 2021), wine 30–40% (Backbar 2019).",
                     "note": "Mix matters — a wine-heavy list legitimately runs higher. Prefer the owner's own target."},
-        "liquor": (18, 22), "beer": (20, 26), "wine": (30, 40),
+        # Per category, as benchmark_registry holds them (the Bar page reads the
+        # same; beer & seltzer as one category is Cavnar AI's starting range).
+        "liquor": (14, 20), "beer": (20, 26), "wine": (30, 40),
         "variance_target": 3.0,
         "variance_source": "Well-run bars target inventory variance under 3–5% of usage; above 5% warrants investigation; above 10% signals systemic loss (bar inventory vendors' published guidance — vendor-sourced, treat as directional).",
     },

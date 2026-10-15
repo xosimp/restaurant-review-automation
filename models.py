@@ -6555,7 +6555,9 @@ _MODULE_REGISTRY = [
     # live INSIDE Food Cost (barfix Decision 6, 10/15/26): bar purchase and
     # price tracking ships under FOOD_COST_VIEW with no module of its own and
     # no pricing change; counted pour cost and variance are arriving.
-    # `module_bar` is read nowhere until the gating is decided.
+    # The gating is decided (Decision 6): `module_bar` gates nothing; a
+    # restaurant with it set sees home_brief's tile for it, which says the
+    # Bar is inside Food Cost rather than "Coming soon."
     {"key": "waitlist",  "label": "Waitlist",      "column": "module_waitlist",  "status": "coming_soon"},
     {"key": "bar",       "label": "Bar & Alcohol", "column": "module_bar",       "status": "coming_soon"},
 ]

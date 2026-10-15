@@ -681,6 +681,14 @@ def test_bar_ranges_come_from_the_registry():
     assert old["kind"] == "starting" and old["label"] == "Cavnar AI's starting range"
     src = open(os.path.join(ROOT, "bar", "pour_cost.py"), encoding="utf-8").read()
     assert "RULE_OF_THUMB = {c: tuple(range_for(c)" in src
+    # The sales audit Erik heard agrees with the page (it said liquor 18–22).
+    import sales_audit_engine as eng
+    for c in ("liquor", "wine"):
+        e = br.lookup(bp._REGISTRY_METRIC[c], None, definition="counted_pour_cost", today=T)
+        assert tuple(eng.BENCHMARKS["bar"][c]) == (e["low"], e["high"]), c
+    assert eng.BENCHMARKS["bar"]["beer"] == tuple(beer["range"])
+    said = eng.BENCHMARKS["bar"]["blended"]["source"]
+    assert "spirits 18–22" not in said and "liquor 14–20%" in said
     pc = pc_of(*steady())
     for c in pc["categories"]:
         assert c["range_source"]["definition"] == "counted_pour_cost"
