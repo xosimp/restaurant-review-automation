@@ -215,7 +215,7 @@ Web `#panel-labor` header shows Sales/Labor as the two headline numbers, the lab
 
 ## Food Cost (Inventory)
 
-**Files**: `inventory.py` (waste/overstock/reorder), `inventory_ledger.py` (the stock ledger, recipes, menu margins, portion variance), `cogs.py` (actual food cost %), `waste_trend.py` (the trend engine), `food_cost_intelligence.py` (the CFO layer). Panel id is historically `#panel-inventory` (predates the "Food Cost" rename).
+**Files**: `inventory.py` (waste/overstock/reorder), `inventory_ledger.py` (the stock ledger, recipes, menu margins, portion variance), `cogs.py` (actual food cost %), `waste_trend.py` (the trend engine), `food_cost_intelligence.py` (the CFO layer), `bar_signals.py` (the Bar beyond its page: Ask's `read_bar`, the DSR week's bar line, the digest and Home card and the $25-a-month push for a bar price increase that held, the game-week order hint — 10/15/26). Panel id is historically `#panel-inventory` (predates the "Food Cost" rename).
 
 Weekly ingredient counts → waste cost, price-drift detection (this week's unit cost vs last), monthly waste projection, purchase-order drafting. CSV shape: `item,category,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week`.
 
