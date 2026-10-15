@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 
 from bar.common import CATEGORIES, get_conn
+from fintech_invoices import distributor_key, item_key
 
 # Description words, checked in this order (a keg is beer whatever else it
 # says; a vodka seltzer is sold under the POS's Seltzer, inside Beer).
@@ -58,15 +59,57 @@ def init_bar_cost(db_path=None):
             set_by INTEGER,
             set_at TEXT NOT NULL,
             PRIMARY KEY (restaurant_id, product_key))""")
+        migrate_product_keys(conn)
         conn.commit()
     finally:
         conn.close()
 
 
 def product_key(distributor, item_code, description) -> str:
-    """One product: the distributor's own item code, else its description."""
-    code = str(item_code or "").strip()
-    return f"{str(distributor or '').strip().lower()}|{code or str(description or '').strip().lower()}"
+    """One product: the distributor (its canonical name — "Breakthru
+    Beverage Illinois, LLC" and "…Illinois LLC" are one) and its own item
+    code without the padding ('000009031' and '9031' are one product), else
+    its description."""
+    code = item_key(item_code)
+    return f"{distributor_key(distributor)}|{code or str(description or '').strip().lower()}"
+
+
+def _rekey(old) -> str:
+    """An owner correction's key as product_key writes it today. The part
+    after '|' was the raw item code (no spaces) or the lowercased
+    description; only a code loses its padding."""
+    dist, sep, rest = str(old).partition("|")
+    if not sep:
+        return old
+    if rest and not re.search(r"\s", rest):
+        rest = item_key(rest) or rest
+    return f"{distributor_key(dist)}|{rest}"
+
+
+def migrate_product_keys(conn) -> int:
+    """Move the owner's corrections to today's product keys (bar fix round
+    10/15/26, V14/R3: leading zeros out of item codes, canonical distributor
+    names). Idempotent: a key already in today's form maps to itself. Where
+    two old keys become one, the later correction holds. Runs at boot on
+    init_bar_cost's connection (the table is small: one row per corrected
+    product)."""
+    rows = [dict(r) for r in conn.execute(
+        "SELECT restaurant_id, product_key, category, set_by, set_at FROM bar_product_categories").fetchall()]
+    moved = 0
+    by_new = {}
+    for r in rows:
+        by_new.setdefault((r["restaurant_id"], _rekey(r["product_key"])), []).append(r)
+    for (rid, new), group in by_new.items():
+        if len(group) == 1 and group[0]["product_key"] == new:
+            continue
+        keep = max(group, key=lambda r: (str(r["set_at"] or ""), r["product_key"] == new))
+        for r in group:
+            conn.execute("DELETE FROM bar_product_categories WHERE restaurant_id=? AND product_key=?",
+                         (rid, r["product_key"]))
+        conn.execute("INSERT INTO bar_product_categories (restaurant_id, product_key, category, set_by, set_at) "
+                     "VALUES (?,?,?,?,?)", (rid, new, keep["category"], keep["set_by"], keep["set_at"]))
+        moved += len(group)
+    return moved
 
 
 def classify(distributor, description, uom=None, kind="item") -> tuple:
