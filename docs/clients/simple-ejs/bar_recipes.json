@@ -424,6 +424,46 @@
       "garnish": "lemon wheel and a cherry",
       "flavor": null,
       "flags": []
+    },
+    {
+      "name": "Salted Caramel Tini",
+      "alcoholic": true,
+      "rpower_item": "Salt Caramel Tini",
+      "rpower_category": "38. Cocktails",
+      "ingredients": [
+        {
+          "item": "Ketel One Vodka",
+          "amount": 1.68,
+          "unit": "oz"
+        },
+        {
+          "item": "Cold brew concentrate",
+          "amount": 1.81,
+          "unit": "oz"
+        },
+        {
+          "item": "Monin salted caramel syrup",
+          "amount": 0.51,
+          "unit": "oz"
+        }
+      ],
+      "batch": {
+        "oz": {
+          "cold brew concentrate": 57,
+          "Ketel One Vodka": 53,
+          "Monin salted caramel syrup": 16
+        },
+        "total_oz": 126,
+        "per_drink_oz": 4.0,
+        "drinks_per_batch": 31.5,
+        "source": "Will, 10/15/26: 57 oz cold brew concentrate, 53 oz Ketel One, 16 oz Monin salted caramel; 4 oz of batch a drink"
+      },
+      "method": "Batched; 4 oz of batch a drink, shaken with ice.",
+      "glass": "martini",
+      "ice": null,
+      "garnish": null,
+      "flavor": null,
+      "flags": []
     }
   ],
   "_answers_1013": [
