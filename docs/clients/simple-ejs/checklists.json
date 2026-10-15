@@ -401,6 +401,231 @@
      ]
     }
    ]
+  },
+  {
+   "job_code": "Manager FOH",
+   "shift_kind": "opening",
+   "title": "Manager opening",
+   "requires_signoff": true,
+   "source": "Erik's \"Manager Opening Checklist 10-26\" (docx), sent by Will 10/15/26 and simplified for the task sheet at his ask: duplicates merged (the perimeter and exterior walks, server sections three times, restrooms twice, systems live twice), one action per line, \"Canvas AI\" read as Cavnar AI, the open question about which Cavnar AI screens are used dropped. Order is the manager's walk: outside, office, systems, the book, Cavnar AI, bar, room, lineup, doors. The sheet's sign-off replaces the MOD signature line.",
+   "sections": [
+    {
+     "title": "Walkthrough",
+     "items": [
+      {
+       "label": "Walk the perimeter - lot, patio, piazza, the back and trash enclosure: no trash, glass or cigarette butts"
+      },
+      {
+       "label": "Front doors and glass streak-free; signage right"
+      },
+      {
+       "label": "Check CO2 and water-softener salt levels"
+      },
+      {
+       "label": "Check last night's cleaning, behind the bar and everywhere else"
+      },
+      {
+       "label": "Restrooms clean and stocked (TP, towels, soap), no odors, nothing broken"
+      },
+      {
+       "label": "Walk-ins and reach-ins holding temperature",
+       "critical": true
+      },
+      {
+       "label": "Look for leaks and pests; log anything you find"
+      },
+      {
+       "label": "Set the thermostats for the day"
+      },
+      {
+       "label": "Storage room organized; cases and kegs at par"
+      }
+     ]
+    },
+    {
+     "title": "Office",
+     "items": [
+      {
+       "label": "Read last night's closing manager notes"
+      },
+      {
+       "label": "Full safe audit; make the drawers you need"
+      },
+      {
+       "label": "Last night's batch settled, no open checks"
+      },
+      {
+       "label": "Print the daily manager log and fill it in: weather, budget, roster, pre-shift lesson"
+      },
+      {
+       "label": "Print the OT report and the TV guide"
+      },
+      {
+       "label": "Check the calendar and BEO folder for events and parties"
+      }
+     ]
+    },
+    {
+     "title": "RPOWER",
+     "items": [
+      {
+       "label": "Every terminal on, online and synced"
+      },
+      {
+       "label": "Handhelds charged"
+      },
+      {
+       "label": "Count and log each cash drawer and who took it",
+       "critical": true
+      },
+      {
+       "label": "Enter today's 86 list, specials and price changes"
+      },
+      {
+       "label": "Staff can clock in; fix any missing employee or job code"
+      }
+     ]
+    },
+    {
+     "title": "Tock & Hostie",
+     "items": [
+      {
+       "label": "Answer every Tock and Hostie inquiry"
+      },
+      {
+       "label": "Review today's book: covers by hour, large parties, peaks"
+      },
+      {
+       "label": "Read guest notes: allergies, celebrations, VIPs, regulars"
+      },
+      {
+       "label": "Flag Charlie's Crew and Founders Club members for their servers"
+      },
+      {
+       "label": "Confirm prepaid bookings and events; give the kitchen the counts"
+      },
+      {
+       "label": "Make server sections and set the floor plan; block tables for parties or game day"
+      },
+      {
+       "label": "Pacing matches today's staffing"
+      },
+      {
+       "label": "Host tablet charged and logged in to Tock"
+      }
+     ]
+    },
+    {
+     "title": "Cavnar AI",
+     "items": [
+      {
+       "label": "Read today's brief; answer open items and give each alert an owner"
+      },
+      {
+       "label": "Forecast vs. the Tock book: adjust staffing or prep if they don't match"
+      },
+      {
+       "label": "Pick guest follow-ups for lineup (reviews, at-risk regulars) and one action for today"
+      }
+     ]
+    },
+    {
+     "title": "Bar (with the opening bartender)",
+     "items": [
+      {
+       "label": "Bar clean; wells and speed rails stocked"
+      },
+      {
+       "label": "Draft lines pouring clean; kegs checked, backups ready"
+      },
+      {
+       "label": "Batched cocktails made and labeled"
+      },
+      {
+       "label": "Garnishes cut, fresh and covered"
+      },
+      {
+       "label": "Ice bins full; ice machine running"
+      },
+      {
+       "label": "Glassware polished and stocked"
+      },
+      {
+       "label": "Bar 86s told to the servers"
+      }
+     ]
+    },
+    {
+     "title": "Room & patio (35 min before doors)",
+     "items": [
+      {
+       "label": "Tables and booths wiped, level and set; chairs straight"
+      },
+      {
+       "label": "Floors swept; nothing under tables or booths"
+      },
+      {
+       "label": "Menus clean and current; kids' menus and crayons stocked"
+      },
+      {
+       "label": "Server stations stocked: roll-ups, napkins, condiments, to-go boxes, presenters"
+      },
+      {
+       "label": "Patio set for the weather: furniture wiped, pergola, heaters or fans; garage door decided"
+      },
+      {
+       "label": "Lights, music level, playlist and TVs set"
+      },
+      {
+       "label": "Promo frames current; membership signs and table cards out"
+      },
+      {
+       "label": "Host stand clean: tablet, pens, membership cards"
+      }
+     ]
+    },
+    {
+     "title": "Lineup",
+     "items": [
+      {
+       "label": "Everyone clocked in; call-outs covered"
+      },
+      {
+       "label": "Uniforms and appearance checked"
+      },
+      {
+       "label": "Sections assigned; side work verified"
+      },
+      {
+       "label": "Pre-shift: weather, specials, today's membership pitch goal"
+      },
+      {
+       "label": "Hosts: get every guest's phone number to start their profile"
+      },
+      {
+       "label": "The mission: make every guest feel like the most important person in the room"
+      }
+     ]
+    },
+    {
+     "title": "Doors (final 10 minutes)",
+     "items": [
+      {
+       "label": "Walk in the front door as the first guest: entrance, host stand, LED wall"
+      },
+      {
+       "label": "Restrooms rechecked"
+      },
+      {
+       "label": "Every station staffed; RPOWER, Tock and handhelds live"
+      },
+      {
+       "label": "Unlock on time and greet the first guests yourself",
+       "critical": true
+      }
+     ]
+    }
+   ]
   }
  ],
  "superseded": [
