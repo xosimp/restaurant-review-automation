@@ -22,6 +22,7 @@ from bar.spend import _distributors, _products
 from bar.spend import deposits as _deposits
 from bar.spend import mixers as _mixers
 from bar.targets import _restaurant, target_details
+from bar.variance import bar_blocks as _bar_blocks
 
 
 def _feed_status(restaurant_id, db_path, today):
@@ -89,6 +90,11 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     prices = analysis["payload"]
     to_check = sum(1 for p in products if not (p["sure"] or p["owner_set"]))
     fresh = pour.get("freshness") or {}
+    # Bought vs rung / variance per product (F2), and the bar's operations:
+    # waste beside it, keg yield, and comps by bartender shift — owner-only,
+    # filled at the route by bar.comps.for_viewer (F12, F14).
+    ops = _bar_blocks(restaurant_id, today=today, db_path=db_path, lines=lines, counted=counted, cfg=cfg,
+                      mapping=sales_detail.get("mapping"), sales=sales)
     mix_to = (win or {}).get("to") or inv_dates[-1]
     mix_from = (win or {}).get("from") or (date.fromisoformat(mix_to) - timedelta(days=27)).isoformat()
     return {"ok": True, "available": True,
@@ -105,6 +111,8 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
             "counted": counted,
             "price_watch": prices,
             "insights": _insights(pour, prices, to_check),
+            "variance": ops["variance"],
+            "bar_ops": ops["bar_ops"],
             "distributors": _distributors(lines),
             # Keg deposits each distributor holds (F7): charged, credited, balance.
             "deposits": _deposits(lines),

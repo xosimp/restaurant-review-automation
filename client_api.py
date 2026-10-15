@@ -11855,8 +11855,12 @@ def food_cost_bar(current_user):
     from the Fintech invoices and the nightly report (bar_cost.build).
     Gated with Food Cost (/api/food-cost: FOOD_COST_VIEW)."""
     import bar_cost as _bc
+    from bar.comps import for_viewer
     try:
-        return jsonify(**_bc.build(current_user["restaurant_id"]))
+        rid = current_user["restaurant_id"]
+        # bar_ops.comps is the account holder's alone (F12): filled here for
+        # them, left {"owner_only": true} for every other login.
+        return jsonify(**for_viewer(_bc.build(rid), rid, current_user))
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
 
@@ -11913,6 +11917,41 @@ def food_cost_bar_mapping(current_user):
 def food_cost_bar_mapping_save(current_user):
     """Web twin — the one body is mobile_api.mobile_bar_mapping_save."""
     return _m("mobile_bar_mapping_save")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/waste", methods=["GET"])
+@login_required
+def food_cost_bar_waste(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_waste."""
+    return _m("mobile_bar_waste")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/waste", methods=["POST"])
+@login_required
+def food_cost_bar_waste_save(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_waste_save."""
+    return _m("mobile_bar_waste_save")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/waste/<int:entry_id>", methods=["DELETE"])
+@login_required
+def food_cost_bar_waste_delete(current_user, entry_id):
+    """Web twin — the one body is mobile_api.mobile_bar_waste_delete."""
+    return _m("mobile_bar_waste_delete")(current_user, entry_id)
+
+
+@client_bp.route("/api/food-cost/bar/drink-specs", methods=["GET"])
+@login_required
+def food_cost_bar_drink_specs(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_drink_specs."""
+    return _m("mobile_bar_drink_specs")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/drink-spec", methods=["POST"])
+@login_required
+def food_cost_bar_drink_spec_save(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_drink_spec_save."""
+    return _m("mobile_bar_drink_spec_save")(current_user)
 
 
 @client_bp.route("/api/food-cost/cfo")

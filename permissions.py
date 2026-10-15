@@ -121,6 +121,10 @@ FOOD_COST_ENTER_PATHS = (
     # FOOD_COST_VIEW. Deleting a count is the account holder's.
     ("GET", r"^/(mobile/)?api/food-cost/bar/counts$"),
     ("POST", r"^/(mobile/)?api/food-cost/bar/counts$"),
+    # The bar's waste log (bar.waste, F14): entered as counts by whoever
+    # works the bar; removing an entry is the account holder's.
+    ("GET", r"^/(mobile/)?api/food-cost/bar/waste$"),
+    ("POST", r"^/(mobile/)?api/food-cost/bar/waste$"),
 )
 
 

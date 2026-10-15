@@ -4748,6 +4748,12 @@ def init_db(db_path: str = DB_PATH):
     # The bar's shelf counts by category (bar.counts — counted pour cost, F1).
     from bar.counts import init_bar_counts
     init_bar_counts(db_path)
+    # Bought vs rung's owner-confirmed cocktail specs (bar.variance) and the
+    # bar's waste log (bar.waste) — F2 / F14, bar fix round 10/15/26.
+    from bar.variance import init_bar_variance
+    init_bar_variance(db_path)
+    from bar.waste import init_bar_waste
+    init_bar_waste(db_path)
     # The owner's "we stopped buying from X" (bar.judge, Bar fix round V9).
     from bar.judge import init_bar_judge
     init_bar_judge(db_path)
@@ -15769,6 +15775,11 @@ ACCOUNT_EVENT_LABELS = {
     "bar_count_removed": "Bar count removed",
     # `detail` names each POS category and where it now counts ("Beer › 56. Brunch Drinks: liquor").
     "bar_mapping_changed": "Bar sales mapping changed",
+    # `detail` carries the date, product, amount and why — never a dollar.
+    "bar_waste_logged": "Bar waste logged",
+    "bar_waste_removed": "Bar waste entry removed",
+    # `detail` names the drink, the ingredient and confirmed / suggested / removed.
+    "bar_drink_spec_changed": "Bar drink spec changed",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",

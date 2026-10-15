@@ -2781,6 +2781,129 @@ def mobile_bar_mapping_save(current_user):
     return jsonify(**res)
 
 
+# ── the bar's waste log and drink specs (bar.waste F14, bar.variance F2) ───
+# The one body for web and phone (client_api's twins call these). Waste is
+# entered as counts by the account holder and FOOD_COST_ENTER logins
+# (permissions.FOOD_COST_ENTER_PATHS) and removed by the account holder; a
+# drink spec (a cocktail's bought product and ounces) is the account
+# holder's to confirm — a recipe card's suggestion is never counted until then.
+
+@mobile_bp.route("/food-cost/bar/waste", methods=["GET"])
+@mobile_login_required
+def mobile_bar_waste(current_user):
+    """The waste log, newest first, and the products an entry can name —
+    counts only, never a dollar."""
+    import bar.waste as _bw
+    from permissions import is_principal
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can see the waste log."), 403
+    rid = current_user["restaurant_id"]
+    try:
+        products = _bw.bought_products(rid)
+        rows = _bw.waste_rows(rid, limit=100)
+        for r in rows:
+            r["product"] = (products.get(r["product_key"]) or {}).get("name") or r["product_key"]
+            r["unit_label"] = _bw.UNIT_LABELS.get(r["unit"], r["unit"])
+        return jsonify(ok=True, entries=rows,
+                       products=sorted(({"product_key": k, "name": v["name"], "category": v["category"]}
+                                        for k, v in products.items()), key=lambda x: x["name"]),
+                       reasons=[{"reason": k, "label": _bw.REASON_LABELS[k]} for k in _bw.REASONS],
+                       units=[{"unit": k, "label": _bw.UNIT_LABELS[k]} for k in _bw.UNITS],
+                       can_remove=bool(is_principal(current_user)))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+
+
+@mobile_bp.route("/food-cost/bar/waste", methods=["POST"])
+@mobile_login_required
+def mobile_bar_waste_save(current_user):
+    """{waste_date: YYYY-MM-DD, product_key, qty, unit: each|oz|keg,
+    reason: spill|breakage|comp|line_clean|other, note} — one event."""
+    import bar.waste as _bw
+    if not _bar_count_enters(current_user):
+        return jsonify(ok=False, error="Only someone who can count stock can log bar waste."), 403
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    try:
+        res = _bw.log_waste(rid, b.get("waste_date"), b.get("product_key"), b.get("qty"), b.get("unit"),
+                            b.get("reason"), note=b.get("note"), user_id=current_user.get("id"),
+                            today=_bar_count_today(rid))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That entry didn't save.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    _log_account_event(rid, "bar_waste_logged", current_user,
+                       detail=(f"{res['waste_date_mdy']}: {res['qty']:g} {_bw.UNIT_LABELS[res['unit']]} "
+                               f"{res['product']} ({_bw.REASON_LABELS[res['reason']].lower()})")[:500])
+    return jsonify(**res)
+
+
+@mobile_bp.route("/food-cost/bar/waste/<int:entry_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_bar_waste_delete(current_user, entry_id):
+    """Remove one waste entry. The account holder's alone."""
+    import bar.waste as _bw
+    from permissions import principal_only
+    refused = principal_only(current_user, "the bar's waste log")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    res = _bw.delete_waste(rid, entry_id)
+    if not res["deleted"]:
+        return jsonify(ok=False, error="No such waste entry."), 404
+    _log_account_event(rid, "bar_waste_removed", current_user, detail=res["waste_date_mdy"])
+    return jsonify(**res)
+
+
+@mobile_bp.route("/food-cost/bar/drink-specs", methods=["GET"])
+@mobile_login_required
+def mobile_bar_drink_specs(current_user):
+    """Every cocktail spec row: suggested (from the recipe cards) or
+    confirmed, with its POS button, ingredient, bought product and ounces."""
+    import bar.variance as _bv
+    from permissions import is_principal
+    rid = current_user["restaurant_id"]
+    try:
+        rows = [_bv._spec_public(s) for s in _bv.drink_specs(rid)]
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    return jsonify(ok=True, specs=rows, can_change=bool(is_principal(current_user)))
+
+
+@mobile_bp.route("/food-cost/bar/drink-spec", methods=["POST"])
+@mobile_login_required
+def mobile_bar_drink_spec_save(current_user):
+    """{id, product_key?, oz?, confirm?: bool, remove?: bool} — the account
+    holder confirms, corrects or removes one spec row."""
+    import bar.variance as _bv
+    import bar.waste as _bw
+    from permissions import principal_only
+    refused = principal_only(current_user, "the bar's drink specs")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    try:
+        spec_id = int(b.get("id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which drink spec?"), 400
+    try:
+        res = _bv.set_drink_spec(rid, spec_id, product_key=b.get("product_key"), oz=b.get("oz"),
+                                 confirm=(None if b.get("confirm") is None else bool(b.get("confirm"))),
+                                 remove=bool(b.get("remove")), user_id=current_user.get("id"),
+                                 known_keys=set(_bw.bought_products(rid)))
+    except LookupError:
+        return jsonify(ok=False, error="No such drink spec."), 404
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That spec didn't save.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    what = "removed" if res.get("removed") else res["status"]
+    _log_account_event(rid, "bar_drink_spec_changed", current_user,
+                       detail=f"{res['item_name']} · {res['ingredient']}: {what}"[:500])
+    return jsonify(**res)
+
+
 def food_target_labelled(payload, rid):
     """The food cost payload with where its target came from, in the
     server's words (Benchmarking #10): `food_cost_target_label` ("your

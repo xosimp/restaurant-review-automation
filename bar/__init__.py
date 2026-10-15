@@ -52,6 +52,14 @@ module has one owner in a fix round):
              counted, latest_counted, the Back Office valuation reader, the
              month-end count reminder (10/15/26, F1; not on the facade)
 - build      build: the page's payload
+- variance   bought vs rung / variance per product (F2), keg yield (F14),
+             bar_drink_specs (cocktail recipe cards as suggestions;
+             init_bar_variance, boot only), bar_blocks -> `variance`,
+             `bar_ops` (10/15/26; not on the facade)
+- waste      bar_waste (init_bar_waste): log_waste, delete_waste,
+             waste_rows, waste_block (F14)
+- comps      comps and voids by bartender shift, owner-only: comps_block,
+             for_viewer (F12)
 - feed       feed_status (the payload's `feed`: invoices through, drink sales
              through, the last Fintech file, stale_days) and invoices_through
 
