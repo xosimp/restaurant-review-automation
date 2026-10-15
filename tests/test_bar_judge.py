@@ -213,10 +213,11 @@ def test_invoices_older_than_a_week_say_the_feed_has_stopped():
     ins = bi._insights(pc, {}, 0)
     assert ins[0]["key"] == "feed_stale"
     assert ins[0]["headline"] == "No invoices since 7/20/26 — check the Fintech forward"
-    # The feed's own status (W2's bar.feed) is taken when it is known.
+    # The feed (W2's bar.feed) says how far invoices reach; staleness is judged
+    # against today and the houses' own rhythm, not the feed's fixed-week flag.
     fresh = pc_of(*steady(), feed={"invoices_through": "2026-10-05", "stale_days": None})
     assert fresh["freshness"]["stale"] is False
-    stale = pc_of(*steady(), feed={"invoices_through": "2026-10-05", "stale_days": 9})
+    stale = pc_of(*steady(), today=T, feed={"invoices_through": "2026-10-05", "stale_days": None})
     assert stale["freshness"]["stale"] is True and cat(stale, "liquor")["judged"] is False
 
 
@@ -843,3 +844,16 @@ def test_a_years_old_invoice_does_not_stretch_the_month_table():
     sales.setdefault("liquor", {})["2016-10-03"] = 200.0
     pc = pc_of(lines, sales)
     assert len(pc["months"]) <= bp.MONTH_ROWS
+
+
+def test_a_biweekly_house_is_not_stale_on_day_eight_even_when_the_feed_says_a_week():
+    """The feed's own stale flag is a fixed week; the judge allows the slowest
+    active house's rhythm (W2/W4 hand-off, 10/15/26)."""
+    from datetime import date, timedelta
+    import bar.judge as j
+    today = date(2026, 10, 15)
+    lines = [{"invoice_date": (today - timedelta(days=8 + 14 * k)).isoformat(), "distributor": "Breakthru",
+              "category": "liquor", "net": 1000.0, "kind": "item"} for k in range(8)]
+    feed = {"invoices_through": (today - timedelta(days=8)).isoformat(), "stale_days": 8}
+    f = j.freshness(lines, {}, today, feed=feed)
+    assert f["stale"] is False and f["grace_days"] >= 14

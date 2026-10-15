@@ -205,12 +205,11 @@ def freshness(lines, sales, today, feed=None) -> dict:
               if h["typical"] and (today - _d(h["last"])).days <= HISTORY_DAYS]
     grace = max(FEED_GRACE_DAYS, min(max(active) if active else 0, FEED_GRACE_MAX_DAYS))
     lag = (today - _d(through)).days if through else None
-    if feed and "stale_days" in feed:
-        stale_days = feed.get("stale_days")
-        stale = stale_days is not None
-    else:
-        stale = lag is not None and lag > grace
-        stale_days = lag if stale else None
+    # The feed says how far invoices reach; staleness is judged here, against
+    # the slowest active house's rhythm: the feed's own flag is a fixed week,
+    # which would call a biweekly house stale on day 8.
+    stale = lag is not None and lag > grace
+    stale_days = lag if stale else None
     return {"invoices_through": through, "invoices_through_mdy": _mdy(through) if through else "",
             "sales_through": sal[-1] if sal else None, "sales_through_mdy": _mdy(sal[-1]) if sal else "",
             "last_file_mdy": (feed or {}).get("last_file_mdy"),
