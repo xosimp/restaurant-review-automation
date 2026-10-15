@@ -461,3 +461,10 @@ def test_a_resumed_answer_written_from_inputs_that_moved_is_said(db):
     assert review["lines"][0] == schedule_resume.INPUTS_MOVED_LINE and review["lead_lines"][0].startswith("⚠")
     assert cand.result["resumed_inputs"]["inputs_moved"] is True
     assert schedule_resume.resume_facts() == {"resumed": False}
+
+
+def test_the_review_says_what_the_needs_cost_against_the_target_when_the_trim_cut():
+    src = open(sj.__file__).read()
+    body = src[src.index("# Why the trim had to cut"):src.index("for _line in _econ.trim_lines(")]
+    assert '"requirements_cost"' in body and "Trim to budget" in body and "labor target allows" in body
+    assert 'result.get("trimmed")' in body                    # only when the trim actually cut

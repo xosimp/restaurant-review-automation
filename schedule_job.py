@@ -1270,6 +1270,25 @@ def _stage_review(cand: Candidate, ctx: _PassContext) -> None:
     review["trimmed"] = result.get("trimmed") or []
     review["hours_trimmed"] = result.get("hours_trimmed") or 0.0
     review["staggered"] = result.get("staggered") or []
+    # Why the trim had to cut: what the solve's draft cost before it — every
+    # requirement, floor and minimum priced — against the target's dollars
+    # (owner, 10/15/26: EJ's requirements cost $22,046 a week against a
+    # $19,865 hourly budget, and the review only said which shifts went).
+    try:
+        _drafted = ((((result.get("draft_source") or {}).get("solver") or {}).get("priced") or {}).get("parts") or {})
+        _need_usd = float(_drafted.get("labor") or 0) + float(_drafted.get("overtime") or 0)
+        if result.get("trimmed") and _lbd > 0 and _need_usd > _lbd * 1.01:
+            _tgt = result.get("labor_target")
+            review["requirements_cost"] = {"drafted": round(_need_usd), "budget": round(_lbd),
+                                           "over": round(_need_usd - _lbd)}
+            review["lines"].append(
+                f"Staffing what your shifts need came to ${_need_usd:,.0f} of hourly pay, "
+                f"${_need_usd - _lbd:,.0f} past the ${_lbd:,.0f} "
+                + (f"your {float(_tgt):g}% labor target allows" if _tgt else "your labor budget allows")
+                + " — the trim cut the week back to it. Raise the target, or turn off Trim to budget "
+                  "(Setup → Advanced), to keep those shifts.")
+    except (TypeError, ValueError) as _rcx:
+        _degraded(f"requirements cost line not written: {_rcx!r}", _rcx)
     for _line in _econ.trim_lines(result.get("trimmed") or [], result.get("hours_trimmed") or 0.0, _hb)[:3]:
         review["lines"].append(_line)
     # Who this draft puts past the ceiling in the payroll week, and the days
