@@ -370,12 +370,14 @@ def window_span(lines, sales, today) -> dict:
 
 
 def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), restaurant=None,
-               counted=None) -> dict:
+               counted=None, sales_gaps=()) -> dict:
     """The page's reading. `targets` maps None (overall) / beer / liquor /
     wine to thresholds.bar_target_for's dict (or a bare number); `feed` is
     the invoice feed's status (bar.feed, W2; None = unknown); `counted` is
     the counted period covering this window (bar.counts.latest_counted, W6a)
-    or None. The basis is "counted" when every measured category rests on
+    or None; `sales_gaps` the nights whose drink sales weren't sorted
+    (bar.sales, V5) — one inside the window keeps it from being judged.
+    The basis is "counted" when every measured category rests on
     two counts, else "purchases" (each category says its own `basis`)."""
     head = {"basis": "purchases", "label": BASIS_LABELS["purchases"], "sub": BASIS_SUBS["purchases"]}
     span = window_span(lines, sales, today)
@@ -387,6 +389,7 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
     ranges = {c: range_for(c, today) for c in POUR_CATEGORIES}
     usual = usual_open_share(sales, start)
     win_open = open_days(sales, start, end)
+    gap_nights = tuple(d for d in sales_gaps if start <= d <= end)
     w = _read(lines, sales, start, end, owner_stopped)
     cur, gaps = w["cats"], w["gaps"]
     trend = _trend(lines, sales, lo, hi, owner_stopped)
@@ -425,7 +428,8 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
             x.pop("incomplete", None)
             x["stock_up"] = None
             v = judge(x["pct"], x["_bought"], window_days=_days(counted["from"], counted["to"]), fresh=fresh,
-                      unbalanced=bool(x.get("unbalanced")))
+                      unbalanced=bool(x.get("unbalanced")),
+                      sales_gap=tuple(d for d in sales_gaps if counted["from"] < d <= counted["to"]))
         else:
             x["basis"] = "purchases"
             # The range rule (a reading over twice the range's top) is only
@@ -434,7 +438,7 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
                              if x["pct"] is not None else None)
             v = judge(x["pct"], x["_bought"], window_days=days, open_n=len(win_open), have_n=x["days_with_sales"],
                       usual_share=usual, fresh=fresh, stock=x["stock_up"], incomplete=bool(x.get("incomplete")),
-                      unbalanced=bool(x.get("unbalanced")))
+                      unbalanced=bool(x.get("unbalanced")), sales_gap=gap_nights)
         x.update(v)
         if v["judged"]:
             _verdict(x, jt, scope)
@@ -452,7 +456,7 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
     mix_range = ([round(sum(ranges[k]["range"][0] * v for k, v in weights.items()) / wsum, 1),
                   round(sum(ranges[k]["range"][1] * v for k, v in weights.items()) / wsum, 1)] if wsum else None)
     tv = judge(tot["pct"], tot["_bought"], window_days=days, open_n=len(win_open), usual_share=usual, fresh=fresh,
-               incomplete=bool(gaps), unbalanced=bool(w["unbalanced"]),
+               incomplete=bool(gaps), unbalanced=bool(w["unbalanced"]), sales_gap=gap_nights,
                stock=next((c["stock_up"] for c in inc if c.get("stock_up")), None))
     extra = sorted({r for c in inc for r in c["reasons"] if r == "sales_coverage"})
     if extra:

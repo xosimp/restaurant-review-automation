@@ -134,9 +134,19 @@ JOBS = {
         target=("strategy_jobs", "run_loss_sync"), max_minutes=45, retry=True),
     "pos_archive": dict(
         cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
-        label="POS archive", description="Store yesterday's tickets, sale lines and punches; re-store days the POS "
-                                         "restated; backfill a week (bounded, resumable)",
+        label="POS archive", description="Queue one archive row per restaurant whose POS can archive (job_queue "
+                                         "kind pos_archive): yesterday's tickets, sale lines and punches, days "
+                                         "the POS restated, a week of backfill",
         target=("strategy_jobs", "run_pos_archive"), max_minutes=30, retry=True),
+    # The Daily Sales Report's figures for the nights before it started, its
+    # own job (bar audit 10/14/26 RPW-13 / R11): it ran inside the POS sync
+    # with every failure swallowed.
+    "dsr_backfill": dict(
+        cadence="3am CT nightly, after the POS sync", sla_minutes=_D, sends=False, runnable=True,
+        label="DSR backfill", description="Fill the Daily Sales Report's figures for nights before it started, "
+                                          "from the POS (figures only: no report, email or model; bounded, "
+                                          "resumable)",
+        target=("strategy_jobs", "run_dsr_backfill"), max_minutes=40, retry=True),
     "intelligence_features": dict(
         cadence="3am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Intelligence features", description="The intelligence engine's per-restaurant feature pass (bounded, resumable)",

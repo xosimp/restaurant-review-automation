@@ -5593,6 +5593,14 @@ def scheduler_loop():
                 from strategy_jobs import run_loss_sync
                 _ops.run_job("loss_sync", run_loss_sync)
 
+            # 3am+, once the POS sync has settled — the Daily Sales Report's
+            # figures for the nights before it started (dsr.backfill), its
+            # own job so a failure has a job_runs row (bar audit R11).
+            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+                    _ops.claim_period("dsr_backfill", str(today)):
+                from strategy_jobs import run_dsr_backfill
+                _ops.run_job("dsr_backfill", run_dsr_backfill)
+
             # 4am daily — the ticket-level POS archive (pos_archive): yesterday,
             # restated days, a week of backfill.
             if _due(now, 4) and _ops.claim_period("pos_archive", str(today)):

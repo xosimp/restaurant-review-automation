@@ -1,7 +1,9 @@
 """
 bar/ — the Bar page (Food Cost → Bar): what the bar buys and what it earns,
-from the distributor invoices Fintech sends (fintech_invoices) and the
-nightly report's sales by category (dsr_metrics `sales.cat:*`).
+from the distributor invoices Fintech sends (fintech_invoices) and the POS's
+drink sales after comps and check discounts (bar.sales: the nightly report's
+department and item-category dollars under the bar mapping, and the ticket
+archive).
 
 Two reads, both measured, neither a model's: the PRICE WATCH (every product
 bought more than once, its latest price change and what it does at the
@@ -20,7 +22,11 @@ module has one owner in a fix round):
              classify, set_category, init_bar_cost (bar_product_categories,
              boot only)
 - purchases  _lines: the invoice lines, sorted and netted
-- sales      _sales: the nightly report's sales by bar category
+- sales      bar_sales / window_basis / _sales: POS drink sales after comps and
+             check discounts under the bar mapping, gaps named;
+             derive_nights (the archive's nights, net of discounts)
+- mapping    the bar mapping (bar_sales_map, bar_sales_nights): suggest,
+             Mapping, mapping_payload, save_mapping
 - pour_cost  range_for, RULE_OF_THUMB, _window, _gaps, _total, _judge,
              window_span, _pour_cost, _trend ("Bought vs sold" until two
              counts bracket the window, then "Pour cost (counted)")

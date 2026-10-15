@@ -11901,6 +11901,20 @@ def food_cost_bar_count_delete(current_user, count_date):
     return _m("mobile_bar_count_delete")(current_user, count_date)
 
 
+@client_bp.route("/api/food-cost/bar/mapping", methods=["GET"])
+@login_required
+def food_cost_bar_mapping(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_mapping."""
+    return _m("mobile_bar_mapping")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/mapping", methods=["POST"])
+@login_required
+def food_cost_bar_mapping_save(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_mapping_save."""
+    return _m("mobile_bar_mapping_save")(current_user)
+
+
 @client_bp.route("/api/food-cost/cfo")
 @login_required
 def food_cost_cfo(current_user):

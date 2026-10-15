@@ -217,8 +217,6 @@ class _BoundedWalk:
 
 # The walks above, bounded (#84). Each is per-restaurant model or POS work.
 LOSS_SYNC_MAX_SECONDS = 30 * 60
-# The POS archive's walk (run_pos_archive): a week of backfill is ~25 reads.
-POS_ARCHIVE_MAX_SECONDS = 20 * 60
 WEEKLY_PLAN_MAX_SECONDS = 45 * 60
 RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
 ISSUE_SCAN_MAX_SECONDS = 15 * 60
@@ -398,33 +396,95 @@ def run_loss_sync(db_path=DB_PATH):
                    synced=synced, not_supported=unsupported)
 
 
-def run_pos_archive(db_path=DB_PATH):
-    """Nightly: the ticket-level POS archive (pos_archive.run_for) — each
-    store that can archive stores yesterday, any day its POS restated, and a
-    week of backfill. Bounded and resumable (_BoundedWalk, #84)."""
-    import ops
+def run_pos_archive(db_path=DB_PATH, today=None):
+    """Nightly: the ticket-level POS archive as queue work (bar audit
+    10/14/26 RPW-10 / R2). One `pos_archive` row (bulk class) per restaurant
+    whose POS can archive, keyed on the restaurant and the day so a pass run
+    twice queues nothing new; the queue workers drain them in parallel,
+    fairly across tenants, each running pos_archive.run_for (yesterday, the
+    days the POS restated, a week of backfill). The serial 20-minute walk
+    this replaces fitted ~150-200 stores a night; RPOWER's own budget is
+    the shared token bucket per token (rpower._sleep_for_spacing), not this
+    pass. Standard counts: `attempted` / `ok` are the rows queued now;
+    `skipped` the restaurants with no POS that can archive (and rows already
+    queued today)."""
+    import job_queue
     import pos_archive
-    ok = failed = unsupported = days = restated = 0
-    walk = _BoundedWalk("pos_archive", _restaurants(db_path), db_path, POS_ARCHIVE_MAX_SECONDS)
-    for r in walk:
+    from datetime import date as _date
+    day = str(today or _date.today())[:10]
+    items, unsupported = [], 0
+    for r in _restaurants(db_path):
         if pos_archive.provider_for(r.id)[1] is None:
             unsupported += 1
             continue
+        items.append({"payload": {"restaurant_id": r.id, "day": day}, "restaurant_id": r.id,
+                      "idempotency_key": f"pos_archive:{r.id}:{day}"})
+    created = job_queue.enqueue_many("pos_archive", items, priority_class="bulk",
+                                     db_path=None if db_path == DB_PATH else db_path) if items else 0
+    return _counts(created, created, 0, unsupported + (len(items) - created), False, queued=created)
+
+
+def run_queued_pos_archive(job):
+    """job_queue's handler for `pos_archive`: one restaurant's night of the
+    archive. Raises when a day could not be stored (the queue captures it
+    and tries again; the next night's pass archives what is still missing)."""
+    import pos_archive
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    if pos_archive.provider_for(rid)[1] is None:
+        return {"skipped": "no POS that can archive"}
+    out = pos_archive.run_for(rid)
+    if not out.get("ok"):
+        raise RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+    return {"archived": len(out.get("archived") or []), "restated": out.get("restated") or 0,
+            "backfill_left": out.get("backfill_left")}
+
+
+# The DSR backfill's pass (bar audit 10/14/26 RPW-13 / R11): bounded and
+# resumable like every per-restaurant sweep.
+DSR_BACKFILL_MAX_SECONDS = 30 * 60
+
+
+def run_dsr_backfill(db_path=DB_PATH):
+    """Nightly, after the POS sync: the Daily Sales Report's figures for the
+    nights before its report started, from the POS (dsr.backfill.backfill:
+    figures only, no report, email or model) — its own job, where it used to
+    run inside rpower.sync_to_db with every failure swallowed into a log
+    line, so a broken backfill (and the Bar history it feeds) had no
+    job_runs row and no alert. Every restaurant with the report on and a
+    connected POS; a restaurant whose read failed counts as failed, its
+    error captured. Bounded and resumable (_BoundedWalk)."""
+    import ops
+    import pos
+    from dsr import backfill as _dsr_backfill
+    ok = failed = skipped = filled = 0
+    walk = _BoundedWalk("dsr_backfill", _restaurants(db_path), db_path, DSR_BACKFILL_MAX_SECONDS)
+    for r in walk:
+        if not getattr(r, "dsr_enabled", 0):
+            skipped += 1
+            continue
         try:
-            out = pos_archive.run_for(r.id, db_path=db_path)
+            provider, _mod = pos.connected_provider(r.id)
+        except Exception:
+            provider = None
+        if not provider:
+            skipped += 1
+            continue
+        try:
+            out = _dsr_backfill.backfill(r, days=60, db_path=None if db_path == DB_PATH else db_path)
         except Exception as e:
-            ops.capture(e, job="pos_archive", context=f"restaurant_id={r.id}")
+            ops.capture(e, job="dsr_backfill", context=f"restaurant_id={r.id}")
             failed += 1
             continue
-        days += len(out.get("archived") or [])
-        restated += out.get("restated") or 0
-        if out.get("ok"):
-            ok += 1
-        else:
+        filled += out.get("filled") or 0
+        if out.get("failed"):
             failed += 1
-            ops.capture(RuntimeError(f"pos_archive: days not archived {out.get('failed')}"),
-                        job="pos_archive", context=f"restaurant_id={r.id}")
-    return _counts(ok + failed, ok, failed, unsupported, walk.hit_bound, days=days, restated=restated)
+            ops.capture(RuntimeError(f"dsr_backfill: {out['failed']} nights could not be read from the POS"),
+                        job="dsr_backfill", context=f"restaurant_id={r.id}")
+        else:
+            ok += 1
+    return _counts(ok + failed, ok, failed, skipped, walk.hit_bound, filled=filled)
 
 
 def _record_loss(restaurant_id, ok, error, provider, db_path):

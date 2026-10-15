@@ -2872,6 +2872,10 @@ _RETENTION_DAYS = {
     "pos_archive_days":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_payments":       int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_payouts":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # Each archived night's sales by POS item category net of its check
+    # discounts (bar.sales.derive_nights, 10/15/26): kept as long as the
+    # archive it is derived from.
+    "bar_sales_nights":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3061,6 +3065,7 @@ _RETENTION_COLUMN = {
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
+    "bar_sales_nights": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
     "task_proof_media": "created_at",
     "ai_reads": "created_at", "ai_claims": "created_at",
@@ -3188,6 +3193,8 @@ _RETENTION_FLOOR_DAYS = {
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     "pos_payments": 400, "pos_payouts": 400,
+    # The Bar's months table and trend (bar.pour_cost) read a year back.
+    "bar_sales_nights": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
     "task_assignments": 90, "task_line_completions": 90, "task_signoffs": 90, "task_proof_media": 30,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts

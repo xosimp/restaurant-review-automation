@@ -54,7 +54,7 @@ HISTORY_DAYS = 91
 # Why a reading is not judged, most telling first; `not_judged` is the
 # first that applies, `reasons` all of them.
 REASONS = ("feed_stale", "credits_exceed", "no_reading", "short_window", "closed_days", "sales_coverage",
-           "incomplete", "unbalanced", "stock_up")
+           "sales_gap", "incomplete", "unbalanced", "stock_up")
 
 # The sentence each reason is said with (owner copy; never "pour cost" for a
 # purchase ratio). Filled by `reason_text`.
@@ -67,6 +67,8 @@ _REASON_TEXT = {
                    "so this window isn't judged.",
     "sales_coverage": "Sales for this category are on file for {have} of {open_days} open days — judged once the "
                       "nightly reports fill in.",
+    "sales_gap": "The nightly report for {gap_mdy} didn't sort its drink sales into categories, so this window "
+                 "isn't judged until that night is repaired.",
     "incomplete": "Some invoices for this category aren't on file, so it reads low until they are.",
     "unbalanced": "An invoice for this category didn't add up to its total, so it isn't judged until it's re-read.",
     "stock_up": "A large delivery on {date_mdy} — {amount} from {distributor} — makes this window read high; it "
@@ -280,7 +282,7 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
 # ── the judgement ─────────────────────────────────────────────────────────
 
 def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=None, fresh=None,
-          stock=None, incomplete=False, unbalanced=False) -> dict:
+          stock=None, incomplete=False, unbalanced=False, sales_gap=()) -> dict:
     """{judged, not_judged, reasons, not_judged_text} for one reading.
 
     pct / purchases     the reading and the window's net purchases
@@ -291,7 +293,9 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
     fresh               freshness(); stale -> not judged
     stock               stock_up() or None
     incomplete          a distributor's invoices missing (_gaps)
-    unbalanced          an invoice in the window that didn't add up"""
+    unbalanced          an invoice in the window that didn't add up
+    sales_gap           nights in the window whose drink sales weren't
+                        sorted (bar.sales, V5): ISO dates"""
     reasons = []
     if fresh and fresh.get("stale"):
         reasons.append("feed_stale")
@@ -305,6 +309,8 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
         reasons.append("closed_days")
     if have_n is not None and open_n and have_n < MIN_SALES_COVERAGE * open_n:
         reasons.append("sales_coverage")
+    if sales_gap:
+        reasons.append("sales_gap")
     if incomplete:
         reasons.append("incomplete")
     if unbalanced:
@@ -314,7 +320,8 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
     reasons = sorted(set(reasons), key=REASONS.index)
     first = reasons[0] if reasons else None
     facts = {"days": window_days, "open_days": open_n, "have": have_n,
-             "last_mdy": (fresh or {}).get("invoices_through_mdy") or "—"}
+             "last_mdy": (fresh or {}).get("invoices_through_mdy") or "—",
+             "gap_mdy": ", ".join(_mdy(d) for d in sales_gap) if sales_gap else ""}
     facts.update(stock or {})
     return {"judged": not reasons, "not_judged": first, "reasons": reasons,
             "not_judged_text": reason_text(first, **facts) if first else None}

@@ -2719,6 +2719,68 @@ def mobile_bar_count_delete(current_user, count_date):
     return jsonify(**res)
 
 
+# ── the bar mapping (bar.mapping — which POS sales are beer, liquor, wine) ──
+# The one body for web and phone (client_api's twins call these). Reading it
+# is the Bar page's gate (FOOD_COST_VIEW); changing it is the account
+# holder's (permissions.principal_only), logged as bar_mapping_changed.
+
+@mobile_bp.route("/food-cost/bar/mapping", methods=["GET"])
+@mobile_login_required
+def mobile_bar_mapping(current_user):
+    """Each POS item category (and department or report category where a
+    night kept only those) with sales in the last 28 days, every sales
+    category the POS lists, its suggestion and why, the current choice,
+    whether the account holder confirmed it, and its sales; `mapping_needed`
+    while any with sales is unconfirmed (bar.mapping.mapping_payload)."""
+    import bar.mapping as _bmap
+    from permissions import is_principal
+    rid = current_user["restaurant_id"]
+    try:
+        out = _bmap.mapping_payload(rid, today=_bar_count_today(rid))
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    out["can_change"] = bool(is_principal(current_user))
+    return jsonify(**out)
+
+
+@mobile_bp.route("/food-cost/bar/mapping", methods=["POST"])
+@mobile_login_required
+def mobile_bar_mapping_save(current_user):
+    """{entries: [{key, kind, bar_category}], confirm} — bar_category one of
+    beer | liquor | wine | na | not_bar, or "" to go back to the suggestion;
+    `confirm` confirms every category on the screen as it stands, once. The
+    account holder's alone."""
+    import bar.mapping as _bmap
+    from permissions import principal_only
+    refused = principal_only(current_user, "which sales count as bar sales")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    entries = b.get("entries") or []
+    if not isinstance(entries, list) or len(entries) > 500:
+        return jsonify(ok=False, error="Send the categories as a list."), 400
+    try:
+        res = _bmap.save_mapping(rid, entries, confirm=bool(b.get("confirm")), user_id=current_user.get("id"),
+                                 today=_bar_count_today(rid))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That mapping didn't save.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_safe_err(e)), 500
+    moved = [f"{c['key']}: {_bmap.BAR_KIND_LABELS.get(c['after'], 'back to the suggestion').lower()}"
+             for c in res["changes"]][:12]
+    if moved or res["confirmed"]:
+        detail = "; ".join(moved) if moved else ""
+        if res["confirmed"]:
+            detail = (detail + "; " if detail else "") + f"{res['confirmed']} confirmed as suggested"
+        _log_account_event(rid, "bar_mapping_changed", current_user, detail=detail[:500])
+    try:
+        res["mapping"] = _bmap.mapping_payload(rid, today=_bar_count_today(rid))
+    except Exception:
+        pass
+    return jsonify(**res)
+
+
 def food_target_labelled(payload, rid):
     """The food cost payload with where its target came from, in the
     server's words (Benchmarking #10): `food_cost_target_label` ("your

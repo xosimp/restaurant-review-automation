@@ -45,8 +45,10 @@ log = logging.getLogger("pos_archive")
 # The archive's layout. Raise it when a table joins the archive: every day
 # stored under an older layout counts as not archived and the backfill stores
 # it again (2: payments and payouts; 3: the raw fields the POS reads derive
-# from, so they read a closed day from here — both 9/29/26).
-ARCHIVE_VERSION = 3
+# from, so they read a closed day from here — both 9/29/26; 4: each line's
+# department and sales category, RPOWER's cost / discounted / aqu_count /
+# fraction, and the modifier links from ticketitem — the Bar, 10/15/26 F5).
+ARCHIVE_VERSION = 4
 
 BACKFILL_DAYS = 90
 BACKFILL_DAYS_PER_NIGHT = 7
@@ -61,7 +63,11 @@ _TICKET_COLS = ("ticket_id", "business_date", "ticket_no", "opened_at", "closed_
 _LINE_COLS = ("line_id", "ticket_id", "business_date", "item_id", "item_name", "item_kind", "kind", "qty",
               "sales", "price", "regular_price", "loss_amount", "reason", "approver_id", "item_at", "mealtime",
               "profit_center", "price_level_id", "source_stamp", "sales_type_id", "voided", "mgr_id",
-              "void_mgr_id", "reason_id", "shift")
+              "void_mgr_id", "reason_id", "shift",
+              # layout 4 (F5): where RPOWER filed the line, its bar-relevant
+              # fields, and which line a modifier modifies (never summed).
+              "department", "sales_category", "category_id", "cost", "discounted", "aqu_count", "fraction",
+              "atom", "parent_atom", "mod_level", "parent_line_id")
 _PUNCH_COLS = ("punch_id", "business_date", "employee_id", "employee_name", "job_id", "role", "clock_in",
                "clock_out", "reg_hours", "ot_hours", "dt_hours", "reg_rate", "ot_rate", "pay", "ot_pay", "tips",
                "tips_net", "grats", "break_minutes", "meal_minutes", "rest_minutes", "edited_by", "edited_at",
@@ -73,6 +79,96 @@ _PAYOUT_COLS = ("payout_id", "business_date", "category", "is_payin", "amount", 
 _TABLES = (("pos_tickets", _TICKET_COLS, "tickets"), ("pos_ticket_lines", _LINE_COLS, "lines"),
            ("pos_punches", _PUNCH_COLS, "punches"), ("pos_payments", _PAYMENT_COLS, "payments"),
            ("pos_payouts", _PAYOUT_COLS, "payouts"))
+
+
+def init_pos_catalog(db_path=None):
+    """The POS's own sales catalog, kept nightly beside the archive (bar fix
+    round 10/15/26, F5) — boot only (models.init_db):
+
+      pos_sales_categories  every sales category with its department and
+                            what RPOWER says about it for a bar: is_bar,
+                            alt_qty_unit / alt_rpt_unit / aqu_in_aru (the
+                            alternate quantity, e.g. ounces poured). Seeds
+                            the bar mapping's suggestions (bar.mapping).
+      pos_menu_catalog      every menu item: its sales category, is_mod and
+                            RPOWER's last_cost, plu, upc and aqu_count (POS
+                            cost per item where a store keeps one; a
+                            theoretical pour cost needs no recipe then).
+    Both are replaced per store on each read; 0 / "" are kept as RPOWER
+    sends them (no value), never read as a measurement here."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS pos_sales_categories (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            category_id     TEXT NOT NULL,
+            name            TEXT,
+            department_id   TEXT,
+            department      TEXT,
+            is_bar          INTEGER NOT NULL DEFAULT 0,
+            alt_qty_unit    TEXT,
+            alt_rpt_unit    TEXT,
+            aqu_in_aru      REAL,
+            seen_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, provider, category_id)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pos_menu_catalog (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            item_id         TEXT NOT NULL,
+            name            TEXT,
+            category_id     TEXT,
+            is_mod          INTEGER NOT NULL DEFAULT 0,
+            last_cost       REAL,
+            plu             TEXT,
+            upc             TEXT,
+            aqu_count       REAL,
+            seen_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, provider, item_id)
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sync_catalog(restaurant_id, db_path=DB_PATH) -> dict:
+    """Keep the POS's sales categories and menu items (init_pos_catalog) as
+    the provider lists them now — a provider that defines
+    `fetch_sales_catalog` (rpower). A category or item the POS no longer
+    lists is removed: the archived lines keep their own department and
+    category, so nothing a night says is lost with it."""
+    name, mod = provider_for(restaurant_id)
+    fn = getattr(mod, "fetch_sales_catalog", None) if mod else None
+    if not callable(fn):
+        return {"ok": False, "reason": "the POS does not share its sales catalog"}
+    cat = fn(restaurant_id) or {}
+    cats, items = cat.get("categories") or [], cat.get("items") or []
+    if not cats and not items:
+        return {"ok": False, "reason": "the POS listed no sales categories"}
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM pos_sales_categories WHERE restaurant_id=? AND provider=?", (restaurant_id, name))
+        conn.executemany(
+            "INSERT INTO pos_sales_categories (restaurant_id, provider, category_id, name, department_id, department, "
+            "is_bar, alt_qty_unit, alt_rpt_unit, aqu_in_aru, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            [(restaurant_id, name, c["category_id"], c.get("name"), c.get("department_id"), c.get("department"),
+              int(c.get("is_bar") or 0), c.get("alt_qty_unit"), c.get("alt_rpt_unit"), c.get("aqu_in_aru"))
+             for c in cats if c.get("category_id")])
+        conn.execute("DELETE FROM pos_menu_catalog WHERE restaurant_id=? AND provider=?", (restaurant_id, name))
+        conn.executemany(
+            "INSERT INTO pos_menu_catalog (restaurant_id, provider, item_id, name, category_id, is_mod, last_cost, "
+            "plu, upc, aqu_count, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+            [(restaurant_id, name, i["item_id"], i.get("name"), i.get("category_id"), int(i.get("is_mod") or 0),
+              i.get("last_cost"), i.get("plu"), i.get("upc"), i.get("aqu_count")) for i in items if i.get("item_id")])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"ok": True, "categories": len(cats), "items": len(items),
+            "bar_categories": sum(1 for c in cats if c.get("is_bar")),
+            "costed_items": sum(1 for i in items if (i.get("last_cost") or 0) > 0)}
 
 
 def provider_for(restaurant_id):
@@ -124,6 +220,15 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
         raise
     finally:
         conn.close()
+    try:
+        # The night's drink sales by POS item category, net of the check
+        # discounts allocated per ticket (bar.sales.derive_nights) — every
+        # path that stores a day (the nightly run, a restatement, a reader's
+        # on-demand archive) derives it again from what was just stored.
+        from bar.sales import derive_nights
+        derive_nights(restaurant_id, [iso], db_path=db_path, provider=name)
+    except Exception as e:                           # the archive stands; the Bar estimates the night
+        log.warning("pos_archive: bar night %s not derived for %s: %s", iso, restaurant_id, e)
     return {"date": iso, "tickets": len(rows["tickets"]), "lines": len(rows["lines"]),
             "punches": len(rows["punches"]), "net_sales": net, "restated": restated}
 
@@ -208,6 +313,21 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
             failed.append(d.isoformat())
     if callable(changed) and not failed:
         _set_changes_checked_to(restaurant_id, name, now_utc, db_path)
+    catalog = backfill_restated = None
+    try:
+        catalog = sync_catalog(restaurant_id, db_path=db_path)
+    except Exception as e:                           # the archive stands; the catalog tries again tomorrow
+        log.warning("pos_archive: catalog sync failed for %s: %s", restaurant_id, e)
+    if restated_dates:
+        try:
+            # A night the DSR backfill filled is restated with the archive
+            # (bar audit 10/14/26 RPW-13 / R11): its stored figures were the
+            # POS's before the re-post.
+            from dsr.backfill import restate
+            backfill_restated = restate(restaurant_id, [d.isoformat() for d in restated_dates
+                                                        if d.isoformat() in done], db_path=db_path)
+        except Exception as e:
+            log.warning("pos_archive: backfilled nights not restated for %s: %s", restaurant_id, e)
     roles = prices = None
     try:
         roles = sync_roles(restaurant_id, db_path=db_path)
@@ -219,7 +339,7 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
         log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
             "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles,
-            "prices": prices}
+            "prices": prices, "catalog": catalog, "backfill_restated": backfill_restated}
 
 
 # ── who can work which job (RPower endpoint audit, High ROI #5) ─────────────
@@ -385,6 +505,7 @@ ON_DEMAND_MAX = 7
 FRESH_DAYS = 3
 RECHECK_MINUTES = 30
 CHANGE_MEMO_SECONDS = 300
+CHANGE_MEMO_MAX = 256             # restaurants remembered at once (bounded, R2)
 _change_memo = {}
 
 
@@ -412,6 +533,12 @@ def _changed_since(restaurant_id, mod, since_utc, now_utc):
     if hit and _t.monotonic() - hit[0] < CHANGE_MEMO_SECONDS and hit[1] <= since_utc:
         return hit[2]
     out = set(mod.changed_business_dates(restaurant_id, since_utc, now_utc))
+    if len(_change_memo) >= CHANGE_MEMO_MAX:
+        now = _t.monotonic()
+        for k in [k for k, v in list(_change_memo.items()) if now - v[0] >= CHANGE_MEMO_SECONDS]:
+            _change_memo.pop(k, None)
+        while len(_change_memo) >= CHANGE_MEMO_MAX:
+            _change_memo.pop(next(iter(_change_memo)), None)
     _change_memo[restaurant_id] = (_t.monotonic(), since_utc, out)
     return out
 

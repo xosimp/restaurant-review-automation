@@ -49,6 +49,10 @@ number when it names only one).
 
 `ingest_file` says `stored` only when it wrote an invoice; a file whose
 invoices are all undated is `unrecognized`.
+
+The Bar page reads these tables (since 10/14/26: bar.purchases._lines, behind
+the bar_cost facade) for its purchases, price watch and bought-vs-sold
+reading; nothing else owner-facing does.
 """
 import csv
 import hashlib

@@ -857,3 +857,18 @@ def test_a_biweekly_house_is_not_stale_on_day_eight_even_when_the_feed_says_a_we
     feed = {"invoices_through": (today - timedelta(days=8)).isoformat(), "stale_days": 8}
     f = j.freshness(lines, {}, today, feed=feed)
     assert f["stale"] is False and f["grace_days"] >= 14
+
+
+def test_a_night_whose_drink_sales_were_not_sorted_keeps_the_window_unjudged():
+    """W3/W4 hand-off (10/15/26): bar.sales leaves a gap night out of the
+    per-day figures, which alone is 27 of 28 nights and would still pass the
+    85% coverage rule — the named gap keeps the window from being judged."""
+    lines, sales = steady()
+    end = max(l["invoice_date"] for l in lines)
+    gap = (date.fromisoformat(end) - timedelta(days=5)).isoformat()
+    pc = pc_of(lines, sales, sales_gaps=(gap,))
+    for c in ("beer", "liquor"):
+        assert cat(pc, c)["judged"] is False and "sales_gap" in cat(pc, c)["reasons"]
+        assert cat(pc, c)["tone"] is None
+    assert pc["total"]["judged"] is False
+    assert pc_of(lines, sales)["total"]["judged"] is True
