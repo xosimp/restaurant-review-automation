@@ -860,3 +860,12 @@ def test_bought_vs_rung_and_the_mapping_show_three_rows_and_fold_the_rest():
     assert 'id="br-varrest"' in var and "i < SHOW_FIRST" in var
     body = src[src.index("  function mapBody() {"):src.index("  /* ── how every product is sorted")]
     assert 'id="br-maprest"' in body and "nAct < SHOW_FIRST" in body
+
+
+def test_the_category_charts_never_wear_the_app_wide_green_sp_class():
+    # 10/15/26: the cards' charts carried class "sp", and the app-wide
+    # `.sp{background:var(--green-bg)}` painted them green under a neutral band.
+    src = _src()
+    cat = src[src.index("chart(sp, "):src.index("chart(sp, ") + 400]
+    assert "chart(sp, 'br-spk'," in cat and 'class="sp"' not in cat
+    assert ".br-cat .br-chart.br-spk{" in src and ".br-cat .br-chart.sp{" not in src

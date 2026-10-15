@@ -45649,7 +45649,9 @@ function sfw2RuleCheck(chk) {
 .br-cat .v small{font-size:20px;color:var(--ink2);margin-left:2px;letter-spacing:0}
 .br-delta{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:var(--ink2)}
 .br-delta.good{color:var(--hb-good)}.br-delta.bad{color:var(--br-red-text)}
-.br-cat .br-chart.sp{width:auto;height:56px;margin:12px 6px 4px 0}
+/* br-spk, never .sp: the app-wide .sp rule paints a green background (owner, 10/15/26). */
+.br-cat .br-chart.br-spk{width:auto;height:56px;margin:12px 6px 4px 0}
+.br-cat .br-spk{background:none}
 .br-cat .ft{display:flex;justify-content:space-between;gap:10px;font-size:14px;color:var(--ink2);margin-top:auto;padding-top:8px}
 .br-cat .ft b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
 .br-ov{margin-top:10px;font-size:14px;line-height:1.5;color:var(--ink2)}
@@ -46242,7 +46244,7 @@ function sfw2RuleCheck(chk) {
         // Neutral behind the line (owner, 10/15/26: a coloured band and fill
         // read green): a grey range band and a faint fill; the line keeps
         // its category colour.
-        + (nn(sp) >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, areaOpacity: '.10', band: c.range, bandCss: 'var(--ink3)', hot: false}) : '<div class="sp"></div>')
+        + (nn(sp) >= 2 ? chart(sp, 'br-spk', {min: dom.min, max: dom.max, css: s.css, area: true, areaOpacity: '.10', band: c.range, bandCss: 'var(--ink3)', hot: false}) : '<div class="br-spk"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + '</div>' : '')
