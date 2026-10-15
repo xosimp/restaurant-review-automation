@@ -2027,7 +2027,17 @@ def _do_staff_settings_set(u):
                            "experienced", "minor_age_band") + _F1_STAFF_FIELDS if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
                       detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
-    return {"ok": True, "settings": row}, 200
+    out = {"ok": True, "settings": row}
+    if b.get("active") is False:
+        # Off the roster: the weeks to come that still give them shifts are
+        # said now, not first at Publish (owner, 10/14/26).
+        try:
+            import prepublish as _pp_off
+            out["weeks_holding"] = _pp_off.weeks_holding(_rid(u), row["employee_name"], today=_local_today(u))
+        except Exception as _wx:
+            out["weeks_holding"] = []
+            print(f"[staff_settings] weeks_holding unavailable: {_wx!r}")
+    return out, 200
 
 
 def _do_staff_pairs_set(u):

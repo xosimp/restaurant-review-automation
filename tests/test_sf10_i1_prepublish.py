@@ -31,6 +31,18 @@ import strategy_routes
 from tests.test_ios_parity_labor import _rid, db, pushed  # noqa: F401
 from tests.test_ios_parity_labor import _client as _mobile_client
 
+@pytest.fixture(autouse=True)
+def _before_the_week(monkeypatch):
+    """These weeks are 10/12-10/18/26: the gate reads them from before they
+    start, whatever day the suite runs (a week under way steps its worked
+    days aside - schedule_publish, 10/14/26)."""
+    import datetime as _dt
+    import schedule_publish as _sp_fx
+    monkeypatch.setattr(_sp_fx, "_local_today", lambda rid: _dt.date(2026, 10, 9))
+    import strategy_routes as _sr_fx
+    monkeypatch.setattr(_sr_fx, "_local_today", lambda *a, **k: _dt.date(2026, 10, 9))
+
+
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
 
@@ -586,3 +598,35 @@ def test_the_held_week_push_never_offers_send_now_past_a_must_fix_item():
              {"key": "input:availability:ana", "text": "Ana's settings", "tier": sp.MUST_FIX}]
     assert delayed._send_now_keys({}, {"blocker_items": items, "new_blockers": ["late"]}) is None
     assert delayed._send_now_keys({}, {"blocker_items": items[:1], "new_blockers": ["late"]}) == ["notice_short"]
+
+
+# ── a week under way; a draft the world moved under (owner, 10/14/26) ─────
+
+def test_in_a_week_under_way_a_worked_day_never_holds_the_send(db, monkeypatch):
+    """A four-day-old draft opened on a Wednesday had Tuesday's shifts at the
+    top of its must-fix list: nobody can be sent for a day already worked."""
+    import datetime as _dt
+    rid = _rid(db)
+    _team(db, rid, [("Erik", "Manager"), ("Ana", "Server")])
+    hid = _week(db, rid, ["2026-10-12,Monday,Ana,Server,4:00pm,10:00pm,6,"])
+    before = sp.publish_review(rid, hid, today=_dt.date(2026, 10, 9))
+    assert any(b.get("date") == "2026-10-12" and b["tier"] == sp.MUST_FIX for b in before["blockers"])
+    during = sp.publish_review(rid, hid, today=_dt.date(2026, 10, 14))
+    assert not any(b.get("date") == "2026-10-12" for b in during["blockers"])
+    assert any(n["key"] == "past_days" and "10/12/26" in n["text"] for n in during["notes"])
+
+
+def test_a_draft_the_inputs_moved_under_says_what_moved_and_which_days():
+    gate = {"blockers": [
+        {"key": "rule:inactive:ann boska:2026-10-17", "text": "Ann Boska — Saturday 11:30am: no longer on the roster",
+         "date": "2026-10-17"},
+        {"key": "rule:long_run:evan price:2026-10-16", "text": "Evan Price — Friday 5:00pm: 7 days in a row",
+         "date": "2026-10-16"},
+        {"key": "rule:coverage_floor:2026-10-15", "text": "3 Kitchen on at 5:30pm", "date": "2026-10-15"}]}
+    row = {"generated_at": "2026-10-10 18:53:15", "published_at": None}
+    d = prepublish.drift(row, gate, {"by_kind": {"coverage_floor": 1}}, today=__import__("datetime").date(2026, 10, 14))
+    assert d["built_mdy"] == "10/10/26" and d["days_ago"] == 4 and d["count"] == 2
+    assert d["reasons"] == ["Ann Boska left the roster", "Evan Price worked shifts since that run into this week"]
+    assert d["dates"] == ["2026-10-16", "2026-10-17"], "the floor it was built with is not drift"
+    assert prepublish.drift(row, {"blockers": gate["blockers"][2:]}, {"by_kind": {"coverage_floor": 1}}) is None
+    assert prepublish.drift(dict(row, published_at="2026-10-11"), gate, {}) is None

@@ -318,7 +318,71 @@ def _review(restaurant_id, schedule_id, rows=None, user=None, today=None, can_pu
         {"tone": None, "sentence": "", "subline": ""}
     out["gate"] = {"blocker_keys": [b["key"] for b in gate.get("blockers") or []],
                    "always_overridden": gate.get("always_overridden") or []}
+    out["drift"] = _safe(lambda: drift(row, gate, saved_review, today), None, "drift", rid) if core else None
     return out
+
+
+# ── what changed since the draft was built ─────────────────────────────────
+
+# Rule kinds a draft is never built with once its inputs say so, so more of
+# them now than when it was built is the world moving under it: someone off
+# the roster, time off approved, availability changed, shifts worked since
+# that now reach into the week. Each with the words the banner says.
+DRIFT_KINDS = {
+    "inactive": "left the roster", "off_roster": "left the roster",
+    "approved_time_off": "had time off approved", "pending_time_off": "asked for time off",
+    "unavailable_day": "changed their availability", "unavailable_daypart": "changed their availability",
+    "outside_window": "changed their availability", "note_unavailable": "changed their availability",
+    "long_run": "worked shifts since that run into this week", "rest_gap": "worked shifts since that run into this week",
+}
+
+
+def drift(row, gate, saved_review, today=None):
+    """{built_mdy, days_ago, reasons, dates, count} when this draft's own
+    problems grew since it was built because its inputs moved — the roster,
+    time off, availability, shifts worked since — else None (owner,
+    10/14/26: a four-day-old draft showed six "must fix" of which five came
+    from after it was built). `dates` are the days to rebuild, never a day
+    already worked."""
+    import schedule_overrides as _so
+    built = str(row.get("generated_at") or "")[:19]
+    if not built or row.get("published_at"):
+        return None
+    then = (saved_review or {}).get("by_kind") or {}
+    now_kinds, who, dates = {}, {}, set()
+    for b in gate.get("blockers") or []:
+        kind = str(_so.kind_of(b.get("key") or "") or "").split(":", 1)[-1]
+        if kind not in DRIFT_KINDS:
+            continue
+        now_kinds[kind] = now_kinds.get(kind, 0) + 1
+        name = str(b.get("employee") or str(b.get("text") or "").split(" — ")[0]).strip()
+        who.setdefault(DRIFT_KINDS[kind], [])
+        if name and name not in who[DRIFT_KINDS[kind]]:
+            who[DRIFT_KINDS[kind]].append(name)
+        if b.get("date"):
+            dates.add(str(b["date"])[:10])
+    grown = {k for k, n in now_kinds.items() if n > int(then.get(k) or 0)}
+    if not grown:
+        return None
+    reasons, done = [], set()
+    for k in sorted(grown, key=lambda x: list(DRIFT_KINDS).index(x)):
+        words = DRIFT_KINDS[k]
+        if words in done:
+            continue
+        done.add(words)
+        names = who.get(words) or []
+        lead = (", ".join(names[:-1]) + " and " + names[-1]) if len(names) > 1 else (names[0] if names else "Someone")
+        if len(names) > 3:
+            lead = ", ".join(names[:3]) + f" and {len(names) - 3} more"
+        reasons.append(f"{lead} {words}")
+    t = today or date.today()
+    t_iso = t.isoformat() if hasattr(t, "isoformat") else str(t)[:10]
+    try:
+        days_ago = (date.fromisoformat(t_iso) - date.fromisoformat(built[:10])).days
+    except ValueError:
+        days_ago = None
+    return {"built_at": built, "built_mdy": _mdy(built[:10]), "days_ago": days_ago, "reasons": reasons,
+            "dates": sorted(d for d in dates if d >= t_iso), "count": sum(now_kinds[k] for k in grown)}
 
 
 # ── the cache (TRUST-26) ───────────────────────────────────────────────────
@@ -2384,3 +2448,34 @@ def pos_push_status(rid, row):
     else:
         text = None
     return {"status": status, "failed": failed, "sent_on": p.get("sent_on"), "text": text}
+
+
+def weeks_holding(restaurant_id, name, today=None, db_path=None) -> list:
+    """The weeks still to come that give `name` shifts: every unsent draft
+    in force and every published week, each {history_id, week_start,
+    week_mdy, published, shifts, dates} — said the moment someone is taken
+    off the roster (owner, 10/14/26), never first at Publish."""
+    import models as _m
+    import schedule_shifts as _ss
+    from staff_settings import name_key
+    t = today or date.today()
+    t_iso = t.isoformat() if hasattr(t, "isoformat") else str(t)[:10]
+    key = name_key(name)
+    conn = _m.get_conn(db_path) if db_path else _m.get_conn()
+    try:
+        weeks = conn.execute("SELECT id, week_start, week_end, published_at FROM schedule_history WHERE restaurant_id=? "
+                             "AND superseded_by IS NULL AND substr(COALESCE(week_end, week_start),1,10) >= ? "
+                             "ORDER BY week_start", (int(restaurant_id), t_iso)).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for w in weeks:
+        copy = "live" if w["published_at"] else "working"
+        mine = [r for r in _ss.rows_of(w["id"], copy, db_path=db_path, restaurant_id=restaurant_id)
+                if name_key(r.get("employee") or "") == key and str(r.get("date") or "") >= t_iso]
+        if mine:
+            out.append({"history_id": w["id"], "week_start": w["week_start"], "week_mdy": _mdy(w["week_start"]),
+                        "published": bool(w["published_at"]), "shifts": len(mine),
+                        "dates": sorted({str(r.get("date"))[:10] for r in mine})})
+    return out
+

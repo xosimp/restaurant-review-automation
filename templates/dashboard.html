@@ -10889,6 +10889,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .sw-notes{width:100%;box-sizing:border-box;resize:vertical;min-height:72px;font-size:13.5px;line-height:1.45}
 .sw-gen{position:sticky;bottom:0;padding:12px 0 16px;margin-top:4px;background:var(--surface)}
 .sw-gen .cbtn{width:100%;justify-content:center}
+.sw-gen.two{display:flex;flex-direction:column;gap:8px}
 .sw-gen #sched-week{display:none}
 .sw-bar{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:8px;align-items:center;font-size:12.5px;color:var(--ink2);padding:3px 0}
 .sw-bar .tr{height:7px;border-radius:99px;background:var(--sf-recess);position:relative}
@@ -22728,6 +22729,18 @@ function _schedNotice(btnEl, msg) {
   (btnEl.closest('.lb2-actions') || btnEl).insertAdjacentElement('afterend', n);
 }
 
+// Someone just taken off the roster who still has shifts ahead (owner,
+// 10/14/26): a draft or a sent week keeps them until a person moves them,
+// so the save says which weeks and opens the first. True when it said so.
+function staffHoldingSay(name, list) {
+  var w = list || [], i, parts = [], n = 0;
+  if (!w.length) return false;
+  for (i = 0; i < w.length; i++) { n += w[i].shifts || 0; parts.push('the week of ' + mdy(w[i].week_start) + (w[i].published ? ' (sent)' : ' (draft)')); }
+  toast(name + ' is off the roster but still has ' + n + ' shift' + (n === 1 ? '' : 's') + ' ahead on ' + parts.join(' and ') + '.', 'warning',
+    {label: 'Open the week', fn: function () { if (window.openScheduleDraft) openScheduleDraft(w[0].history_id); }});
+  return true;
+}
+
 function _schedReset(btnEl) {
   stopScheduleSteps();
   if (btnEl) btnEl.innerHTML = 'Generate a draft schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -22736,6 +22749,7 @@ function _schedReset(btnEl) {
   var _wk = document.getElementById('sched-week'); if (_wk) _wk.remove();
   if (window.swActive) swActive();
   if (window.studioOnReset) studioOnReset();
+  if (window.ssGenState) ssGenState();
 }
 
 function _schedHandleResult(data) {
@@ -22748,15 +22762,10 @@ function _schedHandleResult(data) {
     _schedNotice(_schedBtn, data.error || 'Schedule generation failed. Try again.');
     return;
   }
-  if (_schedBtn) {
-    _schedBtn.innerHTML = 'Schedule ready ✓';
-    _schedBtn.style.background = 'var(--green)';
-    _schedBtn.style.color = '#fff';
-    // The primary button's ember glow stays off a green "ready" (owner,
-    // 9/26/26): a green button with an orange halo read as two states.
-    _schedBtn.style.boxShadow = 'none';
-    _schedBtn.disabled = false;
-  }
+  // No green "Schedule ready" any more: Setup's button says what the week
+  // on file offers - open it, or write a new one - and says the same after
+  // a reload (owner, 10/14/26; ssGenState below, once the rows are in).
+  if (_schedBtn) _schedBtn.disabled = false;
   // "Posted" — the week grid gives way to the ember-to-checkmark for a beat,
   // then clears, once the real result is in hand.
   stopScheduleSteps();
@@ -22826,6 +22835,7 @@ function _schedHandleResult(data) {
   _schedOverrides = {};
   _schedHistoryId = data.history_id || null;
   _schedWeekDates = data.week_dates || [];
+  setTimeout(function () { if (window.ssGenState) ssGenState(); }, 0);
   _schedRosterNames = data.roster || [];
   _schedHoliday = data.holiday_lift || {};
   if (data.reservation_feed) window._reservationFeed = data.reservation_feed;
@@ -27762,6 +27772,7 @@ function ssRightTab(tab) {
 // ── the generation, as the Studio sees it ─────────────────────────────
 function studioOnGenerate() {
   _ssGenerating = true;
+  var od = document.getElementById('ss-open-draft'); if (od) od.parentNode.removeChild(od);
   if (!_ssOpen) studioOpen({stage: 'build'}); else studioGo('build');
 }
 function studioOnResult(data, fromGeneration) {
@@ -27803,6 +27814,38 @@ function studioOnReset() {
   _ssGenerating = false;
   ssLeaveEmptyBuild('schedule');
 }
+// Setup's button for the picked week. With that week's draft open, the
+// first press opens it and a second button writes a new one; otherwise the
+// one Generate. A reload restores the draft quietly, so this is what keeps
+// a written week from reading as unwritten (owner, 10/14/26).
+function _ssPickedDay() {
+  var pick = document.getElementById('sched-week-pick'), dt = document.getElementById('sched-week-date');
+  if (!pick) return null;
+  if (pick.value === 'date') return (dt && dt.value) ? dt.value : null;
+  var d = new Date();
+  d.setDate(d.getDate() + (pick.value === 'this' ? 0 : pick.value === 'after' ? 14 : 7));
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function ssGenState() {
+  var gen = document.getElementById('gen-sched-btn'); if (!gen || _ssGenerating) return;
+  var day = _ssPickedDay(), wd = _schedWeekDates || [];
+  var has = _ssHasDraft() && !!day && wd.length && day >= wd[0] && day <= wd[wd.length - 1];
+  var open = document.getElementById('ss-open-draft');
+  if (has && !open) {
+    open = document.createElement('button');
+    open.id = 'ss-open-draft'; open.type = 'button'; open.className = 'cbtn cbtn-primary';
+    open.textContent = 'Open the draft';
+    open.onclick = function () { studioGo('summary'); };
+    gen.parentNode.insertBefore(open, gen);
+  } else if (!has && open) open.parentNode.removeChild(open);
+  gen.className = 'cbtn ' + (has ? 'cbtn-secondary' : 'cbtn-primary');
+  gen.style.background = ''; gen.style.color = ''; gen.style.boxShadow = '';
+  gen.textContent = has ? 'Generate a new draft' : 'Generate a draft schedule';
+  if (gen.parentNode && gen.parentNode.classList) gen.parentNode.classList[has ? 'add' : 'remove']('two');
+}
+document.addEventListener('change', function (ev) {
+  var t = ev.target; if (t && (t.id === 'sched-week-pick' || t.id === 'sched-week-date')) ssGenState();
+});
 // The Build stage is the Building view and nothing else, so once that view
 // is gone (finished, stopped, failed, lost) the Studio never stays on it:
 // an empty page with only the step bar (owner, 10/9/26). The argument is
@@ -37295,7 +37338,7 @@ window._cuRole=window.CAV_BOOT.role;
       if(!d.ok){toast(d.error||'Could not save that','error');renderRoster();return;}
       var e=_rstFind(name);
       if(e){var s=d.settings||{},k;e.settings=e.settings||{};for(k in s)if(s.hasOwnProperty(k))e.settings[k]=s[k];if(s.active!==undefined)e.active=s.active;}
-      toast('Saved','success');
+      if(!(patch.active===false&&staffHoldingSay(name,d.weeks_holding)))toast('Saved','success');
       if(after)after();
     });
   }
@@ -41643,6 +41686,21 @@ window.cavPalette = cavPalette;
     var p = (d.send || {}).pos_push;
     return p && p.text ? '<section class="pr-sec"><div class="pr-k">Your POS</div><div class="pr-it' + (p.status === 'failed' || p.status === 'refused' || p.failed ? ' bad' : '') + '">' + nt(p.text) + '</div></section>' : '';
   }
+  // The draft is older than what it is checked against (owner, 10/14/26):
+  // problems that grew because the roster, time off or availability moved
+  // after it was built say so, and the days still ahead rebuild in one press.
+  function driftHtml(d) {
+    var dr = d.drift, n, i, h;
+    if (!dr || !(dr.reasons || []).length) return '';
+    n = (dr.dates || []).length;
+    h = '<section class="pr-sec pr-drift"><div class="pr-k">Built <span class="hb-num">' + e(dr.built_mdy || '') + '</span>'
+      + (dr.days_ago ? ', <span class="hb-num">' + dr.days_ago + '</span> day' + (dr.days_ago === 1 ? '' : 's') + ' ago' : '') + '</div>'
+      + '<div class="pr-sub">Since then things changed under it, so some problems below are new:</div>';
+    for (i = 0; i < dr.reasons.length; i++) h += '<div class="pr-it">' + nt(dr.reasons[i]) + '</div>';
+    if (n) h += '<div class="pr-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-pr="drift" data-n="0" data-j="0">Rebuild '
+      + (n === 1 ? 'that day' : 'these <span class="hb-num">' + n + '</span> days') + '</button></div>';
+    return h + '</section>';
+  }
   window.prRender = function () {
     var el = $id('pr-review'); if (!el) return;
     var d = prFor();
@@ -41653,7 +41711,7 @@ window.cavPalette = cavPalette;
     }
     el.innerHTML = prVerdictHtml(d, 'h2') + (S.busy ? '<div class="dr-pulse wide" role="status" aria-label="Checking again"><i></i></div>' : '')
       + (S.err ? '<div class="pr-err">' + e(S.err) + (S.fallback ? ' The publish gate’s own list is below; Send is checked again on the server.' : '') + ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-pr="retry" data-n="0" data-j="0">Check again</button></div>' : '')
-      + mustHtml(d) + decideHtml(d) + alwaysHtml(d) + numbersHtml(d) + changedHtml(d) + fragileHtml(d) + whyHtml(d) + (d.fallback ? '' : sureHtml(d)) + fyiHtml(d) + sendHtml(d);
+      + driftHtml(d) + mustHtml(d) + decideHtml(d) + alwaysHtml(d) + numbersHtml(d) + changedHtml(d) + fragileHtml(d) + whyHtml(d) + (d.fallback ? '' : sureHtml(d)) + fyiHtml(d) + sendHtml(d);
     prChangedBlock(d);
     prTeamRender(false);
   };
@@ -41774,6 +41832,13 @@ window.cavPalette = cavPalette;
     var d = prFor() || {}, what = t.getAttribute('data-pr'), n = +t.getAttribute('data-n'), j = +t.getAttribute('data-j');
     var m = (d.must_fix || [])[n], x = (d.decide || [])[n];
     if (what === 'retry') { prRefresh(); return; }
+    if (what === 'drift') {
+      var dd = (d.drift || {}).dates || [];
+      if (!dd.length || !_schedHistoryId) return;
+      if (_schedDirty) { toast('Save or discard your edits first', 'error'); return; }
+      generateSchedule($id('gen-sched-btn') || t, {dates: dd, history_id: _schedHistoryId});
+      return;
+    }
     if (what === 'lmiss') { var lm = (d.numbers || {}).labor_missing; if (lm && lm.action) prDo(lm.action, t, null); return; }
     if (what === 'fix' && m) { prDo((m.fixes || [])[j], t, m.key); return; }
     if (what === 'gfix') { var g = (d.must_fix_groups || [])[n]; if (g) prDo((g.fixes || [])[j], t, g.kind); return; }
@@ -44363,7 +44428,8 @@ function sfw2RuleCheck(chk) {
       jpost('/api/labor/staff-settings', {employee_name: name, active: !off}, function (d) {
         fin2();
         if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
-        say(off ? name + ' is off the roster — Still here on their row brings them back' : name + ' stays on the roster — asked again if six more weeks pass with no shift');
+        if (!(off && staffHoldingSay(name, d.weeks_holding)))
+          say(off ? name + ' is off the roster — Still here on their row brings them back' : name + ' stays on the roster — asked again if six more weeks pass with no shift');
         if (window.loadRoster) window.loadRoster();
       });
     }

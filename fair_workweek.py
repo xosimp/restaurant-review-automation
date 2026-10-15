@@ -500,7 +500,7 @@ def offer_hours(restaurant_id, day, shift_start, shift_end, role=None, hours_win
         raise FairWorkweekError(f"{label} asks for at least {int(law_h)} hours")
     try:
         posted_req = shift_requests.post_open_shift(restaurant_id, day, shift_start, shift_end=shift_end, role=role,
-                                                    actor=actor, note=note, db_path=db_path or DB_PATH)
+                                                    actor=actor, note=note, db_path=db_path or DB_PATH, now=now)
     except shift_requests.ShiftRequestError as e:
         raise FairWorkweekError(str(e))
     req = (posted_req or {}).get("request") or {}

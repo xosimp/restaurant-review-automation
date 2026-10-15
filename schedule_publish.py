@@ -781,8 +781,30 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
     # lines — never a rule) moved to a note, and the review of the warnings
     # they always override.
     import schedule_overrides as _so_pr
-    # Severity first, never the date: the must-fix tier, then each tier by
-    # rank — annotate keeps this order inside its own ranking.
+    # In a week already under way, a problem on a day already worked holds
+    # nothing: nobody can be sent for a shift that has happened, so it is one
+    # quiet note, never "must fix" (owner, 10/14/26 - a four-day-old draft
+    # opened on a Wednesday had Tuesday's shifts at the top of its must-fix
+    # list). A week wholly ahead or wholly past is read as before.
+    try:
+        _t = today or _local_today(restaurant_id)
+        _t_iso = _t.isoformat() if hasattr(_t, "isoformat") else str(_t)[:10]
+        _ws, _we = str(row.get("week_start") or "")[:10], str(row.get("week_end") or row.get("week_start") or "")[:10]
+        underway = bool(_ws) and _ws <= _t_iso <= (_we or _ws)
+        past = ([b for b in out if b.get("date") and str(b["date"])[:10] < _t_iso] if underway else [])
+        if past:
+            out = [b for b in out if b not in past]
+            days = sorted({str(b["date"])[:10] for b in past})
+            from time_utils import mdy as _mdy_pb
+            note("past_days", f"{len(past)} problem{'s' if len(past) != 1 else ''} on "
+                              f"{'a day' if len(days) == 1 else 'days'} already worked "
+                              f"({', '.join(_mdy_pb(d) for d in days)}) — nothing to send for "
+                              f"{'it' if len(days) == 1 else 'them'}, so {'it doesn' if len(past) == 1 else 'they don'}"
+                              "'t hold this week")
+            held_unattended = [h for h in held_unattended
+                               if not any(h.get("key", "").endswith(":" + d) for d in days)]
+    except Exception as _px:
+        _degraded(f"past-day check unavailable: {_px!r}", _px)
     out.sort(key=lambda b: (b.get("tier") != MUST_FIX, b.get("rank") or 0, b.get("date") or ""))
     if keep is not None:
         keep.update(row=dict(row), rows=rows, constraints=c, violations=viols, review=review, quality=quality,

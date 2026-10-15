@@ -103,6 +103,14 @@ def _pin_week(monkeypatch):
     monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
 
 
+@pytest.fixture(autouse=True)
+def _one_call_at_a_time(monkeypatch):
+    """_gen hands out its answers in the order the calls arrive, so the calls
+    go one at a time here: with three in flight (PARALLEL_CALLS) a slice
+    could take another's answer, and the test failed by chance."""
+    monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
+
+
 def _gen(answers, calls):
     """A stubbed generate_optimized_schedule: each call pops its answer — a
     list of CSV lines, or a dict merged into the result, or an exception."""

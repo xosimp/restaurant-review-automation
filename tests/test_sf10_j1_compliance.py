@@ -410,8 +410,10 @@ def test_chicago_states_no_posting_period_so_the_owner_sets_one(db, monkeypatch)
     rid, hid, _ = _covered_week(db)
     monkeypatch.setattr(srq, "_notify", lambda *a, **k: None)
     with pytest.raises(fww.FairWorkweekError):
-        fww.offer_hours(rid, T.W2[2], "5:00pm", "9:00pm", role="Server", actor="owner")
-    assert fww.offer_hours(rid, T.W2[2], "5:00pm", "9:00pm", role="Server", actor="owner", hours_window=48)["id"]
+        fww.offer_hours(rid, T.W2[2], "5:00pm", "9:00pm", role="Server", actor="owner",
+                        now=dt.datetime(2026, 10, 1, 9))
+    assert fww.offer_hours(rid, T.W2[2], "5:00pm", "9:00pm", role="Server", actor="owner", hours_window=48,
+                           now=dt.datetime(2026, 10, 1, 9))["id"]
 
 
 # ── three-year records (MARKET-4) ────────────────────────────────────────────

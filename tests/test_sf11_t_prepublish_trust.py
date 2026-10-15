@@ -33,6 +33,18 @@ import schedule_publish as sp
 import schedule_rules as sr
 from tests.test_ios_parity_labor import _rid, db, pushed  # noqa: F401
 
+@pytest.fixture(autouse=True)
+def _before_the_week(monkeypatch):
+    """These weeks are 10/12-10/18/26: the gate reads them from before they
+    start, whatever day the suite runs (a week under way steps its worked
+    days aside - schedule_publish, 10/14/26)."""
+    import datetime as _dt
+    import schedule_publish as _sp_fx
+    monkeypatch.setattr(_sp_fx, "_local_today", lambda rid: _dt.date(2026, 10, 9))
+    import strategy_routes as _sr_fx
+    monkeypatch.setattr(_sr_fx, "_local_today", lambda *a, **k: _dt.date(2026, 10, 9))
+
+
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 SRC = open("templates/dashboard.html", encoding="utf-8").read()
 MON = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18"]
