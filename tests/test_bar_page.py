@@ -229,6 +229,69 @@ def test_a_missing_distributor_names_it_and_offers_we_stopped_buying(db_path):
     assert "data-br-stop" not in no and "data-br-cat" not in no
 
 
+def _card(html, label):
+    m = re.search(r'<article class="br-card lift br-cat[^"]*"[^>]*aria-label="' + re.escape(label.replace("&", "&amp;")) + r'">.*?</article>',
+                  html, re.S)
+    assert m, label
+    return m.group(0)
+
+
+def test_the_page_renders_a_gap_with_its_reason_and_no_judgement(db_path):
+    """EDG list 44: a category with a house's invoices missing shows what's
+    in so far with the reason, never a verdict pill or a dollars-over line."""
+    p = _build(db_path, liquor_gap=True)
+    liq = next(c for c in p["pour_cost"]["categories"] if c["key"] == "liquor")
+    assert not liq["judged"] and liq["not_judged_text"], liq
+    card = _card(_render(p), "Liquor")
+    assert 'class="na"' in card and ("Not judged, for the reason above." in card
+                                     or _text(liq["not_judged_text"])[:20] in _text(card))
+    assert "br-ov" not in card and "br-pill bad" not in card and "br-pill good" not in card
+
+
+def test_the_page_draws_the_trend_once_four_weeks_fit(full, db_path):
+    """EDG list 46: ninety days draw the hero's week-by-week chart and each
+    category's sparkline; under four weeks there is no chart, the thin-data
+    sentence instead."""
+    html = _render(full)
+    assert 'data-br-trend="1"' in html and "<svg" in html[html.index('data-br-trend="1"'):][:4000]
+    for label in ("Beer & seltzer", "Liquor", "Wine"):
+        assert '<svg' in _card(html, label), label
+    short = bc.build(_world(db_path, days=20), db_path=db_path, today=TODAY)
+    sh = _render(short)
+    assert 'data-br-trend="1"' not in sh and "fills in as four-week windows" in sh
+
+
+def test_the_page_never_says_four_weeks_for_a_shorter_window(db_path):
+    """EDG list 47 / V8: a 20-day overlap is shown as what it is — its own
+    dates and "N of 28 days" — never as "the last four weeks"."""
+    rid = _world(db_path, days=20)
+    # The day after the last delivery: a fresh feed, so the short window is the reason.
+    p = bc.build(rid, db_path=db_path, today=TODAY - timedelta(days=11))
+    w = p["pour_cost"]["window"]
+    assert w["days"] < 28 and p["pour_cost"]["total"]["not_judged"] == "short_window", p["pour_cost"]["total"]
+    html = _render(p)
+    hero = _text(html[html.index('class="br-card br-hero'):html.index('class="br-cats"')])
+    assert f"{w['days']} of 28 days" in hero and w["from_mdy"] in hero and w["to_mdy"] in hero
+    text = _text(html)
+    for claim in ("over the last four weeks", "in these four weeks", "over four weeks ·", "in four weeks",
+                  "the four weeks above"):
+        assert claim not in text, claim
+    assert f"the {w['days']} days above" in text
+    _common(html)
+
+
+def test_the_page_renders_the_no_overlap_state(full):
+    """EDG list 48: invoices on file but no sales overlapping them: the page
+    says so and draws no figure."""
+    p = json.loads(json.dumps(full))
+    p["pour_cost"] = {"available": False, "basis": "purchases",
+                      "why_not": "The invoices and the sales on file don't overlap yet."}
+    html = _render(p)
+    assert "don’t overlap yet" in html or "don't overlap yet" in html
+    assert 'class="br-big"' not in html
+    _common(html)
+
+
 def test_the_owners_target_judges_and_the_tick_is_labelled_your(db_path):
     p = _build(db_path, bar_cost_target=15, liquor_cost_target=20)
     t = p["pour_cost"]["total"]

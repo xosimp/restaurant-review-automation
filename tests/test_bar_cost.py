@@ -130,6 +130,39 @@ def test_the_owner_sorts_a_product_once_and_it_holds(db):
         bc.set_category(rid, p["product_key"], "nonsense", db_path=db)
 
 
+def _by_category(rid, db):
+    from bar.purchases import _lines
+    out = {}
+    for l in _lines(rid, db):
+        out[l["category"]] = round(out.get(l["category"], 0.0) + l["net"], 2)
+    return out
+
+
+def test_an_owner_sort_moves_pour_cost_and_follows_charge_lines(db):
+    """EDG list 22: the owner's sort moves the product's dollars between
+    categories, and its per-unit charge line (a $2.29 beside the case)
+    goes with it wherever it sits; EDG 23: clearing the sort ('') returns
+    the guess, and a product key not on this restaurant's invoices is
+    refused at the route (tests/test_bar_routes.py::test_unknown_product_key_refused)."""
+    rid = _rid(db)
+    csv = (HEAD + _row("Winebow Inc", "W1", "10/01/2026", "106.87", "777", "MYSTERY THING", "CA", 1, "100.00")
+           + _row("Winebow Inc", "W1", "10/01/2026", "106.87", "777", "MYSTERY THING", "CA", 3, "2.29"))
+    fi.ingest_file(rid, "x.csv", csv.encode(), db_path=db)
+    from bar.purchases import _lines
+    kinds = sorted(l["kind"] for l in _lines(rid, db))
+    assert kinds == ["charge", "item"]
+    guess = _by_category(rid, db)
+    assert guess == {"wine": 106.87}
+    key = _lines(rid, db)[0]["product_key"]
+    bc.set_category(rid, key, "liquor", user_id=1, db_path=db)
+    assert _by_category(rid, db) == {"liquor": 106.87}, "the charge follows its item"
+    assert all(l["owner_set"] for l in _lines(rid, db) if l["kind"] == "item")
+    bc.set_category(rid, key, "", user_id=1, db_path=db)
+    back = _lines(rid, db)
+    assert _by_category(rid, db) == guess and not any(l["owner_set"] for l in back)
+    assert next(l for l in back if l["kind"] == "item")["sure"] is False
+
+
 def test_no_invoices_says_so(db):
     rid = _rid(db)
     out = bc.build(rid, db_path=db)

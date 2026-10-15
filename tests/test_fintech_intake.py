@@ -920,3 +920,83 @@ def test_the_reread_script_runs_dry_by_default(db, capsys):
     fi.ingest_file(rid, "b.csv", FIREBALL_EXPORT.encode(), db_path=db)
     assert script.main(["--restaurant", str(rid), "--db", db]) == 0
     assert "Dry run" in capsys.readouterr().out
+
+
+# ── the reader's other doors (barfix W10: EDG list 31, 37, 39, 40) ─────────
+
+def test_a_bom_and_crlf_export_reads_like_the_plain_one():
+    """Excel's UTF-8 BOM and Windows line endings: the same invoices, the
+    same kept columns (pins today's correct behaviour, EDG-31)."""
+    plain = fi.read("a.csv", EXPORT.encode())
+    windows = fi.read("a.csv", ("﻿" + EXPORT.replace("\n", "\r\n")).encode("utf-8"))
+    assert windows[0] == plain[0] == "export"
+    assert windows[2] == plain[2] and len(plain[2]) == 1 and len(plain[2][0]["lines"]) == 2
+    assert "Bank Account" not in windows[1] and "﻿" not in windows[1]
+
+
+def test_a_spreadsheet_attachment_is_unrecognized_not_stored(db):
+    """An .xlsx (a zip: 'PK') is never read as invoices: Fintech's CSV is
+    the one read, and the file is recorded as unrecognized (EDG-40)."""
+    rid = _rid(db)
+    assert fi.read("invoices.xlsx", b"PK\x03\x04" + b"\x00" * 64) == (None, None, [])
+    res = fi.ingest_file(rid, "invoices.xlsx", b"PK\x03\x04" + EXPORT.encode(), db_path=db)
+    assert res["status"] == "unrecognized" and res["invoices"] == 0
+    assert _rows(db, "SELECT status, invoices FROM fintech_files") == [{"status": "unrecognized", "invoices": 0}]
+    assert _rows(db, "SELECT id FROM fintech_invoices") == []
+
+
+def test_a_resent_invoice_with_fewer_lines_replaces_them_all(db):
+    """A copy that outranks the one on file (the balanced export over an
+    unbalanced printout carrying a stray line) replaces every line — the
+    count after the re-send is the new copy's, never old lines left behind
+    (EDG-37; only precedence was tested)."""
+    rid = _rid(db)
+    fee = "9039158         Service Fee                           1        $12.00        $12.00\n"
+    stray = EXPORT_AS_PRINTOUT.replace(
+        fee, fee + "9039999         MISC CHARGE                           1         $5.00         $5.00\n")
+    assert stray != EXPORT_AS_PRINTOUT
+    fi.ingest_file(rid, "a.txt", stray.encode(), db_path=db)
+    inv = _rows(db, "SELECT id, balanced, source_format FROM fintech_invoices")[0]
+    assert inv["balanced"] == 0 and inv["source_format"] == "printout"
+    assert len(_rows(db, "SELECT id FROM fintech_invoice_lines WHERE invoice_id=?", (inv["id"],))) == 3
+    res = fi.ingest_file(rid, "b.csv", EXPORT.encode(), db_path=db)
+    assert res["invoices"] == 1
+    after = _rows(db, "SELECT id, balanced, source_format FROM fintech_invoices")
+    assert len(after) == 1 and after[0]["id"] == inv["id"] and after[0]["source_format"] == "export"
+    lines = _rows(db, "SELECT description FROM fintech_invoice_lines WHERE invoice_id=? ORDER BY line_no",
+                  (inv["id"],))
+    assert [l["description"] for l in lines] == ["HIGH NOON VODKA SELTZER", "Service Fee"]
+
+
+def _text_pdf(text):
+    """A one-page PDF drawing `text` line by line in Courier (no PDF
+    library here writes text, so the objects are written by hand)."""
+    def esc(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    ops = ["BT", "/F1 7 Tf", "9 TL", "20 780 Td"] + [f"({esc(ln)}) Tj T*" for ln in text.split("\n")] + ["ET"]
+    stream = "\n".join(ops).encode("latin-1")
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> "
+            b"/Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"]
+    out, offs = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offs)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+
+
+def test_the_printout_pdf_reads_like_its_text():
+    """Fintech's printout as a PDF goes through the capped child-process
+    reader (R20) and gives the invoices its text gives (EDG-39). The PDF's
+    font turns ' into a curly one, so distributors compare by their key."""
+    fmt, kept, invoices = fi.read("daily.pdf", _text_pdf(PRINTOUT))
+    ref = fi.parse_printout(PRINTOUT)
+    assert fmt == "printout" and len(invoices) == len(ref) == 2
+
+    def same(i):
+        return dict(i, distributor=fi.distributor_key(i["distributor"]))
+    assert [same(i) for i in invoices] == [same(i) for i in ref]

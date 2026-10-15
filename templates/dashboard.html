@@ -46696,6 +46696,11 @@ function sfw2RuleCheck(chk) {
     }
     return '<div class="br-sub"><div class="br-k">Ordering rhythm</div><h3>Past its usual reorder</h3><div class="br-list">' + h + '</div></div>';
   }
+  /* The window above, as long as it is (V8: a 20-day window is never "four weeks"). */
+  function aboveSpan(d) {
+    var w = ((d.pour_cost || {}).window) || {};
+    return (w.days && w.days < 28) ? hn(w.days) + ' ' + plural(w.days, 'day') + ' above' : 'four weeks above';
+  }
   function distributors(d) {
     var ds = d.distributors || [];
     if (!ds.length) return '';
@@ -46708,7 +46713,7 @@ function sfw2RuleCheck(chk) {
         + '<div class="m">' + (x.fees ? hn(money(x.fees)) : '—') + '<span>fees &amp; taxes</span></div></div>';
     }
     return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Distributors · ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + '</div><h2 class="dn-h2">Where the money goes</h2>'
-      + '<p class="dn-sub" style="margin-top:8px">Every invoice on file, ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + ', every category — non-alcoholic drinks and supplies included, so it runs longer and wider than the four weeks above.</p></div></div><div class="br-dl">' + h + '</div></section>';
+      + '<p class="dn-sub" style="margin-top:8px">Every invoice on file, ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + ', every category — non-alcoholic drinks and supplies included, so it runs longer and wider than the ' + aboveSpan(d) + '.</p></div></div><div class="br-dl">' + h + '</div></section>';
   }
 
   /* ── the bar mapping (V7) ───────────────────────────────────────────── */

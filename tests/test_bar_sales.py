@@ -248,6 +248,48 @@ def test_bar_sales_use_the_explicit_bar_mapping_never_substrings(db):
     assert bsales.window_basis(d)["unmapped_usd"] == 0.0
 
 
+def test_root_beer_and_na_beer_are_not_beer_sales():
+    """EDG list 19, against the rule rather than one night: every
+    non-alcoholic name with 'beer' in it suggests NA; plain drink names
+    suggest their drink; a name of two drinks is the owner's to say."""
+    for name in ("Root Beer", "Root Beer Floats", "N/A Beer", "NA Beer", "Ginger Beer", "Non-Alc Beer",
+                 "Zero Proof", "Mocktails"):
+        assert bmap.suggest(name)["kind"] == "na", name
+    for name, kind in (("Draft", "beer"), ("Bottles & Cans", "beer"), ("Hard Cider", "beer"), ("Shots", "liquor"),
+                       ("Cocktails", "liquor"), ("Wine by the Glass", "wine")):
+        assert bmap.suggest(name)["kind"] == kind, name
+    for name in ("Wine & Spirits", "Beer & Shots"):
+        assert bmap.suggest(name)["kind"] is None, name
+
+
+def test_a_pos_category_renamed_mid_window_is_named_not_lost(db):
+    """EDG list 18 / V7: "Beer" renamed mid-window. To a drink name
+    ("Draft") its sales keep counting as beer, unconfirmed; to a name that
+    says nothing ("Local Pours") they are named with their dollars and the
+    mapping asked for — never silently dropped from the beer figure."""
+    rid = _rid(db)
+    days = [f"2026-10-{d:02d}" for d in range(1, 18)]
+    for i, day in enumerate(days):
+        name = "Beer" if i < 7 else ("Draft" if i < 11 else "Local Pours")
+        vals = {"sales.net": 1500.0, f"sales.dep:{name}": 500.0, "sales.dep:Food": 1000.0}
+        if i >= 14:                    # a night that still sells cocktails: not a gap night
+            vals.update({"sales.net": 1800.0, "sales.dep:Cocktails": 300.0})
+        _metrics(db, rid, day, vals)
+    d = bsales.bar_sales(rid, db_path=db)
+    beer = d["by_category"]["beer"]
+    assert [beer.get(day) for day in days[:11]] == [500.0] * 11
+    assert not any(day in beer for day in days[11:])
+    basis = bsales.window_basis(d)
+    assert basis["mapping_needed"] is True
+    # A night whose only drinks are under the new name is a named gap night
+    # (V5: it keeps the window from being judged)...
+    gaps = {g["date"]: g for g in basis["gaps"]}
+    assert sorted(gaps) == days[11:14] and {g["why"] for g in gaps.values()} == {"no_drinks_mapped"}
+    # ...and on a night with other drinks, the new name is named with its dollars.
+    named = {u["key"]: u for u in basis["unmapped_categories"]}
+    assert named["Local Pours"]["sales_usd"] == 1500.0 and basis["unmapped_usd"] == 1500.0
+
+
 def test_an_item_category_inside_beer_can_be_mapped_to_liquor(db):
     rid = _rid(db)
     day = "2026-10-05"

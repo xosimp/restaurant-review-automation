@@ -285,6 +285,26 @@ def test_a_low_reading_keeps_its_caveat_under_an_owner_target():
     assert "count the shelf" in low["action"] and "your 18% target" in low["metric"]
 
 
+def test_a_target_below_the_range_suppresses_the_low_insight_only_when_met():
+    """EDG list 9, as V18 left it: a target set below the range. Over it
+    (13% against 12%, the range starting at 14%) the one card is the
+    target's — never a "reads below the range" card beside it. Under it
+    (10%) the low card stands, its caveat with it, naming the target."""
+    lines, sales = steady()
+    for net, over in ((182.0, True), (140.0, False)):
+        ls = [dict(l, net=net) if l["category"] == "liquor" else l for l in lines]
+        pc = pc_of(ls, sales, targets={"liquor": 12.0})
+        liq = cat(pc, "liquor")
+        assert liq["judged"] and liq["range_tone"] == "low" and 12.0 < liq["range"][0], liq
+        ks = keys(bi._insights(pc, {}, 0))
+        if over:
+            assert liq["target_tone"] == "over" and "over_target:liquor" in ks and "low:liquor" not in ks
+        else:
+            assert liq["target_tone"] == "under" and "over_target:liquor" not in ks
+            low = next(i for i in bi._insights(pc, {}, 0) if i["key"] == "low:liquor")
+            assert "count the shelf" in low["action"] and "your 12% target" in low["metric"]
+
+
 def test_clearing_a_target_returns_to_the_industry_range():
     lines, sales = steady()
     with_t = pc_of(lines, sales, targets={"liquor": 10.0})
