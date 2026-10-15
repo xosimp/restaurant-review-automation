@@ -108,8 +108,10 @@ def test_the_prompt_says_which_budget_it_is_and_never_the_salaries(monkeypatch):
     monkeypatch.setattr(labor, "create_with_retry", fake)
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")
+    # A measured labor % needs sales behind it (re-audit 10/11/26 AI-12: with
+    # no sales the prompt says "not measured"), so the window has sales.
     analysis = {"overall_labor_pct": 28.0, "overstaffed_days": [], "understaffed_days": [], "dow_summary": {},
-                "total_sales": 0, "period_days": 0, "by_day": _by_day()}
+                "total_sales": 100000, "period_days": 28, "by_day": _by_day()}
     out = labor.generate_optimized_schedule(analysis, [], roster=[("Ana", "Server")], week_start="2026-10-05",
                                             projected_revenue_override=100000, hourly_rate=15.0, labor_target=35.0,
                                             salaried_week={"cost": 5769.23, "people": 2, "trading_days": 7})

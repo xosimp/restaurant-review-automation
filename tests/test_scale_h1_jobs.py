@@ -195,4 +195,6 @@ def test_a_draft_made_on_the_publish_day_itself_is_not_auto_published(db):
     assert not scheduler._drafted_today("2026-10-01 14:10:00", date(2026, 10, 2), r)  # the draft day
     src = open(scheduler.__file__).read()
     fn = src[src.index("def run_auto_publish_schedules"):]
-    assert fn.index("_drafted_today(") < fn.index("delayed.schedule(")
+    # The send is queued through delayed.queue_schedule_send since the
+    # re-audit (10/11/26 BUGSLIFE-9: one waiting send per week).
+    assert fn.index("_drafted_today(") < fn.index("delayed.queue_schedule_send(")
