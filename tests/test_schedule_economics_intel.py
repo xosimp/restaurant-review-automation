@@ -479,3 +479,31 @@ def test_demand_blind_notice_reads_the_last_sales_date(db_path, rid):
     out = schedule_engine._demand_data_through(rid)
     assert out["date"] == old and out["days_ago"] == 40 and out["blind"]
     assert out["blocked"] and out["stale"] and "Reconnect the POS" in out["message"]
+
+
+def test_the_trim_lands_on_the_same_week_however_slow_the_clock_runs(monkeypatch):
+    # The trim's budgets are work, never the wall clock (10/14/26, LOGIC-9):
+    # the 24-hour diner's week trimmed to 152 rows on one press and 154 on
+    # the next, because the clock decided where the score stopped choosing
+    # and where the trim stopped. A clock that crawls 9 seconds a reading must
+    # give exactly the week a fast one does.
+    import time
+    rows = [_row(d, n, "4:00pm", "8:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]
+    rows += [_row(d, "Dee", "11:00am", "9:00pm") for d in WEEK[4:]]
+    score = lambda rs: -sum(float(r["scheduled_hours"]) for r in rs if r["employee"] == "Dee")  # noqa: E731
+
+    def trim():
+        out, trimmed, removed = econ.trim_to_budget(
+            [dict(r) for r in rows], hours_budget=80.0, daily_targets={d: 14 for d in WEEK},
+            constraints=_c(compliance={"min_shift_hours": 4.0}), floors={}, score_fn=score)
+        return sorted((r["date"], r["employee"], r["shift_start"], r["shift_end"]) for r in out), removed
+
+    fast = trim()
+    real = time.monotonic
+    ticks = {"n": 0}
+
+    def slow():
+        ticks["n"] += 1
+        return real() + 9.0 * ticks["n"]
+    monkeypatch.setattr(time, "monotonic", slow)
+    assert trim() == fast

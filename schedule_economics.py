@@ -56,14 +56,23 @@ from canonical_facts import FINAL_SQL
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
 TRIM_SCORE_CANDIDATES = 5       # how many equally-discretionary rows the score chooses between
-TRIM_SCORE_SECONDS = 8.0        # past this the score stops choosing; the order alone decides (big rosters)
+TRIM_SCORE_SECONDS = 8.0        # kept for callers that pass score_seconds; read as TRIM_SCORE_EVALS below
+# The trim's budgets are WORK, never the wall clock (the same week trimmed to
+# 152 rows on one press and 154 on the next when the clock decided where it
+# stopped — blind re-audit 10/11/26 LOGIC-9/STRESS-10, found 10/14/26 on the
+# 24-hour diner): how many week-scores the score may spend choosing, how many
+# priced candidates the whole trim may weigh, and a far wall-clock cap that is
+# only an emergency stop (reported as timed_out).
+TRIM_SCORE_EVALS = 400
+TRIM_MAX_WORK = 20000
+TRIM_WALL_CAP_SECONDS = 180.0
 # The close stagger: the end of a shift goes before a whole shift does — at
 # most this much off one shift, in half hours, never leaving it shorter than a
 # four-hour shift (the overtime trim's floor).
 TRIM_TAIL_MAX_HOURS = 2.0
 TRIM_TAIL_STEP_MIN = 30
 TRIM_MAX_TAIL_CUTS = 120
-TRIM_MAX_SECONDS = 20.0         # past this the trim stops where it is and says what is left over
+TRIM_MAX_SECONDS = TRIM_WALL_CAP_SECONDS   # the emergency stop only; the trim's budget is TRIM_MAX_WORK
 # A cut must lower the one objective (schedule_objective.price_week) by at
 # least this many dollars to be a saving.
 OBJECTIVE_MIN_GAIN_USD = 0.5
@@ -2169,9 +2178,10 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
     (a partial redo)."""
     if not hourly_profile:
         return rows, []
-    import time as _time
     import schedule_rules as _sr
-    _t0 = _time.monotonic()
+    scored = {"n": 0}
+    score_evals = TRIM_SCORE_EVALS if score_seconds == TRIM_SCORE_SECONDS else \
+        max(0, int(round(TRIM_SCORE_EVALS * float(score_seconds) / TRIM_SCORE_SECONDS)))
     c = constraints
     only = set(only_dates) if only_dates else None
     index = _sr.requirement_index(requirements, c) if requirements else {}
@@ -2243,11 +2253,14 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             if not legal:
                 continue      # every stagger of this row breaks something: it stays
             off = legal[0][0]
-            if score_fn is not None and _time.monotonic() - _t0 > score_seconds:
+            # Scoring stops after a fixed number of week-scores, never on the
+            # clock (the same week staggered differently on a busy box).
+            if score_fn is not None and scored["n"] >= score_evals:
                 score_fn = None
             if score_fn is not None:
                 best = None
                 for step, trial in legal + [(0, list(rows))]:
+                    scored["n"] += 1
                     try:
                         val = score_fn(trial)
                     except Exception:
@@ -2489,9 +2502,15 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     cut_rows = set()    # id() of rows already ended early — one cut per shift
     refusals = {}       # id(row) -> (reason, detail) from the last search
     timed_out = False
+    # Work done, the trim's only budget: one priced candidate or one
+    # week-score is one unit (and a week-score also counts toward the score's
+    # own TRIM_SCORE_EVALS). The wall clock only stops a runaway.
+    work = {"units": 0, "scores": 0}
+    score_evals = TRIM_SCORE_EVALS if score_seconds == TRIM_SCORE_SECONDS else \
+        max(0, int(round(TRIM_SCORE_EVALS * float(score_seconds) / TRIM_SCORE_SECONDS)))
 
     def _out_of_time():
-        return _time.monotonic() - _t0 > TRIM_MAX_SECONDS
+        return work["units"] > TRIM_MAX_WORK or _time.monotonic() - _t0 > TRIM_WALL_CAP_SECONDS
 
     def _learned_note(r) -> str:
         worse_s, _lean = _learned(r)
@@ -2604,6 +2623,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     def _objective_change(r, new):
         """(the week's objective dollars now, with `r` changed into `new`) —
         (None, None) when it cannot be priced (the trim's own order rules)."""
+        work["units"] += 1
         try:
             if pricer is not None:
                 if id(r) in no_show:
@@ -2628,7 +2648,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return ((splh or {}).get(day) or {}).get(_daypart(r), {}).get("splh")
 
     def _scoring():
-        return score_fn is not None and _time.monotonic() - _t0 <= score_seconds
+        return score_fn is not None and work["scores"] < score_evals
 
     def _choose(options):
         """The option (row, new, hours) that lowers the one objective
@@ -2650,6 +2670,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         best = None
         for opt in options:
             r, new, _h = opt
+            work["units"] += 1
+            work["scores"] += 1
             try:
                 val = score_fn([x for x in rows if x is not r] + ([new] if new is not None else []))
             except Exception:
