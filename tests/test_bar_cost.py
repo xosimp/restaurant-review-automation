@@ -65,7 +65,12 @@ def test_pour_cost_reads_purchases_against_sales_by_category(db):
     cats = {c["key"]: c for c in out["pour_cost"]["categories"]}
     assert cats["beer"]["purchases"] == 458.0 and cats["beer"]["sales"] == 2200.0
     assert cats["beer"]["pct"] == round(458 / 2200 * 100, 1)
-    assert cats["liquor"]["pct"] == 20.0 and cats["liquor"]["tone"] == "good"
+    assert cats["liquor"]["pct"] == 20.0
+    # Two days is shown, never judged (Bar audit V8 — this test used to pin a
+    # "good" tone on this two-day window).
+    assert cats["liquor"]["tone"] is None and cats["liquor"]["judged"] is False
+    assert cats["liquor"]["not_judged"] == "short_window" and out["pour_cost"]["window"]["days"] == 2
+    assert out["pour_cost"]["basis"] == "purchases" and out["pour_cost"]["label"] == "Bought vs sold"
     assert cats["wine"]["pct"] is None, "no wine invoices is never 0%"
 
 
@@ -131,8 +136,11 @@ def test_a_distributor_gone_quiet_is_said_and_its_category_not_judged(db):
         rows += _row("Breakthru Beverage", f"B{i}", d + "/2026", "300.00", "9031", "TITOS VDK 1L", "CA", 1, "300.00")
     rows += _row("Chicago Beverage", "C1", "10/05/2026", "229.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 1, "229.00")
     fi.ingest_file(rid, "x.csv", (HEAD + rows).encode(), db_path=db)
-    for d in ("2026-09-20", "2026-10-01", "2026-10-05"):
-        _sales(db, rid, d, beer=500, liquor=900, wine=0)
+    # Sales every night (three scattered nights read as a closure since the
+    # gap detector learned that a silent span with no sales is no gap, V9).
+    from datetime import timedelta
+    for k in range(35):
+        _sales(db, rid, (date(2026, 9, 1) + timedelta(days=k)).isoformat(), beer=500, liquor=900, wine=0)
     pc = bc.build(rid, db_path=db, today=date(2026, 10, 6))["pour_cost"]
     assert pc["complete"] is False and pc["gaps"][0]["distributor"] == "Breakthru Beverage"
     liq = next(c for c in pc["categories"] if c["key"] == "liquor")
@@ -150,7 +158,11 @@ def test_a_tax_line_is_never_a_price_change(db):
     assert not pw["increases"] and not pw["decreases"]
 
 
-def test_the_week_by_week_trend_gaps_a_window_with_invoices_missing(db):
+def test_the_week_by_week_trend_reads_every_point_of_a_steady_house(db):
+    """Renamed (Bar audit EDG-24): it was called "…gaps a window with
+    invoices missing" and asserted there were none. The gap branch is
+    tests/test_bar_judge.py's
+    test_a_trend_window_with_a_house_missing_is_a_gap_and_its_total_is_partial."""
     rid = _rid(db)
     rows = ""
     days = [f"{m:02d}/{d:02d}/2026" for m, d in ((8, 3), (8, 10), (8, 17), (8, 24), (8, 31), (9, 7), (9, 14),
@@ -183,9 +195,16 @@ def test_the_insights_say_only_what_was_measured(db):
     out = bc.build(rid, db_path=db, today=date(2026, 10, 1))
     keys = [i["key"] for i in out["insights"]]
     top = out["price_watch"]["increases"][0]
-    assert keys[0] == "price:" + top["product_key"] and top["name"] == "ST Germain Liqueur 750ML"  # +$18 x 7 > +$20 x 6
-    assert "concentration" in keys
-    assert all(set(i) == {"key", "tone", "headline", "metric", "action"} for i in out["insights"])
+    assert top["name"] == "ST Germain Liqueur 750ML"  # +$18 x 7 > +$20 x 6
+    # A single higher purchase is not a change that held (Bar audit V2/V24):
+    # a price card needs W5's kind "increase" and `persistent`; and four
+    # increases never make a concentration card (V25 — this test used to pin
+    # that tautology). The price-card rules are tests/test_bar_judge.py's.
+    held = [r for r in out["price_watch"]["increases"] if r.get("persistent") is True and r.get("kind") == "increase"]
+    assert all(k == "price:" + r["product_key"] for k, r in zip([k for k in keys if k.startswith("price:")], held))
+    assert "concentration" not in keys
+    assert all(set(i) == {"key", "tone", "headline", "metric", "action", "basis", "confidence"}
+               for i in out["insights"])
     assert not any(i["key"].startswith(("over:", "trend:")) for i in out["insights"]), "no sales: nothing judged"
     s = out["price_watch"]["summary"]
     assert s["up_n"] == 4 and s["up_impact_90d"] == round(sum(r["impact_90d"] for r in out["price_watch"]["increases"]), 2)
@@ -196,20 +215,30 @@ def test_the_owners_own_targets_judge_the_bar_when_set(db):
     """Account -> Targets (10/14/26): with a target of their own a category is
     judged against it — over it is a warning with the dollars over — and the
     industry range stays as context; without one the range judges."""
+    # Four whole weeks (Bar audit V8: this test used to judge a two-day
+    # window): a keg and a case of liquor every week, sales every night.
+    from datetime import timedelta
     rid = _rid(db)
-    csv = HEAD + _row("Chicago Beverage", "A1", "10/01/2026", "458.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 2, "229.00") \
-        + _row("Breakthru Beverage", "B1", "10/02/2026", "300.00", "9031", "TITOS VDK 1L", "CA", 1, "300.00")
+    csv = HEAD
+    for k in range(5):
+        d = (date(2026, 9, 6) + timedelta(days=7 * k)).strftime("%m/%d/%Y")
+        csv += _row("Chicago Beverage", f"A{k}", d, "458.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 2, "229.00")
+    for k in range(4):
+        d = (date(2026, 9, 10) + timedelta(days=7 * k)).strftime("%m/%d/%Y")
+        csv += _row("Breakthru Beverage", f"B{k}", d, "300.00", "9031", "TITOS VDK 1L", "CA", 1, "300.00")
     fi.ingest_file(rid, "x.csv", csv.encode(), db_path=db)
-    for d in ("2026-10-01", "2026-10-02"):
-        _sales(db, rid, d, beer=1100, liquor=750, wine=100)
+    for k in range(28):
+        _sales(db, rid, (date(2026, 9, 7) + timedelta(days=k)).isoformat(), beer=550, liquor=6000 / 28, wine=100)
     models.update_restaurant(rid, {"liquor_cost_target": 18.0, "bar_cost_target": 25.0}, db_path=db)
-    out = bc.build(rid, db_path=db, today=date(2026, 10, 4))
+    out = bc.build(rid, db_path=db, today=date(2026, 10, 5))
     pc = out["pour_cost"]
+    assert pc["window"]["days"] == 28
     cats = {c["key"]: c for c in pc["categories"]}
     liq = cats["liquor"]
     assert liq["pct"] == 20.0 and liq["target"] == 18.0 and liq["target_source"] == "owner"
-    assert liq["tone"] == "warn", "20% is inside the industry range but over the owner's 18%"
-    assert liq["over_target_usd"] == round((20.0 - 18.0) / 100 * 1500, 2)
+    assert liq["judged"] is True
+    assert liq["tone"] == "warn", "20% is a reading over the owner's 18%"
+    assert liq["over_target_usd"] == round(1200 - 18.0 / 100 * liq["sales"], 2)
     assert cats["beer"]["target"] is None and cats["beer"]["target_source"] == "industry"
     assert pc["total"]["target"] == 25.0
     keys = [i["key"] for i in out["insights"]]

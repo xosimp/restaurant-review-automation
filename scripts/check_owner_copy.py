@@ -18,7 +18,8 @@ write it, a test fixture) carries the marker `owner-copy-ok` on that line.
 
 What is read:
   * Python (emails.py, reporter.py, notify.py, strategy_jobs.py,
-    milestones.py, value_delivered.py, sales_audit_cheatsheet.py): string
+    milestones.py, value_delivered.py, sales_audit_cheatsheet.py, bar_cost.py
+    and every bar/*.py): string
     literals only — never comments, never docstrings.
   * Swift (ios/**/*.swift): string literals only, never // comments.
   * HTML (templates/**, public/**): the page text and inline script
@@ -35,7 +36,10 @@ import tokenize
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PY_FILES = ["emails.py", "reporter.py", "notify.py", "strategy_jobs.py", "milestones.py", "value_delivered.py",
-            "sales_audit_cheatsheet.py"]
+            "sales_audit_cheatsheet.py",
+            # The Bar page's owner copy (insights, not-judged reasons, the
+            # payload's basis line) — Bar audit R19, 10/15/26.
+            "bar_cost.py"] + sorted("bar/" + f for f in os.listdir(os.path.join(ROOT, "bar")) if f.endswith(".py"))
 HTML_DIRS = ["templates", "public"]
 SWIFT_DIR = "ios"
 

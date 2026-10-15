@@ -4733,6 +4733,9 @@ def init_db(db_path: str = DB_PATH):
     # The bar's shelf counts by category (bar.counts — counted pour cost, F1).
     from bar.counts import init_bar_counts
     init_bar_counts(db_path)
+    # The owner's "we stopped buying from X" (bar.judge, Bar fix round V9).
+    from bar.judge import init_bar_judge
+    init_bar_judge(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
@@ -5263,6 +5266,31 @@ OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct
 # The alcohol targets, by the Bar page category each judges (None = overall).
 BAR_TARGET_FIELDS = {None: "bar_cost_target", "beer": "beer_cost_target", "liquor": "liquor_cost_target",
                      "wine": "wine_cost_target"}
+# The range an alcohol target may hold — the Targets route's bounds
+# (strategy_routes._TARGET_BOUNDS), held at the model layer too: 'abc', 0,
+# -5 and 200 were stored by any other writer and made everything "over"
+# (Bar audit V18 / EDG-22).
+BAR_TARGET_BOUNDS = (5.0, 60.0)
+
+
+def _check_bar_targets(updates):
+    """Each alcohol target in `updates` is None (cleared; '' clears too) or a
+    number from 5 to 60 — else ValueError and nothing is written."""
+    lo, hi = BAR_TARGET_BOUNDS
+    for f in BAR_TARGET_FIELDS.values():
+        if f not in updates:
+            continue
+        v = updates[f]
+        if v is None or (isinstance(v, str) and not v.strip()):
+            updates[f] = None
+            continue
+        try:
+            n = float(v) if not isinstance(v, bool) else float("nan")
+        except (TypeError, ValueError):
+            raise ValueError(f"{f} must be a number, not {v!r}") from None
+        if n != n or not lo <= n <= hi:
+            raise ValueError(f"{f} must be between {lo:g} and {hi:g}, not {v!r}")
+        updates[f] = n
 
 
 # The revenue target is ONE stored figure, `monthly_revenue_target`. An owner
@@ -5381,6 +5409,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         fields = dict(fields)
         fields["monthly_revenue_target"] = monthly_from_weekly(fields.pop("weekly_revenue_target"))
     updates = {k: v for k, v in fields.items() if k in allowed}
+    _check_bar_targets(updates)
     if "auto_draft_weekday" in updates and "auto_draft_weekday_chosen" not in updates:
         # Any write of the draft day is a choice — the owner's picker, an
         # undo, an admin's edit — and is never replaced by the spread
@@ -5440,6 +5469,28 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     # Will setting 28% at onboarding read to the owner as "your 28% target"
     # (thresholds.target_label; memory audit "change_log", PEOPLE-6).
     _set_now = [t for t, s in TARGET_SOURCE_FIELDS.items() if t in updates and updates.get(s) == "set"]
+    # The alcohol targets have no source column (no default, no seed): a
+    # CHANGED non-empty value is a target someone set, recorded the same way
+    # so the Bar page never calls an admin's view-as save "your target"
+    # (Bar audit R9; thresholds.bar_target_for).
+    _bar_now = [f for f in BAR_TARGET_FIELDS.values() if updates.get(f) is not None]
+    if _bar_now:
+        try:
+            _cb = get_conn(db_path)
+            try:
+                _prev_b = _cb.execute(f"SELECT {', '.join(_bar_now)} FROM restaurants WHERE id=?",
+                                      (restaurant_id,)).fetchone()
+            finally:
+                _cb.close()
+        except Exception:
+            _prev_b = None
+        for _bf in _bar_now:
+            try:
+                _was_b = _prev_b[_bf] if _prev_b is not None else None
+                if _was_b is None or abs(float(_was_b) - float(updates[_bf])) > 1e-9:
+                    _set_now.append(_bf)
+            except (TypeError, ValueError):
+                _set_now.append(_bf)
     if _set_now and "target_setters_json" not in updates:
         try:
             _c1 = get_conn(db_path)

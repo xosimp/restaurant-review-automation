@@ -21,8 +21,15 @@ module has one owner in a fix round):
              boot only)
 - purchases  _lines: the invoice lines, sorted and netted
 - sales      _sales: the nightly report's sales by bar category
-- pour_cost  RULE_OF_THUMB, _window, _gaps, _judge, _pour_cost, _trend
-- targets    owner_targets: the owner's own alcohol cost targets
+- pour_cost  range_for, RULE_OF_THUMB, _window, _gaps, _total, _judge,
+             window_span, _pour_cost, _trend ("Bought vs sold" until two
+             counts bracket the window, then "Pour cost (counted)")
+- judge      the one judgement policy (judge, freshness, stock_up, houses,
+             stopped, confidence) and the owner's "we stopped buying from X"
+             (bar_stopped_distributors, init_bar_judge; 10/15/26, not on the
+             facade)
+- targets    owner_targets, target_details: the owner's own alcohol cost
+             targets through thresholds.bar_target_for
 - prices     _price_watch
 - spend      _distributors, _products
 - insights   _insights
