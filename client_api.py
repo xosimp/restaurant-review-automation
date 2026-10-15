@@ -11874,7 +11874,9 @@ def food_cost_bar_category(current_user):
         return jsonify(**_bc.set_category(current_user["restaurant_id"], key, b.get("category"),
                                           user_id=current_user.get("id")))
     except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        # set_category's own owner-facing sentence (which categories exist),
+        # never an exception's text (a provider error can carry its URL).
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That category isn't one of the five.")), 400
 
 
 @client_bp.route("/api/food-cost/cfo")

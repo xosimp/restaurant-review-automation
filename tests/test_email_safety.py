@@ -72,8 +72,12 @@ def test_every_send_site_goes_through_a_guarded_path():
         src = open(path, encoding="utf-8").read()
         # provider_health GETs /domains to check the key (it sends nothing; the
         # probe moved there from status_manager); anything else is new.
-        if "api.resend.com" in src and path not in ("emails.py", "provider_health.py"):
+        # email_intake GETs Resend Receiving's received emails and their
+        # attachments (the Fintech invoice intake); it sends nothing.
+        if "api.resend.com" in src and path not in ("emails.py", "provider_health.py", "email_intake.py"):
             offenders.append(path)
+        if path in ("provider_health.py", "email_intake.py") and re.search(r"requests\.(post|put|patch)\s*\(", src):
+            offenders.append(path + " (a write to Resend outside emails.deliver)")
         # Raw SDK sends — every one of these is blocked by conftest's
         # resend.Emails.send patch. A new file appearing here means a new
         # send path someone should route through emails.deliver instead.

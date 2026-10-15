@@ -8296,14 +8296,15 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
     b.innerHTML=h;
     bigMount(b);
-    drCheer(b);
+    // The celebration is decoration: it may never cost the owner the report.
+    try{drCheer(b);}catch(e){}
   }
   // The night beat its forecast or budget (owner, 10/13/26): one short
   // burst of ember sparks from the hero's net, and its "+$X vs" line pops.
   // Once per night per browser (localStorage, best effort), never under
   // reduced motion, never on a night that missed.
   function drCheer(root){
-    var hero=root&&root.querySelector('.dr-score.dr-beat[data-cheer]');if(!hero)return;
+    var hero=root&&root.querySelector&&root.querySelector('.dr-score.dr-beat[data-cheer]');if(!hero)return;
     if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
     var key='cav_dsr_cheer:'+hero.getAttribute('data-cheer');
     try{if(window.localStorage.getItem(key))return;window.localStorage.setItem(key,'1');}catch(e){}
@@ -45446,8 +45447,10 @@ function sfw2RuleCheck(chk) {
     return h;
   }
   function load(cb) {
-    fetch('/api/food-cost/bar', {credentials: 'same-origin'}).then(function (r) { return r.json(); })
-      .then(function (d) { DATA = d; cb(d); }).catch(function () { cb(null); });
+    fetch('/api/food-cost/bar', {credentials: 'same-origin'}).then(function (r) {
+      if (!r.ok) throw new Error('bar ' + r.status);
+      return r.json();
+    }).then(function (d) { DATA = d; cb(d); }).catch(function () { cb(null); });
   }
   function paint() {
     var body = document.getElementById('br-body'); if (!body) return;
@@ -45461,7 +45464,11 @@ function sfw2RuleCheck(chk) {
   function setCategory(key, cat, sel) {
     sel.disabled = true;
     fetch('/api/food-cost/bar/category', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({product_key: key, category: cat})}).then(function (r) { return r.json(); }).then(function (d) {
+      body: JSON.stringify({product_key: key, category: cat})}).then(function (r) {
+      // A refusal still carries its sentence; a non-JSON failure reads as not saved.
+      return r.json().then(function (d) { d = d || {}; if (!r.ok) d.ok = false; return d; },
+                           function () { return {ok: false}; });
+    }).then(function (d) {
       sel.disabled = false;
       if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'That didn’t save. Try again.', 'error'); return; }
       if (typeof toast === 'function') toast('Saved — pour cost updated', 'success');

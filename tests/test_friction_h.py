@@ -192,8 +192,11 @@ def test_a_filter_or_search_on_a_partial_page_asks_the_server():
     assert _fn("filterReviews").split("\n")[3].strip().startswith("if(rvServerSync())return;")
     sync = _fn("rvServerSync")
     assert "/api/reviews/page?" in sync and "data-list-key" in sync
-    # A complete, unfiltered page is filtered in place — no request.
-    assert "if(have==='all||'&&total<=loaded)return false;" in sync
+    # A complete, unfiltered page is filtered in place — no request — except
+    # Most recent and This month, which the server orders newest first
+    # (10/12/26).
+    assert "if(have==='all||'&&total<=loaded&&!ordered)return false;" in sync
+    assert "ordered=/^(recent|month)\\|/.test(want)" in sync
     assert "rvNoteTotal(d.total)" in _fn("updateReviewStats")
     assert "insertBefore" in _fn("rvPullNew") and "reload" not in _fn("rvPullNew")
 

@@ -109,7 +109,9 @@ def test_answerable_brief_lines_carry_done_and_not_for_us_but_not_track():
     m = re.search(r"var BRIEF_MOD=\{([^}]*)\};", SRC)
     assert m and "stock:'food'" in m.group(1) and "slow_day:'marketing'" in m.group(1)
     ctrl = _fn("recControlsHtml")
-    assert "!(opts&&opts.noTrack)&&REC_TRACKABLE[m]" in ctrl
+    # A line may ask for Measure it itself (opts.track: a report action that
+    # carries a number); noTrack still wins.
+    assert "!(opts&&opts.noTrack)&&((opts&&opts.track)||REC_TRACKABLE[m])" in ctrl
     # The reason picker opens under the line, not inside it.
     assert ".hb-tl .it" in _fn("recPickerHost")
 
