@@ -1,5 +1,5 @@
 """Erik's checklist sheets load onto his staff checklists (9/28/26):
-bar opening -> Bartender AM, server opening + end of morning -> Server AM,
+bar opening -> Bartender AM, bar closing -> Bartender PM, server opening + end of morning -> Server AM,
 server closing -> Server PM; a re-run adds nothing."""
 import json
 import os
@@ -15,7 +15,11 @@ def test_each_sheet_lands_on_its_job_in_order():
     by_job = {}
     for job, line in todo:
         by_job.setdefault(job, []).append(line)
-    assert set(by_job) == {"Bartender AM", "Server AM", "Server PM"}
+    assert set(by_job) == {"Bartender AM", "Bartender PM", "Server AM", "Server PM"}
+    # Stephanie's closing sheet (10/14/26): her 35 lines in her order.
+    pm = by_job["Bartender PM"]
+    assert len(pm) == 35 and pm[0].startswith("Be sure all dishes & dish tubs")
+    assert pm[-1] == "Put bar cart in cooler & lock door."
     assert by_job["Bartender AM"][0] == "Punch in with your personal number"
     assert len(by_job["Bartender AM"]) == 29
     am = by_job["Server AM"]

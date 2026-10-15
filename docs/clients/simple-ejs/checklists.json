@@ -4,8 +4,7 @@
  "job_codes_note": "job_code values are RPOWER job names at Simple EJ's (read 9/28/26): Barback AM/PM, Bartender, Bartender AM/PM, Busser AM/PM, Dishwasher, Host AM/PM, Kitchen, Manager BOH/FOH, Mascot, Server AM/PM, Training, Utility AM/PM. The server sheets were written as opening / end of morning / closing (Erik, 9/23): the opening and end-of-morning sheets are the morning server's (Server AM), the closing sheet the night server's (Server PM) - Will, 9/28/26. A staff member's checklist is one flat list per job, so a sheet sharing a job with another carries a `prefix` that heads each of its lines (the end-of-morning lines read \"Before clocking out: ...\"). Loaded onto rid 5 with scripts/load_checklists.py.",
  "pending": [
   "Host - Opening (Will has it, not yet sent)",
-  "Host - Closing (Will has it, not yet sent)",
-  "Bartender - Closing (Erik: still being written, as of 9/28/26)"
+  "Host - Closing (Will has it, not yet sent)"
  ],
  "sheets": [
   {
@@ -103,6 +102,124 @@
       },
       {
        "label": "Grab your 2 dish tubs"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "job_code": "Bartender PM",
+   "shift_kind": "closing",
+   "title": "Bar closing duties",
+   "source": "Stephanie (EJ's top bartender), 10/14/26 (\"Closing Duties Checklist\"), sent by Will. Her wording and order; only a doubled space was removed. Bartender PM is the closer (its shifts end 10pm-1:15am; Bartender AM ends by ~9pm).",
+   "sections": [
+    {
+     "title": "Closing duties",
+     "items": [
+      {
+       "label": "Be sure all dishes & dish tubs are brought back to kitchen before kitchen closes."
+      },
+      {
+       "label": "If the 3rd & 2nd wells are open, you need to break them down first."
+      },
+      {
+       "label": "3rd well first then 2nd well next."
+      },
+      {
+       "label": "Start by taking fruit & see if the 1st well can fit it in their fruit containers, if it can fit empty the fruit into fruit holder. If it can’t wrap it with plastic & place it on bar cart."
+      },
+      {
+       "label": "Remove juices, wipe them off & place on bar cart."
+      },
+      {
+       "label": "See if the fresh mint or rosemary will fit in the 1st well, if it will add it to glasses, if not wrap with plastic wrap & store on bar cart."
+      },
+      {
+       "label": "Wrap up cherries, walnuts, coffee beans & salt with plastic wrap."
+      },
+      {
+       "label": "Put black bottle caps on liquor bottles & wipe off & Wipe down well where bottles sit."
+      },
+      {
+       "label": "Also cap the bitters bottles & wipe down."
+      },
+      {
+       "label": "Remove all bar tools & containers."
+      },
+      {
+       "label": "Do the same to the 1st well when it’s time."
+      },
+      {
+       "label": "Wipe down bar wells & tops make sure they are clean & free of any debris. If need be put hot water down them & make sure all water drains."
+      },
+      {
+       "label": "Fill all the straw & coaster holders."
+      },
+      {
+       "label": "Fill all to go boxes, napkins, silverware rolls, & plates in their area. There are two."
+      },
+      {
+       "label": "Be sure all coolers are stocked & full. Don’t forget the Red Bull cooler too."
+      },
+      {
+       "label": "Clean Kettle one Espresso machine, rinse the runoff tray & turn it off on side & in front."
+      },
+      {
+       "label": "Remove the container & store in cooler."
+      },
+      {
+       "label": "Wrap dispenser & cord connector with plastic wrap."
+      },
+      {
+       "label": "Wash beer well take top off & wash in sink in kitchen."
+      },
+      {
+       "label": "Pour hot bleach water down well & make sure it is drained & dry. Put glass over drain."
+      },
+      {
+       "label": "Cap off beer spouts & wrap plastic around Guinness spout."
+      },
+      {
+       "label": "Make sure all sink drains are clean & free of any debris. Put glass over all sink drains."
+      },
+      {
+       "label": "Turn off Frozen drinks machine, wipe down & clean run off tray & put back."
+      },
+      {
+       "label": "Wipe down outside of coolers & turn off lights."
+      },
+      {
+       "label": "Wrap pop guns with plastic wrap to stop bugs."
+      },
+      {
+       "label": "Wrap fruit container in plastic wrap & store in cooler."
+      },
+      {
+       "label": "Pour hot bleach water down drain under 1st well ice bin."
+      },
+      {
+       "label": "Wipe down bar & make sure it’s clean."
+      },
+      {
+       "label": "Make sure all glassware is cleaned & put away."
+      },
+      {
+       "label": "Cover ice bin."
+      },
+      {
+       "label": "Make sure bar mats are taken to kitchen to get cleaned."
+      },
+      {
+       "label": "Be sure all trash bins are emptied & new bags put in."
+      },
+      {
+       "label": "Make sure all dirty rags are removed from bar."
+      },
+      {
+       "label": "Make sure the drawer is settled & counted down & all credit card receipts are attached to the nightly report."
+      },
+      {
+       "label": "Put bar cart in cooler & lock door."
       }
      ]
     }
