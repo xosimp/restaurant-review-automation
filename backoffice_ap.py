@@ -124,6 +124,12 @@ def init_backoffice_ap(db_path=None):
             updated_at TEXT NOT NULL,
             PRIMARY KEY (restaurant_id, vendor_key, invoice_key, line_no))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bo_invoice_lines_item ON bo_invoice_lines(restaurant_id, item_code)")
+        # The restaurant's Back Office recipe book, whole (backoffice_recipes.load).
+        conn.execute("""CREATE TABLE IF NOT EXISTS bo_recipe_books (
+            restaurant_id INTEGER PRIMARY KEY,
+            payload TEXT NOT NULL,
+            source TEXT,
+            loaded_at TEXT NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS bo_vendor_categories (
             restaurant_id INTEGER NOT NULL,
             vendor_key TEXT NOT NULL,

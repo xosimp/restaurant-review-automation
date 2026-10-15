@@ -13870,6 +13870,25 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-bo-tbl td.n{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
 .fc2-bo-sup{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink2)}
 .fc2-bo-sup select{min-height:40px}
+.fc2-pl-fig{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.fc2-pl-fig b{font-family:'Space Grotesk',sans-serif;font-size:44px;font-weight:600;color:var(--ink);letter-spacing:-.02em}
+.fc2-pl-fig span{font-size:15px;color:var(--ink2)}
+.fc2-pl-list{display:flex;flex-direction:column}
+.fc2-pl-row{border-top:1px solid var(--hb-line2)}
+.fc2-pl-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;align-items:baseline;padding:9px 0;font-size:14px;color:var(--ink2)}
+.fc2-pl-row>summary::-webkit-details-marker{display:none}
+.fc2-pl-row>summary .d{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.fc2-pl-row>summary .d small{display:block;font-size:12.5px;color:var(--ink3)}
+.fc2-pl-row>summary .n{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.fc2-pl-row>summary .n.p{color:var(--ink2)}
+.fc2-pl-head{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;font-size:12px;color:var(--ink3);padding-bottom:6px}
+.fc2-pl-head span+span{text-align:right}
+.fc2-pl-lines{padding:2px 0 12px 12px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink3)}
+.fc2-pl-lines .l{display:flex;gap:10px;justify-content:space-between}
+.fc2-pl-lines .l .n{font-family:'Space Grotesk',sans-serif;color:var(--ink2);white-space:nowrap}
+.fc2-pl-lines .miss{color:var(--ember2)}
+.fc2-pl-more>summary{cursor:pointer;font-size:13.5px;color:var(--ember2);padding:10px 0;list-style:none}
+@media (max-width:560px){.fc2-pl-row>summary,.fc2-pl-head{grid-template-columns:minmax(0,1fr) repeat(2,minmax(56px,auto))}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
 .fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
 .fc2-cfo-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--hb-line2)}
 .fc2-cfo-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
@@ -14052,6 +14071,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      food suppliers were paid as a % of the POS's food sales, purchase-based.
      Filled by /api/food-cost/purchases; hidden until there is a reading. #}
   <div id="fc2-bo" class="fc2-cfo" hidden></div>
+  {# Plate costs from the restaurant's Back Office recipes (backoffice_recipes,
+     10/15/26): each dish's recipe at today's supplier prices beside what the
+     POS took for it. Filled by /api/food-cost/plates; hidden without recipes. #}
+  <div id="fc2-pl" class="fc2-cfo" hidden></div>
   <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
@@ -29079,6 +29102,7 @@ function loadInvInsight(){
   fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();
   fc2LoadCfo();
   fc2LoadBo();
+  fc2LoadPlates();
   if(window.memLoadPars)memLoadPars();
   var fiveMin=5*60*1000;
   try{
@@ -29189,6 +29213,45 @@ document.addEventListener('change',function(ev){
       else toast((r&&r.error)||'That couldn’t be saved just now.','error');
     })['catch'](function(){toast('That couldn’t be saved just now.','error');});
 });
+// ── Plate costs, from the Back Office recipes ───────────────────────────────
+// Each dish's recipe at today's supplier prices (the latest invoice line, read
+// the way the supplier bills it, else Back Office's last price) beside what
+// the POS took for it. A dish with an ingredient that can't be priced shows
+// "at least" and no percentage.
+var FC2_PL_SHOW=12;
+function fc2PlMoney(v){return '$'+(Number(v)||0).toFixed(2);}
+function fc2PlRow(p){
+  var e=fc2BoEsc,i,h='',cost=(p.complete?'':'≥ ')+fc2PlMoney(p.cost),sub=[];
+  if(p.units)sub.push('<span class="hb-num">'+Math.round(p.units).toLocaleString()+'</span> sold');
+  if(!p.complete)sub.push(p.missing.length+' ingredient'+(p.missing.length===1?'':'s')+' not priced');
+  if(!p.pos_names.length)sub.push('not matched to the POS');
+  h+='<details class="fc2-pl-row"><summary><span class="d">'+e(p.name)+(sub.length?'<small>'+sub.join(' · ')+'</small>':'')+'</span>';
+  h+='<span class="n p">'+(p.price==null?'—':fc2PlMoney(p.price))+'</span><span class="n">'+cost+'</span>';
+  h+='<span class="n x">'+(p.cost_pct==null?'—':e(p.cost_pct)+'%')+'</span><span class="n x">'+(p.margin==null?'—':fc2PlMoney(p.margin))+'</span></summary><div class="fc2-pl-lines">';
+  for(i=0;i<p.lines.length;i++){var l=p.lines[i];
+    h+='<div class="l"><span>'+(l.qty==null?'':'<span class="hb-num">'+e(l.qty)+'</span> ')+e(l.unit)+' '+e(l.name)+(l.per?' · '+e(l.per)+(l.source==='invoice'?' (invoice)':' (Back Office)'):'')+(l.flag?' · '+e(l.flag):'')+'</span>'+(l.missing?'<span class="miss">'+e(l.missing)+'</span>':'<span class="n">'+fc2PlMoney(l.cost)+'</span>')+'</div>';}
+  for(i=0;i<p.missing.length;i++){var m=p.missing[i];if(m.via)h+='<div class="l"><span>'+e(m.via)+' › '+e(m.name)+'</span><span class="miss">'+e(m.reason)+'</span></div>';}
+  return h+'</div></details>';
+}
+function fc2LoadPlates(){
+  var host=document.getElementById('fc2-pl');if(!host)return;
+  fetch('/api/food-cost/plates',{headers:{'Accept':'application/json'}})
+    .then(apiJson)
+    .then(function(d){
+      if(!d||!d.ok||!d.available||!(d.plates||[]).length){host.hidden=true;return;}
+      var w=d.window||{},s=d.summary||{},ps=d.plates,h='',i,rows='',rest='';
+      h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from Back Office recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
+      if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>what the recipes cost for the dishes that sold, at today’s prices · the fully priced dishes, <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> sold</span></div>';
+      h+='<div><span class="fc2-bo-chip">Recipe cost · not a count</span></div>';
+      h+='<div class="fc2-pl-head"><span>Dish · four weeks</span><span>Price</span><span>Cost</span><span class="x">Cost %</span><span class="x">Margin</span></div><div class="fc2-pl-list">';
+      for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
+      h+=rows+'</div>';
+      if(rest)h+='<details class="fc2-pl-more"><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
+      var pr=d.prices||{};
+      h+='<div class="fc2-cfo-basis">Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from Back Office: <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'')+'</div></div>';
+      host.innerHTML=h;host.hidden=false;
+    })['catch'](function(){host.hidden=true;});
+}
 function fc2LoadCfo(){
   var host=document.getElementById('fc2-cfo');if(!host)return;
   fetch('/api/food-cost/cfo',{headers:{'Accept':'application/json'}})
@@ -29668,6 +29731,7 @@ function fc2ApplyWaste(w){
   if(typeof loadWasteTrend==='function')loadWasteTrend(true);
   if(typeof fc2LoadCfo==='function')fc2LoadCfo();
   if(typeof fc2LoadBo==='function')fc2LoadBo();
+  if(typeof fc2LoadPlates==='function')fc2LoadPlates();
 }
 function fc2LogWaste(btn){
   var ing=(document.getElementById('fc2-waste-ing')||{}).value,q=parseFloat((document.getElementById('fc2-waste-qty')||{}).value),why=(document.getElementById('fc2-waste-why')||{}).value;

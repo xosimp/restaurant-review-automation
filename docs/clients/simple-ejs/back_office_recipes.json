@@ -1,6 +1,6 @@
 {
  "source": "Back Office (Buyers Edge) \u2192 Menu Engineering \u2192 Unit Recipes, and Inventory \u2192 Items ~ Unit; read 10/15/26 from Erik's login, Simple EJs #7101",
- "note": "bo_cost is Back Office's own figure and is wrong wherever an item's pack is set up differently from how the supplier bills it (catch-weight brisket, bacon, onions by the sack, milk by the gallon). Cost plates from invoice prices, not from bo_cost.",
+ "note": "bo_cost is Back Office's own figure and is wrong wherever an item's pack is set up differently from how the supplier bills it (catch-weight brisket, bacon, onions by the sack, milk by the gallon). Cost plates from invoice prices, not from bo_cost. Each vendor's weight_per_unit / volume_per_unit is Back Office's conversion for one of that vendor's pack units (or purchase unit when there is no pack), e.g. butter blend: 1 Pound = 32.4 Tbsp.",
  "recipes": [
   {
    "name": "BAKE BROWNIES",
@@ -7314,7 +7314,11 @@
      "pack_unit": "Box",
      "price": "$51.18",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "weight_per_unit": [
+      20.0,
+      "Ounce"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -7324,7 +7328,11 @@
      "pack_unit": "Box",
      "price": "$56.92",
      "yield": "100%",
-     "last_purchased": "8/26/2026"
+     "last_purchased": "8/26/2026",
+     "weight_per_unit": [
+      20.0,
+      "Ounce"
+     ]
     }
    ]
   },
@@ -7378,7 +7386,11 @@
      "pack_unit": "Each",
      "price": "$20.59",
      "yield": "100%",
-     "last_purchased": "10/1/2026"
+     "last_purchased": "10/1/2026",
+     "volume_per_unit": [
+      1.75,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -7396,7 +7408,15 @@
      "pack_unit": "",
      "price": "$14.22",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "weight_per_unit": [
+      19.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      4.95,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7414,7 +7434,11 @@
      "pack_unit": "Pound",
      "price": "$28.21",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      2.27,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7424,7 +7448,11 @@
      "pack_unit": "Pound",
      "price": "$26.80",
      "yield": "100%",
-     "last_purchased": "5/13/2026"
+     "last_purchased": "5/13/2026",
+     "volume_per_unit": [
+      2.27,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7442,7 +7470,15 @@
      "pack_unit": "",
      "price": "$14.24",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      16.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      72.0,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -7460,7 +7496,15 @@
      "pack_unit": "",
      "price": "$70.73",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      20.85,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7478,7 +7522,11 @@
      "pack_unit": "Pound",
      "price": "$83.61",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -7488,7 +7536,11 @@
      "pack_unit": "Pound",
      "price": "$89.63",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     }
    ]
   },
@@ -7506,7 +7558,15 @@
      "pack_unit": "",
      "price": "$81.49",
      "yield": "100%",
-     "last_purchased": "9/24/2026"
+     "last_purchased": "9/24/2026",
+     "weight_per_unit": [
+      7.25,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      328.28,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -7524,7 +7584,15 @@
      "pack_unit": "",
      "price": "$111.11",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      20.55,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7534,7 +7602,15 @@
      "pack_unit": "",
      "price": "$45.98",
      "yield": "100%",
-     "last_purchased": "8/22/2026"
+     "last_purchased": "8/22/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      20.55,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7570,7 +7646,11 @@
      "pack_unit": "Pound",
      "price": "$68.92",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7580,7 +7660,11 @@
      "pack_unit": "Pound",
      "price": "$19.35",
      "yield": "100%",
-     "last_purchased": "10/3/2026"
+     "last_purchased": "10/3/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     }
    ]
   },
@@ -7654,7 +7738,11 @@
      "pack_unit": "Pound",
      "price": "$29.66",
      "yield": "100%",
-     "last_purchased": "9/14/2026"
+     "last_purchased": "9/14/2026",
+     "volume_per_unit": [
+      0.49,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7664,7 +7752,11 @@
      "pack_unit": "Pound",
      "price": "$29.99",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      0.49,
+      "Quart"
+     ]
     }
    ]
   },
@@ -7682,7 +7774,15 @@
      "pack_unit": "Box",
      "price": "$46.68",
      "yield": "100%",
-     "last_purchased": "9/28/2026"
+     "last_purchased": "9/28/2026",
+     "weight_per_unit": [
+      3.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      6.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -7692,7 +7792,11 @@
      "pack_unit": "Pound",
      "price": "$4.99",
      "yield": "100%",
-     "last_purchased": "6/11/2026"
+     "last_purchased": "6/11/2026",
+     "volume_per_unit": [
+      6.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7710,7 +7814,11 @@
      "pack_unit": "Pound",
      "price": "$68.41",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      0.49,
+      "Quart"
+     ]
     }
    ]
   },
@@ -7728,7 +7836,11 @@
      "pack_unit": "Pound",
      "price": "$113.11",
      "yield": "100%",
-     "last_purchased": "8/20/2026"
+     "last_purchased": "8/20/2026",
+     "volume_per_unit": [
+      1.34,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7738,7 +7850,15 @@
      "pack_unit": "Bottle",
      "price": "$108.45",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      6.7,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7756,7 +7876,11 @@
      "pack_unit": "Pound",
      "price": "$118.86",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      2.93,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7774,7 +7898,15 @@
      "pack_unit": "",
      "price": "$13.95",
      "yield": "100%",
-     "last_purchased": "8/13/2026"
+     "last_purchased": "8/13/2026",
+     "weight_per_unit": [
+      15.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      3.41,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7792,7 +7924,11 @@
      "pack_unit": "Pound",
      "price": "$69.39",
      "yield": "100%",
-     "last_purchased": "5/4/2026"
+     "last_purchased": "5/4/2026",
+     "volume_per_unit": [
+      32.4,
+      "Tbsp"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7802,7 +7938,11 @@
      "pack_unit": "Pound",
      "price": "$48.65",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "volume_per_unit": [
+      32.4,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -7820,7 +7960,11 @@
      "pack_unit": "Pound",
      "price": "$24.28",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      3.07,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7830,7 +7974,11 @@
      "pack_unit": "Pound",
      "price": "$71.95",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      3.07,
+      "Cup"
+     ]
     }
    ]
   },
@@ -7848,7 +7996,11 @@
      "pack_unit": "",
      "price": "$11.63",
      "yield": "100%",
-     "last_purchased": "7/13/2026"
+     "last_purchased": "7/13/2026",
+     "volume_per_unit": [
+      31.5,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -7866,7 +8018,11 @@
      "pack_unit": "Bottle",
      "price": "$52.63",
      "yield": "100%",
-     "last_purchased": "3/30/2026"
+     "last_purchased": "3/30/2026",
+     "volume_per_unit": [
+      64.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7940,7 +8096,15 @@
      "pack_unit": "",
      "price": "$16.01",
      "yield": "100%",
-     "last_purchased": "9/21/2026"
+     "last_purchased": "9/21/2026",
+     "weight_per_unit": [
+      16.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      64.0,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -7958,7 +8122,15 @@
      "pack_unit": "",
      "price": "$21.83",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "weight_per_unit": [
+      21.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      89.25,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -7976,7 +8148,15 @@
      "pack_unit": "",
      "price": "$11.89",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      20.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      56.6,
+      "Tbsp"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -7986,7 +8166,15 @@
      "pack_unit": "",
      "price": "$21.30",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      56.6,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -8050,7 +8238,11 @@
      "pack_unit": "Pound",
      "price": "$76.65",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      3.06,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -8060,7 +8252,15 @@
      "pack_unit": "Bag",
      "price": "$30.94",
      "yield": "100%",
-     "last_purchased": "10/6/2026"
+     "last_purchased": "10/6/2026",
+     "weight_per_unit": [
+      22.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      33.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8078,7 +8278,11 @@
      "pack_unit": "Pound",
      "price": "$214.80",
      "yield": "100%",
-     "last_purchased": "9/1/2026"
+     "last_purchased": "9/1/2026",
+     "volume_per_unit": [
+      0.51,
+      "Quart"
+     ]
     }
    ]
   },
@@ -8124,7 +8328,11 @@
      "pack_unit": "Package",
      "price": "$42.52",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      3.2,
+      "Ounce"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -8134,7 +8342,11 @@
      "pack_unit": "Each",
      "price": "$62.82",
      "yield": "100%",
-     "last_purchased": "6/11/2026"
+     "last_purchased": "6/11/2026",
+     "weight_per_unit": [
+      3.2,
+      "Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8144,7 +8356,11 @@
      "pack_unit": "Each",
      "price": "$41.99",
      "yield": "100%",
-     "last_purchased": "6/11/2026"
+     "last_purchased": "6/11/2026",
+     "weight_per_unit": [
+      3.2,
+      "Ounce"
+     ]
     }
    ]
   },
@@ -8162,7 +8378,11 @@
      "pack_unit": "Pound",
      "price": "$105.53",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      1.13,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8172,7 +8392,11 @@
      "pack_unit": "Pound",
      "price": "$28.95",
      "yield": "100%",
-     "last_purchased": "8/22/2026"
+     "last_purchased": "8/22/2026",
+     "volume_per_unit": [
+      1.13,
+      "Quart"
+     ]
     }
    ]
   },
@@ -8236,7 +8460,15 @@
      "pack_unit": "Container",
      "price": "$120.05",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "weight_per_unit": [
+      2.25,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      20.57,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -8246,7 +8478,11 @@
      "pack_unit": "Pound",
      "price": "$94.65",
      "yield": "100%",
-     "last_purchased": "3/29/2026"
+     "last_purchased": "3/29/2026",
+     "volume_per_unit": [
+      22.7,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8256,7 +8492,15 @@
      "pack_unit": "Container",
      "price": "$75.55",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "weight_per_unit": [
+      2.8,
+      "Kilogram"
+     ],
+     "volume_per_unit": [
+      98.8,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -8274,7 +8518,11 @@
      "pack_unit": "Pound",
      "price": "$13.96",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      16.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8284,7 +8532,11 @@
      "pack_unit": "",
      "price": "$11.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      16.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8302,7 +8554,11 @@
      "pack_unit": "Pound",
      "price": "$10.72",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      1.75,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8312,7 +8568,11 @@
      "pack_unit": "Pound",
      "price": "$5.95",
      "yield": "100%",
-     "last_purchased": "9/8/2026"
+     "last_purchased": "9/8/2026",
+     "volume_per_unit": [
+      1.75,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8322,7 +8582,11 @@
      "pack_unit": "Pound",
      "price": "$30.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      1.75,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8358,7 +8622,15 @@
      "pack_unit": "",
      "price": "$22.27",
      "yield": "100%",
-     "last_purchased": "9/21/2026"
+     "last_purchased": "9/21/2026",
+     "weight_per_unit": [
+      19.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      4.95,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8376,7 +8648,11 @@
      "pack_unit": "Pound",
      "price": "$21.01",
      "yield": "100%",
-     "last_purchased": "5/25/2026"
+     "last_purchased": "5/25/2026",
+     "volume_per_unit": [
+      3.13,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8386,7 +8662,11 @@
      "pack_unit": "Pound",
      "price": "$23.95",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "volume_per_unit": [
+      3.13,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8404,7 +8684,15 @@
      "pack_unit": "Can",
      "price": "$89.79",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "weight_per_unit": [
+      4.51,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      117.33,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8414,7 +8702,15 @@
      "pack_unit": "Can",
      "price": "$45.99",
      "yield": "100%",
-     "last_purchased": "10/1/2026"
+     "last_purchased": "10/1/2026",
+     "weight_per_unit": [
+      4.51,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      117.33,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -8450,7 +8746,11 @@
      "pack_unit": "Pound",
      "price": "$59.21",
      "yield": "100%",
-     "last_purchased": "10/2/2026"
+     "last_purchased": "10/2/2026",
+     "volume_per_unit": [
+      0.83,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8460,7 +8760,11 @@
      "pack_unit": "Pound",
      "price": "$55.25",
      "yield": "100%",
-     "last_purchased": "9/18/2026"
+     "last_purchased": "9/18/2026",
+     "volume_per_unit": [
+      0.83,
+      "Quart"
+     ]
     }
    ]
   },
@@ -8478,7 +8782,15 @@
      "pack_unit": "",
      "price": "$80.20",
      "yield": "100%",
-     "last_purchased": "4/20/2026"
+     "last_purchased": "4/20/2026",
+     "weight_per_unit": [
+      6.75,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      28.14,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8496,7 +8808,15 @@
      "pack_unit": "",
      "price": "$76.53",
      "yield": "100%",
-     "last_purchased": "4/20/2026"
+     "last_purchased": "4/20/2026",
+     "weight_per_unit": [
+      5.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      378.4,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -8542,7 +8862,11 @@
      "pack_unit": "Pound",
      "price": "$50.36",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      5.34,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8552,7 +8876,11 @@
      "pack_unit": "Pound",
      "price": "$34.95",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      5.34,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8588,7 +8916,11 @@
      "pack_unit": "Pound",
      "price": "$31.72",
      "yield": "100%",
-     "last_purchased": "7/13/2026"
+     "last_purchased": "7/13/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8598,7 +8930,11 @@
      "pack_unit": "Pound",
      "price": "$20.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8616,7 +8952,11 @@
      "pack_unit": "Pound",
      "price": "$18.16",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      5.34,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8626,7 +8966,11 @@
      "pack_unit": "Pound",
      "price": "$9.95",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      5.34,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8680,7 +9024,15 @@
      "pack_unit": "",
      "price": "$29.77",
      "yield": "100%",
-     "last_purchased": "4/20/2026"
+     "last_purchased": "4/20/2026",
+     "weight_per_unit": [
+      24.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      14.17,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8698,7 +9050,15 @@
      "pack_unit": "",
      "price": "$14.69",
      "yield": "100%",
-     "last_purchased": "9/17/2026"
+     "last_purchased": "9/17/2026",
+     "weight_per_unit": [
+      6.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      3.94,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8716,7 +9076,11 @@
      "pack_unit": "",
      "price": "$11.95",
      "yield": "100%",
-     "last_purchased": "4/20/2026"
+     "last_purchased": "4/20/2026",
+     "weight_per_unit": [
+      2.0,
+      "Ounce"
+     ]
     }
    ]
   },
@@ -8734,7 +9098,11 @@
      "pack_unit": "Pound",
      "price": "$32.27",
      "yield": "100%",
-     "last_purchased": "7/6/2026"
+     "last_purchased": "7/6/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -8744,7 +9112,11 @@
      "pack_unit": "Pound",
      "price": "$55.97",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      0.75,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -8754,7 +9126,11 @@
      "pack_unit": "",
      "price": "$39.26",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      0.75,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8764,7 +9140,11 @@
      "pack_unit": "Pound",
      "price": "$28.95",
      "yield": "100%",
-     "last_purchased": "5/30/2026"
+     "last_purchased": "5/30/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8782,7 +9162,11 @@
      "pack_unit": "Pound",
      "price": "$22.15",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      3.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8792,7 +9176,11 @@
      "pack_unit": "Pound",
      "price": "$22.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      3.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8810,7 +9198,11 @@
      "pack_unit": "Pound",
      "price": "$47.40",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8820,7 +9212,11 @@
      "pack_unit": "Pound",
      "price": "$33.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8830,7 +9226,11 @@
      "pack_unit": "Pound",
      "price": "$18.95",
      "yield": "100%",
-     "last_purchased": "5/19/2026"
+     "last_purchased": "5/19/2026",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8848,7 +9248,11 @@
      "pack_unit": "Pound",
      "price": "$51.41",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8866,7 +9270,11 @@
      "pack_unit": "Pound",
      "price": "$79.33",
      "yield": "100%",
-     "last_purchased": "8/13/2026"
+     "last_purchased": "8/13/2026",
+     "volume_per_unit": [
+      0.47,
+      "Quart"
+     ]
     }
    ]
   },
@@ -8884,7 +9292,15 @@
      "pack_unit": "Container",
      "price": "$92.06",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      11.0,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      42.35,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8894,7 +9310,11 @@
      "pack_unit": "Pound",
      "price": "$37.36",
      "yield": "100%",
-     "last_purchased": "5/30/2026"
+     "last_purchased": "5/30/2026",
+     "volume_per_unit": [
+      1.8,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8912,7 +9332,11 @@
      "pack_unit": "Pound",
      "price": "$57.32",
      "yield": "100%",
-     "last_purchased": "8/3/2026"
+     "last_purchased": "8/3/2026",
+     "volume_per_unit": [
+      1.2,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8922,7 +9346,11 @@
      "pack_unit": "Pound",
      "price": "$131.80",
      "yield": "100%",
-     "last_purchased": "9/26/2026"
+     "last_purchased": "9/26/2026",
+     "volume_per_unit": [
+      1.2,
+      "Quart"
+     ]
     }
    ]
   },
@@ -8940,7 +9368,15 @@
      "pack_unit": "Can",
      "price": "$355.40",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "weight_per_unit": [
+      28.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      2.5,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -8950,7 +9386,15 @@
      "pack_unit": "",
      "price": "$19.72",
      "yield": "100%",
-     "last_purchased": "9/11/2026"
+     "last_purchased": "9/11/2026",
+     "weight_per_unit": [
+      25.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      2.4,
+      "Cup"
+     ]
     }
    ]
   },
@@ -8968,7 +9412,11 @@
      "pack_unit": "Can",
      "price": "$64.92",
      "yield": "100%",
-     "last_purchased": "9/21/2026"
+     "last_purchased": "9/21/2026",
+     "weight_per_unit": [
+      7.0,
+      "Ounce"
+     ]
     }
    ]
   },
@@ -8986,7 +9434,15 @@
      "pack_unit": "",
      "price": "$15.34",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "weight_per_unit": [
+      26.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      47.58,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -9068,7 +9524,11 @@
      "pack_unit": "Pound",
      "price": "$27.45",
      "yield": "100%",
-     "last_purchased": "8/10/2026"
+     "last_purchased": "8/10/2026",
+     "volume_per_unit": [
+      3.78,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9122,7 +9582,11 @@
      "pack_unit": "Bottle",
      "price": "$35.29",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      20.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9140,7 +9604,11 @@
      "pack_unit": "Pound",
      "price": "$32.08",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      2.06,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9158,7 +9626,15 @@
      "pack_unit": "",
      "price": "$51.57",
      "yield": "100%",
-     "last_purchased": "4/20/2026"
+     "last_purchased": "4/20/2026",
+     "weight_per_unit": [
+      5.5,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      19.49,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9176,7 +9652,11 @@
      "pack_unit": "Pound",
      "price": "$56.98",
      "yield": "100%",
-     "last_purchased": "9/10/2026"
+     "last_purchased": "9/10/2026",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9194,7 +9674,11 @@
      "pack_unit": "Can",
      "price": "$44.42",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      115.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9212,7 +9696,11 @@
      "pack_unit": "Pound",
      "price": "$22.19",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      4.72,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9222,7 +9710,11 @@
      "pack_unit": "Pound",
      "price": "$10.95",
      "yield": "100%",
-     "last_purchased": "9/24/2026"
+     "last_purchased": "9/24/2026",
+     "volume_per_unit": [
+      4.72,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9240,7 +9732,11 @@
      "pack_unit": "Bottle",
      "price": "$61.90",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      28.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9250,7 +9746,11 @@
      "pack_unit": "Bottle",
      "price": "$57.35",
      "yield": "100%",
-     "last_purchased": "9/21/2026"
+     "last_purchased": "9/21/2026",
+     "volume_per_unit": [
+      28.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9268,7 +9768,11 @@
      "pack_unit": "Pound",
      "price": "$9.58",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      0.52,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9278,7 +9782,11 @@
      "pack_unit": "Pound",
      "price": "$12.95",
      "yield": "100%",
-     "last_purchased": "9/12/2026"
+     "last_purchased": "9/12/2026",
+     "volume_per_unit": [
+      0.52,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9288,7 +9796,11 @@
      "pack_unit": "Pound",
      "price": "$7.55",
      "yield": "100%",
-     "last_purchased": "8/21/2026"
+     "last_purchased": "8/21/2026",
+     "volume_per_unit": [
+      0.52,
+      "Quart"
+     ]
     }
    ]
   },
@@ -9344,7 +9856,11 @@
      "pack_unit": "Bottle",
      "price": "$31.57",
      "yield": "100%",
-     "last_purchased": "9/24/2026"
+     "last_purchased": "9/24/2026",
+     "volume_per_unit": [
+      105.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9362,7 +9878,11 @@
      "pack_unit": "Pound",
      "price": "$31.27",
      "yield": "100%",
-     "last_purchased": "9/24/2026"
+     "last_purchased": "9/24/2026",
+     "volume_per_unit": [
+      10.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9372,7 +9892,11 @@
      "pack_unit": "Pound",
      "price": "$26.95",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      10.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9382,7 +9906,11 @@
      "pack_unit": "Pound",
      "price": "$85.95",
      "yield": "100%",
-     "last_purchased": "6/6/2026"
+     "last_purchased": "6/6/2026",
+     "volume_per_unit": [
+      10.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9400,7 +9928,11 @@
      "pack_unit": "Pound",
      "price": "$27.71",
      "yield": "100%",
-     "last_purchased": "5/21/2026"
+     "last_purchased": "5/21/2026",
+     "volume_per_unit": [
+      12.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9410,7 +9942,11 @@
      "pack_unit": "Pound",
      "price": "$12.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      12.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9428,7 +9964,11 @@
      "pack_unit": "Pound",
      "price": "$16.52",
      "yield": "100%",
-     "last_purchased": "7/9/2026"
+     "last_purchased": "7/9/2026",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9438,7 +9978,11 @@
      "pack_unit": "Pound",
      "price": "$18.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9456,7 +10000,11 @@
      "pack_unit": "Pound",
      "price": "$15.43",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      3.5,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9466,7 +10014,11 @@
      "pack_unit": "Pound",
      "price": "$14.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      3.5,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9484,7 +10036,11 @@
      "pack_unit": "Pound",
      "price": "$35.81",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9494,7 +10050,11 @@
      "pack_unit": "Pound",
      "price": "$3.35",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      0.46,
+      "Quart"
+     ]
     }
    ]
   },
@@ -9512,7 +10072,15 @@
      "pack_unit": "",
      "price": "$9.04",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      14.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      3.94,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9558,7 +10126,11 @@
      "pack_unit": "Pound",
      "price": "$42.54",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      3.5,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9568,7 +10140,11 @@
      "pack_unit": "",
      "price": "$5.95",
      "yield": "100%",
-     "last_purchased": "5/28/2026"
+     "last_purchased": "5/28/2026",
+     "volume_per_unit": [
+      3.5,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -9578,7 +10154,11 @@
      "pack_unit": "Pound",
      "price": "$22.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      3.5,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9596,7 +10176,11 @@
      "pack_unit": "Pound",
      "price": "$57.65",
      "yield": "100%",
-     "last_purchased": "8/27/2026"
+     "last_purchased": "8/27/2026",
+     "volume_per_unit": [
+      1.76,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9650,7 +10234,11 @@
      "pack_unit": "Pound",
      "price": "$48.32",
      "yield": "100%",
-     "last_purchased": "10/1/2026"
+     "last_purchased": "10/1/2026",
+     "volume_per_unit": [
+      1.89,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9772,7 +10360,11 @@
      "pack_unit": "Pound",
      "price": "$20.40",
      "yield": "100%",
-     "last_purchased": "3/30/2026"
+     "last_purchased": "3/30/2026",
+     "volume_per_unit": [
+      3.63,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9790,7 +10382,11 @@
      "pack_unit": "Can",
      "price": "$75.03",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "weight_per_unit": [
+      3.0,
+      "Kilogram"
+     ]
     }
    ]
   },
@@ -9808,7 +10404,11 @@
      "pack_unit": "Pound",
      "price": "$62.20",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      2.91,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -9818,7 +10418,11 @@
      "pack_unit": "Pound",
      "price": "$5.71",
      "yield": "100%",
-     "last_purchased": ""
+     "last_purchased": "",
+     "volume_per_unit": [
+      2.91,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9836,7 +10440,11 @@
      "pack_unit": "Pound",
      "price": "$31.54",
      "yield": "100%",
-     "last_purchased": "9/17/2026"
+     "last_purchased": "9/17/2026",
+     "volume_per_unit": [
+      2.25,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -9846,7 +10454,11 @@
      "pack_unit": "Pound",
      "price": "$52.95",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      2.25,
+      "Cup"
+     ]
     }
    ]
   },
@@ -9864,7 +10476,11 @@
      "pack_unit": "Can",
      "price": "$40.87",
      "yield": "100%",
-     "last_purchased": "9/17/2026"
+     "last_purchased": "9/17/2026",
+     "volume_per_unit": [
+      17.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9928,7 +10544,15 @@
      "pack_unit": "Bottle",
      "price": "$20.90",
      "yield": "100%",
-     "last_purchased": "5/12/2026"
+     "last_purchased": "5/12/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "SUPERIOR BEVERAGE",
@@ -9938,7 +10562,15 @@
      "pack_unit": "Bottle",
      "price": "$22.45",
      "yield": "100%",
-     "last_purchased": "9/29/2026"
+     "last_purchased": "9/29/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9956,7 +10588,15 @@
      "pack_unit": "Bottle",
      "price": "$24.55",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9974,7 +10614,15 @@
      "pack_unit": "Bottle",
      "price": "$35.40",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -9992,7 +10640,15 @@
      "pack_unit": "Bottle",
      "price": "$35.40",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10010,7 +10666,15 @@
      "pack_unit": "Bottle",
      "price": "$33.30",
      "yield": "100%",
-     "last_purchased": "5/20/2026"
+     "last_purchased": "5/20/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10028,7 +10692,15 @@
      "pack_unit": "Bottle",
      "price": "$35.00",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10046,7 +10718,15 @@
      "pack_unit": "Bottle",
      "price": "$24.35",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "EUCLID BEVERAGE",
@@ -10056,7 +10736,15 @@
      "pack_unit": "Bottle",
      "price": "$24.65",
      "yield": "100%",
-     "last_purchased": "9/16/2026"
+     "last_purchased": "9/16/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10074,7 +10762,15 @@
      "pack_unit": "Bottle",
      "price": "$24.55",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "EUCLID BEVERAGE",
@@ -10084,7 +10780,15 @@
      "pack_unit": "",
      "price": "$23.15",
      "yield": "100%",
-     "last_purchased": ""
+     "last_purchased": "",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "EUCLID BEVERAGE",
@@ -10094,7 +10798,15 @@
      "pack_unit": "Bottle",
      "price": "$22.90",
      "yield": "100%",
-     "last_purchased": "7/29/2026"
+     "last_purchased": "7/29/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10112,7 +10824,15 @@
      "pack_unit": "Bottle",
      "price": "$35.40",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10130,7 +10850,15 @@
      "pack_unit": "Bottle",
      "price": "$44.95",
      "yield": "100%",
-     "last_purchased": "5/8/2026"
+     "last_purchased": "5/8/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10148,7 +10876,15 @@
      "pack_unit": "Can",
      "price": "$24.10",
      "yield": "100%",
-     "last_purchased": "9/1/2026"
+     "last_purchased": "9/1/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10166,7 +10902,15 @@
      "pack_unit": "Can",
      "price": "$53.95",
      "yield": "100%",
-     "last_purchased": "9/17/2026"
+     "last_purchased": "9/17/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10184,7 +10928,15 @@
      "pack_unit": "Can",
      "price": "$35.65",
      "yield": "100%",
-     "last_purchased": "10/7/2026"
+     "last_purchased": "10/7/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10202,7 +10954,15 @@
      "pack_unit": "Can",
      "price": "$33.25",
      "yield": "100%",
-     "last_purchased": "5/20/2026"
+     "last_purchased": "5/20/2026",
+     "weight_per_unit": [
+      12.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10220,7 +10980,15 @@
      "pack_unit": "Bottle",
      "price": "$472.00",
      "yield": "100%",
-     "last_purchased": "5/12/2026"
+     "last_purchased": "5/12/2026",
+     "weight_per_unit": [
+      33.83,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      33.83,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10238,7 +11006,15 @@
      "pack_unit": "Bottle",
      "price": "$162.00",
      "yield": "100%",
-     "last_purchased": "6/23/2026"
+     "last_purchased": "6/23/2026",
+     "weight_per_unit": [
+      33.83,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      33.83,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10256,7 +11032,11 @@
      "pack_unit": "Bottle",
      "price": "$44.67",
      "yield": "100%",
-     "last_purchased": "8/20/2026"
+     "last_purchased": "8/20/2026",
+     "volume_per_unit": [
+      1.0,
+      "Liter"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -10266,7 +11046,11 @@
      "pack_unit": "Bottle",
      "price": "$45.66",
      "yield": "100%",
-     "last_purchased": "6/30/2026"
+     "last_purchased": "6/30/2026",
+     "volume_per_unit": [
+      1.0,
+      "Liter"
+     ]
     }
    ]
   },
@@ -10330,7 +11114,11 @@
      "pack_unit": "Pound",
      "price": "$38.86",
      "yield": "100%",
-     "last_purchased": "8/13/2026"
+     "last_purchased": "8/13/2026",
+     "volume_per_unit": [
+      48.06,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -10348,7 +11136,11 @@
      "pack_unit": "Bottle",
      "price": "$72.60",
      "yield": "100%",
-     "last_purchased": "8/13/2026"
+     "last_purchased": "8/13/2026",
+     "volume_per_unit": [
+      24.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -10358,7 +11150,11 @@
      "pack_unit": "Bottle",
      "price": "$75.89",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      24.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10376,7 +11172,11 @@
      "pack_unit": "Pound",
      "price": "$59.81",
      "yield": "100%",
-     "last_purchased": "3/30/2026"
+     "last_purchased": "3/30/2026",
+     "volume_per_unit": [
+      12.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10440,7 +11240,11 @@
      "pack_unit": "Bottle",
      "price": "$103.80",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      24.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -10458,7 +11262,11 @@
      "pack_unit": "Can",
      "price": "$51.77",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      6.64,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10476,7 +11284,11 @@
      "pack_unit": "Pound",
      "price": "$138.07",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "volume_per_unit": [
+      2.62,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10494,7 +11306,11 @@
      "pack_unit": "Pound",
      "price": "$74.75",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      4.44,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10504,7 +11320,11 @@
      "pack_unit": "Pound",
      "price": "$57.95",
      "yield": "100%",
-     "last_purchased": "9/16/2026"
+     "last_purchased": "9/16/2026",
+     "volume_per_unit": [
+      4.44,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10514,7 +11334,11 @@
      "pack_unit": "Pound",
      "price": "$45.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "volume_per_unit": [
+      4.44,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10532,7 +11356,11 @@
      "pack_unit": "Pound",
      "price": "$14.94",
      "yield": "100%",
-     "last_purchased": "9/17/2026"
+     "last_purchased": "9/17/2026",
+     "volume_per_unit": [
+      11.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10542,7 +11370,11 @@
      "pack_unit": "Pound",
      "price": "$21.95",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      11.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10552,7 +11384,11 @@
      "pack_unit": "Pound",
      "price": "$21.95",
      "yield": "100%",
-     "last_purchased": "5/23/2026"
+     "last_purchased": "5/23/2026",
+     "volume_per_unit": [
+      11.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10570,7 +11406,11 @@
      "pack_unit": "Pound",
      "price": "$15.31",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      6.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10580,7 +11420,11 @@
      "pack_unit": "Pound",
      "price": "$18.95",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "volume_per_unit": [
+      6.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -10590,7 +11434,11 @@
      "pack_unit": "Pound",
      "price": "$16.25",
      "yield": "100%",
-     "last_purchased": "6/30/2026"
+     "last_purchased": "6/30/2026",
+     "volume_per_unit": [
+      6.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10608,7 +11456,11 @@
      "pack_unit": "Pound",
      "price": "$76.90",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10618,7 +11470,11 @@
      "pack_unit": "Pound",
      "price": "$52.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      4.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10636,7 +11492,11 @@
      "pack_unit": "Pound",
      "price": "$29.98",
      "yield": "100%",
-     "last_purchased": "9/7/2026"
+     "last_purchased": "9/7/2026",
+     "volume_per_unit": [
+      2.74,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10646,7 +11506,11 @@
      "pack_unit": "Pound",
      "price": "$26.95",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "volume_per_unit": [
+      2.74,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10664,7 +11528,11 @@
      "pack_unit": "Pound",
      "price": "$34.59",
      "yield": "100%",
-     "last_purchased": "9/7/2026"
+     "last_purchased": "9/7/2026",
+     "volume_per_unit": [
+      0.31,
+      "Quart"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10674,7 +11542,11 @@
      "pack_unit": "Pound",
      "price": "$38.99",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      0.31,
+      "Quart"
+     ]
     }
    ]
   },
@@ -10692,7 +11564,15 @@
      "pack_unit": "Can",
      "price": "$51.04",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "weight_per_unit": [
+      6.75,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10702,7 +11582,15 @@
      "pack_unit": "Can",
      "price": "$59.99",
      "yield": "100%",
-     "last_purchased": "9/18/2026"
+     "last_purchased": "9/18/2026",
+     "weight_per_unit": [
+      2.5,
+      "Kilogram"
+     ],
+     "volume_per_unit": [
+      13.5,
+      "Cup"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -10712,7 +11600,15 @@
      "pack_unit": "Can",
      "price": "$54.66",
      "yield": "100%",
-     "last_purchased": "8/5/2026"
+     "last_purchased": "8/5/2026",
+     "weight_per_unit": [
+      6.75,
+      "Pound"
+     ],
+     "volume_per_unit": [
+      12.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10730,7 +11626,11 @@
      "pack_unit": "Pound",
      "price": "$27.94",
      "yield": "100%",
-     "last_purchased": "8/27/2026"
+     "last_purchased": "8/27/2026",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10740,7 +11640,15 @@
      "pack_unit": "Package",
      "price": "$30.95",
      "yield": "100%",
-     "last_purchased": "10/14/2026"
+     "last_purchased": "10/14/2026",
+     "weight_per_unit": [
+      11.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10758,7 +11666,11 @@
      "pack_unit": "Each",
      "price": "$37.52",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "weight_per_unit": [
+      4.5,
+      "Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10768,7 +11680,11 @@
      "pack_unit": "Each",
      "price": "$33.95",
      "yield": "100%",
-     "last_purchased": "10/5/2026"
+     "last_purchased": "10/5/2026",
+     "weight_per_unit": [
+      6.0,
+      "Ounce"
+     ]
     }
    ]
   },
@@ -10786,7 +11702,15 @@
      "pack_unit": "Each",
      "price": "$39.00",
      "yield": "100%",
-     "last_purchased": "8/27/2026"
+     "last_purchased": "8/27/2026",
+     "weight_per_unit": [
+      19.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      9.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10796,7 +11720,15 @@
      "pack_unit": "Each",
      "price": "$67.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "weight_per_unit": [
+      19.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      9.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10842,7 +11774,11 @@
      "pack_unit": "Pound",
      "price": "$70.72",
      "yield": "100%",
-     "last_purchased": "4/23/2026"
+     "last_purchased": "4/23/2026",
+     "volume_per_unit": [
+      2.21,
+      "Cup"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -10852,7 +11788,11 @@
      "pack_unit": "Pound",
      "price": "$50.77",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      2.21,
+      "Cup"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -10862,7 +11802,11 @@
      "pack_unit": "Pound",
      "price": "$71.44",
      "yield": "100%",
-     "last_purchased": "7/1/2026"
+     "last_purchased": "7/1/2026",
+     "volume_per_unit": [
+      2.21,
+      "Cup"
+     ]
     }
    ]
   },
@@ -10954,7 +11898,11 @@
      "pack_unit": "Each",
      "price": "$96.41",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      1.75,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -10964,7 +11912,11 @@
      "pack_unit": "Each",
      "price": "$34.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      1.75,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11084,7 +12036,11 @@
      "pack_unit": "Gallon",
      "price": "$28.13",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "weight_per_unit": [
+      5.5,
+      "Pound"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -11094,7 +12050,11 @@
      "pack_unit": "Gallon",
      "price": "$30.09",
      "yield": "100%",
-     "last_purchased": "7/24/2026"
+     "last_purchased": "7/24/2026",
+     "weight_per_unit": [
+      5.5,
+      "Pound"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -11104,7 +12064,11 @@
      "pack_unit": "Gallon",
      "price": "$28.13",
      "yield": "100%",
-     "last_purchased": "9/25/2026"
+     "last_purchased": "9/25/2026",
+     "weight_per_unit": [
+      5.5,
+      "Pound"
+     ]
     }
    ]
   },
@@ -11122,7 +12086,11 @@
      "pack_unit": "Pound",
      "price": "$11.31",
      "yield": "100%",
-     "last_purchased": "8/27/2026"
+     "last_purchased": "8/27/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -11132,7 +12100,11 @@
      "pack_unit": "Pound",
      "price": "$35.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      8.71,
+      "Cup"
+     ]
     }
    ]
   },
@@ -11168,7 +12140,11 @@
      "pack_unit": "Pound",
      "price": "$32.93",
      "yield": "100%",
-     "last_purchased": "8/27/2026"
+     "last_purchased": "8/27/2026",
+     "volume_per_unit": [
+      3.25,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -11178,7 +12154,11 @@
      "pack_unit": "Pound",
      "price": "$42.95",
      "yield": "100%",
-     "last_purchased": "10/10/2026"
+     "last_purchased": "10/10/2026",
+     "volume_per_unit": [
+      3.25,
+      "Cup"
+     ]
     }
    ]
   },
@@ -11214,7 +12194,11 @@
      "pack_unit": "Bottle",
      "price": "$98.54",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "volume_per_unit": [
+      8.5,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GORDON FOOD SERVICE",
@@ -11224,7 +12208,11 @@
      "pack_unit": "Bottle",
      "price": "$263.86",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      8.0,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "GFS FOOD STORE",
@@ -11234,7 +12222,11 @@
      "pack_unit": "Bottle",
      "price": "$91.76",
      "yield": "100%",
-     "last_purchased": "8/4/2026"
+     "last_purchased": "8/4/2026",
+     "volume_per_unit": [
+      8.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11252,7 +12244,11 @@
      "pack_unit": "Pound",
      "price": "$13.08",
      "yield": "100%",
-     "last_purchased": "11/11/2025"
+     "last_purchased": "11/11/2025",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     },
     {
      "vendor": "GRECO & SONS",
@@ -11262,7 +12258,11 @@
      "pack_unit": "Pound",
      "price": "$12.95",
      "yield": "100%",
-     "last_purchased": "10/8/2026"
+     "last_purchased": "10/8/2026",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -11280,7 +12280,11 @@
      "pack_unit": "",
      "price": "$33.38",
      "yield": "100%",
-     "last_purchased": "10/15/2026"
+     "last_purchased": "10/15/2026",
+     "volume_per_unit": [
+      56.0,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11298,7 +12302,11 @@
      "pack_unit": "Pound",
      "price": "$16.05",
      "yield": "100%",
-     "last_purchased": "8/17/2026"
+     "last_purchased": "8/17/2026",
+     "volume_per_unit": [
+      2.0,
+      "Cup"
+     ]
     }
    ]
   },
@@ -11344,7 +12352,11 @@
      "pack_unit": "Container",
      "price": "$84.71",
      "yield": "100%",
-     "last_purchased": "8/20/2026"
+     "last_purchased": "8/20/2026",
+     "volume_per_unit": [
+      35.2,
+      "Cup"
+     ]
     }
    ]
   },
@@ -11362,7 +12374,15 @@
      "pack_unit": "",
      "price": "$25.35",
      "yield": "100%",
-     "last_purchased": "10/12/2026"
+     "last_purchased": "10/12/2026",
+     "weight_per_unit": [
+      18.0,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      216.0,
+      "Tbsp"
+     ]
     }
    ]
   },
@@ -11380,7 +12400,15 @@
      "pack_unit": "Bottle",
      "price": "$180.00",
      "yield": "100%",
-     "last_purchased": "10/9/2026"
+     "last_purchased": "10/9/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11398,7 +12426,15 @@
      "pack_unit": "Bottle",
      "price": "$84.00",
      "yield": "100%",
-     "last_purchased": "9/29/2026"
+     "last_purchased": "9/29/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11416,7 +12452,15 @@
      "pack_unit": "Bottle",
      "price": "$192.00",
      "yield": "100%",
-     "last_purchased": "9/15/2026"
+     "last_purchased": "9/15/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11434,7 +12478,15 @@
      "pack_unit": "Bottle",
      "price": "$648.00",
      "yield": "100%",
-     "last_purchased": "5/11/2026"
+     "last_purchased": "5/11/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11452,7 +12504,15 @@
      "pack_unit": "Bottle",
      "price": "$144.00",
      "yield": "100%",
-     "last_purchased": "9/15/2026"
+     "last_purchased": "9/15/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11470,7 +12530,15 @@
      "pack_unit": "Bottle",
      "price": "$96.00",
      "yield": "100%",
-     "last_purchased": "5/6/2026"
+     "last_purchased": "5/6/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     },
     {
      "vendor": "WINEBOW",
@@ -11480,7 +12548,15 @@
      "pack_unit": "Bottle",
      "price": "$108.00",
      "yield": "100%",
-     "last_purchased": "8/12/2026"
+     "last_purchased": "8/12/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11498,7 +12574,15 @@
      "pack_unit": "Bottle",
      "price": "$126.00",
      "yield": "100%",
-     "last_purchased": "9/29/2026"
+     "last_purchased": "9/29/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11516,7 +12600,15 @@
      "pack_unit": "Bottle",
      "price": "$180.00",
      "yield": "100%",
-     "last_purchased": "9/29/2026"
+     "last_purchased": "9/29/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11534,7 +12626,15 @@
      "pack_unit": "Bottle",
      "price": "$61.50",
      "yield": "100%",
-     "last_purchased": "9/29/2026"
+     "last_purchased": "9/29/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11552,7 +12652,15 @@
      "pack_unit": "Bottle",
      "price": "$84.00",
      "yield": "100%",
-     "last_purchased": "10/6/2026"
+     "last_purchased": "10/6/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   },
@@ -11570,9 +12678,172 @@
      "pack_unit": "Bottle",
      "price": "$54.00",
      "yield": "100%",
-     "last_purchased": "10/13/2026"
+     "last_purchased": "10/13/2026",
+     "weight_per_unit": [
+      25.36,
+      "Ounce"
+     ],
+     "volume_per_unit": [
+      25.36,
+      "Fluid Ounce"
+     ]
     }
    ]
   }
- ]
+ ],
+ "pos_names": {
+  "SMASHBURGER- EJ'S STYLE": [
+   "EJ's Smash Burger"
+  ],
+  "CHICKEN WINGS": [
+   "Wings",
+   "GF The Wings"
+  ],
+  "HONEY CHICKY SANDWICH": [
+   "Honey Chicky"
+  ],
+  "SIMPLE FRIED RICE": [
+   "Fried Rice"
+  ],
+  "CHICKEN TENDERS": [
+   "Chix Tenders"
+  ],
+  "SIMPLY SEASONED FRIES- SINGLE": [
+   "Pers Simply Fries"
+  ],
+  "SMOKED BRISKET SLIDERS": [
+   "Brisket Sliders"
+  ],
+  "PRETZEL": [
+   "Pretzel"
+  ],
+  "MELTY BRISKET SAMMY": [
+   "Brisket Sammy"
+  ],
+  "MAC & CHEESETOPIA": [
+   "Mac & Cheese",
+   "GF Mac n Cheese"
+  ],
+  "CHICKEN & ARUGULA": [
+   "Chix & Arugula"
+  ],
+  "SPINACH & ARTICHOKE DIP PLATE": [
+   "Spin Art Dip"
+  ],
+  "SOUTHERN FRIED SALAD": [
+   "Southern Fried"
+  ],
+  "TRUFFLE, BLACK PEPPER & PARM FRIES- SINGLE": [
+   "Pers Truf Fries"
+  ],
+  "SIDE ONION RINGS": [
+   "Onion Rings"
+  ],
+  "CHIMICHURRI SHRIMP": [
+   "Chimi Shrimp",
+   "GF Chimi Shrimp"
+  ],
+  "SMASHBURGER- CLASSIC STYLE": [
+   "Classic Smash Bur"
+  ],
+  "THE VALLEY WEDGE SALAD": [
+   "Wedge"
+  ],
+  "BRUSSELS SPROUTS CAESAR SALAD": [
+   "Caesar"
+  ],
+  "MOD- ADD GRILLED CHICKEN": [
+   "Add Grill Chix"
+  ],
+  "TOMAHAWK PORK CHOP": [
+   "Pork Chop"
+  ],
+  "KIDS CHICKEN TENDERS": [
+   "K/ Tenders"
+  ],
+  "CHEESY CHIPS": [
+   "Cheesy Chips",
+   "GF Cheesy Chips"
+  ],
+  "SIMPLY SEASONED FRIES- TABLE": [
+   "Tbl Simply Fries"
+  ],
+  "MOD- ADD BEEF PATTY": [
+   "Add 2nd Patty"
+  ],
+  "KIDS BURGER": [
+   "K/ Burger"
+  ],
+  "CLASSIC SKILLET COOKIE": [
+   "Skillet Cookie"
+  ],
+  "S&S SALAD": [
+   "S&S"
+  ],
+  "SIDE CRISPY BRUSSELS SPROUTS": [
+   "Side Brussels"
+  ],
+  "SIDE MAC & CHEESE": [
+   "Sd Mac & Cheese"
+  ],
+  "KIDS MAC & CHEESE": [
+   "K/ Mac & Chs"
+  ],
+  "SPROUTS SHAREABLE": [
+   "Sprouts App",
+   "GF Sprouts"
+  ],
+  "TRUFFLE, BLACK PEPPER & PARM FRIES- TABLE": [
+   "Tbl Truf Fries"
+  ],
+  "MOD- ADD SHRIMP": [
+   "Add Shrimp"
+  ],
+  "BBQ SPICE RUB FRIES- SINGLE": [
+   "Pers BBQ Fries"
+  ],
+  "BBQ SPICE RUB FRIES- TABLE": [
+   "Tbl BBQ Fries"
+  ],
+  "SIDE SALAD": [
+   "Sd Salad"
+  ],
+  "WARM BROWNIE SUNDAE": [
+   "Brownie Sundae"
+  ],
+  "ALL AMERICAN BREAKFAST": [
+   "All American"
+  ],
+  "SIDE HOUSE KETTLE CHIPS": [
+   "Chips"
+  ],
+  "KIDS GRILLED CHEESE": [
+   "K/ Grilled Chs"
+  ],
+  "BISCUIT BOSS SANDWICH": [
+   "Biscuit Boss"
+  ],
+  "HOT HONEY CHICKEN & WAFFLES": [
+   "Chix & Waffles"
+  ],
+  "MOD- ADD PASTURE EGG": [
+   "Add Egg"
+  ],
+  "KIDS GRILLED CHICKEN BREAST": [
+   "K/ Chix Breast"
+  ],
+  "CINNAMON MONKEY BREAD BITES": [
+   "Monkey Bread Bite"
+  ],
+  "BYO SCRAMBLE": [
+   "BYO Scramble"
+  ],
+  "BAD ASS BACON": [
+   "Bad Ass Bacon"
+  ],
+  "MOD- ADD FALAFEL": [
+   "Add Falafel"
+  ]
+ },
+ "pos_names_note": "Each Back Office menu recipe and the RPOWER item names it rings as (Simple EJ's, matched 10/15/26). Left out where the match is not certain: Add Brisket (2 or 6 oz), Add Bacon ($2.99 / $4.99), Pers/Tbl Brisk and Chili Fries (which of Gruyere, Brisket & Chile / Cotija & Chimichurri), K/ Chicken Sand (fried or grilled), Stack Attack, Hellfire."
 }

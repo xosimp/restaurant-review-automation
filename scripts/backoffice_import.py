@@ -2,7 +2,9 @@
 (backoffice_ap.read_file): the Chart of Accounts CSV (Report Center → Export
 Chart of Accounts), the Invoices By Vendor page printed to PDF, or one
 invoice's Edit Invoice page printed to PDF (its line items, each with its GL
-account). Dry run by default (parses and reports, writes nothing); --apply
+account), or the restaurant's recipe book read from Back Office's recipe
+and item pages (JSON: backoffice_recipes.load, e.g.
+docs/clients/simple-ejs/back_office_recipes.json). Dry run by default (parses and reports, writes nothing); --apply
 stores it. `--file -`
 reads the file from stdin, so a file on a laptop reaches production with
 
@@ -28,6 +30,18 @@ def main(argv=None):
     content = sys.stdin.buffer.read() if a.file == "-" else open(a.file, "rb").read()
     name = a.name or os.path.basename(a.file)
     import backoffice_ap as bo
+    if name.lower().endswith(".json"):
+        import backoffice_recipes as br
+        b = json.loads(content.decode("utf-8-sig"))
+        if a.apply:
+            out = dict(br.load(a.rid, b, source=b.get("source")), kind="recipe_book")
+        else:
+            br.validate(b)
+            out = {"kind": "recipe_book", "recipes": len(b["recipes"]), "items": len(b["items"]),
+                   "mapped": len(b.get("pos_names") or {})}
+        out["applied"] = bool(a.apply)
+        print(json.dumps(out, indent=1, default=str))
+        return 0
     if a.apply:
         out = bo.read_file(a.rid, name, content)
     else:

@@ -3019,6 +3019,25 @@ def mobile_food_cost_purchases(current_user):
     return jsonify(ok=True, **out)
 
 
+@mobile_bp.route("/food-cost/plates", methods=["GET"])
+@mobile_login_required
+def mobile_food_cost_plates(current_user):
+    """Plate costs from the restaurant's Back Office recipes
+    (backoffice_recipes.plates, 10/15/26): {ok, available, why_not?,
+    window, plates: [{name, group, cost, complete, missing, lines,
+    pos_names, units, sales, price, cost_pct, margin}], summary, prices,
+    note}. Gated with Food Cost (FOOD_COST_VIEW)."""
+    import backoffice_recipes as _br
+    rid = current_user["restaurant_id"]
+    try:
+        out = _br.plates(rid, today=_bar_count_today(rid))
+    except Exception as e:
+        _bar_capture(e, "food_plates", rid)
+        return jsonify(ok=False, error="Your plate costs couldn't be read just now. Cavnar AI has been told; "
+                                       "try again in a minute."), 500
+    return jsonify(ok=True, **out)
+
+
 @mobile_bp.route("/food-cost/purchases/vendor", methods=["POST"])
 @mobile_login_required
 def mobile_food_cost_purchase_vendor(current_user):
