@@ -88,8 +88,11 @@ def _price_cards(pw, pc) -> list:
     for r in rows[:1]:
         up = r["kind"] == "increase"
         reg = r.get("regime") or {}
-        ref = reg.get("reference", r.get("from"))
-        since = reg.get("since_mdy") or r.get("since_mdy") or ""
+        # W5's regime.reference is the price NOW (the new regime); the usual
+        # price it moved from is the row's `from` (EJ's Ketel One read "$309 a
+        # case since 9/10/26, from a usual $309").
+        ref = r.get("from") if r.get("from") is not None else reg.get("reference")
+        since = r.get("since_mdy") or reg.get("since_mdy") or ""
         unit = r.get("unit") or "unit"
         pct = abs(float(r.get("pct") or 0))
         fwd = abs(float(r.get("forward_monthly_usd") or 0))
