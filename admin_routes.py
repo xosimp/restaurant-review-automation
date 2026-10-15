@@ -6913,11 +6913,10 @@ def admin_api_intake_purge(restaurant_id, current_user):
         return jsonify(ok=False, error="No such file for this restaurant"), 404
     before = {"file_id": f["id"], "filename": f["filename"], "format": f["format"], "invoices": f["invoices"],
               "status": f["status"]}
-    purge = getattr(fintech_invoices, "purge_file", None)
-    if purge is None:                  # written by the ingest workstream (W1)
-        return jsonify(ok=False, error="Purging a file isn't available on this build yet."), 501
+    if f["status"] == "purged":
+        return jsonify(ok=False, error="This file was purged already."), 409
     try:
-        res = purge(restaurant_id, file_id) or {}
+        res = fintech_invoices.purge_file(restaurant_id, file_id) or {}
     except Exception as e:
         _ops.capture(e, job="admin_intake_purge", context=f"restaurant_id={restaurant_id} file_id={file_id}")
         _audit_admin_action(current_user, "intake.file_purged", restaurant_id=restaurant_id,
@@ -6925,11 +6924,59 @@ def admin_api_intake_purge(restaurant_id, current_user):
                             summary=f"purge of file {file_id} failed")
         return jsonify(ok=False, error="The file couldn't be purged — nothing was changed."), 500
     done = bool(res.get("ok", True))
-    if done:
+    if done and f["content"]:
+        # The purged file's text goes too (a forged or wrong file is never
+        # read again — purge_file keeps its row, marked purged, so the same
+        # bytes stay a duplicate).
         blob_store.delete_text(f["content"])
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE fintech_files SET content=NULL WHERE id=? AND restaurant_id=?",
+                         (file_id, restaurant_id))
+            conn.commit()
+        finally:
+            conn.close()
     _audit_admin_action(current_user, "intake.file_purged", restaurant_id=restaurant_id,
                         target=f"fintech_file:{file_id}", before=before, after=res,
                         result="ok" if done else "failed")
     if not done:
         return jsonify(ok=False, error=res.get("error") or "Not purged"), 400
     return jsonify(ok=True, result=res, message=f"Purged {f['filename'] or 'the file'}")
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/store", methods=["POST"])
+@admin_required
+def admin_api_intake_store(restaurant_id, current_user):
+    """{location_id, target_restaurant_id?}: which restaurant a Fintech store
+    number in this restaurant's files belongs to (fintech_invoices.
+    set_location — an invoice for an unmapped store is skipped, never
+    written to the route's restaurant). The target is this restaurant or
+    one in its location group: never another client's."""
+    import fintech_invoices
+    r, refused = _intake_restaurant(restaurant_id)
+    if refused:
+        return refused
+    data = request.get_json(silent=True) or {}
+    try:
+        target = int(data.get("target_restaurant_id") or restaurant_id)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which restaurant?"), 400
+    if target != restaurant_id:
+        t = get_restaurant(target)
+        group = (getattr(r, "location_group", None) or "").strip()
+        if not t or not group or (getattr(t, "location_group", None) or "").strip() != group:
+            return jsonify(ok=False, error="A store can only go to this restaurant or another location in its "
+                                           "group."), 400
+    before = fintech_invoices.location_map(restaurant_id)
+    try:
+        out = fintech_invoices.set_location(restaurant_id, data.get("location_id"), target,
+                                            set_by=current_user.get("username"))
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    _audit_admin_action(current_user, "intake.store_mapped", restaurant_id=restaurant_id,
+                        target=f"fintech_store:{out['location_key']}",
+                        before={"restaurant_id": before.get(out["location_key"])},
+                        after={"restaurant_id": out["restaurant_id"]})
+    return jsonify(ok=True, location_key=out["location_key"], restaurant_id=out["restaurant_id"],
+                   message=f"Store {out['location_key']} goes to #{out['restaurant_id']} — re-read its files to "
+                           "write the invoices that were skipped")

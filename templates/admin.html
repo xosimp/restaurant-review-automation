@@ -1798,9 +1798,22 @@ function cData(c, d){
 // address and the senders it takes mail from, the feed, the last 20 emails
 // and files. Rotate and purge ask for the password (step-up); every action
 // is audited on the server (record_admin_action).
-const INTAKE_ST = {done:'ok', queued:'info', held_sender:'warn', held_auth:'warn', failed:'bad', ignored:'warn', no_files:'off', no_route:'off', gmail_confirmation:'info'};
-const INTAKE_LABEL = {done:'read', queued:'queued', held_sender:'held · sender', held_auth:'held · not verified', failed:'failed', ignored:'nothing read', no_files:'no attachment', no_route:'retired address', gmail_confirmation:'Gmail confirmation'};
-const FILE_ST = {stored:'ok', unrecognized:'warn', too_many_rows:'bad', too_many_pages:'bad', too_slow:'bad', unreadable_pdf:'bad', reading:'info'};
+const INTAKE_ST = {done:'ok', queued:'info', held_sender:'warn', held_auth:'warn', failed:'bad', ignored:'warn', no_files:'off', no_route:'off', gmail_confirmation:'info', unchanged:'off', conflict:'bad', location_unmapped:'bad'};
+const INTAKE_LABEL = {done:'read', queued:'queued', held_sender:'held · sender', held_auth:'held · not verified', failed:'failed', ignored:'nothing read', no_files:'no attachment', no_route:'retired address', gmail_confirmation:'Gmail confirmation', unchanged:'already on file', conflict:'conflict', location_unmapped:'store not mapped'};
+const FILE_ST = {stored:'ok', unrecognized:'warn', too_many_rows:'bad', too_many_pages:'bad', too_slow:'bad', unreadable_pdf:'bad', reading:'info', unchanged:'off', conflict:'bad', location_unmapped:'bad', purged:'off'};
+// A file's detail (fintech_invoices): conflicts kept, stores skipped,
+// near-duplicates, undated invoices — or why it was refused.
+function intakeFileDetail(r){
+  const d = r.detail; if(!d) return '';
+  if(typeof d === 'string') return esc(d);
+  const bits = [];
+  (d.conflicts || []).forEach(x => bits.push(`conflict: ${esc(x.distributor)} #${esc(x.invoice_number)} on file ${fmtUSD(x.kept_total, 2)}, this file ${fmtUSD(x.file_total, 2)}`));
+  (d.skipped_locations || []).forEach(x => bits.push(`store ${esc(x.location_key || x.location_id || '?')} not mapped: ${fmtN(x.invoices)} invoice${x.invoices === 1 ? '' : 's'} skipped`));
+  if((d.near_duplicates || []).length) bits.push(`near-duplicates: ${esc(d.near_duplicates.join(', '))}`);
+  if(d.undated) bits.push(`${fmtN(d.undated)} undated`);
+  if(d.kept) bits.push(`${fmtN(d.kept)} already on file`);
+  return bits.join(' · ');
+}
 async function intakeHtml(c){
   const d = await need('/admin/api/client/' + c.id + '/intake');
   const live = (d.routes || []).filter(r => r.active), old = (d.routes || []).filter(r => !r.active), f = d.feed || {}, sh = d.source_health || null, n = jsq(c.name);
@@ -1812,11 +1825,21 @@ async function intakeHtml(c){
   const sendersBox = `<label class="lbl" for="intake-senders">Senders it takes mail from — one per line; @domain for any address there. Anyone else is held.</label><textarea id="intake-senders" rows="4" style="width:100%" placeholder="processor@fintech.net">${esc(senders)}</textarea>`;
   const buttons = r0 ? `<span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn s w" onclick="intakeSenders(${c.id},'${n}','${jsq(r0.address)}')">Save senders</button><button class="btn s g w" onclick="intakeRotate(${c.id},'${n}')">Rotate address…</button></span>` : `<button class="btn s p w" style="align-self:flex-start" onclick="intakeCreate(${c.id},'${n}')">Make an intake address</button>`;
   const emails = table([{h:'Received',key:'received_at',cell:r=>`<span class="num">${fmtDT(r.received_at)}</span>`},{h:'From',key:'sender',wrap:true,cell:r=>`<span class="dim">${esc(r.sender||'')}</span>`},{h:'Subject',key:'subject',wrap:true,cell:r=>esc(r.subject||'')},{h:'Status',key:'status',cell:r=>`<span class="chip ${INTAKE_ST[r.status]||''}">${esc(INTAKE_LABEL[r.status]||r.status)}</span>`},{h:'Verified',cell:r=>r.auth?`<span class="dim" title="SPF ${esc(r.auth.spf||'—')} · DKIM ${esc(r.auth.dkim||'—')} · DMARC ${esc(r.auth.dmarc||'—')}">${esc(r.auth.dmarc||'—')}</span>`:'<span class="dim">—</span>'},{h:'Detail',key:'detail',wrap:true,cell:r=>`<span class="dim">${esc(String(r.detail||'').slice(0,200))}</span>`},{h:'',cell:r=>r.releasable?`<button class="btn s w" onclick="intakeRelease(${c.id},'${n}','${jsq(r.email_id)}','${jsq(r.sender||'')}')">Release…</button>`:''}], d.emails || [], {id:'cint-e', sort:'received_at', limit:20, empty:'No email has reached this restaurant\'s address yet.'});
-  const files = table([{h:'Received',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'File',key:'filename',wrap:true,cell:r=>esc(r.filename||'')},{h:'Format',key:'format',cell:r=>`<span class="dim">${esc(r.format||'—')}</span>`},{h:'Invoices',key:'invoices',r:true,cell:r=>`<span class="num">${fmtN(r.invoices)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="chip ${FILE_ST[r.status]||''}" title="${esc(r.detail||'')}">${esc(String(r.status||'').replace(/_/g,' '))}</span>`},{h:'',cell:r=>`<span style="display:flex;gap:6px">${r.has_content?`<button class="btn s g w" onclick="intakeReread(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}')">Re-read</button>`:''}<button class="btn s g w dz" onclick="intakePurge(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}',${r.invoices||0})">Purge…</button></span>`}], d.files || [], {id:'cint-f', sort:'created_at', limit:20, empty:'No file stored yet.'});
+  const files = table([{h:'Received',key:'created_at',cell:r=>`<span class="num">${fmtDT(r.created_at)}</span>`},{h:'File',key:'filename',wrap:true,cell:r=>esc(r.filename||'')},{h:'Format',key:'format',cell:r=>`<span class="dim">${esc(r.format||'—')}</span>`},{h:'Invoices',key:'invoices',r:true,cell:r=>`<span class="num">${fmtN(r.invoices)}</span>`},{h:'Status',key:'status',cell:r=>`<span class="chip ${FILE_ST[r.status]||''}">${esc(String(r.status||'').replace(/_/g,' '))}</span>`},{h:'Detail',wrap:true,cell:r=>`<span class="dim">${intakeFileDetail(r)}</span>`},{h:'',cell:r=>r.status==='purged'?'':`<span style="display:flex;gap:6px">${r.has_content?`<button class="btn s g w" onclick="intakeReread(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}')">Re-read</button>`:''}<button class="btn s g w dz" onclick="intakePurge(${c.id},'${n}',${r.id},'${jsq(r.filename||'')}',${r.invoices||0})">Purge…</button></span>`}], d.files || [], {id:'cint-f', sort:'created_at', limit:20, empty:'No file stored yet.'});
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Invoice intake</h2><span class="muted" style="font-size:12.5px">Fintech's daily file, by email</span></div>
     ${stale}${failing}<span class="muted" style="font-size:12.5px">${feed}</span>${addr}${sendersBox}${buttons}
     <div class="lbl">Last 20 emails</div>${emails}<div class="lbl">Last 20 files</div>${files}
+    <div class="lbl">Fintech stores in this restaurant's files</div>
+    <span class="muted" style="font-size:12.5px">${(d.stores || []).length ? d.stores.map(x => `store <span class="mono">${esc(x.location_key)}</span> → ${x.restaurant_id === c.id ? 'this restaurant' : esc(locName(null, x.restaurant_id))}`).join(' · ') : 'No store mapped yet — the first file naming one store teaches it as this restaurant\'s.'} An invoice for a store with no mapping is skipped, never written here.</span>
+    <span style="display:flex;gap:6px;flex-wrap:wrap"><input id="intake-store" placeholder="Store number, e.g. 000001" style="width:200px"><button class="btn s g w" onclick="intakeStore(${c.id},'${n}')">Map to this restaurant</button></span>
     ${old.length ? `<details class="more-d" style="margin:0 -18px -16px"><summary>Retired addresses · <span class="n">${old.length}</span></summary><div style="padding:0 18px 16px" class="kv">${old.map(r=>`<span class="k">${fmtD(r.retired_at || r.created_at)}</span><span class="mono dim" style="word-break:break-all">${esc(r.address)}</span>`).join('')}</div></details>` : ''}`;
+}
+async function intakeStore(rid, name){
+  const v = $('intake-store').value.trim();
+  if(!v){ toast('Enter the store number', 'bad'); return; }
+  if(!confirm('Read Fintech store ' + v + ' as ' + name + '? Its invoices in this address\'s files are written here from now on (re-read a file to write ones skipped before).')) return;
+  const d = await post('/admin/api/client/' + rid + '/intake/store', {location_id: v});
+  if(say(d, 'Store mapped')) intakeReload(rid, name);
 }
 function intakeReload(rid, name){ lazy('cd-intake', () => intakeHtml({id:rid, name:name})); }
 async function intakeCreate(rid, name){

@@ -184,3 +184,33 @@ def test_reread_and_purge_a_file(app, db_path, monkeypatch):
     # Another restaurant's file is not this one's to purge.
     other = _rid(db_path)
     assert _post(c, f"/admin/api/client/{other}/intake/purge", {"file_id": res["file_id"]}).status_code == 404
+
+
+def test_a_real_purge_takes_the_invoices_out_and_drops_the_text(app, db_path):
+    c = _admin(app, db_path)
+    rid = _rid(db_path)
+    res = fi.ingest_file(rid, "forged.csv", EXPORT.encode(), db_path=db_path)
+    r = _post(c, f"/admin/api/client/{rid}/intake/purge", {"file_id": res["file_id"]})
+    assert r.status_code == 200, r.get_json()
+    assert _rows(db_path, "SELECT id FROM fintech_invoices WHERE restaurant_id=?", (rid,)) == []
+    assert _rows(db_path, "SELECT status, content FROM fintech_files") == [{"status": "purged", "content": None}]
+    assert _post(c, f"/admin/api/client/{rid}/intake/purge", {"file_id": res["file_id"]}).status_code == 409
+
+
+def test_a_store_is_mapped_only_inside_the_restaurants_group(app, db_path):
+    c = _admin(app, db_path)
+    rid = _rid(db_path)
+    r = _post(c, f"/admin/api/client/{rid}/intake/store", {"location_id": "000002"})
+    assert r.status_code == 200 and r.get_json()["restaurant_id"] == rid
+    assert fi.location_map(rid, db_path=db_path) == {r.get_json()["location_key"]: rid}
+    stranger = _rid(db_path)
+    r = _post(c, f"/admin/api/client/{rid}/intake/store", {"location_id": "000003", "target_restaurant_id": stranger})
+    assert r.status_code == 400
+    models.update_restaurant(rid, {"location_group": "EJ's"}, db_path=db_path)
+    models.update_restaurant(stranger, {"location_group": "EJ's"}, db_path=db_path)
+    r = _post(c, f"/admin/api/client/{rid}/intake/store", {"location_id": "000003", "target_restaurant_id": stranger})
+    assert r.status_code == 200 and r.get_json()["restaurant_id"] == stranger
+    ev = _events(db_path, "intake.store_mapped")
+    assert len(ev) == 2 and all(e["actor"] == "will" for e in ev)
+    view = c.get(f"/admin/api/client/{rid}/intake").get_json()
+    assert {s["restaurant_id"] for s in view["stores"]} == {rid, stranger}
