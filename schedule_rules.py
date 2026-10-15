@@ -3009,11 +3009,19 @@ def _identity(c: "Constraints", restaurant_id, people_rows, db_path=None):
         found = []
         _degraded(f"identity concerns unread rid={restaurant_id}: {exc!r}", exc)
     c.identity_concerns = []
+    try:
+        apart = people.told_apart(restaurant_id, [(f["old"], f["new"]) for f in found if f["kind"] == "handoff"],
+                                  db_path=None if db_path == DB_PATH else db_path)
+    except Exception as exc:
+        apart = set()
+        _degraded(f"identity ids unread rid={restaurant_id}: {exc!r}", exc)
     for f in found:
         if f["kind"] == "handoff":
             a, b = c.key(f["old"]), c.key(f["new"])
             if a not in c.display or b not in c.display:
                 continue                       # one of them is not on the roster any more
+            if (f["old"], f["new"]) in apart:
+                continue                       # the POS gave each an employee id: two people
             ra, rb = c.linked.get(a, a), c.linked.get(b, b)
             rep = min(ra, rb)
             for k, v in list(c.linked.items()):

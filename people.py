@@ -1322,6 +1322,18 @@ class _Index:
     def for_key(self, key) -> set:
         return {p for p in (self.by_key.get(key) or set()) if self.live(p) == p}
 
+    def told_apart(self, a, b) -> bool:
+        """True when one source gave `a` and `b` employee ids of their own:
+        the POS keeps a person's id through a rename (resolve_rows renames
+        the person it belongs to), so two ids there are two people."""
+        a, b = self.live(a), self.live(b)
+        if a is None or b is None or a == b:
+            return False
+        for (pid, src), ext in self.ext_of.items():
+            if pid == a and ext and self.ext_of.get((b, src)) not in (None, "", ext):
+                return True
+        return False
+
     def keys_of(self, pid) -> set:
         return {k for k, ps in self.by_key.items() if pid in ps}
 
@@ -1797,6 +1809,8 @@ def identity_index(restaurant_id, names, db_path=None) -> dict:
         a, b = idx.live(q["person_a"]), idx.live(q["person_b"])
         if a is None or b is None or a == b or a not in roster_of or b not in roster_of:
             continue
+        if idx.told_apart(a, b):
+            continue                    # the POS keeps them apart: asked, never bound
         _join(roster_of[a][0], roster_of[b][0])
         out["questions"].append({"a": idx.people[a]["display_name"], "b": idx.people[b]["display_name"],
                                  "reason": q["reason"]})
@@ -1804,6 +1818,26 @@ def identity_index(restaurant_id, names, db_path=None) -> dict:
         rep = _find(k)
         out["linked"][k] = rep
         out["linked"][rep] = rep
+    return out
+
+
+def told_apart(restaurant_id, pairs, db_path=None) -> set:
+    """The (a, b) name pairs of `pairs` the POS keeps apart — each name one
+    live person, the two with employee ids of their own from one source
+    (_Index.told_apart). A history guess never joins such a pair."""
+    pairs = [(a, b) for a, b in (pairs or []) if a and b]
+    if not pairs:
+        return set()
+    conn = _conn(db_path)
+    try:
+        idx = _Index(conn, restaurant_id)
+    finally:
+        conn.close()
+    out = set()
+    for a, b in pairs:
+        pa, pb = idx.for_key(_nk(a)), idx.for_key(_nk(b))
+        if len(pa) == 1 and len(pb) == 1 and idx.told_apart(next(iter(pa)), next(iter(pb))):
+            out.add((a, b))
     return out
 
 
@@ -3010,6 +3044,7 @@ def identity_concerns(shifts) -> list:
         horizon = (_d.fromisoformat(newest) - _td(days=HANDOFF_RECENT_DAYS)).isoformat()
     except ValueError:
         horizon = ""
+    claims = {}
     for new, sn in stats.items():
         best = None
         for old, so in stats.items():
@@ -3028,6 +3063,17 @@ def identity_concerns(shifts) -> list:
             if best is None or gap < best[0]:
                 best = (gap, old, why)
         if best:
+            claims.setdefault(best[1], []).append((new, best))
+    # One departed name is one person: when two new names each look like it,
+    # the restaurant hired, it did not rename — unless exactly one of them is
+    # a name like it (10/15/26: two new cooks were joined into one through
+    # the cook they replaced).
+    for old, cl in claims.items():
+        if len(cl) > 1:
+            alike = [c_ for c_ in cl if similar(display[old], display[c_[0]])]
+            cl = alike if len(alike) == 1 else []
+        for new, best in cl:
+            sn = stats[new]
             _gap, old, why = best
             out.append({"kind": "handoff", "old": display[old], "new": display[new], "role": sn["role"],
                         "old_last": stats[old]["last"], "new_first": sn["first"], "why": why,
@@ -3036,6 +3082,26 @@ def identity_concerns(shifts) -> list:
                                  f"start {mdy(sn['first'])}. Until you answer in Team, Cavnar AI counts them as one "
                                  f"person for hours, overtime and rest.")})
     return out
+
+
+def _withdraw_told_apart(conn, idx) -> int:
+    """Close the open "took over from" questions the POS has since answered:
+    the two names have employee ids of their own (_Index.told_apart). 10/15/26
+    at EJ's: two new cooks were each asked about one departed cook, both
+    questions bound at once, and the week read the two as one person
+    double-booked. Recorded as `different`, answered by the POS."""
+    n = 0
+    for q in conn.execute("SELECT id, person_a, person_b, evidence_json FROM person_questions WHERE restaurant_id=? "
+                          "AND status='open' AND kind='same_person'", (idx.rid,)).fetchall():
+        try:
+            ev = _json.loads(q["evidence_json"] or "{}")
+        except ValueError:
+            ev = {}
+        if "new_first" in ev and idx.told_apart(q["person_a"], q["person_b"]):
+            conn.execute("UPDATE person_questions SET status='different', answered_at=datetime('now'), "
+                         "answered_authority='pos' WHERE id=? AND status='open'", (q["id"],))
+            n += 1
+    return n
 
 
 def raise_identity_questions(restaurant_id, shifts=None, db_path=None) -> int:
@@ -3051,20 +3117,19 @@ def raise_identity_questions(restaurant_id, shifts=None, db_path=None) -> int:
             shifts = shift_facts.person_rows(restaurant_id, since=(_d.today() - _td(days=120)).isoformat(),
                                              db_path=db_path)
         found = identity_concerns(shifts)
-        if not found:
-            return 0
         n = 0
         conn = _conn(db_path)
         try:
             conn.execute("BEGIN IMMEDIATE")
             idx = _Index(conn, restaurant_id)
+            _withdraw_told_apart(conn, idx)
             for f in found:
                 if f["kind"] == "handoff":
                     a, b = idx.for_key(_nk(f["new"])), idx.for_key(_nk(f["old"]))
                     if len(a) != 1 or len(b) != 1:
                         continue
                     pa, pb = next(iter(a)), next(iter(b))
-                    if pa == pb:
+                    if pa == pb or idx.told_apart(pa, pb):
                         continue
                     before = conn.total_changes
                     _ask(conn, idx, pa, pb, "same_person", f["text"][:300],

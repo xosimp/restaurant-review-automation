@@ -331,6 +331,51 @@ def test_a_mid_week_rename_is_read_as_one_person_until_answered():
     assert "counts them as one person" in got[0]["text"]
 
 
+def _cook_replaced_by_two():
+    """Cesar's kitchen shifts stop 9/5; Alan starts 9/9 and Jhoan 9/13, the
+    same role and days (EJ's, 10/15/26)."""
+    days = [dt.date(2026, 8, 10) + dt.timedelta(days=i) for i in range(60)]
+    rows = []
+    for d in days:
+        if d.weekday() not in (1, 3, 4, 5):
+            continue
+        if d <= dt.date(2026, 9, 5):
+            rows.append((d.isoformat(), "Cesar Lopez", "Kitchen", "3:00pm", "10:00pm"))
+        if d >= dt.date(2026, 9, 9):
+            rows.append((d.isoformat(), "Alan Gutierrez", "Kitchen", "3:00pm", "10:00pm"))
+        if d >= dt.date(2026, 9, 13):
+            rows.append((d.isoformat(), "Jhoan Martinez", "Kitchen", "3:00pm", "10:00pm"))
+    return _hist(rows)
+
+
+def test_two_hires_after_one_departure_are_never_one_person():
+    # Each new cook alone looks like Cesar under a new name; together they are
+    # two hires, and were joined into one through him - a double booking.
+    assert [f for f in people.identity_concerns(_cook_replaced_by_two()) if f["kind"] == "handoff"] == []
+
+
+def test_names_the_pos_gave_their_own_ids_are_never_joined_by_a_guess(db):
+    rid = _restaurant(db, [("Cesar Lopez", "Kitchen"), ("Alan Gutierrez", "Kitchen")])
+    people.resolve_rows(rid, [{"employee": "Cesar Lopez", "employee_ext_id": "111", "date": "2026-09-05"},
+                              {"employee": "Alan Gutierrez", "employee_ext_id": "222", "date": "2026-09-09"}],
+                        "rpower", db_path=db)
+    hist = [r for r in _cook_replaced_by_two() if r["employee"] != "Jhoan Martinez"]
+    assert [f["new"] for f in people.identity_concerns(hist) if f["kind"] == "handoff"] == ["Alan Gutierrez"]
+    assert people.told_apart(rid, [("Cesar Lopez", "Alan Gutierrez")], db_path=db) == {("Cesar Lopez", "Alan Gutierrez")}
+    assert people.raise_identity_questions(rid, shifts=hist, db_path=db) == 0
+    # A question filed before the ids were known is closed as the POS's
+    # answer, and never binds the two meanwhile.
+    pa, pb = (people.person_id_for(rid, n, db_path=db) for n in ("Alan Gutierrez", "Cesar Lopez"))
+    conn = models.get_conn(db)
+    conn.execute("INSERT INTO person_questions (restaurant_id, person_a, person_b, kind, reason, evidence_json) "
+                 "VALUES (?,?,?,?,?,?)", (rid, pa, pb, "same_person", "took over", json.dumps({"new_first": "2026-09-09"})))
+    conn.commit()
+    conn.close()
+    assert people.identity_index(rid, ["Cesar Lopez", "Alan Gutierrez"], db_path=db)["linked"] == {}
+    people.raise_identity_questions(rid, shifts=hist, db_path=db)
+    assert not [q for q in people.open_questions(rid, db_path=db) if q["kind"] == "same_person"]
+
+
 def test_a_two_people_answer_splits_the_history_by_role(db):
     rid = _restaurant(db, [("Maria Garcia", "Server")])
     rows = [f"2026-09-{d:02d},Tuesday,Maria Garcia,Server,11:00am,5:00pm,6,6,0," for d in (1, 2)] + \

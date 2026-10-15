@@ -41778,7 +41778,7 @@ window.cavPalette = cavPalette;
     if (!d) { el.innerHTML = ''; if (fetchIfMissing && _schedHistoryId && !S.busy) prRefresh(); return; }
     var l = (d.why || {}).left_off || [];
     if (!l.length) { el.innerHTML = ''; return; }
-    h += '<section class="pr-sec" style="margin:0 0 22px"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
+    h += '<section class="pr-sec" style="margin:16px 0 0"><div class="pr-k">Left off the week of <span class="hb-num">' + e(mdy(d.week_start)) + '</span></div>';
     for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> \u2014 ' + nt(l[i].reason) + '</div>';
     el.innerHTML = h + '</section>';
   };
