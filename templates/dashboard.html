@@ -45438,7 +45438,7 @@ function sfw2RuleCheck(chk) {
    Charts follow the glowLine pattern: the svg stretches to its box
    (preserveAspectRatio none, non-scaling strokes) and every dot and label is
    HTML placed by percentage. */
-#bar{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
+#bar{--br-range:var(--ember);--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
 [data-theme="dark"] #bar{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
 /* --br-red-text: red for SMALL text (V31) — --red is 3.85:1 on the dark
    surface; mixed 70% into the ink it is ~5.3:1. --red stays for dots,
@@ -45458,8 +45458,8 @@ function sfw2RuleCheck(chk) {
 .br-basis{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px}
 .br-bchip{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:5px 13px;border-radius:999px;font-size:14px;font-weight:600;color:var(--ink);background:linear-gradient(90deg,color-mix(in srgb,var(--ember2) 16%,transparent),color-mix(in srgb,var(--ember2) 5%,transparent));border:1px solid color-mix(in srgb,var(--ember2) 40%,transparent)}
 .br-bchip svg{color:var(--ember2);flex:none}
-.br-bchip.counted{background:linear-gradient(90deg,color-mix(in srgb,var(--hb-good) 18%,transparent),color-mix(in srgb,var(--hb-good) 5%,transparent));border-color:color-mix(in srgb,var(--hb-good) 45%,transparent)}
-.br-bchip.counted svg{color:var(--hb-good)}
+.br-bchip.counted{background:linear-gradient(90deg,color-mix(in srgb,var(--br-range) 18%,transparent),color-mix(in srgb,var(--br-range) 5%,transparent));border-color:color-mix(in srgb,var(--br-range) 45%,transparent)}
+.br-bchip.counted svg{color:var(--br-range)}
 .br-why{margin-top:12px;padding:16px 18px;border-radius:16px;background:var(--sf-recess);border:1px solid var(--hb-line2);font-size:14.5px;line-height:1.6;color:var(--ink2);max-width:62ch}
 .br-why b{color:var(--ink)}
 .br-why[hidden]{display:none}
@@ -45474,9 +45474,10 @@ function sfw2RuleCheck(chk) {
 .br-fig .l{font-size:14px;color:var(--ink3);margin-top:2px}
 .br-sb{font-size:14px;color:var(--ink2);margin-top:16px;line-height:1.55}
 .br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:34px 0 30px}
-.br-meter .band{position:absolute;top:-1px;bottom:-1px;border-radius:999px;background:color-mix(in srgb,var(--hb-good) 26%,transparent);border:1px solid color-mix(in srgb,var(--hb-good) 48%,transparent)}
-/* A purchase ratio's range is context, never a verdict: no green zone. */
-.br-meter.ctx .band{background:color-mix(in srgb,var(--ink) 12%,transparent);border:1px dashed color-mix(in srgb,var(--ink) 40%,transparent)}
+.br-meter .band{position:absolute;top:-1px;bottom:-1px;border-radius:999px;background:linear-gradient(90deg,color-mix(in srgb,var(--br-range) 22%,transparent),color-mix(in srgb,var(--br-range) 34%,transparent));border:1px solid color-mix(in srgb,var(--br-range) 55%,transparent);box-shadow:0 0 10px color-mix(in srgb,var(--br-range) 22%,transparent)}
+/* A purchase ratio's range is context, never a verdict: the same ember band,
+   fainter and dashed (owner, 10/15/26: ember, never green). */
+.br-meter.ctx .band{background:color-mix(in srgb,var(--br-range) 14%,transparent);border:1px dashed color-mix(in srgb,var(--br-range) 50%,transparent);box-shadow:none}
 .br-meter .mk{position:absolute;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--c,var(--ink));box-shadow:0 0 0 3px var(--surface),0 0 16px color-mix(in srgb,var(--c,var(--ink)) 65%,transparent);transition:left 1s var(--br-ease)}
 .br-meter .pv{position:absolute;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;border:2px solid var(--ink3);background:var(--surface)}
 .br-meter .tg{position:absolute;top:-6px;bottom:-6px;width:2px;margin-left:-1px;border-radius:2px;background:var(--ink)}
@@ -45486,8 +45487,8 @@ function sfw2RuleCheck(chk) {
 .br-mleg span{display:inline-flex;align-items:center;gap:6px}
 .br-mleg i{display:inline-block;width:10px;height:10px;border-radius:50%}
 .br-mleg .now{background:var(--c,var(--ink))}.br-mleg .was{border:2px solid var(--ink3)}.br-mleg .tgi{width:2px;height:12px;border-radius:2px;background:var(--ink)}
-.br-mleg .bnd{width:16px;height:8px;border-radius:999px;background:color-mix(in srgb,var(--ink) 12%,transparent);border:1px dashed color-mix(in srgb,var(--ink) 40%,transparent)}
-.br-mleg .bnd.ok{background:color-mix(in srgb,var(--hb-good) 26%,transparent);border:1px solid color-mix(in srgb,var(--hb-good) 48%,transparent)}
+.br-mleg .bnd{width:16px;height:8px;border-radius:999px;background:color-mix(in srgb,var(--br-range) 14%,transparent);border:1px dashed color-mix(in srgb,var(--br-range) 50%,transparent)}
+.br-mleg .bnd.ok{background:color-mix(in srgb,var(--br-range) 28%,transparent);border:1px solid color-mix(in srgb,var(--br-range) 55%,transparent)}
 .br-tgset{font-size:14px;color:var(--ink3);margin-top:10px}
 .br-chart{position:relative;width:100%}
 .br-chart svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
@@ -45671,12 +45672,12 @@ function sfw2RuleCheck(chk) {
 .br-dr .m>span{display:block;font-size:13px;color:var(--ink3)}
 /* Bar counts: the counted period as its equation. */
 .br-eq{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:26px 28px;overflow:hidden}
-.br-eq::before{content:"";position:absolute;right:-12%;top:-60%;width:55%;height:180%;background:radial-gradient(closest-side,color-mix(in srgb,var(--hb-good) 12%,transparent),transparent 72%);pointer-events:none}
+.br-eq::before{content:"";position:absolute;right:-12%;top:-60%;width:55%;height:180%;background:radial-gradient(closest-side,color-mix(in srgb,var(--br-range) 14%,transparent),transparent 72%);pointer-events:none}
 .br-eq>*{position:relative}
 .br-eq .t .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
 .br-eq .t .l{font-size:13.5px;color:var(--ink3);margin-top:2px}
 .br-eq .op{font-family:'Space Grotesk',sans-serif;font-size:22px;color:var(--ink3)}
-.br-eq .t.res .v{font-size:40px;color:var(--ink);text-shadow:0 0 24px color-mix(in srgb,var(--hb-good) 35%,transparent)}
+.br-eq .t.res .v{font-size:40px;color:var(--ink);text-shadow:0 0 24px color-mix(in srgb,var(--br-range) 35%,transparent)}
 .br-cnt{padding:22px 24px;margin-top:14px}
 .br-cnt .st{font-size:15px;color:var(--ink2);line-height:1.55}
 .br-cnt .st b{color:var(--ink);font-family:'Space Grotesk',sans-serif}
@@ -45852,7 +45853,7 @@ function sfw2RuleCheck(chk) {
      {min, max, css, area, band:[lo,hi], bandCss, hot, labels:[..], ylabels} */
   function chart(vals, cls, opts) {
     opts = opts || {};
-    var n = vals.length, W = 1000, H = 300, i, lo = opts.min, hi = opts.max, bc = opts.bandCss || 'var(--hb-good)';
+    var n = vals.length, W = 1000, H = 300, i, lo = opts.min, hi = opts.max, bc = opts.bandCss || 'var(--br-range)';
     var x = function (k) { return n <= 1 ? W / 2 : k * W / (n - 1); };
     var y = function (v) { return H - (v - lo) / ((hi - lo) || 1) * H; };
     var segs = [], cur = [], last = -1;
@@ -45960,7 +45961,7 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="br-k" style="margin-bottom:16px">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: counted ? 'var(--hb-good)' : 'var(--ink)', labels: labels, width: 3})
+      ? '<div class="br-k" style="margin-bottom:16px">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
@@ -46081,7 +46082,7 @@ function sfw2RuleCheck(chk) {
       else if (c.over_overall_usd) ov = '<div class="br-ov bad">' + hn(money(c.over_overall_usd)) + ' more ' + used + ' than ' + esc2(jt ? jt.phrase : 'your overall target') + ' allows at these sales</div>';
       else if (c.over_range_usd && c.judged) ov = '<div class="br-ov' + (counted && c.tone === 'warn' ? ' bad' : '') + '">' + hn(money(c.over_range_usd)) + ' more ' + used + ' than the range’s top would ' + (counted ? 'use' : 'buy') + ' at these sales</div>';
       h += '<div class="row"><span class="v">' + cnt(c.pct, 1) + '<small>%</small></span>' + deltaHtml(delta, noise, false) + '</div>'
-        + (nn(sp) >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, band: c.range, bandCss: counted ? 'var(--hb-good)' : 'var(--ink)', hot: false}) : '<div class="sp"></div>')
+        + (nn(sp) >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, band: c.range, bandCss: 'var(--br-range)', hot: false}) : '<div class="sp"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + '</div>' : '')
@@ -46133,7 +46134,7 @@ function sfw2RuleCheck(chk) {
     var dom = domain(lists, band), labels = [], layers = '';
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     for (k = 0; k < keys.length; k++) {
-      layers += chart(lists[k], 'br-layer', {min: dom.min, max: dom.max, css: keys[k].css, area: keys[k].key === 'total' && keys.length <= 2, band: k === 0 ? band : null, bandCss: 'var(--ink)',
+      layers += chart(lists[k], 'br-layer', {min: dom.min, max: dom.max, css: keys[k].css, area: keys[k].key === 'total' && keys.length <= 2, band: k === 0 ? band : null, bandCss: 'var(--br-range)',
                                              grid: k === 0 ? dom.ticks : null, ylabels: k === 0 ? dom.ticks : null, labels: k === 0 ? labels : null, width: keys[k].key === 'total' ? 3.2 : 2.2});
     }
     return '<div class="br-chart br-tc" data-br-trend="1" tabindex="0" role="img" aria-label="Bought vs sold over four weeks, read every week, ' + esc2(trend[0].end_mdy) + ' to ' + esc2(trend[trend.length - 1].end_mdy) + '. Left and right arrows read each week; the table below has every value.">'

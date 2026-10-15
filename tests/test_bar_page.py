@@ -738,3 +738,17 @@ def test_the_owners_category_choices_are_the_ones_the_server_accepts():
     body = src[src.index("function catControl(p)"):src.index("function catControl(p)") + 900]
     assert "DATA.owner_categories" in body
     assert "set_by_name" in src[src.index("set by you") - 200:src.index("set by you") + 200]
+
+
+def test_the_range_bands_are_ember_never_green():
+    """Owner, 10/15/26: "change these green backgrounds on the kpis to our
+    orange color, green looks weird" — the meter band, the chart bands, the
+    legend swatch, the counted chip and glow all read --br-range (ember)."""
+    src = open(DASHBOARD, encoding="utf-8").read()
+    a = src.index("/* ── Bar (owner, 10/14/26; redesigned")
+    blk = src[a:src.index("function catControl", a)]
+    assert "#bar{--br-range:var(--ember);" in blk
+    for sel in (".br-meter .band{", ".br-meter.ctx .band{", ".br-mleg .bnd{", ".br-mleg .bnd.ok{", ".br-bchip.counted{"):
+        rule = blk[blk.index(sel):blk.index("}", blk.index(sel))]
+        assert "--br-range" in rule and "--hb-good" not in rule and "--green" not in rule, sel
+    assert "bandCss: counted ?" not in blk and "opts.bandCss || 'var(--br-range)'" in blk
