@@ -229,15 +229,16 @@ _EXPORT_COLS = {
     "distributor": ("vendorname", "distributor", "distributorname"),
     "invoice_number": ("invoicenumber", "invoiceno", "invoice"),
     "invoice_date": ("invoicedate",),
+    "due_date": ("invoiceduedate", "duedate"),
     "total": ("invoicetotal", "invoiceamount"),
     "location_id": ("locationid", "storenumber"),
     "item_code": ("productnumber", "itemnumber", "item", "itemcode"),
     "description": ("productdescription", "description", "itemdescription"),
-    "upc": ("upc",),
+    "upc": ("upc", "upcnumber"),
     "uom": ("unitofmeasure", "uom", "unit"),
     "qty": ("itemquantity", "quantity", "qty"),
     "unit_price": ("itemcost", "unitcost", "price"),
-    "adjustment": ("itemadjustment", "adjustment"),
+    "adjustment": ("itemadjustment", "adjustment", "totaladjustments"),
     "cost": ("extendedcost", "extendedamount", "extcost", "extendedprice", "linetotal", "lineamount"),
 }
 
@@ -280,7 +281,7 @@ def parse_export(text):
         inv = by_key.get((dist, num))
         if inv is None:
             inv = {"distributor": dist, "invoice_number": num, "invoice_date": iso_date(cell(row, "invoice_date")),
-                   "due_date": None, "total": money(cell(row, "total")),
+                   "due_date": iso_date(cell(row, "due_date")), "total": money(cell(row, "total")),
                    "location_id": cell(row, "location_id") or None, "lines": []}
             by_key[(dist, num)] = inv
             invoices.append(inv)
@@ -378,6 +379,23 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id):
                      (inv_id, n, ln["item_code"], ln["description"], ln["upc"], ln["uom"], ln["qty"],
                       ln["unit_price"], ln["cost"], ln["deposit"], ln["adjustment"], kind))
     return True
+
+
+def reread_file(restaurant_id, file_id, db_path=None) -> dict:
+    """Read a stored file again with today's reader (a column it did not know
+    yet): its invoices are written as a fresh read would write them."""
+    conn = get_conn(db_path)
+    try:
+        f = conn.execute("SELECT format, content FROM fintech_files WHERE id=? AND restaurant_id=?",
+                         (int(file_id), int(restaurant_id))).fetchone()
+        if not f or not f["content"]:
+            return {"ok": False, "error": "no such file"}
+        invoices = parse_export(f["content"]) if f["format"] == "export" else parse_printout(f["content"])
+        n = sum(1 for inv in invoices if _store_invoice(conn, int(restaurant_id), inv, f["format"], int(file_id)))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "invoices": n}
 
 
 def ingest_file(restaurant_id, filename, content, intake_id=None, db_path=None):

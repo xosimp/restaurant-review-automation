@@ -260,3 +260,17 @@ def test_a_failed_fetch_marks_the_row_and_raises_for_the_queue_to_retry(db, monk
     with pytest.raises(RuntimeError):
         email_intake.run_queued({"payload": {"email_id": "em_6"}})
     assert _rows(db, "SELECT status FROM email_intake WHERE email_id='em_6'") == [{"status": "failed"}]
+
+
+def test_the_invoice_details_report_reads_its_own_column_names(db):
+    """Fintech's My Invoices "Invoice Details" CSV (10/14/26): Quantity, Unit
+    Cost, Extended Price, UPC Number, Invoice Due Date."""
+    rid = _rid(db)
+    csv_ = ("Vendor Name,Retailer Name,Invoice Date,Invoice Due Date,Invoice Number,Invoice Total,Product Number,"
+            "Quantity,Unit Cost,Unit of Measure,UPC Number,Product Description,Total Adjustments,Extended Price\n"
+            "Breakthru,EJs,09/22/2026,10/22/2026,0128949524,$84.00,9006996,2,$42.00,CA,611269991000,RED BULL 8.4Z,$0.00,$84.00\n")
+    res = fi.ingest_file(rid, "invoices-report.csv", csv_.encode(), db_path=db)
+    assert res["status"] == "stored" and res["unbalanced"] == []
+    ln = _rows(db, "SELECT upc, uom, qty, unit_price, cost FROM fintech_invoice_lines")[0]
+    assert ln == {"upc": "611269991000", "uom": "CA", "qty": 2.0, "unit_price": 42.0, "cost": 84.0}
+    assert _rows(db, "SELECT due_date FROM fintech_invoices")[0]["due_date"] == "2026-10-22"
