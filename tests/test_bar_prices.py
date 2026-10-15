@@ -319,8 +319,48 @@ def test_a_credit_memo_pairs_through_its_ref_invoice_number(db_path):
     pw, _ = _watch(db_path, rows + memo)
     c = next(x for x in pw["credits"] if x["kind"] in ("credit", "return"))
     assert (c["kind"], c["rebill_invoice_number"], c["credit_usd"]) == ("credit", "02427352", 2.0)
-    assert [h["date"] for h in (pw["events"][0]["history"] if pw["events"] else [])] in ([], ["2026-07-07",
-                                                                                            "2026-08-14"])
+    # The paired rebill (8/12) and the memo leave the series: what's left is
+    # 7/7 at $180 and 8/14 at $170 — one purchase at a new price, unconfirmed.
+    assert [(e["kind"], e["persistent"], e["from"], e["to"], [h["date"] for h in e["history"]])
+            for e in pw["events"]] == [("decrease", False, 180.0, 170.0, ["2026-07-07", "2026-08-14"])]
+
+
+def _export_then_printouts(db_path):
+    """Four weekly exports (Daisy Cutter $199 a keg, Fireball $228 a case),
+    then three daily printouts with no unit of measure: Daisy Cutter at
+    $229, and a single Fireball bottle at $22.29 on a padded code."""
+    from tests.test_fintech_intake import BANK_HEAD, BREAKTHRU, WINDY, _bank, _printout
+    rid = _rid(db_path)
+    csv = BANK_HEAD
+    for i, d in enumerate(("8/3/2026", "8/10/2026", "8/17/2026", "8/24/2026")):
+        csv += _bank(WINDY, f"E{i}", d, "$229.00", "13682", "HALF ACRE DAISY CUTTER K 1/2BBL", "KE", 1,
+                     "$199.00", "$30.00", "$229.00")
+        csv += _bank(BREAKTHRU, f"F{i}", d, "$228.00", "9031406", "FIREBALL CINN WHSKY 1L", "CA", 1,
+                     "$228.00", "$0.00", "$228.00", upc="088004144678")
+    fi.ingest_file(rid, "h.csv", csv.encode(), db_path=db_path)
+    for i, d in enumerate(("09/07/2026", "09/14/2026", "09/21/2026")):
+        fi.ingest_file(rid, f"p{i}.txt", _printout(WINDY, f"P{i}", d, "$259.00", [
+            ("13682", "HALF ACRE DAISY CUTTER K 1/2BB", "1", "$229.00", "$259.00")]).encode(), db_path=db_path)
+        fi.ingest_file(rid, f"q{i}.txt", _printout("BREAKTHRU BEVERAGE ILLINOIS LLC", f"Q{i}", d, "$22.29", [
+            ("000009031406", "FIREBALL CINN WHSKY 1L", "1", "$22.29", "$22.29")]).encode(), db_path=db_path)
+    return bp.analyse(_lines(rid, db_path), date(2026, 10, 1))["payload"]
+
+
+def test_a_printout_price_is_compared_with_the_same_products_export_history(db_path):
+    """V14: the printout carries no unit; its keg takes KE from the code's
+    export history, so $199 -> $229 is seen (it read as no change)."""
+    pw = _export_then_printouts(db_path)
+    ups = [r for r in pw["increases"] if "DAISY" in r["product"].upper()]
+    assert len(ups) == 1 and ups[0]["uom"] == "KE" and (ups[0]["from"], ups[0]["to"]) == (199.0, 229.0)
+
+
+def test_printout_case_and_bottle_buys_never_compare(db_path):
+    """V14: a Fireball case on the export and a bottle on a printout (same
+    code, zeros padded) were one series: "-90.2%". They never compare."""
+    pw = _export_then_printouts(db_path)
+    fire = [r for r in pw["events"] if "FIREBALL" in r["product"].upper()]
+    assert fire == [], [(r["kind"], r["from"], r["to"]) for r in fire]
+    assert not any("FIREBALL" in r["product"].upper() for r in pw["decreases"] + pw["unconfirmed"])
 
 
 def test_a_lone_return_comes_off_the_volume_and_is_never_a_price(db_path):

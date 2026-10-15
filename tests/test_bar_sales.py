@@ -370,7 +370,7 @@ def test_sales_query_uses_metric_range(db):
         "EXPLAIN QUERY PLAN SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
         "AND (metric >= 'sales.dep:' AND metric < 'sales.dep;') AND value IS NOT NULL", (1,)))
     c.close()
-    assert "idx_dsr_metrics_series" in plan or "PRIMARY" not in plan
+    assert "idx_dsr_metrics_series" in plan and "metric>? AND metric<?" in plan, plan
 
 
 # ── the mapping screen's routes ──────────────────────────────────────────────

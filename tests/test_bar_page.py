@@ -304,7 +304,9 @@ def test_the_owners_target_judges_and_the_tick_is_labelled_your(db_path):
     liquor = html[html.index('aria-label="Liquor"'):]
     liquor = liquor[:liquor.index("</article>")]
     assert "your 20% target" in _text(liquor)
-    for ov in re.findall(r'<div class="br-ov[^"]*">(.*?)</div>', html, re.S):
+    ovs = re.findall(r'<div class="br-ov[^"]*">(.*?)</div>', html, re.S)
+    assert ovs, "a target the bar is over draws its dollars line"
+    for ov in ovs:
         assert "more bought than" in _text(ov), ov            # never a bare "$X over"
     _common(html)
 
@@ -350,6 +352,9 @@ def test_a_stale_feed_says_how_far_behind_the_invoices_are(db_path):
     assert fr.get("stale") or (p.get("feed") or {}).get("stale_days"), fr
     html = _render(p)
     assert "Invoices are " in html and "behind." in html and "Fintech" in html
+    # V22: the header says how far sales run beside how far invoices run.
+    head = re.search(r"'invoices through ' \+ [^;]*;", _src()).group(0)
+    assert "sales_through_mdy" in head and "' · sales through '" in head
 
 
 def test_held_invoices_are_named_future_and_years_old(full):
@@ -618,6 +623,9 @@ def test_reduce_motion_stops_the_entrances_and_never_resizes_a_card():
     for sel, decl in rise:
         assert "animation:none" in decl.replace(" ", "")
         assert not re.search(r"(^|;)\s*(width|height|margin)\s*:", decl), (sel, decl)
+    # No rule in the block resizes anything (V16 merged the dot sizing into it).
+    for sel, decl in _rules(block):
+        assert not re.search(r"(^|;)\s*(width|height|margin|padding)\s*:", decl), (sel, decl)
     css = _bar_css()
     assert ".br-chart .dot.sm{width:7px;height:7px" in css
 
