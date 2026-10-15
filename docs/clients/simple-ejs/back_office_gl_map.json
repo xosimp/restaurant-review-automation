@@ -1,0 +1,321 @@
+{
+ "_about": "Simple EJ's (Back Office unit 7101, HHB LLC) chart of accounts: the purchase (cost of goods) and sales accounts only, mapped to Cavnar AI categories. From Back Office's 'Export Chart of Accounts (CSV)', read 10/15/26. Every other account (supplies 48xx-49xx, overhead 50xx-59xx, assets 1xxx, liabilities, equity) is not cost of goods. 'inventory_adjustment' accounts carry count changes - EJ's has submitted no counts, so they are empty.",
+ "purchases": {
+  "4005": {
+   "name": "PRIOR FOOD PURCHASE",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4010": {
+   "name": "PRODUCE",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4011": {
+   "name": "PRODUCE INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4020": {
+   "name": "DAIRY",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4021": {
+   "name": "DAIRY INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4030": {
+   "name": "MEAT",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4031": {
+   "name": "MEAT INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4040": {
+   "name": "SEAFOOD",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4041": {
+   "name": "SEAFOOD INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4050": {
+   "name": "DRY GOODS",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4051": {
+   "name": "DRY GOODS INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4060": {
+   "name": "POULTRY",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4061": {
+   "name": "POULTRY INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4070": {
+   "name": "PORK",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4071": {
+   "name": "PORK INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4080": {
+   "name": "NA BEVERAGES",
+   "category": "na_beverage",
+   "type": "Purchase"
+  },
+  "4081": {
+   "name": "NA BEV INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4090": {
+   "name": "BREAD",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4091": {
+   "name": "BREAD INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4096": {
+   "name": "FOOD PREP ITEM",
+   "category": "food",
+   "type": "Purchase"
+  },
+  "4097": {
+   "name": "FOOD PREP INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4098": {
+   "name": "BAR PURCHASE DISCOUNT",
+   "category": "bar_discount",
+   "type": "Purchase"
+  },
+  "4099": {
+   "name": "PURCHASE DISCOUNTS",
+   "category": "purchase_discount",
+   "type": "Purchase"
+  },
+  "4100": {
+   "name": "RETAIL MERCHANDISE",
+   "category": "retail",
+   "type": "Purchase"
+  },
+  "4101": {
+   "name": "RETAIL MERCHANDISE INV",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4310": {
+   "name": "PRIOR BAR PURCHASES",
+   "category": "beer",
+   "type": "Purchase"
+  },
+  "4320": {
+   "name": "BEER",
+   "category": "beer",
+   "type": "Purchase"
+  },
+  "4321": {
+   "name": "BEER INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4325": {
+   "name": "DRAFT BEER",
+   "category": "beer",
+   "type": "Purchase"
+  },
+  "4326": {
+   "name": "DRAFT BEER INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4327": {
+   "name": "BREWERY PREP",
+   "category": "beer",
+   "type": "Purchase"
+  },
+  "4328": {
+   "name": "BREWERY PREP INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4330": {
+   "name": "WINE",
+   "category": "wine",
+   "type": "Purchase"
+  },
+  "4331": {
+   "name": "WINE INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4335": {
+   "name": "DRAFT WINE",
+   "category": "wine",
+   "type": "Purchase"
+  },
+  "4336": {
+   "name": "DRAFT WINE INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4370": {
+   "name": "LIQUOR",
+   "category": "liquor",
+   "type": "Purchase"
+  },
+  "4371": {
+   "name": "LIQUOR INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4374": {
+   "name": "BAR PREP",
+   "category": "liquor",
+   "type": "Purchase"
+  },
+  "4375": {
+   "name": "BAR PREP INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4380": {
+   "name": "BAR CONSUMABLES",
+   "category": "bar_consumables",
+   "type": "Purchase"
+  },
+  "4381": {
+   "name": "BAR CONSUMABLES INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4934": {
+   "name": "PAPER PRODUCTS",
+   "category": "paper",
+   "type": "Purchase"
+  },
+  "4935": {
+   "name": "PAPER PRODUCTS INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  },
+  "4937": {
+   "name": "TOGO SUPPLIES",
+   "category": "togo",
+   "type": "Purchase"
+  },
+  "4938": {
+   "name": "TOGO SUPPLIES INVENTORY",
+   "category": "inventory_adjustment",
+   "type": "Purchase Inventory"
+  }
+ },
+ "sales": {
+  "3009": {
+   "name": "TPCST FOOD SALES",
+   "category": "food"
+  },
+  "3010": {
+   "name": "FOOD SALES",
+   "category": "food"
+  },
+  "3011": {
+   "name": "LOW RATE FOOD SALES",
+   "category": "food"
+  },
+  "3012": {
+   "name": "TO GO FOOD SALES",
+   "category": "food"
+  },
+  "3014": {
+   "name": "TO GO BAKERY ITEMS",
+   "category": "food"
+  },
+  "3015": {
+   "name": "SENIOR FOOD SALES",
+   "category": "food"
+  },
+  "3016": {
+   "name": "UNCOOKED/TAKE & BAKE FS",
+   "category": "food"
+  },
+  "3019": {
+   "name": "TPCST NA BEV SALES",
+   "category": "na_beverage"
+  },
+  "3020": {
+   "name": "NA BEVERAGE SALES",
+   "category": "na_beverage"
+  },
+  "3021": {
+   "name": "LOW RATE BEVERAGE SALES",
+   "category": "na_beverage"
+  },
+  "3022": {
+   "name": "TO GO BEVERAGE SALES",
+   "category": "na_beverage"
+  },
+  "3063": {
+   "name": "CATERING FOOD SALES",
+   "category": "food"
+  },
+  "3100": {
+   "name": "LIQUOR SALES",
+   "category": "liquor"
+  },
+  "3101": {
+   "name": "CATERING LIQUOR SALES",
+   "category": "liquor"
+  },
+  "3145": {
+   "name": "RETAIL SALES",
+   "category": "retail"
+  },
+  "3170": {
+   "name": "BEER SALES",
+   "category": "beer"
+  },
+  "3171": {
+   "name": "CATERING BEER SALES",
+   "category": "beer"
+  },
+  "3175": {
+   "name": "DRAFT BEER SALES",
+   "category": "beer"
+  },
+  "3180": {
+   "name": "WINE SALES",
+   "category": "wine"
+  },
+  "3181": {
+   "name": "CATERING WINE SALES",
+   "category": "wine"
+  },
+  "3182": {
+   "name": "DRAFT WINE SALES",
+   "category": "wine"
+  }
+ }
+}
