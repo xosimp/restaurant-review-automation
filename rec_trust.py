@@ -322,16 +322,22 @@ def _kind(key):
     return rec_ledger.kind_of(key)
 
 
+# The alcohol targets judge only the Bar page, whose own source is the
+# distributor invoices (data_freshness "invoices"; the Bar module's sources
+# are invoices + dsr + sales). Filed under "inventory" they annotated every
+# food-cost recommendation (Bar audit R9 / AIX-13); "dsr" or "sales" would
+# annotate every daily-report and labor card, which no bar target moves.
+BAR_TARGET_SOURCE = "invoices"
 # What each recorded owner change touches, by the data_freshness source a
 # recommendation rests on (DH3-14).
 _TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
                    "food_cost_target": ("inventory", "your food cost target"),
                    "waste_target_pct": ("inventory", "your waste target"),
                    "monthly_revenue_target": ("sales", "your revenue target"),
-                   "bar_cost_target": ("inventory", "your alcohol cost target"),
-                   "beer_cost_target": ("inventory", "your beer cost target"),
-                   "liquor_cost_target": ("inventory", "your liquor cost target"),
-                   "wine_cost_target": ("inventory", "your wine cost target")}
+                   "bar_cost_target": (BAR_TARGET_SOURCE, "your alcohol cost target"),
+                   "beer_cost_target": (BAR_TARGET_SOURCE, "your beer cost target"),
+                   "liquor_cost_target": (BAR_TARGET_SOURCE, "your liquor cost target"),
+                   "wine_cost_target": (BAR_TARGET_SOURCE, "your wine cost target")}
 
 
 def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:
