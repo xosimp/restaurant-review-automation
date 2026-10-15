@@ -786,3 +786,23 @@ def test_a_brand_word_beats_a_spirit_word_and_apostrophes_match():
     recipes = json.load(open(os.path.join(ROOT, "docs", "clients", "simple-ejs", "bar_recipes.json"), encoding="utf-8"))
     walnut = next(r for r in recipes["recipes"] if r.get("rpower_item") == "Walnut Old Fash")
     assert "2 oz of Angel's Envy each" in walnut["rpower_also"][0]["note"]
+
+
+def test_an_unmatched_drink_comes_with_a_checked_suggestion():
+    # 10/15/26 ("the easiest way to correlate these so I don't mess up"): the
+    # row arrives pre-filled — the product its name points at, a keg for a
+    # draft size, the ounces its name states — and is only saved on Match.
+    import bar.variance as bv
+    lines = [{"kind": "item", "category": "beer", "description": "LITE 1/2 BBL", "uom": "KE", "product_key": "keg"},
+             {"kind": "item", "category": "beer", "description": "LITE 24NR LSE", "uom": "CA", "product_key": "cans"},
+             {"kind": "item", "category": "beer", "description": "AB 2 PRODUCT DISCOUNT", "uom": "EA", "product_key": "d"},
+             {"kind": "item", "category": "liquor", "description": "TITOS VDK HANDMADE 1L", "uom": "CA", "product_key": "t"}]
+    c = bv.pour_candidates(lines)
+    assert "d" not in c                                                    # a discount is never a pour
+    assert bv.suggest_pour("Miller Lite 22oz", "beer", c) == {"product_key": "keg", "product": "Lite 1/2 BBL", "oz": 22.0}
+    assert bv.suggest_pour("Miller Lite", "beer", c)["product_key"] == "cans"   # no draft size: the cans
+    assert bv.suggest_pour("Titos", "liquor", c) == {"product_key": "t", "product": "Titos VDK Handmade 1L", "oz": None}
+    assert bv.suggest_pour("Blue Moon 22oz", "beer", c) == {}
+    src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    row = src[src.index("  function varUnmapped(u) {"):src.index("  function specRow(s) {")]
+    assert "sg && sg.product_key" in row and "check it, then Match" in row

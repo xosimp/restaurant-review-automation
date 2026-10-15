@@ -662,9 +662,12 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             kegs.append((p, row))
     items.sort(key=lambda x: -abs(x["gap_usd"] or 0))
     unmapped_rows = sorted(unmapped.values(), key=lambda u: -u["sales_usd"])
+    _cands = pour_candidates(lines)
     for u in unmapped_rows:
         u["rung_units"] = _r(u["rung_units"])
         u["sales_usd"] = round(u["sales_usd"], 2)
+    for u in unmapped_rows[:MAX_UNMAPPED]:
+        u["suggest"] = suggest_pour(u["item"], u["category"], _cands) or None
     totals = _totals(items, cat_sales, mapped_sales)
     out = {"available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
            "span": span_out, "items": items[:MAX_ITEMS], "items_total": len(items),
@@ -702,6 +705,48 @@ def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
         if l.get("product_key") and l.get("description"):
             out.setdefault(l["product_key"], display_name(l["description"]))
     return out
+
+
+_SIZE_RE = re.compile(r"(\d{1,2}(?:\.\d)?)\s*oz\b", re.I)
+_KEG_RE = re.compile(r"\b(1/2|1/4|1/6)\s*(bbl|barrel|keg)\b|\bbarrel\b|\b\d{2}\s*l\b|\bkeg\b", re.I)
+_NOT_ITEM_RE = re.compile(r"discount|deposit|empties|fee\b|charge|credit|handle", re.I)
+_POS_NOISE = re.compile(r"\b(\d{1,2}(?:\.\d)?\s*oz|btl|bottle|can|gl|glass|dft|draft|draught|n/a|na)\b", re.I)
+
+
+def pour_candidates(lines) -> dict:
+    """{product_key: (name, words, category, keg)} — the bought beer, liquor
+    and wine a POS drink can pour from (never a discount, deposit or fee)."""
+    out = {}
+    for l in lines or []:
+        d = l.get("description") or ""
+        if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES or _NOT_ITEM_RE.search(d):
+            continue
+        keg = str(l.get("uom") or "").upper() == "KE" or bool(_KEG_RE.search(d))
+        out.setdefault(l["product_key"], (display_name(d), _words(d), l["category"], keg))
+    return out
+
+
+def suggest_pour(item_name, category, cands) -> dict:
+    """What an unmatched POS drink most likely pours (owner, 10/15/26: "the
+    easiest way to correlate these so I don't mess up"): the bottle or keg
+    of its category whose brand words it shares, a keg for a draft size,
+    and the ounces its name states ("Miller Lite 22oz" -> LITE 1/2 BBL, 22).
+    {product_key, product, oz} or {} — a suggestion the owner checks, never
+    a match until they press Match."""
+    name = str(item_name or "")
+    size = _SIZE_RE.search(name)
+    oz = float(size.group(1)) if size else None
+    draft = category == "beer" and oz is not None and oz >= 10
+    words = _words(_POS_NOISE.sub(" ", name))
+    if not words:
+        return {}
+    pool = {k: (n, w) for k, (n, w, c, keg) in cands.items() if c == category and (keg if draft else True)}
+    if category == "beer" and not draft:
+        pool = {k: v for k, v in pool.items() if not cands[k][3]} or pool
+    key, pname, score = _best_product(" ".join(sorted(words)), pool)
+    if not key or score < 0.2:
+        return {}
+    return {"product_key": key, "product": pname, "oz": oz if (draft or category != "beer") else None}
 
 
 def _spec_public(s, names=None) -> dict:

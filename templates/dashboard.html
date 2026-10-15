@@ -45799,6 +45799,7 @@ function sfw2RuleCheck(chk) {
 .br-vmf .br-sel{width:240px;height:40px}
 .br-vmf .br-in2{width:72px!important;height:40px}
 .br-vmf .cbtn{height:40px}
+.br-sug{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);border:1px solid color-mix(in srgb,var(--ember) 45%,transparent);margin-right:4px}
 @media (max-width:720px){.br-li.vm{grid-template-columns:1fr}.br-vmf{flex-wrap:wrap;justify-content:flex-start}.br-vmf .br-sel{width:auto;flex:1 1 100%}}
 .br-dl{display:grid;gap:8px}
 .br-dr{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,2fr) minmax(0,.8fr) minmax(0,.8fr);gap:16px;align-items:center;padding:14px 18px}
@@ -46401,9 +46402,20 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < ps.length; i++) if ((cat ? ps[i].category === cat : LABELS[ps[i].category])) out.push(ps[i]);
     return out;
   }
-  function prodOptions(cat, first) {
-    var ps = barProducts(cat), o = '<option value="">' + esc2(first) + '</option>', i;
-    for (i = 0; i < ps.length && i < 300; i++) o += '<option value="' + esc2(ps[i].product_key) + '">' + esc2(ps[i].product) + '</option>';
+  // The products a drink can pour from: never a discount, deposit or fee
+  // line; the drink's own category first, each group A to Z, so the right
+  // bottle is quick to find (owner, 10/15/26). pick is pre-selected.
+  var NOT_ITEM = /discount|deposit|empties|\bfee\b|charge|credit|handle/i;
+  function prodOptions(cat, first, pick) {
+    var ps = barProducts(null), own = [], rest = [], o = '<option value="">' + esc2(first) + '</option>', i;
+    for (i = 0; i < ps.length; i++) {
+      if (NOT_ITEM.test(ps[i].product || '')) continue;
+      (cat && ps[i].category === cat ? own : rest).push(ps[i]);
+    }
+    var by = function (a, b) { return String(a.product).toLowerCase() < String(b.product).toLowerCase() ? -1 : 1; };
+    own.sort(by); rest.sort(by);
+    var all = cat ? own.concat(rest) : own.concat(rest).sort(by);
+    for (i = 0; i < all.length && i < 400; i++) o += '<option value="' + esc2(all[i].product_key) + '"' + (pick && all[i].product_key === pick ? ' selected' : '') + '>' + esc2(all[i].product) + '</option>';
     return o;
   }
   function varItem(x) {
@@ -46419,13 +46431,14 @@ function sfw2RuleCheck(chk) {
       + '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not rung' : (gap < 0 ? 'rung beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>';
   }
   function varUnmapped(u) {
+    var sg = u.suggest || null;
     // One thin row: the drink, one short note, and the match on one line
     // (owner, 10/15/26: the oz box and Match wrapped under the dropdown).
     return '<div class="br-card br-li vm"><div class="n"><b>' + esc2(u.item) + '</b><span>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' rung · ' + hn(money(u.sales_usd)) + ' sold</span>'
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
-      + '<div class="m">Left out until matched — never counted as zero.</div>'
-      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…') + '</select>'
-        + '<input class="br-in2" style="width:90px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" aria-label="Ounces a drink">'
+      + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span> ' + esc2(sg.product) + (sg.oz != null ? ' · ' + hn(sg.oz + ' oz') : '') + ' — check it, then Match' : 'Left out until matched — never counted as zero.') + '</div>'
+      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '</select>'
+        + '<input class="br-in2" style="width:90px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
   // A recipe card's ingredient: the owner picks or keeps the product it

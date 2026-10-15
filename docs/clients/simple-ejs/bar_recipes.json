@@ -464,6 +464,136 @@
       "garnish": null,
       "flavor": null,
       "flags": []
+    },
+    {
+      "name": "Frose",
+      "alcoholic": true,
+      "rpower_item": "Frose",
+      "rpower_category": "38. Cocktails",
+      "ingredients": [
+        {
+          "item": "The Beach Rose wine",
+          "amount": 2.02,
+          "unit": "oz"
+        },
+        {
+          "item": "Finest Call strawberry puree",
+          "amount": 0.85,
+          "unit": "oz"
+        },
+        {
+          "item": "Bols Peach Schnapps",
+          "amount": 0.32,
+          "unit": "oz"
+        },
+        {
+          "item": "Simple syrup",
+          "amount": 0.21,
+          "unit": "oz"
+        },
+        {
+          "item": "Fresh lemon juice",
+          "amount": 0.16,
+          "unit": "oz"
+        },
+        {
+          "item": "Water",
+          "amount": 2.12,
+          "unit": "oz"
+        },
+        {
+          "item": "Bloomers neutral base",
+          "amount": 0.32,
+          "unit": "oz"
+        }
+      ],
+      "batch": {
+        "oz": {
+          "The Beach Rose wine": 76.08,
+          "Finest Call strawberry puree": 32,
+          "Bols Peach Schnapps": 12,
+          "Simple syrup": 8,
+          "Fresh lemon juice": 6,
+          "Water": 80,
+          "Bloomers neutral base": 12
+        },
+        "total_oz": 226.08,
+        "per_drink_oz": 6.0,
+        "drinks_per_batch": 37.7,
+        "source": "Will, 10/15/26: 3 bottles of The Beach rosé (750 ml), 32 oz Finest Call strawberry purée, 12 oz peach schnapps, 8 oz simple syrup, 6 oz fresh lemon, 80 oz water, 12 oz Bloomers neutral base; 6 oz of batch a drink"
+      },
+      "method": "Batched frozen; 6 oz of batch a drink.",
+      "glass": null,
+      "ice": null,
+      "garnish": null,
+      "flavor": null,
+      "flags": []
+    },
+    {
+      "name": "Yum Yum Frose",
+      "alcoholic": true,
+      "rpower_item": "Yum Yum Frose",
+      "rpower_category": "38. Cocktails",
+      "ingredients": [
+        {
+          "item": "Ketel One Vodka",
+          "amount": 3.23,
+          "unit": "oz"
+        },
+        {
+          "item": "Monin blueberry syrup",
+          "amount": 1.62,
+          "unit": "oz"
+        },
+        {
+          "item": "DeKuyper Blue Curacao",
+          "amount": 1.08,
+          "unit": "oz"
+        },
+        {
+          "item": "Simple syrup",
+          "amount": 1.08,
+          "unit": "oz"
+        },
+        {
+          "item": "Lemon juice",
+          "amount": 1.62,
+          "unit": "oz"
+        },
+        {
+          "item": "Water",
+          "amount": 4.31,
+          "unit": "oz"
+        },
+        {
+          "item": "Frose syrup",
+          "amount": 1.08,
+          "unit": "oz"
+        }
+      ],
+      "batch": {
+        "oz": {
+          "Ketel One Vodka": 60,
+          "Monin blueberry syrup": 30,
+          "DeKuyper Blue Curacao": 20,
+          "Simple syrup": 20,
+          "Lemon juice": 30,
+          "Water": 80,
+          "Frose syrup": 20
+        },
+        "total_oz": 260,
+        "per_drink_oz": 14.0,
+        "drinks_per_batch": 18.6,
+        "source": "Will, 10/15/26: 60 oz Ketel One, 30 oz Monin blueberry, 20 oz blue curacao (\"blue carosal\"), 20 oz simple syrup, 30 oz lemon juice, 80 oz water, 20 oz frose syrup; 14 oz of batch a drink"
+      },
+      "method": "Batched frozen; 14 oz of batch a drink.",
+      "glass": null,
+      "ice": null,
+      "garnish": null,
+      "flavor": null,
+      "flags": [
+        "No 'Yum Yum Frose' button on RPOWER yet (10/15/26): the card attaches when one is rung under that name."
+      ]
     }
   ],
   "_answers_1013": [
