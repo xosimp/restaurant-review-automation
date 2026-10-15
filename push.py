@@ -487,6 +487,8 @@ PRIORITY = {
     "order_send_pending": P3_INFO, "order_send_voided": P2_OPPORTUNITY,
     # The month-end "Count the bar tonight" (bar.counts.run_count_reminders).
     "bar_count_due": P3_INFO,
+    # A bar price increase that held, worth $25 a month (bar_signals.push_increase).
+    "bar_price": P3_INFO,
     # A data source that stopped updating is worth today; its return is news
     # (notify.check_data_source_alerts, Data Freshness #18).
     "data_source_down": P2_OPPORTUNITY, "data_source_restored": P3_INFO,
@@ -525,6 +527,8 @@ NOTIFICATION_MODULE = {
     "food_waste": "inventory", "critical_low": "inventory", "price_spike": "inventory",
     "order_send_pending": "inventory", "order_send_held": "inventory", "order_send_voided": "inventory",
     "bar_count_due": "inventory",
+    # A bar price increase that held, worth $25 a month (bar_signals, barfix W9).
+    "bar_price": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
     "demand_opportunity": "marketing",
@@ -581,7 +585,7 @@ ACTIONABLE_TYPES = frozenset({
     "unresponded", "negative_trend", "rating_threshold",
     "labor_over", "coverage", "shift_request", "labor_reminder", "schedule_publish_held", "employee_message",
     "schedule_drafted", "lineup_brief_waiting",
-    "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided", "bar_count_due",
+    "food_waste", "critical_low", "price_spike", "order_send_held", "order_send_voided", "bar_count_due", "bar_price",
     "ai_visibility_drop", "issue", "issue_escalated", "connection_lost", "data_source_down",
     "platform_alert",
 })

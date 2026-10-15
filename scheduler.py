@@ -5782,6 +5782,13 @@ def scheduler_loop():
                 from bar.counts import run_count_reminders
                 _ops.run_job("bar_count_reminders", run_count_reminders)
 
+            # Hourly on Mondays — from 9am local, each restaurant's biggest
+            # bar price increase that held, worth $25 a month, pushed once
+            # (bar_signals.run_price_push; barfix W9, Decision 7).
+            if now.weekday() == 0 and _ops.claim_period("bar_price_push", f"{today}-{now.hour}"):
+                from bar_signals import run_price_push
+                _ops.run_job("bar_price_push", run_price_push)
+
             # Hourly — shift requests whose shift has passed expire (a swap
             # for last Tuesday no longer executes), and an open shift still
             # unclaimed 12 hours before it starts goes back to the deciders

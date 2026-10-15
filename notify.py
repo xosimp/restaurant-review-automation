@@ -779,6 +779,8 @@ ALERT_TAB = {
     "order_send_held": "inventory",
     "order_send_voided": "inventory",
     "bar_count_due": "inventory",
+    # A bar price increase that held, worth $25 a month (bar_signals, barfix W9).
+    "bar_price": "inventory",
     "ai_visibility_drop": "competitor", "competitor_move": "competitor",
     "review_request_nudge": "reviews",
     "login": "account", "staff_signin": "account", "connection_lost": "account",

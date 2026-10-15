@@ -2290,6 +2290,7 @@ _TOOL_LABELS = {
     "read_shifts": "Looking at your roster",
     "read_menu": "Pulling up your menu",
     "read_food_cost": "Going through your food cost",
+    "read_bar": "Going through the bar's invoices",
     "read_competitors": "Checking your competitors",
     "read_market_history": "Looking back at your market",
     "read_marketing_posts": "Reviewing what you've published",
@@ -3873,6 +3874,8 @@ _UNTAGGED_MODULE = {
     "read_upcoming": "what's coming", "read_forecast_record": "forecast record",
     "read_closeouts": "daily report",
     "read_target_history": "target history",
+    # The Bar's sources (data_freshness.MODULE_SOURCES["bar"]: invoices, dsr, sales).
+    "read_bar": "bar",
     "read_service_performance": "service record",
     "read_task_sheets": "task sheets",
 }
