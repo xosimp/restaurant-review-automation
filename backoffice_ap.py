@@ -303,6 +303,91 @@ def save_invoices(restaurant_id, parsed, file_id=None, db_path=None) -> dict:
     return {"written": n, "vendors": len(parsed["vendors"])}
 
 
+# ── one invoice's page (Edit Invoice, printed to PDF) ─────────────────────
+
+# Each line item prints as label-under-value pairs: "(197761) BEEF BRISKET" /
+# "Unit Inventory Item*" / "Use Tax Applies 4030 MEAT" / "GL Account" / "Case"
+# / "Purchase Unit*" / qty / "Quantity*" / price / "Amount*" / ext / "Ext Amount".
+# The browser's page header and footer can fall between any two of them.
+_PAGE_NOISE_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d\d, .*Back Office|Page \d+ of \d+)")
+_ROW_NO_RE = re.compile(r"^\d+\s*\uf057?$")
+_NUM = r"\(?-?\$?[\d,]*\.?\d+\)?"
+_LINE_RE = re.compile(
+    r"^\(([^)\n]+)\)\s*([^\n]*)\nUnit Inventory Item\*\n(?:Use Tax Applies)?[ \t]*(?:(\d+)[ \t]*([^\n]*))?\n"
+    r"GL Account\n([^\n]*)\nPurchase Unit\*\n(%s)\nQuantity\*\n(%s)\nAmount\*\n(%s)\nExt Amount" % (_NUM, _NUM, _NUM),
+    re.M)
+
+
+# Words the PDF's text layer splits at a kerning pair ("POUL TRY").
+_PDF_SPLIT_RE = re.compile(r"\bPOUL TRY\b")
+
+
+def _money(s):
+    s = str(s or "").strip()
+    v = float(re.sub(r"[^\d.]", "", s) or 0)
+    return -v if ("(" in s or "-" in s) else v
+
+
+def looks_like_invoice_page(text) -> bool:
+    return "Unit Inventory Item*" in (text or "") and "Invoice Number*" in (text or "")
+
+
+def parse_invoice_page(text) -> dict:
+    """{vendor, invoice_number, date (ISO), total, lines: [{item_code,
+    description, gl, purchase_unit, qty, unit_amount, ext_amount}], "adds_up"}
+    from one invoice's Edit Invoice page printed to PDF. `adds_up` is False
+    when the lines read do not sum to the page's Total Price (a line missed)."""
+    t = str(text or "").replace("\xa0", " ").replace("\u202f", " ")
+    kept, top = [], False
+    for l in t.split("\n"):
+        l = l.rstrip()
+        if not l.strip():
+            continue
+        if _PAGE_NOISE_RE.match(l.strip()):
+            top = True
+            continue
+        if top and _ROW_NO_RE.match(l.strip()):
+            continue            # the row numbers the page's top margin repeats
+        top = False
+        kept.append(l)
+
+    def field(label):
+        for i, l in enumerate(kept):
+            if l.strip() == label and i:
+                return kept[i - 1].strip()
+        return None
+    vendor, number = field("Vendor*"), field("Invoice Number*")
+    d, total = field("Invoice Date*"), field("Total Price*")
+    if not (vendor and number and d and re.match(r"\d{1,2}/\d{1,2}/\d{4}$", d)):
+        raise ValueError("no vendor, invoice number and date read from the invoice page")
+    mo, dy, yr = d.split("/")
+    lines = []
+    for m in _LINE_RE.finditer("\n".join(kept)):
+        desc = _PDF_SPLIT_RE.sub(lambda x: x.group(0).replace(" ", ""), " ".join(m.group(2).split()))
+        lines.append({"item_code": m.group(1).strip(), "description": desc or None,
+                      "gl": m.group(3), "purchase_unit": m.group(5).strip() or None,
+                      "qty": _money(m.group(6)), "unit_amount": _money(m.group(7)),
+                      "ext_amount": round(_money(m.group(8)), 2)})
+    total = round(_money(total), 2) if total else None
+    return {"vendor": " ".join(vendor.split()), "invoice_number": number, "date": f"{yr}-{int(mo):02d}-{int(dy):02d}",
+            "total": total, "lines": lines,
+            "adds_up": total is not None and abs(sum(l["ext_amount"] for l in lines) - total) < 0.02}
+
+
+def save_invoice_page(restaurant_id, inv, file_id=None, db_path=None) -> dict:
+    """Store a parsed invoice page: its lines (save_lines), and the invoice
+    itself in bo_invoices under the same entry key an Invoices By Vendor
+    printout gives it — so a page read before the printout counts once, and
+    the printout's later row updates it in place."""
+    save_invoices(restaurant_id, {"vendors": [{"vendor": inv["vendor"], "total": inv["total"], "rows": [
+        {"entry_kind": "invoice", "invoice_number": inv["invoice_number"], "itemized": True, "date": inv["date"],
+         "amount": inv["total"] if inv["total"] is not None else round(sum(l["ext_amount"] for l in inv["lines"]), 2),
+         "gl": None}]}]}, file_id=file_id, db_path=db_path)
+    n = save_lines(restaurant_id, inv["vendor"], inv["invoice_number"], inv["lines"], invoice_date=inv["date"],
+                   file_id=file_id, db_path=db_path)
+    return {"written": n}
+
+
 # ── the intake reader ─────────────────────────────────────────────────────
 
 def _text_of(filename, content):
@@ -337,9 +422,22 @@ def read_file(restaurant_id, filename, content, intake_id=None, db_path=None) ->
             out = {"accounts": n}
         else:
             text = _text_of(filename, content)
+        if kind == "coa":
+            pass
+        elif looks_like_invoice_page(text):
+            inv = parse_invoice_page(text)
+            if not inv["lines"]:
+                return {"status": "unrecognized", "detail": "no line items read from the invoice page"}
+            kind = "invoice_page"
+            out = {"vendor": inv["vendor"], "invoice_number": inv["invoice_number"], "lines": len(inv["lines"]),
+                   "adds_up": inv["adds_up"]}
+            from time_utils import mdy
+            detail = (f"{inv['vendor']} invoice {inv['invoice_number']} ({mdy(inv['date'])}): {len(inv['lines'])} lines"
+                      + ("" if inv["adds_up"] else f"; lines don't add up to the ${inv['total']:,.2f} total"))
+        else:
             if not looks_like_invoices_by_vendor(text):
                 return {"status": "unrecognized",
-                        "detail": "neither a Chart of Accounts export nor an Invoices By Vendor printout"}
+                        "detail": "not a Chart of Accounts export, an Invoices By Vendor printout or an invoice page"}
             parsed = parse_invoices_by_vendor(text)
             if not parsed["vendors"]:
                 return {"status": "unrecognized", "detail": "no vendors read from the printout"}
@@ -363,6 +461,8 @@ def read_file(restaurant_id, filename, content, intake_id=None, db_path=None) ->
     if kind == "invoices_by_vendor":
         out.update(save_invoices(restaurant_id, parsed, file_id=file_id, db_path=db_path))
         _invalidate(restaurant_id)
+    elif kind == "invoice_page":
+        save_invoice_page(restaurant_id, inv, file_id=file_id, db_path=db_path)
     return dict(out, status="stored", kind=kind, file_id=file_id, detail=detail)
 
 

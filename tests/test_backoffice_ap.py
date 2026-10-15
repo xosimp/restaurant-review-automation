@@ -282,3 +282,66 @@ def test_an_invoice_with_its_lines_splits_by_account_and_paper_leaves_food(db):
     assert f["window"]["purchases"] == 1400.0 - 80.0, "the napkins leave food"
     names = {x["name"] for x in f["by_category"]}
     assert {"MEAT", "PRODUCE"} <= names
+
+
+def _invoice_page(number, day, lines, total, page_break_after=None):
+    """One invoice's Edit Invoice page as the PDF's text reads (EJ's GFS
+    invoice 9041344199, 10/15/26): the header's label under each value, then
+    each line as value/label pairs; the browser's page header can fall
+    between two fields of one line."""
+    out = ["10/15/26, 4:57 PMBack Office - Invoice",
+           "Page 1 of 2https://accounting4.restacct.com/AccountsPayable/EditInvoice?invoi…",
+           "Edit InvoiceHHB LLC   Entered by: JH ", "1 ", "2 ",
+           "GORDON FOOD SERVICE", "Vendor*", number, "Invoice Number*", day, "Invoice Date*",
+           "Debit/EFT", "Payment Method*", total, "Total Price*"]
+    for i, (code, desc, gl, unit, qty, amt, ext) in enumerate(lines):
+        fields = [f"({code}) {desc}", "Unit Inventory Item*", f"Use Tax Applies {gl}", "GL Account", unit,
+                  "Purchase Unit*", qty, "Quantity*", amt, "Amount*", ext, "Ext Amount"]
+        if page_break_after == i:
+            fields[6:6] = ["10/15/26, 4:57 PMBack Office - Invoice",
+                           "Page 2 of 2https://accounting4.restacct.com/AccountsPayable/EditInvoice?invoi…",
+                           "11 ", "12 ", "13"]
+        out += fields
+    out += ["2 ", "     Add Line Item     Total" + total]
+    return "\n".join(out)
+
+
+GFS_LINES = [
+    ("197761", "BEEF BRISKET", "4030 MEAT", "Case", "128.60", "5.94", "763.88"),
+    ("516561", "POUL TRY CHICKEN BREAST B/S", "4060 POUL TRY", "Case", "4.00", "79.93", "319.72"),
+    ("162080", "FOAM CUP 24 OZ", "4888 RESTAURANT SUPPLIES", "Case", "1.00", "49.37", "49.37"),
+    ("Tax", "TAX", "4999 RETAIL TAX/FEES PAID", "Each", "1.00", "16.46", "16.46"),
+]
+
+
+def test_an_invoice_page_reads_every_line_even_across_a_page_break():
+    t = _invoice_page("9041344199", "10/15/2026", GFS_LINES, "$1,149.43", page_break_after=1)
+    inv = bo.parse_invoice_page(t)
+    assert (inv["vendor"], inv["invoice_number"], inv["date"], inv["total"]) == \
+        ("GORDON FOOD SERVICE", "9041344199", "2026-10-15", 1149.43)
+    assert [(l["item_code"], l["gl"], l["ext_amount"]) for l in inv["lines"]] == [
+        ("197761", "4030", 763.88), ("516561", "4060", 319.72), ("162080", "4888", 49.37), ("Tax", "4999", 16.46)]
+    assert inv["lines"][0]["qty"] == 128.6 and inv["lines"][0]["unit_amount"] == 5.94
+    assert inv["lines"][1]["description"] == "POULTRY CHICKEN BREAST B/S", "the PDF's split word is mended"
+    assert inv["adds_up"]
+    short = bo.parse_invoice_page(_invoice_page("9041344199", "10/15/2026", GFS_LINES[:3], "$1,149.43"))
+    assert not short["adds_up"], "a line the reader missed is named, not hidden"
+
+
+def test_an_invoice_page_stores_its_lines_and_the_invoice_counts_once(db):
+    """A page read before an Invoices By Vendor printout lists the invoice
+    stores it under the printout's own key: the printout later updates it in
+    place, never doubles it."""
+    rid = _rid(db)
+    bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
+    page = _invoice_page("9041200735", _d(5), GFS_LINES, "$1,149.43")
+    r = bo.read_file(rid, "gfs.txt", page.encode(), db_path=db)
+    assert r["status"] == "stored" and r["kind"] == "invoice_page" and r["lines"] == 4 and r["adds_up"]
+    assert bo.read_file(rid, "gfs.txt", page.encode(), db_path=db)["status"] == "duplicate"
+    rows = [e for e in bo.entries(rid, db_path=db) if e["invoice_number"] == "9041200735"]
+    assert sorted((e["gl"], e["category_source"]) for e in rows) == [
+        ("4030", "line"), ("4060", "line"), ("4888", "line"), ("4999", "line")]
+    assert round(sum(e["amount"] for e in rows), 2) == 1149.43
+    bo.read_file(rid, "ibv.txt", _printout().encode(), db_path=db)
+    rows = [e for e in bo.entries(rid, db_path=db) if e["invoice_number"] == "9041200735"]
+    assert round(sum(e["amount"] for e in rows), 2) == 900.0, "the printout's amount, once"
