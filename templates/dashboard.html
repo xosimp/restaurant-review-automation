@@ -45561,7 +45561,8 @@ function sfw2RuleCheck(chk) {
 #bar{--br-total:var(--ember);--br-beer:color-mix(in srgb,var(--amber) 72%,var(--ink));--br-liquor:color-mix(in srgb,var(--blue) 78%,var(--ink));--br-wine:color-mix(in srgb,var(--red) 48%,var(--blue) 52%);--br-up:var(--hb-bad);--br-down:var(--hb-good);--br-red-text:color-mix(in srgb,var(--red) 70%,var(--ink));--br-ease:cubic-bezier(.2,.9,.3,1)}
 .br-card{position:relative;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 86%,var(--bg-base)));border:1px solid var(--hb-line2);border-radius:22px;box-shadow:var(--elev-1);transition:transform .28s var(--br-ease),box-shadow .28s var(--br-ease),border-color .28s ease}
 .br-card.lift:hover{transform:translateY(-2px);box-shadow:var(--elev-2);border-color:var(--line-hi)}
-.br-k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+/* One kicker on the Bar page: the .dn-k face (owner, 10/15/26: some read light orange, some dark). */
+.br-k{font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
 .br-hero{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:40px;align-items:stretch;padding:36px 38px 34px;overflow:hidden;margin-top:6px}
 /* The trend runs the full height of the figures beside it, its heading on
    the same line as theirs (owner, 10/15/26). */
@@ -45696,7 +45697,9 @@ function sfw2RuleCheck(chk) {
 .br-more{margin-top:18px}
 .br-more>summary{cursor:pointer;list-style:none;font-size:15px;font-weight:600;color:var(--ink);display:inline-flex;align-items:center;gap:8px;min-height:44px}
 .br-more>summary::-webkit-details-marker{display:none}
-.br-more>summary::before{content:"+";display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;border:1px solid var(--hb-line);color:var(--ink2);transition:transform .25s var(--br-ease)}
+/* The plus is two bars at the box's centre, not a glyph (owner, 10/15/26:
+   the font's "+" sat low in the square); it turns to an x when open. */
+.br-more>summary::before{content:"";display:inline-block;flex:0 0 auto;box-sizing:border-box;width:22px;height:22px;border-radius:7px;border:1px solid var(--hb-line);background:linear-gradient(var(--ink2),var(--ink2)) center/10px 1.6px no-repeat,linear-gradient(var(--ink2),var(--ink2)) center/1.6px 10px no-repeat;transition:transform .25s var(--br-ease)}
 .br-more[open]>summary::before{transform:rotate(45deg)}
 .br-sum{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
 .br-st{padding:18px 18px 16px}
@@ -45790,6 +45793,13 @@ function sfw2RuleCheck(chk) {
 .br-li .r{text-align:right;font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--ink);white-space:nowrap}
 .br-li .r>span:not(.hb-num){display:block;font-family:inherit;font-size:13px;font-weight:400;color:var(--ink3)}
 .br-li .r.good{color:var(--hb-good)}.br-li .r.bad{color:var(--br-red-text)}
+.br-li.vm{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto;padding:10px 18px}
+.br-li.vm .m{font-size:13.5px;color:var(--ink3)}
+.br-vmf{flex-wrap:nowrap;justify-content:flex-end;gap:8px}
+.br-vmf .br-sel{width:240px;height:40px}
+.br-vmf .br-in2{width:72px!important;height:40px}
+.br-vmf .cbtn{height:40px}
+@media (max-width:720px){.br-li.vm{grid-template-columns:1fr}.br-vmf{flex-wrap:wrap;justify-content:flex-start}.br-vmf .br-sel{width:auto;flex:1 1 100%}}
 .br-dl{display:grid;gap:8px}
 .br-dr{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,2fr) minmax(0,.8fr) minmax(0,.8fr);gap:16px;align-items:center;padding:14px 18px}
 .br-dr .n b{display:block;font-size:15.5px;color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -45809,7 +45819,11 @@ function sfw2RuleCheck(chk) {
 .br-cnt{padding:22px 24px;margin-top:14px}
 .br-cnt .st{font-size:15px;color:var(--ink2);line-height:1.55}
 .br-cnt .st b{color:var(--ink);font-family:'Space Grotesk',sans-serif}
-.br-cnt .br-form{margin-top:16px}
+.br-cnt .br-form{margin-top:16px;align-items:flex-start}
+/* The count date and the three values on one line, labels and boxes level
+   (owner, 10/15/26: each value's error line made it taller, and the row
+   centred them, so the date sat lower); the date box is the values' height. */
+.br-cnt .br-form .br-in2.date{height:44px;line-height:42px;-webkit-appearance:none;appearance:none}
 .br-ok{font-size:13.5px;color:var(--hb-good);min-height:18px}
 .br-err{display:block;font-size:13.5px;color:var(--br-red-text);margin-top:4px;line-height:1.45}
 .br-ch-h{display:grid;gap:6px;margin-top:12px}
@@ -45991,7 +46005,7 @@ function sfw2RuleCheck(chk) {
     }
     if (cur.length) segs.push(cur);
     var id = 'brg' + (++GID), svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">';
-    if (opts.area) svg += '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + opts.css + '" stop-opacity=".32"/><stop offset="1" stop-color="' + opts.css + '" stop-opacity="0"/></linearGradient></defs>';
+    if (opts.area) svg += '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + opts.css + '" stop-opacity="' + (opts.areaOpacity != null ? opts.areaOpacity : '.32') + '"/><stop offset="1" stop-color="' + opts.css + '" stop-opacity="0"/></linearGradient></defs>';
     if (opts.band) {
       var b1 = y(Math.min(opts.band[1], hi)), b2 = y(Math.max(opts.band[0], lo));
       svg += '<rect x="0" y="' + b1 + '" width="' + W + '" height="' + Math.max(0, b2 - b1) + '" fill="' + bc + '" opacity=".09"/>';
@@ -46185,7 +46199,10 @@ function sfw2RuleCheck(chk) {
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Check the bar mapping</button></div>');
     }
     var sb = d.sales_basis || {};
-    if (sb.unmapped_say || (sb.mapping_needed && !sg.length)) {
+    // Only when unsorted sales move the figures (owner, 10/15/26: the bare
+    // "confirm your categories" nudge sat between the hero and the cards;
+    // the mapping section below still asks).
+    if (sb.unmapped_usd > 0 && (sb.unmapped_say || (sb.mapping_needed && !sg.length))) {
       var uc = sb.unmapped_categories || [], ul = '';
       for (i = 0; i < uc.length && i < 6; i++) ul += '<li>' + esc2(uc[i].key) + ' — ' + hn(money(uc[i].sales_usd)) + (uc[i].why ? ' · ' + esc2(uc[i].why) : '') + '</li>';
       out.push('<div class="br-warn">' + (sb.unmapped_usd > 0
@@ -46193,18 +46210,8 @@ function sfw2RuleCheck(chk) {
           : '<b>Confirm which POS categories are bar sales.</b> Cavnar AI is reading its own suggestions until you do.')
         + (ul ? '<ul>' + ul + '</ul>' : '') + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Sort your POS categories</button></div>');
     }
-    var so = pc.stopped || [];
-    if (so.length) {
-      var ol = '';
-      for (i = 0; i < so.length; i++) {
-        var s = so[i];
-        ol += '<li><b>' + esc2(s.distributor) + '</b> — ' + (s.why === 'owner' ? 'you said the bar stopped buying from them' : 'no invoices since ' + hn(s.last_mdy))
-          + ((s.taken_over_by || []).length ? '; its products now come from ' + esc2(s.taken_over_by.join(', ')) : '')
-          + ((s.categories || []).length ? ' (' + esc2(catNames(s.categories)) + ')' : '')
-          + (s.why === 'owner' && OWNER ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-unstop="' + esc2(s.distributor) + '">We still buy from them</button>' : '') + '</li>';
-      }
-      out.push('<div class="br-warn info"><b>Not expected any more.</b> The missing-invoice check skips ' + plural(so.length, 'this distributor', 'these distributors') + '.<ul>' + ol + '</ul></div>');
-    }
+    // Distributors no longer expected are listed with the distributors, not
+    // above the cards (owner, 10/15/26).
     return out.length ? '<div class="br-alerts">' + out.join('') + '</div>' : '';
   }
 
@@ -46227,7 +46234,10 @@ function sfw2RuleCheck(chk) {
       else if (c.over_overall_usd) ov = '<div class="br-ov bad">' + hn(money(c.over_overall_usd)) + ' more ' + used + ' than ' + esc2(jt ? jt.phrase : 'your overall target') + ' allows at these sales</div>';
       else if (c.over_range_usd && c.judged) ov = '<div class="br-ov' + (counted && c.tone === 'warn' ? ' bad' : '') + '">' + hn(money(c.over_range_usd)) + ' more ' + used + ' than the range’s top would ' + (counted ? 'use' : 'buy') + ' at these sales</div>';
       h += '<div class="row"><span class="v">' + cnt(c.pct, 1) + '<small>%</small></span>' + deltaHtml(delta, noise, false) + '</div>'
-        + (nn(sp) >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, band: c.range, bandCss: 'var(--br-range)', hot: false}) : '<div class="sp"></div>')
+        // Neutral behind the line (owner, 10/15/26: a coloured band and fill
+        // read green): a grey range band and a faint fill; the line keeps
+        // its category colour.
+        + (nn(sp) >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, areaOpacity: '.10', band: c.range, bandCss: 'var(--ink3)', hot: false}) : '<div class="sp"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + '</div>' : '')
@@ -46405,10 +46415,12 @@ function sfw2RuleCheck(chk) {
       + '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not rung' : (gap < 0 ? 'rung beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>';
   }
   function varUnmapped(u) {
-    return '<div class="br-card br-li"><div class="n"><b>' + esc2(u.item) + '</b><span>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' rung · ' + hn(money(u.sales_usd)) + ' sold</span>'
+    // One thin row: the drink, one short note, and the match on one line
+    // (owner, 10/15/26: the oz box and Match wrapped under the dropdown).
+    return '<div class="br-card br-li vm"><div class="n"><b>' + esc2(u.item) + '</b><span>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' rung · ' + hn(money(u.sales_usd)) + ' sold</span>'
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
-      + '<div class="m">Left out of bought vs rung — never counted as zero — until it’s matched to what it pours.</div>'
-      + '<div class="r">' + (OWNER ? '<div class="br-form" style="justify-content:flex-end"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…') + '</select>'
+      + '<div class="m">Left out until matched — never counted as zero.</div>'
+      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…') + '</select>'
         + '<input class="br-in2" style="width:90px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" aria-label="Ounces a drink">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
@@ -46861,8 +46873,18 @@ function sfw2RuleCheck(chk) {
         + '<div class="m">' + hn(money(x.spend)) + '<span>' + (x.share != null ? hn(x.share + '%') + ' of spend' : '') + '</span></div>'
         + '<div class="m">' + (x.fees ? hn(money(x.fees)) : '—') + '<span>fees &amp; taxes</span></div></div>';
     }
+    // Distributors no longer expected (moved here from above the cards,
+    // owner 10/15/26): the missing-invoice check skips them.
+    var so = ((d.pour_cost || {}).stopped) || [], sl = '';
+    for (i = 0; i < so.length; i++) {
+      var st = so[i];
+      sl += '<li><b>' + esc2(st.distributor) + '</b> — ' + (st.why === 'owner' ? 'you said the bar stopped buying from them' : 'no invoices since ' + hn(st.last_mdy))
+        + ((st.taken_over_by || []).length ? '; its products now come from ' + esc2(st.taken_over_by.join(', ')) : '')
+        + (st.why === 'owner' && OWNER ? ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-unstop="' + esc2(st.distributor) + '">We still buy from them</button>' : '') + '</li>';
+    }
     return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Distributors · ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + '</div><h2 class="dn-h2">Where the money goes</h2>'
-      + '<p class="dn-sub" style="margin-top:8px">Every invoice on file, ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + ', every category — non-alcoholic drinks and supplies included, so it runs longer and wider than the ' + aboveSpan(d) + '.</p></div></div><div class="br-dl">' + h + '</div></section>';
+      + '<p class="dn-sub" style="margin-top:8px">Every invoice on file, ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + ', every category — non-alcoholic drinks and supplies included, so it runs longer and wider than the ' + aboveSpan(d) + '.</p></div></div><div class="br-dl">' + h + '</div>'
+      + (sl ? '<div class="br-ctx" style="margin-top:14px"><b>Not expected any more</b> — the missing-invoice check skips ' + plural(so.length, 'this distributor', 'these distributors') + ':<ul>' + sl + '</ul></div>' : '') + '</section>';
   }
 
   /* ── the bar mapping (V7) ───────────────────────────────────────────── */
