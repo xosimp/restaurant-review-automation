@@ -23,6 +23,11 @@ PRICE_CARD_MONTHLY_USD = 10.0
 # share at least this multiple of the uniform 3/n (V25).
 CONCENTRATION_MIN_N = 7
 CONCENTRATION_OVER_UNIFORM = 1.5
+# A distributor's quantity ladder is a card (V3) when this product's own
+# orders prove it, two or more smaller orders were bought in 90 days, and
+# ordering at the best tier would have saved this much over those 90 days
+# (the headline floor, $10 a month).
+LADDER_CARD_90D_USD = 30.0
 
 _TIMING = "A delivery or a stock-up moves this; count the shelf to know."
 _LOW_ACTION = "Often bottles bought earlier are pouring now — count the shelf before reading it as a win."
@@ -121,6 +126,23 @@ def _price_cards(pw, pc) -> list:
                              f"+{_money(top)} of +{_money(whole)} a month at your usual buying, across {n} products",
                              "Start with these three when you next talk to your distributors", "prices",
                              confidence(invoices=n, lag_days=lag)))
+    # The ladder as a finding (V3): what the order size costs, from the
+    # distributor's own billing — "order 3 kegs, save $15 a keg".
+    ladders = [x for x in (pw.get("ladders") or [])
+               if x.get("proven") and x.get("confidence") == "high" and (x.get("small_orders_90d") or 0) >= 2
+               and float(x.get("save_90d_at_best") or 0) >= LADDER_CARD_90D_USD and x.get("tiers")]
+    ladders.sort(key=lambda x: -float(x["save_90d_at_best"]))
+    for x in ladders[:1]:
+        small, best = x["tiers"][0], x["tiers"][-1]
+        unit = x.get("unit") or "unit"
+        out.append(_card("ladder:" + str(x.get("product_key")), "info",
+                         f"{x.get('name')} costs {_usd(x['save_per_unit'])} a {unit} less ordered "
+                         f"{x['best_label']} at a time",
+                         f"{x.get('distributor')} bills {x['smallest_label']} at {_usd(small['price'])} and "
+                         f"{x['best_label']} at {_usd(best['price'])} · {x['small_orders_90d']} smaller orders in "
+                         f"90 days cost {_money(x['save_90d_at_best'])} more",
+                         "Where storage and the pace allow, order to the larger size.", "prices",
+                         confidence(invoices=sum(t.get("purchases") or 0 for t in x["tiers"]), lag_days=lag)))
     return out
 
 

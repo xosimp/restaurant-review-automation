@@ -742,6 +742,32 @@ def test_the_price_insight_only_names_a_persistent_same_tier_change():
     assert "has held" in down["headline"] and down["action"].startswith("It has held at the new price")
 
 
+def _ladder(**kw):
+    return dict({"product_key": "superior|ultra", "name": "Ultra 1/2 Barrel", "distributor": "Superior Beverage",
+                 "unit": "keg", "proven": True, "confidence": "high", "save_per_unit": 15.0,
+                 "smallest_label": "1 keg", "best_label": "3+ kegs", "small_orders_90d": 3,
+                 "small_units_90d": 3.0, "save_90d_at_best": 45.0,
+                 "tiers": [{"tier": 0, "label": "1 keg", "price": 125.0, "purchases": 3},
+                           {"tier": 1, "label": "2 kegs", "price": 115.0, "purchases": 4},
+                           {"tier": 2, "label": "3+ kegs", "price": 110.0, "purchases": 5}]}, **kw)
+
+
+def test_a_proven_quantity_ladder_is_an_insight():
+    """V3's other half: the ladder is said as a finding — "order 3 kegs,
+    save $15 a keg" — only when this product's own orders prove it, smaller
+    orders keep happening, and the 90 days' difference clears $10 a month."""
+    cards = [i for i in bi._insights({"available": False}, {"ladders": [_ladder()]}, 0) if i["key"].startswith("ladder:")]
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["headline"] == "Ultra 1/2 Barrel costs $15 a keg less ordered 3+ kegs at a time"
+    assert "bills 1 keg at $125 and 3+ kegs at $110" in c["metric"] and "3 smaller orders" in c["metric"]
+    assert c["basis"] == "prices" and c["tone"] == "info"
+    for weak in (_ladder(proven=False), _ladder(confidence="low"), _ladder(small_orders_90d=1),
+                 _ladder(save_90d_at_best=bi.LADDER_CARD_90D_USD - 1)):
+        assert not [i for i in bi._insights({"available": False}, {"ladders": [weak]}, 0)
+                    if i["key"].startswith("ladder:")], weak
+
+
 def test_concentration_needs_more_than_its_arithmetic_floor():
     """V25 / AIX-8: four equal increases gave 'Three products carry 75%'."""
     pc = {"available": False}
