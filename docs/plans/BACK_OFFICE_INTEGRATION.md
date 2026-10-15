@@ -74,7 +74,7 @@ The seam is in place; only the HTTP calls are missing.
 - Rows are summed into beer (beer, draft, keg, seltzer, cider, ale, lager, IPA), liquor (liquor, spirits, vodka, whiskey, bourbon, tequila, mezcal, rum, gin, scotch, cordials, liqueur, brandy, cognac) and wine (wine, champagne, sparkling, prosecco); total, non-alcoholic, mixer, food and supply rows are ignored and listed.
 - The count date: a date column (one date across the rows), else one date in the rows above the header ("Inventory Date: 10/31/2026"; a period "10/1/2026 - 10/31/2026" is read at its end, and the result says so), else one date in the file's name.
 - Never guessed: no date, two different dates, a row that reads as two categories ("Beer & Wine"), a negative value, no beer/liquor/wine row, a PDF or anything else is `unrecognized` with the reason, and nothing is saved. A value the owner typed for that date is kept (`kept_owner`).
-- To turn it on for a restaurant: `email_intake.new_route(rid, "backoffice_valuation", domain)` and Back Office's scheduled email sent to that address.
+- To turn it on for a restaurant: the admin card's `POST /admin/api/client/<rid>/intake/create` with `{"kind": "backoffice_valuation", "allowed_senders": …}` (since 10/15/26; no shell write), and Back Office's scheduled email sent to that address.
 
 ## What we need from Erik to start (1)
 

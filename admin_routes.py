@@ -6758,6 +6758,16 @@ def _intake_restaurant(restaurant_id):
     return r, None
 
 
+def _intake_kind(data):
+    """The intake address kind a request names: "fintech" when it names
+    none, a kind email_intake.READERS reads, else None (refused). A Back
+    Office valuation address no longer needs a production shell write
+    (barfix W10, F10/F1)."""
+    import email_intake
+    kind = str(data.get("kind") or "fintech").strip()
+    return kind if kind in email_intake.READERS else None
+
+
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/intake")
 @admin_required
 def admin_api_intake(restaurant_id, current_user):
@@ -6771,15 +6781,19 @@ def admin_api_intake(restaurant_id, current_user):
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/intake/create", methods=["POST"])
 @admin_required
 def admin_api_intake_create(restaurant_id, current_user):
-    """{allowed_senders, note?}: the restaurant's first Fintech address (409
-    when it has one — rotate it)."""
+    """{allowed_senders, note?, kind?}: the restaurant's first address of
+    `kind` — "fintech" (the default) or another email_intake.READERS kind,
+    e.g. "backoffice_valuation" (409 when it has one — rotate it)."""
     import email_intake
     _r, refused = _intake_restaurant(restaurant_id)
     if refused:
         return refused
     data = request.get_json(silent=True) or {}
+    kind = _intake_kind(data)
+    if kind is None:
+        return jsonify(ok=False, error="That isn't a kind of intake address Cavnar AI reads."), 400
     try:
-        out = email_intake.create_route(restaurant_id, "fintech", allowed_senders=data.get("allowed_senders"),
+        out = email_intake.create_route(restaurant_id, kind, allowed_senders=data.get("allowed_senders"),
                                         note=(str(data.get("note") or "").strip()[:300] or None),
                                         created_by=current_user.get("username"))
     except ValueError as e:
@@ -6795,14 +6809,18 @@ def admin_api_intake_create(restaurant_id, current_user):
 @admin_required
 @recent_auth_required()
 def admin_api_intake_rotate(restaurant_id, current_user):
-    """Retire the active Fintech address (active=0) and issue a new one with
-    the same senders. Mail to the old one is no_route from now on."""
+    """{kind?}: retire the active address of `kind` (Fintech's by default;
+    active=0) and issue a new one with the same senders. Mail to the old one
+    is no_route from now on."""
     import email_intake
     _r, refused = _intake_restaurant(restaurant_id)
     if refused:
         return refused
+    kind = _intake_kind(request.get_json(silent=True) or {})
+    if kind is None:
+        return jsonify(ok=False, error="That isn't a kind of intake address Cavnar AI reads."), 400
     try:
-        out = email_intake.rotate_route(restaurant_id, "fintech", created_by=current_user.get("username"))
+        out = email_intake.rotate_route(restaurant_id, kind, created_by=current_user.get("username"))
     except ValueError as e:
         _audit_admin_action(current_user, "intake.route_rotated", restaurant_id=restaurant_id,
                             target=f"restaurant:{restaurant_id}", result="refused", summary=str(e)[:300])

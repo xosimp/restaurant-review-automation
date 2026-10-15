@@ -114,6 +114,28 @@ def test_rotate_route_records_admin_action_and_deactivates_old(app, db_path):
                                 db_path=db_path) == "no_route"
 
 
+def test_a_back_office_valuation_address_is_made_on_the_card_and_unknown_kinds_refused(app, db_path):
+    """F10 / F1: the valuation reader's address comes from the admin card
+    (no production shell write), beside Fintech's; a kind no reader reads
+    is refused."""
+    c = _admin(app, db_path)
+    rid = _rid(db_path)
+    assert _post(c, f"/admin/api/client/{rid}/intake/create", {"allowed_senders": "processor@fintech.net"}).status_code == 200
+    r = _post(c, f"/admin/api/client/{rid}/intake/create",
+              {"allowed_senders": "reports@backoffice.test", "kind": "backoffice_valuation"})
+    assert r.status_code == 200, r.get_json()
+    bo = r.get_json()["address"]
+    kinds = {x["address"]: (x["kind"], x["active"]) for x in
+             _rows(db_path, "SELECT address, kind, active FROM email_intake_routes WHERE restaurant_id=?", (rid,))}
+    assert kinds[bo] == ("backoffice_valuation", 1) and sorted(k for k, _a in kinds.values()) == [
+        "backoffice_valuation", "fintech"]
+    r = _post(c, f"/admin/api/client/{rid}/intake/rotate", {"kind": "backoffice_valuation"})
+    assert r.status_code == 200 and r.get_json()["retired"] == [bo], r.get_json()
+    for url in ("create", "rotate"):
+        r = _post(c, f"/admin/api/client/{rid}/intake/{url}", {"kind": "payroll", "allowed_senders": "a@b.test"})
+        assert r.status_code == 400 and "kind of intake address" in r.get_json()["error"], url
+
+
 def test_rotate_and_purge_need_the_step_up(app, db_path):
     c = _admin(app, db_path, stepped_up=False)
     rid = _rid(db_path)
