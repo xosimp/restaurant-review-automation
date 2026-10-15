@@ -148,7 +148,9 @@ ALLOWED_POUR = re.compile(r"counted[ -]pour[ -]cost|pour cost,? counted|pour cos
 def _no_pour_cost_for_a_purchase_ratio(html):
     """V1: "pour cost" only names a counted figure, the range for one, or the
     explanation of what it needs — never the purchase ratio."""
-    explain = re.search(r'data-br-explain="1"[^>]*>(.*?)</div>\s*<div class="br-cap"', html, re.S)
+    # The explanation panel closes the hero's left column (10/15/26: it moved
+    # behind "What this measures", under the figures).
+    explain = re.search(r'data-br-explain="1"[^>]*>(.*?)</div></div>\s*<div class="br-hr"', html, re.S)
     body = html.replace(explain.group(1), "") if explain else html
     text = _text(body)
     for m in re.finditer(r"pour[ -]cost", text, re.I):

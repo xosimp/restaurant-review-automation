@@ -2472,3 +2472,6 @@ The owner's targets sit in four closed `details.co-more.tg-grp` groups on the on
 
 The week-to-date hero's budget bar (`kxBar`, hero): the marker's name is a legend above the track, flush with the card's left edge (`.kx-bar .lg`, a 2px ink tick and "Budget to date"), never a label centred on the marker — it sat inset wherever the marker fell.
 
+### Bar hero (10/15/26)
+The owner's card: the left column is the kicker, the figure, one short line ("bought, as a share of drink sales" · the change vs four weeks earlier), the verdict pill, the meter, the two dollar figures, and one link — **What this measures** (or **How it's worked out** once counted) — that opens the basis chip, the definition, the meter's legend, the range as context and what sales count. The right column's heading takes the left heading's face on the same line; the trend chart runs from the top of the big figure to its dates (`.br-hr`, flex), and the dates are a row in the flow (`.br-hx`, `xRow`) on the left column's last line.
+

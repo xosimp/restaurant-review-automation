@@ -45566,7 +45566,15 @@ function sfw2RuleCheck(chk) {
 /* The trend runs the full height of the figures beside it, its heading on
    the same line as theirs (owner, 10/15/26). */
 .br-hr{display:flex;flex-direction:column;min-width:0}
-.br-hr>.br-chart.br-hc{flex:1 1 auto;height:auto;min-height:220px}
+/* The chart starts level with the top of the big figure (the heading's line
+   and gap match the left column's) and its dates sit on the left column's
+   last line: the x labels are a row in the flow at the column's foot, on
+   the same line height as the text beside them (owner, 10/15/26). */
+.br-hr>.br-chart.br-hc{flex:1 1 auto;height:auto;min-height:220px;margin:0 10px 0 4px}
+.br-hr>.br-chart.br-hc .xl{display:none}
+.br-hx{position:relative;top:2px;height:22px;margin:10px 10px 0 4px;font-size:12.5px;line-height:22px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
+.br-hx span{position:absolute;bottom:0;transform:translateX(-50%);white-space:nowrap}
+.br-hx span.first{transform:none}.br-hx span.last{transform:translateX(-100%)}
 .br-hr>.br-empty{margin:auto 0}
 .br-hero::before{content:"";position:absolute;left:-18%;top:-55%;width:72%;height:150%;background:radial-gradient(closest-side,color-mix(in srgb,var(--ember) 15%,transparent),transparent 74%);pointer-events:none}
 .br-hero>*{position:relative}
@@ -46072,6 +46080,18 @@ function sfw2RuleCheck(chk) {
       + 'Count the bar at month-end — beer, liquor and wine at what you paid — and the figure becomes pour cost, counted.'
       + '<div><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-counts" style="margin-top:12px">Count the bar</button></div>';
   }
+  /* The hero chart's dates as a row in the flow, placed as the chart places
+     its own (first left, last right, the rest centred on their point). */
+  function cap0(t) { t = String(t || ''); return t.charAt(0).toUpperCase() + t.slice(1); }
+  function xRow(labels) {
+    var n = labels.length, h = '<div class="br-hx" aria-hidden="true">', idx = labelIdx(n, narrowNow()), j, i;
+    for (j = 0; j < idx.length; j++) {
+      i = idx[j];
+      if (!labels[i]) continue;
+      h += '<span class="' + (i === 0 ? 'first' : (i === n - 1 ? 'last' : '')) + '" style="left:' + (n <= 1 ? 50 : i * 100 / (n - 1)).toFixed(2) + '%">' + hn(esc2(labels[i])) + '</span>';
+    }
+    return h + '</div>';
+  }
   function hero(d, pc) {
     var t = pc.total || {}, counted = pc.basis === 'counted', rng = t.range, v = verdict(t, counted);
     var label = pc.label || (counted ? 'Pour cost (counted)' : 'Bought vs sold');
@@ -46081,7 +46101,7 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="dn-k">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})
+      ? '<div class="dn-k">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3}) + xRow(labels)
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
@@ -46100,24 +46120,29 @@ function sfw2RuleCheck(chk) {
     var sales = '<div class="br-sb">Sales: ' + numify(sb.label || 'POS drink sales after comps and check discounts')
       + (sb.discounts_usd > 0 ? ' · ' + hn(money(sb.discounts_usd)) + ' in check discounts taken off' : '')
       + (sb.poured_not_paid_usd > 0 ? ' · ' + hn(money(sb.poured_not_paid_usd)) + ' poured, not paid (100% comps, kept apart)' : '') + '</div>';
+    // The owner's card (owner, 10/15/26: "way too wordy"): the figure, one
+    // line, the verdict, the meter, the two dollar figures. How it is worked
+    // out — the basis, the range as context, what sales count — opens
+    // behind one link.
+    var cap = counted ? 'used, as a share of drink sales' : 'bought, as a share of drink sales';
+    var bandNote = v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + ' — context, not a verdict.' + (rng ? ' The shaded band on the meter is that range.' : '') + '</div>'
+      : (rng ? '<div class="br-ctx">The shaded band on the meter is the published range for counted pour cost, ' + hn(rng[0] + '–' + rng[1] + '%') + '.</div>' : '');
     return '<section class="br-card br-hero br-rise" aria-label="' + esc2(label) + '">'
-      + '<div><div class="dn-k">' + esc2(label) + ' · ' + hn(from) + ' – ' + hn(to) + '</div>'
+      + '<div class="br-hl"><div class="dn-k">' + esc2(label) + ' · ' + hn(from) + ' – ' + hn(to) + '</div>'
       + '<div class="br-big">' + (t.pct == null ? '—' : cnt(t.pct, 1) + '<small>%</small>') + '</div>'
-      + '<div class="br-basis">' + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>')
-      + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-why="1" aria-expanded="' + (ST.why ? 'true' : 'false') + '" aria-controls="br-why">' + (counted ? 'How it’s worked out' : 'What does that mean?') + '</button></div>'
-      + '<div class="br-why" id="br-why" data-br-explain="1"' + (ST.why ? '' : ' hidden') + '>' + whyText(d, pc, counted) + '</div>'
-      + '<div class="br-cap">' + esc2(pc.sub || (counted ? 'what the bar used as a % of what it sold' : 'what you bought from distributors as a % of what the POS sold')) + (delta != null ? ' · ' + deltaHtml(delta, noise, false) + ' vs four weeks earlier' : '') + '</div>'
+      + '<div class="br-cap">' + esc2(cap) + (delta != null ? ' · ' + deltaHtml(delta, noise, false) + ' vs four weeks earlier' : '') + '</div>'
       + pillHtml(v)
-      + (v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + ' — context, not a verdict.</div>' : '')
       + (!t.judged && t.not_judged_text ? '<div class="br-nj">' + numify(t.not_judged_text) + '</div>' : '')
       + (t.target == null && t.pct != null ? '<div class="br-tgset">The range is context. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-targets="1">Set an alcohol target in Account → Targets</button></div>' : '')
       + meter(t.pct, rng, counted ? null : t.prev_pct, v.c, t.target, ctxRange, tlabel)
-      + (rng ? meterLegend(v.c, counted ? null : t.prev_pct, t.target, ctxRange) : '')
       + over + ex
       + '<div class="br-figs"><div class="br-fig"><div class="v">' + cnt(t.purchases, 0, '$') + '</div><div class="l">' + (counted ? 'used · opening + bought − closing' : 'bought from distributors') + '</div></div>'
       + '<div class="br-fig"><div class="v">' + cnt(t.sales, 0, '$') + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
-      + sales + '</div>'
+      + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-expanded="' + (ST.why ? 'true' : 'false') + '" aria-controls="br-why">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
+      + '<div class="br-why" id="br-why" data-br-explain="1"' + (ST.why ? '' : ' hidden') + '>'
+      + '<div>' + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
+      + (pc.sub ? '<div class="br-ctx">' + esc2(cap0(pc.sub)) + '.</div>' : '') + whyText(d, pc, counted) + (rng ? meterLegend(v.c, counted ? null : t.prev_pct, t.target, ctxRange) : '') + bandNote + sales + '</div></div>'
       + '<div class="br-hr">' + right + '</div></section>';
   }
   /* Why a trend can't draw yet (V45): measured readings, not points. */
