@@ -45302,41 +45302,561 @@ function sfw2RuleCheck(chk) {
 </script>
 <script>window._BAR_BOOT={{ 'true' if request.path == '/bar' else 'false' }};</script>
 <style>
-/* ── Bar (owner, 10/14/26; DESIGN_SYSTEM.md -> Bar page): Food Cost's Bar
-   page over the dashboard, in the Restaurant DNA page's shell (.dn, .dn-bar,
-   .dn-scroll, .dn-wrap and its type). br- is the prefix. */
-.br-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:6px}
-.br-tile{background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;padding:18px 20px}
-.br-tile .k{font-size:13px;color:var(--ink3);display:flex;align-items:center;gap:8px}
-.br-tile .k i{width:8px;height:8px;border-radius:50%;background:var(--ink3)}
-.br-tile.good .k i{background:var(--hb-good)}.br-tile.warn .k i{background:var(--hb-warn)}.br-tile.low .k i{background:var(--ink3)}
-.br-tile .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:40px;line-height:1.1;color:var(--ink);margin:8px 0 4px}
-.br-tile .v small{font-size:16px;color:var(--ink3);margin-left:2px}
-.br-tile .s{font-size:13.5px;color:var(--ink2);line-height:1.45}
-.br-tile .r{font-size:12.5px;color:var(--ink3);margin-top:8px}
-.br-t{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:14px}
-.br-t th{font-size:12px;font-weight:600;color:var(--ink3);text-align:left;padding:8px 10px;border-bottom:1px solid var(--hb-line2)}
-.br-t td{padding:11px 10px;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:middle}
+/* ── Bar (owner, 10/14/26; redesigned 10/14/26 — DESIGN_SYSTEM.md -> Bar page):
+   Food Cost's Bar page over the dashboard, in the Restaurant DNA page's shell
+   (.dn, .dn-bar, .dn-scroll, .dn-wrap and its type). br- is the prefix.
+   Order: the hero (four-week pour cost against this bar's own mix range,
+   bought and sold, its week-by-week line), the three categories, what Cavnar
+   AI noticed, the trend, price watch, distributors, how products are sorted.
+   Charts follow the glowLine pattern: the svg stretches to its box
+   (preserveAspectRatio none, non-scaling strokes) and every dot and label is
+   HTML placed by percentage. */
+#bar{--hb-line:rgba(14,12,10,.12);--hb-line2:rgba(14,12,10,.07);--hb-good:var(--green);--hb-warn:var(--amber);--hb-bad:var(--red)}
+[data-theme="dark"] #bar{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
+#bar{--br-total:var(--ember);--br-beer:color-mix(in srgb,var(--amber) 72%,var(--ink));--br-liquor:color-mix(in srgb,var(--blue) 78%,var(--ink));--br-wine:color-mix(in srgb,var(--red) 48%,var(--blue) 52%);--br-up:var(--hb-bad);--br-down:var(--hb-good);--br-ease:cubic-bezier(.2,.9,.3,1)}
+.br-card{position:relative;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 86%,var(--bg-base)));border:1px solid var(--hb-line2);border-radius:22px;box-shadow:var(--elev-1);transition:transform .28s var(--br-ease),box-shadow .28s var(--br-ease),border-color .28s ease}
+.br-card.lift:hover{transform:translateY(-2px);box-shadow:var(--elev-2);border-color:var(--line-hi)}
+.br-k{font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
+.br-hero{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:40px;align-items:center;padding:36px 38px 34px;overflow:hidden;margin-top:6px}
+.br-hero::before{content:"";position:absolute;left:-18%;top:-55%;width:72%;height:150%;background:radial-gradient(closest-side,color-mix(in srgb,var(--ember) 15%,transparent),transparent 74%);pointer-events:none}
+.br-hero>*{position:relative}
+.br-hero .dn-k{margin-bottom:14px}
+.br-big{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:clamp(68px,8.4vw,108px);line-height:.92;letter-spacing:-.035em;color:var(--ink);font-variant-numeric:tabular-nums}
+.br-big small{font-size:.36em;letter-spacing:0;color:var(--ink2);margin-left:6px;font-weight:500}
+.br-cap{font-size:17px;color:var(--ink2);margin:10px 0 18px}
+.br-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;font-size:14.5px;color:var(--ink);background:color-mix(in srgb,var(--c,var(--ink3)) 13%,transparent);border:1px solid color-mix(in srgb,var(--c,var(--ink3)) 34%,transparent)}
+.br-pill i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink3));box-shadow:0 0 10px color-mix(in srgb,var(--c,var(--ink3)) 70%,transparent)}
+.br-figs{display:flex;gap:16px 34px;margin-top:22px;flex-wrap:wrap}
+.br-fig .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
+.br-fig .l{font-size:14px;color:var(--ink3);margin-top:2px}
+.br-meter{position:relative;height:10px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);margin:16px 0 26px}
+.br-meter .band{position:absolute;top:-1px;bottom:-1px;border-radius:999px;background:color-mix(in srgb,var(--hb-good) 26%,transparent);border:1px solid color-mix(in srgb,var(--hb-good) 48%,transparent)}
+.br-meter .mk{position:absolute;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--c,var(--ink));box-shadow:0 0 0 3px var(--surface),0 0 16px color-mix(in srgb,var(--c,var(--ink)) 65%,transparent);transition:left 1s var(--br-ease)}
+.br-meter .pv{position:absolute;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;border:2px solid var(--ink3);background:var(--surface)}
+.br-meter .lb{position:absolute;top:16px;transform:translateX(-50%);font-size:12.5px;color:var(--ink3);white-space:nowrap}
+.br-chart{position:relative;width:100%}
+.br-chart svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.br-chart .dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px var(--surface),0 0 14px var(--c)}
+.br-chart .dot.sm{width:7px;height:7px;margin:-3.5px 0 0 -3.5px;box-shadow:0 0 0 2px var(--surface)}
+.br-chart .dot.hot::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--c);opacity:0;animation:brPing 2.4s ease-out 1.2s infinite}
+.br-chart .yl{position:absolute;left:0;transform:translateY(-50%);font-size:12.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
+.br-chart .xl{position:absolute;bottom:-26px;transform:translateX(-50%);font-size:12.5px;color:var(--ink3);white-space:nowrap;font-family:'Space Grotesk',sans-serif}
+.br-chart .xl.first{transform:none}.br-chart .xl.last{transform:translateX(-100%)}
+.br-chart .bandl{position:absolute;right:0;font-size:12.5px;color:color-mix(in srgb,var(--hb-good) 80%,var(--ink));transform:translateY(-120%)}
+.br-chart.br-hc{width:auto;height:190px;margin:0 10px 30px 4px}
+.br-draw{clip-path:inset(0 100% 0 0);animation:brDraw 1.3s var(--br-ease) .15s forwards}
+.br-fade{opacity:0;animation:brFade .9s ease .55s forwards}
+.br-cats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:18px}
+.br-cat{padding:22px 22px 20px;overflow:hidden}
+.br-cat .hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.br-cat .nm{display:flex;align-items:center;gap:10px;font-size:16.5px;font-weight:600;color:var(--ink)}
+.br-cat .nm i{width:10px;height:10px;border-radius:3px;background:var(--s)}
+.br-cat .row{display:flex;align-items:baseline;gap:12px;margin-top:14px}
+.br-cat .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:48px;line-height:1;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.br-cat .v small{font-size:20px;color:var(--ink2);margin-left:2px;letter-spacing:0}
+.br-delta{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:var(--ink2)}
+.br-delta.good{color:var(--hb-good)}.br-delta.bad{color:var(--hb-bad)}
+.br-cat .br-chart.sp{width:auto;height:56px;margin:12px 6px 4px 0}
+.br-cat .ft{display:flex;justify-content:space-between;gap:10px;font-size:14px;color:var(--ink2)}
+.br-cat .ft b{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink)}
+.br-cat .ov{margin-top:10px;font-size:14px;color:var(--hb-bad)}
+.br-cat .na{font-size:15px;color:var(--ink2);margin-top:14px;line-height:1.5}
+.br-sec{margin-top:64px}
+.br-sh{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:18px}
+.br-sh .dn-h2{margin-bottom:0}
+.br-ins{display:grid;grid-template-columns:repeat(var(--n,3),minmax(0,1fr));gap:14px}
+.br-in{padding:20px 22px 20px;display:flex;flex-direction:column;gap:10px}
+.br-in .t{display:flex;align-items:center;gap:9px;font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--c)}
+.br-in .t i{width:7px;height:7px;border-radius:50%;background:var(--c);box-shadow:0 0 10px var(--c)}
+.br-in .h{font-family:'Clash Display',sans-serif;font-weight:500;font-size:20px;line-height:1.25;color:var(--ink);text-wrap:balance}
+.br-in .m{font-size:15px;color:var(--ink2);line-height:1.45}
+.br-in .a{margin-top:auto;padding-top:10px;border-top:1px solid var(--hb-line2);font-size:14.5px;color:var(--ink);line-height:1.45;display:flex;gap:8px}
+.br-in .a::before{content:"→";color:var(--ember2);font-weight:700}
+.br-chips{display:flex;gap:8px;flex-wrap:wrap}
+.br-chip.cbtn{height:34px;padding:0 13px;font-size:14px;font-weight:600}
+.br-chip i{width:9px;height:9px;border-radius:3px;background:var(--s)}
+.br-chip[aria-pressed="false"]{opacity:.5}
+.br-chip[aria-pressed="false"] i{background:transparent;border:1.5px solid var(--s)}
+.br-tbox{padding:26px 28px 44px}
+.br-chart.br-tc{width:auto;height:300px;margin:0 22px 0 48px}
+.br-tline{position:absolute;top:0;bottom:0;width:1px;background:color-mix(in srgb,var(--ink) 28%,transparent);pointer-events:none;opacity:0;transition:opacity .15s}
+.br-tip{position:absolute;top:8px;min-width:190px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb,var(--surface) 92%,var(--ink));border:1px solid var(--line-hi);box-shadow:var(--elev-2);pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .15s,transform .15s;z-index:3}
+.br-tip.on,.br-tline.on{opacity:1;transform:none}
+.br-tip .d{font-size:13px;color:var(--ink3);margin-bottom:8px}
+.br-tip .r{display:flex;align-items:center;gap:9px;font-size:14.5px;color:var(--ink2);padding:2px 0}
+.br-tip .r i{width:9px;height:9px;border-radius:3px;background:var(--s)}
+.br-tip .r b{margin-left:auto;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.br-thin{font-size:15px;color:var(--ink2);margin:6px 0 0}
+.br-more{margin-top:18px}
+.br-more>summary{cursor:pointer;list-style:none;font-size:15px;font-weight:600;color:var(--ink);display:inline-flex;align-items:center;gap:8px}
+.br-more>summary::-webkit-details-marker{display:none}
+.br-more>summary::before{content:"+";display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;border:1px solid var(--hb-line);color:var(--ink2);transition:transform .25s var(--br-ease)}
+.br-more[open]>summary::before{transform:rotate(45deg)}
+.br-sum{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.br-st{padding:18px 18px 16px}
+.br-st .l{font-size:14px;color:var(--ink3)}
+.br-st .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:32px;line-height:1.1;color:var(--ink);margin-top:8px;font-variant-numeric:tabular-nums}
+.br-st .v.up{color:var(--br-up)}.br-st .v.down{color:var(--br-down)}
+.br-st .s{font-size:14px;color:var(--ink2);margin-top:6px;line-height:1.4;overflow-wrap:anywhere}
+.br-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:22px 0 14px}
+.br-q{flex:1 1 180px;min-width:0;height:42px;border-radius:12px;border:1px solid var(--hb-line);background:var(--surface);color:var(--ink);font:inherit;font-size:15px;padding:0 14px}
+.br-q:focus{outline:none;border-color:color-mix(in srgb,var(--ember) 60%,var(--hb-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--ember) 18%,transparent)}
+.br-seg{display:inline-flex;padding:3px;border-radius:12px;background:color-mix(in srgb,var(--ink) 6%,transparent);gap:2px}
+.br-seg .cbtn{height:36px;border-radius:9px;font-size:14px;border-color:transparent;box-shadow:none;background-color:transparent}
+.br-seg .cbtn[aria-pressed="true"]{background-color:var(--surface);border-color:var(--hb-line);box-shadow:var(--elev-1)}
+.br-sel{height:42px;max-width:230px;flex:0 1 auto;background:var(--surface);color:var(--ink);border:1px solid var(--hb-line);border-radius:12px;padding:0 12px;font:inherit;font-size:14.5px}
+.br-rows{display:grid;gap:10px}
+.br-row{overflow:hidden}
+.br-row .cbtn.br-rh{display:grid;grid-template-columns:40px minmax(0,2.3fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 22px;align-items:center;gap:16px;width:100%;height:auto;min-height:76px;padding:14px 18px;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:left;white-space:normal;font-weight:400;font-size:15px;color:var(--ink);transform:none}
+.br-row .cbtn.br-rh:hover{background-color:color-mix(in srgb,var(--ink) 3.5%,transparent);transform:none;box-shadow:none}
+.br-dir{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 15%,transparent);color:var(--c)}
+.br-nm{min-width:0}
+.br-nm b{display:block;font-size:16px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.br-nm>span{display:block;font-size:14px;color:var(--ink3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.br-px{font-family:'Space Grotesk',sans-serif;font-size:15.5px;color:var(--ink2);white-space:nowrap}
+.br-px b{color:var(--ink);font-weight:600}
+.br-ch{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;color:var(--c);white-space:nowrap}
+.br-ch>span{display:block;font-size:13.5px;font-weight:500;margin-top:2px;opacity:.85}
+.br-im{text-align:right;white-space:nowrap}
+.br-im b{display:block;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;color:var(--ink)}
+.br-im>span{display:block;font-size:13px;color:var(--ink3);margin-top:2px}
+.br-cv{color:var(--ink3);transition:transform .3s var(--br-ease)}
+.br-row.open .br-cv{transform:rotate(180deg)}
+.br-rb{display:grid;grid-template-rows:0fr;transition:grid-template-rows .38s var(--br-ease)}
+.br-row.open .br-rb{grid-template-rows:1fr}
+.br-rb>div{overflow:hidden}
+.br-rbi{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:28px;padding:6px 22px 22px 74px}
+.br-hist{height:110px;margin:10px 0 30px}
+.br-facts{display:grid;gap:10px;font-size:14.5px;color:var(--ink2);align-content:start;margin-top:10px}
+.br-facts div{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--hb-line2);padding-bottom:9px}
+.br-facts b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600;text-align:right}
+.br-showall{margin-top:16px;display:flex;justify-content:center}
+.br-note{font-size:14px;color:var(--ink3);margin-top:12px;max-width:72ch;line-height:1.55}
+.br-empty{padding:22px;border-radius:16px;background:var(--sf-recess);color:var(--ink2);font-size:15.5px;line-height:1.55;margin-top:14px}
+.br-warn{padding:18px 20px;border-radius:18px;margin-top:18px;background:color-mix(in srgb,var(--amber) 10%,transparent);border:1px solid color-mix(in srgb,var(--amber) 32%,transparent);color:var(--ink2);font-size:15px;line-height:1.55}
+.br-warn b{color:var(--ink)}
+.br-dl{display:grid;gap:8px}
+.br-dr{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,2fr) minmax(0,.8fr) minmax(0,.8fr);gap:16px;align-items:center;padding:14px 18px}
+.br-dr .n b{display:block;font-size:15.5px;color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.br-dr .n>span{font-size:13.5px;color:var(--ink3)}
+.br-bar{height:8px;border-radius:999px;background:color-mix(in srgb,var(--ink) 7%,transparent);overflow:hidden}
+.br-bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,color-mix(in srgb,var(--ember2) 55%,transparent),var(--ember2));transform-origin:left;animation:brGrow .9s var(--br-ease) both}
+.br-dr .m{font-family:'Space Grotesk',sans-serif;font-size:15px;color:var(--ink);text-align:right;white-space:nowrap}
+.br-dr .m>span{display:block;font-size:13px;color:var(--ink3)}
+.br-t{width:100%;border-collapse:collapse;font-size:15px;margin-top:14px}
+.br-t th{font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:10px 12px;border-bottom:1px solid var(--hb-line2)}
+.br-t td{padding:13px 12px;border-bottom:1px solid var(--hb-line2);color:var(--ink2);vertical-align:middle}
 .br-t td.n,.br-t th.n{text-align:right;white-space:nowrap}
 .br-t td b{color:var(--ink);font-weight:600}
-.br-t .m{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px}
-.br-t .br-up{color:var(--hb-bad)}.br-t .br-down{color:var(--hb-good)}
+.br-t .m{display:block;font-size:13.5px;color:var(--ink3);margin-top:3px}
 .br-scroll{overflow-x:auto}
-.br-note{font-size:13.5px;color:var(--ink3);margin-top:10px;max-width:72ch;line-height:1.5}
-.br-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
-.br-sel{background:var(--surface);color:var(--ink);border:1px solid var(--hb-line);border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
-.br-tag{font-size:11.5px;color:var(--ink3);border:1px solid var(--hb-line);border-radius:6px;padding:0 6px;margin-left:6px}
-.br-empty{padding:22px;border-radius:14px;background:var(--sf-recess);color:var(--ink2);font-size:15px;line-height:1.55;margin-top:14px}
+.br-tag{font-size:12.5px;color:var(--ink3);border:1px solid var(--hb-line);border-radius:6px;padding:1px 7px;margin-left:6px}
+.br-rise{animation:brRise .6s var(--br-ease) both}
+.br-sk{border-radius:20px;background:linear-gradient(90deg,color-mix(in srgb,var(--ink) 4%,transparent) 20%,color-mix(in srgb,var(--ink) 9%,transparent) 50%,color-mix(in srgb,var(--ink) 4%,transparent) 80%);background-size:220% 100%;animation:brSk 1.5s ease-in-out infinite}
+@keyframes brRise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes brDraw{to{clip-path:inset(0 0 0 0)}}
+@keyframes brFade{to{opacity:1}}
+@keyframes brGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes brSk{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@keyframes brPing{0%{opacity:.6;transform:scale(.6)}80%,100%{opacity:0;transform:scale(1.9)}}
+@media (prefers-reduced-motion:reduce){.br-rise,.br-fade,.br-bar i,.br-sk,.br-chart .dot.sm{width:7px;height:7px;margin:-3.5px 0 0 -3.5px;box-shadow:0 0 0 2px var(--surface)}
+.br-chart .dot.hot::after{animation:none!important;opacity:1}.br-draw{animation:none!important;clip-path:none}.br-card,.br-rb,.br-cv,.br-meter .mk{transition:none!important}}
 .fc2-sub{margin-top:10px}
-@media (max-width:900px){.br-tiles{grid-template-columns:1fr}.br-two{grid-template-columns:1fr}}
+@media (max-width:980px){.br-ins{grid-template-columns:repeat(2,minmax(0,1fr))}.br-hero{grid-template-columns:1fr;gap:26px;padding:28px 24px}.br-cats{grid-template-columns:1fr}.br-sum{grid-template-columns:repeat(2,minmax(0,1fr))}.br-rbi{grid-template-columns:1fr;padding:4px 18px 20px}.br-dr{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.br-dr .br-bar{grid-column:1/-1;order:3}}
+@media (max-width:720px){.br-ins{grid-template-columns:1fr}.br-row .cbtn.br-rh{grid-template-columns:38px minmax(0,1fr) 20px;row-gap:8px}.br-row .br-px,.br-row .br-ch,.br-row .br-im{grid-column:2/3}.br-im{text-align:left}.br-chart.br-tc{height:220px;margin:0 16px 0 40px}.br-tbox{padding:20px 16px 40px}.br-sum{grid-template-columns:1fr}}
 </style>
 <script>
 (function () {
-  var OPEN = false, BACK_TO = null, FROM_DASH = false, DATA = null;
+  var OPEN = false, BACK_TO = null, FROM_DASH = false, DATA = null, GID = 0;
+  /* What the owner set on the page: survives a re-read (a category change).
+     The list opens on the increases, biggest money first: where the bar is
+     paying more. Came down and All are one tap away. */
+  var ST = {q: '', dir: 'up', cat: '', dist: '', sort: 'impact', all: false, open: {},
+            series: {total: true, beer: true, liquor: true, wine: true}};
+  var TOP = 8;
+  var SERIES = [{key: 'total', label: 'All three', css: 'var(--br-total)'},
+                {key: 'beer', label: 'Beer & seltzer', css: 'var(--br-beer)'},
+                {key: 'liquor', label: 'Liquor', css: 'var(--br-liquor)'},
+                {key: 'wine', label: 'Wine', css: 'var(--br-wine)'}];
   function esc2(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function hn(t) { return '<span class="hb-num">' + esc2(t) + '</span>'; }
   function money(v) { var n = Math.round(+v || 0); return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US'); }
   function money2(v) { var n = +v || 0; return (n < 0 ? '−$' : '$') + Math.abs(n).toFixed(2); }
+  function signed(v) { var n = Math.round(+v || 0); return (n > 0 ? '+' : (n < 0 ? '−' : '')) + '$' + Math.abs(n).toLocaleString('en-US'); }
+  /* Text with every figure in the number face. */
+  function numify(t) { return esc2(t).replace(/([+−\-]?\$?\d[\d,]*(\.\d+)?%?)/g, '<span class="hb-num">$1</span>'); }
+  function reduced() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  function seriesOf(key) { for (var i = 0; i < SERIES.length; i++) { if (SERIES[i].key === key) return SERIES[i]; } return SERIES[0]; }
+  function name(r) { return r.name || r.product || ''; }
+  /* A count-up figure: drawn at its final value, counted up after paint. */
+  function cnt(v, dec, pre, suf) {
+    var a = Math.abs(+v || 0), parts = (dec ? a.toFixed(dec) : String(Math.round(a))).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    var txt = (pre || '') + ((+v) < 0 ? '-' : '') + parts.join('.') + (suf || '');
+    return '<span class="hb-num" data-br-n="' + (+v) + '" data-br-d="' + (dec || 0) + '" data-br-p="' + esc2(pre || '') + '" data-br-s="' + esc2(suf || '') + '">' + esc2(txt) + '</span>';
+  }
+  function tone(c) {
+    if (c.incomplete) return {c: 'var(--hb-warn)', t: 'Invoices missing'};
+    if (c.pct == null) return {c: 'var(--ink3)', t: 'Not measured'};
+    if (c.tone === 'good') return {c: 'var(--hb-good)', t: 'Inside range'};
+    if (c.tone === 'warn') return {c: 'var(--hb-bad)', t: 'Above range'};
+    if (c.tone === 'low') return {c: 'var(--ink3)', t: 'Below range'};
+    return {c: 'var(--ink3)', t: ''};
+  }
+  /* ── charts ─────────────────────────────────────────────────────────── */
+  /* A line over [vals] in a box of the given height; a null is a gap. opts:
+     {min, max, css, area, band:[lo,hi], hot, labels:[..], ylabels} */
+  function chart(vals, cls, opts) {
+    opts = opts || {};
+    var n = vals.length, W = 1000, H = 300, i, lo = opts.min, hi = opts.max;
+    var x = function (k) { return n <= 1 ? W / 2 : k * W / (n - 1); };
+    var y = function (v) { return H - (v - lo) / ((hi - lo) || 1) * H; };
+    var segs = [], cur = [], last = -1;
+    for (i = 0; i < n; i++) {
+      if (vals[i] == null) { if (cur.length) segs.push(cur); cur = []; continue; }
+      cur.push([x(i), y(vals[i])]); last = i;
+    }
+    if (cur.length) segs.push(cur);
+    var id = 'brg' + (++GID), svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">';
+    if (opts.area) svg += '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + opts.css + '" stop-opacity=".32"/><stop offset="1" stop-color="' + opts.css + '" stop-opacity="0"/></linearGradient></defs>';
+    if (opts.band) {
+      var b1 = y(Math.min(opts.band[1], hi)), b2 = y(Math.max(opts.band[0], lo));
+      svg += '<rect x="0" y="' + b1 + '" width="' + W + '" height="' + Math.max(0, b2 - b1) + '" fill="var(--hb-good)" opacity=".09"/>';
+      svg += '<line x1="0" x2="' + W + '" y1="' + b1 + '" y2="' + b1 + '" stroke="var(--hb-good)" stroke-opacity=".45" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"/>';
+      svg += '<line x1="0" x2="' + W + '" y1="' + b2 + '" y2="' + b2 + '" stroke="var(--hb-good)" stroke-opacity=".45" stroke-dasharray="6 6" vector-effect="non-scaling-stroke"/>';
+    }
+    if (opts.grid) {
+      for (i = 0; i < opts.grid.length; i++) svg += '<line x1="0" x2="' + W + '" y1="' + y(opts.grid[i]) + '" y2="' + y(opts.grid[i]) + '" stroke="var(--ink)" stroke-opacity=".07" vector-effect="non-scaling-stroke"/>';
+    }
+    for (var s = 0; s < segs.length; s++) {
+      var g = segs[s], d = '';
+      for (i = 0; i < g.length; i++) d += (i ? 'L' : 'M') + g[i][0].toFixed(1) + ' ' + g[i][1].toFixed(1);
+      if (opts.area && g.length > 1) svg += '<path class="br-fade" d="' + d + 'L' + g[g.length - 1][0].toFixed(1) + ' ' + H + 'L' + g[0][0].toFixed(1) + ' ' + H + 'Z" fill="url(#' + id + ')"/>';
+      if (g.length > 1) svg += '<path class="br-draw" d="' + d + '" fill="none" stroke="' + opts.css + '" stroke-width="' + (opts.width || 2.5) + '" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    }
+    svg += '</svg>';
+    var html = '';
+    for (s = 0; s < segs.length; s++) {
+      for (i = 0; i < segs[s].length; i++) {
+        if (segs[s].length !== 1 && !opts.dots) continue;
+        html += '<span class="dot' + (opts.dots ? ' sm' : '') + '" style="--c:' + opts.css + ';left:' + (segs[s][i][0] / W * 100) + '%;top:' + (segs[s][i][1] / H * 100) + '%"></span>';
+      }
+    }
+    if (last >= 0 && opts.hot !== false) html += '<span class="dot hot" style="--c:' + opts.css + ';left:' + (x(last) / W * 100) + '%;top:' + (y(vals[last]) / H * 100) + '%"></span>';
+    if (opts.ylabels) for (i = 0; i < opts.ylabels.length; i++) html += '<span class="yl" style="left:-44px;top:' + (y(opts.ylabels[i]) / H * 100) + '%">' + opts.ylabels[i] + '%</span>';
+    if (opts.labels) {
+      var every = n > 8 ? 2 : 1;
+      for (i = 0; i < n; i++) {
+        if ((n - 1 - i) % every !== 0 || !opts.labels[i]) continue;
+        html += '<span class="xl' + (n > 1 && i === 0 ? ' first' : '') + (n > 1 && i === n - 1 ? ' last' : '') + '" style="left:' + (x(i) / W * 100) + '%">' + esc2(opts.labels[i]) + '</span>';
+      }
+    }
+    return '<div class="br-chart ' + (cls || '') + '">' + svg + html + (opts.extra || '') + '</div>';
+  }
+  /* The y range for a set of series: a little room above and below. */
+  function domain(lists, band) {
+    var mn = null, mx = null, i, j;
+    for (i = 0; i < lists.length; i++) for (j = 0; j < lists[i].length; j++) {
+      var v = lists[i][j]; if (v == null) continue;
+      mn = mn == null ? v : Math.min(mn, v); mx = mx == null ? v : Math.max(mx, v);
+    }
+    if (band) { mn = mn == null ? band[0] : Math.min(mn, band[0]); mx = mx == null ? band[1] : Math.max(mx, band[1]); }
+    if (mn == null) return {min: 0, max: 40, ticks: [0, 10, 20, 30, 40]};
+    var step = (mx - mn) > 24 ? 10 : 5;
+    var lo = Math.max(0, Math.floor((mn - 2) / step) * step), hi = Math.ceil((mx + 2) / step) * step;
+    var ticks = []; for (var t = lo; t <= hi; t += step) ticks.push(t);
+    return {min: lo, max: hi, ticks: ticks};
+  }
+  /* The rule-of-thumb range as a track: the band, today's marker, and four weeks earlier. */
+  function meter(pct, range, prev, c) {
+    if (!range) return '';
+    var top = Math.max(range[1] * 1.45, (pct || 0) * 1.12, (prev || 0) * 1.12);
+    top = Math.ceil(top / 5) * 5;
+    var pos = function (v) { return Math.max(0, Math.min(100, v / top * 100)); };
+    return '<div class="br-meter" role="img" aria-label="' + (pct == null ? 'Not measured' : pct + '% against a range of ' + range[0] + ' to ' + range[1] + '%') + '">'
+      + '<span class="band" style="left:' + pos(range[0]) + '%;width:' + (pos(range[1]) - pos(range[0])) + '%"></span>'
+      + (prev != null ? '<span class="pv" title="Four weeks earlier: ' + prev + '%" style="left:' + pos(prev) + '%"></span>' : '')
+      + (pct != null ? '<span class="mk" style="--c:' + c + ';left:' + pos(pct) + '%"></span>' : '')
+      + '<span class="lb" style="left:' + pos(range[0]) + '%">' + hn(range[0] + '%') + '</span><span class="lb" style="left:' + pos(range[1]) + '%">' + hn(range[1] + '%') + '</span></div>';
+  }
+  /* ── sections ───────────────────────────────────────────────────────── */
+  function hero(d, pc) {
+    var t = pc.total || {}, rng = t.range, c = 'var(--ink)', pill = '';
+    if (t.pct != null && rng) {
+      if (pc.complete === false) { c = 'var(--hb-warn)'; pill = 'So far — some invoices aren’t on file'; }
+      else if (t.pct > rng[1]) { c = 'var(--hb-bad)'; pill = 'Above your mix’s range'; }
+      else if (t.pct < rng[0]) { c = 'var(--ink3)'; pill = 'Below your mix’s range'; }
+      else { c = 'var(--hb-good)'; pill = 'Inside your mix’s range'; }
+    }
+    var trend = pc.trend || [], spark = t.spark || [], labels = [], i;
+    for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
+    var dom = domain([spark], rng);
+    var right = spark.length >= 2
+      ? '<div class="br-k" style="margin-bottom:16px">Four weeks at a time, week by week</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, labels: labels, width: 3})
+      : '<div class="br-empty" style="margin:0">The week-by-week line fills in as four-week windows of invoices and sales build up — ' + hn(spark.length) + ' so far.</div>';
+    var delta = (t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
+    return '<section class="br-card br-hero br-rise">'
+      + '<div><div class="dn-k">Bar · ' + hn(pc.window.from_mdy) + ' – ' + hn(pc.window.to_mdy) + '</div>'
+      + '<div class="br-big">' + (t.pct == null ? '—' : cnt(t.pct, 1) + '<small>%</small>') + '</div>'
+      + '<div class="br-cap">pour cost over the last four weeks' + (delta != null ? ' · ' + '<span class="br-delta ' + (delta < 0 ? 'good' : 'bad') + '">' + hn((delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1) + ' pts') + '</span> vs four weeks earlier' : '') + '</div>'
+      + (pill ? '<span class="br-pill" style="--c:' + c + '"><i></i>' + esc2(pill) + (rng ? ' · ' + hn(rng[0] + '–' + rng[1] + '%') : '') + '</span>' : '')
+      + meter(t.pct, rng, t.prev_pct, c)
+      + '<div class="br-figs"><div class="br-fig"><div class="v">' + cnt(t.purchases, 0, '$') + '</div><div class="l">bought from distributors</div></div>'
+      + '<div class="br-fig"><div class="v">' + cnt(t.sales, 0, '$') + '</div><div class="l">beer, liquor &amp; wine sales</div></div></div></div>'
+      + '<div>' + right + '</div></section>';
+  }
+  function cats(pc) {
+    var h = '', i;
+    for (i = 0; i < pc.categories.length; i++) {
+      var c = pc.categories[i], tn = tone(c), s = seriesOf(c.key), sp = c.spark || [];
+      var delta = (c.prev_pct != null && c.pct != null && !c.incomplete) ? (c.pct - c.prev_pct) : null;
+      var dom = domain([sp], c.range);
+      h += '<article class="br-card lift br-cat br-rise" style="--s:' + s.css + ';animation-delay:' + (0.08 + i * 0.07) + 's">'
+        + '<div class="hd"><span class="nm"><i></i>' + esc2(c.label) + '</span>' + (tn.t ? '<span class="br-pill" style="--c:' + tn.c + ';padding:4px 10px;font-size:13.5px"><i></i>' + esc2(tn.t) + '</span>' : '') + '</div>';
+      if (c.pct == null) {
+        h += '<div class="br-cat row"><span class="v">—</span></div><div class="na">' + (c.sales ? 'No ' + esc2(c.label.toLowerCase()) + ' invoices in these four weeks.' : 'No sales in this category yet.') + '</div></article>';
+        continue;
+      }
+      h += '<div class="row"><span class="v">' + cnt(c.pct, 1) + '<small>%</small></span>'
+        + (delta != null && Math.abs(delta) >= 0.1 ? '<span class="br-delta ' + (delta < 0 ? 'good' : 'bad') + '">' + (delta < 0 ? '▼ ' : '▲ ') + hn(Math.abs(delta).toFixed(1) + ' pts') + '</span>' : '') + '</div>'
+        + (sp.length >= 2 ? chart(sp, 'sp', {min: dom.min, max: dom.max, css: s.css, area: true, band: c.range}) : '<div class="sp"></div>')
+        + meter(c.pct, c.range, c.incomplete ? null : c.prev_pct, tn.c)
+        + '<div class="ft"><span>Bought <b>' + esc2(money(c.purchases)) + '</b></span><span>Sold <b>' + esc2(money(c.sales)) + '</b></span></div>'
+        + (c.over_range_usd ? '<div class="ov">' + hn(money(c.over_range_usd)) + ' over the range’s top in four weeks</div>' : '')
+        + '</article>';
+    }
+    return '<div class="br-cats">' + h + '</div>';
+  }
+  function insights(list) {
+    if (!list || !list.length) return '';
+    var h = '', i, label = {good: 'Going well', warn: 'Worth a look', bad: 'Needs attention', info: 'Good to know'},
+        col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--ember2)'};
+    for (i = 0; i < list.length; i++) {
+      var x = list[i];
+      h += '<article class="br-card lift br-in br-rise" style="--c:' + (col[x.tone] || 'var(--ember2)') + ';animation-delay:' + (0.05 + i * 0.06) + 's">'
+        + '<div class="t"><i></i>' + esc2(label[x.tone] || 'Good to know') + '</div>'
+        + '<div class="h">' + numify(x.headline) + '</div><div class="m">' + numify(x.metric) + '</div>'
+        + '<div class="a">' + numify(x.action) + '</div></article>';
+    }
+    return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Cavnar AI noticed</div><h2 class="dn-h2">What deserves a look</h2></div></div><div class="br-ins" style="--n:' + Math.min(list.length, 4) + '">' + h + '</div></section>';
+  }
+  function trendBox(pc) {
+    var trend = pc.trend || [], keys = [], lists = [], i, k, band = null, on = [];
+    for (k = 0; k < SERIES.length; k++) if (ST.series[SERIES[k].key]) on.push(SERIES[k]);
+    if (trend.length < 2) return '<div class="br-thin">The trend fills in week by week — ' + hn(trend.length) + ' four-week reading' + (trend.length === 1 ? '' : 's') + ' so far.</div>';
+    for (k = 0; k < on.length; k++) { var col = []; for (i = 0; i < trend.length; i++) col.push(trend[i][on[k].key]); lists.push(col); keys.push(on[k]); }
+    if (on.length === 1) {
+      if (on[0].key === 'total') band = (pc.total || {}).range;
+      else for (i = 0; i < pc.categories.length; i++) if (pc.categories[i].key === on[0].key) band = pc.categories[i].range;
+    }
+    var dom = domain(lists, band), labels = [], layers = '';
+    for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
+    for (k = 0; k < keys.length; k++) {
+      layers += chart(lists[k], 'br-layer', {min: dom.min, max: dom.max, css: keys[k].css, area: keys[k].key === 'total' && keys.length <= 2, band: k === 0 ? band : null,
+                                             grid: k === 0 ? dom.ticks : null, ylabels: k === 0 ? dom.ticks : null, labels: k === 0 ? labels : null, width: keys[k].key === 'total' ? 3.2 : 2.2});
+    }
+    if (!keys.length) return '<div class="br-thin">Pick a line to show.</div>';
+    return '<div class="br-chart br-tc" data-br-trend="1" role="img" aria-label="Four-week pour cost, week by week">'
+      + layers.replace(/class="br-chart br-layer"/g, 'class="br-chart br-layer" style="position:absolute;inset:0"')
+      + '<span class="br-tline"></span><div class="br-tip"></div></div>';
+  }
+  function chips() {
+    var h = '', k;
+    for (k = 0; k < SERIES.length; k++) {
+      var s = SERIES[k];
+      h += '<button type="button" class="cbtn cbtn-secondary cbtn-sm br-chip" style="--s:' + s.css + '" data-br-series="' + s.key + '" aria-pressed="' + (ST.series[s.key] ? 'true' : 'false') + '"><i></i>' + esc2(s.label) + '</button>';
+    }
+    return '<div class="br-chips" role="group" aria-label="Lines on the chart">' + h + '</div>';
+  }
+  function monthsTable(pc) {
+    var rows = '', i, j;
+    for (i = pc.months.length - 1; i >= 0; i--) {
+      var m = pc.months[i];
+      rows += '<tr><td><b>' + esc2(m.label) + '</b>' + (m.partial ? '<span class="m">' + hn(m.from_mdy) + '–' + hn(m.to_mdy) + '</span>' : '') + '</td>';
+      for (j = 0; j < m.categories.length; j++) { var c = m.categories[j]; rows += '<td class="n">' + (c.pct == null ? '—' : hn(c.pct + '%')) + (c.incomplete ? ' <span class="br-tag" title="Invoices missing for part of this month">incomplete</span>' : '') + '<span class="m">' + hn(money(c.purchases)) + ' / ' + hn(money(c.sales)) + '</span></td>'; }
+      rows += '</tr>';
+    }
+    return '<details class="br-more"><summary>Month by month, as a table</summary><div class="br-scroll"><table class="br-t"><thead><tr><th>Month</th><th class="n">Beer &amp; seltzer</th><th class="n">Liquor</th><th class="n">Wine</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '<p class="br-note">Each cell is bought / sold. A month is read only where invoices and sales are both on file; a delivery that lands early moves a month, which is why four weeks is the headline.</p></details>';
+  }
+  function trendSec(pc) {
+    return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Trend</div><h2 class="dn-h2">Pour cost, week by week</h2></div>' + chips() + '</div>'
+      + '<div class="br-card br-tbox br-rise"><div id="br-trend">' + trendBox(pc) + '</div></div>' + monthsTable(pc) + '</section>';
+  }
+  /* Price watch: every change, ranked; the top ones first. */
+  function allRows() {
+    var pw = (DATA && DATA.price_watch) || {}, out = [], i;
+    var ups = pw.increases || [], downs = pw.decreases || [];
+    for (i = 0; i < ups.length; i++) out.push(ups[i]);
+    for (i = 0; i < downs.length; i++) out.push(downs[i]);
+    return out;
+  }
+  function filtered() {
+    var rows = allRows(), out = [], q = ST.q.toLowerCase(), i;
+    for (i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (ST.dir === 'up' && !(r.change > 0)) continue;
+      if (ST.dir === 'down' && !(r.change < 0)) continue;
+      if (ST.cat && r.category !== ST.cat) continue;
+      if (ST.dist && r.distributor !== ST.dist) continue;
+      if (q && (name(r) + ' ' + r.product + ' ' + r.distributor).toLowerCase().indexOf(q) < 0) continue;
+      out.push(r);
+    }
+    out.sort(function (a, b) {
+      if (ST.sort === 'pct') return Math.abs(b.pct || 0) - Math.abs(a.pct || 0);
+      if (ST.sort === 'recent') return a.since < b.since ? 1 : (a.since > b.since ? -1 : 0);
+      return Math.abs(b.impact_90d || 0) - Math.abs(a.impact_90d || 0);
+    });
+    return out;
+  }
+  var ARROW_UP = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ARROW_DN = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3.5 8.5 8 13l4.5-4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var CHEVRON = '<svg class="br-cv" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 7 9 11.5 13.5 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function rowHtml(r) {
+    var up = r.change > 0, c = up ? 'var(--br-up)' : 'var(--br-down)', open = !!ST.open[r.product_key + '|' + r.uom];
+    var unitS = r.bought_90d === 1 ? r.unit : r.unit + 's';
+    var hist = r.history || [], vals = [], hl = [], i;
+    for (i = 0; i < hist.length; i++) { vals.push(hist[i].price); hl.push(i === 0 || i === hist.length - 1 ? hist[i].date_mdy : ''); }
+    var dom = domain([vals]);
+    var detail = '<div class="br-rbi"><div><div class="br-k">Every purchase, last four months</div>'
+      + (vals.length >= 2 ? chart(vals, 'br-hist', {min: Math.max(0, dom.min), max: dom.max, css: c, labels: hl, dots: true}) : '<div class="br-thin">One purchase on file.</div>')
+      + '</div><div class="br-facts">'
+      + '<div><span>Was</span><b>' + esc2(money2(r.from)) + ' since ' + esc2(r.was_since_mdy) + '</b></div>'
+      + '<div><span>Now</span><b>' + esc2(money2(r.to)) + ' since ' + esc2(r.since_mdy) + '</b></div>'
+      + '<div><span>Bought in 90 days</span><b>' + esc2(r.bought_90d) + ' ' + esc2(unitS) + '</b></div>'
+      + '<div><span>Purchases in four months</span><b>' + esc2(r.purchases || hist.length) + '</b></div>'
+      + '<div><span>At that buying</span><b>' + esc2(signed(r.impact_90d)) + ' <span style="color:var(--ink3);font-weight:400">(' + esc2(money2(Math.abs(r.change))) + ' × ' + esc2(r.bought_90d) + ')</span></b></div>'
+      + '<div><span>Category</span><b>' + catSelect({product_key: r.product_key, product: r.product, category: r.category}, (DATA && DATA.categories) || []) + '</b></div>'
+      + '</div></div>';
+    return '<article class="br-card br-row' + (open ? ' open' : '') + '">'
+      + '<button type="button" class="cbtn br-rh" data-br-row="' + esc2(r.product_key + '|' + r.uom) + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
+      + '<span class="br-dir" style="--c:' + c + '">' + (up ? ARROW_UP : ARROW_DN) + '</span>'
+      + '<span class="br-nm"><b>' + esc2(name(r)) + '</b><span>' + esc2(r.distributor) + ' · ' + esc2(r.category_label || '') + ' · per ' + esc2(r.unit) + '</span></span>'
+      + '<span class="br-px">' + hn(money2(r.from)) + ' → <b>' + hn(money2(r.to)) + '</b></span>'
+      + '<span class="br-ch" style="--c:' + c + '">' + hn((up ? '+' : '−') + money2(Math.abs(r.change))) + (r.pct != null ? '<span>' + hn((r.pct > 0 ? '+' : '') + r.pct + '%') + ' · ' + hn(r.since_mdy) + '</span>' : '') + '</span>'
+      + '<span class="br-im">' + (r.impact_90d ? '<b>' + hn(signed(r.impact_90d)) + '</b><span>at 90-day buying</span>' : '<span>not bought in 90 days</span>') + '</span>'
+      + CHEVRON + '</button>'
+      + '<div class="br-rb"><div>' + detail + '</div></div></article>';
+  }
+  function listHtml() {
+    var rows = filtered(), narrowed = !!(ST.q || ST.cat || ST.dist);
+    if (!rows.length) return '<div class="br-empty">' + (allRows().length ? 'Nothing matches — clear the search or a filter.' : 'No price changed on a product bought more than once in the last four months.') + '</div>';
+    var show = (ST.all || narrowed) ? rows.length : Math.min(TOP, rows.length), h = '', i;
+    for (i = 0; i < show; i++) h += rowHtml(rows[i]);
+    return '<div class="br-rows">' + h + '</div>'
+      + (rows.length > show ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary" data-br-more="1">Show all ' + hn(rows.length) + ' changes</button></div>' : '')
+      + (ST.all && !narrowed && rows.length > TOP ? '<div class="br-showall"><button type="button" class="cbtn cbtn-text" data-br-more="0">Show the top ' + hn(TOP) + '</button></div>' : '');
+  }
+  function priceSec(pw) {
+    var s = pw.summary || {}, lu = s.largest_up, ld = s.largest_down, rows = allRows(), dists = {}, catsSeen = {}, i;
+    for (i = 0; i < rows.length; i++) { dists[rows[i].distributor] = 1; catsSeen[rows[i].category] = rows[i].category_label; }
+    var dOpts = '<option value="">Every distributor</option>', cOpts = '<option value="">Every category</option>', k;
+    var dl = []; for (k in dists) if (dists.hasOwnProperty(k)) dl.push(k); dl.sort();
+    for (i = 0; i < dl.length; i++) dOpts += '<option value="' + esc2(dl[i]) + '"' + (ST.dist === dl[i] ? ' selected' : '') + '>' + esc2(dl[i]) + '</option>';
+    for (k in catsSeen) if (catsSeen.hasOwnProperty(k)) cOpts += '<option value="' + esc2(k) + '"' + (ST.cat === k ? ' selected' : '') + '>' + esc2(catsSeen[k]) + '</option>';
+    var seg = function (v, t) { return '<button type="button" class="cbtn cbtn-sm" data-br-dir="' + v + '" aria-pressed="' + (ST.dir === v ? 'true' : 'false') + '">' + t + '</button>'; };
+    return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Price watch</div><h2 class="dn-h2">What your distributors charge</h2>'
+      + '<p class="dn-sub" style="margin-top:8px">Every product bought more than once, ranked by what its latest change does at the amounts you bought in the last 90 days.</p></div></div>'
+      + '<div class="br-sum">'
+      + '<div class="br-card br-st br-rise"><div class="l">Went up</div><div class="v up">' + cnt(s.up_n || 0) + '</div><div class="s">' + hn(signed(s.up_impact_90d)) + ' at your 90-day buying</div></div>'
+      + '<div class="br-card br-st br-rise" style="animation-delay:.05s"><div class="l">Came down</div><div class="v down">' + cnt(s.down_n || 0) + '</div><div class="s">' + hn(signed(s.down_impact_90d)) + ' · often a case deal or a new pack</div></div>'
+      + '<div class="br-card br-st br-rise" style="animation-delay:.1s"><div class="l">Biggest increase</div><div class="v up">' + (lu ? cnt(lu.pct, 1, '+', '%') : '—') + '</div><div class="s">' + (lu ? esc2(lu.name) : 'None') + '</div></div>'
+      + '<div class="br-card br-st br-rise" style="animation-delay:.15s"><div class="l">Biggest drop</div><div class="v down">' + (ld ? cnt(Math.abs(ld.pct), 1, '−', '%') : '—') + '</div><div class="s">' + (ld ? esc2(ld.name) : 'None') + '</div></div>'
+      + '<div class="br-card br-st br-rise" style="animation-delay:.2s"><div class="l">Increases add</div><div class="v">' + cnt(Math.max(0, s.up_impact_90d || 0), 0, '+$') + '</div><div class="s">Estimated at the amounts bought in 90 days — not money already paid</div></div>'
+      + '</div>'
+      + '<div class="br-tools"><input class="br-q" id="br-q" type="search" placeholder="Search a product or distributor" aria-label="Search price changes" value="' + esc2(ST.q) + '">'
+      + '<span class="br-seg" role="group" aria-label="Direction">' + seg('all', 'All') + seg('up', 'Up') + seg('down', 'Down') + '</span>'
+      + '<select class="br-sel" id="br-fcat" aria-label="Category">' + cOpts + '</select>'
+      + '<select class="br-sel" id="br-fdist" aria-label="Distributor">' + dOpts + '</select>'
+      + '<select class="br-sel" id="br-fsort" aria-label="Sort"><option value="impact"' + (ST.sort === 'impact' ? ' selected' : '') + '>Biggest money first</option><option value="pct"' + (ST.sort === 'pct' ? ' selected' : '') + '>Biggest % first</option><option value="recent"' + (ST.sort === 'recent' ? ' selected' : '') + '>Newest first</option></select></div>'
+      + '<div id="br-list">' + listHtml() + '</div>'
+      + '<p class="br-note">“At 90-day buying” is the change times what you bought in the last 90 days — an estimate of what the new price does at that volume, not a bill already paid or a saving earned.</p></section>';
+  }
+  function gapsHtml(gs) {
+    if (!gs || !gs.length) return '';
+    var li = '', i;
+    for (i = 0; i < gs.length; i++) li += '<li><b>' + esc2(gs[i].distributor) + '</b> — nothing on file ' + hn(gs[i].from_mdy) + '–' + hn(gs[i].to_mdy) + (gs[i].categories.length ? ' (' + esc2(gs[i].categories.join(', ')) + ')' : '') + '</li>';
+    return '<div class="br-warn"><b>Some invoices aren’t on file yet.</b> What these distributors supply reads low until the missing invoices arrive — forward Fintech’s invoice detail for those dates.<ul style="margin:8px 0 0;padding-left:18px">' + li + '</ul></div>';
+  }
+  function distributors(ds) {
+    if (!ds || !ds.length) return '';
+    var h = '', i, top = ds[0].spend || 1;
+    for (i = 0; i < ds.length; i++) {
+      var d = ds[i];
+      h += '<div class="br-card br-dr"><div class="n"><b>' + esc2(d.distributor) + '</b><span>' + hn(d.invoices) + ' invoice' + (d.invoices === 1 ? '' : 's') + '</span></div>'
+        + '<div class="br-bar"><i style="width:' + Math.max(2, d.spend / top * 100) + '%;animation-delay:' + (i * 0.04) + 's"></i></div>'
+        + '<div class="m">' + hn(money(d.spend)) + '<span>' + (d.share != null ? hn(d.share + '%') + ' of spend' : '') + '</span></div>'
+        + '<div class="m">' + (d.fees ? hn(money(d.fees)) : '—') + '<span>fees &amp; taxes</span></div></div>';
+    }
+    return '<section class="br-sec"><div class="br-sh"><div><div class="dn-k">Distributors</div><h2 class="dn-h2">Where the money goes</h2></div></div><div class="br-dl">' + h + '</div></section>';
+  }
+  function catSelect(p, cats) {
+    var o = '', i;
+    for (i = 0; i < cats.length; i++) o += '<option value="' + esc2(cats[i].key) + '"' + (cats[i].key === p.category ? ' selected' : '') + '>' + esc2(cats[i].label) + '</option>';
+    return '<select class="br-sel" style="height:34px" data-br-cat="' + esc2(p.product_key) + '" aria-label="Category for ' + esc2(p.product) + '">' + o + '</select>';
+  }
+  function products(d) {
+    var ps = d.products || [], h = '', i, n = 0;
+    for (i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (p.category === 'fee' || p.category === 'deposit') continue;
+      n++;
+      h += '<tr><td><b>' + esc2(p.product) + '</b>' + (p.owner_set ? '<span class="br-tag">set by you</span>' : (p.sure ? '' : '<span class="br-tag">a guess</span>')) + '<span class="m">' + esc2(p.distributor) + '</span></td><td class="n">' + hn(money(p.spend)) + '</td><td class="n">' + catSelect(p, d.categories || []) + '</td></tr>';
+    }
+    return '<details class="dn-fam"><summary><span class="nm">How every product is sorted</span><span class="c">' + hn(n) + ' products' + (d.to_check ? ' · ' + hn(d.to_check) + ' to check' : '') + '</span></summary>'
+      + '<p class="br-note">Cavnar AI sorts each product from its name, unit and distributor. Change one and it stays that way.</p>'
+      + '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Spend</th><th class="n">Category</th></tr></thead><tbody>' + h + '</tbody></table></div></details>';
+  }
+  function page(d) {
+    if (!d || !d.ok) return '<div class="dn-k">Bar</div><div class="br-empty">The bar’s numbers couldn’t be read just now. Try again in a minute.</div>';
+    if (!d.available) return '<div class="dn-k">Bar</div><h1 class="dn-read" style="font-size:32px">Your bar page is waiting on invoices.</h1><div class="br-empty">' + esc2(d.why_not || '') + '</div>';
+    var pc = d.pour_cost || {}, pw = d.price_watch || {}, h = '';
+    if (pc.available) h += hero(d, pc) + gapsHtml(pc.gaps) + cats(pc);
+    else h += '<div class="dn-k">Bar · invoices ' + hn(d.invoices.from_mdy) + '–' + hn(d.invoices.to_mdy) + '</div><h1 class="dn-read" style="font-size:32px">Prices first; pour cost soon.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>';
+    h += insights(d.insights);
+    if (pc.available) h += trendSec(pc);
+    h += priceSec(pw) + distributors(d.distributors)
+      + '<section class="br-sec">' + products(d) + '</section>'
+      + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
+    return h;
+  }
+  function skeleton() {
+    return '<div class="dn-k">Bar</div><div class="br-sk" role="status" aria-label="Loading" style="height:300px;margin-top:14px"></div>'
+      + '<div class="br-cats"><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div></div>'
+      + '<div class="br-sk" style="height:150px;margin-top:64px"></div>';
+  }
+  /* After a paint: count the figures up (still under Reduce Motion). */
+  function settle(root) {
+    if (reduced() || !window.cavCount) return;
+    var els = root.querySelectorAll('[data-br-n]'), i;
+    for (i = 0; i < els.length; i++) {
+      var el = els[i];
+      cavCount(el, +el.getAttribute('data-br-n'), {decimals: +el.getAttribute('data-br-d') || 0, prefix: el.getAttribute('data-br-p') || '', suffix: el.getAttribute('data-br-s') || ''});
+    }
+  }
+  function redrawList() { var b = document.getElementById('br-list'); if (b) b.innerHTML = listHtml(); }
+  function redrawTrend() {
+    var b = document.getElementById('br-trend'); if (b && DATA && DATA.pour_cost) b.innerHTML = trendBox(DATA.pour_cost);
+    var cs = document.querySelectorAll('[data-br-series]'), i;
+    for (i = 0; i < cs.length; i++) cs[i].setAttribute('aria-pressed', ST.series[cs[i].getAttribute('data-br-series')] ? 'true' : 'false');
+  }
+  /* The trend's hover: the week under the pointer, every line's value. */
+  function trendHover(box, clientX) {
+    var trend = (DATA && DATA.pour_cost && DATA.pour_cost.trend) || [], n = trend.length;
+    if (n < 2) return;
+    var rect = box.getBoundingClientRect(), rel = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    var i = Math.round(rel * (n - 1)), p = trend[i], line = box.querySelector('.br-tline'), tip = box.querySelector('.br-tip'), rows = '', k;
+    for (k = 0; k < SERIES.length; k++) {
+      var s = SERIES[k]; if (!ST.series[s.key]) continue;
+      rows += '<div class="r" style="--s:' + s.css + '"><i></i>' + esc2(s.label) + '<b>' + (p[s.key] == null ? '—' : esc2((+p[s.key]).toFixed(1) + '%')) + '</b></div>';
+    }
+    tip.innerHTML = '<div class="d">Four weeks ' + hn(p.from_mdy) + ' – ' + hn(p.end_mdy) + '</div>' + rows;
+    var left = i / (n - 1) * 100;
+    line.style.left = left + '%';
+    tip.style.left = left > 60 ? '' : 'calc(' + left + '% + 14px)';
+    tip.style.right = left > 60 ? 'calc(' + (100 - left) + '% + 14px)' : '';
+    line.classList.add('on'); tip.classList.add('on');
+  }
   function shell() {
     var el = document.getElementById('bar');
     if (el) return el;
@@ -45348,103 +45868,41 @@ function sfw2RuleCheck(chk) {
     document.getElementById('br-close').addEventListener('click', function () { window.barClose(); });
     el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); window.barClose(); } });
     el.addEventListener('change', function (e) {
-      var t = e.target; if (!t || !t.getAttribute || !t.getAttribute('data-br-cat')) return;
-      setCategory(t.getAttribute('data-br-cat'), t.value, t);
+      var t = e.target; if (!t || !t.getAttribute) return;
+      if (t.getAttribute('data-br-cat')) { setCategory(t.getAttribute('data-br-cat'), t.value, t); return; }
+      if (t.id === 'br-fcat') { ST.cat = t.value; redrawList(); }
+      else if (t.id === 'br-fdist') { ST.dist = t.value; redrawList(); }
+      else if (t.id === 'br-fsort') { ST.sort = t.value; redrawList(); }
     });
+    el.addEventListener('input', function (e) { if (e.target && e.target.id === 'br-q') { ST.q = e.target.value; redrawList(); } });
+    el.addEventListener('click', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more]') : null;
+      if (!t) return;
+      if (t.getAttribute('data-br-row') != null) {
+        if (e.target.closest('select')) return;
+        var key = t.getAttribute('data-br-row'), art = t.parentNode;
+        ST.open[key] = !ST.open[key];
+        art.classList.toggle('open', !!ST.open[key]); t.setAttribute('aria-expanded', ST.open[key] ? 'true' : 'false');
+      } else if (t.getAttribute('data-br-dir') != null) {
+        ST.dir = t.getAttribute('data-br-dir');
+        var segs = el.querySelectorAll('[data-br-dir]'), i;
+        for (i = 0; i < segs.length; i++) segs[i].setAttribute('aria-pressed', segs[i] === t ? 'true' : 'false');
+        redrawList();
+      } else if (t.getAttribute('data-br-series') != null) {
+        var sk = t.getAttribute('data-br-series'); ST.series[sk] = !ST.series[sk]; redrawTrend();
+      } else if (t.getAttribute('data-br-more') != null) {
+        ST.all = t.getAttribute('data-br-more') === '1'; redrawList();
+      }
+    });
+    el.addEventListener('mousemove', function (e) {
+      var box = e.target && e.target.closest ? e.target.closest('[data-br-trend]') : null;
+      if (box) trendHover(box, e.clientX);
+    });
+    el.addEventListener('mouseleave', function () {
+      var on = el.querySelectorAll('.br-tline.on,.br-tip.on'), i;
+      for (i = 0; i < on.length; i++) on[i].classList.remove('on');
+    }, true);
     return el;
-  }
-  function tiles(pc) {
-    var h = '', i;
-    for (i = 0; i < pc.categories.length; i++) {
-      var c = pc.categories[i];
-      h += '<div class="br-tile ' + (c.tone || '') + '"><div class="k"><i></i>' + esc2(c.label) + '</div>'
-        + '<div class="v">' + (c.pct == null ? '—' : hn(c.pct) + '<small>%</small>') + '</div>'
-        + '<div class="s">' + (c.pct == null ? (c.sales ? 'No ' + esc2(c.label.toLowerCase()) + ' invoices in this window' : 'No sales in this category') : 'Bought ' + hn(money(c.purchases)) + ' · sold ' + hn(money(c.sales))) + '</div>'
-        + '<div class="r">' + (c.incomplete ? 'Invoices missing — not judged yet' : 'Rule of thumb ' + hn(c.range[0] + '–' + c.range[1] + '%') + (c.tone === 'warn' ? ' · above it' : (c.tone === 'low' ? ' · below it' : (c.tone === 'good' ? ' · inside it' : '')))) + '</div></div>';
-    }
-    return '<div class="br-tiles">' + h + '</div>';
-  }
-  /* Invoices a distributor normally sends that aren't on file: said, and the
-     categories they supply aren't judged until they arrive (10/14/26). */
-  function gapsHtml(gs) {
-    if (!gs.length) return '';
-    var li = '', i;
-    for (i = 0; i < gs.length; i++) {
-      li += '<li><b>' + esc2(gs[i].distributor) + '</b> — nothing on file ' + hn(gs[i].from_mdy) + '–' + hn(gs[i].to_mdy) + (gs[i].categories.length ? ' (' + esc2(gs[i].categories.join(', ')) + ')' : '') + '</li>';
-    }
-    return '<div class="br-empty" style="margin-top:18px"><b>Some invoices aren’t on file yet.</b> These distributors usually invoice more often, so what they supply reads low until the missing invoices arrive — forward Fintech’s invoice detail for those dates to fill them in.<ul style="margin:8px 0 0;padding-left:18px">' + li + '</ul></div>';
-  }
-  function months(pc) {
-    var rows = '', i, j;
-    for (i = pc.months.length - 1; i >= 0; i--) {
-      var m = pc.months[i];
-      rows += '<tr><td><b>' + esc2(m.label) + '</b>' + (m.partial ? '<span class="m">' + hn(m.from_mdy) + '–' + hn(m.to_mdy) + '</span>' : '') + '</td>';
-      for (j = 0; j < m.categories.length; j++) { var c = m.categories[j]; rows += '<td class="n">' + (c.pct == null ? '—' : hn(c.pct + '%')) + (c.incomplete ? ' <span class="br-tag" title="Invoices missing for part of this month">incomplete</span>' : '') + '<span class="m">' + hn(money(c.purchases)) + ' / ' + hn(money(c.sales)) + '</span></td>'; }
-      rows += '</tr>';
-    }
-    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Month</th><th class="n">Beer &amp; seltzer</th><th class="n">Liquor</th><th class="n">Wine</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-      + '<p class="br-note">Each cell is bought / sold. A month is read only where invoices and sales are both on file; a delivery that lands early moves a month, which is why four weeks is the headline.</p>';
-  }
-  function priceRows(list, up) {
-    if (!list.length) return '<div class="br-empty">' + (up ? 'No price went up in the last four months.' : 'No price came down in the last four months.') + '</div>';
-    var h = '', i, show = Math.min(list.length, 12);
-    for (i = 0; i < show; i++) {
-      var r = list[i];
-      h += '<tr><td><b>' + esc2(r.product) + '</b><span class="m">' + esc2(r.distributor) + ' · per ' + esc2(r.unit) + '</span></td>'
-        + '<td class="n">' + hn(money2(r.from)) + ' → ' + hn(money2(r.to)) + '<span class="m ' + (up ? 'br-up' : 'br-down') + '">' + hn((r.change > 0 ? '+' : '−') + money2(Math.abs(r.change)) + (r.pct != null ? ' (' + (r.pct > 0 ? '+' : '') + r.pct + '%)' : '')) + '</span></td>'
-        + '<td class="n">' + hn(r.since_mdy) + (r.bought_90d && r.impact_90d ? '<span class="m">' + hn((r.impact_90d > 0 ? '+' : '−') + money(Math.abs(r.impact_90d))) + ' on ' + hn(r.bought_90d) + ' ' + esc2(r.unit) + (r.bought_90d === 1 ? '' : 's') + ' in 90 days</span>' : '') + '</td></tr>';
-    }
-    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Price</th><th class="n">Since</th></tr></thead><tbody>' + h + '</tbody></table></div>'
-      + (list.length > show ? '<p class="br-note">' + hn(list.length - show) + ' more ' + (up ? 'increases' : 'decreases') + ' are smaller.</p>' : '');
-  }
-  function distributors(ds) {
-    var h = '', i;
-    for (i = 0; i < ds.length; i++) {
-      var d = ds[i];
-      h += '<tr><td><b>' + esc2(d.distributor) + '</b><span class="m">' + hn(d.invoices) + ' invoice' + (d.invoices === 1 ? '' : 's') + '</span></td><td class="n">' + hn(money(d.spend)) + '<span class="m">' + (d.share != null ? hn(d.share + '%') : '') + '</span></td><td class="n">' + (d.fees ? hn(money(d.fees)) : '—') + '</td></tr>';
-    }
-    return '<div class="br-scroll"><table class="br-t"><thead><tr><th>Distributor</th><th class="n">Spend</th><th class="n">Fees &amp; taxes</th></tr></thead><tbody>' + h + '</tbody></table></div>';
-  }
-  function catSelect(p, cats) {
-    var o = '', i;
-    for (i = 0; i < cats.length; i++) o += '<option value="' + esc2(cats[i].key) + '"' + (cats[i].key === p.category ? ' selected' : '') + '>' + esc2(cats[i].label) + '</option>';
-    return '<select class="br-sel" data-br-cat="' + esc2(p.product_key) + '" aria-label="Category for ' + esc2(p.product) + '">' + o + '</select>';
-  }
-  function products(d) {
-    var ps = d.products || [], h = '', i, n = 0;
-    for (i = 0; i < ps.length; i++) {
-      var p = ps[i];
-      if (p.category === 'fee' || p.category === 'deposit') continue;
-      n++;
-      h += '<tr><td><b>' + esc2(p.product) + '</b>' + (p.owner_set ? '<span class="br-tag">set by you</span>' : '') + '<span class="m">' + esc2(p.distributor) + '</span></td><td class="n">' + hn(money(p.spend)) + '</td><td class="n">' + catSelect(p, d.categories || []) + '</td></tr>';
-    }
-    return '<details class="dn-fam"><summary><span class="nm">How every product is sorted</span><span class="c">' + hn(n) + ' products</span></summary>'
-      + '<p class="br-note">Cavnar AI sorts each product from its name, unit and distributor. Change one and it stays that way.</p>'
-      + '<div class="br-scroll"><table class="br-t"><thead><tr><th>Product</th><th class="n">Spend</th><th class="n">Category</th></tr></thead><tbody>' + h + '</tbody></table></div></details>';
-  }
-  function page(d) {
-    if (!d || !d.ok) return '<div class="dn-k">Bar</div><div class="br-empty">The bar’s numbers couldn’t be read just now. Try again in a minute.</div>';
-    if (!d.available) return '<div class="dn-k">Bar</div><h1 class="dn-read" style="font-size:32px">Your bar page is waiting on invoices.</h1><div class="br-empty">' + esc2(d.why_not || '') + '</div>';
-    var pc = d.pour_cost || {}, pw = d.price_watch || {}, h = '<div class="dn-k">Bar · invoices ' + hn(d.invoices.from_mdy) + '–' + hn(d.invoices.to_mdy) + '</div>';
-    if (pc.available) {
-      var t = pc.total || {};
-      h += '<h1 class="dn-read" style="font-size:clamp(26px,3vw,40px)">' + (t.pct == null ? 'Pour cost needs both invoices and sales in the same weeks.'
-          : (pc.complete === false ? 'Pour cost reads <em>' + hn(t.pct + '%') + '</em> so far — some invoices aren’t on file yet.' : 'The bar’s pour cost is <em>' + hn(t.pct + '%') + '</em> over the last four weeks.')) + '</h1>'
-        + '<p class="dn-sub">' + hn(pc.window.from_mdy) + '–' + hn(pc.window.to_mdy) + ': ' + hn(money(t.purchases)) + ' bought from distributors against ' + hn(money(t.sales)) + ' in beer, liquor and wine sales.</p>'
-        + gapsHtml(pc.gaps || [])
-        + '<div style="margin-top:26px">' + tiles(pc) + '</div>'
-        + '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Month by month</div><h2 class="dn-h2">Pour cost by month</h2>' + months(pc) + '</section>';
-    } else {
-      h += '<h1 class="dn-read" style="font-size:32px">Prices first; pour cost soon.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>';
-    }
-    h += '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Price watch</div><h2 class="dn-h2">What your distributors charge</h2>'
-      + '<p class="dn-sub">The latest change on every product bought more than once in the last four months, with what it means at the amounts you buy. A lower price is often a case deal or a different pack.</p>'
-      + '<div class="br-two" style="margin-top:18px"><div><div class="dn-k" style="color:var(--hb-bad)">Went up · ' + hn((pw.increases || []).length) + '</div>' + priceRows(pw.increases || [], true) + '</div>'
-      + '<div><div class="dn-k" style="color:var(--hb-good)">Came down · ' + hn((pw.decreases || []).length) + '</div>' + priceRows(pw.decreases || [], false) + '</div></div></section>'
-      + '<section class="dn-sec" style="margin-top:56px"><div class="dn-k">Distributors</div><h2 class="dn-h2">Where the money goes</h2>' + distributors(d.distributors || []) + '</section>'
-      + '<section class="dn-sec" style="margin-top:56px">' + products(d) + '</section>'
-      + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
-    return h;
   }
   function load(cb) {
     fetch('/api/food-cost/bar', {credentials: 'same-origin'}).then(function (r) {
@@ -45454,10 +45912,11 @@ function sfw2RuleCheck(chk) {
   }
   function paint() {
     var body = document.getElementById('br-body'); if (!body) return;
-    body.innerHTML = '<div class="dn-k">Bar</div><div class="dr-pulse wide" role="status" aria-label="Loading" style="margin-top:24px"><i></i></div>';
+    body.innerHTML = skeleton();
     load(function (d) {
       if (!OPEN) return;
       body.innerHTML = page(d);
+      settle(body);
       var as = document.getElementById('br-asof'); if (as) as.textContent = d && d.as_of_mdy ? 'invoices through ' + d.as_of_mdy : '';
     });
   }
@@ -45473,7 +45932,7 @@ function sfw2RuleCheck(chk) {
       if (!d || !d.ok) { if (typeof toast === 'function') toast((d && d.error) || 'That didn’t save. Try again.', 'error'); return; }
       if (typeof toast === 'function') toast('Saved — pour cost updated', 'success');
       var sc = document.getElementById('br-scroll'), top = sc ? sc.scrollTop : 0;
-      load(function (d2) { var b = document.getElementById('br-body'); if (b && OPEN) { b.innerHTML = page(d2); if (sc) sc.scrollTop = top; var det = b.querySelector('details.dn-fam'); if (det) det.open = true; } });
+      load(function (d2) { var b = document.getElementById('br-body'); if (b && OPEN) { b.innerHTML = page(d2); if (sc) sc.scrollTop = top; var det = b.querySelector('details.dn-fam'); if (det && sel.closest && sel.closest('details.dn-fam')) det.open = true; } });
     }).catch(function () { sel.disabled = false; if (typeof toast === 'function') toast('That didn’t save. Check your connection.', 'error'); });
   }
   window.barOpen = function (opts) {
@@ -45506,6 +45965,9 @@ function sfw2RuleCheck(chk) {
     if (at && !OPEN) window.barOpen({fromPop: true});
     else if (!at && OPEN) window.barClose({fromPop: true});
   };
+  /* For the preview harness and tests: the page from a payload, no fetch. */
+  window._barRender = function (d) { DATA = d; return page(d); };
+  window._barSettle = settle;
   if (window.cavNavRegister) cavNavRegister('bar', function () { window.barOpen(); return true; });
   document.addEventListener('click', function (e) {
     var t = e.target && e.target.closest ? e.target.closest('[data-bar-open]') : null;

@@ -39,6 +39,13 @@ POUR_CATEGORIES = ("beer", "liquor", "wine")
 RULE_OF_THUMB = {"beer": (20.0, 26.0), "liquor": (16.0, 22.0), "wine": (30.0, 40.0)}
 WINDOW_DAYS = 28
 PRICE_LOOKBACK_DAYS = 120
+# The four-week pour cost read week by week: at most this many weekly points.
+TREND_POINTS = 12
+# A four-week reading this far from the one four weeks earlier is a change
+# worth saying (purchase-based pour cost moves a point or so on its own).
+TREND_SAY_POINTS = 1.5
+# How many insights the page leads with.
+MAX_INSIGHTS = 4
 
 _UOM_WORD = {"CA": "case", "CS": "case", "KE": "keg", "KG": "keg", "BO": "bottle", "BL": "bottle", "BT": "bottle",
              "EA": "each", "DS": "deposit"}
@@ -172,6 +179,21 @@ def _mdy(iso) -> str:
     except ValueError:
         return ""
     return f"{d.month}/{d.day}/{str(d.year)[2:]}"
+
+
+def display_name(description) -> str:
+    """A distributor's all-caps description, easier to read: words of four
+    or more letters in title case; short words (VDK, TEQ, BBL, IPA), sizes
+    (750ML, 1/2) and codes stay as written."""
+    out = []
+    for w in str(description or "").split():
+        out.append(w[:1].upper() + w[1:].lower() if len(w) >= 4 and w.isalpha() else w)
+    return " ".join(out)
+
+
+def _money(v) -> str:
+    n = round(abs(float(v or 0)))
+    return ("-" if float(v or 0) < 0 else "") + f"${n:,.0f}"
 
 
 def _lines(restaurant_id, db_path=None) -> list:
@@ -321,13 +343,65 @@ def _pour_cost(lines, sales, today) -> dict:
                        "partial": not full, "from_mdy": _mdy(a), "to_mdy": _mdy(b),
                        "categories": [w[c] for c in POUR_CATEGORIES]})
         m = nxt
+    trend = _trend(lines, sales, lo, hi)
+    # Four weeks before the latest weekly point, when the trend reaches back that far.
+    earlier = trend[-5] if len(trend) >= 5 else None
+    for c in POUR_CATEGORIES:
+        x = cur[c]
+        lo_r, hi_r = x["range"]
+        x["spark"] = [p[c] for p in trend]
+        x["prev_pct"] = earlier[c] if earlier else None
+        x["prev_end_mdy"] = earlier["end_mdy"] if earlier else None
+        judged = x["pct"] is not None and not x.get("incomplete")
+        # What the reading is above the rule of thumb's top, in dollars at
+        # this window's sales: the range's arithmetic, never money "lost".
+        x["over_range_usd"] = round((x["pct"] - hi_r) / 100 * x["sales"], 2) if judged and x["pct"] > hi_r else None
+    weights = {c: cur[c]["sales"] for c in POUR_CATEGORIES if cur[c]["sales"] > 0}
+    wsum = sum(weights.values())
+    mix_range = ([round(sum(RULE_OF_THUMB[c][0] * v for c, v in weights.items()) / wsum, 1),
+                  round(sum(RULE_OF_THUMB[c][1] * v for c, v in weights.items()) / wsum, 1)] if wsum else None)
+    total_pct = round(bought / sold * 100, 1) if sold > 0 and bought > 0 else None
     return {"available": True, "window": {"from": start, "to": end, "from_mdy": _mdy(start), "to_mdy": _mdy(end),
                                           "days": (date.fromisoformat(end) - date.fromisoformat(start)).days + 1},
             "categories": [cur[c] for c in POUR_CATEGORIES],
-            "total": {"purchases": round(bought, 2), "sales": round(sold, 2),
-                      "pct": round(bought / sold * 100, 1) if sold > 0 and bought > 0 else None},
+            "total": {"purchases": round(bought, 2), "sales": round(sold, 2), "pct": total_pct,
+                      # The rule-of-thumb range for this bar's own mix: each
+                      # category's range weighted by its share of the sales.
+                      "range": mix_range,
+                      "spark": [p["total"] for p in trend],
+                      "prev_pct": earlier["total"] if earlier else None,
+                      "prev_end_mdy": earlier["end_mdy"] if earlier else None},
+            "trend": trend,
             "months": months, "overlap": {"from_mdy": _mdy(lo), "to_mdy": _mdy(hi)},
             "gaps": gaps, "complete": not gaps}
+
+
+def _trend(lines, sales, lo, hi) -> list:
+    """The four-week pour cost read week by week: one point for the four weeks
+    ending on the last day both are on file, then every seven days back,
+    while a whole four weeks of invoices and sales fits ([oldest .. newest]).
+    A category whose distributor's invoices are missing in a window is a gap
+    (None) there, never a low reading; the total is a gap with it."""
+    first = date.fromisoformat(lo)
+    end = date.fromisoformat(hi)
+    pts = []
+    while len(pts) < TREND_POINTS:
+        start = end - timedelta(days=WINDOW_DAYS - 1)
+        if start < first:
+            break
+        a, b = start.isoformat(), end.isoformat()
+        w = _window(lines, sales, a, b)
+        missing = {c for g in _gaps(lines, a, b) for c in g["categories"]}
+        point = {"end": b, "end_mdy": _mdy(b), "from_mdy": _mdy(a)}
+        bought = sum(w[c]["purchases"] for c in POUR_CATEGORIES)
+        sold = sum(w[c]["sales"] for c in POUR_CATEGORIES)
+        for c in POUR_CATEGORIES:
+            point[c] = None if c in missing else w[c]["pct"]
+        point["total"] = (round(bought / sold * 100, 1)
+                          if not missing and sold > 0 and bought > 0 else None)
+        pts.append(point)
+        end -= timedelta(days=7)
+    return list(reversed(pts))
 
 
 def _price_watch(lines, today) -> dict:
@@ -335,6 +409,10 @@ def _price_watch(lines, today) -> dict:
     meta = {}
     for l in lines:
         if l["kind"] != "item" or not l["unit_price"] or float(l["unit_price"]) < 1 or float(l["qty"] or 0) <= 0:
+            continue
+        # A tax, fee or deposit printed as an item line is not a product with
+        # a price ("Sales TAX" read as a 70% price drop).
+        if l["category"] in ("fee", "deposit"):
             continue
         k = (l["product_key"], str(l["uom"] or ""))
         series[k].append((str(l["invoice_date"])[:10], float(l["unit_price"]), float(l["qty"] or 0)))
@@ -362,7 +440,13 @@ def _price_watch(lines, today) -> dict:
         l = meta[k]
         change = round(last_p - prev[1], 2)
         qty90 = sum(q for d, p, q in pts if d >= since90)
-        row = {"product_key": l["product_key"], "product": l["description"], "distributor": l["distributor"],
+        recent = [(d, p) for d, p, _q in pts if d >= cutoff]
+        row = {"product_key": l["product_key"], "product": l["description"], "name": display_name(l["description"]),
+               "distributor": l["distributor"],
+               # Every purchase in the lookback, oldest first, for the row's
+               # own small chart; how often it is bought.
+               "history": [{"date": d, "date_mdy": _mdy(d), "price": round(p, 2)} for d, p in recent[-12:]],
+               "purchases": len(recent), "last_bought_mdy": _mdy(last_d),
                "uom": l["uom"], "unit": _UOM_WORD.get(str(l["uom"] or "").upper(), "unit"),
                "category": l["category"], "category_label": LABELS.get(l["category"], ""),
                "from": round(prev[1], 2), "to": round(last_p, 2), "change": change,
@@ -372,8 +456,22 @@ def _price_watch(lines, today) -> dict:
         (ups if change > 0 else downs).append(row)
     ups.sort(key=lambda r: (-(r["impact_90d"] or 0), -(r["pct"] or 0)))
     downs.sort(key=lambda r: (r["impact_90d"] or 0, r["pct"] or 0))
+    up_usd = round(sum(r["impact_90d"] for r in ups if r["impact_90d"]), 2)
+    down_usd = round(sum(r["impact_90d"] for r in downs if r["impact_90d"]), 2)
+    by_pct_up = max(ups, key=lambda r: r["pct"] or 0) if ups else None
+    by_pct_down = min(downs, key=lambda r: r["pct"] or 0) if downs else None
+    # The changes at the amounts bought in the last 90 days: an estimate of
+    # what each change does at that volume, never money already paid or saved.
+    summary = {"up_n": len(ups), "down_n": len(downs),
+               "up_impact_90d": up_usd, "down_impact_90d": down_usd, "net_impact_90d": round(up_usd + down_usd, 2),
+               "largest_up": ({"product_key": by_pct_up["product_key"], "name": by_pct_up["name"],
+                               "pct": by_pct_up["pct"], "change": by_pct_up["change"], "unit": by_pct_up["unit"]}
+                              if by_pct_up else None),
+               "largest_down": ({"product_key": by_pct_down["product_key"], "name": by_pct_down["name"],
+                                 "pct": by_pct_down["pct"], "change": by_pct_down["change"],
+                                 "unit": by_pct_down["unit"]} if by_pct_down else None)}
     return {"increases": ups, "decreases": downs, "products_repeat": repeat,
-            "lookback_days": PRICE_LOOKBACK_DAYS}
+            "lookback_days": PRICE_LOOKBACK_DAYS, "summary": summary}
 
 
 def _distributors(lines) -> list:
@@ -416,6 +514,72 @@ def _products(lines) -> list:
     return out
 
 
+def _insights(pc, pw, to_check) -> list:
+    """What deserves a look first: [{key, tone, headline, metric, action}],
+    each from a figure this page measured (no model, no estimate dressed as
+    money earned), most pressing first, at most MAX_INSIGHTS. tone is
+    good / warn / bad / info."""
+    out = []
+    if pc.get("available"):
+        for g in (pc.get("gaps") or [])[:1]:
+            out.append({"key": "gap", "tone": "warn",
+                        "headline": f"Invoices from {g['distributor']} aren't on file",
+                        "metric": f"Nothing between {g['from_mdy']} and {g['to_mdy']}",
+                        "action": "Forward Fintech's invoice detail for those dates — what they supply reads low until then"})
+        cats = pc.get("categories") or []
+        for c in cats:
+            if c.get("tone") == "warn" and c.get("over_range_usd"):
+                lo, hi = c["range"]
+                out.append({"key": "over:" + c["key"], "tone": "bad",
+                            "headline": f"{c['label']} is above its usual range",
+                            "metric": f"{c['pct']}% against {lo:g}–{hi:g}% · {_money(c['over_range_usd'])} over the top "
+                                      f"of the range in four weeks",
+                            "action": f"Check {c['label'].lower()} pours, comps and waste"})
+    ups = pw.get("increases") or []
+    if ups and (ups[0].get("impact_90d") or 0) > 0:
+        r = ups[0]
+        out.append({"key": "price:" + r["product_key"], "tone": "warn",
+                    "headline": f"{r['name']} went up {r['pct']:g}%",
+                    "metric": f"+{_money(r['impact_90d'])} at the {r['bought_90d']:g} {r['unit']}"
+                              f"{'' if r['bought_90d'] == 1 else 's'} bought in 90 days",
+                    "action": f"Ask {r['distributor']} about it before the next order"})
+    positive = [r for r in ups if (r.get("impact_90d") or 0) > 0]
+    if len(positive) >= 4:
+        top = sum(r["impact_90d"] for r in positive[:3])
+        whole = sum(r["impact_90d"] for r in positive)
+        share = round(top / whole * 100) if whole else 0
+        if share >= 50:
+            out.append({"key": "concentration", "tone": "info",
+                        "headline": f"Three products carry {share}% of the price increases",
+                        "metric": f"+{_money(top)} of +{_money(whole)} at the amounts bought in 90 days",
+                        "action": "Start with these three when you talk to your distributors"})
+    if pc.get("available"):
+        for c in pc.get("categories") or []:
+            prev, now = c.get("prev_pct"), c.get("pct")
+            if prev is None or now is None or c.get("incomplete") or abs(now - prev) < TREND_SAY_POINTS:
+                continue
+            better = now < prev
+            out.append({"key": "trend:" + c["key"], "tone": "good" if better else "warn",
+                        "headline": f"{c['label']} pour cost {'improved' if better else 'rose'}",
+                        "metric": f"{now}% from {prev}% four weeks earlier ({c['prev_end_mdy']})",
+                        "action": ("Keep doing what changed" if better
+                                   else "Look at what moved: prices, pours or comps")})
+        for c in pc.get("categories") or []:
+            if c.get("tone") == "low":
+                lo, hi = c["range"]
+                out.append({"key": "low:" + c["key"], "tone": "info",
+                            "headline": f"{c['label']} reads below its usual range",
+                            "metric": f"{c['pct']}% against {lo:g}–{hi:g}%",
+                            "action": "Purchase-based: bottles bought earlier may be pouring now — count the shelf "
+                                      "before reading it as a win"})
+    if to_check:
+        out.append({"key": "to_check", "tone": "info",
+                    "headline": f"{to_check} product{'' if to_check == 1 else 's'} sorted by a guess",
+                    "metric": "Pour cost counts them where Cavnar AI guessed",
+                    "action": "Check their category under How every product is sorted"})
+    return out[:MAX_INSIGHTS]
+
+
 def build(restaurant_id, db_path=None, today=None) -> dict:
     """The Bar page's payload."""
     today = today or date.today()
@@ -428,15 +592,19 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
     products = _products(lines)
     other_spend = round(sum(p["spend"] for p in products if p["category"] == "other"), 2)
+    pour = _pour_cost(lines, sales, today)
+    prices = _price_watch(lines, today)
+    to_check = sum(1 for p in products if not (p["sure"] or p["owner_set"]))
     return {"ok": True, "available": True,
             "as_of": inv_dates[-1], "as_of_mdy": _mdy(inv_dates[-1]),
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
                          "count": len({(l["distributor"], l["invoice_number"]) for l in lines})},
-            "pour_cost": _pour_cost(lines, sales, today),
-            "price_watch": _price_watch(lines, today),
+            "pour_cost": pour,
+            "price_watch": prices,
+            "insights": _insights(pour, prices, to_check),
             "distributors": _distributors(lines),
             "products": products,
-            "to_check": sum(1 for p in products if not (p["sure"] or p["owner_set"])),
+            "to_check": to_check,
             "other_spend": other_spend,
             "categories": [{"key": c, "label": LABELS[c]} for c in ("beer", "liquor", "wine", "na", "supplies", "other")],
             "basis": "Purchases are Fintech's distributor invoices; sales are the nightly report's sales by "

@@ -137,3 +137,56 @@ def test_a_distributor_gone_quiet_is_said_and_its_category_not_judged(db):
     assert pc["complete"] is False and pc["gaps"][0]["distributor"] == "Breakthru Beverage"
     liq = next(c for c in pc["categories"] if c["key"] == "liquor")
     assert liq.get("incomplete") is True and liq["tone"] is None
+
+
+def test_a_tax_line_is_never_a_price_change(db):
+    """EJ's Elgin invoices print sales tax as an item line: it read as a
+    69.9% price drop in Price watch (10/14/26)."""
+    rid = _rid(db)
+    csv = HEAD + _row("Elgin Beverage", "E1", "09/01/2026", "12.00", "99901", "SALES TAX", "EA", 1, "5.25") \
+        + _row("Elgin Beverage", "E2", "09/15/2026", "12.00", "99901", "SALES TAX", "EA", 1, "1.58")
+    fi.ingest_file(rid, "x.csv", csv.encode(), db_path=db)
+    pw = bc.build(rid, db_path=db, today=date(2026, 10, 1))["price_watch"]
+    assert not pw["increases"] and not pw["decreases"]
+
+
+def test_the_week_by_week_trend_gaps_a_window_with_invoices_missing(db):
+    rid = _rid(db)
+    rows = ""
+    days = [f"{m:02d}/{d:02d}/2026" for m, d in ((8, 3), (8, 10), (8, 17), (8, 24), (8, 31), (9, 7), (9, 14),
+                                                (9, 21), (9, 28), (10, 5))]
+    for i, d in enumerate(days):
+        rows += _row("Chicago Beverage", f"C{i}", d, "229.00", "13682", "DAISY CUTTER K 1/2BB", "KE", 1, "229.00")
+    fi.ingest_file(rid, "x.csv", (HEAD + rows).encode(), db_path=db)
+    from datetime import timedelta
+    d0 = date(2026, 8, 3)
+    for k in range(64):
+        _sales(db, rid, (d0 + timedelta(days=k)).isoformat(), beer=150)
+    pc = bc.build(rid, db_path=db, today=date(2026, 10, 6))["pour_cost"]
+    trend = pc["trend"]
+    assert len(trend) >= 5 and trend[-1]["end"] == pc["window"]["to"]
+    assert all(p["beer"] is not None for p in trend)
+    beer = next(c for c in pc["categories"] if c["key"] == "beer")
+    assert beer["spark"] == [p["beer"] for p in trend] and beer["prev_pct"] == trend[-5]["beer"]
+    assert pc["total"]["range"] == [20.0, 26.0], "an all-beer mix takes beer's range"
+
+
+def test_the_insights_say_only_what_was_measured(db):
+    rid = _rid(db)
+    csv = ""
+    for i, (code, desc, p1, p2, q) in enumerate((("1", "TITOS VDK 1L", 150, 170, 6), ("2", "KETEL ONE VDK 1L", 290, 309, 6),
+                                                 ("3", "ST GERMAIN LIQUEUR 750ML", 180, 198, 7),
+                                                 ("4", "CASAMIGOS TEQ BL 1L", 400, 402, 2))):
+        csv += _row("Breakthru Beverage", f"A{i}", "08/10/2026", str(p1), code, desc, "CA", 1, str(p1))
+        csv += _row("Breakthru Beverage", f"B{i}", "09/10/2026", str(p2 * (q - 1)), code, desc, "CA", q - 1, str(p2))
+    fi.ingest_file(rid, "x.csv", (HEAD + csv).encode(), db_path=db)
+    out = bc.build(rid, db_path=db, today=date(2026, 10, 1))
+    keys = [i["key"] for i in out["insights"]]
+    top = out["price_watch"]["increases"][0]
+    assert keys[0] == "price:" + top["product_key"] and top["name"] == "ST Germain Liqueur 750ML"  # +$18 x 7 > +$20 x 6
+    assert "concentration" in keys
+    assert all(set(i) == {"key", "tone", "headline", "metric", "action"} for i in out["insights"])
+    assert not any(i["key"].startswith(("over:", "trend:")) for i in out["insights"]), "no sales: nothing judged"
+    s = out["price_watch"]["summary"]
+    assert s["up_n"] == 4 and s["up_impact_90d"] == round(sum(r["impact_90d"] for r in out["price_watch"]["increases"]), 2)
+    assert bc.display_name("KETEL ONE VDK 1L") == "Ketel ONE VDK 1L"
