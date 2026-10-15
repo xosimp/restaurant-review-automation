@@ -137,20 +137,34 @@ def drink_specs(restaurant_id, db_path=None, status=None) -> list:
     return [dict(r) for r in rows]
 
 
+# What kind of spirit a bottle is, not which bottle: shared alone it never
+# beats a brand word (10/15/26: "WhistlePig Bourbon" and "Angel's Envy
+# Bourbon" both matched Barmen 1873 Bourbon on the word "bourbon").
+_GENERIC = {"bourbon", "bbn", "whiskey", "whisky", "rye", "scotch", "vodka", "vdk", "gin", "rum", "tequila", "teq",
+            "mezcal", "liqueur", "liq", "brandy", "cognac", "wine", "blanco", "reposado", "anejo", "white", "dark",
+            "spiced", "dry", "sweet", "red"}
+
+
 def _words(s) -> set:
-    return {w.lower() for w in _WORD.findall(str(s or "")) if w.lower() not in _STOP}
+    """Lower-cased words, apostrophes dropped ("Angel's" reads as "angels")."""
+    return {w.lower().replace("'", "") for w in _WORD.findall(str(s or "")) if w.lower() not in _STOP}
 
 
 def _best_product(ingredient, products) -> tuple:
     """(product_key, name, match) — the bought liquor/wine product whose
     description shares the most words with an ingredient, or (None, None, 0)."""
     w = _words(ingredient)
+    brand = w - _GENERIC
     best = (None, None, 0.0)
     for key, (name, pw) in products.items():
         shared = w & pw
         if not shared or not any(len(x) >= 4 for x in shared):
             continue
-        score = len(shared) / len(w | pw)
+        named = shared - _GENERIC
+        if brand and not named:
+            continue          # the card names a brand this bottle doesn't carry
+        # A brand word counts twice a generic one.
+        score = (2 * len(named) + len(shared - named)) / (len(w | pw) + len(named))
         if score > best[2]:
             best = (key, name, round(score, 2))
     return best

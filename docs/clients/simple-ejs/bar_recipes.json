@@ -58,7 +58,7 @@
           "item": "Walnut For 2",
           "sold": 17,
           "sales": 654,
-          "note": "likely a double batch - confirm the spec"
+          "note": "two drinks, 2 oz of Angel's Envy each (Will, 10/15/26)"
         }
       ],
       "ingredients": [
@@ -93,9 +93,7 @@
       "ice": "large cube",
       "garnish": "expressed orange peel and a toasted walnut",
       "flavor": null,
-      "flags": [
-        "Walnut For 2: confirm it is exactly a double."
-      ]
+      "flags": []
     },
     {
       "name": "Pure Passion Margarita",
@@ -432,6 +430,7 @@
     "Splash and top-off amounts are non-alcoholic mixers - Erik (10/13/26): they don't matter for the liquor counts.",
     "Dirty Martini is RPOWER's 'Perfect Game' button.",
     "Smoked Walnut Maple OF is actually smoked, with Angel's Envy.",
-    "Classic Old Fashioned uses WhistlePig bourbon."
+    "Classic Old Fashioned uses WhistlePig bourbon.",
+    "Walnut For 2 is two separate drinks: 2 oz of Angel's Envy in each, 4 oz in all (Will, 10/15/26)."
   ]
 }

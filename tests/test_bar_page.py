@@ -770,3 +770,19 @@ def test_every_unconfirmed_recipe_card_can_pick_its_product_and_names_it():
     assert 'data-br-specp="' in body and 'data-act="confirm">Confirm' in body and "Pick the product" in body
     handler = src[src.index("a('data-br-spec') != null"):src.index("a('data-br-varall')")]
     assert "sb.product_key = spk" in handler and "Pick the product it pours first." in handler
+
+
+def test_a_brand_word_beats_a_spirit_word_and_apostrophes_match():
+    # 10/15/26: "WhistlePig Bourbon" and "Angel's Envy Bourbon" both matched
+    # Barmen 1873 Bourbon on the word "bourbon"; "Angel's" never met "Angels".
+    import bar.variance as bv
+    prods = {"barmen": ("Barmen 1873 Bourbon", bv._words("Barmen 1873 Bourbon 6/750ML")),
+             "ae": ("Angels Envy BBN", bv._words("Angels Envy BBN 86.6 750ML")),
+             "wp": ("Whistlepig BBN Piggyback", bv._words("Whistlepig BBN Piggyback 6YR 100 750ML"))}
+    assert bv._best_product("Angel's Envy Bourbon", prods)[0] == "ae"
+    assert bv._best_product("WhistlePig Bourbon", prods)[0] == "wp"
+    assert bv._best_product("Maker's Mark Bourbon", prods)[0] is None       # a brand nobody bought: none, never Barmen
+    assert bv._best_product("Bourbon", prods)[0] == "barmen"               # no brand on the card: the kind may match
+    recipes = json.load(open(os.path.join(ROOT, "docs", "clients", "simple-ejs", "bar_recipes.json"), encoding="utf-8"))
+    walnut = next(r for r in recipes["recipes"] if r.get("rpower_item") == "Walnut Old Fash")
+    assert "2 oz of Angel's Envy each" in walnut["rpower_also"][0]["note"]
