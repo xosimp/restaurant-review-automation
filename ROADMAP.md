@@ -25,6 +25,18 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 ## Open / in progress
 
+- **The Bar — what the 10/15/26 fix round left open** (`/Users/simp/bar_fix/CLOSURE.md` has the item-by-item ledger).
+  - Production, at deploy (the lead): set EJ's intake allowed senders on the admin card first (or all mail is held); `scripts/bar_reread_fintech.py --restaurant 5` dry, then `--apply --orphans` (EJ's beer 9/16–10/13 drops ~$630 of deposits); `scripts/bar_sales_repair.py --rid 5` dry, then `--apply --catalog` (9/27); `scripts/bar_load_recipe_cards.py --rid 5`; the P-Mix PDF text for `scripts/plu_pmix_recategorise.py` (V41); probe which RPOWER fields EJ's fills (`cost`, `aqu_count`, `last_cost` — F5); check the first live Fintech email's authentication verdict; re-print `brand/print/cavnar-one-sheet.pdf`/`.png` from the updated HTML.
+  - Purchases outside Fintech are not counted (R13 / F9): no scanned-invoice or generic-CSV source, no "I also buy outside Fintech" switch — a self-distributing brewery or a cash buy flatters the ratio. Build: an invoice-source abstraction feeding the same lines.
+  - Counts are monthly by category (F1): weekly cadence, item counts in tenths and keg weights are not built; `bar_counts.method = items` is reserved. The Back Office valuation reader is unverified (no sample file yet).
+  - PO matching (F8): the printout's PO number is parsed and stored, never matched.
+  - The game-week order hint reaches Ask only (F13), not the Bar page, Home or iOS; reorder hints are web only.
+  - The Bar page's own cards have no Done / Pass (R19) — only the Home/digest price rec goes through `rec_ledger`.
+  - Bar goal metrics (R9): `thresholds._GOAL_METRIC` covers labor and food; counts now exist, so a bar goal can be measured.
+  - Food cost % divides food COGS by ALL net sales, drinks included (`cogs.build_food_cost_pct`, AIX-12): a bar-heavy restaurant reads low. Whether to divide by food sales only is Will's call; the number is unchanged and the docs say what it divides by.
+  - RPOWER asks (R2, R26): a partner token, published rate limits, a sandbox and a close-of-day webhook; confirm `ot_dow` and whether the payouts end date is inclusive (probe recipes in `rpower.py`).
+  - Positioning (R18): "Fintech + RPOWER" is not a moat (MarginEdge, WISK, Yellow Dog and R365 have both); position on "a number with no count, scale or approvals" plus the joins, and confirm with Erik what Fintech charges for the feed.
+  - Cold build at three years (45k lines) is ~570 ms (cached ~5 ms): the floor is the SQL row read (~60–75 ms) and ~12 single passes over the lines. A materialised daily ledger would be the next step if a restaurant's cold build matters.
 - **Google Business reviews API access.**
   - Applied 9/30/26 (case 0-4962000041049); the quota is 0 until approved.
   - Then: enable the Business Profile API (v4), Erik reconnects, and watch
@@ -146,6 +158,13 @@ restaurant 5; restaurant 4 is Will's demo copy.
 
 ## Recently shipped (newest first; trim entries older than ~2 months)
 
+- **10/15 — The Bar fix round** (the 10/14/26 Bar & Alcohol audit: 49 verified bugs, 28 risks, 14 missing features; branch `barfix-1015`, ten workstreams; ledger in `/Users/simp/bar_fix/CLOSURE.md`).
+  - One name per figure: **Bought vs sold** until two bar counts bracket a window, then **Pour cost (counted)**; the ranges (benchmark_registry, sourced, for counted pour cost) are context, never a tone, against a purchase ratio. One judgement policy (`bar.judge`): 28 days, 85% of open days, a fresh feed, no stock-up, a complete category — else shown with its reason.
+  - Purchases: keg deposits out of beer on both file formats, credits in every written form, UTF-16 and cp1252 files, one invoice whatever the spelling, invoice versions (a balanced invoice is never silently replaced; `purge_file`), store routing, a sender allow-list with Resend's authentication verdict, intake that can't lose an email, files in R2 with a row cap, invoices held for a date check (after today, a week past their file, years before joining).
+  - Sales: POS drink sales after comps and check discounts from each night's departments and item categories under an explicit bar mapping the account holder confirms; a night with no drink coverage is a named gap.
+  - Price watch: credit pairs, quantity tiers and ladders, deals that end, changes that persist, forward monthly dollars; one product across codes, per bottle / oz / pour, deposits, rebates and free goods, the deal sheet, drink margins, reorder rhythm.
+  - New: bar counts and counted pour cost (and the Back Office valuation reader), bought vs rung and variance, the waste log and keg yield, comps by bartender shift (owner only), the admin intake card, Ask's `read_bar`, the daily report's bar line, the Home / digest / push price signal, the iOS Bar card.
+  - The page: rewritten on every new block; owner-only writes logged under the acting login; kept per restaurant until the data changes, paged; failures captured and answered with a fixed sentence; accessible (focus, contrast, reduce motion, print).
 - **10/3–10/4 — The schedule fix round** (the 10/3/26 audit of the AI
   schedule generator: 223 findings, all fixed in code; branch
   `schedfix-1003`).
