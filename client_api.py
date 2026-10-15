@@ -11852,37 +11852,87 @@ def food_cost_cogs(current_user):
 @client_bp.route("/api/food-cost/bar")
 @login_required
 def food_cost_bar(current_user):
-    """The Bar page (Food Cost → Bar): price watch and pour cost by category
-    from the Fintech invoices and the nightly report (bar_cost.build).
-    Gated with Food Cost (/api/food-cost: FOOD_COST_VIEW)."""
-    import bar_cost as _bc
-    from bar.comps import for_viewer
-    try:
-        rid = current_user["restaurant_id"]
-        # bar_ops.comps is the account holder's alone (F12): filled here for
-        # them, left {"owner_only": true} for every other login.
-        return jsonify(**for_viewer(_bc.build(rid), rid, current_user))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+    """Web twin — the one body is mobile_api.mobile_food_cost_bar (the Bar
+    page, Food Cost → Bar; gated with Food Cost: FOOD_COST_VIEW)."""
+    return _m("mobile_food_cost_bar")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/prices")
+@login_required
+def food_cost_bar_prices(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_prices."""
+    return _m("mobile_bar_prices")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/products")
+@login_required
+def food_cost_bar_products(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_products."""
+    return _m("mobile_bar_products")(current_user)
 
 
 @client_bp.route("/api/food-cost/bar/category", methods=["POST"])
 @login_required
 def food_cost_bar_category(current_user):
-    """The owner sorts one product (beer / liquor / wine / na / other), or
-    clears it back to Cavnar AI's guess with an empty category."""
-    import bar_cost as _bc
-    b = request.get_json(silent=True) or {}
-    key = str(b.get("product_key") or "").strip()
-    if not key:
-        return jsonify(ok=False, error="Which product?"), 400
-    try:
-        return jsonify(**_bc.set_category(current_user["restaurant_id"], key, b.get("category"),
-                                          user_id=current_user.get("id")))
-    except ValueError as e:
-        # set_category's own owner-facing sentence (which categories exist),
-        # never an exception's text (a provider error can carry its URL).
-        return jsonify(ok=False, error=(e.args[0] if e.args else "That category isn't one of the five.")), 400
+    """Web twin — the one body is mobile_api.mobile_bar_category (the
+    account holder sorts one product)."""
+    return _m("mobile_bar_category")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/stopped", methods=["POST", "DELETE"])
+@login_required
+def food_cost_bar_stopped(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_stopped."""
+    return _m("mobile_bar_stopped")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/settings", methods=["POST"])
+@login_required
+def food_cost_bar_settings(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_settings."""
+    return _m("mobile_bar_settings")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/pack", methods=["POST"])
+@login_required
+def food_cost_bar_pack(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_pack."""
+    return _m("mobile_bar_pack")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/link", methods=["POST"])
+@login_required
+def food_cost_bar_link(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_link."""
+    return _m("mobile_bar_link")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/expected-price", methods=["POST"])
+@login_required
+def food_cost_bar_expected_price(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_expected_price."""
+    return _m("mobile_bar_expected_price")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/expected-price/<int:row_id>", methods=["DELETE"])
+@login_required
+def food_cost_bar_expected_price_delete(current_user, row_id):
+    """Web twin — the one body is mobile_api.mobile_bar_expected_price_delete."""
+    return _m("mobile_bar_expected_price_delete")(current_user, row_id)
+
+
+@client_bp.route("/api/food-cost/bar/expected-prices")
+@login_required
+def food_cost_bar_expected_prices(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_expected_prices."""
+    return _m("mobile_bar_expected_prices")(current_user)
+
+
+@client_bp.route("/api/food-cost/bar/drink-map", methods=["POST"])
+@login_required
+def food_cost_bar_drink_map(current_user):
+    """Web twin — the one body is mobile_api.mobile_bar_drink_map."""
+    return _m("mobile_bar_drink_map")(current_user)
 
 
 @client_bp.route("/api/food-cost/bar/counts", methods=["GET"])

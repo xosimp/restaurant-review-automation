@@ -15738,6 +15738,12 @@ ACCOUNT_EVENT_TYPES = (
     # Which POS sales count as beer, liquor, wine (bar.mapping, bar fix round
     # 10/15/26 V7): the account holder's choice, `detail` naming what moved.
     "bar_mapping_changed",
+    # The account holder's other Bar writes (bar fix round 10/15/26, V21):
+    # a product re-sorted, a distributor marked stopped, the bar settings, a
+    # product's pack or link, the deal sheet, a POS drink's product — the
+    # acting login recorded, `detail` the before and after.
+    "bar_category_changed", "bar_stopped_changed", "bar_settings_changed", "bar_pack_changed",
+    "bar_link_changed", "bar_deal_sheet_changed", "bar_drink_map_changed",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -15787,6 +15793,14 @@ ACCOUNT_EVENT_LABELS = {
     "bar_waste_removed": "Bar waste entry removed",
     # `detail` names the drink, the ingredient and confirmed / suggested / removed.
     "bar_drink_spec_changed": "Bar drink spec changed",
+    # `detail`: the product and its category before and after ("…|9031: guess -> liquor").
+    "bar_category_changed": "Bar product re-sorted",
+    "bar_stopped_changed": "Bar distributor marked stopped or resumed",
+    "bar_settings_changed": "Bar settings changed",
+    "bar_pack_changed": "Bar product pack changed",
+    "bar_link_changed": "Bar products linked or unlinked",
+    "bar_deal_sheet_changed": "Bar deal sheet changed",
+    "bar_drink_map_changed": "Bar drink matched to a product",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",

@@ -52,11 +52,12 @@ _CATS = ("beer", "liquor", "wine")
 
 
 def payload(restaurant_id, today=None, db_path=None):
-    """The Bar page's payload (bar_cost.build), or None when it cannot be
-    read. Never raises."""
+    """The Bar page's payload (bar_cost.build, served from bar.cache: kept
+    until the data under it changes — read it, never change it), or None
+    when it cannot be read. Never raises."""
     try:
-        import bar_cost
-        return bar_cost.build(int(restaurant_id), db_path=db_path, today=today)
+        import bar.cache as _bcache
+        return _bcache.full(int(restaurant_id), db_path=db_path, today=today)
     except Exception as e:
         print(f"[bar_signals] bar payload unreadable for {restaurant_id}: {e!r}")
         return None

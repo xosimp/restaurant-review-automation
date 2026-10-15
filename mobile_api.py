@@ -2678,7 +2678,7 @@ def mobile_bar_count_save(current_user):
     b = request.get_json(silent=True) or {}
     try:
         res = _bcn.save_count(rid, b.get("count_date"), b.get("values"), note=b.get("note"),
-                              user_id=current_user.get("id"), source="owner", method="category_value",
+                              user_id=_bar_viewer(current_user), source="owner", method="category_value",
                               today=_bar_count_today(rid))
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That count didn't save.")), 400
@@ -2686,6 +2686,8 @@ def mobile_bar_count_save(current_user):
         return jsonify(ok=False, error=_safe_err(e)), 500
     names = ", ".join(_bcn.LABELS[c].lower() for c in res["saved"])
     _log_account_event(rid, "bar_counted", current_user, detail=f"{res['count_date_mdy']}: {names}")
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     out = {"ok": True, "count_date": res["count_date"], "count_date_mdy": res["count_date_mdy"],
            "saved": res["saved"]}
     if _bar_count_sees_dollars(current_user):
@@ -2714,6 +2716,8 @@ def mobile_bar_count_delete(current_user, count_date):
         return jsonify(ok=False, error=(e.args[0] if e.args else "Pick the count date from the calendar.")), 400
     if not res["deleted"]:
         return jsonify(ok=False, error="No bar count on that date."), 404
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     _log_account_event(rid, "bar_count_removed", current_user,
                        detail=res["count_date_mdy"] + (f": {_bcn.LABELS[category].lower()}" if category else ""))
     return jsonify(**res)
@@ -2761,12 +2765,14 @@ def mobile_bar_mapping_save(current_user):
     if not isinstance(entries, list) or len(entries) > 500:
         return jsonify(ok=False, error="Send the categories as a list."), 400
     try:
-        res = _bmap.save_mapping(rid, entries, confirm=bool(b.get("confirm")), user_id=current_user.get("id"),
+        res = _bmap.save_mapping(rid, entries, confirm=bool(b.get("confirm")), user_id=_bar_viewer(current_user),
                                  today=_bar_count_today(rid))
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That mapping didn't save.")), 400
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     moved = [f"{c['key']}: {_bmap.BAR_KIND_LABELS.get(c['after'], 'back to the suggestion').lower()}"
              for c in res["changes"]][:12]
     if moved or res["confirmed"]:
@@ -2826,12 +2832,14 @@ def mobile_bar_waste_save(current_user):
     b = request.get_json(silent=True) or {}
     try:
         res = _bw.log_waste(rid, b.get("waste_date"), b.get("product_key"), b.get("qty"), b.get("unit"),
-                            b.get("reason"), note=b.get("note"), user_id=current_user.get("id"),
+                            b.get("reason"), note=b.get("note"), user_id=_bar_viewer(current_user),
                             today=_bar_count_today(rid))
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That entry didn't save.")), 400
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     _log_account_event(rid, "bar_waste_logged", current_user,
                        detail=(f"{res['waste_date_mdy']}: {res['qty']:g} {_bw.UNIT_LABELS[res['unit']]} "
                                f"{res['product']} ({_bw.REASON_LABELS[res['reason']].lower()})")[:500])
@@ -2851,6 +2859,8 @@ def mobile_bar_waste_delete(current_user, entry_id):
     res = _bw.delete_waste(rid, entry_id)
     if not res["deleted"]:
         return jsonify(ok=False, error="No such waste entry."), 404
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     _log_account_event(rid, "bar_waste_removed", current_user, detail=res["waste_date_mdy"])
     return jsonify(**res)
 
@@ -2890,7 +2900,7 @@ def mobile_bar_drink_spec_save(current_user):
     try:
         res = _bv.set_drink_spec(rid, spec_id, product_key=b.get("product_key"), oz=b.get("oz"),
                                  confirm=(None if b.get("confirm") is None else bool(b.get("confirm"))),
-                                 remove=bool(b.get("remove")), user_id=current_user.get("id"),
+                                 remove=bool(b.get("remove")), user_id=_bar_viewer(current_user),
                                  known_keys=set(_bw.bought_products(rid)))
     except LookupError:
         return jsonify(ok=False, error="No such drink spec."), 404
@@ -2899,9 +2909,414 @@ def mobile_bar_drink_spec_save(current_user):
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e)), 500
     what = "removed" if res.get("removed") else res["status"]
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
     _log_account_event(rid, "bar_drink_spec_changed", current_user,
                        detail=f"{res['item_name']} · {res['ingredient']}: {what}"[:500])
     return jsonify(**res)
+
+
+# ── the Bar page and its owner writes (bar fix round 10/15/26, W7) ──────────
+# One body each for web and phone (client_api's twins call these). Reading
+# is the Food Cost gate (FOOD_COST_VIEW, auth's module prefixes); every
+# write below is the account holder's (permissions.principal_only — a
+# view-only grant or a manager re-sorted products and moved the liquor
+# figure, V21), stored under the ACTING login, logged with its before and
+# after, and drops the kept payload (bar.cache.invalidate). A failure is
+# captured (ops.capture) and answered with a fixed sentence, never the
+# exception's text (V38).
+
+_BAR_READ_FAILED = "The bar's numbers couldn't be read just now. Cavnar AI has been told; try again in a minute."
+_BAR_WRITE_FAILED = "That change didn't save just now. Cavnar AI has been told; try again in a minute."
+
+
+def _bar_capture(e, job, rid):
+    try:
+        import ops as _ops_bar
+        _ops_bar.capture(e, job=job, context=f"restaurant_id={rid}", restaurant_id=rid, kind="request")
+    except Exception:
+        pass
+
+
+def _bar_viewer(user):
+    from permissions import acting_login_id
+    return acting_login_id(user)
+
+
+def _bar_annotated(rid, rows, user):
+    """The product rows with who sorted each (bar.edits.annotate_products)."""
+    import bar.edits as _bed
+    return _bed.annotate_products(rows, _bed.owner_sorts(rid), _bar_viewer(user))
+
+
+@mobile_bp.route("/food-cost/bar", methods=["GET"])
+@mobile_login_required
+def mobile_food_cost_bar(current_user):
+    """The Bar page (Food Cost → Bar): bar.cache.page — the payload kept
+    until the data under it changes, its long lists capped (`totals`;
+    the rest through food-cost/bar/prices and /products). Products say who
+    sorted them; `owner_categories` are the categories an owner may pick,
+    `can_change` whether this login may; `expected_prices` the owner's deal
+    sheet; `bar_ops.comps` filled for the account holder only (per viewer,
+    after the cache: the kept payload is viewer-neutral)."""
+    import bar.cache as _bcache
+    import bar.edits as _bed
+    from permissions import is_principal
+    rid = current_user["restaurant_id"]
+    from bar.comps import for_viewer
+    try:
+        today = _bar_count_today(rid)
+        whole = _bcache.full(rid, today=today)
+        out = dict(_bcache.trim(whole))
+        if out.get("available") and isinstance(out.get("products"), list):
+            out["products"] = _bar_annotated(rid, out["products"], current_user)
+        # The owner's deal sheet as it stands (shown and removed on the page).
+        out["expected_prices"] = _bcache.expected_prices(rid, whole)
+        # The kept payload is viewer-neutral: bar_ops.comps is the account
+        # holder's alone (F12), filled here per login on a copy.
+        if isinstance(out.get("bar_ops"), dict):
+            out["bar_ops"] = dict(out["bar_ops"])
+            for_viewer(out, rid, current_user, today=today)
+    except Exception as e:
+        _bar_capture(e, "bar_page", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
+    out["owner_categories"] = _bed.owner_category_choices()
+    out["can_change"] = bool(is_principal(current_user))
+    return jsonify(**out)
+
+
+@mobile_bp.route("/food-cost/bar/expected-prices", methods=["GET"])
+@mobile_login_required
+def mobile_bar_expected_prices(current_user):
+    """The owner's deal sheet: {ok, rows: [{id, product_key, product,
+    min_qty, price, valid_from, valid_to, valid_from_mdy, valid_to_mdy,
+    note}], can_change} (also on the page payload as `expected_prices`)."""
+    import bar.cache as _bcache
+    from permissions import is_principal
+    rid = current_user["restaurant_id"]
+    try:
+        rows = _bcache.expected_prices(rid, _bcache.full(rid, today=_bar_count_today(rid)))
+    except Exception as e:
+        _bar_capture(e, "bar_expected_prices", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
+    return jsonify(ok=True, rows=rows, can_change=bool(is_principal(current_user)))
+
+
+def _bar_page_args():
+    a = request.args
+    return {"offset": a.get("offset"), "limit": a.get("limit"), "q": a.get("q")}
+
+
+@mobile_bp.route("/food-cost/bar/prices", methods=["GET"])
+@mobile_login_required
+def mobile_bar_prices(current_user):
+    """The price watch a page at a time: ?offset=&limit=(≤200)&q=&dir=up|down|all
+    &kind=&cat=&dist=&sort=money|pct|newest&list=events|increases|… →
+    {ok, total, offset, limit, rows} (bar.cache.price_rows)."""
+    import bar.cache as _bcache
+    rid = current_user["restaurant_id"]
+    a = request.args
+    try:
+        payload = _bcache.full(rid, today=_bar_count_today(rid))
+        out = _bcache.price_rows(payload, dir=a.get("dir") or "all", kind=a.get("kind"), cat=a.get("cat"),
+                                 dist=a.get("dist"), sort=a.get("sort") or "money",
+                                 list_name=a.get("list") or "events", **_bar_page_args())
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "Check the filters.")), 400
+    except Exception as e:
+        _bar_capture(e, "bar_prices", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
+    return jsonify(**out)
+
+
+@mobile_bp.route("/food-cost/bar/products", methods=["GET"])
+@mobile_login_required
+def mobile_bar_products(current_user):
+    """The products a page at a time: ?offset=&limit=(≤200)&q=&cat= →
+    {ok, total, offset, limit, rows} in the page's order, each row saying
+    who sorted it (set_by_name, set_by_you)."""
+    import bar.cache as _bcache
+    rid = current_user["restaurant_id"]
+    try:
+        payload = _bcache.full(rid, today=_bar_count_today(rid))
+        out = _bcache.product_rows(payload, cat=request.args.get("cat"), **_bar_page_args())
+        out["rows"] = _bar_annotated(rid, out["rows"], current_user)
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "Check the filters.")), 400
+    except Exception as e:
+        _bar_capture(e, "bar_products", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
+    return jsonify(**out)
+
+
+def _bar_write(current_user, what, event, fn):
+    """The one shape of every owner write here: account holder only, `fn()`
+    returns (body, detail); a ValueError is a 400 with its owner sentence, a
+    LookupError a 404, anything else captured with a fixed sentence; on
+    success the kept payload is dropped and `event` logged with `detail`."""
+    from permissions import principal_only
+    refused = principal_only(current_user, what)
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    try:
+        body, detail = fn(rid, _bar_viewer(current_user))
+    except ValueError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "That change didn't save.")), 400
+    except LookupError as e:
+        return jsonify(ok=False, error=(e.args[0] if e.args else "Nothing to change there.")), 404
+    except Exception as e:
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
+    import bar.cache as _bcache
+    _bcache.invalidate(rid)
+    if detail:
+        _log_account_event(rid, event, current_user, detail=str(detail)[:500])
+    return jsonify(**body)
+
+
+def _bar_body():
+    b = request.get_json(silent=True)
+    if not isinstance(b, dict):
+        raise ValueError("Send the change as a JSON object.")
+    return b
+
+
+def _bar_num(v, sentence, whole=False):
+    """None for empty; else the number, or ValueError(sentence)."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if isinstance(v, bool):
+        raise ValueError(sentence)
+    try:
+        n = float(str(v).replace(",", "").replace("$", "").strip())
+    except (TypeError, ValueError):
+        raise ValueError(sentence)
+    if n != n or n in (float("inf"), float("-inf")):
+        raise ValueError(sentence)
+    if whole:
+        if n != int(n):
+            raise ValueError(sentence)
+        return int(n)
+    return n
+
+
+def _bar_word(v):
+    return "guess" if v in (None, "") else str(v)
+
+
+@mobile_bp.route("/food-cost/bar/category", methods=["POST"])
+@mobile_login_required
+def mobile_bar_category(current_user):
+    """{product_key, category} — the account holder sorts one product into
+    beer | liquor | wine | na | supplies, or "" back to Cavnar AI's guess.
+    → {ok, product_key, category, before, after, set_by_name}."""
+    import bar.edits as _bed
+
+    def run(rid, acting):
+        b = _bar_body()
+        res = _bed.set_product_category(rid, b.get("product_key"), b.get("category"), acting_id=acting)
+        res["set_by_name"] = (_bed.owner_sorts(rid).get(res["product_key"]) or {}).get("set_by_name")
+        return res, f"{res['product_key']}: {_bar_word(res['before'])} -> {_bar_word(res['after'])}"
+    return _bar_write(current_user, "how the bar's products are sorted", "bar_category_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/stopped", methods=["POST", "DELETE"])
+@mobile_login_required
+def mobile_bar_stopped(current_user):
+    """{distributor} — POST: the bar stopped buying from this distributor
+    (never read as missing invoices again); DELETE: it buys there again.
+    POST takes only a distributor on this restaurant's invoices; DELETE
+    only one marked stopped (404 otherwise). → {ok, distributor, stopped}."""
+    import bar.judge as _bj
+    from bar.common import get_conn as _bar_gc
+
+    def run(rid, acting):
+        b = _bar_body()
+        name = " ".join(str(b.get("distributor") or "").split())
+        if not name or len(name) > 200:
+            raise ValueError("Name the distributor.")
+        key = name.lower()
+        stopping = request.method == "POST"
+        if stopping:
+            conn = _bar_gc()
+            try:
+                rows = conn.execute("SELECT DISTINCT distributor FROM fintech_invoices WHERE restaurant_id=?",
+                                    (int(rid),)).fetchall()
+            finally:
+                conn.close()
+            if key not in {" ".join(str(r["distributor"]).split()).lower() for r in rows}:
+                raise ValueError("That distributor isn't on this restaurant's invoices.")
+        elif key not in set(_bj.owner_stopped(rid)):
+            raise LookupError("That distributor isn't marked stopped.")
+        res = _bj.set_stopped(rid, name, stopped_buying=stopping, user_id=acting)
+        return res, f"{name}: {'stopped' if stopping else 'buying again'}"
+    return _bar_write(current_user, "which distributors the bar buys from", "bar_stopped_changed", run)
+
+
+_BAR_SETTING_FIELDS = ("count_mixers", "liquor_oz", "wine_oz", "draft_oz", "draft_yield_pct")
+
+
+@mobile_bp.route("/food-cost/bar/settings", methods=["POST"])
+@mobile_login_required
+def mobile_bar_settings(current_user):
+    """{count_mixers?, liquor_oz?, wine_oz?, draft_oz?, draft_yield_pct?}
+    (the pour sizes may also come inside `pour_specs`) —
+    bar.products.set_settings; "" or null puts a pour size back to its
+    default. → the settings with ok."""
+    import bar.products as _bprod
+
+    def run(rid, acting):
+        b = _bar_body()
+        specs = b.get("pour_specs")
+        if specs is not None and not isinstance(specs, dict):
+            raise ValueError("Send the pour sizes as an object.")
+        given = dict(specs or {})
+        given.update({k: b[k] for k in _BAR_SETTING_FIELDS if k in b})
+        fields = {}
+        for k, v in given.items():
+            if k not in _BAR_SETTING_FIELDS:
+                raise ValueError("That isn't one of the bar settings.")
+            if k == "count_mixers":
+                if v not in (True, False, 0, 1, "0", "1", "true", "false"):
+                    raise ValueError("Counting mixers is on or off.")
+                fields[k] = v in (True, 1, "1", "true")
+            else:
+                fields[k] = _bar_num(v, "Pour sizes are numbers.")
+        if not fields:
+            raise ValueError("Nothing to change.")
+        before = _bprod.settings(rid)
+        res = _bprod.set_settings(rid, user_id=acting, **fields)
+        moved = [f"{k}: {before.get(k)} -> {res.get(k)}" for k in fields if before.get(k) != res.get(k)]
+        return res, "; ".join(moved)
+    return _bar_write(current_user, "the bar settings", "bar_settings_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/pack", methods=["POST"])
+@mobile_login_required
+def mobile_bar_pack(current_user):
+    """{product_key, units_per_case, container_ml} — the owner's pack for
+    one product; both null clears it back to the reading of its name."""
+    import bar.edits as _bed
+    import bar.products as _bprod
+
+    def run(rid, acting):
+        b = _bar_body()
+        key = _bed.check_product_key(rid, b.get("product_key"))
+        u = _bar_num(b.get("units_per_case"), "A case holds a whole number of units.", whole=True)
+        ml = _bar_num(b.get("container_ml"), "Give the container's size in ml.")
+        before = _bprod.pack_overrides(rid).get(key)
+        res = _bprod.set_pack(rid, key, units_per_case=u, container_ml=ml, user_id=acting)
+        after = {"units_per_case": u, "container_ml": ml} if (u is not None or ml is not None) else None
+        return res, f"{key}: {before or 'read from its name'} -> {after or 'read from its name'}"
+    return _bar_write(current_user, "a product's pack", "bar_pack_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/link", methods=["POST"])
+@mobile_login_required
+def mobile_bar_link(current_user):
+    """{product_key, same_as} — the owner's word that two of this
+    restaurant's codes are one product; same_as null unlinks."""
+    import bar.edits as _bed
+    import bar.products as _bprod
+
+    def run(rid, acting):
+        b = _bar_body()
+        known = _bed.known_product_keys(rid)
+        key = _bed.check_product_key(rid, b.get("product_key"), known=known)
+        same = b.get("same_as")
+        same = _bed.check_product_key(rid, same, known=known) if same not in (None, "") else None
+        before = _bprod.product_links(rid).get(key)
+        res = _bprod.link_products(rid, key, same, user_id=acting)
+        return res, f"{key}: {before or 'its own product'} -> {same or 'its own product'}"
+    return _bar_write(current_user, "which products are one", "bar_link_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/expected-price", methods=["POST"])
+@mobile_login_required
+def mobile_bar_expected_price(current_user):
+    """{product_key, min_qty, price, valid_from?, valid_to?, note?} — one
+    line of the owner's deal sheet (from min_qty units, price a unit;
+    dates YYYY-MM-DD). → {ok, id, product_key, min_qty, price}."""
+    import bar.edits as _bed
+    import bar.products as _bprod
+    from datetime import date as _bdate
+
+    def run(rid, acting):
+        b = _bar_body()
+        key = _bed.check_product_key(rid, b.get("product_key"))
+        q = _bar_num(b.get("min_qty"), "The quantity is a number between 1 and 1,000.")
+        p = _bar_num(b.get("price"), "Enter the price a unit.")
+        if q is None or p is None:
+            raise ValueError("Give the quantity and the price a unit.")
+        days = []
+        for f in ("valid_from", "valid_to"):
+            v = b.get(f)
+            if v in (None, ""):
+                days.append(None)
+                continue
+            try:
+                days.append(_bdate.fromisoformat(str(v)[:10]).isoformat())
+            except ValueError:
+                raise ValueError("Pick the deal's dates from the calendar.")
+        note = b.get("note")
+        if note is not None and not isinstance(note, str):
+            raise ValueError("The note is text.")
+        res = _bprod.set_expected_price(rid, key, q, p, valid_from=days[0], valid_to=days[1], note=note,
+                                        user_id=acting)
+        return res, f"{key}: from {q:g} at ${p:,.2f} added"
+    return _bar_write(current_user, "the deal sheet", "bar_deal_sheet_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/expected-price/<int:row_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_bar_expected_price_delete(current_user, row_id):
+    """Remove one line of the deal sheet (404 when it isn't this
+    restaurant's)."""
+    import bar.products as _bprod
+
+    def run(rid, acting):
+        row = next((r for r in _bprod.deal_sheet(rid) if int(r["id"]) == int(row_id)), None)
+        if row is None:
+            raise LookupError("That deal sheet line isn't there.")
+        res = _bprod.clear_expected_price(rid, row_id)
+        return res, f"{row['product_key']}: from {float(row['min_qty']):g} at ${float(row['price']):,.2f} removed"
+    return _bar_write(current_user, "the deal sheet", "bar_deal_sheet_changed", run)
+
+
+@mobile_bp.route("/food-cost/bar/drink-map", methods=["POST"])
+@mobile_login_required
+def mobile_bar_drink_map(current_user):
+    """{provider, item_id, product_key (null clears), pour_oz?} — the
+    owner's word that a POS drink is one of this restaurant's products at a
+    pour (bar.margins.set_drink_map). The POS item must be on this
+    restaurant's menu (pos_menu_prices)."""
+    import bar.edits as _bed
+    import bar.margins as _bmar
+    from bar.common import get_conn as _bar_gc
+
+    def run(rid, acting):
+        b = _bar_body()
+        provider = str(b.get("provider") or "").strip()
+        item_id = str(b.get("item_id") or "").strip()
+        if not provider or not item_id or len(provider) > 40 or len(item_id) > 100:
+            raise ValueError("Pick the drink from the POS menu.")
+        conn = _bar_gc()
+        try:
+            on_menu = conn.execute("SELECT 1 FROM pos_menu_prices WHERE restaurant_id=? AND provider=? "
+                                   "AND item_id=? LIMIT 1", (int(rid), provider, item_id)).fetchone()
+        finally:
+            conn.close()
+        if not on_menu:
+            raise ValueError("That drink isn't on this restaurant's POS menu.")
+        key = b.get("product_key")
+        key = _bed.check_product_key(rid, key) if key not in (None, "") else None
+        oz = _bar_num(b.get("pour_oz"), "A pour is a number of ounces.")
+        before = next((m.get("product_key") for m in _bmar.drink_map(rid)
+                       if m.get("provider") == provider and str(m.get("item_id")) == item_id), None)
+        res = _bmar.set_drink_map(rid, provider, item_id, key, pour_oz=oz, user_id=acting)
+        return res, f"{provider} {item_id}: {before or 'not matched'} -> {key or 'not matched'}"
+    return _bar_write(current_user, "which product a drink pours", "bar_drink_map_changed", run)
 
 
 def food_target_labelled(payload, rid):
