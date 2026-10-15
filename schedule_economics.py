@@ -59,10 +59,10 @@ TRIM_SCORE_CANDIDATES = 5       # how many equally-discretionary rows the score 
 TRIM_SCORE_SECONDS = 8.0        # kept for callers that pass score_seconds; read as TRIM_SCORE_EVALS below
 # The trim's budgets are WORK, never the wall clock (the same week trimmed to
 # 152 rows on one press and 154 on the next when the clock decided where it
-# stopped — blind re-audit 10/11/26 LOGIC-9/STRESS-10, found 10/14/26 on the
-# 24-hour diner): how many week-scores the score may spend choosing, how many
-# priced candidates the whole trim may weigh, and a far wall-clock cap that is
-# only an emergency stop (reported as timed_out).
+# stopped, on the 24-hour benchmark diner): how many week-scores the score
+# may spend choosing, how many priced candidates the whole trim may weigh,
+# and a far wall-clock cap that is only an emergency stop (reported as
+# timed_out).
 TRIM_SCORE_EVALS = 400
 TRIM_MAX_WORK = 20000
 TRIM_WALL_CAP_SECONDS = 180.0
