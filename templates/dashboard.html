@@ -46860,7 +46860,7 @@ function sfw2RuleCheck(chk) {
         + '<p class="br-note">A keg’s deposit is charged with it and credited when the empty goes back; the balance is money the distributor holds for kegs not yet returned.</p>' : '') + '</div>';
   }
   function margins(d) {
-    var m = d.margins || {}, rows = m.rows || [], sg = m.suggestions || [], h = '', i;
+    var m = d.margins || {}, rows = m.rows || [], sg = m.suggestions || [], h = '', hs = '', i;
     if (!rows.length && !sg.length) return '';
     for (i = 0; i < rows.length; i++) {
       var r = rows[i], up = r.cost_pct_before != null && r.cost_pct > r.cost_pct_before;
@@ -46868,12 +46868,19 @@ function sfw2RuleCheck(chk) {
         + '<div class="m">Drink cost ' + hn(r.cost_pct + '%') + (r.cost_pct_before != null ? ' (was ' + hn(r.cost_pct_before + '%') + (r.changed_mdy ? ' before ' + hn(r.changed_mdy) : '') + ')' : '') + ' · ' + hn(money2(r.cost)) + ' a drink</div>'
         + '<div class="r' + (up ? ' bad' : '') + '">' + (r.restore_price != null && up ? hn(price(r.restore_price)) + '<span>restores the margin</span>' : hn(r.cost_pct + '%') + '<span>drink cost</span>') + '</div></div>';
     }
-    for (i = 0; i < sg.length && i < 8; i++) {
+    for (i = 0; i < sg.length && i < 20; i++) {
       var s = sg[i];
-      h += '<div class="br-card br-li"><div class="n"><b>' + esc2(s.item) + '</b><span>Poured from ' + esc2(s.product) + '?</span></div><div class="m">Cavnar AI matched them by name' + (s.match ? ' (' + esc2(s.match) + ')' : '') + '; confirm and its drink cost shows here.</div>'
-        + '<div class="r">' + (OWNER ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="' + esc2(s.product_key) + '">Yes, that’s it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="">No</button>' : '') + '</div></div>';
+      hs += '<div class="br-card br-li"><div class="n"><b>' + esc2(s.item) + '</b><span>Poured from ' + esc2(s.product) + (s.pour_oz ? ' · ' + hn(s.pour_oz + ' oz') : '') + '?</span></div><div class="m">Cavnar AI matched them by name' + (s.match ? ' (' + esc2(s.match) + ')' : '') + '; confirm and its drink cost shows here.</div>'
+        + '<div class="r">' + (OWNER ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="' + esc2(s.product_key) + '"' + (s.pour_oz ? ' data-oz="' + esc2(String(s.pour_oz)) + '"' : '') + '>Yes, that’s it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="">No</button>' : '') + '</div></div>';
     }
-    return '<div class="br-sub" id="br-margins"><div class="br-k">Drink margins</div><h3>What a drink costs to pour</h3><div class="br-list">' + h + '</div></div>';
+    // Both lists fold (owner, 10/15/26: "ALL of these need to be in a drop
+    // down"): what each drink costs, and the matches waiting for a yes.
+    var fold = function (id, title, n, body) {
+      return '<details class="br-more" id="' + id + '"' + (ST.det[id] ? ' open' : '') + '><summary>' + title + ' <small class="hb-num">' + n + '</small></summary><div class="br-list">' + body + '</div></details>';
+    };
+    return '<div class="br-sub" id="br-margins"><div class="br-k">Drink margins</div><h3>What a drink costs to pour</h3>'
+      + (h ? fold('br-mg-rows', 'What each drink costs', rows.length, h) : '')
+      + (hs ? fold('br-mg-sug', 'Matches to confirm', Math.min(sg.length, 20), hs) : '') + '</div>';
   }
   function reorder(d) {
     var rs = d.reorder || [], h = '', i;
@@ -47393,7 +47400,9 @@ function sfw2RuleCheck(chk) {
         ownerWrite('/api/food-cost/bar/expected-price', {product_key: ek, min_qty: qq, price: +pq}, 'Added to your deal sheet — invoices are checked against it', t);
       } else if (a('data-br-dm') != null) {
         var prod = a('data-product');
-        ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-dm'), product_key: prod || null}, prod ? 'Saved — its drink cost shows here' : 'Saved — not paired', t);
+        var dmb = {provider: a('data-provider'), item_id: a('data-br-dm'), product_key: prod || null};
+        if (prod && a('data-oz')) dmb.pour_oz = +a('data-oz');
+        ownerWrite('/api/food-cost/bar/drink-map', dmb, prod ? 'Saved — its drink cost shows here' : 'Saved — not paired', t);
       } else if (a('data-br-ladall') != null) { ST.ladAll = !ST.ladAll; var lb = $id('br-lads'); if (lb) lb.outerHTML = ladders(pwOf()); refocus(el, '[data-br-ladall]'); }
       else if (a('data-br-credall') != null) { ST.credAll = !ST.credAll; var cb = $id('br-credits'); if (cb && DATA) cb.outerHTML = creditsHtml(DATA); refocus(el, '[data-br-credall]'); }
       else if (a('data-br-wlog') != null) logWaste(t);

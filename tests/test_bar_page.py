@@ -806,3 +806,21 @@ def test_an_unmatched_drink_comes_with_a_checked_suggestion():
     src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     row = src[src.index("  function varUnmapped(u) {"):src.index("  function specRow(s) {")]
     assert "sg && sg.product_key" in row and "check it, then Match" in row
+
+
+def test_margins_suggest_only_drinks_with_the_same_beer_and_towers_at_100_oz():
+    # 10/15/26: the wing sauce "Blueberry Scotch Bonnet" was offered Glenmorangie
+    # Scotch, "Coors Banquet" Coors Light 24 cans; every tower is 3 L, 100 oz.
+    import bar.variance as bv
+    assert bv.stated_oz("Stella Tower") == 100.0 and bv.stated_oz("Modelo 22oz") == 22.0 and bv.stated_oz("Titos") is None
+    lines = [{"kind": "item", "category": "beer", "description": "COORS LT 24NR LSE", "uom": "CA", "product_key": "cl"},
+             {"kind": "item", "category": "beer", "description": "STELLA ARTOIS 1/2 BL 13.2", "uom": "KE", "product_key": "st"}]
+    c = bv.pour_candidates(lines)
+    assert bv.suggest_pour("Coors Banquet", "beer", c) == {}
+    assert bv.suggest_pour("Coors Light", "beer", c)["product_key"] == "cl"
+    assert bv.suggest_pour("Stella Tower", "beer", c) == {"product_key": "st", "product": "Stella Artois 1/2 BL 13.2", "oz": 100.0}
+    src = open(os.path.join(ROOT, "bar", "margins.py"), encoding="utf-8").read()
+    assert "drink_items is not None and k not in drink_items" in src and '"pour_oz": stated_oz(' in src
+    page = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    mg = page[page.index("  function margins(d) {"):page.index("  function reorder(d) {")]
+    assert "'What each drink costs'" in mg and "'Matches to confirm'" in mg and "data-oz=" in mg

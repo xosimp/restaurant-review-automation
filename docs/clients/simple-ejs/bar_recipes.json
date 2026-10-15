@@ -594,6 +594,77 @@
       "flags": [
         "No 'Yum Yum Frose' button on RPOWER yet (10/15/26): the card attaches when one is rung under that name."
       ]
+    },
+    {
+      "name": "Midwest Wrecker",
+      "alcoholic": true,
+      "rpower_item": "Midwest Wrecker",
+      "rpower_category": "38. Cocktails",
+      "ingredients": [
+        {
+          "item": "Ketel One Vodka",
+          "amount": 3.05,
+          "unit": "oz"
+        },
+        {
+          "item": "Monin orange syrup",
+          "amount": 1.53,
+          "unit": "oz"
+        },
+        {
+          "item": "Monin vanilla syrup",
+          "amount": 1.02,
+          "unit": "oz"
+        },
+        {
+          "item": "Pasteurized orange juice",
+          "amount": 3.05,
+          "unit": "oz"
+        },
+        {
+          "item": "Lemon juice",
+          "amount": 0.76,
+          "unit": "oz"
+        },
+        {
+          "item": "Bloomers neutral base",
+          "amount": 1.53,
+          "unit": "oz"
+        },
+        {
+          "item": "Water",
+          "amount": 3.05,
+          "unit": "oz"
+        },
+        {
+          "item": "Whipped cream topper",
+          "amount": "1-1.5",
+          "unit": "oz"
+        }
+      ],
+      "batch": {
+        "oz": {
+          "Ketel One Vodka": 48,
+          "Monin orange syrup": 24,
+          "Monin vanilla syrup": 16,
+          "Pasteurized orange juice": 48,
+          "Lemon juice": 12,
+          "Bloomers neutral base": 24,
+          "Water": 48
+        },
+        "total_oz": 220,
+        "per_drink_oz": 14.0,
+        "drinks_per_batch": 15.7,
+        "source": "Will, 10/15/26: 48 oz Ketel One, 24 oz Monin orange, 16 oz Monin vanilla, 48 oz pasteurized OJ, 12 oz lemon juice, 24 oz Bloomers neutral base, 48 oz water; 14 oz of batch a drink, topped with 1-1.5 oz whipped cream"
+      },
+      "method": "Batched frozen; 14 oz of batch a drink, whipped cream on top.",
+      "glass": null,
+      "ice": null,
+      "garnish": "whipped cream (1-1.5 oz)",
+      "flavor": null,
+      "flags": [
+        "No 'Midwest Wrecker' button on RPOWER yet (10/15/26): the card attaches when one is rung under that name."
+      ]
     }
   ],
   "_answers_1013": [
@@ -601,6 +672,9 @@
     "Dirty Martini is RPOWER's 'Perfect Game' button.",
     "Smoked Walnut Maple OF is actually smoked, with Angel's Envy.",
     "Classic Old Fashioned uses WhistlePig bourbon.",
-    "Walnut For 2 is two separate drinks: 2 oz of Angel's Envy in each, 4 oz in all (Will, 10/15/26)."
+    "Walnut For 2 is two separate drinks: 2 oz of Angel's Envy in each, 4 oz in all (Will, 10/15/26).",
+    "Blueberry Scotch Bonnet and SD Mild Buffalo are wing sauces, SD Bonnet Pepper a kitchen pepper - not drinks (Will, 10/15/26).",
+    "Every tower is 3 L, taken as 100 oz (Will, 10/15/26).",
+    "Coors Banquet is a 12 oz beer (Will, 10/15/26); no Coors Banquet line is on the Fintech invoices yet."
   ]
 }

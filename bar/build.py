@@ -176,7 +176,7 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
             # shown beside liquor; `counted` is the owner's switch.
             "mixers": _mixers(lines, mix_from, mix_to, counted=cfg["count_mixers"]),
             # The drink margin check (F11), owner-confirmed pairs only.
-            "margins": _margins(restaurant_id, analysis, pour=cfg, db_path=db_path),
+            "margins": _margins(restaurant_id, analysis, pour=cfg, db_path=db_path, drink_items=ops.get("drink_items")),
             # Products past their usual reorder rhythm (F13): an insight input.
             "reorder": _reorder_hints(lines, today, canon=analysis["canon"]),
             "bar_settings": {k: cfg[k] for k in ("count_mixers", "liquor_oz", "wine_oz", "draft_oz",

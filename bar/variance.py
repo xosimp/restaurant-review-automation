@@ -550,6 +550,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         mapping = Mapping(restaurant_id, db_path)
     from bar.mapping import key_for
     unmapped = {}
+    drink_items = set()     # POS items sold as beer, liquor or wine under the mapping
     cat_sales = defaultdict(float)
     mapped_sales = defaultdict(float)
     spec_pending = {(s["provider"], s["item_name"].lower()) for s in suggested}
@@ -567,6 +568,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         is_drink = bar_kind in POUR_CATEGORIES
         if kind == "sale" and is_drink:
             cat_sales[bar_kind] += _f(r["sales"])
+            if r["item_id"]:
+                drink_items.add((r["provider"], str(r["item_id"])))
         k = (r["provider"], str(r["item_id"] or ""))
         tg = targets.get(k)
         if not tg:
@@ -686,7 +689,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                    categories=_counted_variance(sp["period"], totals),
                    item_note="Counts are by category, so each product reads bought vs rung; a category's "
                              "variance is what the counts say it used against what was rung.")
-    return {"variance": out, "keg_yield": _keg_yield(kegs, cfg), "span": span_out, "products": prods}
+    return {"variance": out, "keg_yield": _keg_yield(kegs, cfg), "span": span_out, "products": prods,
+            "drink_items": drink_items}
 
 
 def _r(v, n=1):
@@ -710,7 +714,29 @@ def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
 _SIZE_RE = re.compile(r"(\d{1,2}(?:\.\d)?)\s*oz\b", re.I)
 _KEG_RE = re.compile(r"\b(1/2|1/4|1/6)\s*(bbl|barrel|keg)\b|\bbarrel\b|\b\d{2}\s*l\b|\bkeg\b", re.I)
 _NOT_ITEM_RE = re.compile(r"discount|deposit|empties|fee\b|charge|credit|handle", re.I)
-_POS_NOISE = re.compile(r"\b(\d{1,2}(?:\.\d)?\s*oz|btl|bottle|can|gl|glass|dft|draft|draught|n/a|na)\b", re.I)
+# A beer's variety must agree (owner, 10/15/26: "Coors Banquet" was offered
+# Coors Light 24 cans): Light, Ultra, Banquet, Original, Zero are different beers.
+_VARIANTS = {"lite": "lite", "light": "lite", "lt": "lite", "ultra": "ultra", "banquet": "banquet",
+             "original": "original", "zero": "zero", "amber": "amber", "black": "black"}
+
+
+def variants(text) -> set:
+    """The varieties a name states, from its raw text (a 2-letter "LT" too)."""
+    toks = re.findall(r"[a-z]+", str(text or "").lower()) if isinstance(text, str) else list(text or ())
+    return {_VARIANTS[w] for w in toks if w in _VARIANTS}
+
+
+def stated_oz(name):
+    """The ounces a POS button's name states: "22oz" -> 22; a tower is 3 L,
+    taken as 100 oz (owner, 10/15/26: "ALL towers are 3L, 100oz")."""
+    n = str(name or "")
+    if re.search(r"\btower\b", n, re.I):
+        return 100.0
+    m = _SIZE_RE.search(n)
+    return float(m.group(1)) if m else None
+
+
+_POS_NOISE = re.compile(r"\b(\d{1,2}(?:\.\d)?\s*oz|btl|bottle|can|gl|glass|dft|draft|draught|n/a|na|tower)\b", re.I)
 
 
 def pour_candidates(lines) -> dict:
@@ -722,7 +748,7 @@ def pour_candidates(lines) -> dict:
         if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES or _NOT_ITEM_RE.search(d):
             continue
         keg = str(l.get("uom") or "").upper() == "KE" or bool(_KEG_RE.search(d))
-        out.setdefault(l["product_key"], (display_name(d), _words(d), l["category"], keg))
+        out.setdefault(l["product_key"], (display_name(d), _words(d), l["category"], keg, variants(d)))
     return out
 
 
@@ -734,13 +760,14 @@ def suggest_pour(item_name, category, cands) -> dict:
     {product_key, product, oz} or {} — a suggestion the owner checks, never
     a match until they press Match."""
     name = str(item_name or "")
-    size = _SIZE_RE.search(name)
-    oz = float(size.group(1)) if size else None
+    oz = stated_oz(name)
     draft = category == "beer" and oz is not None and oz >= 10
     words = _words(_POS_NOISE.sub(" ", name))
     if not words:
         return {}
-    pool = {k: (n, w) for k, (n, w, c, keg) in cands.items() if c == category and (keg if draft else True)}
+    want = variants(name)
+    pool = {k: (n, w) for k, (n, w, c, keg, var) in cands.items() if c == category and (keg if draft else True)
+            and var == want}
     if category == "beer" and not draft:
         pool = {k: v for k, v in pool.items() if not cands[k][3]} or pool
     key, pname, score = _best_product(" ".join(sorted(words)), pool)
@@ -882,7 +909,7 @@ def bar_blocks(restaurant_id, today=None, db_path=None, lines=None, counted=None
         return {"variance": {"available": False, "basis": None, "items": [], "unmapped": [],
                              "why": "Bought vs rung couldn't be read just now."},
                 "bar_ops": {"waste": None, "keg_yield": [], "comps": {"owner_only": True}}}
-    return {"variance": res["variance"],
+    return {"variance": res["variance"], "drink_items": res.get("drink_items"),
             "bar_ops": {"waste": res.get("waste"), "keg_yield": res["keg_yield"],
                         # Owner-only: bar.comps.for_viewer fills it for the account holder.
                         "comps": {"owner_only": True}}}
