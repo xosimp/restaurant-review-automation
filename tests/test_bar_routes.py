@@ -290,6 +290,60 @@ def test_build_failure_is_captured_and_generic(db, monkeypatch):
 
 # ── the stopped distributor (W4's store, W7's route) ────────────────────────
 
+def _bar_route_bodies():
+    """{function name: source} of every mobile_api route under /food-cost/bar
+    (one body each for web and phone — client_api's twins call these)."""
+    import re
+    src = open(os.path.join(ROOT, "mobile_api.py")).read()
+    out = {}
+    for m in re.finditer(r'@mobile_bp\.route\("/food-cost/bar[^"]*"[^\n]*\n(?:@[^\n]*\n)*def (\w+)\(', src):
+        start = m.start()
+        nxt = re.search(r"\n(?:@|def |# ──)", src[m.end():])
+        out[m.group(1)] = src[start:m.end() + (nxt.start() if nxt else len(src))]
+    return out
+
+
+def test_no_bar_route_answers_a_failure_with_the_exceptions_text():
+    """V38 everywhere on the Bar (W6b's counts, mapping, waste and drink-spec
+    routes included): a failure is captured and answered with a fixed
+    sentence — read from the source, so a route added later is held to it."""
+    bodies = _bar_route_bodies()
+    assert len(bodies) >= 22, sorted(bodies)
+    for name, body in bodies.items():
+        assert "_safe_err" not in body and "str(e)" not in body, name
+        if "except Exception" in body:
+            assert "_bar_capture(" in body, name
+            assert "_BAR_READ_FAILED" in body or "_BAR_WRITE_FAILED" in body, name
+
+
+def test_waste_and_drink_spec_failures_are_captured_and_generic(db, monkeypatch):
+    rid = _rid(db)
+    _history(db, rid)
+    _as(monkeypatch, rid)
+    import bar.variance
+    import bar.waste
+    import ops
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("no such table: bar_waste_secret")
+    captured = []
+    monkeypatch.setattr(ops, "capture", lambda e, **k: captured.append(k))
+    monkeypatch.setattr(bar.waste, "waste_rows", boom)
+    monkeypatch.setattr(bar.waste, "log_waste", boom)
+    monkeypatch.setattr(bar.variance, "drink_specs", boom)
+    cl = _app().test_client()
+    for method, path, body, job in (
+            ("get", "/api/food-cost/bar/waste", None, "bar_waste"),
+            ("post", "/api/food-cost/bar/waste", {"waste_date": TODAY.isoformat(), "product_key": _key(),
+                                                  "qty": 1, "unit": "each", "reason": "spill"}, "bar_write"),
+            ("get", "/mobile/api/food-cost/bar/drink-specs", None, "bar_drink_specs")):
+        r = getattr(cl, method)(path, json=body, headers=MOBILE if path.startswith("/mobile") else {})
+        text = r.get_data(as_text=True)
+        assert r.status_code == 500 and "secret" not in text and "no such table" not in text, path
+        assert r.get_json()["error"] in (mobile_api._BAR_READ_FAILED, mobile_api._BAR_WRITE_FAILED), path
+        assert captured[-1]["job"] == job and captured[-1]["restaurant_id"] == rid, path
+
+
 def test_owner_marks_a_distributor_stopped_and_back(db, monkeypatch):
     import bar.judge as bj
     rid = _rid(db)

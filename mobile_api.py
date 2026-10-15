@@ -2661,7 +2661,8 @@ def mobile_bar_counts(current_user):
             out["counted"] = _bcn.counted(rid, today=today)
         return jsonify(**out)
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_counts", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
 
 
 @mobile_bp.route("/food-cost/bar/counts", methods=["POST"])
@@ -2683,7 +2684,8 @@ def mobile_bar_count_save(current_user):
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That count didn't save.")), 400
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
     names = ", ".join(_bcn.LABELS[c].lower() for c in res["saved"])
     _log_account_event(rid, "bar_counted", current_user, detail=f"{res['count_date_mdy']}: {names}")
     import bar.cache as _bcache
@@ -2742,7 +2744,8 @@ def mobile_bar_mapping(current_user):
     try:
         out = _bmap.mapping_payload(rid, today=_bar_count_today(rid))
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_mapping", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
     out["can_change"] = bool(is_principal(current_user))
     return jsonify(**out)
 
@@ -2770,7 +2773,8 @@ def mobile_bar_mapping_save(current_user):
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That mapping didn't save.")), 400
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
     import bar.cache as _bcache
     _bcache.invalidate(rid)
     moved = [f"{c['key']}: {_bmap.BAR_KIND_LABELS.get(c['after'], 'back to the suggestion').lower()}"
@@ -2817,7 +2821,8 @@ def mobile_bar_waste(current_user):
                        units=[{"unit": k, "label": _bw.UNIT_LABELS[k]} for k in _bw.UNITS],
                        can_remove=bool(is_principal(current_user)))
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_waste", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
 
 
 @mobile_bp.route("/food-cost/bar/waste", methods=["POST"])
@@ -2837,7 +2842,8 @@ def mobile_bar_waste_save(current_user):
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That entry didn't save.")), 400
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
     import bar.cache as _bcache
     _bcache.invalidate(rid)
     _log_account_event(rid, "bar_waste_logged", current_user,
@@ -2876,7 +2882,8 @@ def mobile_bar_drink_specs(current_user):
     try:
         rows = [_bv._spec_public(s) for s in _bv.drink_specs(rid)]
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_drink_specs", rid)
+        return jsonify(ok=False, error=_BAR_READ_FAILED), 500
     return jsonify(ok=True, specs=rows, can_change=bool(is_principal(current_user)))
 
 
@@ -2907,7 +2914,8 @@ def mobile_bar_drink_spec_save(current_user):
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "That spec didn't save.")), 400
     except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e)), 500
+        _bar_capture(e, "bar_write", rid)
+        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
     what = "removed" if res.get("removed") else res["status"]
     import bar.cache as _bcache
     _bcache.invalidate(rid)
