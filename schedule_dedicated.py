@@ -18,33 +18,48 @@ How it is held, the way the managers' shifts are (schedule_skeleton):
     restaurant writes that daypart's shifts of the family in (its history),
     at its usual times for that weekday, given to a person who holds the
     role — the family itself, never a name that merely contains it ("Server
-    Assistant" is not a server, BUGSGEN-24) — and may legally take it
+    Assistant" is not a server) — and may legally take it
     (Constraints.fillable / can_add): last week's person in that slot
     first, then whoever usually works it, then the fewest hours in the
     payroll week (the managers' plan and every row already fixed counted),
-    so the same bartender keeps bar tables week to week (LOGIC-17); never
-    into overtime while somebody else can take it without, and past the
+    so the same bartender keeps bar tables week to week; never into
+    overtime while somebody else can take it without, and past the
     restaurant's own limits only when nobody can inside them (FILL_ROUNDS);
   * the position is one of the role's usual crew when the restaurant has
     been running it — its punches already count that person — so the
     shift's requirement is the usual crew, at least the position; only a
-    position newer than the history (the rule's "since") is one MORE on
-    top of it (LOGIC-16: EJ's three usual Friday bartenders already include
-    bar tables; a +1 on top asked for a fourth the bar never runs);
+    position newer than the history (the rule's "since") is one MORE on top
+    of it (EJ's three usual Friday bartenders already include bar tables; a
+    +1 on top asked for a fourth the bar never runs);
   * the rows carry "_pinned": DEDICATED_SOURCE and merge into the model's
     answer by code (labor.generate_optimized_schedule, restore_pinned), so
     no trim, fill or redo pass removes, re-times or re-assigns one;
   * a covered slot nobody can legally take is said in the review, with why;
-  * a note sentence naming the position with an allowance word ("no",
-    "skip", "without", "don't need", "waive") waives the slots it names
-    (its days and dayparts; none named = the whole week), and the review
-    says which note did it.
+  * a note sentence that LETS THE POSITION OFF — an allowance built on the
+    position itself ("no bar tables bartender Tuesday", "skip the bar
+    tables Monday", "bar tables not needed Sunday") — reads as a waiver of
+    the slots it names (its days and dayparts; none named = the whole
+    week). A sentence that insists ("never", "always", "keep", "must", "no
+    matter what", "somebody else must take…") is never one, and a negation
+    anywhere else in the sentence is not an allowance ("Bar tables are
+    never off — always staff them" waived all nine slots). A waiver holds
+    only once the owner CONFIRMED it (schedule_note_rules.add_waiver — the
+    AI tab, or the Generate sheet for a draft's own instruction); until
+    then the position is staffed and the review says the note was read but
+    not applied.
 
 The row's note is "<label> — Cavnar AI: standing position": the staff read
 the label (labor.staff_facing_note strips the Cavnar AI mark).
 """
 import json
 import re
+
+import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DEDICATED_SOURCE = "dedicated"
 NOTE_MARK = "Cavnar AI: standing position"
@@ -57,7 +72,18 @@ PART_WORDS = {"morning": "daytime", "night": "night"}
 IN_USUAL_DAYS = 28
 
 _ALLOW_RX = re.compile(r"\b(no|skip|skipping|without|waive|waived|don'?t need|do not need|not needed|no need|"
-                       r"drop|leave off|off)\b", re.I)
+                       r"drop|leave off|off|optional)\b", re.I)
+# Words that insist on the position, or on somebody taking it — never an
+# allowance, whatever negation sits beside them.
+_KEEP_RX = re.compile(r"\b(never|always|keep|keeps|kept|must|make sure|ensure|require|requires|"
+                      r"required|no matter|regardless|non-?negotiable|still|staff them|staff it|cover|covers|"
+                      r"covered|somebody else|someone else|anyone else|take the|takes the|instead)\b", re.I)
+# The allowance itself: a verb of letting off whose object is the position,
+# or the position as the subject of "not needed" / "off" / "optional".
+_LEAD = (r"(?:no|skip|skipping|without|waive|waived|waiving|drop|dropping|leave off|no need for|don'?t need|"
+         r"do not need|cut)\s+(?:the\s+|a\s+|an\s+|any\s+|our\s+)?")
+_TRAIL = (r"(?:\s+(?:bartender|server|position|person|shift|station|section)s?)?(?:\s+\w+){0,2}?\s+"
+          r"(?:is\s+|are\s+|can\s+be\s+)?(?:not needed|isn'?t needed|aren'?t needed|off|waived|skipped|optional)\b")
 
 
 def rules_of(restaurant) -> list:
@@ -94,7 +120,7 @@ def in_usual(rule, week_start) -> bool:
     the restaurant has been staffing (Simple EJ's: "every night one more
     bartender is on") — or one started IN_USUAL_DAYS or more before the
     week. Then the usual crew counts it and it is one of them; otherwise it
-    is one more on top (LOGIC-16)."""
+    is one more on top."""
     since = (rule or {}).get("since")
     if not since:
         return True
@@ -119,17 +145,30 @@ def describe(rule) -> str:
     return f"{rule['label']}: one more {rule['family']} " + " and ".join(bits)
 
 
+def allows(low, words) -> bool:
+    """Whether the sentence `low` (lower case) lets the position off: an
+    allowance construction about the position itself (one of its waive
+    `words`), and no word that insists on it."""
+    if not _ALLOW_RX.search(low) or _KEEP_RX.search(low):
+        return False
+    for w in words or ():
+        pos = re.escape(str(w).lower()) + r"(?:s|es)?"
+        if re.search(r"\b" + _LEAD + pos + r"\b", low) or re.search(r"\b" + pos + _TRAIL, low):
+            return True
+    return False
+
+
 def waivers(text, rules) -> list:
-    """[{"rule", "day", "part", "note"}]: the slots the notes waive. A
-    sentence counts when it names the position (one of its waive_words) and
-    says an allowance; its days and dayparts narrow it (none = all)."""
+    """[{"rule", "day", "part", "note"}]: the slots the notes' sentences
+    read as waiving (allows); their days and dayparts narrow it (none =
+    all). A READING: plan() is handed only the confirmed ones."""
     if not text or not rules:
         return []
     from schedule_note_rules import _DAYPART_TOKENS, _days, _normalise, _sentences
     out = []
     for s in _sentences(str(text)):
         low = " ".join(s.lower().replace("’", "'").split())
-        if not _ALLOW_RX.search(low):
+        if not _ALLOW_RX.search(low) or _KEEP_RX.search(low):
             continue
         tokens = re.findall(r"[a-z]+|\d+|-", _normalise(s))
         try:
@@ -139,7 +178,7 @@ def waivers(text, rules) -> list:
         days = list(named or DAYS)
         parts = sorted({_DAYPART_TOKENS[t] for t in tokens if t in _DAYPART_TOKENS}) or list(PARTS)
         for i, r in enumerate(rules):
-            if not any(w in low for w in r["waive_words"]):
+            if not allows(low, r["waive_words"]):
                 continue
             for d in days:
                 for p in parts:
@@ -148,10 +187,49 @@ def waivers(text, rules) -> list:
     return out
 
 
+def confirmed_waiver_keys(restaurant_id, week_dates=None, db_path=None) -> set:
+    """The sentences (schedule_note_rules._key) whose waiver the owner
+    confirmed and that are in force for the week: every standing one, and a
+    one-week one for exactly this week."""
+    import schedule_note_rules as _snr
+    week = [str(d)[:10] for d in (week_dates or []) if d]
+    out = set()
+    try:
+        sd = _snr._start_day(restaurant_id)
+        mondays = {_snr._monday(d, sd).isoformat() for d in week}
+        for r in _snr.note_rules(restaurant_id, week_start=(week or [None])[0], db_path=db_path or _snr.DB_PATH):
+            if r.get("kind") != "waiver":
+                continue
+            if r["scope"] == "week" and mondays != {r.get("week_start")}:
+                continue
+            for src in [r.get("source_text")] + list(r.get("more_sources") or []):
+                if src:
+                    out.add(_snr._key(src))
+    except Exception as e:
+        _degraded(f"confirmed waivers unread: {e!r}", e)
+    return out
+
+
+def split_waivers(text, rules, confirmed) -> tuple:
+    """(waived, unconfirmed): the slots the confirmed sentences waive, and
+    [{"note", "label"}] for each sentence read as a waiver the owner has not
+    confirmed — the position stays staffed and the review says so."""
+    from schedule_note_rules import _key, _sentences
+    yes, no = [], []
+    for s in _sentences(str(text or "")):
+        (yes if _key(s) in (confirmed or set()) else no).append(s)
+    waived = waivers("\n".join(yes), rules)
+    pending = []
+    for s in no:
+        ws = waivers(s, rules)
+        if ws:
+            pending.append({"note": s.strip()[:200], "label": rules[ws[0]["rule"]]["label"]})
+    return waived, pending
+
+
 def _part_of(row):
     """The daypart a past row is, by the one rule (schedule_time.
-    primary_daypart, BUGSGEN-25) — None when its times cannot be read."""
-    import schedule_time as _stime
+    primary_daypart) — None when its times cannot be read."""
     part = _stime.primary_daypart(row)
     return part if part in PARTS else None
 
@@ -170,9 +248,8 @@ def _usual(history, family, day, part, c=None):
     `part` shifts in on `day` — the most common role, the median start and
     end — falling back to every weekday of that daypart. None with no
     history of the family in that daypart. A row is the family's by its
-    role's family, never by the name containing it (BUGSGEN-24: "server"
-    matched "Server Assistant", "cook" matched "Prep Cook")."""
-    import schedule_skeleton as sk
+    role's family, never by the name containing it ("server" matched
+    "Server Assistant", "cook" matched "Prep Cook")."""
 
     def pick(rows):
         if not rows:
@@ -181,17 +258,17 @@ def _usual(history, family, day, part, c=None):
         for r in rows:
             roles[r.get("role") or ""] = roles.get(r.get("role") or "", 0) + 1
         role = max(sorted(roles), key=lambda k: roles[k])
-        spans = [sk._span(r) for r in rows if (r.get("role") or "") == role]
+        spans = [_stime.bounded_span(r) for r in rows if (r.get("role") or "") == role]
         spans = [s for s in spans if s]
         if not spans or not role:
             return None
         # Clock-in medians (3:56pm) written as a schedule writes them: the
         # nearest quarter hour.
         q = lambda m: int(round(float(m) / 15.0)) * 15  # noqa: E731
-        return role, q(sk._median([s[0] for s in spans])), q(sk._median([s[1] for s in spans]))
+        return role, q(_stime.median([s[0] for s in spans])), q(_stime.median([s[1] for s in spans]))
 
     mine = [r for r in history or [] if _family_of(c, r.get("role")) == family and _part_of(r) == part]
-    same_day = [r for r in mine if sk._weekday(r.get("date")) == day]
+    same_day = [r for r in mine if _stime.weekday_of(r.get("date")) == day]
     return pick(same_day) or pick(mine)
 
 
@@ -200,7 +277,6 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     date and daypart (see the module note). `prior_rows` are rows already
     fixed (the managers' plan, a redo's kept days); `roster_roles` the
     {name: role} roster. Never raises: a failure is one unfilled entry."""
-    import schedule_skeleton as sk
     import schedule_rules as _rules
     out = {"rows": [], "unfilled": [], "waived": [], "rules": [describe(r) for r in rules or []]}
     if not rules or not week_dates:
@@ -213,7 +289,7 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     def week_hours(n, d):
         """Hours `n` has in `d`'s payroll week: published or worked already
         (base_hours), every row fixed so far (the managers' plan, kept days)
-        and this plan's rows — never only this plan's (LOGIC-17)."""
+        and this plan's rows — never only this plan's."""
         k = c.key(n)
         b = c.bucket(d)
         h = float(((getattr(c, "base_hours", None) or {}).get(k) or {}).get(b, 0.0) or 0.0)
@@ -223,14 +299,14 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
     for i, rule in enumerate(rules):
         fam = rule["family"]
         # Who holds the role: its family, by the restaurant's own families —
-        # never a role whose name merely contains it (BUGSGEN-24).
+        # never a role whose name merely contains it.
         people = [n for n in names
                   if _family_of(c, (roster_roles or {}).get(n)) == fam
                   or any(_family_of(c, r) == fam for r in (getattr(c, "known_roles", {}) or {}).get(c.key(n), ()))]
         keep = in_usual(rule, week_start)
         slot_people = _slot_people(history, fam, rule, c)
         for d in week_dates:
-            day = sk._weekday(d)
+            day = _stime.weekday_of(d)
             for part in PARTS:
                 if day not in (rule["parts"].get(part) or []):
                     continue
@@ -246,25 +322,26 @@ def plan(c, week_dates, rules, history=None, roster_roles=None, prior_rows=None,
                                             "why": f"no {fam} {PART_WORDS[part]} shift on file to copy the times from"})
                     continue
                 role, s, e = usual
-                row = {"date": d, "day": day, "role": role, "shift_start": sk._fmt(s), "shift_end": sk._fmt(e % 1440),
+                row = {"date": d, "day": day, "role": role, "shift_start": _stime.fmt_minutes(s),
+                       "shift_end": _stime.fmt_minutes(e % 1440),
                        "notes": f"{rule['label']} — {NOTE_MARK}", "_pinned": DEDICATED_SOURCE,
                        "_pin_reason": rule["label"], "_in_usual": keep}
                 # As every row carries it — a string, from the real span in
-                # the restaurant's zone (BUGSGEN-6): it was a float of the
-                # wall-clock span.
-                import schedule_time as _stime
+                # the restaurant's zone: it was a float of the wall-clock
+                # span.
                 row["scheduled_hours"] = _stime.row_hours_text(row, getattr(c, "tz", None))
                 chosen, why_not = None, []
                 last, usual_n = slot_people.get((day, part), (None, {}))
                 # Last week's person in this slot, then whoever usually works
-                # it, then the fewest hours in the payroll week (LOGIC-17).
+                # it, then the fewest hours in the payroll week.
                 order = sorted(people, key=lambda n: (0 if last and c.key(n) == last else 1,
                                                       -usual_n.get(c.key(n), 0), week_hours(n, d), n))
                 for mode in _rules.FILL_ROUNDS:
                     for n in order:
                         cand = dict(row, employee=n)
                         if any((r.get("employee") or "").strip().lower() == n.lower() and r.get("date") == d
-                               and sk._overlap(sk._span(r) or (0, 0), (s, e)) > 0 for r in fixed + out["rows"]):
+                               and _stime.overlap_minutes(_stime.bounded_span(r) or (0, 0), (s, e)) > 0
+                               for r in fixed + out["rows"]):
                             continue
                         ok, why = c.fillable(n, d)
                         if ok:
@@ -292,8 +369,7 @@ def _slot_people(history, family, rule, c) -> dict:
     """{(weekday, daypart): (last person key or None, {person key: times})}
     from the history: who took the position in that slot most recently (a
     row marked as the position), and who works the family's shift there
-    most often — the stable choice a GM makes (LOGIC-17)."""
-    import schedule_skeleton as sk
+    most often — the stable choice a GM makes."""
     out = {}
     marked = {}
     for r in history or []:
@@ -304,7 +380,7 @@ def _slot_people(history, family, rule, c) -> dict:
         d = str(r.get("date") or "")[:10]
         if not part or not d:
             continue
-        day = sk._weekday(d)
+        day = _stime.weekday_of(d)
         key = c.key(name) if c is not None and hasattr(c, "key") else name.lower()
         slot = out.setdefault((day, part), (None, {}))
         slot[1][key] = slot[1].get(key, 0) + 1
@@ -323,7 +399,7 @@ def requirement_adjustments(dplan) -> list:
     `adjustments`). A position the restaurant has been running is one of
     its role's usual crew (`_in_usual`): the requirement is the usual crew,
     at least this one (delta 0) — never a +1 on top of a crew that already
-    counts it (LOGIC-16). A position newer than the history is one more."""
+    counts it. A position newer than the history is one more."""
     out = []
     for r in (dplan or {}).get("rows") or []:
         part = _part_of(r)
@@ -349,10 +425,9 @@ def prompt_block(dplan, dates=None) -> str:
     unf = [u for u in dplan.get("unfilled") or [] if want is None or u["date"] in want]
     if not rows and not unf:
         return ""
-    import schedule_skeleton as sk
-    lines = [f"  {sk._weekday(r['date'])[:3]} {r['date']}: {r['employee']} {r['shift_start']}–{r['shift_end']} "
+    lines = [f"  {_stime.weekday_of(r['date'])[:3]} {r['date']}: {r['employee']} {r['shift_start']}–{r['shift_end']} "
              f"({r['role']}) — {r['_pin_reason']}" for r in sorted(rows, key=lambda r: (r["date"], r["shift_start"]))]
-    lines += [f"  {sk._weekday(u['date'])[:3]} {u['date']} {PART_WORDS[u['part']]}: {u['label']} could not be placed "
+    lines += [f"  {_stime.weekday_of(u['date'])[:3]} {u['date']} {PART_WORDS[u['part']]}: {u['label']} could not be placed "
               f"— staff the role as usual; the owner is told" for u in unf]
     extra = any(r.get("_in_usual") is False for r in rows)
     count = ("Each is one MORE of its role on top of the usual crew, and SHIFT REQUIREMENTS already count it "
@@ -368,15 +443,17 @@ def prompt_block(dplan, dates=None) -> str:
 def review_lines(dplan) -> list:
     """What the owner reads about the positions this week: a slot nobody
     could take (with why) and a slot a note waived (with the note)."""
-    import schedule_skeleton as sk
     from time_utils import mdy
     out = []
     for u in (dplan or {}).get("unfilled") or []:
-        out.append(f"{u['label']} — {sk._weekday(u['date'])} {mdy(u['date'])} {PART_WORDS[u['part']]} has nobody: "
+        out.append(f"{u['label']} — {_stime.weekday_of(u['date'])} {mdy(u['date'])} {PART_WORDS[u['part']]} has nobody: "
                    f"{u['why']}.")
     for w in (dplan or {}).get("waived") or []:
-        out.append(f"{w['label']} — not staffed {sk._weekday(w['date'])} {mdy(w['date'])} {PART_WORDS[w['part']]}, "
+        out.append(f"{w['label']} — not staffed {_stime.weekday_of(w['date'])} {mdy(w['date'])} {PART_WORDS[w['part']]}, "
                    f"as your note says: “{w['note']}”.")
+    for u in (dplan or {}).get("unconfirmed_waivers") or []:
+        out.append(f"{u['label']} — your note “{u['note']}” reads as letting it off, but you haven't confirmed that, "
+                   f"so the position is staffed. Confirm it in the Schedule Studio's AI tab to let it off.")
     return out
 
 

@@ -8,6 +8,7 @@ inputs, its live check, its sweep and its exact scorer per week being
 edited and runs the what-if only when asked (P-25).
 """
 import sys
+import schedule_fixes
 
 import pytest
 from flask import Flask
@@ -38,7 +39,7 @@ def _sig(names, role="Server", **kw):
 
 
 def _fix(rows, c, **sig):
-    return sq.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, **sig)
+    return schedule_fixes.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, **sig)
 
 
 # ── E-1: a fix is judged by breach identity, the manager's minutes included ──
@@ -59,7 +60,7 @@ def test_a_fix_that_leaves_the_floor_without_a_manager_longer_is_refused(monkeyp
     assert {"outside_window", "no_manager"} <= {v["kind"] for v in viols}
     monkeypatch.setattr(sq.LocalScorer, "score",
                         lambda self, rs, flagged=None, hard_breaches=None: 100.0 if rs[1]["employee"] == "Kim" else 50.0)
-    out = sq.apply_fixes(rows, viols, rule_constraints=c, **_sig(names))
+    out = schedule_fixes.apply_fixes(rows, viols, rule_constraints=c, **_sig(names))
     assert out["rows"][1]["employee"] == "Mo"
     gaps = lambda rs: sum(e - s for s, e, _i in (sr.manager_gaps(rs, c).get(TUE) or []))  # noqa: E731
     assert gaps(out["rows"]) <= gaps(rows)
@@ -130,7 +131,7 @@ def test_a_breach_about_the_day_is_never_an_unfixed_line_on_a_person():
     rows = [row(TUE, "Ann", "4:00pm", "10:00pm"), row(TUE, "Bob", "4:00pm", "10:00pm")]
     viols = sr.violations(rows, c)
     assert any(v.get("day_level") for v in viols)
-    out = sq.apply_fixes(rows, viols, rule_constraints=c, **_sig(names))
+    out = schedule_fixes.apply_fixes(rows, viols, rule_constraints=c, **_sig(names))
     assert not out["unfixed"] and not out["fixes"]
 
 
@@ -140,7 +141,7 @@ def test_somebody_in_a_role_they_do_not_hold_is_replaced_by_somebody_who_holds_i
     rows = [row(TUE, "Ann", "4:00pm", "10:00pm", role="Line Cook"), row(MON, "Kim", "4:00pm", "10:00pm", role="Line Cook")]
     viols = sr.violations(rows, c)
     assert any(v["kind"] == "role_not_held" and v.get("hard") for v in viols)
-    out = sq.apply_fixes(rows, viols, rule_constraints=c,
+    out = schedule_fixes.apply_fixes(rows, viols, rule_constraints=c,
                          **_sig(names, role="Line Cook", roster_roles={"Ann": "Server", "Cook": "Line Cook",
                                                                         "Kim": "Line Cook"}))
     assert out["rows"][0]["employee"] in ("Cook", "Kim") and out["fixes"][0]["kind"] == "role_not_held"
@@ -154,10 +155,10 @@ def test_apply_fixes_and_the_what_if_keep_to_a_deadline():
     c = cons(names, blocked_dates={"ann": {TUE: "on approved time off"}})
     rows = [row(TUE, "Ann", "4:00pm", "10:00pm"), row(MON, "Kim", "4:00pm", "10:00pm")]
     sig = _sig(names, typical_headcount={("Tuesday", "night"): {"Server": 1}})
-    late = sq.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=0, **sig)
+    late = schedule_fixes.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=0, **sig)
     assert not late["fixes"] and late["unfixed"][0].get("not_tried")
-    assert sq.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=30, **sig)["fixes"]
-    out = sq.compare_candidates(rows, rule_constraints=c, max_seconds=0, **_sig(names, scores={"Kim": 5}))
+    assert schedule_fixes.apply_fixes(rows, sr.violations(rows, c), rule_constraints=c, max_seconds=30, **sig)["fixes"]
+    out = schedule_fixes.compare_candidates(rows, rule_constraints=c, max_seconds=0, **_sig(names, scores={"Kim": 5}))
     assert out["evaluated"] == 0 and not out["swaps"]
 
 
@@ -209,12 +210,12 @@ def studio(monkeypatch):
         calls["inputs"] += 1
         return real_inputs(*a, **k)
     monkeypatch.setattr(schedule_engine, "quality_inputs_from_db", inputs)
-    real_cc = sq.compare_candidates
+    real_cc = schedule_fixes.compare_candidates
 
     def what_if(*a, **k):
         calls["what_if"] += 1
         return real_cc(*a, **k)
-    monkeypatch.setattr(sq, "compare_candidates", what_if)
+    monkeypatch.setattr(schedule_fixes, "compare_candidates", what_if)
     app = Flask(__name__)
     app.register_blueprint(mobile_api.mobile_bp)
     client = app.test_client()

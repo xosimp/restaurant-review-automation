@@ -31,6 +31,13 @@ from datetime import date, datetime, timedelta
 import models as _models_mod
 from models import DB_PATH
 import schedule_time as _stime
+from schedule_time import _APPROXIMATE, _holiday_dates, holiday_names  # noqa: F401  (the holiday calendar; re-exported)
+from schedule_review import binding_budget, budget_conflict_line  # noqa: E402,F401  (the review's budget lines; re-exported)
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -42,36 +49,55 @@ def get_conn(db_path=None):
         return _models_mod.get_conn()
     return _models_mod.get_conn(db_path)
 
-# Final days only (canonical_facts, memory audit 9/29/26): a half-night the
-# POS had not closed is never a week's sales or a day's labor %.
+# Final days only (canonical_facts): a half-night the POS had not closed is
+# never a week's sales or a day's labor %.
 from canonical_facts import FINAL_SQL
 
 TRIM_TOLERANCE = 0.02            # a week within 2% of the budget is not trimmed
 TRIM_MAX_REMOVALS = 60
 TRIM_SCORE_CANDIDATES = 5       # how many equally-discretionary rows the score chooses between
-TRIM_SCORE_SECONDS = 8.0        # past this the score stops choosing; the order alone decides (big rosters)
-# The close stagger (schedule audit 10/3/26 P-27): the end of a shift goes
-# before a whole shift does — at most this much off one shift, in half hours,
-# never leaving it shorter than a four-hour shift (the overtime trim's floor).
+TRIM_SCORE_SECONDS = 8.0        # kept for callers that pass score_seconds; read as TRIM_SCORE_EVALS below
+# The trim's budgets are WORK, never the wall clock (the same week trimmed to
+# 152 rows on one press and 154 on the next when the clock decided where it
+# stopped, on the 24-hour benchmark diner): how many week-scores the score
+# may spend choosing, how many priced candidates the whole trim may weigh,
+# and a far wall-clock cap that is only an emergency stop (reported as
+# timed_out).
+TRIM_SCORE_EVALS = 400
+TRIM_MAX_WORK = 20000
+TRIM_WALL_CAP_SECONDS = 180.0
+# The close stagger: the end of a shift goes before a whole shift does — at
+# most this much off one shift, in half hours, never leaving it shorter than a
+# four-hour shift (the overtime trim's floor).
 TRIM_TAIL_MAX_HOURS = 2.0
 TRIM_TAIL_STEP_MIN = 30
-TRIM_MIN_SHIFT_HOURS = 4.0
 TRIM_MAX_TAIL_CUTS = 120
-TRIM_MAX_SECONDS = 20.0         # past this the trim stops where it is and says what is left over
-# Somebody's only shift of the week is a cost to cut, not a refusal (sched
-# audit 10/10/26 LOGIC-14): it ranks as though its day were this many hours
-# less over its target — a Tuesday-lunch extra on a day far over can still
-# go, before a regular's Saturday tail. A minimum-hours promise still holds.
+TRIM_MAX_SECONDS = TRIM_WALL_CAP_SECONDS   # the emergency stop only; the trim's budget is TRIM_MAX_WORK
+# A cut must lower the one objective (schedule_objective.price_week) by at
+# least this many dollars to be a saving.
+OBJECTIVE_MIN_GAIN_USD = 0.5
+# With the one objective the trim weighs this many candidate cuts a step (the
+# objective, priced one change at a time, picks the cheapest to lose), not
+# the first few in its order: a cut is spread to the low-value half hours
+# and away from somebody already under half their usual week.
+TRIM_OBJECTIVE_CANDIDATES = 12
+# The note a shift the trim ended early carries (and how a later cycle of
+# the repair loop knows it was already cut once).
+TRIM_NOTE = "ends early — hours budget"
+# Somebody's only shift of the week is a cost to cut, not a refusal: it
+# ranks as though its day were this many hours less over its target — a
+# Tuesday-lunch extra on a day far over can still go, before a regular's
+# Saturday tail. A minimum-hours promise still holds.
 ONLY_SHIFT_COST_HOURS = 2.0
 # What staffing cuts measured worse here weigh in the trim at full strength
 # (rec_learning.learned_cut_penalty, 0-1): the slot ranks as though its day
 # were this many hours less over target — graded, never a freeze of the
-# weekday (LOGIC-15); improved cuts the mirror, half as much.
+# weekday; improved cuts the mirror, half as much.
 LEARNED_CUT_COST_HOURS = 4.0
 LEARNED_LEAN_BONUS_HOURS = 2.0
-# What one more of a role on a meal measured here (staffing_elasticity,
-# MARKET-23): a slot whose hour clearly pays ranks as though its day were
-# this many hours less over target — cut last; one clearly not, more — first.
+# What one more of a role on a meal measured here (staffing_elasticity): a
+# slot whose hour clearly pays ranks as though its day were this many hours
+# less over target — cut last; one clearly not, more — first.
 VALUE_KEEP_HOURS = 3.0
 STAGGER_STEP_MIN = 30
 STAGGER_MAX_MIN = 90
@@ -85,7 +111,7 @@ def _minutes(t):
 
 
 def _fmt(m):
-    from schedule_engine import _format_minutes_to_time
+    from schedule_time import fmt_minutes as _format_minutes_to_time
     return _format_minutes_to_time(int(m))
 
 
@@ -97,16 +123,17 @@ def _hours(r):
 
 
 def _daypart(r):
-    """A row's daypart by the one rule (schedule_time.primary_daypart,
-    BUGSGEN-25): the core window it covers most, else its start's."""
+    """A row's daypart by the one rule
+    (schedule_time.primary_daypart): the core window it covers most,
+    else its start's."""
     import schedule_time as _stime
     return _stime.primary_daypart(r)
 
 
 def _hours_text(row, constraints=None) -> str:
     """A re-timed row's scheduled_hours from its real span in the
-    restaurant's zone, two decimals (BUGSGEN-6, BUGSGEN-7): the stagger and
-    the trim wrote wall-clock hours rounded to a tenth."""
+    restaurant's zone, two decimals: the stagger and the trim wrote
+    wall-clock hours rounded to a tenth."""
     import schedule_time as _stime
     return _stime.row_hours_text(row, getattr(constraints, "tz", None) if constraints is not None else None)
 
@@ -124,12 +151,12 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     base_hours is {name: {bucket: hours already published}} — or a plain
     {name: hours} when there is one bucket. A Monday-Sunday draft over a
     Wednesday payroll week is two payroll weeks, and pricing it as one read
-    26h of overtime where there were 2 (SCHED-7). Those base hours are not
-    priced here but they push this week's hours into overtime sooner.
+    26h of overtime where there were 2. Those base hours are not priced
+    here but they push this week's hours into overtime sooner.
 
     daily_ot_hours: where daily overtime applies, the hours past it in one
-    day are overtime too — flagged by the sweep and, until now, never priced
-    (SCHED-7). An hour already paid as daily overtime does not also count
+    day are overtime too — flagged by the sweep and, until now, never
+    priced. An hour already paid as daily overtime does not also count
     toward the weekly ceiling.
 
     salaried: names (models.salaried_name_key) paid the same whatever the
@@ -141,17 +168,15 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     the owner's role rate still beats the typical one.
 
     rounded False keeps the cents: the optimizer and the solver weigh a
-    half-hour move by what it costs (schedule audit 10/3/26 P-32).
+    half-hour move by what it costs.
 
-    Jurisdiction premiums (schedule audit 10/10/26 MARKET-5, MARKET-3):
-    `daily_dt_hours` — hours past it in one workday at double time
-    (California: past 12); `seventh_day_ot` — a person working all seven
-    days of a payroll week is paid 1.5x for the seventh day's first 8 hours
-    and 2x past 8 (California Labor Code 510); `rest_rule` — {"need",
-    "multiplier" | "flat", "scope": "hours_inside" | "shift" | "instance",
-    "waived": fn(name, date) -> bool}: a short turnaround the person agreed
-    to in writing is paid its premium. `premiums` in the result breaks them
-    out (double_time, seventh_day, rest)."""
+    Jurisdiction premiums: `daily_dt_hours` — hours past it in one workday at double
+    time (California: past 12); `seventh_day_ot` — a person working all seven days of a
+    payroll week is paid 1.5x for the seventh day's first 8 hours and 2x past 8
+    (California Labor Code 510); `rest_rule` — {"need", "multiplier" | "flat", "scope":
+    "hours_inside" | "shift" | "instance", "waived": fn(name, date, start=None) ->
+    bool}: a short turnaround the person agreed to in writing is paid its premium.
+    `premiums` in the result breaks them out (double_time, seventh_day, rest)."""
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
@@ -276,7 +301,7 @@ def _rest_premium_dollars(name, rows, items, rule) -> float:
         gap = (s1 - e0).total_seconds() / 3600.0
         if gap < 0 or gap >= need - 0.01:
             continue
-        if not (waived and waived(name, r1.get("date"))):
+        if not (waived and waived(name, r1.get("date"), r1.get("shift_start"))):
             continue
         later_h = (e1 - s1).total_seconds() / 3600.0
         rate = rate_by_date.get(r1.get("date")) or 0.0
@@ -289,17 +314,17 @@ def _rest_premium_dollars(name, rows, items, rule) -> float:
 
 
 def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
-    """The one set of inputs a drafted week is priced with — the
-    generation's (schedule_engine _price_week), a reopened week's and the
-    live edit line's — so the saved cost, the reopened cost and an edit's
-    delta agree (schedule re-audit 10/4/26 SQ-6): each person's own rate,
-    else the role's, else the role's typical; overtime from the 40h line
-    (labor.OVERTIME_THRESHOLD_HOURS) per payroll week, with the hours
-    already published in it (`constraints.base_hours`, `.bucket`); daily
-    overtime where it applies; salaried people free (`constraints.salaried`).
-    The edit line used to price a salaried GM's extra shift at the blended
-    rate with overtime, and an hourly person's without their published hours.
-    `constraints` None prices without the week's people facts."""
+    """The one set of inputs a drafted week is priced with — the generation's
+    (schedule_engine _price_week), a reopened week's and the live edit line's
+    — so the saved cost, the reopened cost and an edit's delta agree: each
+    person's own rate, else the role's, else the role's typical; overtime
+    from the 40h line (schedule_time.OVERTIME_THRESHOLD_HOURS) per payroll
+    week, with the hours already published in it (`constraints.base_hours`,
+    `.bucket`); daily overtime where it applies; salaried people free
+    (`constraints.salaried`). The edit line used to price a salaried GM's
+    extra shift at the blended rate with overtime, and an hourly person's
+    without their published hours. `constraints` None prices without the
+    week's people facts."""
     from models import get_role_rates
     import labor as _lab
     rates = get_role_rates(restaurant_id) or {}
@@ -316,9 +341,9 @@ def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
                            if c is not None else {}),
             "bucket": c.bucket if c is not None else None,
             "daily_ot_hours": (getattr(c, "compliance", None) or {}).get("daily_ot_hours") if c is not None else None,
-            # Jurisdiction premiums (MARKET-5, MARKET-3): double time past a
-            # daily line, the seventh day of a workweek, and the rest
-            # premium a consented short turnaround owes.
+            # Jurisdiction premiums: double time past a daily line, the
+            # seventh day of a workweek, and the rest premium a consented
+            # short turnaround owes.
             "daily_dt_hours": (getattr(c, "compliance", None) or {}).get("daily_dt_hours") if c is not None else None,
             "seventh_day_ot": bool((getattr(c, "compliance", None) or {}).get("seventh_day_ot")) if c is not None else False,
             "rest_rule": _rest_rule_of(c)}
@@ -335,7 +360,7 @@ def _rest_rule_of(c):
         return None
     return {"need": float(comp.get("min_rest_hours") or 0), "multiplier": comp.get("rest_premium_multiplier"),
             "flat": comp.get("rest_premium_flat"), "scope": comp.get("rest_premium_scope") or "hours_inside",
-            "waived": lambda name, d: c.rest_waived(name, d)}
+            "waived": lambda name, d, start=None: c.rest_waived(name, d, start)}
 
 
 def stored_blended_rate(restaurant_id, history_id):
@@ -381,9 +406,9 @@ def cost_delta(before_rows: list, after_rows: list, role_rates: dict = None, ble
     """What an edit moves: hours and overtime-priced dollars, before → after.
 
     With `pricing` (week_pricing) the edit is priced exactly as the
-    generation prices the week (SQ-6), and the hours are HOURLY hours — a
-    salaried person's shift costs nothing and spends no budget; their hours
-    move as `salaried_hours_delta`, said apart."""
+    generation prices the week, and the hours are HOURLY hours — a salaried
+    person's shift costs nothing and spends no budget; their hours move as
+    `salaried_hours_delta`, said apart."""
     if pricing:
         a, b = price_week(before_rows, pricing), price_week(after_rows, pricing)
         sal = pricing.get("salaried") or ()
@@ -405,10 +430,10 @@ def cost_delta(before_rows: list, after_rows: list, role_rates: dict = None, ble
 
 def hours_view(rows: list, c, ceiling: float = None) -> dict:
     """The Studio hours panel's figures for `rows`, on the hourly basis the
-    PAR and the daily targets are sized on (schedule re-audit 10/4/26 SQ-5):
-    the panel summed every row — salaried managers on the floor every
-    minute included — against the hourly PAR and the hourly daily targets,
-    read every day over target, and listed the salaried managers "over 40h".
+    PAR and the daily targets are sized on: the panel summed every row —
+    salaried managers on the floor every minute included — against the
+    hourly PAR and the hourly daily targets, read every day over target, and
+    listed the salaried managers "over 40h".
 
     Returns {basis: "hourly", hourly, salaried, by_date: {date: hourly h},
     salaried_by_date: {date: h}, by_role: {role: hourly h}, role_people:
@@ -457,7 +482,7 @@ def hours_view(rows: list, c, ceiling: float = None) -> dict:
 def labor_grade(pct, target) -> str:
     """"over" when the labor % as shown (one decimal place) is past the
     target, "under" when it is at or under it, "no_target" without one
-    (TRUST-7: the one grade web and iOS both colour by)."""
+    (the one grade web and iOS both colour by)."""
     try:
         t = float(target) if target not in (None, "") else None
         p = round(float(pct), 1)
@@ -470,14 +495,14 @@ def labor_grade(pct, target) -> str:
 
 def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_target=None,
                labor_budget_dollars=None, week_dates=None, restaurant=None, sees_salaries: bool = None,
-               recent: dict = None) -> dict:
+               recent: dict = None, quality: dict = None, last_plan: dict = None) -> dict:
     """The week's labor % on ONE stated basis, for the Studio's Labor tile,
-    its "Labor % as drafted" and its estimated savings (schedule re-audit
-    10/4/26 SQ-4). `projected_cost` is hourly pay only (salaried people are
-    free in priced_cost); the owner's labor target and the recent labor %
-    are all-in since 9/30/26. Dividing the one by sales and grading it
-    against the other read a week 9 points over target as green, and the
-    "savings" were the salaries left out of the draft.
+    its "Labor % as drafted" and its estimated savings. `projected_cost` is
+    hourly pay only (salaried people are free in priced_cost); the owner's
+    labor target and the recent labor % are all-in since 9/30/26. Dividing
+    the one by sales and grading it against the other read a week 9 points
+    over target as green, and the "savings" were the salaries left out of
+    the draft.
 
     For a reader who may see salaries (models.viewer_sees_salaries) the
     view is ALL-IN: the hourly cost plus the salaried staff's share of the
@@ -489,13 +514,23 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
     salaries are left out. With nobody salaried the two are one.
 
     `recent` overrides the recent-labor read ({pct, days, includes_salaries})
-    — for a caller that already has it. Savings are a projection (CLAUDE.md:
-    value delivered is only what was measured): shown only when the recent
-    % is measured on the same basis and above this week's.
+    — for a caller that already has it.
+
+    `vs_last_plan` replaces the old "savings": the recent MEASURED labor %
+    against this draft's SCHEDULED % showed savings for an identical
+    schedule (actual labor runs above the plan) and more for a draft cut
+    below need — the number grew as the week got thinner. Now it is
+    scheduled against scheduled: the last published week's plan priced the
+    same way over its own forecast sales (last_plan_labor, or `last_plan`),
+    on this view's basis, times this week's forecast sales — and withheld
+    while the draft is short of the people its shifts need (`quality`:
+    coverage_short_shifts). A projection, never a result. `savings` stays in
+    the payload, always None (shipped clients decode it; nothing computes
+    it).
 
     Returns {basis, cost, hourly_cost, salaried_cost (owner only), pct,
-    target_pct, target_basis, recent_pct, recent_days, savings, text} or
-    None without a priced week and a forecast."""
+    target_pct, target_basis, recent_pct, recent_days, savings (None),
+    vs_last_plan, text} or None without a priced week and a forecast."""
     try:
         rev = float(projected_revenue or 0)
         hourly = float((projected_cost or {}).get("total") or 0)
@@ -566,19 +601,41 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
         same = bool(recent.get("includes_salaries")) == (basis == "all_in" and anyone_salaried)
         if same:
             r_pct, r_days = round(float(recent["pct"]), 1), int(recent.get("days") or 14)
-    savings = round((r_pct - pct) / 100 * rev, 0) if (r_pct is not None and r_pct > pct) else None
+    on_all_in = basis == "all_in" and anyone_salaried
+    if last_plan is None:
+        last_plan = last_plan_labor(restaurant_id, week_dates, on_all_in, restaurant=restaurant)
+    vs = None
+    if last_plan and last_plan.get("pct"):
+        lp_pct = float(last_plan["pct"])
+        short = coverage_short_shifts(quality) if quality else 0
+        from time_utils import mdy as _mdy
+        when = _mdy(last_plan.get("week_start")) if last_plan.get("week_start") else "last week"
+        vs = {"last_pct": round(lp_pct, 1), "week_start": last_plan.get("week_start"), "basis": basis,
+              "short_shifts": short, "projected": True, "value": None, "text": None, "withheld": None}
+        if short:
+            vs["withheld"] = (f"Not shown: {short} {'shift is' if short == 1 else 'shifts are'} short of the people "
+                              "they need — a thinner week is not a saving.")
+        else:
+            diff = round((lp_pct - pct) / 100 * rev, 0)
+            vs["value"] = diff
+            vs["text"] = (f"{'Under' if diff >= 0 else 'Over'} the week of {when}'s plan by "
+                          f"${abs(diff):,.0f} — its {lp_pct:g}% scheduled against this draft's {pct:g}%, "
+                          f"on this week's ${rev:,.0f} forecast. A projection, earned only if the week runs "
+                          "as drafted.")
     out = {"basis": basis, "cost": round(cost, 0), "hourly_cost": round(hourly, 0), "pct": pct,
            "target_pct": target_pct, "target_basis": target_basis, "recent_pct": r_pct, "recent_days": r_days,
-           "savings": savings, "text": text,
-           # One grade both clients colour the tile by (schedule audit
-           # 10/10/26 TRUST-7): the target is a ceiling, so any amount over
-           # it — the % as shown, one place — is over; no target is neutral,
-           # never green. The web graded with a 0.5-point grace and called a
-           # week with no target green; iOS red at any amount over.
+           # Never computed any more (kept for the clients that decode
+           # it): scheduled against scheduled is vs_last_plan.
+           "savings": None, "vs_last_plan": vs, "text": text,
+           # One grade both clients colour the tile by: the target is a
+           # ceiling, so any amount over it — the % as shown, one place — is
+           # over; no target is neutral, never green. The web graded with a
+           # 0.5-point grace and called a week with no target green; iOS red
+           # at any amount over.
            "grade": labor_grade(pct, target_pct),
-           # The basis named on the tile itself (TRUST-30): the owner's
-           # all-in % and a manager's hourly % of the same week never read as
-           # one number that disagrees with itself.
+           # The basis named on the tile itself: the owner's all-in % and a
+           # manager's hourly % of the same week never read as one number
+           # that disagrees with itself.
            "label": "All-in labor" if basis == "all_in" and anyone_salaried else
                     ("Hourly labor" if basis == "hourly" else "Labor"),
            "other_basis_note": ("Salaries are left out of this figure; owners see the all-in labor %, salaries "
@@ -586,6 +643,91 @@ def labor_view(restaurant_id, projected_cost: dict, projected_revenue, labor_tar
     if sal_cost is not None:
         out["salaried_cost"] = round(sal_cost, 0)
     return out
+
+
+def coverage_short_shifts(quality) -> int:
+    """The scored shifts of a Shift Quality week short of the people they
+    need (the coverage dimension's `missing`) — the condition: a week
+    thinner than its requirement is not cheaper, it is short."""
+    n = 0
+    for s in (quality or {}).get("shifts") or []:
+        if not s.get("scored"):
+            continue
+        for d in s.get("dimensions") or []:
+            if d.get("key") == "coverage" and int((d.get("facts") or {}).get("missing") or 0) > 0:
+                n += 1
+                break
+    return n
+
+
+def last_plan_labor(restaurant_id, week_dates, all_in: bool, restaurant=None) -> dict:
+    """The last PUBLISHED week before `week_dates`, priced the way this draft
+    is (week_pricing, salaried people free, hourly) over its own forecast
+    sales (its economics' projected revenue), on the same basis — all-in adds
+    that week's salaried share (the hero compared a measured actual labor %
+    with a scheduled one, so an identical schedule showed "savings" and a
+    thinner one showed more). {"pct", "cost", "revenue", "week_start"} or
+    None when there is no published week with a priced forecast."""
+    import json as _json
+    import models as _m
+    dates = sorted(str(d)[:10] for d in (week_dates or ()) if d)
+    if not dates:
+        return None
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT h.id, h.week_start, h.week_end, h.economics_json "
+                "FROM schedule_history h WHERE h.restaurant_id=? AND " + _m.live_where("h") + " AND h.week_end < ? "
+                "ORDER BY h.week_end DESC, h.id DESC LIMIT 1", (restaurant_id, dates[0])).fetchone()
+            # Its published rows from the shift table (schedule_shifts).
+            import schedule_shifts as _ss_lp
+            plan_rows = _ss_lp.rows_of(row["id"], "live", conn=conn) if row is not None else []
+        finally:
+            conn.close()
+    except Exception as e:
+        _degraded(f"last plan unreadable for {restaurant_id}: {e}", e)
+        return None
+    if row is None:
+        return None
+    try:
+        econ = _json.loads(row["economics_json"] or "null") or {}
+        rev = float(econ.get("projected_revenue") or 0)
+    except (TypeError, ValueError):
+        return None
+    if rev <= 0:
+        return None
+    rows = plan_rows
+    if not rows:
+        return None
+    if restaurant is None:
+        try:
+            restaurant = _m.get_restaurant(restaurant_id)
+        except Exception:
+            restaurant = None
+    try:
+        sal_names = [p.get("name") for p in (_m.salaried_staff(restaurant) if restaurant is not None else [])]
+    except Exception:
+        sal_names = []
+    pricing = week_pricing(restaurant_id, None, blended_rate=econ.get("blended_rate") or None)
+    pricing["salaried"] = {" ".join(str(n or "").lower().split()) for n in sal_names if n}
+    if not pricing.get("blended_rate"):
+        pricing["blended_rate"] = getattr(restaurant, "hourly_rate", None) or 15.0
+    cost = float((price_week(rows, pricing) or {}).get("total") or 0)
+    if all_in and sal_names:
+        try:
+            import schedule_rules as _rules
+            a = date.fromisoformat(str(row["week_start"])[:10])
+            b = date.fromisoformat(str(row["week_end"])[:10])
+            wk = [(a + timedelta(days=i)).isoformat() for i in range((b - a).days + 1)]
+            share = _m.salaried_week_share(restaurant, wk, _rules.closed_in(restaurant, wk))
+            cost += float((share or {}).get("cost") or 0)
+        except Exception:
+            return None
+    if cost <= 0:
+        return None
+    return {"pct": round(cost / rev * 100, 1), "cost": round(cost, 0), "revenue": round(rev, 0),
+            "week_start": row["week_start"]}
 
 
 def _recent_labor(restaurant_id, all_in: bool) -> dict:
@@ -607,7 +749,7 @@ def _recent_labor(restaurant_id, all_in: bool) -> dict:
 # ── weekly revenue from the restaurant's own pattern ──────────────────────
 
 # The week's own budget is the projection once the owner has budgeted this
-# many of its nights in the DSR (memory audit 9/29/26, owner_goals).
+# many of its nights in the DSR (owner_goals).
 BUDGET_MIN_NIGHTS = 5
 
 
@@ -659,7 +801,7 @@ def budgeted_week_revenue(restaurant_id, week_dates, db_path=DB_PATH) -> dict:
 
 def _weekday_medians(restaurant_id, weeks: int = 8, db_path=DB_PATH, today=None) -> dict:
     """{weekday: median daily sales} over the last `weeks` weeks before the
-    restaurant's own today (never the server's UTC date — D-33)."""
+    restaurant's own today (never the server's UTC date)."""
     today = _today_for(restaurant_id, today)
     conn = get_conn(db_path)
     try:
@@ -703,7 +845,7 @@ def _corrected_by_record(restaurant_id, out, raw, db_path=DB_PATH):
         elif rec.get("withheld"):
             out["source"] += "; the published weeks' projections here have often been wide, so treat it as rough"
     except Exception as e:
-        print(f"[schedule_economics] revenue record unreadable for {restaurant_id}: {e}")
+        _degraded(f"revenue record unreadable for {restaurant_id}: {e}", e)
     return out
 
 
@@ -720,9 +862,9 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
     of a monthly target. None when none exists (fewer than three complete
     weeks).
 
-    The revenue_week record corrects only the estimator it measured (PRED-4,
-    memory fix round integration 9/29/26): it used to be applied to the
-    median-week figure, a different estimate whose own lean nobody scored."""
+    The revenue_week record corrects only the estimator it measured (memory
+    fix round integration 9/29/26): it used to be applied to the median-week
+    figure, a different estimate whose own lean nobody scored."""
     if week_dates:
         own = budgeted_week_revenue(restaurant_id, week_dates, db_path=db_path)
         if own.get("value"):
@@ -732,7 +874,7 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
             import demand
             proj = demand.week_projection(restaurant_id, week_dates, db_path=db_path)
         except Exception as e:
-            print(f"[schedule_economics] week projection unavailable for {restaurant_id}: {e}")
+            _degraded(f"week projection unavailable for {restaurant_id}: {e}", e)
             proj = {}
         if proj.get("total") and not proj.get("missing") and len(proj.get("days") or []) == len(week_dates):
             total = float(proj["total"])
@@ -779,17 +921,17 @@ def projected_weekly_revenue(restaurant_id, weeks: int = 8, db_path=DB_PATH, wee
 # The week's demand used to change a shift's LABEL and nothing else: the
 # requirements table copied past headcount, the day targets spread a
 # measured +40% holiday across all seven days, and the weather reached only
-# the prompt (schedule audit 10/3/26 D-23, P-19, D-24, D-30). One number per
-# date now — how far it sits from a typical night of its weekday — from, in
-# order: the owner's own budget for the night (the DSR); else what the
-# owner and the record say about the date (demand_signals.by_date: an
-# owner's lift, booked covers, an event's measured lift, last year's
-# holiday night — already the strongest of them, never a sum); else the
-# forecast's measured effects (event_memory: the 1st of the month, a
-# campaign night). Then the weather, only where it is measured: a fresh
-# forecast of rain on a near-term date, at this restaurant's own measured
-# rain effect — never an assumed one. Different kinds multiply (rain on a
-# holiday still dampens it); the same kind never adds.
+# the prompt. One number per date now — how far it sits from a typical night
+# of its weekday — from, in order: the owner's own budget for the night (the
+# DSR); else what the owner and the record say about the date
+# (demand_signals.by_date: an owner's lift, booked covers, an event's
+# measured lift, last year's holiday night — already the strongest of them,
+# never a sum); else the forecast's measured effects (event_memory: the 1st
+# of the month, a campaign night). Then the weather, only where it is
+# measured: a fresh forecast of rain on a near-term date, at this
+# restaurant's own measured rain effect — never an assumed one. Different
+# kinds multiply (rain on a holiday still dampens it); the same kind never
+# adds.
 
 RAIN_FORECAST_PCT = 60           # the precipitation chance that makes a date rainy (the trim's own line)
 
@@ -844,14 +986,13 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
             continue
     if wet:
         rain = _rain_effect(restaurant_id, db_path=db_path)
-    # Per daypart and per role (scheduler audit 10/10/26 LOGIC-9, LEARNING-19,
-    # LEARNING-20, LEARNING-21): the trend and season of the backtested
-    # forecast (demand_model), the weather of each meal (the NWS day period
-    # is lunch's, the night period dinner's) at this restaurant's measured
-    # effect per daypart and band, an event's lift on the daypart it falls
-    # in and on each role, and the patio's own. `ratio` stays the date's one
-    # figure (the hours targets, the projected sales); `parts` carries each
-    # meal's, with `roles` where a role moves on its own.
+    # Per daypart and per role: the trend and season of the backtested
+    # forecast (demand_model), the weather of each meal (the NWS day period is
+    # lunch's, the night period dinner's) at this restaurant's measured effect
+    # per daypart and band, an event's lift on the daypart it falls in and on
+    # each role, and the patio's own. `ratio` stays the date's one figure (the
+    # hours targets, the projected sales); `parts` carries each meal's, with
+    # `roles` where a role moves on its own.
     ctx = _DemandContext(restaurant_id, dates, weather, db_path, today)
     out = {}
     for d in dates:
@@ -905,8 +1046,8 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 role_lifts = ctx.role_lifts(labels, fc.get("effect_pct"))
             else:
                 # A holiday this restaurant has no night of its own for yet
-                # starts from similar restaurants' (LEARNING-27: a first
-                # Christmas was planned as a typical night).
+                # starts from similar restaurants' (a first Christmas was
+                # planned as a typical night).
                 hp = ctx.holiday_prior(d)
                 if hp:
                     occasion = 1.0 + float(hp["pct"]) / 100.0
@@ -983,12 +1124,62 @@ def date_demand(restaurant_id, week_dates, signals_by_date: dict = None, weather
                 entry["projected_sales"] = round(bv * (ratio / occasion if occasion else 1.0), 0)
             else:
                 entry["projected_sales"] = round(base * ratio, 0)
+        # The figure every other surface states for this date
+        # (demand.forecast_day, calibrated — Home, the nightly report) beside
+        # the one the schedule is sized on, reconciled in words where they
+        # differ.
+        surface = ctx.surface_sales(day)
+        entry["surface_sales"] = surface
+        if entry.get("projected_sales") and surface:
+            import demand_model as _dm_r
+            rec = _dm_r.reconcile(entry["projected_sales"], surface, fcm, f"{wd[:3]} {mdy(d)}")
+            if rec:
+                entry["reconcile"] = rec
+    return out
+
+
+def forecast_basis(date_demand: dict, projected_revenue=None, revenue_source: str = None) -> dict | None:
+    """The week's two sales figures said together: {"sized_on" (the sum the
+    crew was sized on, date_demand's projected_sales), "surface" (the sum of
+    what Home and the nightly report state, forecast_day's), "stated" (the
+    week's projected revenue the labor % is set against, and its source),
+    "estimator" (the schedule forecast's chosen one), "low", "high" (its 80%
+    range summed, when measured), "dates" (the reconciled ones), "text"} —
+    None without a projected figure. Pure."""
+    dd = {d: x for d, x in (date_demand or {}).items() if isinstance(x, dict) and not x.get("closed")}
+    sized = [float(x["projected_sales"]) for x in dd.values() if x.get("projected_sales")]
+    if not sized:
+        return None
+    surf = [float(x["surface_sales"]) for x in dd.values() if x.get("surface_sales")]
+    ests = [((x.get("forecast") or {}).get("estimator")) for x in dd.values()]
+    est = next((e for e in ests if e), None) or "naive"
+    lows = [(x.get("forecast") or {}).get("low") for x in dd.values()]
+    highs = [(x.get("forecast") or {}).get("high") for x in dd.values()]
+    ranged = all(v for v in lows) and all(v for v in highs) and len(lows) == len(dd)
+    rec_dates = sorted(d for d, x in dd.items() if x.get("reconcile"))
+    out = {"sized_on": round(sum(sized), 0), "surface": round(sum(surf), 0) if len(surf) == len(dd) else None,
+           "stated": round(float(projected_revenue), 0) if projected_revenue else None,
+           "stated_source": revenue_source, "estimator": est,
+           "low": round(sum(float(v) for v in lows), 0) if ranged else None,
+           "high": round(sum(float(v) for v in highs), 0) if ranged else None,
+           "dates": rec_dates, "text": None}
+    est_words = {"trend": "the weekday's typical night moved by this restaurant's recent trend",
+                 "seasonal": "the weekday's typical night moved by how this week ran last year",
+                 "naive": "the weekday's typical night"}.get(est, "the weekday's typical night")
+    bits = [f"The crew is sized on ${out['sized_on']:,.0f} of sales ({est_words}, with each date's own facts"
+            + (f"; 80% range ${out['low']:,.0f}–${out['high']:,.0f}" if ranged else "") + ")"]
+    if out["surface"] and abs(out["surface"] - out["sized_on"]) / out["surface"] * 100 >= 3.0:
+        bits.append(f"Home and the nightly report add up to ${out['surface']:,.0f} for the same days")
+    if out["stated"] and abs(out["stated"] - out["sized_on"]) / out["stated"] * 100 >= 3.0:
+        bits.append(f"the labor % is set against ${out['stated']:,.0f}"
+                    + (f" ({revenue_source})" if revenue_source else ""))
+    out["text"] = "; ".join(bits) + "."
     return out
 
 
 # Wider bounds where the figure is the owner's own or measured here: an +80%
 # festival the owner budgeted is staffed for it, a measured snow day at -50%
-# is not held at -25% (LOGIC-9). An estimate keeps DEMAND_SCALE_BOUNDS.
+# is not held at -25%. An estimate keeps DEMAND_SCALE_BOUNDS.
 MEASURED_SCALE_BOUNDS = (0.4, 2.5)
 
 
@@ -1006,7 +1197,7 @@ class _DemandContext:
             import demand_model as _dm
             self.model = (_dm.forecast_dates(restaurant_id, dates, db_path=db_path, today=today) or {}).get("dates") or {}
         except Exception as e:
-            print(f"[schedule_economics] demand model unavailable for {restaurant_id}: {e}")
+            _degraded(f"demand model unavailable for {restaurant_id}: {e}", e)
             self.model = {}
 
     def _once(self, key, fn):
@@ -1020,7 +1211,7 @@ class _DemandContext:
                 try:
                     self._memo[key] = fn()
                 except Exception as e:
-                    print(f"[schedule_economics] {key[0]} unavailable for {self.rid}: {e}")
+                    _degraded(f"{key[0]} unavailable for {self.rid}: {e}", e)
                     self._memo[key] = None
                 if store is not None:
                     store[skey] = self._memo[key]
@@ -1028,6 +1219,20 @@ class _DemandContext:
 
     def _today(self):
         return self.today or _today_for(self.rid)
+
+    def surface_sales(self, day):
+        """What Home and the nightly report state for `day` (demand.
+        forecast_day with its effects and its calibration), or None."""
+        try:
+            import demand as _demand
+            fc = _demand.forecast_day(self.rid, day, db_path=self.db) or {}
+        except Exception:
+            return None
+        v = fc.get("typical_sales") if fc.get("available") else None
+        try:
+            return round(float(v), 0) if v else None
+        except (TypeError, ValueError):
+            return None
 
     def forecast_effects(self, day):
         try:
@@ -1230,21 +1435,21 @@ class _DemandContext:
 # intraday captures alone (three same-weekday days needed), while the POS's
 # ticket archive (pos_tickets: every ticket's open time and net, 90 days
 # back) sat unread — Simple EJ's, RPOWER-live since 9/28/26, had no curve
-# and a 40/60 split assumed for weeks (schedule audit 10/3/26 D-26, L-25).
-# One reader now: per business date, the archive's tickets by the hour they
-# opened; for a date the archive does not hold, the intraday captures; then
-# the nightly report's own hourly split. One source per date — never two
-# added together. An hour after midnight that belongs to the night before
-# is 24+ (1:30am → hour 25), as the captures already file it.
+# and a 40/60 split assumed for weeks. One reader now: per business date,
+# the archive's tickets by the hour they opened; for a date the archive
+# does not hold, the intraday captures; then the nightly report's own
+# hourly split. One source per date — never two added together. An hour
+# after midnight that belongs to the night before is 24+ (1:30am → hour
+# 25), as the captures already file it.
 
 CURVE_WEEKS = 8
 CURVE_MIN_DAYS = 3               # same-weekday measured days before a curve or a split is stated
-LATE_START_HOUR = 22             # shift_quality.LATE_WINDOW_START: from 10pm is the late segment (D-32)
+LATE_START_HOUR = 22             # shift_quality.LATE_WINDOW_START: from 10pm is the late segment
 
 
 def _today_for(restaurant_id, today=None):
     """The restaurant's own calendar date (demand.local_today) — never the
-    server's UTC date: after 7pm Central it was already tomorrow (D-33)."""
+    server's UTC date: after 7pm Central it was already tomorrow."""
     if today is not None:
         return today
     try:
@@ -1393,7 +1598,7 @@ def measured_sales_curve(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PAT
             "sources": {k: sum(1 for nm, _s in entries if nm == k) for k in ("tickets", "intraday", "dsr")},
             # Sales before the restaurant's lunch/dinner boundary (3pm unless
             # set — schedule_time.daypart_split) are lunch's; a 1am hour is
-            # the night's tail, never lunch (ARCH-12, BUGSGEN-19).
+            # the night's tail, never lunch.
             "morning_share": round(_median([sum(v for h, v in s.items()
                                                 if _stime.business_hour(int(h)) * 60 < _stime.daypart_split())
                                             for _n, s in entries]), 4),
@@ -1432,11 +1637,11 @@ def _ticket_half_hours(conn, restaurant_id, start, end) -> dict:
 
 def measured_half_hours(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PATH, today=None) -> dict:
     """{weekday: {minute: share of the day's sales}} MEASURED at the half
-    hour from the ticket archive (scheduler audit 10/10/26 MARKET-11: the
-    curve was interpolated from hourly readings), for weekdays with at least
-    CURVE_MIN_DAYS archived days; each half hour's share the mean across
-    them (a day with no sales in it counts 0), renormalised. {} without an
-    archive — the hourly curve, interpolated, stands."""
+    hour from the ticket archive (the curve was interpolated from hourly
+    readings), for weekdays with at least CURVE_MIN_DAYS archived days; each
+    half hour's share the mean across them (a day with no sales in it counts
+    0), renormalised. {} without an archive — the hourly curve,
+    interpolated, stands."""
     today = _today_for(restaurant_id, today)
     conn = get_conn(db_path)
     try:
@@ -1477,8 +1682,8 @@ def hourly_profile(restaurant_id, weeks: int = CURVE_WEEKS, db_path=DB_PATH, tod
 
 # ── sales per labor hour by daypart ───────────────────────────────────────
 
-# A weekday's late segment (from 10pm, D-32) is stated only past this share
-# of its measured sales: a stray 10:30pm ticket is not a late service.
+# A weekday's late segment (from 10pm) is stated only past this share of
+# its measured sales: a stray 10:30pm ticket is not a late service.
 LATE_MIN_SHARE = 0.03
 
 
@@ -1506,12 +1711,12 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict 
     CURVE_MIN_DAYS days of that weekday. A weekday never measured has no
     daypart figures: it used to be split 40/60 by assumption, and the
     assumption became the objective the prompt, the scorer's splh targets
-    and the trim all read (schedule audit 10/3/26 L-25). The split of hours
-    comes from the same `weeks` weeks of hourly shifts (the salaried out,
-    as the daily hours leave them), each row filed under the daypart it is
-    mostly on the floor for — it read the whole shift history. The late
-    segment's hours are each shift's minutes from 10pm (D-32). A weekday
-    with no sales or no hours is absent — never 0."""
+    and the trim all read. The split of hours comes from the same `weeks`
+    weeks of hourly shifts (the salaried out, as the daily hours leave
+    them), each row filed under the daypart it is mostly on the floor for —
+    it read the whole shift history. The late segment's hours are each
+    shift's minutes from 10pm. A weekday with no sales or no hours is
+    absent — never 0."""
     from models import _cached_shifts
     today = _today_for(restaurant_id, today)
     since = (today - timedelta(weeks=int(weeks))).isoformat()
@@ -1529,7 +1734,7 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict 
         try:
             curve = measured_sales_curve(restaurant_id, weeks=weeks, db_path=db_path, today=today)
         except Exception as e:
-            print(f"[splh] sales curve unreadable for {restaurant_id}: {e}")
+            _degraded(f"sales curve unreadable for {restaurant_id}: {e}", e)
             curve = {}
     measured = {wd: v for wd, v in (curve or {}).items() if int(v.get("days") or 0) >= CURVE_MIN_DAYS}
     # hours split by daypart from the window's hourly shifts, per weekday
@@ -1561,7 +1766,7 @@ def splh_by_daypart(restaurant_id, weeks: int = 8, db_path=DB_PATH, curve: dict 
             e[part] += h
             e["late"] += min(h, _late_minutes(sh) / 60.0)
     except Exception as e:
-        print(f"[splh] shift hours unreadable for {restaurant_id}: {e}")
+        _degraded(f"shift hours unreadable for {restaurant_id}: {e}", e)
     out = {}
     sales_by_wd = {}
     for r in days:
@@ -1612,8 +1817,8 @@ def splh_block(splh: dict) -> str:
         lines.append(f"  {wd}: " + ", ".join(bits))
     if not lines:
         return ""
-    # Context (schedule audit 10/3/26 PR-7): "add there last and trim there
-    # first" was a lever on numbers SHIFT REQUIREMENTS already set.
+    # Context: "add there last and trim there first" was a lever on numbers
+    # SHIFT REQUIREMENTS already set.
     return ("\n\nSALES PER LABOR HOUR BY DAYPART (this restaurant's own recent record — context: a daypart well "
             "below the others is where hours have bought the least):\n" + "\n".join(lines))
 
@@ -1646,9 +1851,9 @@ def _hourly_target_pct(restaurant_id, target_pct, days_with_sales, sales_total, 
     """(hourly target %, salaried?) — the labor target the HOURLY record is
     judged against: the owner's target counts salaries (9/30/26), and
     labor_daily_history is hourly, so the salaried staff's share of the
-    window's sales comes off the target first (schedule audit 10/3/26 D-1:
-    the same all-in-against-hourly mix-up as the hours budget). (target,
-    False) with nobody salaried."""
+    window's sales comes off the target first (the same
+    all-in-against-hourly mix-up as the hours budget). (target, False) with
+    nobody salaried."""
     try:
         from models import get_restaurant, salaried_day_share
         share = float(salaried_day_share(get_restaurant(restaurant_id) if db_path == DB_PATH
@@ -1677,11 +1882,11 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
 
     The record is hourly (labor_daily_history) and the owner's target counts
     salaries, so the comparison is against the target less the salaried
-    staff's share of the same window's sales (_hourly_target_pct, D-1) — the
+    staff's share of the same window's sales (_hourly_target_pct) — the
     whole target against the hourly record read Simple EJ's 28% hourly as
     inside its 35% while it ran 41-45% with salaries. `hold` is how far the
     usual crew must come in to meet the target on each daypart: the
-    requirements table holds the usual headcount to it (P-19)."""
+    requirements table holds the usual headcount to it."""
     today = _today_for(restaurant_id, today)
     splh = splh_by_daypart(restaurant_id, weeks=weeks, db_path=db_path, today=today) if splh is None else splh
     if not splh:
@@ -1716,7 +1921,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             hist_pct = float(row["w"]) / float(row["s"])
             days_n, sales_total = int(row["n"] or 0), float(row["s"])
     except Exception as e:
-        print(f"[splh] labor % history unavailable for {restaurant_id}: {e}")
+        _degraded(f"labor % history unavailable for {restaurant_id}: {e}", e)
     finally:
         conn.close()
     if labor_target_pct is None:
@@ -1765,7 +1970,7 @@ def splh_objective(restaurant_id, splh: dict = None, labor_target_pct=None, week
             "labor_target_pct": tgt,
             "history_labor_pct": round(hist_pct, 1) if hist_pct else None, "scale": round(scale, 3),
             "with_salaries": with_salaries, "basis": basis, "split_unmeasured": unmeasured,
-            # The split is never assumed any more (L-25); kept False for readers of the old field.
+            # The split is never assumed any more; kept False for readers of the old field.
             "split_assumed": False}
 
 
@@ -1809,11 +2014,10 @@ def splh_objective_block(objective: dict, dates: list, demand_by_date: dict = No
             lines.append(f"  {wd[:3]} {d}: " + ", ".join(bits))
     if not lines:
         return ""
-    # Context, one figure per shift (schedule audit 10/3/26 PR-7, PR-24): the
-    # hold already brings each shift's crew to its target inside SHIFT
-    # REQUIREMENTS. The block used to add "≈ 31h" per shift — a third hours
-    # anchor beside the day target and the ceiling — and "past it, add hours
-    # where they carry the most sales".
+    # Context, one figure per shift: the hold already brings each shift's
+    # crew to its target inside SHIFT REQUIREMENTS. The block used to add "≈
+    # 31h" per shift — a third hours anchor beside the day target and the
+    # ceiling — and "past it, add hours where they carry the most sales".
     return ("\n\nSALES PER LABOR HOUR — the productivity objective each shift is scored against ("
             + objective.get("basis", "") + "). Context: SHIFT REQUIREMENTS are already held to it, and the day "
             "targets carry the hours:\n" + "\n".join(lines))
@@ -1868,73 +2072,6 @@ def splh_report(objective: dict, rows: list, demand_by_date: dict = None) -> dic
 
 # ── holidays: what they did here last time ────────────────────────────────
 
-# A holiday the calendar only approximates (its date moves with a league's
-# calendar — demand.APPROXIMATE_HOLIDAYS) never takes a date's name from a
-# holiday that falls on its own date every year.
-_APPROXIMATE = ("Super Bowl Sunday",)
-
-
-def holiday_names(year: int) -> dict:
-    """{iso date: [names]} — every dining holiday on each date of `year`
-    (the ones marketing.get_upcoming_holidays already knows), the date's own
-    fixed holiday first, then the floating ones, then the approximate.
-
-    Two can fall on one night: Super Bowl Sunday on 2/14/27 is Valentine's
-    Day, and the one-name calendar let whichever was written last overwrite
-    the other (schedule audit 10/3/26 E-8)."""
-    from datetime import date as _date
-    fixed = {(1, 1): "New Year's Day", (2, 14): "Valentine's Day", (3, 17): "St. Patrick's Day",
-             (5, 5): "Cinco de Mayo", (7, 4): "Fourth of July", (10, 31): "Halloween",
-             (11, 11): "Veterans Day", (12, 24): "Christmas Eve", (12, 25): "Christmas Day",
-             (12, 31): "New Year's Eve"}
-    out = {}
-
-    def add(d, name):
-        names = out.setdefault(d.isoformat() if hasattr(d, "isoformat") else d, [])
-        if name not in names:
-            names.append(name)
-    for (m, d), n in fixed.items():
-        add(_date(year, m, d), n)
-
-    def nth_weekday(month, weekday, n):
-        first = _date(year, month, 1)
-        off = (weekday - first.weekday()) % 7
-        return first + timedelta(days=off + 7 * (n - 1))
-
-    def last_weekday(month, weekday):
-        nxt = _date(year + (month == 12), (month % 12) + 1, 1)
-        d = nxt - timedelta(days=1)
-        while d.weekday() != weekday:
-            d -= timedelta(days=1)
-        return d
-    add(nth_weekday(5, 6, 2), "Mother's Day")
-    add(nth_weekday(6, 6, 3), "Father's Day")
-    add(nth_weekday(11, 3, 4), "Thanksgiving")
-    add(last_weekday(5, 0), "Memorial Day")
-    add(nth_weekday(9, 0, 1), "Labor Day")
-    # Easter (Anonymous Gregorian algorithm)
-    a, b, c = year % 19, year // 100, year % 100
-    d_, e = b // 4, b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d_ - g + 15) % 30
-    i, k = c // 4, c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    add(_date(year, month, day), "Easter")
-    add(nth_weekday(2, 6, 2), "Super Bowl Sunday")
-    for names in out.values():
-        names.sort(key=lambda n: n in _APPROXIMATE)       # stable: fixed, floating, then approximate
-    return out
-
-
-def _holiday_dates(year: int) -> dict:
-    """{iso date: name} — each date's first holiday (holiday_names): the
-    fixed-date one wherever two fall on one night."""
-    return {d: names[0] for d, names in holiday_names(year).items()}
-
 
 def last_years_holiday_night(name: str, day) -> str:
     """The ISO date `name` fell on in the year before `day` — the night a
@@ -1955,15 +2092,15 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
     it did not measure. A date carrying two holidays (Valentine's Day and
     Super Bowl Sunday on 2/14/27) reads each one's own night last year;
     `by_name` holds each, `lift_pct` the strongest measured — one number
-    for the date (E-8, PR-8), `name` the one it came from.
+    for the date, `name` the one it came from.
 
     Last year is read through the ONE last-year reader
     (canonical_facts.sales_history: the night's report, the owner's imported
-    DSR workbooks, the POS sync's final nights — memory audit 9/29/26,
-    imported_year), so an owner who imported a year of workbooks has a
-    holiday lift from day one. The holiday night and the nights it is
-    compared with are on ONE basis (canonical_facts.one_basis), and
-    `source` / `based_on` say where last year came from."""
+    DSR workbooks, the POS sync's final nights, imported_year), so an owner
+    who imported a year of workbooks has a holiday lift from day one. The
+    holiday night and the nights it is compared with are on ONE basis
+    (canonical_facts.one_basis), and `source` / `based_on` say where last
+    year came from."""
     import canonical_facts as _cf
     if not week_dates:
         return {}
@@ -1980,7 +2117,7 @@ def holiday_lift(restaurant_id, week_dates: list, db_path=DB_PATH) -> dict:
         hol_date = last_years_holiday_night(name, d) or \
             (datetime.strptime(d, "%Y-%m-%d") - timedelta(days=364)).date().isoformat()
         # `date`: the night last year's figure is read from, so a reader
-        # can name ITS weekday (re-audit OPP-2).
+        # can name ITS weekday.
         entry = {"name": name, "lift_pct": None, "based_on": None, "date": hol_date, "source": None}
         hd = datetime.strptime(hol_date, "%Y-%m-%d").date()
         series = _cf.sales_history(restaurant_id, (hd - timedelta(days=28)).isoformat(),
@@ -2031,27 +2168,27 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
     stagger that would leave a half hour the sales curve needs short backs
     off instead of opening the gap.
 
-    A role is its family ("Server AM" starts with "Server"). A move is
-    legal only when it leaves no shift further under its requirement
+    A role is its family ("Server AM" starts with "Server"). A move is legal
+    only when it leaves no shift further under its requirement
     (`requirements`, the SHIFT REQUIREMENTS rows with their half-hour ramp)
     and, with `constraints`, makes no rule breach new or worse — a manager's
     later start opening a stretch with no manager on, a floor short at the
-    open, a person taken under their minimum hours (schedule audit 10/3/26
-    E-1). A row the owner
-    kept ("_pinned") is never moved, nor is any row on a day outside
-    `only_dates` (a partial redo; P-10)."""
+    open, a person taken under their minimum hours. A row the owner kept
+    ("_pinned") is never moved, nor is any row on a day outside `only_dates`
+    (a partial redo)."""
     if not hourly_profile:
         return rows, []
-    import time as _time
-    import schedule_engine as _se
-    _t0 = _time.monotonic()
+    import schedule_rules as _sr
+    scored = {"n": 0}
+    score_evals = TRIM_SCORE_EVALS if score_seconds == TRIM_SCORE_SECONDS else \
+        max(0, int(round(TRIM_SCORE_EVALS * float(score_seconds) / TRIM_SCORE_SECONDS)))
     c = constraints
     only = set(only_dates) if only_dates else None
-    index = _se.requirement_index(requirements, c) if requirements else {}
-    skip = _se._will_not_stand(rows, c) if (c is not None and index) else set()
+    index = _sr.requirement_index(requirements, c) if requirements else {}
+    skip = _sr._will_not_stand(rows, c) if (c is not None and index) else set()
     groups = {}
     for i, r in enumerate(rows):
-        key = (r.get("date"), _se._role_key(r.get("role"), c), r.get("shift_start"))
+        key = (r.get("date"), _sr._role_key(r.get("role"), c), r.get("shift_start"))
         if all(key):
             groups.setdefault(key, []).append(i)
     changes = []
@@ -2072,8 +2209,8 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             continue
         peak_hour = max(curve.items(), key=lambda kv: kv[1])[0]
         try:
-            # On the business timeline: a bar's 1am peak is hour 25, after
-            # the dinner starts it would stagger, never before them (BUGSGEN-19).
+            # On the business timeline: a bar's 1am peak is hour 25, after the
+            # dinner starts it would stagger, never before them.
             peak_hour = _stime.business_hour(int(peak_hour))
         except (TypeError, ValueError):
             continue
@@ -2084,10 +2221,10 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             if off <= 0:
                 break
             r = rows[i]
-            if not _se._changeable(r, only):
+            if not _sr._changeable(r, only):
                 continue      # kept by the owner: it still counts, it never moves
             e = _minutes(r.get("shift_end", ""))
-            sp = _se._span_minutes(r)
+            sp = _sr._span_minutes(r)
             if e is None or not sp or sp[1] <= s + off + 120:
                 continue      # would leave under two hours: not worth it
 
@@ -2099,12 +2236,12 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             def _legal(step):
                 trial = list(rows)
                 trial[i] = _moved(step)
-                if index and _se.requirement_regressions(
+                if index and _sr.requirement_regressions(
                         [x for x in rows if id(x) not in skip], [x for x in trial if id(x) not in skip],
                         index, date, c):
                     return None
-                if c is not None and _se.change_regressions(rows, trial, c, date, [r.get("employee")],
-                                                            upto=_se._rules.TIER_MIN_HOURS, hard_only=False):
+                if c is not None and _sr.change_regressions(rows, trial, c, date, [r.get("employee")],
+                                                            upto=_sr.TIER_MIN_HOURS, hard_only=False):
                     return None
                 return trial
             steps = [st for st in range(off, 0, -STAGGER_STEP_MIN)]
@@ -2116,11 +2253,14 @@ def stagger_same_starts(rows: list, hourly_profile: dict, min_group: int = 3, sc
             if not legal:
                 continue      # every stagger of this row breaks something: it stays
             off = legal[0][0]
-            if score_fn is not None and _time.monotonic() - _t0 > score_seconds:
+            # Scoring stops after a fixed number of week-scores, never on the
+            # clock (the same week staggered differently on a busy box).
+            if score_fn is not None and scored["n"] >= score_evals:
                 score_fn = None
             if score_fn is not None:
                 best = None
                 for step, trial in legal + [(0, list(rows))]:
+                    scored["n"] += 1
                     try:
                         val = score_fn(trial)
                     except Exception:
@@ -2148,36 +2288,38 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                    score_seconds: float = TRIM_SCORE_SECONDS, only_dates=None, requirements=None,
                    learned_worse: dict = None, outcomes: dict = None, report: dict = None,
                    soft_asks: list = None, cost_fn=None, budget_value: float = None,
-                   pricing: dict = None, staffing_value: dict = None) -> tuple:
+                   pricing: dict = None, staffing_value: dict = None, objective_fn=None,
+                   objective_ctx=None) -> tuple:
     """Take the most discretionary hours out until the week is within the
     budget — the tails of shifts first, then whole shifts — every change
     reported.
 
-    In dollars (sched audit 10/10/26 LOGIC-13): with `cost_fn` (rows ->
-    the week's hourly pay, each person at their own rate and overtime at its
-    premium — schedule_engine.RepairContext.cost) and `budget_value` (the
-    hourly budget's dollars), the week is over, and each change saves, by
-    that measure: a $9 tipped hour and a $24 cook hour no longer count the
-    same, and 20h of overtime no longer reads "on budget" in hours.
-    `pricing` (week_pricing) ranks equally discretionary hours by what they
-    cost — overtime first. Without them, hours (the display view).
+    In dollars: with `cost_fn` (rows -> the week's hourly pay, each person
+    at their own rate and overtime at its premium —
+    schedule_engine.RepairContext.cost) and `budget_value` (the hourly
+    budget's dollars), the week is over, and each change saves, by that
+    measure: a $9 tipped hour and a $24 cook hour no longer count the same,
+    and 20h of overtime no longer reads "on budget" in hours. `pricing`
+    (week_pricing) ranks equally discretionary hours by what they cost —
+    overtime first. Without them, hours (the display view).
 
-    1. Tails, the close stagger (schedule audit 10/3/26 P-27). Where another
+    1. Tails, the close stagger. Where another
        person in the role stays on through it, the end of a shift goes first
        — the first in is the first cut, on the day furthest over its own
        target — at most TRIM_TAIL_MAX_HOURS off one shift, never leaving it
-       under TRIM_MIN_SHIFT_HOURS, never under a role floor through the hours
+       under the one shortest shift (schedule_rules.shortest_for, contract #2 —
+       a minor's lower legal cap that day included), never under a role floor through the hours
        cut. A 2h overage costs 2h, not a 7h shift.
     2. Whole shifts: rows the top-up added, then the later leg of a double,
        then the latest starter of a role on the day furthest over its own
        target — preferring the daypart with the lowest sales per labor hour
        and, on a rainy day, a patio role — somebody's only shift of the week
-       a cost, not a refusal (LOGIC-14). Never under their minimum hours,
-       never the last of a role on a daypart they were on the floor for or
-       the one who stays latest in their role that night, never below a role
-       floor, never the only trained cover for a kitchen station.
+       a cost, not a refusal. Never under their minimum hours, never the
+       last of a role on a daypart they were on the floor for or the one who
+       stays latest in their role that night, never below a role floor,
+       never the only trained cover for a kitchen station.
 
-    Neither ever (E-2, P-13, SQ-7, L-24, P-10):
+    Neither ever:
       * makes a rule breach new or worse at any rank above the budget's —
         the night's closer, a manager on the floor every minute, somebody
         at close, a floor or a standing rule, a minimum-hours promise
@@ -2196,8 +2338,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         `only_dates` (a partial redo), or a row already marked for review.
     A row that will not stand (time off, a double booking) is not hours
     anybody works: it is judged before the trim, never paid for with a legal
-    row (SCHED-23). A salaried person's hours are not paid from the hourly
-    budget and are never trimmed to fit it.
+    row. A salaried person's hours are not paid from the hourly budget and
+    are never trimmed to fit it.
 
     score_fn(rows) -> float, when given, chooses among the few most
     discretionary candidates the one whose change costs the week the least
@@ -2207,7 +2349,21 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     rec_learning.worsened_levers through schedule_engine.learned_worse_
     levers) push its rows later in that order by their graded strength
     (learned_cut_penalty) — the optimizer's one meaning of the same memory,
-    never a whole weekday frozen by one result (LOGIC-15).
+    never a whole weekday frozen by one result.
+
+    objective_ctx (a schedule_objective.ObjectiveContext, priced one change
+    at a time by its WeekPricer) or objective_fn(rows) -> dollars, when
+    given, is the ONE objective (schedule_objective.price_week's total: the
+    optimizer, the gate, Shift Quality's cost and this trim read the same
+    function the solver drafted to). The budget binds softly there — a
+    dollar past it costs BUDGET_OVER_FACTOR more — and a half hour short
+    costs its slot value (demand x the role's criticality): a cut is made
+    only where it LOWERS that total (what it saves outweighs the coverage
+    it takes, at the stated rates), and of the candidates the one that
+    lowers it most is taken. The busy Friday dinner is never cut before the
+    quiet Tuesday afternoon, and a cut the objective says costs more than
+    it saves is held ("objective" in the conflict report) — the trim no
+    longer undoes coverage the solver bought with the same prices.
 
     `report`, a dict when given, says why a week is still over the budget —
     once, for the review: report["conflict"] = {"over_by", "budget",
@@ -2244,8 +2400,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
     # Rows that will not stand — a person on time off, off the roster,
     # double-booked — are not coverage and not hours anyone works; they are
-    # judged before the trim so it never removes a legal row to pay for one
-    # (SCHED-23). The sweep flags them afterwards.
+    # judged before the trim so it never removes a legal row to pay for
+    # one. The sweep flags them afterwards.
     no_show = set()
     if c is not None:
         try:
@@ -2280,7 +2436,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         base = float(_people.get(n) or _rates.get(str(r.get("role") or "").strip().lower()) or _blend)
         return base * (1.5 if person_hours.get(n, 0.0) > 40.05 else 1.0)
 
-    import schedule_engine as _se
+    import schedule_rules as _sr
     from schedule_rules import floor_for, TIER_MIN_HOURS
     from shift_quality import role_words as _role_words
     if not floors and c is not None:
@@ -2289,13 +2445,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     rainy = rainy_dates or set()
     patio = {p.strip().lower() for p in (patio_roles or set())}
     only = set(only_dates) if only_dates else None
-    index = _se.requirement_index(requirements, c) if requirements else {}
-    # A "+1" the reviews or the nightly reports asked for (L-24's soft asks)
+    index = _sr.requirement_index(requirements, c) if requirements else {}
+    # A "+1" the reviews or the nightly reports asked for (the soft asks)
     # is part of what that night needs while the trim runs: its role is kept
     # at the usual number plus the ask — never the top-up's requirement.
     for ask in soft_asks or []:
         d, role = ask.get("date"), ask.get("role")
-        k = _se._role_key(role, c)
+        k = _sr._role_key(role, c)
         if not (d and k):
             continue
         try:
@@ -2312,26 +2468,26 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     def _learned(r):
         """(strength not to cut, strength the slot runs leaner) from what
         staffing cuts measured here, for `r`'s weekday, dayparts and role
-        (rec_learning.learned_cut_penalty — LOGIC-15)."""
+        (rec_learning.learned_cut_penalty)."""
         if not learned_worse:
             return 0.0, 0.0
         wd = _day(r.get("date"))
-        fam = _se._role_key(r.get("role"), c)
-        parts = _se._present(r) or [None]
+        fam = _sr._role_key(r.get("role"), c)
+        parts = _sr._present(r) or [None]
         return (max(_rl.learned_cut_penalty(learned_worse, wd, p, fam) for p in parts),
                 max(_rl.learned_cut_penalty(learned_worse, wd, p, fam, lean=True) for p in parts))
     def _valued(r):
         """Hours the cut of `r` is held back (+) or brought forward (-) by
         what one more of its role on its meal measured here (staffing_
-        elasticity.marginal_values — scheduler audit 10/10/26 MARKET-23):
-        an hour whose return's interval clears zero is cut last, one whose
-        interval is below zero first — never on a figure inside its noise."""
+        elasticity.marginal_values): an hour whose return's interval
+        clears zero is cut last, one whose interval is below zero first —
+        never on a figure inside its noise."""
         if not staffing_value:
             return 0.0
         from intelligence.staffing import family_of as _fo_v
         fam = _fo_v(r.get("role"))
         best = 0.0
-        for p in (_se._present(r) or []):
+        for p in (_sr._present(r) or []):
             v = staffing_value.get((fam, p)) or {}
             if v.get("lo") is not None and float(v["lo"]) > 0:
                 best = max(best, VALUE_KEEP_HOURS)
@@ -2346,9 +2502,15 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
     cut_rows = set()    # id() of rows already ended early — one cut per shift
     refusals = {}       # id(row) -> (reason, detail) from the last search
     timed_out = False
+    # Work done, the trim's only budget: one priced candidate or one
+    # week-score is one unit (and a week-score also counts toward the score's
+    # own TRIM_SCORE_EVALS). The wall clock only stops a runaway.
+    work = {"units": 0, "scores": 0}
+    score_evals = TRIM_SCORE_EVALS if score_seconds == TRIM_SCORE_SECONDS else \
+        max(0, int(round(TRIM_SCORE_EVALS * float(score_seconds) / TRIM_SCORE_SECONDS)))
 
     def _out_of_time():
-        return _time.monotonic() - _t0 > TRIM_MAX_SECONDS
+        return work["units"] > TRIM_MAX_WORK or _time.monotonic() - _t0 > TRIM_WALL_CAP_SECONDS
 
     def _learned_note(r) -> str:
         worse_s, _lean = _learned(r)
@@ -2367,7 +2529,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return [x for x in rs if id(x) not in no_show]
 
     def _floor(k, day, part):
-        return max((floor_for(floors, role, day, part) for role in floors if _se._role_key(role, c) == k), default=0)
+        return max((floor_for(floors, role, day, part) for role in floors if _sr._role_key(role, c) == k), default=0)
 
     def _held_back(r):
         """Why `r` may not be changed at all, or None."""
@@ -2377,13 +2539,13 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             return ("salaried", None)
         if r.get("needs_review"):
             return ("review", None)
-        if not _se._changeable(r, only):
+        if not _sr._changeable(r, only):
             return ("kept", None)
         d = r.get("date")
         if not (d and (r.get("role") or "").strip()):
             return ("unreadable", None)
         wd = _day(d)
-        for part in _se._present(r):
+        for part in _sr._present(r):
             if (wd.lower(), part) in troubled:
                 return ("troubled", (wd, part))
         return None
@@ -2394,7 +2556,14 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         d = r.get("date")
         after = [x for x in rows if x is not r] + ([new] if new is not None else [])
         if index:
-            worse = _se.requirement_regressions(_live(rows), _live(after), index, d, c)
+            worse = _sr.requirement_regressions(_live(rows), _live(after), index, d, c)
+            if worse and objective_ctx is not None:
+                # With the one objective, only the FIRM part of a requirement
+                # outranks the budget (the TIER_TABLE): a cut that leaves a
+                # role the restaurant is never without with nobody. The rest
+                # of the demand is priced (slot_value) — the objective guard
+                # below weighs it against the dollars.
+                worse = [w for w in worse if _firm_breach(w, d)]
             if worse:
                 part, key, minute, _b, _a = worse[0]
                 spec = ((index.get(d) or {}).get(part) or {}).get(key) or {}
@@ -2404,11 +2573,72 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                                                             else spec.get("required")),
                                                "at": _fmt(minute) if minute is not None else None})
         if c is not None:
-            worse = _se.change_regressions(rows, after, c, d, [r.get("employee")],
+            worse = _sr.change_regressions(rows, after, c, d, [r.get("employee")],
                                            upto=TIER_MIN_HOURS, hard_only=False)
             if worse:
                 return False, ("rule", {"date": d, "day": _day(d), "label": worse[0]["label"]})
+        if objective_on:
+            # The one objective: a cut that costs the week more than it
+            # saves, at the stated rates, is not a saving.
+            before_v, after_v = _objective_change(r, new)
+            if before_v is not None and after_v is not None and after_v >= before_v - OBJECTIVE_MIN_GAIN_USD:
+                detail = {"date": d, "day": _day(d), "role": r.get("role"), "costs": round(after_v - before_v, 2)}
+                k = _sr._role_key(r.get("role"), c)
+                for part in _sr._present(r):
+                    spec = ((index.get(d) or {}).get(part) or {}).get(k) or {}
+                    if spec.get("required"):
+                        detail.update(daypart=part, required=spec["required"], role=spec.get("role") or r.get("role"))
+                        break
+                return False, ("objective", detail)
         return True, None
+
+    def _firm_breach(w, d) -> bool:
+        """Whether requirement regression `w` takes a role to nobody where
+        the restaurant is never without it (its firm part)."""
+        part, key, minute, _before, after_short = w
+        spec = ((index.get(d) or {}).get(part) or {}).get(key) or {}
+        need = spec.get("required") if minute is None else (spec.get("half") or {}).get(minute)
+        try:
+            left = int(need or 0) - int(after_short or 0)
+        except (TypeError, ValueError):
+            return True
+        if left > 0:
+            return False
+        role = spec.get("role") or key
+        return (objective_ctx.firm_part(d, part, role) if minute is None
+                else objective_ctx.firm(d, minute, role))
+
+    # The one objective, priced one change at a time (schedule_objective.
+    # WeekPricer) from its context, else by a whole-week function.
+    pricer = None
+    if objective_ctx is not None:
+        try:
+            import schedule_objective as _objm
+            pricer = _objm.WeekPricer(_live(rows), objective_ctx)
+        except Exception as exc:
+            _degraded(f"trim objective unavailable: {exc!r}", exc)
+            pricer = None
+    objective_on = pricer is not None or objective_fn is not None
+
+    def _objective_change(r, new):
+        """(the week's objective dollars now, with `r` changed into `new`) —
+        (None, None) when it cannot be priced (the trim's own order rules)."""
+        work["units"] += 1
+        try:
+            if pricer is not None:
+                if id(r) in no_show:
+                    return None, None
+                return pricer.total(), pricer.try_change(r, new)
+            after = [x for x in rows if x is not r] + ([new] if new is not None else [])
+            return float(objective_fn(_live(rows))), float(objective_fn(_live(after)))
+        except Exception as exc:
+            _degraded(f"trim objective unavailable: {exc!r}", exc)
+            return None, None
+
+    def _priced_apply(r, new):
+        if pricer is not None and id(r) not in no_show:
+            pricer.apply(r, new)
+            pricer.commit()
 
     def splh_for(r):
         try:
@@ -2418,16 +2648,30 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         return ((splh or {}).get(day) or {}).get(_daypart(r), {}).get("splh")
 
     def _scoring():
-        return score_fn is not None and _time.monotonic() - _t0 <= score_seconds
+        return score_fn is not None and work["scores"] < score_evals
 
     def _choose(options):
-        """The option (row, new, hours) whose change costs the week the least
-        score, among the first few; the first when nothing scores them."""
-        if len(options) < 2 or not _scoring():
+        """The option (row, new, hours) that lowers the one objective
+        most, else whose change costs the week the least score, among the
+        first few; the first when nothing prices or scores them."""
+        if len(options) < 2:
+            return options[0]
+        if objective_on:
+            priced = []
+            for i, opt in enumerate(options):
+                r, new, _h = opt
+                _b, v = _objective_change(r, new)
+                if v is not None:
+                    priced.append((v, i, opt))
+            if priced:
+                return min(priced, key=lambda t: (t[0], t[1]))[2]
+        if not _scoring():
             return options[0]
         best = None
         for opt in options:
             r, new, _h = opt
+            work["units"] += 1
+            work["scores"] += 1
             try:
                 val = score_fn([x for x in rows if x is not r] + ([new] if new is not None else []))
             except Exception:
@@ -2444,7 +2688,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         if not sp:
             return None
         s, e = sp
-        room = min(TRIM_TAIL_MAX_HOURS, (e - s) / 60.0 - TRIM_MIN_SHIFT_HOURS)
+        import schedule_rules as _rules
+        shortest_h = (_rules.shortest_for(c, r.get("employee"), r.get("date") or "") if c is not None
+                      else _rules.DEFAULT_MIN_SHIFT_MINUTES) / 60.0
+        room = min(TRIM_TAIL_MAX_HOURS, (e - s) / 60.0 - shortest_h)
         steps = int(math.floor(room * 60 / TRIM_TAIL_STEP_MIN + 1e-9))
         if steps <= 0:
             return None
@@ -2456,6 +2703,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         mates = [(x, spans[id(x)]) for x in groups.get((d, k), []) if x is not r and spans.get(id(x))
                  and (x.get("employee") or "").strip().lower() != me]
         st = getattr(c, "stations", None) if c is not None else None
+        best = None
         for n in range(steps, 0, -1):
             new_end = e - n * TRIM_TAIL_STEP_MIN
             # Somebody else in the role stays through every hour cut: the
@@ -2482,13 +2730,22 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             new["shift_end"] = _fmt(new_end)
             new["scheduled_hours"] = _hours_text(new, c)
             note = (r.get("notes") or "").strip()
-            new["notes"] = f"{note} (ends early — hours budget)" if note else "ends early — hours budget"
+            new["notes"] = f"{note} ({TRIM_NOTE})" if note else TRIM_NOTE
             ok, why = _guard(r, new)
             if not ok:
                 refusals[id(r)] = why
                 continue
-            return new, round(n * TRIM_TAIL_STEP_MIN / 60.0, 2)
-        return None
+            got = (new, round(n * TRIM_TAIL_STEP_MIN / 60.0, 2))
+            if not objective_on:
+                return got
+            # With the one objective every legal length of the cut is priced
+            # and the cheapest week kept: not the longest cut that passes —
+            # a cut that would take its person under half their usual week
+            # by its last half hour stops short of it.
+            _b, v = _objective_change(r, new)
+            if v is not None and (best is None or v < best[0] - 1e-9):
+                best = (v, got)
+        return best[1] if best is not None else None
 
     def _saved(r, new):
         """What changing `r` into `new` (None: removed) takes off the week's
@@ -2506,8 +2763,8 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             timed_out = True
             break
         live = _live(rows)
-        spans = {id(x): _se._span_minutes(x) for x in rows}
-        keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
+        spans = {id(x): _sr._span_minutes(x) for x in rows}
+        keys = {id(x): _sr._role_key(x.get("role"), c) for x in rows}
         groups, day_hours, person_hours = {}, {}, {}
         for x in live:
             groups.setdefault((x.get("date"), keys[id(x)]), []).append(x)
@@ -2516,7 +2773,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             # A day's "over" is on its target's basis: hourly hours against
             # the hourly daily target. Salaried hours ranked the day a
             # salaried GM works as the most over and cut it while it sat
-            # under target (schedule re-audit 10/4/26 SQ-7).
+            # under target.
             if _paid(x):
                 day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
 
@@ -2533,14 +2790,19 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             s = splh_for(r)
             sp = spans.get(id(r)) or (0, 0)
             # Equally discretionary hours: the dearer first — overtime at its
-            # premium, a $24 cook hour before a $9 tipped one (LOGIC-13).
+            # premium, a $24 cook hour before a $9 tipped one.
             return (rain, -round(over), -per_hour.get(id(r), 1.0), s if s is not None else 10 ** 9, sp[0], -sp[1],
                     (r.get("employee") or ""))
 
         refusals.clear()
-        want = TRIM_SCORE_CANDIDATES if _scoring() else 1
+        want = TRIM_OBJECTIVE_CANDIDATES if objective_on else (TRIM_SCORE_CANDIDATES if _scoring() else 1)
         options = []
-        for r in sorted((x for x in rows if id(x) not in cut_rows), key=_tail_order):
+        # One cut a shift across the whole repair loop, never one per cycle:
+        # a shift the trim already ended early carries its note, and the
+        # loop's later cycles used to cut it again — 6am-2pm to 6am-9am in
+        # four 2-hour bites (the schedule benchmark's 24-hour diner).
+        for r in sorted((x for x in rows if id(x) not in cut_rows and TRIM_NOTE not in (x.get("notes") or "")),
+                        key=_tail_order):
             held = _held_back(r)
             if held is not None:
                 refusals[id(r)] = held
@@ -2554,6 +2816,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             break
         r, new, h = _choose(options)
         saved = _saved(r, new)
+        _priced_apply(r, new)
         rows[rows.index(r)] = new
         cut_rows.add(id(new))
         total -= saved
@@ -2577,9 +2840,9 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             timed_out = True
             break
         live = _live(rows)
-        keys = {id(x): _se._role_key(x.get("role"), c) for x in rows}
-        parts_of = {id(x): _se._present(x) for x in rows}
-        ends = {id(x): (_se._span_minutes(x) or (0, 0))[1] for x in rows}
+        keys = {id(x): _sr._role_key(x.get("role"), c) for x in rows}
+        parts_of = {id(x): _sr._present(x) for x in rows}
+        ends = {id(x): (_sr._span_minutes(x) or (0, 0))[1] for x in rows}
         day_hours, person_rows, person_hours, crew, by_person_day, last_out = {}, {}, {}, {}, {}, {}
         rate_hours = {}
         for x in live:
@@ -2588,7 +2851,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
         for x in live:
             low = (x.get("employee") or "").strip().lower()
             if _paid(x):
-                # Hourly hours against the hourly daily target (SQ-7).
+                # Hourly hours against the hourly daily target.
                 day_hours[x.get("date")] = day_hours.get(x.get("date"), 0.0) + _hours(x)
             person_rows[low] = person_rows.get(low, 0) + 1
             person_hours[low] = person_hours.get(low, 0.0) + _hours(x)
@@ -2619,10 +2882,10 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 return False, held
             d, name = r.get("date"), r.get("employee")
             low = (name or "").strip().lower()
-            # Never under the minimum hours they asked for (SCHED-23).
-            # Somebody's only shift is a cost (priority, ONLY_SHIFT_COST_
-            # HOURS), not a refusal: the most discretionary row of the week
-            # may be a part-timer's one Tuesday lunch (LOGIC-14).
+            # Never under the minimum hours they asked for. Somebody's only
+            # shift is a cost (priority, ONLY_SHIFT_COST_ HOURS), not a
+            # refusal: the most discretionary row of the week may be a
+            # part-timer's one Tuesday lunch.
             if c is not None:
                 try:
                     mn = c.min_hours(name)
@@ -2662,7 +2925,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             over = day_over(r.get("date"))
             low = (r.get("employee") or "").strip().lower()
             if tier == 2 and person_rows.get(low, 0) <= 1:
-                over -= ONLY_SHIFT_COST_HOURS          # retention: a cost, not a refusal (LOGIC-14)
+                over -= ONLY_SHIFT_COST_HOURS          # retention: a cost, not a refusal
             worse_s, lean_s = _learned(r)
             over += lean_s * LEARNED_LEAN_BONUS_HOURS - worse_s * LEARNED_CUT_COST_HOURS
             over -= _valued(r)
@@ -2677,7 +2940,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
                 cands.append(r)
             else:
                 refusals[id(r)] = why
-        want = TRIM_SCORE_CANDIDATES if _scoring() else 1
+        want = TRIM_OBJECTIVE_CANDIDATES if objective_on else (TRIM_SCORE_CANDIDATES if _scoring() else 1)
         options = []
         for r in sorted(cands, key=priority):
             if options and (priority(r)[0] != priority(options[0][0])[0] or len(options) >= want):
@@ -2691,6 +2954,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
             break
         victim, _none, h = _choose(options)
         saved = _saved(victim, None)
+        _priced_apply(victim, None)
         rows.remove(victim)
         total -= saved
         removed += h
@@ -2730,7 +2994,7 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
 # Why a trim stopped short, in the order an owner can act on it. Rows that
 # will not stand, salaried hours and unreadable rows are not the budget's.
-_HELD_REASONS = ("requirement", "learned", "troubled", "rule", "floor", "last_of_role", "station",
+_HELD_REASONS = ("requirement", "objective", "learned", "troubled", "rule", "floor", "last_of_role", "station",
                  "min_hours", "only_shift", "kept", "review")
 
 
@@ -2762,66 +3026,6 @@ def _conflict(total, budget, refusals, timed_out=False) -> dict:
     if timed_out:
         out["timed_out"] = True
     return out
-
-
-def budget_conflict_line(conflict: dict, over_by: float = None, budget: float = None) -> str:
-    """One sentence for the review when the trim stopped above the budget:
-    what holds the remaining hours — the shifts' own requirement, days and
-    dayparts kept from cuts, the rules — and what the owner can change
-    (schedule audit 10/3/26 SQ-7: the requirement and the budget disagree,
-    said once). "" when there is no conflict."""
-    if not conflict:
-        return ""
-    over = conflict.get("over_by") if over_by is None else over_by
-    b = conflict.get("budget") if budget is None else budget
-    held = conflict.get("held") or {}
-    ex = conflict.get("examples") or []
-
-    def _first(reason):
-        return next((x for x in ex if x.get("reason") == reason), None)
-
-    def _part(p):
-        return {"morning": "lunch", "night": "dinner"}.get(p, p or "")
-    bits = []
-    if held.get("requirement"):
-        from shift_quality import role_words
-        x = _first("requirement")
-        what = ""
-        if x and x.get("required"):
-            what = (f" — {x['day']} {_part(x.get('daypart'))} needs {x['required']} "
-                    f"{role_words(x.get('role'), int(x['required']), 'people')}"
-                    + (f" at {x['at']}" if x.get("at") else ""))
-        bits.append("what the shifts need (your usual staffing, floors and demand" + what + ")")
-    if held.get("learned"):
-        x = _first("learned")
-        bits.append(f"{x['day']}s, where staffing cuts measured worse here" if x and x.get("day")
-                    else "days where staffing cuts measured worse here")
-    if held.get("troubled"):
-        x = _first("troubled")
-        bits.append(f"{x['day']} {_part(x.get('daypart'))}, which has gone wrong before" if x and x.get("day")
-                    else "dayparts that have gone wrong before")
-    if held.get("rule"):
-        x = _first("rule")
-        bits.append("the rules" + (f" — {x['label']}" if x and x.get("label") else ""))
-    if held.get("floor") or held.get("last_of_role") or held.get("station"):
-        bits.append("your floors and the last of each role")
-    if held.get("min_hours") or held.get("only_shift"):
-        bits.append("minimum hours and people's only shifts")
-    if held.get("kept"):
-        bits.append("the days you kept as they were")
-    if conflict.get("timed_out"):
-        bits.insert(0, "its time limit")
-    if not bits:
-        return ""
-    if conflict.get("over_by_dollars") is not None and conflict.get("budget_dollars"):
-        # The budget is held in dollars (LOGIC-13): said that way, the
-        # hours beside it.
-        return (f"The trim stopped ${float(conflict['over_by_dollars']):,.0f} over the "
-                f"${float(conflict['budget_dollars']):,.0f} hourly budget ({float(conflict.get('scheduled') or 0):,.0f}h "
-                f"against {float(conflict.get('budget') or 0):,.0f}h): the rest is held by "
-                + "; ".join(bits[:3]) + ". Raise the budget, or lower the floors or staffing you set, to close it.")
-    return (f"The trim stopped {over:,.0f}h over the {b:,.0f}h budget: the rest is held by "
-            + "; ".join(bits[:3]) + ". Raise the hours budget, or lower the floors or staffing you set, to close it.")
 
 
 def trim_lines(trimmed: list, hours_removed: float, budget: float, limit: int = 6) -> list:

@@ -26,7 +26,16 @@ from models import create_restaurant, Restaurant
 
 WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-EXP = sx.EXPERIMENTS[0]
+# The arm mechanics (the hash, the power gate, the pins) are tested on a
+# two-arm, 1:1 copy of assign_v1: production weights its model arm 0 since
+# the solver became the draft (10/14/26), which leaves nothing to flip.
+_LIVE_EXPERIMENTS = sx.EXPERIMENTS
+EXP = dict(_LIVE_EXPERIMENTS[0], arms=tuple(dict(a, weight=1) for a in _LIVE_EXPERIMENTS[0]["arms"]))
+
+
+@pytest.fixture(autouse=True)
+def _two_arm_assign(monkeypatch):
+    monkeypatch.setattr(sx, "EXPERIMENTS", (EXP,) + tuple(_LIVE_EXPERIMENTS[1:]))
 
 
 @pytest.fixture(autouse=True)
@@ -162,8 +171,13 @@ def test_each_arm_is_recorded_and_costs_no_extra_model_call(db, monkeypatch, arm
     assert got[0]["experiment"] == EXP["key"] and got[0]["pinned"] == 1 and got[0]["week_start"] == WEEK[0]
     opt = res.get("optimizer") or {}
     if arm == "solver":
-        assert (opt.get("solver") or {}).get("applied") and opt["changes"][0]["kind"] == "solve"
-        assert got[0]["solver_applied"] == 1
+        # The solver arm ran the solver and the week records whether it was
+        # applied. It may keep the draft: since the one objective (re-audit
+        # 10/11/26 LOGIC-6) stability ranks above quality in the re-solve, so
+        # a draft it proves optimal stays and the optimizer's swaps follow.
+        solved = opt.get("solver") or {}
+        assert solved.get("status") in ("optimal", "time_limit")
+        assert got[0]["solver_applied"] == (1 if solved.get("applied") else 0)
     else:
         assert "solver" not in opt and got[0]["solver_applied"] is None
     # nothing an owner receives names the experiment or the arm
@@ -294,3 +308,12 @@ def test_the_admin_readout_and_pin_route(db, monkeypatch):
     assert body["ok"] and body["arm"] == "off"
     read = admin_ops.schedule_experiments()
     assert read["ok"] and read["pins"][0]["restaurant_id"] == rid and read["pins"][0]["pinned_by"] == "will"
+
+
+def test_the_live_experiments_never_flip_a_week_onto_an_arm_the_benchmark_rejects():
+    # The solver is the draft (10/14/26): once the fleet powers the
+    # experiments, no coin flip may turn the solver off or carry last week
+    # forward — those arms are reachable only by a pin.
+    live = {e["key"]: e for e in _LIVE_EXPERIMENTS}
+    assert {a["key"]: a["weight"] for a in live["assign_v1"]["arms"]}["model"] == 0
+    assert {a["key"]: a["weight"] for a in live["draft_v1"]["arms"]}["carried"] == 0

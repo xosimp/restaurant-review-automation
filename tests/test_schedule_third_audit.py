@@ -56,7 +56,7 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwri
     10/3/26 P-34: the whole week used to be thrown away)."""
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],                    # Mon–Thu fine
         [(WEEK[4], "Ana")],                                # Fri only — Sat, Sun missing
@@ -76,7 +76,7 @@ def test_a_slice_that_skips_a_day_is_retried_with_the_days_named_then_left_unwri
 def test_a_retry_that_writes_the_missing_days_is_merged_and_logged(monkeypatch):
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 2 * se.CHUNK_ROWS_PER_CALL - 10)   # two slices
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:4]],
         [(WEEK[4], "Ana")],
@@ -96,7 +96,7 @@ def test_a_single_call_that_skips_a_day_writes_only_that_day_again(monkeypatch):
     thrown away and the whole week written again in two parts)."""
     import labor
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 50)           # one call
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
     seen = []
     fake = _fake_generator([
         [(d, "Ana") for d in WEEK[:6]],                    # no Sunday
@@ -121,7 +121,7 @@ def test_very_large_rosters_split_by_department_first(monkeypatch):
     # Past three calls' worth of rows (schedule_engine.CHUNK_ROWS_PER_CALL —
     # 320 a call since the compact output contract; a fixed 900 was).
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: 4 * se.CHUNK_ROWS_PER_CALL)
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: __import__("datetime").datetime(2026, 10, 5))
     roster = [("Ana", "Server"), ("Bob", "Line Cook")]
     seen = []
 
@@ -181,7 +181,11 @@ def test_top_up_thinks_in_dayparts_and_copies_that_dayparts_times(monkeypatch):
     assert all(r["employee"] in ("Dee", "Eve") for r in new)
 
 
-def test_top_up_is_capped_at_a_quarter_of_the_days_target(monkeypatch):
+def test_top_up_runs_to_the_requirement_with_no_quarter_of_the_target_cap(monkeypatch):
+    # Blind re-audit 10/11/26 LOGIC-8: "at most a quarter of the day's target"
+    # left a draft more than a quarter light short of its own requirements
+    # while a heavy one was trimmed to them. The top-up runs to them; the
+    # budget decides in dollars (the trim, the one objective).
     _no_avail(monkeypatch)
     rows = []
     for d in WEEK[:6]:
@@ -192,7 +196,8 @@ def test_top_up_is_capped_at_a_quarter_of_the_days_target(monkeypatch):
     out, added, dates = se._top_up_hours_gap(list(rows), {d: 40.0 for d in WEEK}, 400.0, 185.0, 1, {}, {}, constraints=c,
                                              requirements=_need([WEEK[6]], 6))
     sunday_added = sum(float(r["scheduled_hours"]) for r in out if r["date"] == WEEK[6] and r not in rows)
-    assert 0 < sunday_added <= 10.0                                          # 25% of 40h, not the five missing shifts
+    assert sunday_added > 10.0                                               # past the old 25% of 40h
+    assert sum(1 for r in out if r["date"] == WEEK[6]) == 6                  # the six the night needs
 
 
 def test_floor_pass_keeps_trying_candidates_after_a_refusal(monkeypatch):

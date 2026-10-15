@@ -1,7 +1,6 @@
 """
 schedule_prompt.py — how the week's schedule call is laid out, and the parts
-of it that are the same for every call (schedule audit 10/3/26 PR-25, PR-26,
-P-23, PR-33, PR-20, PR-5, PR-6, PR-9, PR-10, PR-21, PR-23, PR-24, PR-27).
+of it that are the same for every call.
 
 The request is one user message in three content blocks, in this order:
 
@@ -19,7 +18,7 @@ The request is one user message in three content blocks, in this order:
      rewrite (its manager plan is re-made for its dates). A second
      breakpoint may close it. Whether each breakpoint is set, and for how
      long, is cache_ttls: only where the calls sharing the block read it
-     before it expires (schedule re-audit 10/4/26 PROMPT-8).
+     before it expires.
   3. THIS REQUEST — what this call writes: its dates, what each shift on
      them needs, what the rest of the week already gives each person, and
      anything said to this call alone.
@@ -44,10 +43,10 @@ import shift_quality as _sq
 
 DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
-# One date format for the model (PR-20): the weekday and the ISO date,
-# "Fri 2026-10-09" — the form the output schema's date enum takes. M/D/YY
-# is what an OWNER reads; the model's own words reach the owner only
-# through the summary, whose dates code writes as M/D/YY (labor).
+# One date format for the model: the weekday and the ISO date, "Fri
+# 2026-10-09" — the form the output schema's date enum takes. M/D/YY is
+# what an OWNER reads; the model's own words reach the owner only through
+# the summary, whose dates code writes as M/D/YY (labor).
 CACHE_CONTROL = {"type": "ephemeral"}
 
 
@@ -84,17 +83,17 @@ def _mdy_to_date(m):
 
 
 def iso_dates(text) -> str:
-    """`text` with every M/D/YY date written as weekday and ISO date, except
-    inside a fence: people's own words (between UNTRUSTED_GUEST_TEXT or
-    OWNER_RULE markers) are theirs and stay as written. Code-built lines
-    shared with owner-facing screens ("rain nights here ran 18% below a
-    typical one (measured 4 times, last 9/12/26)") carry M/D/YY there and
-    the one model format here (PR-20). A weekday already in front of the
-    date is kept once: "Sat 9/12/26" becomes "Sat 2026-09-12"."""
+    """`text` with every M/D/YY date written as weekday and ISO date, except inside a
+    fence: people's own words (between UNTRUSTED_GUEST_TEXT, OWNER_RULE or MANAGER_NOTE
+    markers) are theirs and stay as written. Code-built lines shared with owner-facing
+    screens ("rain nights here ran 18% below a typical one (measured 4 times, last
+    9/12/26)") carry M/D/YY there and the one model format here. A weekday already in
+    front of the date is kept once: "Sat 9/12/26" becomes "Sat 2026-09-12"."""
     import ai_guard
     text = str(text or "")
     fences = re.compile("(" + re.escape(ai_guard.UNTRUSTED_OPEN) + ".*?" + re.escape(ai_guard.UNTRUSTED_CLOSE)
                         + "|" + re.escape(ai_guard.OWNER_RULE_OPEN) + ".*?" + re.escape(ai_guard.OWNER_RULE_CLOSE)
+                        + "|" + re.escape(ai_guard.MANAGER_NOTE_OPEN) + ".*?" + re.escape(ai_guard.MANAGER_NOTE_CLOSE)
                         + ")", re.S)
     out = []
     for i, part in enumerate(fences.split(text)):
@@ -124,8 +123,8 @@ def owner_dates(text) -> str:
     """The model's words as the owner reads them: every ISO date written
     M/D/YY, its weekday kept as written — "Fri 2026-10-09" becomes "Fri
     10/9/26" (DESIGN_SYSTEM.md → Dates and times). The model reads ISO
-    (PR-20) and is told to name days by weekday; a date it writes anyway
-    never reaches an owner as ISO."""
+    and is told to name days by weekday; a date it writes anyway never
+    reaches an owner as ISO."""
     from time_utils import mdy
 
     def _sub(m):
@@ -157,13 +156,13 @@ _clock = clock
 
 
 # The model is told its part is the judgement, and that code re-counts and
-# repairs afterwards (AI cost audit 10/7/26 #3). The prompt used to ask it to
-# "count, check and compare as much as you need" and to count every daypart
-# of every date against SHIFT REQUIREMENTS before answering: on Simple EJ's
-# 215-row week that was 62,353 of 64,000 output tokens, nearly all thinking,
-# for counts the repair loop, the manager plan, the solver, close_out_gaps,
-# rebalance_overtime and the quality gate all make again in code. The rules
-# it must respect while choosing stay (RULE_MARKS, PRIORITIES).
+# repairs afterwards. The prompt used to ask it to "count, check and compare
+# as much as you need" and to count every daypart of every date against SHIFT
+# REQUIREMENTS before answering: on Simple EJ's 215-row week that was 62,353
+# of 64,000 output tokens, nearly all thinking, for counts the repair loop,
+# the manager plan, the solver, close_out_gaps, rebalance_overtime and the
+# quality gate all make again in code. The rules it must respect while
+# choosing stay (RULE_MARKS, PRIORITIES).
 LAYOUT = (
     "You are writing next week's staff schedule for one restaurant, with a short summary of your biggest "
     "decisions.\n\n"
@@ -181,8 +180,9 @@ LAYOUT = (
     "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below. "
     + "CODE OWNS THE ARITHMETIC: after you answer, code counts every daypart and half hour against SHIFT "
     "REQUIREMENTS, re-checks every closer and every rule, and holds every person's hours, minimum, overtime line, "
-    "rest and days in a row and the week's hours ceiling — repairing what falls short. Those figures are bounds on "
-    "your choices, never sums for you to work out: choose once, well, and write the rows.")
+    "rest and days in a row and the week's hours ceiling. Those figures are bounds on your choices, never sums "
+    "for you to work out — but every row code has to change is counted against the draft and shown to the "
+    "owner: choose once, well, and write rows that already hold.")
 
 RULE_MARKS = (
     "HOW RULES ARE MARKED\n"
@@ -199,11 +199,10 @@ def _coverage_text() -> str:
     late_start = _clock(_sq.LATE_WINDOW_START)
     late_after = _clock(_sq.LATE_CLOSE_AFTER)
     (lo_m, hi_m), (lo_n, hi_n) = _sq.CORE_WINDOWS["morning"], _sq.CORE_WINDOWS["night"]
-    # What the shape needs to mean the same as code (scheduler audit 10/10/26
-    # AI-13): the presence rule, the ramp, a late night, the night's date
-    # and the close. How the floors and the half hours are held is code's —
-    # the floors stage, the top-up and the stagger recount it — so it is one
-    # clause, not a lesson in counting.
+    # What the shape needs to mean the same as code: the presence rule, the
+    # ramp, a late night, the night's date and the close. How the floors and
+    # the half hours are held is code's — the floors stage, the top-up and
+    # the stagger recount it — so it is one clause, not a lesson in counting.
     return (
         "HOW COVERAGE IS COUNTED (code counts it after you write; this is what the numbers mean)\n"
         "- Coverage is who is on the floor. " + _req.presence_rule() + " Lunch and dinner are separate numbers; a "
@@ -218,10 +217,12 @@ def _coverage_text() -> str:
 
 
 # Each default says what shapes the judgement; a rule code already holds is
-# one clause naming that it is held (scheduler audit 10/10/26 AI-13): the
-# stagger stage spreads starts along the ramp, the replace stage and the
-# solver's domains keep everyone to CAN WORK, the overtime and minimum-hours
-# stages and the budget trim hold the hours.
+# one clause naming that it is held: the stagger stage spreads starts along
+# the ramp, the overtime and minimum-hours stages and the budget trim hold
+# the hours. Each RULE is stated once, in the restaurant's rules block
+# (schedule_rules.prompt_block, [HARD]/[SOFT] with why); the ROSTER head only
+# says what its columns hold (availability and the roles a person may work
+# were stated in the ROSTER head, the rules and here).
 DEFAULTS = (
     "HOW TO WRITE SHIFTS — defaults. They apply only where this restaurant's own data (SHIFT REQUIREMENTS, its "
     "RESTAURANT HOURS & SHIFT RULES, its ROSTER and history) says nothing, and they rank last (PRIORITIES 5).\n"
@@ -232,14 +233,14 @@ DEFAULTS = (
     "through. This is about length, never headcount: each daypart keeps its full number.\n"
     "- Somebody the ROSTER shows missing shifts or arriving late: pair them with a dependable teammate of their "
     "role, never the only one who opens or closes a day, never a person added for it.\n"
-    "- Roles: code keeps each person to the roles their CAN WORK lists; each role is paid its own rate.\n"
+    "- Pay: each role is paid its own rate.\n"
     "- Hours: each date's hours target in SHIFT REQUIREMENTS is the one hours figure to plan a date by; every other "
     "hours figure here (sales per labor hour, past weeks, peers) is context, never a target.\n"
     "- With no RESTAURANT HOURS & SHIFT RULES, base start and end times on this restaurant's own history: prep "
     "starts before the doors open and closers stay until service ends.")
 
-# The same defaults for the shape contract (AI-14): the model writes slots,
-# never names — nothing in them is about a person.
+# The same defaults for the shape contract: the model writes slots, never
+# names — nothing in them is about a person.
 SHAPE_DEFAULTS = (
     "HOW TO WRITE SLOTS — defaults. They apply only where this restaurant's own data (SHIFT REQUIREMENTS, its "
     "RESTAURANT HOURS & SHIFT RULES, its usual shifts) says nothing, and they rank last (PRIORITIES 5).\n"
@@ -265,7 +266,7 @@ def _times_rule(structured: bool, enums: bool = True) -> str:
                 "\"9:30pm\").")
     if structured:
         # The shape without enums (schema_enums=False, a roster too large to
-        # compile): there is no list of times to pick from (PROMPT-7).
+        # compile): there is no list of times to pick from.
         return ("- Times: `start` and `end` are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
                 "\"9:30pm\" — never 24-hour time.")
     return ("- Times: shift_start and shift_end are 12-hour US clock times with am/pm — \"11:00am\", \"4:00pm\", "
@@ -275,18 +276,21 @@ def _times_rule(structured: bool, enums: bool = True) -> str:
 def _output_text(structured: bool, enums: bool = True, contract: str = "schema") -> str:
     times = "from the schema's clock times" if enums else "as 12-hour clock times with am/pm"
     if structured and contract == "compact":
-        # The same rows with one-letter keys (schedule_output.ROW_KEYS — AI
-        # cost audit 10/7/26 #70): the key names were a fifth of every row.
+        # The same rows with one-letter keys (schedule_output.ROW_KEYS):
+        # the key names were a fifth of every row.
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
                 "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift "
                 "written with one-letter keys: `e` the employee exactly as the ROSTER spells them, `r` the role, `s` "
                 "the start and `t` the end " + times + " (an end at or before the start runs past midnight), and `n` "
                 "the note when one applies — the weekday and the hours are worked out from the date and the times, so "
-                "write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use "
-                "it to report what the week misses — every requirement, target, floor and request the finished week "
-                "does not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "write neither. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     elif structured and contract == "shape":
-        # The shape alone (#69): code chooses who works each slot
+        # The shape alone: code chooses who works each slot
         # (schedule_engine.assign_shape_slots, the solver).
         spec = ("OUTPUT — JSON only, matching the schema you were given. You write the SHAPE of each day, never "
                 "names: who works each slot is chosen afterwards in code, from the roster, against every rule — "
@@ -296,18 +300,24 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
                 "start and `t` the end " + times + " (an end at or before the start runs past midnight), `c` how many "
                 "people work exactly that role and those times (a whole number, 1 or more), and `n` the note when "
                 "one applies. Size each day from SHIFT REQUIREMENTS and AVAILABLE BY DAY: never more slots of a role "
-                "at once than the people who can work that role that day. `summary` is at most three "
-                "bullets: the week's biggest decisions and why. Do not use it to report what the week misses — it "
-                "is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "at once than the people who can work that role that day. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     elif structured:
         spec = ("OUTPUT — JSON only, matching the schema you were given. `days` has one entry per date of THIS REQUEST "
                 "that you staff: its `date` — the ISO date alone, without its weekday — and its `shifts`, each shift's "
                 "`employee` exactly as the ROSTER spells them, its `role`, and its `start` and `end` "
                 + ("from the schema's clock times" if enums else "as 12-hour clock times with am/pm")
                 + " (an end at or before the start runs past midnight) — the weekday and the hours are worked out "
-                "from the date and the times, so write neither. `summary` is at most three bullets: the week's biggest decisions and why. Do not use it "
-                "to report what the week misses — every requirement, target, floor and request the finished week does "
-                "not meet is checked in code and shown to the owner. Write the JSON object and nothing else.")
+                "from the date and the times, so write neither. "
+                "`decisions` is at most three of the week's biggest choices, each with its `date` and `role` from "
+                "this request and `why` — the fact you were given that decided it, in 12 words or fewer; the "
+                "owner's note is written from them after code checks each against the finished week. What the "
+                "week misses is checked in code and shown to the owner, never reported here. Write the JSON object "
+                "and nothing else.")
     else:
         spec = ("OUTPUT — your entire response follows this structure, with nothing before the CSV:\n\n"
                 "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
@@ -316,17 +326,22 @@ def _output_text(structured: bool, enums: bool = True, contract: str = "schema")
                 "Start the response with \"date,day,employee\" and keep that format to the end: the date as the ISO "
                 "date alone (2026-MM-DD, never with its weekday in front), a real weekday, a ROSTER name, then the role, "
                 "times, hours and note, in that order, on every row.")
+    if structured:
+        # The reasons are data now: ~120 words of rules for three prose
+        # bullets the note writer replaced were sent, and paid for, on
+        # every call.
+        return spec
     return (spec + "\nEach summary bullet: one short clause, 10 words or fewer, plain language — the concrete change "
             "and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 "
             "seconds. No full sentences, no restating these rules back, no generic scheduling advice, no emoji. Name "
             "a day by its weekday (\"Friday dinner\"), never by its date.")
 
 
-# The worked example (PR-25): one made-up Friday that shows the manager
-# handover, a ramp in, a server counted at lunch AND dinner, the one
-# straight-through and the taper out. Its numbers are checked against the
-# scorer's own counting by tests/test_schedfix_c1_prompt.py, so the example
-# can never teach something the code would count differently.
+# The worked example: one made-up Friday that shows the manager handover, a
+# ramp in, a server counted at lunch AND dinner, the one straight-through
+# and the taper out. Its numbers are checked against the scorer's own
+# counting by tests/test_schedfix_c1_prompt.py, so the example can never
+# teach something the code would count differently.
 EXAMPLE_OPEN, EXAMPLE_CLOSE = "11:00am", "10:00pm"
 EXAMPLE_ROWS = (
     # (name, role, start, end, note, planned manager row)
@@ -361,9 +376,9 @@ def _example_text() -> str:
         return ", ".join(f"{n} from {t}" for t, n in EXAMPLE_RAMPS[(role, part)])
     # Only the rows the model writes: the planned manager rows are added by
     # code (labor.generate_optimized_schedule merges them in) and listed
-    # under what the day needed, never as written (AI cost audit 10/7/26
-    # #35 — the example used to list them as written, and the model's
-    # copies were then dropped as item_dropped).
+    # under what the day needed, never as written (the example used to list
+    # them as written, and the model's copies were then dropped as
+    # item_dropped).
     rows = []
     for name, role, s, e, note, planned in EXAMPLE_ROWS:
         if planned:
@@ -397,9 +412,8 @@ def _example_text() -> str:
 
 def _priorities() -> str:
     """PRIORITIES from the code's own ranked table (schedule_rules.TIER_TABLE,
-    laid out by PRIORITY_LAYOUT) — one source, so the order the model is
-    told is the order the repair loop holds (sched audit 10/10/26
-    LOGIC-20)."""
+    laid out by PRIORITY_LAYOUT) — one source, so the order the model is told
+    is the order the repair loop holds."""
     import schedule_rules as _sr
     text = {tier: words for tier, _name, words in _sr.TIER_TABLE}
     item = {key: text[tier] for key, tier in _sr.PRIORITY_LAYOUT}
@@ -412,7 +426,8 @@ def _priorities() -> str:
         "  2. The owner's staffing rules, then the restaurant's own scheduling limits — below every item of 1:\n"
         f"     2a. {item['2a']}\n"
         f"     2b. {item['2b']}\n"
-        "  3. Overtime, minimum hours and SHIFT REQUIREMENTS — below 1 and 2, above the hours budget:\n"
+        "  3. Overtime, then minimum hours, then SHIFT REQUIREMENTS' firm part — below 1 and 2, above the hours "
+        "budget, in this order:\n"
         f"     3a. {item['3a']}\n"
         f"     3b. {item['3b']}\n"
         f"     3c. {item['3c']}\n"
@@ -430,9 +445,9 @@ _WHERE_WORDS_RANK = (
 PRIORITIES = _priorities()
 
 
-# The shape contract's PRIORITIES (scheduler audit 10/10/26 AI-14): the
-# model writes slots, so 1a is about the slots around MANAGER COVERAGE and
-# 1b about how many people can work, never about a named person.
+# The shape contract's PRIORITIES: the model writes slots, so 1a is about
+# the slots around MANAGER COVERAGE and 1b about how many people can work,
+# never about a named person.
 SHAPE_PRIORITIES = (PRIORITIES
                     .replace("Where MANAGER COVERAGE plans the managers' shifts, code adds those rows to your answer: "
                              "do not write them, and write no other shift for those managers on those dates;",
@@ -449,15 +464,14 @@ _STATIC = {}
 
 def static_block(structured: bool = True, note_words: str = "", enums: bool = True, contract: str = "schema") -> str:
     """The standing instructions — byte-identical for every restaurant and
-    every call on one output contract, so it is cached (PR-26) — ending in
-    PRIORITIES, which the restaurant's own standing rules follow (PR-2).
+    every call on one output contract, so it is cached — ending in
+    PRIORITIES, which the restaurant's own standing rules follow.
     `note_words` is the output contract's fixed note list
     (schedule_output.NOTE_VALUES), passed by the caller. `enums` False is
     the structured shape without its lists (labor's schema_enums=False
     fallback): the times are not "from the schema's list" there, since
-    there is none (schedule re-audit 10/4/26 PROMPT-7). `contract` is the
-    structured contract's key spelling (schedule_output.CONTRACTS — AI cost
-    audit 10/7/26 #69, #70): "schema" is byte-identical to what it was;
+    there is none. `contract` is the structured contract's key spelling
+    (schedule_output.CONTRACTS): "schema" is byte-identical to what it was;
     "compact" and "shape" change OUTPUT, and "shape" the one LAYOUT line
     that says who chooses the people."""
     enums = bool(enums) or not structured
@@ -474,14 +488,14 @@ def static_block(structured: bool = True, note_words: str = "", enums: bool = Tr
 
 
 # What LAYOUT says the model's part is, and what it says on the shape
-# contract, where code chooses the people (#69).
+# contract, where code chooses the people.
 LAYOUT_JUDGEMENT = "Your part is the judgement: the shape of each day and who works each shift, choosing within the rules below."
 SHAPE_JUDGEMENT = ("Your part is the judgement of the shape: which shifts each day has, in which role, from when to "
                    "when and how many people on each — choosing within the rules below. Code chooses who works each "
                    "slot, from the roster, against the same rules.")
 
 
-# ── a redo's day-only context (scheduler audit 10/10/26 AI-28) ──────────────
+# ── a redo's day-only context ──────────────
 # A model redo of a few days (an owner's redo the code could not draft, the
 # quality gate's rewrite) used to be sent the whole week's context — every
 # date's availability, weather, year-over-year line, the typical crew of
@@ -521,7 +535,7 @@ def slim_redo_line(dates, scope) -> str:
             + "); the rest of the week is kept as it is.")
 
 
-# ── the shape contract's slim input (scheduler audit 10/10/26 AI-14) ────────
+# ── the shape contract's slim input ────────
 
 def availability_table(counts, dates) -> str:
     """AVAILABLE BY DAY — what a slot-writing model needs in place of the
@@ -554,7 +568,7 @@ def availability_table(counts, dates) -> str:
             "than this; code picks the people:\n" + "\n".join(lines))
 
 
-# ── the ROSTER table (one line per person, PR-33) ────────────────────────────
+# ── the ROSTER table (one line per person) ───────────────────────────────────
 
 ROSTER_COLUMNS = ("NAME", "ROLE", "CAN WORK", "AVAILABLE", "HOURS", "SCORE", "EXPERIENCE", "CLOSES", "USUAL",
                   "WANTS", "RELIABILITY")
@@ -563,14 +577,13 @@ ROSTER_HEAD = (
     "ROSTER — one line per person on this draft's roster, the only names to write ({n} people). Columns, \"-\" for "
     "nothing known:\n"
     "  " + " | ".join(ROSTER_COLUMNS) + "\n"
-    "ROLE is their own job code; (manager) marks somebody who counts for the manager rule. CAN WORK is every role "
+    "ROLE is their own job code; (manager) marks somebody who counts for the manager rule. CAN WORK lists the roles "
     "they may be scheduled in — their own, the roles they hold, roles they have worked here on {held}+ shifts and "
-    "stations they hold — and nothing else; a role that needs a certificate they lack is left out. AVAILABLE is "
-    "every day they can work unless it says otherwise: a weekday off, a daypart only, a time window, approved time "
-    "off (all [HARD]), and a day they asked off that the owner has not decided ([SOFT]: avoid it if the day can be "
-    "covered). HOURS: MIN-MAX for the week ([SOFT] minimum, [HARD] maximum), OT where overtime starts below that "
-    "maximum, hours already published in a payroll week this week shares and the room it leaves; \"-\" is the "
-    "restaurant's default — up to {ceiling}h, overtime past {ot}h. SCORE is the owner's 1-5 "
+    "stations they hold (a role that needs a certificate they lack is left out). AVAILABLE lists what limits "
+    "their days — a weekday off, a daypart only, a time window, approved time off, and \"asked off\": a day they "
+    "asked off that the owner has not decided; \"-\" is every day. HOURS: MIN-MAX for the week, OT where overtime "
+    "starts below that maximum, hours already published in a payroll week this week shares and the room it "
+    "leaves; \"-\" is the restaurant's default — up to {ceiling}h, overtime past {ot}h. SCORE is the owner's 1-5 "
     "rating (\"-\" unrated: unknown, neither strong nor weak — never a reason to leave them off). EXPERIENCE: "
     "experienced ({exp}+ shifts here or marked by the owner) or developing (under {dev}): put a developing person on "
     "with an experienced hand of their role, never two developing together on a busy shift. CLOSES: the roles they "
@@ -582,7 +595,7 @@ ROSTER_HEAD = (
 
 def roster_table(people: list, held_shifts: int = 8, ceiling: float = 40.0, ot: float = 40.0) -> str:
     """The ROSTER block: one line per person, every column filled from the
-    person's facts (labor._roster_people), nobody dropped by a cap (PR-33).
+    person's facts (labor._roster_people), nobody dropped by a cap.
     `people` is [{name, role, manager, can_work, available, hours, score,
     experience, closes, usual, wants, reliability}] — each a short string
     or empty."""
@@ -626,14 +639,14 @@ def _marker(ttl):
 
 def request_content(static: str, week: str, request: str, ttls=None) -> list:
     """The user message's content: the three parts as text blocks, a cache
-    breakpoint after the standing instructions and after the week (PR-26,
-    P-23) — at most two of the four the API allows. The date slices of one
-    generation and its missing-day retries share the first two blocks byte
-    for byte; a department call shares only the first (its roster and rules
-    are its own), and the quality gate's rewrite only the first (its manager
-    plan is re-made for its dates). `ttls` — (standing, week), each "5m",
-    "1h" or None for no breakpoint (cache_ttls) — defaults to a 5-minute
-    breakpoint on both."""
+    breakpoint after the standing instructions and after the week — at most
+    two of the four the API allows. The date slices of one generation and
+    its missing-day retries share the first two blocks byte for byte; a
+    department call shares only the first (its roster and rules are its
+    own), and the quality gate's rewrite only the first (its manager plan is
+    re-made for its dates). `ttls` — (standing, week), each "5m", "1h" or
+    None for no breakpoint (cache_ttls) — defaults to a 5-minute breakpoint
+    on both."""
     t0, t1 = ttls if ttls is not None else ("5m", "5m")
     out = []
     for text, ttl in ((static, t0), (week, t1)):
@@ -645,7 +658,7 @@ def request_content(static: str, week: str, request: str, ttls=None) -> list:
     return out
 
 
-# ── when a cache breakpoint pays (schedule re-audit 10/4/26 PROMPT-8) ──────
+# ── when a cache breakpoint pays ──────
 #
 # A cache entry lives CACHE_TTL_SECONDS from the start of the request that
 # wrote or last read it, and a schedule call that thinks runs for minutes:

@@ -241,9 +241,18 @@ def test_the_owner_is_asked_which_days_and_hours_the_managers_work():
 
 def test_a_salaried_manager_stops_at_their_weekly_cap_never_84h():
     one = {"erik": "Owner"}
+    # The 55h DEFAULT is the restaurant's policy: in the plan's last round
+    # (no manager could cover inside the limits) the manager on the floor
+    # outranks it, as it outranks an hourly manager's 40h (LOGIC-1; sched
+    # re-audit 10/11/26 STRESS-18 — a one-manager week was left unmanaged).
     plan = sk.plan_manager_coverage(_c(managers=one, roster_names=["Erik", "Ana"], active={"erik", "ana"}), WEEK)
-    assert plan["hours"]["Erik"] <= sk.SALARIED_WEEK_CAP
-    assert any("past their 55h week" in u["why"] for u in plan["uncovered"])
+    assert plan["hours"]["Erik"] > sk.SALARIED_WEEK_CAP
+    assert any("scheduling limits" in r["_pin_reason"] for r in plan["rows"])
+    # A cap the owner SET is theirs: never passed.
+    capped = sk.plan_manager_coverage(_c(managers=one, roster_names=["Erik", "Ana"], active={"erik", "ana"},
+                                         salaried_cap=55), WEEK)
+    assert capped["hours"]["Erik"] <= sk.SALARIED_WEEK_CAP
+    assert any("55h" in u["why"] for u in capped["uncovered"])
     own = sk.plan_manager_coverage(_c(managers=one, hours_limits={"erik": (None, 60)}), WEEK)
     assert sk.SALARIED_WEEK_CAP < own["hours"]["Erik"] <= 60
     shop = sk.plan_manager_coverage(_c(managers=one, salaried_cap=45), WEEK)
@@ -273,7 +282,9 @@ def test_scarce_hours_cover_every_close_before_any_morning():
     cover is named with why. An owner is not held to days in a row
     (schedule_rules.hours_rules_apply, 10/7/26), so Erik closes all seven;
     an hourly manager stops at six."""
-    plan = sk.plan_manager_coverage(_c(managers={"erik": "Owner"}), WEEK)
+    # Hours made scarce by a 55h cap the owner set (the default gives way
+    # to the manager rule, STRESS-18).
+    plan = sk.plan_manager_coverage(_c(managers={"erik": "Owner"}, salaried_cap=55), WEEK)
     assert plan["uncovered"]
     for u in plan["uncovered"]:
         assert u["start"] == _window(plan, u["date"])[0], u          # a morning (or the whole day), never the close
@@ -471,7 +482,12 @@ def test_the_rules_block_states_the_rule_at_its_rank():
     block = sr.prompt_block(c)
     line = next(ln for ln in block.splitlines() if "NON-NEGOTIABLE" in ln)
     assert "above every other rule" not in line
-    assert "PRIORITIES 1a" in line and "gives way only to a manager's own availability, time off" in line
+    assert "PRIORITIES 1a" in line
+    # What the rule gives way to is said once, in PRIORITIES 1a itself
+    # (re-audit 10/11/26 AI-15: it was restated here a third time).
+    import schedule_prompt as sp
+    assert "gives way only to a manager's own availability" not in line
+    assert "It gives way only to a manager's own availability" in sp.PRIORITIES
     # the acting manager is named once, on its own line, with the date as the
     # owner reads it (schedule_rules._acting_prompt_lines, F1)
     assert "Somebody standing in as the manager counts on their dates" in line
@@ -617,7 +633,7 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
     monkeypatch.setattr(labor, "get_client", lambda *a, **k: None)
     monkeypatch.setattr(labor, "model_for", lambda k: "m")
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: se.CHUNK_ROWS_PER_CALL + 40)
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     out = se._generate_in_parts(_ANALYSIS, _history(), [(n, MANAGERS.get(n.lower()) or "Server") for n in ROSTER],
                                 {"tz_name": None, "week_start": "2026-10-05", "closed_dates": [],
                                  "roster": [(n, MANAGERS.get(n.lower()) or "Server") for n in ROSTER],

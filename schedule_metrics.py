@@ -1,8 +1,8 @@
 """
 schedule_metrics.py — what each schedule generation cost and what the
-model's rows were worth (scheduler audit 10/10/26: AI-2's headline metric,
-the measurement half of AI-23, the stage attribution the evaluation plan
-asks for, and the post-model context the golden eval set replays — RM-1).
+model's rows were worth (the headline metric, the measurement half of the
+role-not-held finding, the stage attribution the evaluation plan asks for, and the
+post-model context the golden eval set replays).
 
 One row a finished generation (a week, an owner's redo, the gate's fill or
 rewrite), in schedule_generation_metrics:
@@ -16,7 +16,7 @@ rewrite), in schedule_generation_metrics:
   * by_stage — which repair stage changed, trimmed, staggered or added how
     many rows (the repair loop's own records).
   * role_violations — model rows in a role the person does not hold
-    (`role_not_held`, AI-23: measured here before any schema change).
+    (`role_not_held`: measured here before any schema change).
   * seconds — the generation's model seconds and its whole wall clock.
   * context_z — the post-model context the job scored the rows in (the
     week's figures, the Constraints, the quality signals, the requirements,
@@ -29,7 +29,7 @@ rewrite), in schedule_generation_metrics:
 A week is ACCEPTED when the owner published it (a schedule_history row of
 the same restaurant and week with published_at). summary() reads cost per
 accepted week — every generation's cost in the window over the weeks that
-were published — and p50/p95 seconds: AI-2's headline, so a saving that
+were published — and p50/p95 seconds: the headline, so a saving that
 makes owners redo more is not counted as a saving.
 
 The table is created at boot (init_schedule_metrics, from models.init_db)
@@ -38,6 +38,11 @@ eval copies what it needs into its own retention-exempt store.
 """
 import json
 import zlib
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -148,14 +153,14 @@ def by_stage(loop) -> dict:
 
 def role_violations(model_rows, c) -> int:
     """How many of the model's rows put a person in a role they do not hold
-    (schedule_rules' role_not_held — AI-23's measurement)."""
+    (schedule_rules' role_not_held — its measurement)."""
     if c is None or not model_rows:
         return 0
     try:
         import schedule_rules as _sr
         return sum(1 for v in _sr.violations(model_rows, c) if v.get("kind") == "role_not_held")
     except Exception as e:
-        print(f"[schedule_metrics] role check skipped: {e!r}")
+        _degraded(f"role check skipped: {e!r}", e)
         return 0
 
 
@@ -221,7 +226,7 @@ def snapshot(result, constraints, restaurant=None, close_times=None, role_buffer
     try:
         enc = _scrub(enc, guest_names_in(json.dumps(enc, default=str)[:200000]))
     except Exception as e:
-        print(f"[schedule_metrics] context not scrubbed, not kept: {e!r}")
+        _degraded(f"context not scrubbed, not kept: {e!r}", e)
         return None
     return zlib.compress(json.dumps(enc, default=str).encode("utf-8", "replace"))
 
@@ -320,12 +325,16 @@ def summary(restaurant_id=None, days=90, db_path=None) -> dict:
             "by_stage": stages}
 
 
-def context_for(generation_id=None, history_id=None, db_path=None):
+def context_for(generation_id=None, history_id=None, db_path=None, kind=None):
     """The newest stored context blob of a generation (or of a history row's
-    generation), for schedule_eval.freeze."""
+    generation — of its pass of `kind`, when named: the one the job saved),
+    for schedule_eval.freeze and the queued learning ablation."""
     conn = get_conn(db_path)
     try:
-        if generation_id:
+        if kind and history_id:
+            r = conn.execute("SELECT context_z FROM schedule_generation_metrics WHERE history_id=? AND kind=? "
+                             "AND context_z IS NOT NULL ORDER BY id DESC LIMIT 1", (history_id, kind)).fetchone()
+        elif generation_id:
             r = conn.execute("SELECT context_z FROM schedule_generation_metrics WHERE generation_id=? "
                              "AND context_z IS NOT NULL ORDER BY id DESC LIMIT 1", (generation_id,)).fetchone()
         else:

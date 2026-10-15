@@ -305,7 +305,7 @@ def active_lockouts(db_path=DB_PATH) -> list:
     try:
         since = _utc(datetime.now(timezone.utc) - timedelta(hours=24))
         rows = conn.execute(
-            "SELECT key, kind, MAX(attempted_at) AS last_at FROM login_attempts "
+            "SELECT key, MIN(kind) AS kind, MAX(attempted_at) AS last_at FROM login_attempts "
             "WHERE kind IN ('account', 'account_ip') AND attempted_at >= ? GROUP BY key ORDER BY last_at DESC",
             (since,)).fetchall()
         names = set()
@@ -529,11 +529,66 @@ import threading as _threading
 _admin_hits_lock = _threading.Lock()
 
 
+# Counts kept under this salt: reset_admin_rate_limits() (tests) starts a
+# fresh one instead of touching the database.
+_admin_salt = ""
+
+
 def admin_request_allowed(key, is_write=False, now=None):
     """(allowed, retry_after_seconds) for one more /admin request on this
-    session. `key` identifies the session (a prefix of its token hash)."""
+    session. `key` identifies the session (a prefix of its token hash).
+
+    Counted in the database (`admin_request_hits`, a sliding-window counter
+    over minute buckets — blind re-audit 10/11/26 ARCH-26/SCALE-23): the
+    ceiling was a dict in each process, so N gunicorn workers allowed N
+    times it. When the table cannot be reached, this process's own window
+    counts (the fallback), never nothing."""
     import time as _time
-    now = _time.monotonic() if now is None else now
+    now = _time.time() if now is None else float(now)
+    try:
+        return _admin_allowed_db(_admin_salt + str(key), bool(is_write), now)
+    except Exception:
+        return _admin_allowed_memory(key, is_write, now)
+
+
+def _admin_allowed_db(key, is_write, now):
+    """The shared count: this minute's requests plus the last minute's,
+    weighted by how much of it is still inside the 60-second window."""
+    import models
+    win = int(now // _ADMIN_WINDOW_SECONDS)
+    into = (now - win * _ADMIN_WINDOW_SECONDS) / _ADMIN_WINDOW_SECONDS
+    conn = models.get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = {r["win"]: r for r in conn.execute(
+            "SELECT win, requests, writes FROM admin_request_hits WHERE key=? AND win IN (?,?)",
+            (key, win, win - 1)).fetchall()}
+        cur, prev = rows.get(win), rows.get(win - 1)
+        weight = 1.0 - into
+        reqs = (cur["requests"] if cur else 0) + (prev["requests"] if prev else 0) * weight
+        writes = (cur["writes"] if cur else 0) + (prev["writes"] if prev else 0) * weight
+        if reqs >= ADMIN_REQUESTS_PER_MINUTE or (is_write and writes >= ADMIN_WRITES_PER_MINUTE):
+            conn.rollback()
+            return False, max(1, int((win + 1) * _ADMIN_WINDOW_SECONDS - now) + 1)
+        conn.execute("INSERT INTO admin_request_hits (key, win, requests, writes) VALUES (?,?,1,?) "
+                     "ON CONFLICT(key, win) DO UPDATE SET requests=admin_request_hits.requests+1, "
+                     "writes=admin_request_hits.writes+excluded.writes",
+                     (key, win, 1 if is_write else 0))
+        conn.execute("DELETE FROM admin_request_hits WHERE win < ?", (win - 2,))
+        conn.commit()
+        return True, 0
+    except BaseException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+def _admin_allowed_memory(key, is_write, now):
+    """The fallback window, in this process only."""
     cutoff = now - _ADMIN_WINDOW_SECONDS
     with _admin_hits_lock:
         hits = [h for h in _admin_hits.get(key, ()) if h[0] > cutoff]
@@ -553,7 +608,11 @@ def admin_request_allowed(key, is_write=False, now=None):
 
 
 def reset_admin_rate_limits():
-    """Tests, and nothing else."""
+    """Tests, and nothing else: a fresh salt (earlier counts are not read
+    again) and an empty fallback window."""
+    global _admin_salt
+    import uuid as _uuid
+    _admin_salt = _uuid.uuid4().hex[:8] + ":"
     with _admin_hits_lock:
         _admin_hits.clear()
 

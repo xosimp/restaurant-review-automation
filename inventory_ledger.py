@@ -831,7 +831,7 @@ def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> 
             "       (SELECT COUNT(*) FROM recipe_ingredients ri WHERE ri.menu_item_id=s.menu_item_id) AS n "
             "FROM menu_item_sales s JOIN menu_items m ON m.id = s.menu_item_id "
             "WHERE s.restaurant_id=? AND s.business_date>=? "
-            "GROUP BY s.menu_item_id ORDER BY qty DESC",
+            "GROUP BY s.menu_item_id, m.name ORDER BY qty DESC",
             (restaurant_id, window_start),
         ).fetchall()
     finally:

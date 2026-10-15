@@ -17,26 +17,34 @@ idempotency_key (UNIQUE: enqueueing the same work twice returns the first
 row), stage_checkpoint (JSON: the last stage reached and what a resume
 needs), external_id (the `async_jobs` id the owner polls), the result.
 
-CLAIM (claim): one write transaction (`BEGIN IMMEDIATE` on SQLite; on
-Postgres the dialect layer turns it into an advisory transaction lock —
-db_dialect), so two consumers can never take one row:
-  * a group's global concurrency — a COUNT of its rows running with a live
-    lease, in the database, so N processes share one bound (the in-memory
-    GenerationSlots multiplied with every process — SCALE-24, ARCH-22).
-    The generation group's bound is QUEUE_GENERATION_CONCURRENCY, capped by
-    what the model gateway's token budget can carry (model_gateway);
+CLAIM (claim): a plain read first — nothing claimable, or no room, returns
+without the write lock (blind re-audit 10/11/26 SCALE-32) — then one write
+transaction (`BEGIN IMMEDIATE` on SQLite; on Postgres the dialect layer
+turns it into an advisory transaction lock — db_dialect), so two consumers
+can never take one row:
+  * a group's global bounds, COUNTs of its rows running with a live lease,
+    in the database, so N processes share them (SCALE-24, ARCH-22): its CPU
+    slots (group_concurrency — QUEUE_GENERATION_CONCURRENCY for generation,
+    capped by what the model gateway's token budget can carry) and its rows
+    in flight (max_running). A row waiting on a model answer gives its CPU
+    slot back for the wait (model_wait, SCALE-1);
   * at most one running job per restaurant in a group (the per-tenant cap);
   * class order: interactive (an owner waiting, p95 < 2 min to start), then
     scheduled (earliest deadline first: the auto-draft's "drafted by" time),
-    then bulk (learners);
+    then bulk (learners) — each class read on its own over the WHOLE queue
+    (SCALE-2: a window of the oldest 500 rows hid a press behind any
+    backlog) — with a CPU slot kept for owners' presses and one for the
+    auto-draft while drafts wait (reservations, SCALE-28);
   * within a class, weighted fair queueing across tenants (`job_tenants`
-    virtual time — a tenant's weight grows with its locations, slowly, so a
-    group is served more than a single but never starves one) gated by a
-    token bucket per tenant per class: a tenant that spent its burst waits
-    behind tenants that have not, unless nobody else is waiting (the queue
-    is work-conserving).
-A running row whose lease ran out (its process died) is claimable again —
-`attempts` counts tries, and a job past `max_attempts` fails.
+    virtual time, ranked never below the class's system virtual time —
+    SCALE-4; an organization weighs n for per-restaurant work and
+    1 + log2(n), at most 4, for presses — SCALE-3) gated by a token bucket
+    per tenant per class (per restaurant for the scheduled class): a tenant
+    that spent its burst waits behind tenants that have not, unless nobody
+    else is waiting (the queue is work-conserving).
+A running row whose lease ran out (its process died) is claimable again,
+ahead of new rows of its class — `attempts` counts tries, and a job past
+`max_attempts` fails.
 
 RUN (run_one): the handler for the row's kind is reached BY NAME (HANDLERS —
 "module:function", resolved lazily; registry-driven dispatch, CLAUDE.md),
@@ -47,16 +55,20 @@ generation's slot skip, the model gateway's class). A lease keeper renews
 the lease while it runs.
 
 CONSUMERS. mode():
-  "inprocess" (the default) — the web process consumes its own queue on
-    bounded pools (kick(); one per group) — one process, as production has
-    always run, but every unit of work is a durable row;
-  "worker" (QUEUE_WORKER=1) — worker.py consumes, as a second process in the
-    SAME Railway service (docs/ops/RAILWAY_SCHEDULER_SPLIT.md — never a
-    separate service: the volume cannot be shared). The web process only
-    enqueues, and consumes after all if no worker has beaten its heartbeat
-    for WORKER_STALE_SECONDS (a worker that never started never strands an
-    owner's press);
-  "off" (JOB_QUEUE=0) — the old in-process paths, as before this module.
+  "worker" (the default; blind re-audit 10/11/26 SCALE-17) — the queue
+    worker process consumes: `worker.py --queue`, started and supervised by
+    gunicorn's master (gunicorn.conf.py) in the SAME container, so the
+    generation CPU and its memory leave the web process's GIL; it recycles
+    itself after QUEUE_WORKER_MAX_JOBS rows or QUEUE_WORKER_MAX_RSS_MB
+    (docs/ops/RAILWAY_SCHEDULER_SPLIT.md — never a separate service: the
+    volume cannot be shared). The web process only enqueues, and consumes
+    after all if no worker has beaten its heartbeat for
+    WORKER_STALE_SECONDS (a worker that never started never strands an
+    owner's press; a local run with no worker consumes in-process);
+  "inprocess" (QUEUE_WORKER=0) — the web process consumes its own queue on
+    bounded pools (kick(); one per group) and no worker is started.
+The queue is the one path (ARCH-10): the JOB_QUEUE=0 in-memory generation
+pool and its GenerationSlots are gone.
 
 DRAIN (shutdown): on SIGTERM / exit a consumer stops claiming and hands its
 running rows back (state queued, lease cleared) so the next process resumes
@@ -72,6 +84,8 @@ import os
 import socket
 import threading
 import time
+
+import db_dialect
 import uuid
 
 log = logging.getLogger("job_queue")
@@ -96,6 +110,13 @@ KINDS = {
     "auto_draft": ("generation", "scheduled", 2),
     "learner": ("bulk", "bulk", 2),
     "email_intake": ("bulk", "bulk", 4),
+    # The owner's notes and staff notes read into typed rules when they are
+    # SAVED, one batched call (owner_rules.queue_read — blind re-audit
+    # 10/11/26 AI-22): never in a generation's critical path.
+    "owner_words_read": ("bulk", "scheduled", 2),
+    # The learning ablation, off the owner's wait (blind re-audit 10/11/26
+    # ARCH-14): research data, one try.
+    "schedule_ablation": ("bulk", "bulk", 1),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -104,6 +125,8 @@ HANDLERS = {
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
     "email_intake": "email_intake:run_queued",
+    "owner_words_read": "owner_rules:run_queued_read",
+    "schedule_ablation": "schedule_job:run_queued_ablation",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -116,10 +139,16 @@ LEASE_SECONDS = int(os.getenv("QUEUE_LEASE_SECONDS", "120"))
 RENEW_SECONDS = max(5, LEASE_SECONDS // 4)
 WORKER_STALE_SECONDS = int(os.getenv("QUEUE_WORKER_STALE_SECONDS", "90"))
 POLL_SECONDS = float(os.getenv("QUEUE_POLL_SECONDS", "2"))
-CANDIDATES = 500
+# The scheduled class's earliest-deadline window (blind re-audit 10/11/26
+# SCALE-2): rows past it have later deadlines, so EDF would not pick them.
+# Interactive and bulk rows are never windowed: every tenant's head is seen.
+CANDIDATES = 200
 # Seconds before a failed try is tried again: try n waits RETRY_BACKOFF[n-1].
 RETRY_BACKOFF = (30, 120, 600)
-# Per-tenant token buckets: (burst, refill per hour) by class.
+# Per-tenant token buckets: (burst, refill per hour) by class. The scheduled
+# class's bucket is per RESTAURANT, never per organization (SCALE-3: a
+# 40-location group shared one 2-token bucket and its auto-drafts expired
+# behind every single restaurant).
 BUCKETS = {
     "interactive": (float(os.getenv("QUEUE_INTERACTIVE_BURST", "6")),
                     float(os.getenv("QUEUE_INTERACTIVE_PER_HOUR", "6"))),
@@ -129,6 +158,11 @@ BUCKETS = {
 }
 # Finished rows are kept this long (ops._RETENTION_DAYS "jobs").
 RETAIN_DAYS = 14
+# A tenant's fairness row unserved this long is forgotten (SCALE-4): it
+# would re-enter at the system virtual time with a full bucket anyway.
+TENANT_IDLE_DAYS = 7
+# The weighted-fair-queueing clock of each class: one job_tenants row.
+SYSTEM_TENANT = "~system"
 
 
 def _int_env(name, default):
@@ -138,37 +172,137 @@ def _int_env(name, default):
         return default
 
 
+def _int_env0(name, default):
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
 def group_concurrency(grp) -> int:
-    """How many rows of `grp` may run at once across EVERY process (a count
-    of claimed rows, never a per-process pool). The generation group is also
-    held to what the organisation's token budget can carry (model_gateway.
+    """How many rows of `grp` may be doing CODE work at once across EVERY
+    process (a count of claimed rows, never a per-process pool) — its CPU
+    slots. A row waiting on a model answer gives its slot back while it
+    waits (model_wait — blind re-audit 10/11/26 SCALE-1) and counts only
+    against max_running. The generation group is also held to what the
+    organisation's token budget can carry (model_gateway.
     max_concurrent_generations — no cap when the budget is not configured)."""
     if grp == "generation":
         import schedule_engine
-        n = _int_env("QUEUE_GENERATION_CONCURRENCY", schedule_engine.SCHEDULE_GEN_WORKERS)
-        try:
-            import model_gateway
-            cap = model_gateway.max_concurrent_generations()
-            if cap:
-                n = max(1, min(n, int(cap)))
-        except Exception:
-            pass
+        # Sized to the cores by default (blind re-audit 10/11/26 SCALE-16):
+        # each generation's solves run SCHEDULE_CPSAT_WORKERS threads, and
+        # more of them at once than the cores can carry end on the wall
+        # clock instead of their work budget. An explicit
+        # QUEUE_GENERATION_CONCURRENCY is the operator's and is kept.
+        n = _int_env("QUEUE_GENERATION_CONCURRENCY",
+                     min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
+        cap = _gateway_streams()
+        if cap:
+            n = max(1, min(n, int(cap)))
         return n
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
+def cpu_cores() -> int:
+    """The cores this container may use: the cgroup's CPU quota (v2
+    cpu.max, else v1 cfs quota/period) when one is set, else the CPUs this
+    process may run on — os.cpu_count() alone reads the HOST's cores."""
+    quota = None
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            q, p = (f.read().split() + ["100000"])[:2]
+        if q != "max":
+            quota = float(q) / float(p)
+    except Exception:
+        try:
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+                q = float(f.read().strip())
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+                p = float(f.read().strip())
+            if q > 0 and p > 0:
+                quota = q / p
+        except Exception:
+            quota = None
+    try:
+        n = len(os.sched_getaffinity(0))
+    except Exception:
+        n = os.cpu_count() or 1
+    if quota:
+        n = min(n, max(1, int(quota)))
+    return max(1, int(n))
+
+
+def cpu_generation_slots() -> int:
+    """Generations whose solves the cores carry at once: the cores over
+    each solve's threads (schedule_cpsat.WORKERS), at least one."""
+    try:
+        import schedule_cpsat
+        per = max(1, int(schedule_cpsat.WORKERS))
+    except Exception:
+        per = 4
+    return max(1, cpu_cores() // per)
+
+
+def _gateway_streams():
+    try:
+        import model_gateway
+        return model_gateway.max_concurrent_generations()
+    except Exception:
+        return None
+
+
+def max_running(grp) -> int:
+    """How many rows of `grp` may be claimed at once across every process,
+    code work and model waits together (SCALE-1): the CPU slots plus the
+    rows streaming a model answer. QUEUE_<GROUP>_MAX_RUNNING, else three
+    times the CPU slots for the generation group (twice for bulk); under a
+    configured token budget, never more streams than it carries. This is
+    also the size of a consumer's thread pool for the group."""
+    slots = group_concurrency(grp)
+    n = _int_env(f"QUEUE_{str(grp).upper()}_MAX_RUNNING", slots * (3 if grp == "generation" else 2))
+    if grp == "generation":
+        cap = _gateway_streams()
+        if cap:
+            n = min(n, slots + int(cap))
+    return max(slots, n)
+
+
+def reservations(grp) -> dict:
+    """The CPU slots a class keeps for itself in `grp` (SCALE-28): one for
+    owners' presses always (a press never waits behind drafts), and one for
+    the auto-draft while drafts are waiting (a draft always progresses).
+    QUEUE_INTERACTIVE_RESERVED / QUEUE_SCHEDULED_RESERVED; each at most the
+    slots less one, so with one slot there is no reservation, only order."""
+    slots = group_concurrency(grp)
+    if grp != "generation" or slots <= 1:
+        return {}
+    return {"interactive": min(_int_env0("QUEUE_INTERACTIVE_RESERVED", 1), slots - 1),
+            "scheduled": min(_int_env0("QUEUE_SCHEDULED_RESERVED", 1), slots - 1)}
+
+
 def mode() -> str:
-    """"off" (JOB_QUEUE=0: the old direct paths), "worker" (QUEUE_WORKER=1:
-    worker.py consumes) or "inprocess" (the default: this process consumes)."""
-    if os.getenv("JOB_QUEUE", "1").strip().lower() in ("0", "false", "off", "no"):
-        return "off"
-    if os.getenv("QUEUE_WORKER", "").strip().lower() in ("1", "true", "on", "yes"):
-        return "worker"
-    return "inprocess"
+    """Who consumes the queue. "worker" (the default, QUEUE_WORKER unset or
+    1 — blind re-audit 10/11/26 SCALE-17): the queue worker process
+    (worker.py --queue, started beside gunicorn by gunicorn.conf.py)
+    consumes, and the web process consumes only while no worker has beaten
+    its heartbeat (this_process_consumes — a press is never stranded, and a
+    local `python3 hosted_dashboard.py` with no worker consumes in-process
+    as before). "inprocess" (QUEUE_WORKER=0): the web process consumes its
+    own queue and no worker process is started — the rollback.
+
+    The queue is the one path for generations, auto-drafts and the nightly
+    learners (ARCH-10): the JOB_QUEUE=0 in-memory paths are gone."""
+    if os.getenv("QUEUE_WORKER", "").strip().lower() in ("0", "false", "off", "no"):
+        return "inprocess"
+    return "worker"
 
 
-def enabled() -> bool:
-    return mode() != "off"
+def worker_process_wanted() -> bool:
+    """Whether gunicorn's master starts the queue worker process
+    (gunicorn.conf.py): in worker mode, unless QUEUE_WORKER_PROCESS=0 (a
+    worker.py started some other way — the documented sh -c command)."""
+    return mode() == "worker" and os.getenv("QUEUE_WORKER_PROCESS", "1").strip().lower() not in (
+        "0", "false", "off", "no")
 
 
 # ── schema (boot only) ──────────────────────────────────────────────────────
@@ -192,6 +326,7 @@ _DDL = (
         lease_owner      TEXT,
         lease_until      REAL,
         stage_checkpoint TEXT,
+        phase            TEXT,
         result_json      TEXT,
         error            TEXT,
         enqueued_at      REAL NOT NULL,
@@ -200,6 +335,13 @@ _DDL = (
         created_at       TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
     "CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(grp, state, not_before)",
+    # The claim's per-class reads (blind re-audit 10/11/26 SCALE-2, SCALE-32):
+    # each tenant's head of a class, the scheduled class by deadline, and the
+    # rows past their deadline — each a SEARCH over its own class, never a
+    # scan of the oldest rows of every class.
+    "CREATE INDEX IF NOT EXISTS idx_jobs_class_tenant ON jobs(grp, priority_class, state, tenant_key, id)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_class_deadline ON jobs(grp, priority_class, state, deadline)",
+    "CREATE INDEX IF NOT EXISTS idx_jobs_deadline ON jobs(grp, state, deadline)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_rid ON jobs(restaurant_id, state)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_external ON jobs(external_id)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)",
@@ -243,9 +385,56 @@ def init_job_queue(db_path=None):
     try:
         for stmt in _DDL:
             conn.execute(stmt)
+        # A running row waiting on the model gateway's next minute (re-audit
+        # 10/11/26 SCALE-25): until this time it does not count against its
+        # group's concurrency (parked).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "parked_until" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN parked_until REAL")
         conn.commit()
     finally:
         conn.close()
+
+
+@contextlib.contextmanager
+def parked(seconds, db_path=None):
+    """`with parked(30): sleep(30)` — the running queue job of this thread
+    gives up its group slot while it waits (the model gateway's wait for the
+    next minute, SCALE-25): claim() does not count it toward the group's
+    concurrency until `seconds` from now, so another generation can do its
+    code work instead of the slot sitting idle. Its lease, its tenant's
+    one-at-a-time rule and everything else are unchanged; the slot is taken
+    back when the wait ends (a claim made meanwhile may run one over the
+    bound for that wait — the bound is the model's tokens, which the waiting
+    call is not spending). Outside a queue job it does nothing."""
+    job = current()
+    if job is None or job.get("id") is None:
+        yield
+        return
+    def _set(value):
+        try:
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE jobs SET parked_until=? WHERE id=? AND state='running'", (value, int(job["id"])))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("job %s not parked: %s", job.get("id"), e)
+    grp = job.get("grp")
+    _set(time.time() + float(seconds or 0))
+    with _pools_lock:
+        _parked_n[grp] = _parked_n.get(grp, 0) + 1
+    try:
+        try:
+            kick(grp, db_path=db_path)          # let a waiting row use the slot
+        except Exception as e:
+            log.warning("no drain started beside parked job %s: %s", job.get("id"), e)
+        yield
+    finally:
+        with _pools_lock:
+            _parked_n[grp] = max(0, _parked_n.get(grp, 0) - 1)
+        _set(None)
 
 
 # ── the job a thread is running ─────────────────────────────────────────────
@@ -313,7 +502,9 @@ def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempot
     now = time.time()
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # Enqueues of one kind serialise with each other (its idempotency
+        # keys), never with claims or other kinds (SCALE-12).
+        db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         if idempotency_key:
             row = conn.execute("SELECT id FROM jobs WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
             if row:
@@ -334,6 +525,7 @@ def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempot
         raise
     finally:
         conn.close()
+    _wake.set()
     if wake:
         kick(grp, db_path=db_path)
     return qid, True
@@ -351,7 +543,7 @@ def enqueue_many(kind, items, priority_class=None, wake=True, db_path=None) -> i
     created = 0
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         tenants = {}
         for it in items:
             rid = it.get("restaurant_id")
@@ -371,27 +563,73 @@ def enqueue_many(kind, items, priority_class=None, wake=True, db_path=None) -> i
         raise
     finally:
         conn.close()
+    if created:
+        _wake.set()
     if wake and created:
         kick(grp, db_path=db_path)
     return created
 
 
 # ── claim ───────────────────────────────────────────────────────────────────
+#
+# Blind re-audit 10/11/26 (SCALE-2, SCALE-3, SCALE-4, SCALE-28, SCALE-32).
+# The claim used to rank the OLDEST 500 rows of a group by id, then apply
+# class priority among them: behind 9,000 queued auto-drafts an owner's
+# press was not claimed in 2,000 claims. Each class is now read on its own,
+# best class first, with indexed reads over the WHOLE queue:
+#   * interactive and bulk — every tenant's oldest claimable row (one
+#     GROUP BY over idx_jobs_class_tenant), ordered in SQL by (its bucket
+#     has a token, its effective virtual time, id): weighted fair queueing
+#     over every tenant with work, never a window of the oldest rows;
+#   * scheduled — earliest deadline first over its own deadline index
+#     (CANDIDATES rows: any row past them has a later deadline), each
+#     restaurant's own bucket deciding (SCALE-3);
+#   * a running row whose lease ran out (its process died) is resumed first
+#     within its class: it holds checkpoints and paid model answers.
+# A class is admitted by the group's CPU slots, its stream bound and the
+# other class's reservation (_admits). With nothing claimable the claim
+# returns after a plain read, never taking the write lock (SCALE-32).
 
-def _bucket(conn, tenant, klass, now):
+def _bucket_key(row, klass):
+    """Whose token bucket a row spends: the restaurant's for the scheduled
+    class (per location, SCALE-3), else its fairness tenant's."""
+    if klass == "scheduled" and row.get("restaurant_id") is not None:
+        return f"r:{int(row['restaurant_id'])}"
+    return row.get("tenant_key") or "platform"
+
+
+def _bucket(conn, key, klass, now):
+    """(tokens now, stored virtual time or None) of one job_tenants row; a
+    tenant never seen has a full bucket and no virtual time."""
     burst, per_hour = BUCKETS.get(klass, BUCKETS["bulk"])
     row = conn.execute("SELECT tokens, refilled_at, vtime FROM job_tenants WHERE tenant_key=? AND klass=?",
-                       (tenant, klass)).fetchone()
+                       (key, klass)).fetchone()
     if row is None:
-        return burst, 0.0
+        return burst, None
     tokens = min(burst, float(row["tokens"]) + (now - float(row["refilled_at"])) * per_hour / 3600.0)
     return tokens, float(row["vtime"] or 0)
 
 
-def _tenant_weight(conn, tenant) -> float:
-    """A tenant's share: an organization with n locations weighs
-    1 + log2(n), at most 4 — served more than a single restaurant, never so
-    much that singles starve behind it."""
+def _system_vtime(conn, klass) -> float:
+    """The class's system virtual time (self-clocked fair queueing, SCALE-4):
+    the start tag of the last row served. A tenant whose own virtual time
+    is behind it — idle a while, or new — is ranked AT it, never below: a
+    long-idle tenant used to keep its old small tag and beat every busy
+    tenant until it caught up, and the busiest restaurants (orgs, weekly
+    planners) lost every contended claim for good."""
+    row = conn.execute("SELECT vtime FROM job_tenants WHERE tenant_key=? AND klass=?",
+                       (SYSTEM_TENANT, klass)).fetchone()
+    return float(row["vtime"] or 0) if row else 0.0
+
+
+def _tenant_weight(conn, tenant, klass="interactive") -> float:
+    """A tenant's share. An organization with n locations weighs n for
+    per-restaurant work — the scheduled auto-drafts and the bulk learners,
+    each location a restaurant's worth of work (SCALE-3: capped at 4, a
+    40-location group was served after every single restaurant and its
+    drafts expired) — and 1 + log2(n), at most 4, for owners' presses:
+    served more than a single restaurant, never so much that singles
+    starve behind it."""
     if not str(tenant).startswith("org:"):
         return 1.0
     try:
@@ -399,99 +637,235 @@ def _tenant_weight(conn, tenant) -> float:
                          (int(str(tenant)[4:]),)).fetchone()["n"]
     except Exception:
         n = 1
-    return min(4.0, 1.0 + math.log2(max(1, int(n or 1))))
+    n = max(1, int(n or 1))
+    if klass in ("scheduled", "bulk"):
+        return float(n)
+    return min(4.0, 1.0 + math.log2(n))
 
 
-def _choose(conn, cands, now):
-    """The row to run among claimable `cands` (all one group): the best
-    class present, then — interactive and bulk — the tenant with tokens and
-    the lowest virtual time, its oldest row; scheduled — earliest deadline
-    first, ties by tenant fairness."""
-    best_rank = min(_CLASS_RANK.get(c["priority_class"], 2) for c in cands)
-    klass = CLASSES[best_rank]
-    pool = [c for c in cands if _CLASS_RANK.get(c["priority_class"], 2) == best_rank]
-    tenants = {}
-    for c in pool:
-        t = c["tenant_key"] or "platform"
-        if t not in tenants:
-            tokens, vt = _bucket(conn, t, klass, now)
-            tenants[t] = (tokens >= 1.0, vt)
-    if klass == "scheduled":
-        def key(c):
-            ok, vt = tenants[c["tenant_key"] or "platform"]
-            return (0 if ok else 1, c["deadline"] if c["deadline"] is not None else float("inf"), vt, c["id"])
-    else:
-        def key(c):
-            ok, vt = tenants[c["tenant_key"] or "platform"]
-            return (0 if ok else 1, vt, c["id"])
-    return min(pool, key=key), klass
-
-
-def _serve(conn, tenant, klass, now):
-    """Spend a token and advance the tenant's virtual time by 1/weight."""
-    burst, per_hour = BUCKETS.get(klass, BUCKETS["bulk"])
-    tokens, vt = _bucket(conn, tenant, klass, now)
-    floor = conn.execute("SELECT MIN(vtime) AS v FROM job_tenants WHERE klass=?", (klass,)).fetchone()
-    base = max(vt, float((floor["v"] if floor else 0) or 0))
-    vt2 = base + 1.0 / _tenant_weight(conn, tenant)
+def _put_tenant(conn, key, klass, tokens, now, vtime):
     conn.execute(
         "INSERT INTO job_tenants (tenant_key, klass, tokens, refilled_at, vtime, served_at) VALUES (?,?,?,?,?,?) "
         "ON CONFLICT(tenant_key, klass) DO UPDATE SET tokens=excluded.tokens, refilled_at=excluded.refilled_at, "
         "vtime=excluded.vtime, served_at=excluded.served_at",
-        (tenant, klass, max(0.0, tokens - 1.0), now, vt2, now))
+        (key, klass, float(tokens), now, float(vtime), now))
+
+
+def _serve(conn, row, klass, now):
+    """Spend a token from the row's bucket and advance its tenant's virtual
+    time: start = max(own, system), finish = start + 1/weight; the system
+    virtual time moves to the start served (never back)."""
+    burst = BUCKETS.get(klass, BUCKETS["bulk"])[0]
+    tenant = row.get("tenant_key") or "platform"
+    bkey = _bucket_key(row, klass)
+    system = _system_vtime(conn, klass)
+    tokens, vt = _bucket(conn, tenant, klass, now)
+    start = max(system, vt if vt is not None else system)
+    finish = start + 1.0 / _tenant_weight(conn, tenant, klass)
+    if bkey == tenant:
+        _put_tenant(conn, tenant, klass, max(0.0, tokens - 1.0), now, finish)
+    else:
+        # An organization's location: the tenant keeps the virtual time, the
+        # location its own bucket.
+        _put_tenant(conn, tenant, klass, burst, now, finish)
+        btokens, _bvt = _bucket(conn, bkey, klass, now)
+        _put_tenant(conn, bkey, klass, max(0.0, btokens - 1.0), now, 0.0)
+    _put_tenant(conn, SYSTEM_TENANT, klass, 0.0, now, max(system, start))
+
+
+# `+not_before` (a unary plus, valid on SQLite and Postgres alike) keeps the
+# planner off idx_jobs_claim for these reads: with no ANALYZE statistics it
+# chose that index's range on not_before over the per-class index and then
+# sorted every queued row of the group (2.7 ms at 9,000 rows, against 0.1).
+
+def _busy_clause(busy):
+    """SQL excluding the restaurants that already run a row of the group."""
+    ids = sorted(int(x) for x in busy if x is not None)
+    if not ids:
+        return "", []
+    return " AND (restaurant_id IS NULL OR restaurant_id NOT IN (" + ",".join("?" * len(ids)) + "))", ids
+
+
+def _fair_head(conn, grp, klass, now, busy):
+    """The row weighted fair queueing serves next among EVERY tenant with a
+    claimable row of `klass` (interactive, bulk): each tenant's oldest row,
+    ranked by (its bucket has a token, its effective virtual time, id).
+    Work-conserving: a tenant past its burst still runs when nobody else
+    waits."""
+    _burst, per_hour = BUCKETS.get(klass, BUCKETS["bulk"])
+    system = _system_vtime(conn, klass)
+    excl, ids = _busy_clause(busy)
+    row = conn.execute(
+        "SELECT j.* FROM (SELECT tenant_key AS tk, MIN(id) AS head FROM jobs "
+        "WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=?" + excl +
+        " GROUP BY tenant_key) h JOIN jobs j ON j.id = h.head "
+        "LEFT JOIN job_tenants t ON t.tenant_key = h.tk AND t.klass = ? "
+        "ORDER BY CASE WHEN t.tenant_key IS NULL OR t.tokens + (? - t.refilled_at) * ? / 3600.0 >= 1 "
+        "THEN 0 ELSE 1 END, CASE WHEN t.vtime IS NULL OR t.vtime < ? THEN ? ELSE t.vtime END, j.id LIMIT 1",
+        (grp, klass, now, *ids, klass, now, float(per_hour), system, system)).fetchone()
+    return dict(row) if row else None
+
+
+def _edf_head(conn, grp, now, busy):
+    """The scheduled row to serve: earliest deadline first (rows with no
+    deadline last), the first whose restaurant's bucket has a token — ties
+    on the deadline go to the tenant with the lower virtual time — else,
+    work-conserving, the earliest."""
+    excl, ids = _busy_clause(busy)
+    base = ("SELECT * FROM jobs WHERE grp=? AND priority_class='scheduled' AND state='queued' "
+            "AND +not_before<=?" + excl)
+    rows = [dict(r) for r in conn.execute(base + " AND deadline IS NOT NULL ORDER BY deadline, id LIMIT ?",
+                                          (grp, now, *ids, CANDIDATES)).fetchall()]
+    if len(rows) < CANDIDATES:
+        rows += [dict(r) for r in conn.execute(base + " AND deadline IS NULL ORDER BY id LIMIT ?",
+                                               (grp, now, *ids, CANDIDATES - len(rows))).fetchall()]
+    if not rows:
+        return None
+    system = _system_vtime(conn, "scheduled")
+    tokens = {}
+
+    def has_token(c):
+        k = _bucket_key(c, "scheduled")
+        if k not in tokens:
+            tokens[k] = _bucket(conn, k, "scheduled", now)[0]
+        return tokens[k] >= 1.0
+    for r in rows:
+        if has_token(r):
+            tied = [c for c in rows if c["deadline"] == r["deadline"] and has_token(c)]
+            if len(tied) <= 1:
+                return r
+
+            def vt_of(c):
+                _t, v = _bucket(conn, c.get("tenant_key") or "platform", "scheduled", now)
+                return (max(system, v if v is not None else system), c["id"])
+            return min(tied, key=vt_of)
+    return rows[0]
+
+
+def _occupancy(conn, grp, now):
+    """(rows running with a live lease, {class: rows holding or awaiting a
+    CPU slot}, {restaurant ids running}) of `grp`."""
+    rows = conn.execute("SELECT restaurant_id, priority_class, phase, parked_until FROM jobs WHERE grp=? "
+                        "AND state='running' AND lease_until>?", (grp, now)).fetchall()
+    held = {}
+    for r in rows:
+        # Waiting on a model answer (model_wait) or parked on the gateway's
+        # next minute (parked, SCALE-25): no CPU slot held.
+        if (r["phase"] or "") != "model" and not (r["parked_until"] and r["parked_until"] > now):
+            held[r["priority_class"]] = held.get(r["priority_class"], 0) + 1
+    return len(rows), held, {r["restaurant_id"] for r in rows if r["restaurant_id"] is not None}
+
+
+def _has_work(conn, grp, klass, now) -> bool:
+    return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=? "
+                        "LIMIT 1", (grp, klass, now)).fetchone() is not None
+
+
+def _admits(conn, grp, klass, total, held, now) -> bool:
+    """Whether a row of `klass` may start in `grp` now: the group's rows in
+    flight under max_running, and its CPU slots — less what another class
+    keeps for itself (reservations: owners' presses always, the auto-draft
+    while drafts wait) — not all held (SCALE-28)."""
+    if total >= max_running(grp):
+        return False
+    kept = 0
+    for other, n in reservations(grp).items():
+        if other == klass or n <= 0:
+            continue
+        if other == "interactive" or _has_work(conn, grp, other, now):
+            kept += max(0, n - held.get(other, 0))
+    return sum(held.values()) + kept < group_concurrency(grp)
+
+
+def _maybe_claimable(conn, groups, now) -> bool:
+    """A plain read (no write lock) of whether a claim could take anything
+    (SCALE-32): some group has a claimable row and room for it, or has a
+    queued row past its deadline to expire."""
+    for grp in groups:
+        if conn.execute("SELECT 1 FROM jobs WHERE grp=? AND state='queued' AND attempts=0 AND deadline IS NOT NULL "
+                        "AND deadline<? LIMIT 1", (grp, now)).fetchone():
+            return True
+        if not conn.execute("SELECT 1 FROM jobs WHERE grp=? AND ((state='queued' AND not_before<=?) OR "
+                            "(state='running' AND lease_until<=?)) LIMIT 1", (grp, now, now)).fetchone():
+            continue
+        total, held, _busy = _occupancy(conn, grp, now)
+        if total < max_running(grp) and sum(held.values()) < group_concurrency(grp):
+            return True
+    return False
+
+
+def _expire_overdue(conn, grp, now) -> list:
+    """Queued rows of `grp` that never started before their deadline:
+    expired (their EXPIRE_HOOKS run after the commit). Bounded per claim."""
+    out = []
+    for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='queued' AND attempts=0 AND deadline IS NOT NULL "
+                          "AND deadline<? ORDER BY deadline LIMIT ?", (grp, now, CANDIDATES)).fetchall():
+        conn.execute("UPDATE jobs SET state='expired', finished_at=?, error=? WHERE id=? AND state='queued'",
+                     (now, "not started before its deadline", r["id"]))
+        out.append(dict(r))
+    return out
+
+
+def _dead_rows(conn, grp, now, expired) -> list:
+    """Running rows whose lease ran out (their process died): a row on its
+    last try is failed (said); the rest are resumable, oldest first."""
+    out = []
+    for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='running' AND lease_until<=? ORDER BY id LIMIT ?",
+                          (grp, now, CANDIDATES)).fetchall():
+        r = dict(r)
+        if int(r["attempts"] or 0) >= int(r["max_attempts"] or 1):
+            conn.execute("UPDATE jobs SET state='failed', finished_at=?, error=COALESCE(error, ?), "
+                         "lease_owner=NULL, phase=NULL WHERE id=?",
+                         (now, "its process stopped on its last try", r["id"]))
+            expired.append(dict(r, state="failed"))
+            continue
+        out.append(r)
+    return out
 
 
 def claim(worker_id, groups=("generation", "bulk"), db_path=None):
     """The next row this consumer may run, claimed (state running, a lease,
-    attempts + 1) — or None when nothing is claimable within the bounds
-    above. Rows expired unstarted on the way are handed to their kind's
-    EXPIRE_HOOKS after the commit."""
+    attempts + 1, holding a CPU slot) — or None when nothing is claimable
+    within the bounds above. Rows expired unstarted on the way are handed
+    to their kind's EXPIRE_HOOKS after the commit."""
     if _draining.is_set() or (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
         return None                       # draining, or the cutover's write freeze
     now = time.time()
     expired, picked = [], None
     conn = get_conn(db_path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        if not _maybe_claimable(conn, groups, now):
+            return None
+        # A group's bounds (its slots, its rows in flight, one running job a
+        # restaurant) are checked and taken under that group's lock: claims
+        # of other groups, enqueues and every other writer go on
+        # (SCALE-12; on SQLite, BEGIN IMMEDIATE as before).
+        db_dialect.begin_write(conn, lock_now=False)
         for grp in groups:
-            live = conn.execute("SELECT restaurant_id FROM jobs WHERE grp=? AND state='running' AND lease_until>?",
-                                (grp, now)).fetchall()
-            if len(live) >= group_concurrency(grp):
-                continue
-            busy = {r["restaurant_id"] for r in live if r["restaurant_id"] is not None}
-            rows = conn.execute(
-                "SELECT * FROM jobs WHERE grp=? AND ((state='queued' AND not_before<=?) "
-                "OR (state='running' AND lease_until<=?)) ORDER BY id LIMIT ?",
-                (grp, now, now, CANDIDATES)).fetchall()
-            cands = []
-            for r in rows:
-                r = dict(r)
-                if r["state"] == "queued" and r["deadline"] is not None and r["deadline"] < now and not r["attempts"]:
-                    conn.execute("UPDATE jobs SET state='expired', finished_at=?, error=? WHERE id=? "
-                                 "AND state='queued'", (now, "not started before its deadline", r["id"]))
-                    expired.append(r)
+            db_dialect.lock(conn, "jobs", "claim", grp)
+            expired += _expire_overdue(conn, grp, now)
+            dead = _dead_rows(conn, grp, now, expired)
+            total, held, busy = _occupancy(conn, grp, now)
+            for klass in CLASSES:
+                if not _admits(conn, grp, klass, total, held, now):
                     continue
-                if r["state"] == "running" and int(r["attempts"] or 0) >= int(r["max_attempts"] or 1):
-                    # Its process died on its last try: failed, said.
-                    conn.execute("UPDATE jobs SET state='failed', finished_at=?, error=COALESCE(error, ?), "
-                                 "lease_owner=NULL WHERE id=?",
-                                 (now, "its process stopped on its last try", r["id"]))
-                    expired.append(dict(r, state="failed"))
+                chosen = next((r for r in dead if r["priority_class"] == klass
+                               and (r["restaurant_id"] is None or r["restaurant_id"] not in busy)), None)
+                if chosen is None:
+                    chosen = _edf_head(conn, grp, now, busy) if klass == "scheduled" else \
+                        _fair_head(conn, grp, klass, now, busy)
+                if chosen is None:
                     continue
-                if r["restaurant_id"] is not None and r["restaurant_id"] in busy:
-                    continue
-                cands.append(r)
-            if not cands:
-                continue
-            chosen, klass = _choose(conn, cands, now)
-            n = conn.execute(
-                "UPDATE jobs SET state='running', attempts=attempts+1, lease_owner=?, lease_until=?, "
-                "started_at=COALESCE(started_at, ?) WHERE id=? AND (state='queued' OR "
-                "(state='running' AND lease_until<=?))",
-                (worker_id, now + LEASE_SECONDS, now, chosen["id"], now)).rowcount
-            if n == 1:
-                _serve(conn, chosen["tenant_key"] or "platform", klass, now)
-                picked = conn.execute("SELECT * FROM jobs WHERE id=?", (chosen["id"],)).fetchone()
+                n = conn.execute(
+                    "UPDATE jobs SET state='running', attempts=attempts+1, lease_owner=?, lease_until=?, phase=NULL, "
+                    "started_at=COALESCE(started_at, ?) WHERE id=? AND (state='queued' OR "
+                    "(state='running' AND lease_until<=?))",
+                    (worker_id, now + LEASE_SECONDS, now, chosen["id"], now)).rowcount
+                if n == 1:
+                    _serve(conn, chosen, klass, now)
+                    picked = conn.execute("SELECT * FROM jobs WHERE id=?", (chosen["id"],)).fetchone()
+                    break
+            if picked is not None:
                 break
         conn.commit()
     except BaseException:
@@ -508,6 +882,20 @@ def claim(worker_id, groups=("generation", "bulk"), db_path=None):
     job["checkpoint"] = _loads(job.get("stage_checkpoint"))
     job["worker_id"] = worker_id
     return job
+
+
+def prune_tenants(db_path=None) -> int:
+    """Forget fairness rows unserved for TENANT_IDLE_DAYS (SCALE-4): such a
+    tenant re-enters at the system virtual time with a full bucket, exactly
+    as if the row were there. The class clocks are kept."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("DELETE FROM job_tenants WHERE tenant_key<>? AND served_at IS NOT NULL AND served_at<?",
+                         (SYSTEM_TENANT, time.time() - TENANT_IDLE_DAYS * 86400)).rowcount
+        conn.commit()
+        return n or 0
+    finally:
+        conn.close()
 
 
 def _loads(text):
@@ -581,13 +969,14 @@ def complete(job_id, worker_id, result=None, db_path=None) -> bool:
     conn = get_conn(db_path)
     try:
         n = conn.execute("UPDATE jobs SET state='done', result_json=?, finished_at=?, lease_owner=NULL, "
-                         "lease_until=NULL WHERE id=? AND lease_owner=? AND state='running'",
+                         "lease_until=NULL, phase=NULL WHERE id=? AND lease_owner=? AND state='running'",
                          (json.dumps(result, default=str) if result is not None else None, time.time(),
                           int(job_id), worker_id)).rowcount
         conn.commit()
         return n == 1
     finally:
         conn.close()
+        _slot_freed()
 
 
 def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
@@ -601,16 +990,18 @@ def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
         again = retry and int(row["attempts"] or 0) < int(row["max_attempts"] or 1)
         if again:
             wait = RETRY_BACKOFF[min(int(row["attempts"] or 1), len(RETRY_BACKOFF)) - 1]
-            conn.execute("UPDATE jobs SET state='queued', not_before=?, error=?, lease_owner=NULL, lease_until=NULL "
-                         "WHERE id=? AND lease_owner=?",
+            conn.execute("UPDATE jobs SET state='queued', not_before=?, error=?, lease_owner=NULL, lease_until=NULL, "
+                         "phase=NULL WHERE id=? AND lease_owner=?",
                          (time.time() + wait, str(error)[:500], int(job_id), worker_id))
         else:
-            conn.execute("UPDATE jobs SET state='failed', error=?, finished_at=?, lease_owner=NULL, lease_until=NULL "
-                         "WHERE id=? AND lease_owner=?", (str(error)[:500], time.time(), int(job_id), worker_id))
+            conn.execute("UPDATE jobs SET state='failed', error=?, finished_at=?, lease_owner=NULL, lease_until=NULL, "
+                         "phase=NULL WHERE id=? AND lease_owner=?",
+                         (str(error)[:500], time.time(), int(job_id), worker_id))
         conn.commit()
         return "queued" if again else "failed"
     finally:
         conn.close()
+        _slot_freed()
 
 
 def release(job_id, worker_id, db_path=None) -> bool:
@@ -620,12 +1011,150 @@ def release(job_id, worker_id, db_path=None) -> bool:
     conn = get_conn(db_path)
     try:
         n = conn.execute("UPDATE jobs SET state='queued', lease_owner=NULL, lease_until=NULL, not_before=0, "
-                         "attempts=MAX(0, attempts-1) WHERE id=? AND lease_owner=? AND state='running'",
+                         "phase=NULL, attempts=MAX(0, attempts-1) WHERE id=? AND lease_owner=? AND state='running'",
                          (int(job_id), worker_id)).rowcount
         conn.commit()
         return n == 1
     finally:
         conn.close()
+        _slot_freed()
+
+
+# ── a model answer is not code work (blind re-audit 10/11/26 SCALE-1) ──────
+#
+# An owner's press held one of the generation group's two slots for the
+# whole model stream — 4 to 8 minutes of waiting on the network at the
+# measured 120 tok/s with 26-55k thinking tokens — so the platform managed
+# about 15-20 presses an hour, whatever the CPU was doing. A row now gives
+# its CPU slot back while it waits on a model answer (`phase` 'model';
+# ai_utils.create_with_retry enters model_wait around every attempt, so a
+# generation's draft calls, its critic and its note readings all do) and
+# takes one back before its code runs on ('await' while it waits: a row
+# coming back goes ahead of any new claim, a press ahead of a draft). The
+# rows in flight are bounded by max_running; the CPU slots by
+# group_concurrency. Time a generation waits for its slot back is excused
+# from its clock (SLOT_WAIT_HOOKS — schedule_engine.GenerationClock.excuse).
+
+SLOT_WAIT_HOOKS = []
+_slot_cv = threading.Condition()
+_wake = threading.Event()
+
+
+def _slot_freed():
+    """A CPU slot may have come free in this process: wake the rows waiting
+    for one, and the worker loops waiting to claim."""
+    with _slot_cv:
+        _slot_cv.notify_all()
+    _wake.set()
+
+
+class _Phase:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.calls = 0
+
+
+def _set_phase(job, phase, db_path=None) -> bool:
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE jobs SET phase=? WHERE id=? AND lease_owner=? AND state='running'",
+                         (phase, int(job["id"]), job["worker_id"])).rowcount
+        conn.commit()
+        return n == 1
+    finally:
+        conn.close()
+
+
+def _take_slot(job, db_path=None) -> bool:
+    """One try at taking a CPU slot back: True when this row holds one now
+    (or no longer holds its lease — nothing to wait for)."""
+    grp, klass, now = job.get("grp"), job.get("priority_class"), time.time()
+    conn = get_conn(db_path)
+    try:
+        db_dialect.begin_write(conn, "jobs", "claim", grp)     # a slot is the group's, as in claim
+        mine = conn.execute("SELECT phase FROM jobs WHERE id=? AND lease_owner=? AND state='running'",
+                            (int(job["id"]), job["worker_id"])).fetchone()
+        if mine is None:
+            conn.rollback()
+            return True
+        rows = conn.execute("SELECT id, priority_class, phase, parked_until FROM jobs WHERE grp=? "
+                            "AND state='running' AND lease_until>?", (grp, now)).fetchall()
+        busy = sum(1 for r in rows if not r["phase"] and not (r["parked_until"] and r["parked_until"] > now))
+        # A press coming back goes ahead of a draft coming back.
+        ahead = klass != "interactive" and any(r["phase"] == "await" and r["priority_class"] == "interactive"
+                                               and r["id"] != int(job["id"]) for r in rows)
+        if busy < group_concurrency(grp) and not ahead:
+            conn.execute("UPDATE jobs SET phase=NULL WHERE id=?", (int(job["id"]),))
+            conn.commit()
+            return True
+        conn.rollback()
+        return False
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _reacquire(job, db_path=None) -> float:
+    """Wait for a CPU slot of the row's group (phase 'await' meanwhile, so
+    no new claim takes the slot first). Returns the seconds waited. A
+    draining consumer does not wait: its rows are being handed back."""
+    started = time.time()
+    try:
+        _set_phase(job, "await", db_path=db_path)
+    except Exception as e:
+        log.warning("job %s: phase not recorded: %s", job.get("id"), e)
+        return 0.0
+    while not _draining.is_set():
+        try:
+            if _take_slot(job, db_path=db_path):
+                break
+        except Exception as e:
+            log.warning("job %s: slot not taken back (%s) — running on", job.get("id"), e)
+            break
+        with _slot_cv:
+            _slot_cv.wait(min(1.0, POLL_SECONDS))
+    return time.time() - started
+
+
+@contextlib.contextmanager
+def model_wait(db_path=None):
+    """Around a wait on a model answer inside a queue job: the row's CPU
+    slot is given back for the wait (another row is woken to use it) and
+    taken back after it. Parallel calls of one job share one wait: the slot
+    goes at the first and comes back after the last. Outside a queue job,
+    nothing. Never fails the call it wraps over bookkeeping."""
+    job = _CURRENT.get()
+    if job is None or not job.get("worker_id") or not job.get("grp"):
+        yield
+        return
+    ph = getattr(job, "_phase", None)
+    if ph is None:
+        ph = job._phase = _Phase()
+    with ph.lock:
+        ph.calls += 1
+        if ph.calls == 1:
+            try:
+                if _set_phase(job, "model", db_path=db_path):
+                    _slot_freed()
+                    kick(job["grp"], db_path=db_path)
+            except Exception as e:
+                log.warning("job %s: slot not given back for the model wait: %s", job.get("id"), e)
+    try:
+        yield
+    finally:
+        waited = 0.0
+        with ph.lock:
+            ph.calls -= 1
+            if ph.calls == 0:
+                waited = _reacquire(job, db_path=db_path)
+        if waited > 0.5:
+            for hook in list(SLOT_WAIT_HOOKS):
+                try:
+                    hook(waited)
+                except Exception as e:
+                    log.warning("slot wait hook failed: %s", e)
 
 
 def cancel(external_id=None, job_id=None, reason="cancelled", db_path=None) -> int:
@@ -795,6 +1324,7 @@ _held = {}
 _held_lock = threading.Lock()
 _pools = {}
 _active = {}
+_parked_n = {}              # grp -> rows of this process parked on the model gateway
 _pools_lock = threading.Lock()
 
 
@@ -815,12 +1345,9 @@ def worker_alive(db_path=None) -> bool:
 def this_process_consumes(db_path=None) -> bool:
     """Whether the web process consumes the queue: in-process mode, or
     worker mode with no live worker (an owner's press is never stranded)."""
-    m = mode()
-    if m == "inprocess":
+    if mode() == "inprocess":
         return True
-    if m == "worker":
-        return not worker_alive(db_path)
-    return False
+    return not worker_alive(db_path)
 
 
 def kick(grp, db_path=None, force=False):
@@ -829,7 +1356,12 @@ def kick(grp, db_path=None, force=False):
     if _draining.is_set() or not (force or this_process_consumes(db_path)):
         return None
     with _pools_lock:
-        size = group_concurrency(grp)
+        # As many threads as rows may be in flight: a row waiting on a model
+        # answer (model_wait) or parked on the gateway's next minute (parked,
+        # SCALE-25) keeps its thread but not its CPU slot, so a drain may
+        # start beside it; claim() holds the group to its CPU slots and to
+        # max_running.
+        size = max_running(grp)
         pool = _pools.get(grp)
         if pool is None or pool._max_workers != size:
             pool = _pools[grp] = concurrent.futures.ThreadPoolExecutor(max_workers=size,
@@ -861,16 +1393,18 @@ def tick(db_path=None) -> dict:
             out["attempted"] += 1
             if kick(grp, db_path=db_path) is not None:
                 out["ok"] += 1
+    try:
+        prune_tenants(db_path=db_path)
+    except Exception as e:
+        log.warning("queue tenants not pruned: %s", e)
     return out
 
 
 def claimable(grp, db_path=None) -> bool:
-    now = time.time()
+    """Whether a claim of `grp` could take a row now (a plain read)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT 1 FROM jobs WHERE grp=? AND ((state='queued' AND not_before<=?) OR "
-                           "(state='running' AND lease_until<=?)) LIMIT 1", (grp, now, now)).fetchone()
-        return row is not None
+        return _maybe_claimable(conn, (grp,), time.time())
     finally:
         conn.close()
 
@@ -893,34 +1427,78 @@ def heartbeat(role="web", db_path=None) -> None:
         log.warning("queue heartbeat not written: %s", e)
 
 
-def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=None):
-    """worker.py's consumer: `threads` per group (the group's concurrency by
-    default) claiming in a loop, a heartbeat every RENEW_SECONDS, waking on
-    POLL_SECONDS. Returns when `stop` is set (or at shutdown)."""
+def rss_mb():
+    """This process's resident memory now, in MB (Linux /proc; elsewhere the
+    peak, which is what a recycle bound needs anyway). None when unknown."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+    except Exception:
+        pass
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return peak / 1e6 if os.uname().sysname == "Darwin" else peak / 1e3
+    except Exception:
+        return None
+
+
+def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=None, max_jobs=None,
+               max_rss_mb=None) -> str:
+    """worker.py's consumer: `threads` per group (max_running by default —
+    a row waiting on a model answer keeps its thread, not its CPU slot)
+    claiming in a loop, a heartbeat every RENEW_SECONDS, woken by a slot
+    coming free here or on POLL_SECONDS. Returns "stopped" when `stop` is
+    set (or at shutdown) — or "recycle" once it has run `max_jobs` rows or
+    its resident memory passed `max_rss_mb` (blind re-audit 10/11/26
+    SCALE-17/SCALE-18: a 250-person generation left 1.4 GB resident for
+    good): it stops claiming, lets its running rows finish, and returns, so
+    worker.py's supervisor starts a fresh process."""
     stop = stop or threading.Event()
+    recycle = threading.Event()
+    ran_total = [0]
+    count_lock = threading.Lock()
     heartbeat("worker", db_path=db_path)
 
     def _loop(grp):
-        while not stop.is_set() and not _draining.is_set():
+        while not stop.is_set() and not _draining.is_set() and not recycle.is_set():
             try:
                 ran = drain((grp,), WORKER_ID, max_jobs=1, db_path=db_path)
             except Exception as e:
                 log.error("queue consumer %s failed: %s", grp, e)
                 ran = 0
-            if not ran:
-                stop.wait(POLL_SECONDS)
+            if ran:
+                with count_lock:
+                    ran_total[0] += ran
+                    if max_jobs and ran_total[0] >= int(max_jobs):
+                        recycle.set()
+                if max_rss_mb and (rss_mb() or 0) > float(max_rss_mb):
+                    recycle.set()
+            else:
+                _wake.clear()
+                _wake.wait(POLL_SECONDS)
 
     workers = []
     for grp in groups:
-        for i in range(threads or group_concurrency(grp)):
+        for i in range(threads or max_running(grp)):
             t = threading.Thread(target=_loop, args=(grp,), daemon=True, name=f"queue-worker-{grp}-{i}")
             t.start()
             workers.append(t)
     while not stop.is_set() and not _draining.is_set():
         heartbeat("worker", db_path=db_path)
-        stop.wait(RENEW_SECONDS)
+        if recycle.is_set() and not any(t.is_alive() for t in workers):
+            log.info("queue worker recycling after %d job(s), %s MB resident", ran_total[0], rss_mb())
+            return "recycle"
+        # A heartbeat every RENEW_SECONDS; a stop or a recycle noticed within a second.
+        for _tick in range(max(1, int(RENEW_SECONDS))):
+            if stop.is_set() or recycle.is_set():
+                break
+            stop.wait(1.0)
+        if recycle.is_set():
+            stop.wait(0.2)
     for t in workers:
         t.join(timeout=1)
+    return "stopped"
 
 
 def shutdown(db_path=None) -> int:
@@ -964,8 +1542,6 @@ def start_inprocess(db_path=None) -> None:
     """The web boot: heartbeat as a web consumer, register the drain, and
     start whatever is already claimable (a row a deploy interrupted resumes
     here)."""
-    if not enabled():
-        return
     register_shutdown()
     heartbeat("web", db_path=db_path)
     if this_process_consumes(db_path):
@@ -1010,6 +1586,24 @@ def stats(window_seconds=3600, db_path=None) -> dict:
         out["consumers"] = {r["role"]: int(r["n"]) for r in conn.execute(
             "SELECT role, COUNT(*) AS n FROM job_workers WHERE heartbeat_at>? GROUP BY role",
             (now - WORKER_STALE_SECONDS,)).fetchall()}
+        # The wait p95 of every class, and what is running in each phase
+        # (blind re-audit 10/11/26 SCALE-1/SCALE-28): the autoscale signal.
+        by_class = {}
+        for r in conn.execute("SELECT priority_class AS k, started_at - enqueued_at AS w FROM jobs "
+                              "WHERE started_at IS NOT NULL AND started_at>?", (now - window_seconds,)).fetchall():
+            by_class.setdefault(r["k"], []).append(float(r["w"]))
+        out["wait_p95_by_class"] = {k: round(sorted(v)[min(len(v) - 1, int(math.ceil(0.95 * len(v))) - 1)], 1)
+                                    for k, v in by_class.items() if v}
+        out["phases"] = {}
+        for r in conn.execute("SELECT grp, COALESCE(phase, 'cpu') AS ph, COUNT(*) AS n FROM jobs "
+                              "WHERE state='running' AND lease_until>? GROUP BY grp, COALESCE(phase, 'cpu')",
+                              (now,)).fetchall():
+            out["phases"].setdefault(r["grp"], {})[r["ph"]] = int(r["n"])
+        # Deadline misses per tenant (SCALE-3): who the queue failed to serve
+        # in time, not just how many.
+        out["expired_by_tenant"] = {r["t"]: int(r["n"]) for r in conn.execute(
+            "SELECT tenant_key AS t, COUNT(*) AS n FROM jobs WHERE state='expired' AND finished_at>? "
+            "GROUP BY tenant_key ORDER BY COUNT(*) DESC LIMIT 10", (now - window_seconds,)).fetchall()}
         return out
     finally:
         conn.close()

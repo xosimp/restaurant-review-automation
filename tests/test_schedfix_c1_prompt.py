@@ -86,7 +86,8 @@ def _prompt(kw):
 
 def _outside_fences(text):
     for o, c in ((ai_guard.UNTRUSTED_OPEN, ai_guard.UNTRUSTED_CLOSE),
-                 (ai_guard.OWNER_RULE_OPEN, ai_guard.OWNER_RULE_CLOSE)):
+                 (ai_guard.OWNER_RULE_OPEN, ai_guard.OWNER_RULE_CLOSE),
+                 (ai_guard.MANAGER_NOTE_OPEN, ai_guard.MANAGER_NOTE_CLOSE)):
         text = re.sub(re.escape(o) + r".*?" + re.escape(c), "<FENCE>", text, flags=re.S)
     return text
 
@@ -150,7 +151,7 @@ def test_p23_every_call_of_a_generation_reads_the_same_first_two_blocks(monkeypa
     # slices go out together by default since 10/10/26, AI-4).
     monkeypatch.setenv("SCHEDULE_PARALLEL_CALLS", "1")
     monkeypatch.setattr(se, "_expected_rows", lambda shifts, roster: se.CHUNK_ROWS_PER_CALL + 40)
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
     roster = [(f"S{i}", "Server") for i in range(4)]
     out = se._generate_in_parts(ANALYSIS, _every_day_history(), roster,
                                 {"tz_name": None, "week_start": WEEK[0], "closed_dates": [], "roster": roster,
@@ -231,7 +232,12 @@ def test_pr4_minimum_hours_are_ranked_counted_and_carried_across_the_seam():
     assert "bounds, never a fill order to work out" in static
     assert "Fill shifts from the people still under their minimum hours first" not in static
     assert "Fill them from the people still under their minimum hours first" not in static
-    assert "[SOFT] minimum, [HARD] maximum" in sp.ROSTER_HEAD
+    # The minimum's rank is PRIORITIES 3b's and the maximum is the rules
+    # block's line; the ROSTER head says only what HOURS holds (schedule
+    # re-audit 10/11/26 AI-15: each rule stated once).
+    assert "[SOFT] minimum, [HARD] maximum" not in sp.ROSTER_HEAD
+    assert "HOURS: MIN-MAX for the week" in sp.ROSTER_HEAD
+    assert "Each person's minimum hours (MIN in the ROSTER" in static
     prior = [{"date": WEEK[4], "day": "Friday", "employee": "S0", "role": "Server", "shift_start": "5:00pm",
               "shift_end": "11:00pm", "scheduled_hours": "6"}]
     lines = req.seam_lines(prior, limits={"S0": {"min": 30.0, "ot": 40.0, "carried": {}}},

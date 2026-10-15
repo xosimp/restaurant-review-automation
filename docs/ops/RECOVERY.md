@@ -152,8 +152,11 @@ answers it already paid for — so after a restart nothing needs pressing
 again. To see them: `SELECT id, kind, restaurant_id, state, attempts, error
 FROM jobs WHERE state IN ('queued','running','failed') ORDER BY id DESC`.
 A row stuck `running` with a lease in the past is claimed by the next
-consumer within a minute (the `job_queue_tick` minute duty). Turning the
-queue off is `JOB_QUEUE=0` (the old in-process paths). The Postgres cutover
+consumer within a minute (the `job_queue_tick` minute duty). The queue
+cannot be turned off any more (`JOB_QUEUE=0` and the in-process paths it
+switched back to are gone — blind re-audit 10/11/26 ARCH-10); a queue worker
+process that misbehaves is turned off with `QUEUE_WORKER=0` (the web process
+consumes the queue again). The Postgres cutover
 and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
 
 ## Database recovery

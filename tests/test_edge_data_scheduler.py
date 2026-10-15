@@ -211,9 +211,16 @@ def test_auto_draft_reaches_every_opted_in_restaurant_by_thursday_evening(db_pat
     pushes = []
     monkeypatch.setattr(push, "fire_push", lambda rid, kind, *a, **k: pushes.append((rid, kind)))
     monkeypatch.setattr(notify, "briefing_allowed", lambda *a, **k: True)
+    # The pass queues each draft and the queue's worker drafts it (blind
+    # re-audit 10/11/26 ARCH-10: the queue is the one path), so each tick is
+    # followed by the worker taking what is due; the spread across the
+    # morning (SCALE-28) is off so every row is due at once.
+    import job_queue, strategy_jobs
+    monkeypatch.setattr(strategy_jobs, "AUTO_DRAFT_SPREAD_MINUTES", 0)
     for hour in range(6, 21):                        # every tick from 6am to 8pm, Thursday 9/24/26
         _prepare_tick(monkeypatch, datetime(2026, 9, 24, hour, 0), _only("auto_draft"))
         _tick()
+        job_queue.drain(["generation"], "test-worker", db_path=db_path)
 
     drafted = {r["restaurant_id"] for r in _sql(db_path, "SELECT DISTINCT restaurant_id FROM schedule_history")}
     told = {rid for rid, kind in pushes if kind != "schedule_drafted"}

@@ -233,7 +233,7 @@ def test_a_row_on_a_closed_day_is_a_hard_breach_and_no_pass_may_add_one(db):
 
 def test_labor_asks_for_and_keeps_only_open_dates(db, monkeypatch):
     import inspect
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert "and d not in _closed_set]" in src                 # _gen_dates, every contract
     assert "not in _closed_set]" in src.split("elif _closed_set:")[1][:200]     # the CSV fallback
 
@@ -312,7 +312,7 @@ def test_a_gate_that_crashes_leaves_the_draft_saved_as_it_was(db, monkeypatch):
     finished = _finish(monkeypatch)
     se._run_schedule_job("gate-crash", rid)
     res = finished["result"]
-    assert finished["status"] == "done" and res["history_id"] and res["gate"] == {"ran": False}
+    assert finished["status"] == "done" and res["history_id"] and res["gate"]["ran"] is False and res["gate"]["why"] == "error"  # said (BUGSGEN-16)
 
 
 def test_a_saved_draft_whose_payload_failed_is_named_not_called_unsaved(monkeypatch):

@@ -69,8 +69,10 @@ def test_trim_removes_discretionary_hours_first_and_reports_each():
     rows = [_row(d, n, "4:00pm", "8:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]     # 84h
     rows.append(_row(WEEK[4], "Dee", "4:00pm", "8:00pm", notes="added — coverage top-up"))
     rows.append(_row(WEEK[5], "Ana", "11:00am", "3:00pm"))                                   # first leg; the 4pm is her second
+    # The trim's floor is the one shortest shift (contract #2, BUGSGEN-6);
+    # this fixture assumes 4h, so it sets it.
     out, trimmed, removed = econ.trim_to_budget(rows, hours_budget=76.0, daily_targets={d: 17 for d in WEEK},
-                                                constraints=_c(), floors={})
+                                                constraints=_c(compliance={"min_shift_hours": 4.0}), floors={})
     assert removed >= 16 and sum(float(r["scheduled_hours"]) for r in out) <= 76.0
     reasons = [t["reason"] for t in trimmed]
     assert all(t["kind"] == "removed" for t in trimmed)
@@ -335,7 +337,9 @@ def test_fairness_reads_the_ledger_when_this_week_adds_to_a_pattern():
 def test_behaviour_preferences_need_two_of_the_same(db_path, rid):
     hid = _publish(db_path, rid, WEEK[0], WEEK[6], HEADER + f"{WEEK[6]},Sunday,Ana,Server,4:00pm,10:00pm,6.0,\n")
     conn = get_conn(db_path)
-    for d in ("2026-09-06", "2026-09-13"):
+    # Three drops: an avoid binds the solver only at AVOID_MIN_EVENTS (re-audit
+    # 10/11/26 LEARNING-22 — two of three was a learned "avoid").
+    for d in ("2026-09-06", "2026-09-13", "2026-09-20"):
         conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, status, replacement_name) "
                      "VALUES (?,?,?,?,?,?,?)", (rid, hid, "Ana", d, "4:00pm", "covered", "Bob"))
     conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, status) "
@@ -475,3 +479,31 @@ def test_demand_blind_notice_reads_the_last_sales_date(db_path, rid):
     out = schedule_engine._demand_data_through(rid)
     assert out["date"] == old and out["days_ago"] == 40 and out["blind"]
     assert out["blocked"] and out["stale"] and "Reconnect the POS" in out["message"]
+
+
+def test_the_trim_lands_on_the_same_week_however_slow_the_clock_runs(monkeypatch):
+    # The trim's budgets are work, never the wall clock (10/14/26, LOGIC-9):
+    # the 24-hour diner's week trimmed to 152 rows on one press and 154 on
+    # the next, because the clock decided where the score stopped choosing
+    # and where the trim stopped. A clock that crawls 9 seconds a reading must
+    # give exactly the week a fast one does.
+    import time
+    rows = [_row(d, n, "4:00pm", "8:00pm") for d in WEEK for n in ("Ana", "Bob", "Cy")]
+    rows += [_row(d, "Dee", "11:00am", "9:00pm") for d in WEEK[4:]]
+    score = lambda rs: -sum(float(r["scheduled_hours"]) for r in rs if r["employee"] == "Dee")  # noqa: E731
+
+    def trim():
+        out, trimmed, removed = econ.trim_to_budget(
+            [dict(r) for r in rows], hours_budget=80.0, daily_targets={d: 14 for d in WEEK},
+            constraints=_c(compliance={"min_shift_hours": 4.0}), floors={}, score_fn=score)
+        return sorted((r["date"], r["employee"], r["shift_start"], r["shift_end"]) for r in out), removed
+
+    fast = trim()
+    real = time.monotonic
+    ticks = {"n": 0}
+
+    def slow():
+        ticks["n"] += 1
+        return real() + 9.0 * ticks["n"]
+    monkeypatch.setattr(time, "monotonic", slow)
+    assert trim() == fast

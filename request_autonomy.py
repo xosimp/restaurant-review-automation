@@ -432,9 +432,13 @@ def reverse(restaurant_id, request_id, actor=None, db_path=DB_PATH, now=None) ->
         if undone:
             _srq._notify(restaurant_id, "auto_reversed", dict(row, status="denied"), db_path=db_path)
     elif row["status"] == "covered" and kind == "swap":
+        # The shifts as they are now: the holder's old shift (shift_id) is
+        # the colleague's, and theirs (target_shift_id) the holder's — so
+        # each leg's person is the other's (ARCH-6).
         back = dict(row, employee_name=row["target_name"], date=row["date"], shift_start=row["shift_start"],
                     target_name=row["employee_name"], target_date=row["target_date"],
-                    target_start=row["target_start"])
+                    target_start=row["target_start"], person_id=row.get("target_person_id"),
+                    target_person_id=row.get("person_id"))
         try:
             undone = bool(_srq.trade_back(restaurant_id, back, actor=who, db_path=db_path, now=now))
         except _srq.ShiftRequestError as e:
@@ -532,18 +536,19 @@ def rank_takers(restaurant_id, req, db_path=DB_PATH, limit=OFFER_CANDIDATES) -> 
     import schedule_engine as _se
     import schedule_rules as _rules
     import shift_requests as _srq
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     legal = _srq._who_could_take(restaurant_id, req, db_path)[:limit]
     if not legal:
         return []
     conn = get_conn(db_path)
     try:
         hist = _srq._live_hist(conn, restaurant_id, req)
+        live_rows = schedule_shifts.rows_of(hist["id"], "live", conn=conn) if hist else []
     finally:
         conn.close()
     if not hist:
         return []
-    rows, idx = _srq._locate(rows_from_csv(hist["schedule_csv"]), req)
+    rows, idx = _srq._locate(live_rows, req)
     if idx is None:
         return []
     c = _srq._week_constraints(restaurant_id, rows)

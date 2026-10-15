@@ -1753,6 +1753,11 @@ def save_client_settings(restaurant_id, current_user):
             return jsonify(ok=False, conflict=True, fields=[], current_version=e.current_version,
                            error=e.user_message), 409
         _record_settings_change(restaurant_id, current_user, before, write, billing_reason)
+        if "sched_notes" in write:
+            # Read into typed rules off the request (owner_rules — blind
+            # re-audit 10/11/26 AI-22); never a send, so no gate.
+            import owner_rules as _owr_save
+            _owr_save.queue_read(restaurant_id)
     saved_row = _gr_cs(restaurant_id)
     saved = {k: getattr(saved_row, k, None) for k in fields if k != "weekly_revenue_target"}
     if "weekly_revenue_target" in fields:
@@ -3798,7 +3803,6 @@ def admin_api_schedule_why(current_user):
     read-only; schedule audit 10/10/26 ARCH-28 — schedule_memory.why_row):
     ?restaurant_id=&history_id=&date=&employee=[&shift_start=]."""
     import schedule_memory
-    import schedule_versions
     from models import get_conn as _gc
     try:
         rid = int(request.args.get("restaurant_id") or 0)
@@ -3807,8 +3811,11 @@ def admin_api_schedule_why(current_user):
         return jsonify(ok=False, error="restaurant_id and history_id are numbers"), 400
     conn = _gc()
     try:
-        h = conn.execute("SELECT schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+        h = conn.execute("SELECT id FROM schedule_history WHERE id=? AND restaurant_id=?",
                          (hid, rid)).fetchone()
+        # The week's WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_why
+        week_rows = _ss_why.rows_of(h["id"], "working", conn=conn) if h is not None else []
     finally:
         conn.close()
     if h is None:
@@ -3816,7 +3823,7 @@ def admin_api_schedule_why(current_user):
     d = str(request.args.get("date") or "")[:10]
     who = " ".join(str(request.args.get("employee") or "").split()).lower()
     start = str(request.args.get("shift_start") or "").strip().lower()
-    row = next((r for r in schedule_versions.rows_from_csv(h["schedule_csv"] or "")
+    row = next((r for r in week_rows
                 if r.get("date") == d and " ".join(str(r.get("employee") or "").split()).lower() == who
                 and (not start or str(r.get("shift_start") or "").strip().lower() == start)), None)
     if row is None:

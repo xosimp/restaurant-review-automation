@@ -81,10 +81,14 @@ RULE = {"key": "rule:min_rest:ana:2026-10-06:11:00am", "text": "Ana — Tuesday 
 
 def test_kinds_and_which_are_hard():
     assert so.kind_of("rule:min_rest:ana:2026-10-06:11:00am") == "rule:min_rest"
-    assert so.kind_of("saved:Over budget by 3h") == "saved"
+    # A saved line's kind is its own class (re-audit 10/11/26 TRUST-9), never
+    # one "saved" bucket for every line: the numbers out, the wording kept.
+    assert so.kind_of("saved:Over budget by 3h") == so.kind_of("saved:Over budget by 41h")
+    assert so.kind_of("saved:Over budget by 3h").startswith("saved:over_budget_by")
+    assert so.kind_of("saved:Thursday is short a cook") != so.kind_of("saved:Over budget by 3h")
     assert so.kind_of("hours_over") == "hours_over"
     assert so.kind_of("late_change:2026-10-06") == "late_change"
-    assert not so.hard("hours_over") and not so.hard("saved")
+    assert not so.hard("hours_over") and not so.hard("saved") and not so.hard(so.kind_of("saved:x y"))
     for k in ("rule:min_rest", "input:availability", "stage:manager", "notice_short", "late_change",
               "quality_unchecked", "roster:no_manager", "soft:minor_hours"):
         assert so.hard(k), k

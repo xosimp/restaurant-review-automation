@@ -2,7 +2,7 @@
 (schedule audit 10/3/26 PR-31).
 
 The trace kept 40,000 characters of a 55-70k prompt and 12,000 of the
-answer, so no real week could be replayed; scripts/schedule_eval.py
+answer, so no real week could be replayed; scripts/run_schedule_eval.py
 re-scored stored weeks with no model call, and the live experiment
 compared the solver against the model only. Now: each call is stored in
 schedule_model_calls with the exact request, the generator's own arguments
@@ -332,7 +332,7 @@ def test_a_prompt_variant_is_a_transform_of_the_stored_request(db, monkeypatch):
 def test_schedule_eval_shows_the_calls_behind_a_week_and_scores_the_models_own_answer(db, monkeypatch):
     rid = _rid(db)
     hid = _stored_week(db, monkeypatch, rid)
-    from scripts import schedule_eval
+    from scripts import run_schedule_eval as schedule_eval
     out = schedule_eval.evaluate(hid, calls=True)
     # The stored week was written on the route's model: a direct call runs on
     # the labor_schedule ladder's first rung, T3 Sonnet 5.5 (AI orchestration 10/7/26).

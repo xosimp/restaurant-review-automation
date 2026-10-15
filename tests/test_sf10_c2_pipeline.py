@@ -150,7 +150,9 @@ def test_the_job_never_reenters_itself_and_steers_by_nothing_but_its_state():
     assert not hasattr(se, "_gate_model_rewrite")
 
 
-BOUNDARIES = ("start", "parsed", "rules_read", "signals_read", "repaired", "reviewed", "scored", "note", "built")
+# The note is the save's pre-step, for the winner only (blind re-audit
+# 10/11/26 ARCH-13): after "built", before "saved".
+BOUNDARIES = ("start", "parsed", "rules_read", "signals_read", "repaired", "reviewed", "scored", "built", "note")
 
 
 @pytest.mark.parametrize("stage", BOUNDARIES)

@@ -98,6 +98,11 @@ def init_commitments(db_path=None):
             PRIMARY KEY (restaurant_id, date, name_key, shift_start)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_commitments_hist ON shift_commitments(restaurant_id, history_id)")
+        # The shift a commitment is about, by its id (schedule re-audit
+        # 10/11/26 ARCH-6): a rename or a retime is the same shift, never a
+        # "removed" promise and a new one.
+        if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_commitments)").fetchall()}:
+            conn.execute("ALTER TABLE shift_commitments ADD COLUMN shift_id TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -201,12 +206,12 @@ def ladder(restaurant_id, rows, forecasts=None, db_path=None) -> dict:
 
 
 def _published(restaurant_id, history_id, db_path=None):
-    """The row's PUBLISHED copy (models.live_csv_sql: what staff were sent,
-    never the working draft with unsent changes — contract #3)."""
-    import models
+    """The row, when it is PUBLISHED (its published copy — what staff were
+    sent, never the working draft with unsent changes, contract #3 — is
+    read by id from the shift table)."""
     conn = get_conn(db_path)
     try:
-        return conn.execute(f"SELECT h.id, h.week_start, h.week_end, {models.live_csv_sql('h')} AS schedule_csv, "
+        return conn.execute("SELECT h.id, h.week_start, h.week_end, "
                             "h.published_at FROM schedule_history h WHERE h.id=? AND h.restaurant_id=? AND "
                             "h.published_at IS NOT NULL", (int(history_id), restaurant_id)).fetchone()
     finally:
@@ -216,12 +221,15 @@ def _published(restaurant_id, history_id, db_path=None):
 def ensure(restaurant_id, history_id, today=None, db_path=None) -> dict:
     """Record a published week's commitments (module doc). Returns
     {committed, changed}. Days already past are left as they were."""
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     today = today or date.today()
     h = _published(restaurant_id, history_id, db_path)
     if not h:
         return {"committed": 0, "changed": 0}
-    rows = [r for r in rows_from_csv(h["schedule_csv"] or "") if str(r.get("date") or "")[:10] >= today.isoformat()]
+    # The published copy's rows from the shift table, each by its shift_id
+    # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+    rows = [r for r in schedule_shifts.rows_of(h["id"], "live", db_path=db_path, restaurant_id=restaurant_id)
+            if str(r.get("date") or "")[:10] >= today.isoformat()]
     conn = get_conn(db_path)
     try:
         have = {(r["date"], r["name_key"], r["shift_start"]): dict(r) for r in conn.execute(
@@ -233,10 +241,31 @@ def ensure(restaurant_id, history_id, today=None, db_path=None) -> dict:
                 for r in rows if (r.get("employee") or "").strip()}
     new = {k: r for k, r in now_keys.items() if k not in have}
     levels = ladder(restaurant_id, list(now_keys.values()), db_path=db_path) if new else {}
-    changed = []
+    changed, rekeyed = [], []
     by_person_day = {}
     for k in now_keys:
         by_person_day.setdefault((k[0], k[1]), []).append(k)
+    # By the shift's id first (ARCH-6): the same shift under a new spelling
+    # of the same person keeps its promise (re-keyed, not removed and
+    # re-made); retimed or moved to another day is said as that; given to
+    # somebody else, the holder's promise was removed.
+    by_sid = {str(r.get("shift_id") or "").lower(): (k, r) for k, r in now_keys.items() if r.get("shift_id")}
+    canon = _canonical_keys(restaurant_id, [c.get("employee_name") for c in have.values()]
+                            + [r.get("employee") for r in now_keys.values()], db_path)
+    for k, c in list(have.items()):
+        sid = str(c.get("shift_id") or "").lower()
+        if k in now_keys or not sid or sid not in by_sid or c.get("changed_at"):
+            continue
+        nk, r = by_sid[sid]
+        if canon.get(_key(c.get("employee_name")), k[1]) != canon.get(nk[1], nk[1]):
+            continue                                  # somebody else's now: removed, below
+        if (nk[0], nk[2]) == (k[0], k[2]) and str(r.get("shift_end") or "").strip() == \
+                str(c.get("shift_end") or "").strip():
+            rekeyed.append((k, nk, r))
+        else:
+            changed.append((k, "retimed" if nk[0] == k[0] else "moved"))
+        new.pop(nk, None)
+        have.pop(k)
     for k, c in have.items():
         if c.get("changed_at") or k in now_keys:
             if k in now_keys and not c.get("changed_at"):
@@ -251,10 +280,20 @@ def ensure(restaurant_id, history_id, today=None, db_path=None) -> dict:
         for k, r in new.items():
             lv = levels.get(k) or {"level": "likely", "reason": ""}
             conn.execute("INSERT OR IGNORE INTO shift_commitments (restaurant_id, date, name_key, shift_start, "
-                         "employee_name, role, shift_end, history_id, level, first_level, reason) VALUES "
-                         "(?,?,?,?,?,?,?,?,?,?,?)",
+                         "employee_name, role, shift_end, history_id, level, first_level, reason, shift_id) VALUES "
+                         "(?,?,?,?,?,?,?,?,?,?,?,?)",
                          (restaurant_id, k[0], k[1], k[2], r.get("employee"), r.get("role"), r.get("shift_end"),
-                          int(history_id), lv["level"], lv["level"], lv["reason"][:300]))
+                          int(history_id), lv["level"], lv["level"], lv["reason"][:300],
+                          str(r.get("shift_id") or "").lower() or None))
+        for k, nk, r in rekeyed:
+            conn.execute("UPDATE OR IGNORE shift_commitments SET name_key=?, employee_name=? WHERE restaurant_id=? "
+                         "AND date=? AND name_key=? AND shift_start=?", (nk[1], r.get("employee"), restaurant_id, *k))
+        # A commitment from before ids learns its shift's id.
+        for k, r in now_keys.items():
+            if r.get("shift_id") and k not in new:
+                conn.execute("UPDATE shift_commitments SET shift_id=? WHERE restaurant_id=? AND date=? AND name_key=? "
+                             "AND shift_start=? AND shift_id IS NULL",
+                             (str(r["shift_id"]).lower(), restaurant_id, *k))
         for k, how in changed:
             conn.execute("UPDATE shift_commitments SET changed_at=datetime('now'), change=? WHERE restaurant_id=? AND "
                          "date=? AND name_key=? AND shift_start=? AND changed_at IS NULL", (how, restaurant_id, *k))
@@ -262,6 +301,17 @@ def ensure(restaurant_id, history_id, today=None, db_path=None) -> dict:
     finally:
         conn.close()
     return {"committed": len(new), "changed": len(changed)}
+
+
+def _canonical_keys(restaurant_id, names, db_path=None) -> dict:
+    """{folded spelling: folded name of the person it means now}."""
+    names = sorted({" ".join(str(n or "").split()) for n in names if str(n or "").strip()})
+    try:
+        import people
+        got = people.canonical_names(restaurant_id, names, db_path=db_path)
+    except Exception:
+        got = {}
+    return {_key(n): _key(got.get(n) or n) for n in names}
 
 
 def ensure_live(restaurant_id, today=None, db_path=None) -> dict:

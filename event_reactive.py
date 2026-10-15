@@ -157,7 +157,7 @@ def _live_weeks(restaurant_id, today, db_path=None) -> list:
     conn = get_conn(db_path)
     try:
         return [dict(r) for r in conn.execute(
-            f"SELECT h.id, h.week_start, h.week_end, {models.live_csv_sql('h')} AS schedule_csv FROM schedule_history h "
+            f"SELECT h.id, h.week_start, h.week_end FROM schedule_history h "
             f"WHERE h.restaurant_id=? AND h.week_end>=? AND h.week_start<=? AND {models.live_where('h')}",
             (restaurant_id, today.isoformat(), (today + timedelta(days=MAX_DAYS_AHEAD)).isoformat())).fetchall()]
     finally:
@@ -325,11 +325,15 @@ def propose(restaurant_id, history_id, day, before_events, after_events, pct_the
 
 def scan(restaurant_id, today=None, db_path=None, notify=True) -> dict:
     """The nightly look (module doc). {dates, baselined, proposals}."""
-    from schedule_versions import rows_from_csv
+    import schedule_shifts
     today = today or date.today()
     out = {"dates": 0, "baselined": 0, "proposals": 0}
-    for w in _live_weeks(restaurant_id, today, db_path):
-        rows = rows_from_csv(w["schedule_csv"] or "")
+    weeks = _live_weeks(restaurant_id, today, db_path)
+    # Their published rows from the shift table (schedule_shifts — schedule
+    # re-audit 10/11/26 ARCH-7).
+    by_week = schedule_shifts.rows_by_week([w["id"] for w in weeks], "live", db_path=db_path)
+    for w in weeks:
+        rows = by_week.get(int(w["id"])) or []
         try:
             d0, d1 = date.fromisoformat(str(w["week_start"])[:10]), date.fromisoformat(str(w["week_end"])[:10])
         except ValueError:

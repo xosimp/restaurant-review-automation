@@ -59,9 +59,10 @@ def init_feature_versions(db_path: str = DB_PATH):
     inserted without a version with FEATURES_VERSION — re-created each boot
     from the constant, so it always names the current definition. A row
     from before versioning keeps NULL (unknown definition): no reader takes
-    it and the backfill re-derives its week."""
-    import sqlite3
-    conn = sqlite3.connect(db_path)
+    it and the backfill re-derives its week. On Postgres the trigger is
+    plpgsql, installed with the tracker's (db_dialect.install_triggers)."""
+    import models
+    conn = models.boot_conn(db_path)
     try:
         have = {r[1] for r in conn.execute("PRAGMA table_info(intel_features)").fetchall()}
         if "version" not in have:

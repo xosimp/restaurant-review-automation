@@ -147,30 +147,20 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
             "direction": "behind" if (pct or 0) < 0 else "ahead"}
 
 
-def _published_csv(restaurant_id, day, db_path=DB_PATH):
-    """The schedule staff were actually SENT for `day`: the published copy
-    of the live week containing it (models.live_week_for — the one rule,
-    schedule audit 10/10/26 ARCH-11) — or "" when none is.
-
-    This read the newest schedule_history row whose CSV contained today's
-    date, whatever it was: a draft nobody published, an auto-draft, or a
-    week superseded by a re-publish. So a no-show issue could name someone
-    who was never told they were on (#13). A draft is not a commitment —
-    nor is a manager's saved edit to a sent week before Send (ARCH-1)."""
-    try:
-        import models as _m
-        w = _m.live_week_for(restaurant_id, day, db_path=db_path)
-    except Exception:
-        w = None
-    return (w or {}).get("schedule_csv") or ""
-
-
 def published_rows(restaurant_id, day, db_path=DB_PATH):
     """[{employee, role, shift_start, shift_end, scheduled_hours}] for `day`
-    from the published week (see _published_csv)."""
-    import csv, io
+    — the schedule staff were actually SENT: the published copy of the live
+    week containing it (models.live_week_for — the one rule, schedule audit
+    10/10/26 ARCH-11; this read the newest row whose CSV held the date, so a
+    no-show issue could name someone never told they were on, #13) — read
+    from the shift
+    projection (schedule_shifts.live_shifts_on: one indexed read of the
+    day, no week parsed — schedule re-audit 10/11/26 ARCH-7), from the
+    week's text while that week has no current projection."""
+    import schedule_shifts
     out = []
-    for row in csv.DictReader(io.StringIO(_published_csv(restaurant_id, day, db_path))):
+    rows, _hid = schedule_shifts.live_shifts_on(restaurant_id, day, db_path=db_path)
+    for row in rows:
         if (row.get("date") or "")[:10] != day.isoformat() or not (row.get("employee") or "").strip():
             continue
         out.append({"employee": row["employee"].strip(), "role": (row.get("role") or "").strip(),
@@ -489,11 +479,23 @@ def ask_to_cover(restaurant_id, issue_id, name, user_id=None, surface="labor", d
             f"{' (' + start + ')' if start else ''}. Can you cover? Call your manager to say yes or no — "
             "a reply to this message isn't read.")
     contact = {} if via else _staff_contact(restaurant_id, who, db_path)
-    phone = _consented_phone(restaurant_id, contact.get("phone"), db_path)
-    if phone:
-        import notify
-        with notify.sms_context(restaurant_id):
-            if notify.send_sms(phone, text[:320], use_case="alert"):
+    if via is None:
+        # A text only on the STAFF campaign, under the person's own staff
+        # consent for requests (people.reach / people.deliver) — never the
+        # owner-alert campaign a consented alert number happened to be on
+        # (schedule re-audit 10/11/26 BUGSLIFE-20); else email below.
+        import people as _people
+        try:
+            ch = (_people.reach(restaurant_id, [who], purpose="request", db_path=db_path) or {}).get(who) or {}
+        except Exception as e:
+            log.warning("cover reach failed rid=%s: %s", restaurant_id, e)
+            ch = {}
+        if ch.get("sms"):
+            got = _people.deliver(restaurant_id, who, {"sms": ch["sms"], "sms_scope": ch.get("sms_scope")},
+                                  alert_type="staff_request", title="Can you cover a shift today?", body=text,
+                                  purpose="request", sms_text=f"{text[:280]} Reply STOP to stop these texts.",
+                                  shift_date=day, db_path=db_path)
+            if got in ("sms", "sms_held"):
                 via = "sms"
     if via is None and contact.get("email"):
         try:
@@ -619,13 +621,15 @@ def closing_summary(restaurant_id, day=None, db_path=DB_PATH, restaurant=None):
         return {"available": False, "reason": "nothing captured from the POS today"}
     conn = get_conn(db_path)
     try:
-        # One figure per past same-weekday: that day's own last reading.
-        # The bare net_sales alongside MAX() is SQLite's documented
-        # min/max-picks-the-row behaviour, not an accident.
+        # One figure per past same-weekday: that day's own last reading —
+        # the row holding the day's latest hour, said as such (a bare
+        # column beside MAX() is SQLite-only: Postgres refuses it).
         history = [r["net_sales"] for r in conn.execute(
-            "SELECT MAX(captured_hour) AS h, net_sales FROM pos_intraday "
-            "WHERE restaurant_id=? AND weekday=? AND business_date<? "
-            "GROUP BY business_date ORDER BY business_date DESC LIMIT 8",
+            "SELECT p.business_date, p.net_sales FROM pos_intraday p "
+            "WHERE p.restaurant_id=? AND p.weekday=? AND p.business_date<? "
+            "AND p.captured_hour = (SELECT MAX(q.captured_hour) FROM pos_intraday q "
+            "WHERE q.restaurant_id = p.restaurant_id AND q.business_date = p.business_date) "
+            "ORDER BY p.business_date DESC LIMIT 8",
             (restaurant_id, weekday, day.isoformat())).fetchall()]
     finally:
         conn.close()

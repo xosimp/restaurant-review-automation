@@ -283,10 +283,11 @@ def _quality(ctx):
     try:
         import models as _m_live
         row = conn.execute(
-            "SELECT id, quality_json FROM schedule_history h WHERE h.restaurant_id=? "
+            "SELECT id, quality_json, quality_ref FROM schedule_history h WHERE h.restaurant_id=? "
             "AND h.week_start <= ? AND h.week_end >= ? AND " + _m_live.live_where("h") + " "
             "ORDER BY COALESCE(h.republished_at, h.published_at) DESC, h.id DESC LIMIT 1",
             (ctx.restaurant_id, ctx.day, ctx.day)).fetchone()
+        whole = _m_live.history_quality(conn, row) if row else {}       # stored once (SCALE-13)
     except Exception as e:
         log.warning("dsr labor: schedule history unreadable rid=%s: %s", ctx.restaurant_id, e)
         row = None
@@ -294,10 +295,7 @@ def _quality(ctx):
         conn.close()
     if not row:
         return None
-    try:
-        q = json.loads(row["quality_json"] or "null") or {}
-    except (TypeError, ValueError):
-        return None
+    q = whole or {}
     shifts = [s for s in (q.get("shifts") or [])
               if isinstance(s, dict) and str(s.get("date") or "")[:10] == ctx.day and s.get("scored")]
     if not shifts:

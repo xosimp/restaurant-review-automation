@@ -24,11 +24,18 @@ read only in aggregate (staff_insights), and a per-person risk would single
 an answer out.
 
 The label is the roster: somebody taken off it (change_log roster "left")
-within LABEL_DAYS of a week. With at least MIN_QUITS such departures and
-MIN_PERSON_WEEKS person-weeks, a logistic model is fitted on person-weeks
-of the last year (standardised, L2) and kept only if its out-of-fold AUC
-(folds by person) reaches MIN_AUC — then `risk` is its probability and the
-`basis` says so. Otherwise there is no probability: `level` comes from
+in the LABEL_DAYS that start NOTICE_DAYS after a week — the weeks just
+before a departure are left out of every example (blind re-audit 10/11/26
+LEARNING-25: hours cut and shifts dropped in the weeks before leaving often
+FOLLOW the notice, so a model on them learned notice periods, and the
+solver "protected" people who had already resigned). With at least
+MIN_QUITS such departures and MIN_PERSON_WEEKS person-weeks, a logistic
+model is fitted on person-weeks of the last year (standardised, L2) and
+kept only if its out-of-fold AUC (folds by person) reaches MIN_AUC AND its
+lower 90% bound (Hanley-McNeil, counted in PEOPLE — departures against
+people who stayed — not person-weeks) clears 0.5 (6 quits passed noise 7%
+of the time) — then `risk` is its probability and the `basis` says so,
+with the AUC's range and the departures behind it. Otherwise there is no probability: `level` comes from
 stated rules (an hours cut of RULE_CUT or more, RULE_DROPS drops, RULE_
 UNWANTED of shifts unwanted), and the basis says it is rules, not a
 measured risk.
@@ -49,8 +56,9 @@ from datetime import date, timedelta
 log = logging.getLogger(__name__)
 
 LABEL_DAYS = 28
+NOTICE_DAYS = 14                 # the weeks before a departure a notice may already shape
 USUAL_FLOOR_HOURS = 8.0          # a week's average before an hours cut is read
-MIN_QUITS = 6
+MIN_QUITS = 12
 MIN_PERSON_WEEKS = 120
 MIN_AUC = 0.65
 HIGH_PROB = 0.25                 # a fitted probability of leaving within LABEL_DAYS this high is "high"
@@ -213,10 +221,12 @@ def signals(data, key, as_of) -> dict | None:
 def _examples(data, today):
     """[(person key, monday, x list, label)] — person-weeks of the last year
     for people on the clock in the 12 weeks before each Monday, labelled
-    by a roster departure within LABEL_DAYS after it."""
+    by a roster departure in [Monday + NOTICE_DAYS, + LABEL_DAYS); a
+    person-week with a departure inside its first NOTICE_DAYS is left out
+    (its features may already be the notice's — LEARNING-25)."""
     out = []
     mon = _monday(today) - timedelta(weeks=52)
-    last = _monday(today) - timedelta(days=LABEL_DAYS)
+    last = _monday(today) - timedelta(days=LABEL_DAYS + NOTICE_DAYS)
     while mon <= last:
         for key in data["by_person"]:
             left = [d for d in data["left"].get(key) or [] if d >= mon.isoformat()]
@@ -227,8 +237,12 @@ def _examples(data, today):
                 continue
             if any(d < mon.isoformat() for d in data["left"].get(key) or []):
                 continue
-            y = 1 if any(mon.isoformat() <= d < (mon + timedelta(days=LABEL_DAYS)).isoformat()
-                         for d in data["left"].get(key) or []) else 0
+            gone = data["left"].get(key) or []
+            notice_end = (mon + timedelta(days=NOTICE_DAYS)).isoformat()
+            if any(mon.isoformat() <= d < notice_end for d in gone):
+                continue
+            y = 1 if any(notice_end <= d < (mon + timedelta(days=NOTICE_DAYS + LABEL_DAYS)).isoformat()
+                         for d in gone) else 0
             out.append((key, mon, [float(s[f]) for f in FEATURES], y))
         mon += timedelta(weeks=1)
     return out
@@ -267,6 +281,40 @@ def _auc(scores, ys):
     return wins / (len(pos) * len(neg))
 
 
+def auc_lower(auc, n_pos, n_neg, z=1.645):
+    """The lower 90% bound of an AUC (Hanley-McNeil), counted in the units
+    that are independent — people, not person-weeks. None without both."""
+    import math as _m
+    if auc is None or not n_pos or not n_neg:
+        return None
+    q1, q2 = auc / (2.0 - auc), 2.0 * auc * auc / (1.0 + auc)
+    var = (auc * (1 - auc) + (n_pos - 1) * (q1 - auc * auc) + (n_neg - 1) * (q2 - auc * auc)) / float(n_pos * n_neg)
+    return round(auc - z * _m.sqrt(max(0.0, var)), 3)
+
+
+def gate(ex) -> dict:
+    """{auc, auc_lo, quits, stayers, ok}: the out-of-fold AUC (folds by
+    person) and whether the model is kept — AUC >= MIN_AUC and its lower
+    bound over 0.5 (LEARNING-25). Pure over examples."""
+    people = sorted({k for k, _m, _x, _y in ex})
+    leavers = {k for k, _m, _x, y in ex if y}
+    folds = 5
+    scores, ys = [], []
+    for f in range(folds):
+        test = {p for i, p in enumerate(people) if i % folds == f}
+        tr = [(x, y) for k, _m, x, y in ex if k not in test]
+        te = [(x, y) for k, _m, x, y in ex if k in test]
+        if not tr or not te or not any(y for _x, y in tr):
+            continue
+        m = _fit([x for x, _y in tr], [y for _x, y in tr])
+        scores += [_prob(m, x) for x, _y in te]
+        ys += [y for _x, y in te]
+    auc = _auc(scores, ys)
+    lo = auc_lower(auc, len(leavers), len(people) - len(leavers))
+    return {"auc": auc, "auc_lo": lo, "quits": len(leavers), "stayers": len(people) - len(leavers),
+            "ok": auc is not None and auc >= MIN_AUC and lo is not None and lo > 0.5}
+
+
 def model(restaurant_id, today=None, db_path=None, data=None) -> dict:
     """{available, model?, auc?, quits, person_weeks, reason?} — cached for
     the restaurant and day."""
@@ -291,26 +339,19 @@ def _model(restaurant_id, today, db_path=None, data=None) -> dict:
         return {"available": False, "quits": quits, "person_weeks": len(ex),
                 "reason": (f"{quits} departure{'s' if quits != 1 else ''} on the roster in the last year "
                            f"(a model needs {MIN_QUITS}) — warning signs are shown by stated rules, not as a risk.")}
-    people = sorted({k for k, _m, _x, _y in ex})
-    folds = 5
-    scores, ys = [], []
-    for f in range(folds):
-        test = {p for i, p in enumerate(people) if i % folds == f}
-        tr = [(x, y) for k, _m, x, y in ex if k not in test]
-        te = [(x, y) for k, _m, x, y in ex if k in test]
-        if not tr or not te or not any(y for _x, y in tr):
-            continue
-        m = _fit([x for x, _y in tr], [y for _x, y in tr])
-        scores += [_prob(m, x) for x, _y in te]
-        ys += [y for _x, y in te]
-    auc = _auc(scores, ys)
-    if auc is None or auc < MIN_AUC:
+    g = gate(ex)
+    auc = g["auc"]
+    if not g["ok"]:
         return {"available": False, "quits": quits, "person_weeks": len(ex), "auc": round(auc, 3) if auc else None,
+                "auc_lo": g["auc_lo"],
                 "reason": (f"A model on {quits} departures did not predict them well enough out of sample "
-                           f"(AUC {auc:.2f}, needs {MIN_AUC}) — warning signs are shown by stated rules."
-                           if auc is not None else "Too few departures in the folds to test a model.")}
+                           f"(AUC {auc:.2f}, at least {g['auc_lo']:.2f} at 90%; needs {MIN_AUC} and more than 0.5) — "
+                           "warning signs are shown by stated rules."
+                           if auc is not None and g["auc_lo"] is not None else
+                           "Too few departures in the folds to test a model.")}
     m = _fit([x for _k, _m, x, _y in ex], [y for _k, _m, _x, y in ex])
-    return {"available": True, "model": m, "auc": round(auc, 3), "quits": quits, "person_weeks": len(ex)}
+    return {"available": True, "model": m, "auc": round(auc, 3), "auc_lo": g["auc_lo"], "quits": quits,
+            "person_weeks": len(ex)}
 
 
 # ── who to protect ─────────────────────────────────────────────────────────
@@ -396,8 +437,10 @@ def assess(restaurant_id, today=None, db_path=None) -> dict:
                        "valued": valued, "valued_because": why, "protect": bool(protect),
                        "protect_set_by_owner": key in over})
     people.sort(key=lambda p: ({"high": 0, "watch": 1, "none": 2}[p["level"]], -(p["risk"] or 0), p["name"]))
-    basis = (f"A model of this restaurant's own departures (out-of-sample AUC {m['auc']:.2f}, {m['quits']} people "
-             f"who left in the last year): the chance of leaving in the next {LABEL_DAYS} days."
+    basis = (f"A model of this restaurant's own departures (out-of-sample AUC {m['auc']:.2f}, at least "
+             f"{m['auc_lo']:.2f} at 90%, from {m['quits']} people who left in the last year): the chance of leaving "
+             f"{NOTICE_DAYS // 7} to {(NOTICE_DAYS + LABEL_DAYS) // 7} weeks from now, read from the weeks before any "
+             "notice."
              if m.get("available") else m.get("reason"))
     return {"ok": True, "basis": basis, "model": {k: v for k, v in m.items() if k != "model"}, "people": people,
             "note": "Only you see this. Nobody is told they were flagged; the schedule just protects their hours and "
@@ -408,6 +451,9 @@ def protect_signal(restaurant_id, today=None, db_path=None) -> dict:
     """{name: {"protect": True, "avoid": [(weekday, daypart)]}} — the solver's
     'retention' signal: the people to protect and the slots they keep
     dropping."""
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     got = assess(restaurant_id, today=today, db_path=db_path)
     data_avoid = {}
     try:

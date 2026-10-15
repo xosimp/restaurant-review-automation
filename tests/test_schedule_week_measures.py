@@ -88,6 +88,9 @@ def test_the_week_score_stays_on_the_scale():
 
 def test_weighting_fatigue_to_zero_takes_it_out_of_the_week():
     out = sq.score_rows(_week(), weights={"fatigue": 0}, **KW)
+    # Shift length (blind re-audit 10/11/26 STRESS-14) is its own week measure.
+    assert [d["key"] for d in out["week_dimensions"]] == ["shift_length"]
+    out = sq.score_rows(_week(), weights={"fatigue": 0, "shift_length": 0}, **KW)
     assert out["week_dimensions"] == []
 
 

@@ -188,8 +188,7 @@ def _read_order_draft(restaurant_id):
 def _read_schedule(restaurant_id):
     """The most recently generated schedule, plus who has actually opened
     the link it was sent with."""
-    from models import get_conn, get_schedule_share_status
-    from labor import employees_in_schedule
+    from models import get_conn
     conn = get_conn()
     try:
         from models import _ensure_history_columns
@@ -199,7 +198,12 @@ def _read_schedule(restaurant_id):
         from models import newest_draft as _newest_draft
         row = _newest_draft(conn, restaurant_id,
                             columns="id, week_start, week_end, hours_scheduled, hours_hourly, hours_salaried, "
-                                    "hours_budget, schedule_csv, quality_json, edited_at")
+                                    "hours_budget, schedule_csv, quality_json, quality_ref, edited_at")
+        if row:
+            # The whole evaluation (its shifts), stored once (SCALE-13).
+            import models as _m_ask
+            row = dict(row)
+            row["quality"] = _m_ask.history_quality(conn, row)
     finally:
         conn.close()
     if not row:
@@ -216,8 +220,11 @@ def _read_schedule(restaurant_id):
         "hours_salaried": row["hours_salaried"],
         "hours_budget": row["hours_budget"],
         "edited_by_manager": bool(row["edited_at"]),
-        "employees": employees_in_schedule(row["schedule_csv"] or ""),
-        "share_status": get_schedule_share_status(restaurant_id, row["id"]),
+        # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        "employees": __import__("labor").employees_in_rows(
+            __import__("schedule_shifts").rows_of(row["id"], "working", restaurant_id=restaurant_id)),
+        # Across every copy of the week staff were sent (BUGSLIFE-8).
+        "share_status": __import__("schedule_publish").week_share_status(restaurant_id, row["id"]),
     }
     # Contract K8: how far the demand forecast this schedule was staffed
     # against has been off (nightly, out of sample) and how the frozen weekly
@@ -234,11 +241,7 @@ def _read_schedule(restaurant_id):
     # why got a worse answer here than the panel had already given them.
     # Trimmed to the verdict and the problems — the full evaluation carries
     # eleven dimensions per shift and would crowd out everything else.
-    try:
-        import json as _j
-        q = _j.loads(row["quality_json"]) if row["quality_json"] else None
-    except Exception:
-        q = None
+    q = row.get("quality") or None
     if q and q.get("checked"):
         out["quality"] = {
             "score": q.get("score"), "band": q.get("band"),
@@ -1204,7 +1207,6 @@ def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
     unsent draft covering those dates, else the week in force. Nothing is
     saved — the Studio's Re-solve applies it."""
     import schedule_engine as _se
-    import schedule_versions as _sv
     from models import get_conn
     want = sorted({str(d)[:10] for d in (dates or []) if str(d)[:10]})
     if not want:
@@ -1216,11 +1218,13 @@ def _propose_resolve(restaurant_id, dates=None, out=None, add=None):
             "AND week_start<=? AND week_end>=? AND superseded_by IS NULL "
             "ORDER BY (published_at IS NULL) DESC, id DESC LIMIT 1",
             (restaurant_id, want[0], want[-1])).fetchone()
+        # The WORKING rows from the shift table (schedule_shifts — schedule re-audit 10/11/26 ARCH-7).
+        import schedule_shifts as _ss_pr
+        rows = _ss_pr.rows_of(row["id"], "working", conn=conn) if row else []
     finally:
         conn.close()
     if not row:
         return {"error": "There is no schedule for those dates yet."}
-    rows = _sv.rows_from_csv(row["schedule_csv"] or "")
     outs = [{"employee": str(n)} for n in (out or []) if str(n).strip()][:10]
     adds = [a for a in (add or []) if isinstance(a, dict)][:10]
     got = _se.resolve_days(restaurant_id, rows, want, out=outs, add=adds, history_id=row["id"])
@@ -4251,8 +4255,18 @@ def build_proposal(name, tool_input, restaurant_id=None, owner_words=""):
         body, summary_text, _why = _schedule_card(args, restaurant_id)
         if body is None:
             return None
+        # The rules the draft will HOLD are read from the owner's OWN words
+        # in this turn — one model hop, never Ask's paraphrase read again —
+        # and shown on the card, so Confirm is the owner confirming each
+        # "I read: …" (blind re-audit 10/11/26 AI-25, contract #6). The
+        # paraphrase still reaches the draft, as preferences only.
+        rules_read = _schedule_card_rules(restaurant_id, body, owner_words)
+        if rules_read:
+            body["confirm_rules"] = rules_read
         return {"action": name, "summary": summary_text, "route": dict(tool["route"]), "body": body,
-                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True}
+                "target": {}, "fields_shown": fields_shown(body), "requires_confirmation": True,
+                "rules_read": [{"reads_as": r.get("reads_as") or "", "quote": r.get("quote") or ""}
+                               for r in rules_read]}
     if name == "edit_shift":
         import shift_edits
         body, summary_text, _why = shift_edits.card(restaurant_id, args)
@@ -4420,6 +4434,7 @@ PROPOSAL_DENYLIST = frozenset({
 })
 
 _FIELD_LABELS = {
+    "confirm_rules": "Held as rules for this week",
     "schedule_id": "Schedule #", "enabled": "Auto-approve", "daily_cap": "At most a day",
     "months": "Keep reviews (months)", "supplier_email": "Supplier", "draft_hash": "Order version",
     "message": "Message", "link_url": "Link", "target_day": "For", "segment": "Audience",
@@ -4627,6 +4642,33 @@ def _week_draft_id(restaurant_id, monday_iso):
         conn.close()
 
 
+def _schedule_card_rules(restaurant_id, body, owner_words) -> list:
+    """The typed rules read from the owner's own words of this turn
+    (owner_rules.instruction_readings, the one reader: shape, meaning and
+    quote checked in code), each with its "I read: …", for the card's
+    Confirm to hold as one-week rules (confirm_for_week). [] with no owner
+    words or nothing read. Never raises."""
+    words_ = " ".join(str(owner_words or "").split())[:500]
+    if restaurant_id is None or not words_:
+        return []
+    try:
+        import owner_rules as _owr
+        import schedule_engine as _se
+        monday = _se.generation_request(restaurant_id, body.get("week_start"), body.get("dates"))["week_start"]
+        dates = _se.week_dates_from(_se._date_of(monday))
+        out = []
+        for item in _owr.instruction_readings(restaurant_id, dates, words_, extract=True):
+            for r in item.get("rules") or []:
+                rule = {k: v for k, v in (r.get("rule") or {}).items() if k != "confirmed"}
+                out.append(dict(rule, reads_as=r.get("reads_as")))
+            if (item.get("waiver") or {}).get("words"):
+                out.append({"kind": "waiver", "quote": item["text"], "reads_as": "I read: " + item["waiver"]["words"]})
+        return out[:10]
+    except Exception as e:
+        print(f"[ask] schedule card rules not read: {e!r}")
+        return []
+
+
 def _schedule_card(args, restaurant_id):
     """(body, summary, None) for generate_schedule — the week (any date in
     it), the days of that week's current draft to rewrite (with the draft
@@ -4661,7 +4703,7 @@ def _schedule_card(args, restaurant_id):
     elif days:
         monday = days[0] - _t(days=(days[0].weekday() - start_day) % 7)
     if monday is not None and restaurant_id is not None:
-        from schedule_engine import check_week_start
+        from schedule_context import check_week_start
         _ok, err = check_week_start(restaurant_id, monday.isoformat())
         if err:
             return None, None, err
@@ -4900,6 +4942,10 @@ def fields_shown(body) -> list:
             val = "the order as it stands now (" + val[:8] + ")"
         if k == "use_checked":
             val = "only the lines Cavnar AI checked"
+        if k == "confirm_rules" and isinstance(v, (list, tuple)):
+            # Each reading said back, so Confirm holds what the owner read
+            # (blind re-audit 10/11/26 AI-25).
+            val = "; ".join(str((x or {}).get("reads_as") or "") for x in v if isinstance(x, dict))
         if k == "review_ids" and isinstance(v, (list, tuple)):
             val = f"only the {len(v)} listed above"
         if k == "review_hashes" and isinstance(v, dict):

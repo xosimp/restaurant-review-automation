@@ -204,9 +204,14 @@ def test_the_draft_ranks_the_owners_notes():
     # the owner's notes, now beside the owner's request for the draft (PR-2).
     import labor
     import schedule_prompt
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert ("Quality preferences — the owner's ADDITIONAL SCHEDULING NOTES and THE OWNER'S REQUEST FOR THIS DRAFT "
-            "first") in schedule_prompt.PRIORITIES and "Follow each one" in src
+            "first") in schedule_prompt.PRIORITIES
+    # Each sentence as the one reader holds it (blind re-audit 10/11/26
+    # ARCH-16, AI-10): "Follow each one" told the model an unconfirmed note
+    # was a rule; now a rule is HELD BY CODE and the rest are preferences.
+    assert "Follow each one" not in src and "HELD BY CODE is a rule the owner confirmed" in src
+    assert "NOT CONFIRMED and NOT ENFORCED lines are preferences" in src
 
 
 # ── the routes ─────────────────────────────────────────────────────────────
@@ -296,7 +301,7 @@ def test_every_cut_surface_reads_the_floors_with_the_note_rules(rid, db):
 def test_cavnar_ais_questions_never_ride_as_the_owners_instructions():
     import labor
     import schedule_engine
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert "partition(SCHED_FINDINGS_HEADER)" in src
     assert "SCHED_FINDINGS_HEADER" in inspect.getsource(schedule_engine._sched_notes_with_findings)
     assert "never instructions" in labor.SCHED_FINDINGS_HEADER

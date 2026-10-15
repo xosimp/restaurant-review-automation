@@ -22,6 +22,7 @@ L-14  a strong calibration waits in the action queue; the dead constants and
       the stale comments are gone
 """
 import inspect
+import schedule_scorecard
 import json
 import sys
 from datetime import date, timedelta
@@ -43,6 +44,18 @@ import schedule_memory as sm
 import schedule_versions as sv
 import staff_settings
 from models import Restaurant, create_restaurant
+
+
+@pytest.fixture(autouse=True)
+def _two_edit_candidates(monkeypatch):
+    """These tests are about their own subject, built on two-edit fixtures
+    from before the candidacy floor (schedule re-audit 10/11/26
+    LEARNING-10: three opportunities and a Wilson lower bound of 0.3 —
+    tests/test_sf11_g2_habits.py holds it). The old floor keeps each test
+    about its subject; enforcement is still earned by hand
+    (schedule_versions.habit_enforceable)."""
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_OPPORTUNITIES", 2)
+    monkeypatch.setattr(sv, "CANDIDATE_MIN_LOWER", 0.0)
 
 HEAD = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 OWNER = {"id": 1, "username": "erik", "role": "owner", "restaurant_id": None}
@@ -239,24 +252,31 @@ def test_a_retired_ruled_or_dormant_pattern_keeps_its_status_in_the_memory():
 
 def test_a_pattern_is_enforced_only_once_its_confidence_clears_the_line():
     rid = _rid()
-    _bob_off_weeks(rid)
+    # Two hand edits: a candidate (binding takes three by hand since re-audit
+    # 10/11/26 LEARNING-9/11 — schedule_versions.habit_enforceable).
+    _bob_off_weeks(rid, weeks=(2, 1))
     sv.refresh_standing_patterns(rid)
     key = next(s["key"] for s in sv.standing_patterns(rid) if s["kind"] == "moved_off")
     week = [(_monday(-1) + timedelta(days=i)).isoformat() for i in range(7)]
     sm.consolidate(rid)
     m = _mem(rid, key="pattern:" + key)[0]
     assert m["confidence"] < sm.ACTIVE_CONFIDENCE and m["status"] == "candidate" and m["enforcement"] == "prompt"
-    assert not sm.enforced_signals(rid, week, roster_names=EVERYONE)
+    # A candidate the hand made twice leans the draft for CANDIDATE_BIND_DAYS
+    # (LEARNING-11) — tier "learning", at a scaled-down weight — never bound.
+    lean = sm.enforced_signals(rid, week, roster_names=EVERYONE)
+    assert all(x["tier"] == "learning" for x in lean)
     # Kept by the manager's own hand week after week: sure enough to bind.
     _sql("UPDATE schedule_standing_patterns SET hits=9, opportunities=9, confidence=0.71, last_hand=? "
          "WHERE restaurant_id=? AND pattern_key=?", date.today().isoformat(), rid, key)
+    sv.refresh_standing_patterns(rid)
     sm.consolidate(rid, only=("patterns",))
     sig = sm.enforced_signals(rid, week, roster_names=EVERYONE)
     assert [s["kind"] for s in sig] == ["moved_off"]
     s = sig[0]
     assert set(s) == {"kind", "key", "person", "day", "daypart", "role", "value", "confidence", "enforcement",
-                      "source"}
+                      "source", "learned_confidence", "tier", "origin", "text"}
     assert (s["person"], s["day"], s["daypart"], s["enforcement"]) == ("Bob", "Tuesday", "night", "soft")
+    assert (s["tier"], s["origin"]) == ("bound", "habit")
     # Bob off the roster, or a week without a Tuesday: nothing binds.
     assert not sm.enforced_signals(rid, week, roster_names=["Ana", "Cy"])
     assert not sm.enforced_signals(rid, [d for d in week if date.fromisoformat(d).weekday() != 1], EVERYONE)
@@ -850,7 +870,7 @@ def test_a_fact_the_passes_hold_is_one_short_line_and_a_candidate_says_its_evide
 
 def test_the_generation_routes_its_learned_blocks_through_the_one_budget():
     import schedule_engine
-    src = inspect.getsource(schedule_engine._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in schedule_engine.INPUT_STEPS)
     assert "_smem.prompt_lines(" in src and "budget_chars=_smem.LEARNED_PROMPT_BUDGET_CHARS" in src
     assembled = src[src.index("rules_block = _rules.prompt_block("):src.index("_gen_kwargs = dict(")]
     assert "+ learned_blk" in assembled
@@ -972,8 +992,8 @@ def test_the_week_is_scored_as_it_ran_beside_its_planned_score(monkeypatch):
         scored["rows"] = rows
         return {"checked": True, "score": 60, "shifts": [{"date": fri, "daypart": "night", "scored": True, "score": 60,
                                                          "dimensions": [{"key": "coverage", "score": 50}]}]}
-    monkeypatch.setattr(schedule_intel, "score_as_run", fake_score)
-    assert schedule_intel.record_as_run_quality(rid) == 1
+    monkeypatch.setattr(schedule_scorecard, "score_as_run", fake_score)
+    assert schedule_scorecard.record_as_run_quality(rid) == 1
     assert [r["employee"] for r in scored["rows"]] == ["Ana"], "the plan was scored, not the punches"
     obs = {o["kind"]: o for o in sm.observations(rid, kinds=("sq_as_run", "sq_planned")) if o.get("date")}
     assert obs["sq_as_run"]["value"]["dims"]["coverage"] == 50 and obs["sq_planned"]["value"]["dims"]["coverage"] == 100

@@ -4435,9 +4435,14 @@ def run_auto_publish_schedules():
             except Exception as e:
                 _ops.capture(e, job="auto_publish_schedule_hold", context=f"restaurant_id={r.id}")
             return False
-        action = delayed.schedule(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
-                                  AUTO_PUBLISH_UNDO_MINUTES,
-                                  label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        # Never beside a Send already waiting for the week (schedule re-audit
+        # 10/11/26 BUGSLIFE-9): a person's queued Send stands, and Undo on
+        # its countdown is the whole of it.
+        action = delayed.queue_schedule_send(r.id, "schedule_publish", {"schedule_id": row["id"], "automatic": True},
+                                             AUTO_PUBLISH_UNDO_MINUTES, replace=False,
+                                             label=f"Publishing the week of {mdy(row['week_start'])} to staff")
+        if action.get("existing"):
+            return False
         try:
             from strategy_jobs import _reach, _clock
             # The real send time. The job's window runs 9am to 2pm local, so
@@ -5764,12 +5769,16 @@ def scheduler_loop():
 
             # Sunday 5am — what each restaurant's own shift outcomes suggest
             # for its Shift Quality weights, floors and bars, recorded as a
-            # suggestion the owner applies — never applied here; a strong one
-            # waits in the action queue (strategy_jobs.run_quality_calibration,
-            # schedule audit 10/3/26 L-14).
+            # suggestion the owner applies (a strong one waits in the action
+            # queue — schedule audit 10/3/26 L-14) — and the automatic
+            # calibration, which writes the weights only when
+            # SCHEDULE_CALIBRATION_AUTOPROMOTE=1 (strategy_jobs.
+            # run_quality_calibration; blind re-audit 10/11/26 LEARNING-2).
             if _due(now, 5) and now.weekday() == 6 and _ops.claim_period("quality_calibration", str(today)):
-                from strategy_jobs import run_quality_calibration
-                _ops.run_job("quality_calibration", run_quality_calibration)
+                from strategy_jobs import quality_calibration_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26), the cohort read first.
+                _ops.run_job("quality_calibration", quality_calibration_pass())
 
             # 4am daily — what each published week actually did, by daypart,
             # each ended week read when its numbers are in and again only
@@ -5812,7 +5821,11 @@ def scheduler_loop():
             # 10/10/26 RM-4). Sends nothing.
             if _due(now, 7) and now.weekday() == 0 and _ops.claim_period("schedule_scorecard", str(today)):
                 import schedule_scorecard as _sscard
-                _ops.run_job("schedule_scorecard", _sscard.run_scorecard)
+                from strategy_jobs import learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26 SCALE-26): a serial
+                # 15-minute pass rotated coverage over weeks at fleet scale.
+                _ops.run_job("schedule_scorecard", learner_pass("schedule_scorecard", _sscard.run_scorecard))
 
             # 7am daily, after event_sync (5am) and the memory (6am) - the
             # Studio's Bench: on-call slots settled, published weeks'
@@ -5828,7 +5841,10 @@ def scheduler_loop():
             # owner's ratings screen. Bounded, resumable. Sends nothing.
             if _due(now, 8) and now.weekday() == 0 and _ops.claim_period("staffing_learning", str(today)):
                 import staffing_elasticity as _sel_job
-                _ops.run_job("staffing_learning", _sel_job.run_elasticity)
+                from strategy_jobs import learner_pass
+                # One `learner` queue row per restaurant when the job queue
+                # is on (blind re-audit 10/11/26 LEARNING-24).
+                _ops.run_job("staffing_learning", learner_pass("staffing_learning", _sel_job.run_elasticity))
 
             # 5am daily — reservation feeds into demand_signals for each
             # restaurant whose draft is tomorrow (its auto_draft_weekday; the
@@ -5855,9 +5871,8 @@ def scheduler_loop():
                 # Each draft a `scheduled` job_queue row when the queue is on
                 # (SCALE-13): the pass claims and enqueues in seconds instead
                 # of holding the AI lane up to 40 minutes an hour.
-                import job_queue as _jq_ad
                 if not _ops.run_in_lane("ai", "auto_draft_schedule", run_auto_draft_schedules, now=now,
-                                        enqueue=_jq_ad.enabled()):
+                                        enqueue=True):
                     _ops.release_period("auto_draft_schedule", f"{today}-{now.hour}")
 
             # Monday 7am local — the agent files the week's three actions.
@@ -6164,21 +6179,16 @@ def scheduling_allowed():
     brief at 7:52, a second "one week in" at 1:39pm, a failure digest about
     the dev machine's own errors. Morning briefs, digests, alerts and issue
     texts reach real people; a laptop must never be a second sender.
+
+    Held while a restore is in progress (RESTORE_FROM: jobs must not write
+    into the restored database, or send from it, until someone has confirmed
+    it) and during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
+    docs/ops/POSTGRES_CUTOVER.md). The one rule lives in
+    config.scheduling_allowed, so a gate read outside the scheduler never
+    imports this module (blind re-audit 10/11/26 BUGSGEN-3, SCALE-29).
     """
-    # Held while a restore is in progress: jobs must not write into the
-    # restored database (or send from it) until someone has confirmed it and
-    # removed RESTORE_FROM.
-    if (os.getenv("RESTORE_FROM") or "").strip():
-        return False
-    # Held during the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY,
-    # docs/ops/POSTGRES_CUTOVER.md): no job writes the database being copied.
-    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
-        return False
-    if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    # Railway sets all of these on every deploy; any one is enough.
-    return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
-                                       "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+    import config as _config_gate
+    return _config_gate.scheduling_allowed()
 
 
 def _run_scheduler_thread():

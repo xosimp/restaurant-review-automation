@@ -68,23 +68,22 @@ def init_note_rules(db_path=DB_PATH):
         conn.executescript(SCHEMA)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_note_rules)").fetchall()}
         if "more_sources" not in cols:
-            # The other sentences the same rule was confirmed from (re-audit
-            # 10/2/26: a second sentence with the same rule showed as unmade).
+            # The other sentences the same rule was confirmed from (a second
+            # sentence with the same rule showed as unmade).
             conn.execute("ALTER TABLE schedule_note_rules ADD COLUMN more_sources TEXT")
-        # A rule about WHEN a role starts or ends, not how many (schedule
-        # audit 10/3/26 L-33: "make it a rule" for a start the manager keeps
-        # setting): kind 'floor' (the minimum above, every row before this),
-        # 'start' or 'end' with at_time ("4:30pm"); min_people is 0 for a
-        # time rule.
+        # A rule about WHEN a role starts or ends, not how many ("make it a
+        # rule" for a start the manager keeps setting): kind 'floor' (the
+        # minimum above, every row before this), 'start' or 'end' with
+        # at_time ("4:30pm"); min_people is 0 for a time rule.
         for _col, _decl in (("kind", "TEXT NOT NULL DEFAULT 'floor'"), ("at_time", "TEXT")):
             if _col not in cols:
                 conn.execute(f"ALTER TABLE schedule_note_rules ADD COLUMN {_col} {_decl}")
         # The owner's words as typed rules beyond a floor or a time
-        # (owner_rules — scheduler audit 10/10/26 RM-9): a person kept off,
-        # on, closing or opening, two kept together or apart, a ceiling, a
-        # day lighter or heavier. `person` / `person2` in the roster's
-        # spelling, `value` a count or a weight, `dates` a JSON list of ISO
-        # dates for a one-week rule naming dates.
+        # (owner_rules): a person kept off, on, closing or opening, two
+        # kept together or apart, a ceiling, a day lighter or heavier.
+        # `person` / `person2` in the roster's spelling, `value` a count or
+        # a weight, `dates` a JSON list of ISO dates for a one-week rule
+        # naming dates.
         for _col, _decl in (("person", "TEXT"), ("person2", "TEXT"), ("value", "REAL"), ("dates", "TEXT")):
             if _col not in cols:
                 conn.execute(f"ALTER TABLE schedule_note_rules ADD COLUMN {_col} {_decl}")
@@ -124,7 +123,7 @@ _FILLER = {"keep", "keeps", "kept", "need", "needs", "needed", "have", "has", "a
            "floor", "people", "person", "persons", "ppl", "atleast", "x", "will", "would", "can", "could",
            "to", "lets", "let", "ll", "s", "d", "going", "gonna", "do", "does", "needs", "keeping", "having",
            "duty", "covered", "cover", "scheduled"}
-# Role words people use for the roster's names (blind re-audit #8).
+# Role words people use for the roster's names.
 _ROLE_SYNONYMS = {"hostess": "host", "hostesses": "host", "busboy": "busser", "busboys": "busser",
                   "busperson": "busser", "buspeople": "busser", "mgr": "manager", "mgrs": "manager",
                   "mngr": "manager", "expediter": "expo", "expeditor": "expo", "expediters": "expo",
@@ -231,11 +230,11 @@ def _normalise(text, roles=()):
 def _match_roles(low, roles):
     """(role, choices, the words that named it): an exact role name first
     (longest), else a role family the job codes share ("servers" where the
-    codes are "Server AM" and "Server PM" — schedule audit 10/3/26 D-14: it
-    named no role, so "keep two servers at dinner" was never a rule; the
-    floor is held on the code for that half of the day), else the roles
-    whose last word the sentence names ("cooks" → Line Cook and Prep Cook:
-    two choices, the owner picks)."""
+    codes are "Server AM" and "Server PM": it named no role, so "keep two
+    servers at dinner" was never a rule; the floor is held on the code for
+    that half of the day), else the roles whose last word the sentence
+    names ("cooks" → Line Cook and Prep Cook: two choices, the owner
+    picks)."""
     clean = sorted({str(r).strip() for r in roles or () if str(r or "").strip()}, key=len, reverse=True)
     for r in clean:
         if re.search(r"\b" + re.escape(r.lower()) + r"(?:s|es)?\b", low):
@@ -282,8 +281,7 @@ def _days(tokens):
     """(days or None for every day, why-not or None) from the day tokens:
     single days, ranges ("friday through sunday", wrapping "sunday to
     thursday"), weekends / weekdays / weeknights, and "every day except
-    Monday" — the complement only when the sentence names no other day
-    (blind re-audit #1)."""
+    Monday" — the complement only when the sentence names no other day."""
     days, i, except_days, in_except = [], 0, [], False
     while i < len(tokens):
         t = tokens[i]
@@ -467,7 +465,13 @@ def read_notes(restaurant_id, text, week_start=None, db_path=DB_PATH) -> list:
     for s in _sentences(text):
         waived = _waiver_words(s, standing) if standing else ""
         if waived:
-            out.append({"text": " ".join(str(s).split()), "kind": "waiver", "why": waived})
+            # A reading until the owner confirms it: the position stays
+            # staffed until then.
+            item = {"text": " ".join(str(s).split()), "kind": "waiver", "why": waived, "confirmed": False}
+            hit = active.get(_key(s))
+            if hit and hit.get("kind") == "waiver":
+                item.update(confirmed=True, rule_id=hit["id"], enforced=hit["words"])
+            out.append(item)
             continue
         item = read_sentence(s, roles, names)
         hit = active.get(_key(s))
@@ -504,7 +508,7 @@ def _key(text):
 
 def _held(role, held) -> bool:
     """Whether somebody on the roster holds `role` — the job code itself, or
-    a code of the same role family ("Server" for "Server PM", D-14)."""
+    a code of the same role family ("Server" for "Server PM")."""
     from shift_quality import role_family
     return str(role or "").lower() in held or role_family(role) in {role_family(x) for x in held}
 
@@ -550,13 +554,17 @@ def _monday(iso, start_day=0):
 
 def _start_day(restaurant_id) -> int:
     try:
-        from labor import get_week_start_day
+        from schedule_context import get_week_start_day
         return get_week_start_day(restaurant_id)
     except Exception:
         return 0
 
 
 TIME_KINDS = ("start", "end")
+# A standing position's waiver the owner confirmed (schedule_dedicated):
+# `source_text` is the sentence; the slots are re-read from it
+# (schedule_dedicated.waivers) whenever it holds.
+WAIVER_KIND = "waiver"
 
 
 def words_for(rule) -> str:
@@ -564,8 +572,12 @@ def words_for(rule) -> str:
     or, for a time rule, "Server at dinner start at 4:30pm, Fri · every week"."""
     from time_utils import mdy
     kind = rule.get("kind") or "floor"
+    if kind == WAIVER_KIND:
+        scope = ("every week" if rule.get("scope") == "every"
+                 else f"the week of {mdy(rule.get('week_start'))} only")
+        return f"standing position let off as your note says: “{str(rule.get('source_text') or '')[:120]}” · {scope}"
     if kind not in ("floor",) + TIME_KINDS:
-        # A typed rule of the owner's words (owner_rules, RM-9): its own words.
+        # A typed rule of the owner's words (owner_rules): its own words.
         import owner_rules as _owr
         scope = ("every week" if rule.get("scope") == "every"
                  else f"the week of {mdy(rule.get('week_start'))} only")
@@ -637,8 +649,8 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
     roles = restaurant_roles(restaurant_id, db_path=db_path)
     match = next((r for r in roles if r.lower() == str(role or "").strip().lower()), None)
     if not match and str(role or "").strip():
-        # A role family the job codes share ("Server" for Server AM / PM —
-        # D-14): held on the code for each half of the day.
+        # A role family the job codes share ("Server" for Server AM / PM):
+        # held on the code for each half of the day.
         from shift_quality import role_family
         from schedule_rules import _family_name
         fam = role_family(role)
@@ -666,8 +678,8 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
         raise ValueError("A rule is for every week or one week.")
     mon = None
     if scope == "week":
-        import schedule_engine
-        raw, err = schedule_engine.check_week_start(restaurant_id, week_start or "")
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
         if err:
             raise ValueError(err)
         sd = _start_day(restaurant_id)
@@ -716,21 +728,44 @@ def add_rule(restaurant_id, role, min_people, dayparts, days=None, scope="every"
 
 
 def add_time_rule(restaurant_id, role, kind, at_time, daypart, days=None, source_text=None, user=None,
-                  db_path=DB_PATH) -> dict:
+                  db_path=DB_PATH, scope="every", week_start=None) -> dict:
     """Store one confirmed START or END rule for a role on a daypart (every
-    week): "Servers start Friday dinner at 4:30pm". From then on the draft
-    is built to it (schedule_rules.apply_role_times), the model is told it
+    week, or — `scope` "week" — the week of `week_start` only: a draft's own
+    instruction the owner confirmed): "Servers start Friday dinner at
+    4:30pm". From then on the draft is built to it
+    (schedule_rules.apply_role_times), the model is told it
     (schedule_rules.prompt_block) and a row off it is a `role_time` breach
-    that names the rule (schedule audit 10/3/26 L-33). Raises ValueError
-    with the owner's words."""
+    that names the rule. Raises ValueError with the owner's words."""
     if kind not in TIME_KINDS:
         raise ValueError("A time rule is a start or an end.")
     roles = restaurant_roles(restaurant_id, db_path=db_path)
     match = next((r for r in roles if r.lower() == str(role or "").strip().lower()), None)
+    if not match and str(role or "").strip():
+        # A role family the job codes share, as add_rule takes it.
+        from shift_quality import role_family
+        from schedule_rules import _family_name
+        fam = role_family(role)
+        codes = [r for r in roles if role_family(r) == fam]
+        match = _family_name(fam, codes) if codes else None
     if not match:
         raise ValueError("Pick one of your roles for this rule.")
     if daypart not in DAYPARTS:
         raise ValueError("Pick lunch or dinner.")
+    if scope not in ("every", "week"):
+        raise ValueError("A rule is for every week or one week.")
+    mon = None
+    if scope == "week":
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
+        if err:
+            raise ValueError(err)
+        sd = _start_day(restaurant_id)
+        if raw:
+            mon = _monday(raw, sd).isoformat()
+        else:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id, naive=True).date()
+            mon = (today + timedelta(days=(sd - today.weekday()) % 7 or 7)).isoformat()
     from schedule_rules import parse_minutes, _fmt_minutes
     m = parse_minutes(str(at_time or ""))
     if m is None:
@@ -746,7 +781,8 @@ def add_time_rule(restaurant_id, role, kind, at_time, daypart, days=None, source
     have = note_rules(restaurant_id, include_past=True, db_path=db_path)
     for r in have:
         if (r.get("kind"), r["role"].lower(), r["dayparts"], r["days"], r.get("at_time")) == \
-                (kind, match.lower(), [daypart], day_list, at) and r["scope"] == "every":
+                (kind, match.lower(), [daypart], day_list, at) and r["scope"] == scope \
+                and r.get("week_start") == mon:
             return dict(r, existing=True)
     conn = get_conn(db_path)
     try:
@@ -754,15 +790,69 @@ def add_time_rule(restaurant_id, role, kind, at_time, daypart, days=None, source
         # one it contradicts (the owner changed their mind), never sits beside it.
         for r in have:
             if r.get("kind") == kind and r["role"].lower() == match.lower() and r["dayparts"] == [daypart] \
-                    and r["days"] == day_list and r["scope"] == "every":
+                    and r["days"] == day_list and r["scope"] == scope and r.get("week_start") == mon:
                 conn.execute("UPDATE schedule_note_rules SET removed_at=datetime('now'), removed_by=? WHERE id=?",
                              (who, r["id"]))
         cur = conn.execute(
             "INSERT INTO schedule_note_rules (restaurant_id, scope, week_start, role, min_people, dayparts, days, "
             "source_text, created_by, kind, at_time) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (restaurant_id, "every", None, match, 0, json.dumps([daypart]),
+            (restaurant_id, scope, mon, match, 0, json.dumps([daypart]),
              json.dumps(day_list) if day_list else None,
              " ".join(str(source_text or "").split())[:SOURCE_MAX] or None, who, kind, at))
+        conn.commit()
+        row = conn.execute("SELECT * FROM schedule_note_rules WHERE id=?", (cur.lastrowid,)).fetchone()
+    finally:
+        conn.close()
+    return _row(row)
+
+
+def add_waiver(restaurant_id, sentence, scope="every", week_start=None, user=None, db_path=DB_PATH) -> dict:
+    """Store the owner's confirmation that `sentence` lets a standing
+    position off (schedule_dedicated): every week while the note stays, or
+    the week of `week_start` only (a draft's own instruction). The slots
+    are re-read from the sentence whenever the waiver holds. Raises
+    ValueError with the owner's words when the sentence does not read as a
+    waiver."""
+    import schedule_dedicated as _ded
+    from models import get_restaurant
+    text = " ".join(str(sentence or "").split())[:SOURCE_MAX]
+    standing = _ded.rules_of(get_restaurant(restaurant_id, db_path=db_path))
+    ws = _ded.waivers(text, standing) if text else []
+    if not ws:
+        raise ValueError("That note doesn't read as letting a standing position off — say it as “no bar tables "
+                         "bartender Tuesday”.")
+    if scope not in ("every", "week"):
+        raise ValueError("A rule is for every week or one week.")
+    mon = None
+    if scope == "week":
+        import schedule_context
+        raw, err = schedule_context.check_week_start(restaurant_id, week_start or "")
+        if err:
+            raise ValueError(err)
+        sd = _start_day(restaurant_id)
+        if raw:
+            mon = _monday(raw, sd).isoformat()
+        else:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id, naive=True).date()
+            mon = (today + timedelta(days=(sd - today.weekday()) % 7 or 7)).isoformat()
+    for r in note_rules(restaurant_id, include_past=True, db_path=db_path):
+        if r.get("kind") == WAIVER_KIND and r["scope"] == scope and r.get("week_start") == mon \
+                and _key(r.get("source_text")) == _key(text):
+            return dict(r, existing=True)
+    who = None
+    if user:
+        who = user.get("email") or user.get("username") or (f"user {user.get('id')}" if user.get("id") else None)
+    first = standing[ws[0]["rule"]]
+    parts = sorted({w["part"] for w in ws}, key=DAYPARTS.index)
+    days = [d for d in DAYS if d in {w["day"] for w in ws}]
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO schedule_note_rules (restaurant_id, scope, week_start, role, min_people, dayparts, days, "
+            "source_text, created_by, kind) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, scope, mon, first["family"], 0, json.dumps(parts), json.dumps(days), text, who,
+             WAIVER_KIND))
         conn.commit()
         row = conn.execute("SELECT * FROM schedule_note_rules WHERE id=?", (cur.lastrowid,)).fetchone()
     finally:
@@ -835,8 +925,8 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
                     f"{r.get('source_text') or r['words']} — nobody on the roster is a {r['role']} now")
                 continue
             if r.get("kind") in TIME_KINDS:
-                # A start or end the owner made a rule (L-33): the draft is
-                # built to it and checked against it (Constraints.role_times).
+                # A start or end the owner made a rule: the draft is built to
+                # it and checked against it (Constraints.role_times).
                 from schedule_rules import parse_minutes
                 at = parse_minutes(r.get("at_time") or "")
                 if at is None:
@@ -844,13 +934,19 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
                 times = getattr(c, "role_times", None)
                 if times is None:
                     continue
+                # A role family the owner named ("Servers start at 4:30pm"
+                # where the codes are Server AM / PM) holds on each of its
+                # codes.
+                import owner_rules as _owr_t
+                codes = _owr_t._role_codes(c, r["role"]) if hasattr(c, "family") else [r["role"].strip().lower()]
                 for day in (r["days"] or DAYS):
                     for part in r["dayparts"]:
                         if not _trades(c, day, part):
                             continue
-                        spec = times.setdefault((r["role"].strip().lower(), day, part), {})
-                        spec[r["kind"]] = at
-                        spec.setdefault("source", {})[r["kind"]] = r.get("source_text") or r["words"]
+                        for code in codes:
+                            spec = times.setdefault((code, day, part), {})
+                            spec[r["kind"]] = at
+                            spec.setdefault("source", {})[r["kind"]] = r.get("source_text") or r["words"]
                 continue
             key = next((x for x in c.role_floors if x.strip().lower() == r["role"].lower()), r["role"])
             spec = c.role_floors.setdefault(key, {"morning": 0, "night": 0, "days": {}})
@@ -864,9 +960,9 @@ def apply_note_rules(c, restaurant_id, db_path=DB_PATH):
                         spec.setdefault("days", {}).setdefault(day, {})[part] = r["min_people"]
                         c.rule_floor_sources[(key.strip().lower(), day, part)] = src
         # Every other typed rule of the owner's words in force for the week
-        # (owner_rules — RM-9, AI-9, AI-19): the ones confirmed here (hard),
-        # and the notes' and staff notes' readings not yet confirmed (soft).
-        # Read from the cache — no model call here.
+        # (owner_rules): the ones confirmed here (hard), and the notes' and
+        # staff notes' readings not yet confirmed (soft). Read from the
+        # cache — no model call here.
         import owner_rules as _owr
         _owr.apply(c, _owr.typed_rules(restaurant_id, c.week_dates, db_path=db_path))
     except Exception as e:

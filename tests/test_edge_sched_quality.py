@@ -8,6 +8,7 @@ xfail(strict=True) marks a confirmed defect, asserting the correct
 behaviour; the marker comes off with the fix.
 """
 import sys
+import schedule_fixes
 
 import pytest
 
@@ -104,7 +105,7 @@ def test_the_fix_pass_scores_the_baseline_once_not_once_per_violation(monkeypatc
         calls.append(1)
         return real(*a, **k)
     monkeypatch.setattr(sq, "score_rows", counted)
-    out = sq.apply_fixes(rows, hard, roster=[r["employee"] for r in rows])
+    out = schedule_fixes.apply_fixes(rows, hard, roster=[r["employee"] for r in rows])
     assert out["fixes"] == [] and len(out["unfixed"]) == 30
     assert len(calls) <= 1 + out["evaluated"], len(calls)
 
@@ -113,7 +114,7 @@ def test_the_fix_pass_caps_candidate_evaluations(monkeypatch):
     rows = [_row(WEEK[0], f"P{i}", "Server", "8:00am", "4:00pm", 8) for i in range(20)]
     rows += [_row(WEEK[1], f"P{i}", "Server", "8:00am", "4:00pm", 8) for i in range(20)]
     hard = [sr._v("rest_gap", i, rows[i], "x") for i in range(20)]
-    out = sq.apply_fixes(rows, hard, roster=[f"P{i}" for i in range(20)], max_evaluations=5)
+    out = schedule_fixes.apply_fixes(rows, hard, roster=[f"P{i}" for i in range(20)], max_evaluations=5)
     assert out["evaluated"] <= 5
 
 
@@ -128,7 +129,7 @@ def test_a_fix_never_hands_a_late_close_to_a_minor(db):
     rows = [_row(WEEK[4], "Ana", "Bartender", "6:00pm", "1:00am", 7),      # the Friday close, flagged hard
             _row(WEEK[0], "Dev", "Bartender", "11:00am", "3:00pm", 4)]     # a minor bartender, free on Friday
     flagged = [sr._v("rest_gap", 0, rows[0], "not enough rest since their previous shift")]
-    out = sq.apply_fixes(rows, flagged, roster=["Ana", "Dev"], rules=se._rules_for_swaps(c))
+    out = schedule_fixes.apply_fixes(rows, flagged, roster=["Ana", "Dev"], rules=se._rules_for_swaps(c))
     after = sr.violations(out["rows"], c)
     assert not [v for v in after if v["kind"] == "minor_late"], out["fixes"]
 

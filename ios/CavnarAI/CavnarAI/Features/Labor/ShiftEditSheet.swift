@@ -28,6 +28,9 @@ struct ShiftEditSheet: View {
     /// Everyone active on the roster, with their roles (Scheduling setup's
     /// roster) — the Who picker's list. Empty: the people on the week.
     var roster: [RosterMember] = []
+    /// A new shift for this person (a review's "Find them a shift",
+    /// TRUST-20): picked in the Who row from the start.
+    var presetEmployee: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var start = Date()
@@ -220,7 +223,9 @@ struct ShiftEditSheet: View {
         case .add:
             let first = rows.first
             date = weekDates.first ?? ""
-            employee = people.first ?? ""
+            employee = presetEmployee.flatMap { want in
+                people.first { $0.caseInsensitiveCompare(want) == .orderedSame } ?? want
+            } ?? people.first ?? ""
             role = roleOf(employee) ?? ""
             start = dateFor(first?.shiftStart) ?? dateFor("4:00pm")!
             end = dateFor(first?.shiftEnd) ?? dateFor("10:00pm")!

@@ -100,13 +100,14 @@ def test_a_save_writes_the_evaluation_once_not_twice():
 
 def test_the_planned_quality_and_the_rec_outcome_read_the_whole_evaluation():
     import schedule_intel
+    import schedule_scorecard
     rid = create_restaurant(Restaurant(name="Plan Co", owner_email="p@x.test"))
     hid = _week(rid)
     q = _quality(score=58)
     sv.append(rid, hid, "published", CSV, quality=q, saved_by="erik", saved_authority="principal")
     conn = models.get_conn()
     try:
-        planned = schedule_intel._planned_quality(conn, hid)
+        planned = schedule_scorecard._planned_quality(conn, hid)
     finally:
         conn.close()
     assert planned["score"] == 58 and len(planned["shifts"]) == 40

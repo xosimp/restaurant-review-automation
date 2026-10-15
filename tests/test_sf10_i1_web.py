@@ -122,7 +122,8 @@ console.log(JSON.stringify(out));
                 "How sure we are", "88%", "Worth a look, never holding the send"):
         assert bit in h, bit
     assert 'class="hb-num bad">31.2%' in h          # the server's grade: over the target is red (TRUST-7)
-    assert got["g0"] == {"loaded": True, "busy": False, "must": 2, "decide": 1, "overriding": 0, "ready": False}
+    assert got["g0"] == {"loaded": True, "busy": False, "must": 2, "decide": 1, "overriding": 0, "ready": False,
+                         "fallback": False}
     assert got["g1"]["must"] == 1 and got["g1"]["overriding"] == 1
     # A manager gap is overridden only by naming who runs the floor (ARCH-30).
     assert got["g2"]["must"] == 1

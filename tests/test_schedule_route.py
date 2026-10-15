@@ -137,11 +137,25 @@ def test_a_first_generation_and_a_week_that_escalated_start_on_t4():
     assert se.hard_week_reasons(WEEK, last_run_escalated=True) == ["this week's last draft escalated"]
 
 
+def _tag_verdict(db, tag):
+    """A stored eval verdict that T4 beat T3 on `tag` weeks, past the floors."""
+    import schedule_eval as sev
+    sev.record_verdict(sev.ROUTE_METRIC, "T4", "T3", None,
+                       {"diff": -1.2, "ci90": (-1.8, -0.6), "weeks": sev.MIN_VERDICT_WEEKS,
+                        "restaurants": sev.MIN_VERDICT_RESTAURANTS}, tag=tag, db_path=db)
+
+
 def test_the_pre_router_reads_the_restaurant_first_draft_and_the_weeks_last_run(db):
     rid = _restaurant(db)
-    # No draft yet: its first schedule starts on T4.
+    # No draft yet: its first schedule is a signal, said in the run — and
+    # stays on T3 until the eval backs first weeks (re-audit 10/11/26 AI-27;
+    # it went to Opus on assertion).
     route, run = _inside(lambda: (_route(rid), se.schedule_route())[1], rid)
-    assert route.tier == "T4" and run["pre_route"] == ["the restaurant's first schedule"]
+    assert route.tier == "T3" and run["pre_route"] == []
+    assert run["pre_route_signals"] == ["the restaurant's first schedule"]
+    _tag_verdict(db, "first_week")
+    route, run = _inside(lambda: (_route(rid), se.schedule_route())[1], rid)
+    assert route.tier == "T4" and run["pre_route"][0].startswith("the restaurant's first schedule — the eval showed")
     assert run["subject"] == "week:2026-10-05" and run["steps"][0]["kind"] == "week"
     conn = models.get_conn(db)
     conn.execute("INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?, ?)", (rid, WEEK[0]))
@@ -159,7 +173,12 @@ def test_the_pre_router_reads_the_restaurant_first_draft_and_the_weeks_last_run(
     conn.commit()
     conn.close()
     route, run = _inside(lambda: (_route(rid), se.schedule_route())[1], rid)
-    assert route.tier == "T4" and run["pre_route"] == ["this week's last draft escalated"]
+    # Not sticky on T4 any more: the escalation is a signal until the eval
+    # backs "escalated" weeks.
+    assert route.tier == "T3" and run["pre_route_signals"] == ["this week's last draft escalated"]
+    _tag_verdict(db, "escalated")
+    route, run = _inside(lambda: (_route(rid), se.schedule_route())[1], rid)
+    assert route.tier == "T4" and run["pre_route"][0].startswith("this week's last draft escalated — ")
 
 
 def test_the_route_is_decided_once_per_run(monkeypatch):
@@ -343,7 +362,7 @@ def test_the_eval_replays_the_ladders_tiers():
 
 
 def test_no_schedule_call_reads_its_model_or_effort_around_the_route():
-    gen = inspect.getsource(labor.generate_optimized_schedule)
+    gen = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert 'model_for("schedule")' not in gen and "_route.apply(" in gen
     for fn in (se.call_cost_model, se.schedule_effort_in_force, se._generate_in_parts):
         assert 'model_for("schedule")' not in inspect.getsource(fn), fn.__name__
@@ -395,6 +414,7 @@ def test_a_generation_that_escalates_is_one_run_with_its_tiers_reasons_and_cost(
 def test_a_hard_week_is_recorded_as_pre_routed(db, monkeypatch):
     calls, tiers = [], []
     rid, finished = _gate_harness(monkeypatch, db, [], calls)
+    _tag_verdict(db, "first_week")                              # the eval backs first weeks on T4
     monkeypatch.setattr(labor, "generate_optimized_schedule",
                         _metered([[_line(d, "Ana") for d in WEEK], [_line(WEEK[5], "Bo")]], calls, tiers, rid))
     monkeypatch.setattr(se, "_gate_local", lambda quality, dates: 50.0 if "Bo" in json.dumps(quality) else 10.0)
@@ -402,7 +422,8 @@ def test_a_hard_week_is_recorded_as_pre_routed(db, monkeypatch):
     assert tiers == ["T4", "T4"]
     (row,) = _runs(db)
     assert row["start_tier"] == "T4" and row["final_tier"] == "T4" and row["escalations"] == 0
-    assert json.loads(row["context_json"])["pre_route"] == ["the restaurant's first schedule"]
+    ctx = json.loads(row["context_json"])
+    assert ctx["pre_route"][0].startswith("the restaurant's first schedule — the eval showed T4 better")
 
 
 def test_the_evaluated_roster_does_not_start_on_opus():

@@ -1016,6 +1016,19 @@ QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
 ASYNC_DEADLINE_GRACE_SECONDS = 90
+# A job that has SAVED its draft (async_jobs.saved_ref) and is past its
+# deadline is finishing its after-save steps, not dead: a poll waits this
+# much longer before it says so, and even then says the draft is saved —
+# provisionally, so the job's own finish still replaces it (blind re-audit
+# 10/11/26 BUGSGEN-13).
+SAVED_FINISH_GRACE_SECONDS = 5 * 60
+# The verdict a poll or the boot sweep writes over a job that saved a draft
+# but did not finish: the draft is in force, and the job's own finish (or a
+# resumed try's) may still replace this (finish_async_job).
+SAVED_UNFINISHED = {"ok": False, "saved": True, "provisional": True,
+                    "error": "Cavnar AI saved a draft for this week but didn't finish its last steps — open it "
+                             "from Schedule History and read it through before you publish."}
+_PROVISIONAL_MARK = '"provisional": true'
 
 
 def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
@@ -1042,13 +1055,19 @@ def sweep_stale_jobs(older_than_minutes: int = 0) -> int:
         resumable = []
         try:
             import job_queue as _jq_sweep
-            if _jq_sweep.enabled():
-                resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
+            resumable = [str(x) for x in _jq_sweep.resumable_external_ids()]
         except Exception as e:
             log.warning(f"sweep_stale_jobs: the queue could not be read ({e}); every pending job is failed")
             resumable = []
         conn = _async_conn()
         keep = (" AND job_id NOT IN (" + ",".join("?" * len(resumable)) + ")") if resumable else ""
+        # A dead job that had saved its draft is never "interrupted — try
+        # again": the draft is in force (BUGSGEN-13).
+        import json as _json_sweep
+        conn.execute(
+            "UPDATE async_jobs SET status='error', result_json=? "
+            "WHERE status='pending' AND saved_ref IS NOT NULL AND created_at <= datetime('now', ?)" + keep,
+            [_json_sweep.dumps(SAVED_UNFINISHED), f"-{int(older_than_minutes)} minutes"] + resumable)
         cur = conn.execute(
             "UPDATE async_jobs SET status='error', result_json=? "
             "WHERE status='pending' AND created_at <= datetime('now', ?)" + keep,
@@ -1154,7 +1173,10 @@ def claim_async_job(job_id, kind, restaurant_id, max_age_minutes: int = JOB_MAX_
     import json
     conn = _async_conn()
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One restaurant's jobs of one kind serialise (check-then-insert),
+        # no one else's (SCALE-12).
+        import db_dialect
+        db_dialect.begin_write(conn, "async_jobs", kind, restaurant_id)
         row = conn.execute(
             "SELECT job_id, request_json FROM async_jobs WHERE kind=? AND restaurant_id=? AND status='pending' "
             + _YOUNG + " " + _NOT_PAST_DEADLINE + " ORDER BY created_at DESC LIMIT 1",
@@ -1208,7 +1230,11 @@ def finish_async_job(job_id, status, result):
     Only a job still pending is written: one already failed — swept at boot,
     or read past its own deadline (read_async_job) — keeps that verdict. A
     generation that ran on past it used to overwrite "didn't finish" with a
-    draft the owner had been told never came (schedule audit 10/3/26 P-22)."""
+    draft the owner had been told never came (schedule audit 10/3/26 P-22).
+    The one exception: a job that saved its draft and was given the
+    provisional "saved but didn't finish" verdict (SAVED_UNFINISHED) is
+    finished by its own finish — the draft it names is the one in force
+    (blind re-audit 10/11/26 BUGSGEN-13)."""
     import json
     try:
         payload = json.dumps(result)
@@ -1217,8 +1243,9 @@ def finish_async_job(job_id, status, result):
     try:
         conn = _async_conn()
         cur = conn.execute(
-            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND status='pending'",
-            (status, payload, str(job_id)),
+            "UPDATE async_jobs SET status=?, result_json=? WHERE job_id=? AND (status='pending' OR "
+            "(status='error' AND saved_ref IS NOT NULL AND result_json LIKE ?))",
+            (status, payload, str(job_id), f"%{_PROVISIONAL_MARK}%"),
         )
         conn.commit()
         conn.close()
@@ -1374,6 +1401,33 @@ def job_still_pending(job_id) -> bool:
         return True
 
 
+_QUEUE_ENDED_MESSAGES = {
+    "expired": "The schedule couldn't be started in time — try again.",
+    "failed": "The schedule couldn't be finished, so nothing was saved. Try again.",
+    "cancelled": "Stopped — nothing was saved.",
+    "done": "The schedule ended without a result, so nothing was saved. Try again.",
+}
+
+
+def _queue_state(job_id):
+    """The durable queue's word on an async job it runs (job_queue.row_for):
+    "live" (queued, or running on a lease not yet run out), the row's end
+    state, or None (the queue does not run this job). Never raises."""
+    try:
+        import job_queue as _jq_state
+        row = _jq_state.row_for(job_id)
+    except Exception:
+        return None
+    if not row:
+        return None
+    st = row.get("state")
+    if st == "queued" or (st == "running" and float(row.get("lease_until") or 0) > time.time()):
+        return "live"
+    if st == "running":
+        return None                       # its process died: the next consumer resumes it
+    return st
+
+
 def read_async_job(job_id, restaurant_id=None):
     """The job's {"status", "result"}, or None if it doesn't exist (or belongs
     to another restaurant).
@@ -1395,9 +1449,14 @@ def read_async_job(job_id, restaurant_id=None):
             "SELECT job_id, restaurant_id, status, result_json, progress_json, "
             "(deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) AS overdue, "
             "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
+            "((deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) OR "
+            " (deadline_at IS NOT NULL AND deadline_at < datetime('now', ?))) AS long_past, "
+            "saved_ref, "
             "CAST(strftime('%s', deadline_at) AS INTEGER) - CAST(strftime('%s', 'now') AS INTEGER) AS seconds_left "
             "FROM async_jobs WHERE job_id=?",
-            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds", str(job_id)),
+            (f"-{JOB_MAX_MINUTES} minutes", f"-{ASYNC_DEADLINE_GRACE_SECONDS} seconds",
+             f"-{JOB_MAX_MINUTES * 60 + SAVED_FINISH_GRACE_SECONDS} seconds",
+             f"-{ASYNC_DEADLINE_GRACE_SECONDS + SAVED_FINISH_GRACE_SECONDS} seconds", str(job_id)),
         ).fetchone()
         if not row:
             conn.close()
@@ -1409,7 +1468,44 @@ def read_async_job(job_id, restaurant_id=None):
             conn.close()
             return None
         status = row["status"]
-        if status == "pending" and (row["overdue"] or row["past_deadline"]):
+        # One source of truth for a job the durable queue runs (blind
+        # re-audit 10/11/26 ARCH-10): the queue row says whether it can still
+        # finish. A row that expired unstarted, failed, was cancelled or
+        # ended without writing a result will never write one — the owner
+        # is told now rather than polling to a timeout (unless the job saved
+        # its draft: that is BUGSGEN-13's case below); a row still queued
+        # (waiting its turn) or running on a live lease is never called dead
+        # by its age, only by its own deadline.
+        queue_state = _queue_state(job_id) if status == "pending" else None
+        if queue_state in ("expired", "failed", "cancelled", "done") and row["saved_ref"] is None:
+            failed = {"ok": False, "error": _QUEUE_ENDED_MESSAGES[queue_state]}
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(failed), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the ended queue job: {e}")
+            conn.close()
+            return {"status": "error", "result": failed}
+        overdue = row["past_deadline"] or (row["overdue"] and queue_state != "live")
+        if status == "pending" and overdue and row["saved_ref"] is not None:
+            # The job saved its draft and is finishing (its after-save
+            # steps): not dead. The poll waits; well past that it says the
+            # draft is saved, provisionally — the job's own finish still
+            # replaces it (blind re-audit 10/11/26 BUGSGEN-13).
+            if not row["long_past"]:
+                conn.close()
+                return {"status": "pending", "result": None, "seconds_left": 0, "saved": True}
+            saved = dict(SAVED_UNFINISHED, history_id=int(row["saved_ref"]))
+            try:
+                conn.execute("UPDATE async_jobs SET status='error', result_json=? WHERE job_id=? "
+                             "AND status='pending'", (json.dumps(saved), str(job_id)))
+                conn.commit()
+            except Exception as e:
+                log.error(f"read_async_job({job_id}) could not record the unfinished saved job: {e}")
+            conn.close()
+            return {"status": "error", "result": saved}
+        if status == "pending" and overdue:
             # Past any real generation (or past the job's own deadline): its
             # result was never stored (the write failed, or the process died
             # after the boot sweep ran). Polling 'pending' forever helps
@@ -1971,6 +2067,47 @@ def schedule_input_failures(db_path=None) -> dict:
     return {"n": n, "rates": rates, "over": over, "alert_rate": SCHEDULE_INPUT_FAIL_ALERT}
 
 
+# Solves an emergency cap ended (blind re-audit 10/11/26 SCALE-15, SCALE-16):
+# each schedule generation names on its review the solves the wall clock or
+# CP-SAT's memory bound ended instead of their deterministic work budget
+# (schedule_engine.solve_capped). Such a week may differ from the one the
+# same inputs give on an idle box. Past SCHEDULE_CAPPED_ALERT of the last
+# SCHEDULE_INPUT_SAMPLE generations — with at least SCHEDULE_P95_MIN — the
+# platform check warns: the box is too busy for its generation concurrency
+# (job_queue.group_concurrency) or a tenant outgrew SCHEDULE_CPSAT_MEMORY_MB.
+SCHEDULE_CAPPED_ALERT = 0.05
+
+
+def schedule_solve_capped(db_path=None) -> dict:
+    """{"n", "capped" (generations with any capped solve), "rate", "kinds":
+    {"wall:solver": count, ...}, "over", "alert_rate"} over the recent
+    generations; {"n": 0, ...} with none on file."""
+    import json as _json
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        rows = conn.execute("SELECT review_json FROM schedule_history WHERE total_seconds IS NOT NULL "
+                            "AND generated_at >= datetime('now', ?) ORDER BY id DESC LIMIT ?",
+                            (f"-{int(SCHEDULE_P95_DAYS)} days", int(SCHEDULE_INPUT_SAMPLE))).fetchall()
+    finally:
+        conn.close()
+    kinds, n, capped = {}, 0, 0
+    for r in rows:
+        n += 1
+        try:
+            got = (_json.loads(r[0] or "null") or {}).get("solve_capped") or []
+        except Exception:
+            got = []
+        if got:
+            capped += 1
+        for k in set(str(x) for x in got if x):
+            kinds[k] = kinds.get(k, 0) + 1
+    rate = round(capped / float(n), 3) if n else 0.0
+    return {"n": n, "capped": capped, "rate": rate, "kinds": dict(sorted(kinds.items())),
+            "over": bool(n >= SCHEDULE_P95_MIN and rate > SCHEDULE_CAPPED_ALERT),
+            "alert_rate": SCHEDULE_CAPPED_ALERT}
+
+
 def _has_urgent(out, state, write_ok=True) -> bool:
     """Whether check_platform_sla's problems include one that cannot wait a
     day: the scheduler dead or stuck, a job past its SLA, the volume almost
@@ -2012,7 +2149,8 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
-           "schedule_generation": None, "schedule_inputs": None, "queue": None, "alerted": False}
+           "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
+           "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2105,22 +2243,33 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         + ", ".join(f"{k} ({int(round(gin['rates'][k] * 100))}% of the last {gin['n']})"
                                     for k in gin["over"][:4])
                         + " — each failure is in the job failures (schedule_inputs).")
+    try:
+        out["schedule_capped"] = schedule_solve_capped(db_path)
+    except Exception as e:
+        log.warning(f"schedule solve caps unavailable to the platform check: {e}")
+    gcap = out.get("schedule_capped") or {}
+    if gcap.get("over"):
+        warn_kinds.add("schedule_capped")
+        problems.append(f"Schedule solves are being cut short: {gcap['capped']} of the last {gcap['n']} generations "
+                        f"({int(round(gcap['rate'] * 100))}%) had a solve ended by the wall clock or the memory "
+                        "bound instead of its work budget ("
+                        + ", ".join(f"{k} {v}" for k, v in list(gcap["kinds"].items())[:4])
+                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB.")
     # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
     # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
     # (p95 over the last hour) is the trigger to move the queue to its own
     # worker and add slots — no request-latency figure sees it.
     try:
         import job_queue as _jq_sla
-        if _jq_sla.enabled():
-            out["queue"] = _jq_sla.stats()
+        out["queue"] = _jq_sla.stats()
     except Exception as e:
         log.warning(f"the job queue's stats unavailable to the platform check: {e}")
     q = out["queue"] or {}
     if (q.get("wait_p95_seconds") or 0) > QUEUE_WAIT_ALERT_SECONDS and (q.get("wait_samples") or 0) >= 5:
         warn_kinds.add("queue_wait")
         problems.append(f"Owners' schedule generations wait {q['wait_p95_seconds'] / 60:.1f} minutes to start "
-                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — move the queue to "
-                        "worker.py (QUEUE_WORKER=1) or raise QUEUE_GENERATION_CONCURRENCY "
+                        f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — check the queue worker "
+                        "process is running (QUEUE_WORKER=1, the default) or raise QUEUE_GENERATION_CONCURRENCY "
                         "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
     out["problems"] = problems
     if not problems or not send:
@@ -2632,6 +2781,9 @@ _RETENTION_DAYS = {
     # The publish warnings a send went out past, by key (TRUST-28): the
     # override rate per kind reads 180 days of them.
     "schedule_publish_overrides": int(os.getenv("RETAIN_SCHED_PUBLISH_OVERRIDES_DAYS", "400")),
+    # The owner's answers to the pre-publish suggestions (schedule re-audit
+    # 10/11/26 TRUST-17): read for DISMISS_MAX_DAYS at most.
+    "schedule_review_dismissals": int(os.getenv("RETAIN_SCHED_REVIEW_DISMISSALS_DAYS", "200")),
     # What made each draft (RM-4, AI-29): its commit, arms, row origins and
     # the learning ablation's two drafts — read until the week's scorecard
     # row is frozen; the frozen row keeps what was measured from it.
@@ -2931,6 +3083,7 @@ _RETENTION_COLUMN = {
     "staff_consents": "created_at", "compliance_pay_ledger": "created_at", "good_faith_estimates": "created_at",
     "fww_requests": "created_at", "fww_access_offers": "created_at",
     "schedule_publish_overrides": "shown_at",
+    "schedule_review_dismissals": "dismissed_at",
     "schedule_calibration_runs": "run_at",
     "offer_response_platforms": "answered_at",
 }
@@ -3002,6 +3155,7 @@ _RETENTION_FLOOR_DAYS = {
     # The kept week records (SCALE-33): the learners' own 24-week window.
     "schedule_learning_records": 168,
     "schedule_publish_overrides": 180,
+    "schedule_review_dismissals": 180,
     "schedule_generation_tags": 120,
     "schedule_calibration_runs": 90,
     "offer_response_platforms": 90,
@@ -3164,6 +3318,7 @@ _RETENTION_READERS = {
     "schedule_rejections": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_learning_records": (("schedule_versions.learning_weeks", "schedule_versions.LEARN_DAYS", None),),
     "schedule_publish_overrides": (("schedule_overrides.stats", "schedule_overrides.WINDOW_DAYS", None),),
+    "schedule_review_dismissals": (("schedule_overrides.dismissals", "schedule_overrides.DISMISS_MAX_DAYS", None),),
     "schedule_generation_tags": (("schedule_scorecard.compute_week", "schedule_scorecard.TAGS_READ_DAYS", None),),
     "offer_response_platforms": (("staff_pwa.response_times", "staff_pwa.RESPONSE_DAYS", None),),
     "schedule_calibration_runs": (("schedule_calibration._quiet", "schedule_calibration.REVERT_QUIET_DAYS", None),),
@@ -3410,14 +3565,16 @@ def _prune_inventory_history(conn, deadline=None, refused=None):
     daily_days = retention_days("inventory_daily_detail")
     if daily_days:
         # The week's figure is its latest snapshot (waste_trend.load_waste_history).
+        # An old row goes when a later snapshot of its week exists (the
+        # same rows the per-week "latest id" subquery kept, in SQL Postgres
+        # takes too — it refused that GROUP BY's ungrouped week_end).
         cur = conn.execute(
-            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND id NOT IN ("
-            "  SELECT (SELECT h2.id FROM inventory_history h2 WHERE h2.restaurant_id = h.restaurant_id"
-            "          AND date(h2.week_end, 'weekday 0', '-6 days') = date(h.week_end, 'weekday 0', '-6 days')"
-            "          ORDER BY h2.week_end DESC, h2.id DESC LIMIT 1)"
-            "  FROM inventory_history h WHERE h.week_end < date('now', ?)"
-            "  GROUP BY h.restaurant_id, date(h.week_end, 'weekday 0', '-6 days'))",
-            (f"-{daily_days} days", f"-{daily_days} days"))
+            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND EXISTS ("
+            "  SELECT 1 FROM inventory_history h2 WHERE h2.restaurant_id = inventory_history.restaurant_id"
+            "  AND date(h2.week_end, 'weekday 0', '-6 days') = date(inventory_history.week_end, 'weekday 0', '-6 days')"
+            "  AND (h2.week_end > inventory_history.week_end OR (h2.week_end = inventory_history.week_end"
+            "       AND h2.id > inventory_history.id)))",
+            (f"-{daily_days} days",))
         n += max(0, cur.rowcount or 0)
     elif refused is not None and retention_state("inventory_daily_detail")["state"] == "below_floor":
         refused.append(retention_state("inventory_daily_detail"))
@@ -3512,8 +3669,11 @@ def _thin_drafts(conn, deadline):
         for r in rows:
             if time.monotonic() > deadline:
                 break
+            # The headlines stay; the pointers to the whole go, and the
+            # stored detail with them once nothing names it (SCALE-13).
+            ref_cols = ", quality_ref=NULL, review_ref=NULL" if {"quality_ref", "review_ref"} <= cols else ""
             conn.execute("UPDATE schedule_history SET quality_json=?, review_json=?, what_if_json=NULL, "
-                         "detail_thinned_at=datetime('now') WHERE id=?",
+                         f"detail_thinned_at=datetime('now'){ref_cols} WHERE id=?",
                          (_thin_quality(r["quality_json"], today), _thin_review(r["review_json"], today), r["id"]))
             n += 1
             if n % 200 == 0:
@@ -3553,6 +3713,14 @@ def _thin_drafts(conn, deadline):
             moved = _compact_version_quality(conn, deadline)
             if moved:
                 out["schedule_versions_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_history_detail(conn, deadline)
+        if moved:
+            out["schedule_history_compacted"] = moved
+    if time.monotonic() < deadline:
+        moved = _compact_shift_exports(conn, deadline)
+        if moved:
+            out["shift_exports_compacted"] = moved
         if has_ref and time.monotonic() < deadline:
             gone = _gc_quality_blobs(conn, deadline)
             if gone:
@@ -3629,7 +3797,7 @@ def _gc_quality_blobs(conn, deadline) -> int:
             for r in conn.execute(
                     "SELECT body FROM quality_blobs WHERE created_at < datetime('now', '-1 hour') AND "
                     "substr(body, 1, ?) = ? AND NOT EXISTS (SELECT 1 FROM schedule_versions v WHERE "
-                    "v.quality_ref = quality_blobs.hash) LIMIT ?",
+                    "v.quality_ref = quality_blobs.hash) AND " + _HISTORY_UNREF + " LIMIT ?",
                     (len(blob_store.POINTER), blob_store.POINTER, int(RETENTION_CHUNK_ROWS))).fetchall():
                 blob_store.delete(r["body"])
     except Exception as e:
@@ -3637,8 +3805,88 @@ def _gc_quality_blobs(conn, deadline) -> int:
     return _chunked_delete(
         conn, "quality_blobs",
         "created_at < datetime('now', '-1 hour') AND NOT EXISTS "
-        "(SELECT 1 FROM schedule_versions v WHERE v.quality_ref = quality_blobs.hash)",
+        "(SELECT 1 FROM schedule_versions v WHERE v.quality_ref = quality_blobs.hash) AND " + _HISTORY_UNREF,
         (), deadline)
+
+
+# A stored detail a draft still names — its evaluation or its review
+# (schedule_history.quality_ref / review_ref, SCALE-13) — is never collected.
+_HISTORY_UNREF = ("NOT EXISTS (SELECT 1 FROM schedule_history h WHERE h.quality_ref = quality_blobs.hash) "
+                  "AND NOT EXISTS (SELECT 1 FROM schedule_history h2 WHERE h2.review_ref = quality_blobs.hash)")
+
+
+def _compact_shift_exports(conn, deadline) -> int:
+    """Restaurants on shift_facts whose shift file export is still stored
+    plain (written before 10/14/26): compressed (models.store_shift_file —
+    SCALE-14). Bounded; resumable (a compacted row no longer matches)."""
+    import models as _m_x
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(client_data)")}
+    if not {"shifts_store", "shifts_csv_z"} <= cols:
+        return 0
+    rids = [r[0] for r in conn.execute(
+        "SELECT restaurant_id FROM client_data WHERE shifts_store = 'facts' AND COALESCE(shifts_csv, '') <> '' "
+        "ORDER BY restaurant_id LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()]
+    n = 0
+    for rid in rids:
+        if time.monotonic() > deadline:
+            break
+        _m_x.store_shift_file(conn, rid, _m_x.shift_file_text(conn, rid))
+        conn.commit()
+        n += 1
+    return n
+
+
+def _compact_history_detail(conn, deadline) -> int:
+    """Drafts written before 10/14/26 that still hold their whole Shift
+    Quality evaluation and review inline (SCALE-13: 0.3-0.7 MB a week):
+    the whole of each moved to quality_blobs under its hash, the headline
+    left inline — the shape a new draft is written in. Bounded by
+    RETENTION_CHUNK_ROWS and the pass's deadline; resumable without a
+    cursor because a compacted row no longer matches (its ref is set, or
+    its JSON is a headline), so the next night starts at the first row
+    still to do and nothing is starved."""
+    import models as _m_c
+    import schedule_versions as _sv_c
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+    if not {"quality_ref", "review_ref"} <= cols:
+        return 0
+    rows = conn.execute(
+        "SELECT id, restaurant_id, quality_json, quality_ref, review_json, review_ref FROM schedule_history WHERE "
+        "(quality_ref IS NULL AND quality_json IS NOT NULL AND quality_json NOT LIKE '%\"headline\": true%' "
+        " AND quality_json NOT LIKE '%\"thinned_at\"%') OR "
+        "(review_ref IS NULL AND review_json IS NOT NULL AND review_json NOT LIKE '%\"headline\": true%' "
+        " AND review_json NOT LIKE '%\"thinned_at\"%') "
+        "ORDER BY id LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall()
+    n = 0
+    for r in rows:
+        if time.monotonic() > deadline:
+            break
+        sets, args = [], []
+        if r["quality_ref"] is None and r["quality_json"]:
+            q = _m_c.history_quality(conn, r)
+            if isinstance(q, dict) and q:
+                head, ref = _sv_c.store_quality(conn, r["restaurant_id"], q)
+                sets += ["quality_json=?", "quality_ref=?"]
+                args += [head, ref]
+            else:
+                sets.append("quality_json=?")
+                args.append(json.dumps({"headline": True, "unreadable": True}))
+        if r["review_ref"] is None and r["review_json"]:
+            rv = _m_c.history_review(conn, r)
+            if rv:
+                head, ref = _m_c.store_history_review(conn, r["restaurant_id"], rv)
+                sets += ["review_json=?", "review_ref=?"]
+                args += [head, ref]
+            else:
+                sets.append("review_json=?")
+                args.append(json.dumps({"headline": True, "unreadable": True}))
+        if sets:
+            conn.execute(f"UPDATE schedule_history SET {', '.join(sets)} WHERE id=?", (*args, r["id"]))
+        n += 1
+        if n % 100 == 0:
+            conn.commit()
+    conn.commit()
+    return n
 
 
 def _prune_schedules(conn, deadline, refused=None, held=None):
@@ -3692,7 +3940,8 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
                 "AND NOT EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id = h.id) "
                 "LIMIT ?", (f"-{drafts_days} days", int(RETENTION_CHUNK_ROWS))).fetchall()]
             dependents = [t for t in ("schedule_versions", "schedule_experiment_weeks",
-                                      "shift_change_requests", "schedule_outcomes")
+                                      "shift_change_requests", "schedule_outcomes",
+                                      "schedule_shifts", "schedule_shift_weeks")
                           if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                                           (t,)).fetchone()]
             deleted = 0
@@ -3703,7 +3952,8 @@ def _prune_schedules(conn, deadline, refused=None, held=None):
                 if any(conn.execute(f"SELECT 1 FROM {t} WHERE history_id=? LIMIT 1", (hid,)).fetchone()
                        for t in ("shift_change_requests", "schedule_outcomes") if t in dependents):
                     continue
-                for t in ("schedule_versions", "schedule_experiment_weeks"):
+                for t in ("schedule_versions", "schedule_experiment_weeks", "schedule_shifts",
+                          "schedule_shift_weeks"):
                     if t in dependents:
                         conn.execute(f"DELETE FROM {t} WHERE history_id=?", (hid,))
                 deleted += max(0, conn.execute("DELETE FROM schedule_history WHERE id=?", (hid,)).rowcount or 0)
@@ -4349,11 +4599,66 @@ def backup_status(db_path=None) -> dict:
     return out
 
 
+# The newest drafts a week's footprint is measured over (storage_per_week).
+STORAGE_SAMPLE_WEEKS = 200
+
+
+def storage_per_week(db_path=None) -> dict:
+    """What one generated week costs the database, measured over the newest
+    STORAGE_SAMPLE_WEEKS drafts (blind re-audit 10/11/26 SCALE-14: the
+    volume's ceiling is bytes per restaurant-week times the fleet, and
+    nothing measured it): {weeks, history_bytes, versions_bytes,
+    detail_bytes, total_bytes} — the draft row's stored text, its versions'
+    and its stored detail (quality_blobs), each an average per week.
+    {weeks: 0} with no drafts. Never raises."""
+    out = {"weeks": 0, "history_bytes": None, "versions_bytes": None, "detail_bytes": None, "total_bytes": None}
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception:
+        return out
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
+        text = [c for c in ("schedule_csv", "published_csv", "quality_json", "review_json", "summary_json",
+                            "what_if_json", "economics_json", "weather_json", "stage_seconds_json") if c in cols]
+        if not text:
+            return out
+        width = " + ".join(f"COALESCE(length({c}), 0)" for c in text)
+        refs = ", quality_ref, review_ref" if {"quality_ref", "review_ref"} <= cols else ""
+        rows = conn.execute(f"SELECT id, {width} AS b{refs} FROM schedule_history ORDER BY id DESC LIMIT ?",
+                            (STORAGE_SAMPLE_WEEKS,)).fetchall()
+        if not rows:
+            return out
+        ids = [r["id"] for r in rows]
+        marks = ",".join("?" * len(ids))
+        vers = conn.execute(
+            "SELECT COALESCE(SUM(COALESCE(length(schedule_csv), 0) + COALESCE(length(quality_json), 0) "
+            "+ COALESCE(length(diff_json), 0) + COALESCE(length(delta_json), 0)), 0) FROM schedule_versions "
+            f"WHERE history_id IN ({marks})", ids).fetchone()[0] or 0
+        hashes = {h for r in rows for h in ((r["quality_ref"], r["review_ref"]) if refs else ()) if h}
+        detail = 0
+        if hashes:
+            hl = list(hashes)
+            detail = conn.execute(f"SELECT COALESCE(SUM(length(body)), 0) FROM quality_blobs "
+                                  f"WHERE hash IN ({','.join('?' * len(hl))})", hl).fetchone()[0] or 0
+        n = len(rows)
+        out.update(weeks=n, history_bytes=int(sum(int(r["b"] or 0) for r in rows) / n),
+                   versions_bytes=int(vers / n), detail_bytes=int(detail / n))
+        out["total_bytes"] = out["history_bytes"] + out["versions_bytes"] + out["detail_bytes"]
+    except Exception as e:
+        log.warning(f"storage per week not measured: {e}")
+    finally:
+        conn.close()
+    return out
+
+
 def storage_trend(days=30, db_path=None) -> dict:
     """The database, WAL and backup sizes recorded by each night's backup,
     for a days-to-full line on Engineering (#28): {rows, growth_bytes_per_day,
-    days_to_full}. Never raises."""
-    out = {"rows": [], "growth_bytes_per_day": None, "days_to_full": None}
+    days_to_full, per_week} — per_week what one generated week costs
+    (storage_per_week, SCALE-14). Never raises."""
+    out = {"rows": [], "growth_bytes_per_day": None, "days_to_full": None,
+           "per_week": storage_per_week(db_path)}
     try:
         from models import get_conn
         conn = get_conn(db_path) if db_path else get_conn()

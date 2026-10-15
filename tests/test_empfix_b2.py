@@ -261,7 +261,9 @@ def test_publish_records_the_app_only_once_the_push_was_delivered(db, apns, wire
                                        HEADER + f"\n{day},Mon,Ana,Server,4:00pm,10:00pm,6,", [], db_path=db)
     apns["ok"] = False
     out, status = client_api._publish_schedule(rid, sid, {"id": 1, "username": "o"})
-    assert status == 200 and out["sent"][0]["channel"] == "push" and out["sent"][0]["delivery"] == "pending"
+    # The send says where it actually landed (re-audit 10/11/26 BUGSLIFE-3:
+    # a push Apple refused was kept as "sent"): no device took it, so email.
+    assert status == 200 and [(s["channel"], s["sent_to"]) for s in out["sent"]] == [("email", "ana@x.test")]
     shares = {r["sent_to"] for r in _rows(db, "SELECT sent_to FROM schedule_shares WHERE schedule_id=?", (sid,))}
     assert shares == {"ana@x.test"}, "no device took it: emailed, and never recorded as sent to the app"
     assert wire["email"] == [("ana@x.test", "week")]

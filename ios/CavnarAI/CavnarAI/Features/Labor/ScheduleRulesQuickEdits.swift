@@ -179,6 +179,27 @@ struct SectionCountBody: Encodable {
     }
 }
 
+/// POST labor/rules `{role_criticality: {role: weight}}` — one role; a
+/// null weight goes back to the role's default (the server merges role by
+/// role, LOGIC-24).
+struct RoleWeightBody: Encodable {
+    let role: String
+    let weight: Double?
+    enum CodingKeys: String, CodingKey { case roleCriticality = "role_criticality" }
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        var inner = c.nestedContainer(keyedBy: Key.self, forKey: .roleCriticality)
+        // Always sent: a null clears the role's weight.
+        try inner.encode(weight, forKey: Key(stringValue: role))
+    }
+}
+
 /// POST labor/rules `{station_edit: {op, …}}`.
 struct StationEditBody: Encodable {
     let stationEdit: StationEdit
@@ -194,9 +215,11 @@ struct QuickRulesResponse: Decodable {
     var sectionCount: Int?
     var floorCapConflicts: [FloorCapConflict]?
     var kitchenStations: KitchenStations?
+    var roleCriticality: [String: Double]?
 
     enum CodingKeys: String, CodingKey {
         case ok, error, closures
+        case roleCriticality = "role_criticality"
         case sectionCount = "section_count"
         case floorCapConflicts = "floor_cap_conflicts"
         case kitchenStations = "kitchen_stations"
@@ -210,6 +233,11 @@ struct QuickRulesResponse: Decodable {
         sectionCount = c.setupInt(.sectionCount)
         floorCapConflicts = c.contains(.floorCapConflicts) ? c.setupList(FloorCapConflict.self, .floorCapConflicts) : nil
         kitchenStations = (try? c.decodeIfPresent(KitchenStations.self, forKey: .kitchenStations)) ?? nil
+        // The whole map after the save; a save that cleared the last weight
+        // answers null, which is no weights at all.
+        if c.contains(.roleCriticality) {
+            roleCriticality = ((try? c.decodeIfPresent([String: Double].self, forKey: .roleCriticality)) ?? nil) ?? [:]
+        }
     }
 }
 
@@ -321,6 +349,52 @@ extension TeamSetupStore {
             }
             next = sectionCountPending
         }
+    }
+
+    /// The weight a role runs at now: the owner's, else its stated default
+    /// (1.0 for a role whose words match none).
+    func roleWeight(_ role: String) -> Double {
+        roleCriticality[role] ?? criticalityDefaults[role] ?? 1.0
+    }
+
+    /// One role's weight (nil: back to its default), saved at once. One
+    /// save at a time; a role stepped again while one is out is saved last
+    /// with the value it shows.
+    func saveRoleWeight(_ role: String, _ weight: Double?) async {
+        let w = weight.map { (min(max($0, criticalityBounds.lowerBound), criticalityBounds.upperBound) * 10).rounded() / 10 }
+        if roleWeightBusy != nil {
+            roleWeightPending[role] = .some(w)
+            return
+        }
+        var next: (String, Double?)? = (role, w)
+        while let pair = next {
+            let (r0, w0) = pair
+            roleWeightBusy = r0
+            roleWeightError = nil
+            roleWeightNote = nil
+            do {
+                let resp: QuickRulesResponse = try await client.send(
+                    "/mobile/api/labor/rules", method: .post, body: RoleWeightBody(role: r0, weight: w0),
+                    hapticOnError: false, retryTransient: false)
+                if resp.ok {
+                    if let m = resp.roleCriticality { roleCriticality = m }
+                    roleWeightNote = "Saved \u{00B7} the next draft weighs it"
+                } else {
+                    roleWeightError = resp.error ?? "Couldn\u{2019}t save that weight."
+                }
+            } catch let error as APIClient.APIError {
+                roleWeightError = error.message
+            } catch {
+                roleWeightError = "Couldn\u{2019}t save that weight."
+            }
+            if let waiting = roleWeightPending.first {
+                roleWeightPending.removeValue(forKey: waiting.key)
+                next = (waiting.key, waiting.value)
+            } else {
+                next = nil
+            }
+        }
+        roleWeightBusy = nil
     }
 
     /// One station change, saved at once; the server's stations adopted.
@@ -474,6 +548,100 @@ struct RulesDiningSectionsSection: View {
             // A refused value goes back to what is stored.
             if e != nil, !store.sectionCountSaving { count = store.sectionCount ?? 0 }
         }
+    }
+}
+
+// MARK: - Role weights (LOGIC-24)
+
+/// How hard each role is to run without — the weight on a half hour short
+/// of it when the draft has to choose (schedule_objective's criticality):
+/// each roster role's weight in Space Grotesk, its default beside it, a
+/// stepper by tenths inside the server's range, and "Default" to go back.
+/// The web rules screen's per-role weights, phone-shaped.
+struct RulesRoleWeightsSection: View {
+    let store: TeamSetupStore
+    let canEdit: Bool
+
+    private var roles: [String] {
+        Array(Set(store.criticalityDefaults.keys).union(store.roleCriticality.keys)).sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
+    private func label(_ w: Double) -> String { String(format: "%.1f\u{00D7}", w) }
+
+    var body: some View {
+        if !roles.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                AccountSection(kicker: "How hard each role is to run without") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(roles.enumerated()), id: \.element) { i, role in
+                            row(role)
+                            if i < roles.count - 1 { AccountRowDivider() }
+                        }
+                        Text("When the draft has to leave a half hour short, it keeps the heavier roles covered first. "
+                             + "1.0\u{00D7} is an ordinary role.")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, 9)
+                    }
+                }
+                if store.roleWeightBusy != nil {
+                    CavnarShimmerText(text: "Saving\u{2026}", color: .cavnarInk3)
+                } else if let error = store.roleWeightError {
+                    Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let note = store.roleWeightNote {
+                    Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarGreen)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ role: String) -> some View {
+        let own = store.roleCriticality[role]
+        let base = store.criticalityDefaults[role] ?? 1.0
+        let now = store.roleWeight(role)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(role).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk)
+                if own != nil {
+                    Button {
+                        guard canEdit else { return }
+                        Haptic.selection()
+                        Task { await store.saveRoleWeight(role, nil) }
+                    } label: {
+                        HomeMixedText.make("Yours \u{00B7} default \(label(base)) \u{2014} use it", size: CavnarType.caption,
+                                           weight: 500, color: .cavnarEmber2)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canEdit)
+                } else {
+                    HomeMixedText.make("Default", size: CavnarType.caption, weight: 500, color: .cavnarInk3)
+                }
+            }
+            Spacer(minLength: 8)
+            Text(label(now))
+                .font(.cavnarNumber(CavnarType.body, weight: 700))
+                .foregroundStyle(own != nil ? Color.cavnarInk : Color.cavnarInk2)
+                .fixedSize()
+            Stepper(role, onIncrement: {
+                Haptic.selection()
+                Task { await store.saveRoleWeight(role, min(now + 0.1, store.criticalityBounds.upperBound)) }
+            }, onDecrement: {
+                Haptic.selection()
+                Task { await store.saveRoleWeight(role, max(now - 0.1, store.criticalityBounds.lowerBound)) }
+            })
+            .labelsHidden()
+            .fixedSize()
+            .tint(Color.cavnarEmber)
+            .disabled(!canEdit)
+            .accessibilityValue(label(now))
+        }
+        .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+        .padding(.vertical, 9)
     }
 }
 

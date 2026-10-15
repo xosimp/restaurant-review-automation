@@ -42,33 +42,42 @@ def _c(**kw):
 
 # ── the switch ─────────────────────────────────────────────────────────────
 
-def test_the_draft_source_is_the_env_then_the_arm_then_the_model(monkeypatch):
+def test_the_draft_source_is_the_env_then_the_arm_then_the_solver(monkeypatch):
+    # The solver is production's default since the blind re-audit of
+    # 10/11/26 (ARCH-1); the model is an arm.
     monkeypatch.delenv("SCHEDULE_DRAFT_SOURCE", raising=False)
-    assert fb.draft_source(5, []) == "model"
+    assert fb.draft_source(5, []) == "solver"
     arm = [{"experiment": "draft_v1", "arm": "carry_forward", "flags": {"draft_source": "carry_forward"}}]
     assert fb.draft_source(5, arm) == "carry_forward"
+    model = [{"experiment": "draft_v1", "arm": "model_draft", "flags": {"draft_source": "model"}}]
+    assert fb.draft_source(5, model) == "model"
     monkeypatch.setenv("SCHEDULE_DRAFT_SOURCE", "solver")
     assert fb.draft_source(5, arm) == "solver"
+    monkeypatch.setenv("SCHEDULE_DRAFT_SOURCE", "model")
+    assert fb.draft_source(5, arm) == "model"
     monkeypatch.setenv("SCHEDULE_DRAFT_SOURCE", "nonsense")
-    assert fb.draft_source(5, []) == "model"
+    assert fb.draft_source(5, []) == "solver"
 
 
-def test_draft_v1_is_an_experiment_that_keeps_the_model_until_it_can_conclude(db_path, monkeypatch):
+def test_draft_v1_keeps_the_solver_until_it_can_conclude_and_the_model_is_an_arm(db_path, monkeypatch):
+    monkeypatch.delenv("SCHEDULE_DRAFT_SOURCE", raising=False)
     exp = sx.experiment("draft_v1")
-    assert exp and exp["active"] and exp["until_powered"] == "model_draft" and exp["control"] == "model_draft"
-    # F (AI-8) added the deterministic+critic arm, off the hash like code_shaped
+    assert exp and exp["active"] and exp["until_powered"] == "code_shaped" and exp["control"] == "code_shaped"
+    # F (AI-8) added the deterministic+critic arm, off the hash
     assert {a["key"] for a in exp["arms"]} == {"model_draft", "carried", "code_shaped", "code_critic"}
-    # the code shape stays off the hash until F's solver-first draft and the eval say so
-    assert next(a for a in exp["arms"] if a["key"] == "code_shaped")["weight"] == 0
+    assert next(a for a in exp["arms"] if a["key"] == "code_critic")["weight"] == 0
+    assert sx.DEFAULT_FLAGS["draft_source"] == "solver"
     monkeypatch.setattr(sx, "_power_or_pin", lambda db: {"powered": False})
     rid = create_restaurant(Restaurant(name="Pin", owner_email="pin@x.com"), db_path=db_path)
     arms = sx.arms_for(rid, WEEK[0], db_path=db_path)
     got = next(a for a in arms if a["experiment"] == "draft_v1")
-    assert got["arm"] == "model_draft" and got["pin_source"] == "underpowered"
-    assert sx.value(arms, "draft_source") == "model"
-    # a restaurant's own pin is its override
+    assert got["arm"] == "code_shaped" and got["pin_source"] == "underpowered"
+    assert sx.value(arms, "draft_source") == "solver"
+    # a restaurant's own pin is its override — the model's draft included
     sx.set_pin(rid, "draft_v1", "carried", db_path=db_path)
     assert fb.draft_source(rid, sx.arms_for(rid, WEEK[0], db_path=db_path)) == "carry_forward"
+    sx.set_pin(rid, "draft_v1", "model_draft", db_path=db_path)
+    assert fb.draft_source(rid, sx.arms_for(rid, WEEK[0], db_path=db_path)) == "model"
 
 
 # ── the carry-forward ─────────────────────────────────────────────────────
@@ -101,6 +110,24 @@ def test_carry_forward_maps_weekdays_and_drops_who_left_or_is_off():
     assert got["rows"][0]["notes"] == "closer"                              # the fixed note list, no engine mark
     whys = {d["employee"]: d["why"] for d in got["dropped"]}
     assert whys["Gone"] == "not on the roster now" and "time off" in whys["Cy"]
+
+
+def test_carry_forward_never_carries_a_shared_person_onto_a_shift_another_location_published():
+    """Schedule benchmark, multi_location_org (10/11/26): North's published
+    Friday dinner (a row of the tail, Constraints.base_rows) is a legal
+    clash for South's carried Friday dinner — the repair loop cannot move
+    North's shift, so the overlap reached the saved week. Dropped and said;
+    a carried row clear of it stays."""
+    base = {"source": "published", "week_start": LAST[0], "rows": [
+        {"date": LAST[4], "employee": "Hana", "role": "Line Cook", "shift_start": "4:00pm", "shift_end": "10:00pm"},
+        {"date": LAST[3], "employee": "Hana", "role": "Line Cook", "shift_start": "4:00pm", "shift_end": "10:00pm"}]}
+    c = _c(roster_names=["Hana"], active={"hana"}, display={"hana": "Hana"})
+    c.base_rows = {"hana": [{"date": WEEK[4], "employee": "Hana", "role": "Line Cook", "shift_start": "5:00pm",
+                             "shift_end": "9:00pm", "_site": "North"}]}
+    got = fb.carry_forward_rows(base, [WEEK[3], WEEK[4]], c, roster_names=["Hana"])
+    assert [(r["employee"], r["date"]) for r in got["rows"]] == [("Hana", WEEK[3])]
+    assert [(d["employee"], d["date"]) for d in got["dropped"]] == [("Hana", WEEK[4])]
+    assert got["dropped"][0]["why"]
 
 
 # ── the fallback inside the generation ────────────────────────────────────

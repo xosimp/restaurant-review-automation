@@ -54,7 +54,16 @@ WEEK = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 MON, TUE, WED, THU, FRI, SAT, SUN = WEEK
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-EXP = sx.EXPERIMENTS[0]
+# The arm mechanics (the hash, the power gate, the pins) are tested on a
+# two-arm, 1:1 copy of assign_v1: production weights its model arm 0 since
+# the solver became the draft (10/14/26), which leaves nothing to flip.
+_LIVE_EXPERIMENTS = sx.EXPERIMENTS
+EXP = dict(_LIVE_EXPERIMENTS[0], arms=tuple(dict(a, weight=1) for a in _LIVE_EXPERIMENTS[0]["arms"]))
+
+
+@pytest.fixture(autouse=True)
+def _two_arm_assign(monkeypatch):
+    monkeypatch.setattr(sx, "EXPERIMENTS", (EXP,) + tuple(_LIVE_EXPERIMENTS[1:]))
 
 
 @pytest.fixture(autouse=True)
@@ -330,7 +339,7 @@ def test_an_input_the_draft_went_without_is_named_in_the_review(db, monkeypatch)
 
 
 def test_the_input_build_says_every_input_it_goes_without():
-    src = inspect.getsource(se._build_schedule_result)
+    src = "".join(inspect.getsource(f) for f in se.INPUT_STEPS)
     for what in ("upcoming_events", "weather", "prior_week", "demand_forecast", "revenue", "labor_target_source",
                  "reservation_feed", "shifts_file"):
         assert f'_soft_fail("{what}"' in src, what
@@ -469,7 +478,7 @@ def test_the_station_pass_runs_before_the_sweep_and_the_score(db, monkeypatch):
             return rows, 0, []
         return rows + [_row(FRI, "Jo", "Line Cook")], 1, []
     monkeypatch.setattr(se, "_ensure_station_coverage", stations)
-    monkeypatch.setattr(se, "station_report", lambda *a, **k: {"gaps": []})
+    monkeypatch.setattr(se._sched_out, "station_report", lambda *a, **k: {"gaps": []})
     real_score = se._score_schedule_quality
     scored = {}
 
@@ -654,7 +663,7 @@ def _real_build(monkeypatch, db, rid, lines):
     monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 1, 9, 0))
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 5))
 
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
         return {"schedule_csv": HEADER + "\n" + "\n".join(lines), "narrative": ["ok"], "generation_seconds": 1.0,
@@ -697,7 +706,7 @@ def test_every_model_call_of_a_generation_shares_one_read(db, monkeypatch):
     assert calls == [rid]
     labor._held_roles_by_name(rid, ["Ana"])                    # outside a generation: read as before
     assert calls == [rid, rid]
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert '_frozen_ns(("attendance_events", restaurant_id)' in src and '_frozen_rd(("readiness", restaurant_id' in src
 
 
@@ -779,7 +788,11 @@ def test_a_studio_save_keeps_the_generations_review_and_refreshes_what_the_rows_
     r = _mobile_app(db).test_client().post("/mobile/api/labor/schedule/score", headers=_bearer(db, rid),
                                            json={"rows": edited, "save": True, "history_id": hid, "version": 1})
     assert r.status_code == 200, r.get_json()
-    stored = json.loads(_history(db, hid)["review_json"])
+    _c = models.get_conn(db)
+    try:
+        stored = models.history_review(_c, _history(db, hid))          # stored once by reference (SCALE-13)
+    finally:
+        _c.close()
     assert stored["fixes"][0]["index"] == 0                     # re-pointed at Cy's Friday, where it is now
     assert stored["trimmed"] == review["trimmed"] and stored["owner_rules_unchecked"] == ["2 servers on Friday"]
     assert stored["stage_failures"] == review["stage_failures"]

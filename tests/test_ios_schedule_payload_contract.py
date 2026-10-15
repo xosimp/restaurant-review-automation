@@ -158,7 +158,7 @@ def _harness(monkeypatch, db):
     monkeypatch.setattr(labor, "build_demand_forecast", lambda r: {"ok": False})
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: dt.datetime(2026, 10, 22, 9, 0))
     monkeypatch.setattr(weather, "get_forecast_for_week", lambda *a, **k: [])
-    monkeypatch.setattr(se, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 26))
+    monkeypatch.setattr(se._stime, "_week_monday", lambda today, ws=None, **_k: dt.datetime(2026, 10, 26))
 
     class _Msg:
         def __init__(self, text):

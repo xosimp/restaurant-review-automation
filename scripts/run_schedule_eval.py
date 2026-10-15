@@ -6,10 +6,10 @@ real weeks, before anyone reads a number it produced. For each saved week
 this prints the score it was stored with, the score today's code gives the
 same rows, and (with --optimize) what the repair loop makes of it.
 
-    python3 scripts/schedule_eval.py --restaurant 2
-    python3 scripts/schedule_eval.py --ids 6953,6952 --optimize --detail
-    python3 scripts/schedule_eval.py --restaurant 2 --solve      # the assignment solver (#47)
-    python3 scripts/schedule_eval.py --ids 7012 --calls           # the model calls behind the week
+    python3 scripts/run_schedule_eval.py --restaurant 2
+    python3 scripts/run_schedule_eval.py --ids 6953,6952 --optimize --detail
+    python3 scripts/run_schedule_eval.py --restaurant 2 --solve      # the assignment solver (#47)
+    python3 scripts/run_schedule_eval.py --ids 7012 --calls           # the model calls behind the week
 
 --calls lists each stored model call the week was generated with
 (schedule_model_calls: model, effort, contract, stop reason, tokens,
@@ -55,13 +55,14 @@ def evaluate(history_id: int, optimize: bool = False, solve: bool = False, secon
 
     conn = get_conn()
     try:
-        row = conn.execute("SELECT id, restaurant_id, week_start, schedule_csv, quality_json FROM schedule_history "
-                           "WHERE id=?", (history_id,)).fetchone()
+        import models as _m_ev
+        row = conn.execute("SELECT id, restaurant_id, week_start, schedule_csv, quality_json, quality_ref "
+                           "FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+        stored = _m_ev.history_quality(conn, row) if row else {}       # stored once (SCALE-13)
     finally:
         conn.close()
     if not row:
         return {"id": history_id, "error": "not found"}
-    stored = json.loads(row["quality_json"] or "null") or {}
     rows = sv.rows_from_csv(row["schedule_csv"])
     inputs = quality_inputs_from_db(row["restaurant_id"], daily_target_hours=_stored_targets(stored), week_rows=rows)
     signals, weights = _quality_signals(row["restaurant_id"], inputs)

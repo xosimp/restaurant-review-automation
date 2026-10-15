@@ -271,7 +271,7 @@ def test_the_reviews_read_judges_against_the_owners_rating_goal():
 GENERATORS = [
     ("ask_cavnar", "_memory_context", "ask"),                       # M2: Ask's snapshot
     ("ask_cavnar", "ask_with_tools", "ask_conversation"),          # M2: the per-turn block
-    ("schedule_engine", "_build_schedule_result", "schedule"),             # M3: the schedule draft
+    ("schedule_engine", "_read_people_and_memory", "schedule"),            # M3: the schedule draft's inputs
     ("labor", "labor_memory_block", None),                          # M3: the labor read (surface passed in)
     ("review_intelligence", "diagnosis_memory", None),              # M4: review + food diagnoses
     ("client_api", "review_read_memory", "review_read"),            # M4: the Reviews read

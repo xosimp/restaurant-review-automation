@@ -193,9 +193,10 @@ def test_the_open_shift_notice_skips_the_dormant_and_rotates(monkeypatch):
     c.active = {"abe", "bo", "cy", "di", "june", "zed"}
     c.dormant = {"june": "2026-06-20"}
     monkeypatch.setattr(sr, "build_constraints", lambda *a, **k: c)
-    monkeypatch.setattr(shift_requests, "_live_hist", lambda *a, **k: {"schedule_csv": "x"})
-    import schedule_versions
-    monkeypatch.setattr(schedule_versions, "rows_from_csv", lambda text: [dict(r) for r in rows])
+    monkeypatch.setattr(shift_requests, "_live_hist", lambda *a, **k: {"id": 1})
+    # The live week's rows are read from the shift table (schedule_shifts).
+    import schedule_shifts
+    monkeypatch.setattr(schedule_shifts, "rows_of", lambda *a, **k: [dict(r) for r in rows])
     monkeypatch.setattr(shift_requests, "_role_ok", lambda *a, **k: (True, ""))
     monkeypatch.setattr(se, "replacement_is_legal", lambda *a, **k: (True, ""))
     # Bo and Cy were told about the last two open shifts; Di about one.

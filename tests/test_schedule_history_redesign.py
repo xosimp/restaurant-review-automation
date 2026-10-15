@@ -120,14 +120,18 @@ def test_a_realistic_long_finding_is_not_clipped():
 def test_get_schedule_history_carries_the_summary_and_edited_by(tmp_path):
     db = str(tmp_path / "t.db")
     # schedule_history is created at boot (init_db), no longer by the save.
-    from models import init_db
+    from models import init_db, create_restaurant, Restaurant
     init_db(db_path=db)
-    save_schedule_history(1, "2026-09-07", "2026-09-13", 300, 300, 26.0,
+    # A draft's review detail is stored against its restaurant (quality_blobs
+    # has a foreign key to restaurants, re-audit 10/11/26 SCALE-13): the
+    # restaurant has to exist, as it always does in production.
+    rid = create_restaurant(Restaurant(name="H", owner_email="h@x.test"), db_path=db)
+    save_schedule_history(rid, "2026-09-07", "2026-09-13", 300, 300, 26.0,
                           "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n",
                           [], quality={"checked": True, "band": "excellent", "score": 94,
                                        "confidence": {"level": "high"}, "strengths": [], "weaknesses": []},
                           db_path=db)
-    rows = get_schedule_history(1, db_path=db)
+    rows = get_schedule_history(rid, db_path=db)
     assert len(rows) == 1
     r = rows[0]
     assert r["summary_tone"] == "good"

@@ -2947,7 +2947,9 @@ def _location_record(conn, r, now):
     last_active = (_one_dict(conn, "SELECT MAX(created_at) AS t FROM login_history WHERE restaurant_id=?", (rid,)) or {}).get("t")
     labor = None
     _lab_ev = None
-    cd = _one_dict(conn, "SELECT shifts_csv IS NOT NULL AND shifts_csv != '' AS live FROM client_data WHERE restaurant_id=?", (rid,)) or {}
+    import models as _m_live
+    cd = _one_dict(conn, f"SELECT {_m_live.SHIFTS_PRESENT_SQL} AS live FROM client_data WHERE restaurant_id=?",
+                   (rid,)) or {}
     if r.get("module_labor") and cd.get("live"):
         try:
             from labor import analyse_shifts_for_restaurant

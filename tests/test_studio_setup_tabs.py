@@ -10,6 +10,7 @@ tab bar actually ends, so a banner above the header no longer hides its
 step bar.
 """
 import inspect
+import schedule_context
 import os
 
 import labor
@@ -25,7 +26,7 @@ def _page():
 
 
 def test_the_draft_and_the_forecast_tab_share_one_hours_plan():
-    src = inspect.getsource(labor.generate_optimized_schedule)
+    src = "".join(inspect.getsource(f) for f in labor.SCHEDULE_CALL_STEPS)
     assert "week_hours_plan(" in src and "_MIN_DAYS_COVERED_TO_SCALE = 5" not in src
     assert "week_hours_plan(" in inspect.getsource(schedule_engine.forecast_preview)
 
@@ -98,14 +99,14 @@ def test_the_route_reads_the_week_and_refuses_a_past_one(monkeypatch):
     import strategy_routes
     monkeypatch.setattr(strategy_routes, "_sees_labor", lambda u: True)
     seen = {}
-    monkeypatch.setattr(schedule_engine, "check_week_start", lambda rid, raw: (raw or None, None))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda rid, raw: (raw or None, None))
     monkeypatch.setattr(schedule_engine, "forecast_preview",
                         lambda rid, week=None: seen.setdefault("week", week) and {"ok": True, "days": []})
     app = Flask(__name__)
     with app.test_request_context("/labor/schedule-forecast?week_start=2026-10-14"):
         body, status = strategy_routes._do_schedule_forecast({"restaurant_id": 1, "role": "owner", "id": 1})
     assert status == 200 and body["available"] is True and seen["week"] == "2026-10-14"
-    monkeypatch.setattr(schedule_engine, "check_week_start", lambda rid, raw: (None, "That week has already happened"))
+    monkeypatch.setattr(schedule_context, "check_week_start", lambda rid, raw: (None, "That week has already happened"))
     with app.test_request_context("/labor/schedule-forecast?week_start=2020-01-01"):
         body, status = strategy_routes._do_schedule_forecast({"restaurant_id": 1, "role": "owner", "id": 1})
     assert status == 400 and "already happened" in body["error"]

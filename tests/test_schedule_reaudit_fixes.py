@@ -8,6 +8,7 @@ draft seeded "7 days in a row" warnings, engine marks reached the
 staff's own schedule, and a stale name crashed the portal.
 """
 import datetime as dt
+import schedule_fixes
 
 import pytest
 
@@ -45,7 +46,7 @@ def test_over_hours_fix_moves_only_the_excess_not_the_whole_week():
     c = _c(active={"ana", "bob"}, hours_limits={"ana": (None, 40)})
     viols = sr.violations(rows, c)
     assert sum(1 for v in viols if v["kind"] == "over_max_hours") == 6
-    out = sq.apply_fixes(rows, viols, roster=["Ana", "Bob"], rules=schedule_engine._rules_for_swaps(c))
+    out = schedule_fixes.apply_fixes(rows, viols, roster=["Ana", "Bob"], rules=schedule_engine._rules_for_swaps(c))
     ana_hours = sum(float(r["scheduled_hours"]) for r in out["rows"] if r["employee"] == "Ana")
     assert ana_hours == 40.0, ana_hours                       # not 0, not 48
     assert len(out["fixes"]) == 1 and out["fixes"][0]["from"] == "Ana" and out["fixes"][0]["to"] == "Bob"

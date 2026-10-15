@@ -57,6 +57,11 @@ struct LaborView: View {
     @State private var draftToSend: DraftToSend?
     /// A shift whose times are being changed, or a new one being added.
     @State private var editingShift: ShiftEditSheet.Mode?
+    /// A review's "Find them a shift": the add sheet opens with them picked.
+    @State private var addShiftFor: String?
+    /// Where a pre-publish review's "open" tap goes once the Send sheet is
+    /// down (TRUST-20).
+    @State private var pendingReviewOpen: ReviewOpenTarget?
     /// A shift the owner asked to take off the week, awaiting the confirm.
     @State private var removingRow: ScheduleRow?
     @State private var editingSectionNames = false
@@ -526,7 +531,15 @@ struct LaborView: View {
         .onChange(of: viewModel.scheduleResult?.historyId) { _, id in
             ScheduleDraftWatch.shared.onScreenScheduleId = id
         }
-        .sheet(isPresented: $showingPublishSchedule, onDismiss: { Task { await viewModel.loadDraftCheck() } }) {
+        .sheet(isPresented: $showingPublishSchedule, onDismiss: {
+            Task { await viewModel.loadDraftCheck() }
+            // A review's "open" (TRUST-20) goes where it said, once the
+            // sheet is down.
+            if let target = pendingReviewOpen {
+                pendingReviewOpen = nil
+                after { openReviewTarget(target) }
+            }
+        }) {
             PublishScheduleSheet(scheduleId: viewModel.scheduleResult?.historyId,
                                  unsentChanges: viewModel.unsentChanges,
                                  hoursBudget: viewModel.scheduleResult?.hoursBudget,
@@ -544,13 +557,15 @@ struct LaborView: View {
                                      (viewModel.rowsUnsaved || viewModel.hasUnsavedFixes || viewModel.optimizerUnsaved)
                                          ? nil : viewModel.latestVersion
                                  },
-                                 hasUnsavedEdits: viewModel.hasLocalEdits)
+                                 hasUnsavedEdits: viewModel.hasLocalEdits,
+                                 onOpen: { pendingReviewOpen = $0 })
         }
         .sheet(item: $draftToSend, onDismiss: { Task { await viewModel.loadDraftCheck() } }) { draft in
             PublishScheduleSheet(scheduleId: draft.id)
         }
-        .sheet(item: $editingShift) { mode in
-            ShiftEditSheet(mode: mode, viewModel: viewModel, roster: setupViewModel.activeRoster)
+        .sheet(item: $editingShift, onDismiss: { addShiftFor = nil }) { mode in
+            ShiftEditSheet(mode: mode, viewModel: viewModel, roster: setupViewModel.activeRoster,
+                           presetEmployee: addShiftFor)
                 .cavnarFormSheet()
         }
         .sheet(isPresented: $editingSectionNames, onDismiss: { Task { await viewModel.loadSections() } }) {
@@ -795,8 +810,7 @@ struct LaborView: View {
                     // What it is actually doing, rather than sixty seconds
                     // of a spinner. Every line is a real stage of the run.
                     ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true,
-                                          startedAt: viewModel.generationStartedAt,
-                                          typical: viewModel.generationTypical)
+                                          progress: viewModel.generationProgress)
                     // The one real measure of how far it has got: the days
                     // its answer has finished (schedule-status `progress`,
                     // AI cost audit 10/7/26 #36) — the web says the same.
@@ -1685,6 +1699,46 @@ struct LaborView: View {
         subTab = .overview
         Task {
             if await viewModel.openWeek(id) { scrollTarget = Self.scheduleID }
+        }
+    }
+
+    /// A pre-publish review's "open" (TRUST-20): the screen its payload
+    /// names — Redo with those days ticked, Setup's roster (where who runs
+    /// the floor is set), the shift on the week, the add sheet with the
+    /// person picked. (A person's record and a web setting open over the
+    /// review itself.)
+    private func openReviewTarget(_ target: ReviewOpenTarget) {
+        switch target {
+        case .redo(let dates):
+            viewModel.openRedo(dates: dates)
+        case .managers:
+            setupViewModel.rosterExpanded = true
+            showingSetup = true
+        case .person(let who):
+            reviewPerson = PersonSheetTarget(key: nil, name: who)
+        case .shift(let date, let shiftId, let employee, let start):
+            viewModel.scheduleResultExpanded = true
+            subTab = .overview
+            if let date { pagerDay = date }
+            scrollTarget = Self.scheduleID
+            var p: [String: LooseValue] = [:]
+            if let shiftId { p["shift_id"] = .string(shiftId) }
+            if let employee { p["employee"] = .string(employee) }
+            if let date { p["date"] = .string(date) }
+            if let start { p["shift_start"] = .string(start) }
+            if let row = LaborViewModel.rowFor(p, in: viewModel.scheduleResult?.previewRows ?? []),
+               viewModel.weekReadOnlyReason == nil {
+                after { editingShift = .edit(row) }
+            }
+        case .addShift(let who):
+            viewModel.scheduleResultExpanded = true
+            scrollTarget = Self.scheduleID
+            if viewModel.weekReadOnlyReason == nil {
+                addShiftFor = who
+                editingShift = .add
+            }
+        case .web, .targets:
+            break      // opened over the review itself
         }
     }
 

@@ -10,7 +10,7 @@ posted yet.
 """
 from datetime import date, datetime, timedelta
 
-from labor import employee_shifts_from_csv
+from labor import employee_shifts_from_rows
 from models import get_schedule_history, get_schedule_history_detail, get_published_week_csv
 
 
@@ -65,16 +65,15 @@ def _owner_of(weeks, d):
     return None
 
 
-def _placed_breaks(schedule_csv, employee_name, break_rules) -> dict:
+def _placed_breaks(rows, employee_name, break_rules) -> dict:
     """{(date, shift_start): [break]} for this person's shifts in one
-    week's CSV, placed across the whole day's team (breaks.plan_week), or {}
-    when no break rule holds."""
+    week's rows, placed across the whole day's team (breaks.plan_week), or
+    {} when no break rule holds."""
     if not break_rules or not (break_rules.get("meals") or break_rules.get("rest")):
         return {}
     try:
         import breaks as _breaks
-        from schedule_versions import rows_from_csv
-        rows = rows_from_csv(schedule_csv or "")
+        rows = list(rows or [])
         plan = _breaks.plan_week(rows, break_rules)
     except Exception:
         return {}
@@ -163,16 +162,21 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
     # fix, employee audit B8): passed only when that reader takes it.
     import inspect as _inspect
     _section_kw = ({"restaurant_id": restaurant_id}
-                   if "restaurant_id" in _inspect.signature(employee_shifts_from_csv).parameters else {})
+                   if "restaurant_id" in _inspect.signature(employee_shifts_from_rows).parameters else {})
     # Every spelling of this person (people's identity): a week written
     # before a rename still shows them their shifts (BUGSLIFE-4).
-    if "spellings" in _inspect.signature(employee_shifts_from_csv).parameters:
+    if "spellings" in _inspect.signature(employee_shifts_from_rows).parameters:
         try:
             import people as _people
             _section_kw["spellings"] = sorted(_people.spellings(restaurant_id, [employee_name]).get(employee_name) or ())
         except Exception as _px:
             print(f"[staff_schedule] spellings unread rid={restaurant_id}: {_px!r}")
     mine, week_of = [], None
+    # Each live week's PUBLISHED rows from the shift table, by shift_id
+    # (schedule_shifts — schedule re-audit 10/11/26 ARCH-7): two queries
+    # for every week, none of them parsed.
+    import schedule_shifts
+    week_rows = schedule_shifts.rows_by_week([w["id"] for w in weeks], "live", restaurant_id=restaurant_id)
     for w in weeks:
         # The PUBLISHED copy — what staff were sent and the covers they
         # were told about; a manager's unsent edit never reaches the portal
@@ -192,8 +196,9 @@ def shifts_for_employee(restaurant_id: int, employee_name: str, today=None, now=
                 parts = [p for p in (a.get("morning"), a.get("night")) if p]
                 if parts:
                     stations[(a.get("date"), a.get("shift_start"))] = " then ".join(dict.fromkeys(parts))
-        placed = _placed_breaks(detail.get("schedule_csv") or "", employee_name, break_rules)
-        for s in employee_shifts_from_csv(detail.get("schedule_csv") or "", employee_name,
+        rows = week_rows.get(int(w["id"])) or []
+        placed = _placed_breaks(rows, employee_name, break_rules)
+        for s in employee_shifts_from_rows(rows, employee_name,
                                           meal_break_after_hours=meal_after, **_section_kw):
             d = _parse_day(s.get("date"))
             # Each day comes from the newest published week that covers it.

@@ -250,6 +250,30 @@ def pending_send_queued(action, db_path=None) -> int:
         return 0
 
 
+def pending_send_moved(action, db_path=None) -> int:
+    """delayed.queue_schedule_send's hook when a second press re-points the
+    week's waiting send (schedule re-audit 10/11/26 BUGSLIFE-9): the same
+    countdown, now ending at the new time, on every phone running it — or,
+    where none was started yet, started now. Returns how many phones were
+    told. Never raises."""
+    try:
+        kind = (action or {}).get("kind")
+        if kind not in COUNTDOWN_KINDS or not push.native_push_allowed():
+            return 0
+        rid = int(action["restaurant_id"])
+        tokens = push.live_activity_tokens("pending_send", push.LA_KIND_UPDATE, restaurant_id=rid,
+                                           activity_key=str(action["id"]), db_path=db_path or DB_PATH)
+        if not tokens:
+            return pending_send_queued(action, db_path=db_path)
+        fire = _parse_utc(action.get("execute_at"))
+        return push.fire_live_activity(
+            tokens, "pending_send", "update", pending_send_state(action.get("execute_at")),
+            stale_at=_unix(fire + timedelta(seconds=60)) if fire else None, db_path=db_path or DB_PATH)
+    except Exception as e:
+        _capture(e, "live_activity_pending_send", f"action={(action or {}).get('id')} moved")
+        return 0
+
+
 def pending_send_finished(restaurant_id, action_id, status, note=None, db_path=None) -> int:
     """delayed.cancel / delayed._run_one's hook: end the countdown on every
     phone running it — "stopped" (undone), "sent" or "failed" (with the

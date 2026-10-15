@@ -619,6 +619,7 @@ def test_the_staff_schedule_shows_the_breaks_placed_in_the_shift(db):
     import staff_schedule
     text = T.HEADER + "\n" + (f"{T.W2[0]},Monday,Ana,Server,10:00am,6:00pm,8,\n"
                               f"{T.W2[0]},Monday,Bob,Server,10:00am,6:00pm,8,\n")
-    placed = staff_schedule._placed_breaks(text, "Ana", {"meals": IL_MEALS["meals"]})
+    import schedule_rows
+    placed = staff_schedule._placed_breaks(schedule_rows.parse(text), "Ana", {"meals": IL_MEALS["meals"]})
     meal = placed[(T.W2[0], "10:00am")][0]
     assert meal["kind"] == "meal" and meal["minutes"] == 20 and meal["placed"]

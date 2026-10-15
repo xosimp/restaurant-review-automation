@@ -113,6 +113,10 @@ def _row(r):
         # 10/9/26: "any time" on a day - a manager who covers lunch and
         # dinner has no one fixed shift): ["Monday", ...].
         "work_days": [d for d in _json_list(r, "work_days", keys) if d in DAYS],
+        # Two legs on one date (lunch and dinner with a break — blind
+        # re-audit 10/11/26 LOGIC-19): True or False as the owner set it;
+        # None is automatic (a double on a quarter of the days they worked).
+        "doubles": (None if "doubles" not in keys or r["doubles"] is None else bool(r["doubles"])),
         "updated_by": r["updated_by"],
         "updated_at": r["updated_at"],
     }
@@ -155,7 +159,14 @@ def for_name(restaurant_id, name, db_path=DB_PATH) -> dict:
 
 
 def get_all(restaurant_id, db_path=DB_PATH) -> dict:
-    """{employee_name: settings} for everyone with a row."""
+    """{employee_name: settings} for everyone with a row — read once in a
+    generation's read scope (models.roster_read, SCALE-24)."""
+    import models as _m_rr
+    return _m_rr.roster_read(("staff_settings", int(restaurant_id), db_path),
+                             lambda: _get_all(restaurant_id, db_path))
+
+
+def _get_all(restaurant_id, db_path) -> dict:
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM staff_settings WHERE restaurant_id=?", (restaurant_id,)).fetchall()
@@ -409,7 +420,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
            time_windows=None, certifications=None, preferred_dayparts=None, desired_hours=None,
            experienced=None, minor_age_band=None, floor_manager=None, paid_hourly=None,
            acting_manager=None, standing_shifts=None, trainee=None, closes_for=None,
-           work_days=None, db_path=DB_PATH) -> dict:
+           work_days=None, doubles=None, db_path=DB_PATH) -> dict:
     """Set any subset of one person's facts. Unset arguments keep their
     stored value; the caller passes only what changed.
 
@@ -503,7 +514,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                                          "time_windows": {}, "certifications": [], "preferred_dayparts": [],
                                          "desired_hours": None, "experienced": False, "minor_age_band": None,
                                          "floor_manager": None, "paid_hourly": False, "acting_manager": [],
-                                         "standing_shifts": [], "trainee": None, "closes_for": [], "work_days": []}
+                                         "standing_shifts": [], "trainee": None, "closes_for": [], "work_days": [],
+                                         "doubles": None}
         if time_windows is not None:
             time_windows = _keep_window_dates(raw_windows, time_windows, current.get("time_windows") or {})
         new = {
@@ -527,6 +539,8 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
             "trainee": (trainee or None) if trainee is not None else current.get("trainee"),
             "closes_for": closes_for if closes_for is not None else current.get("closes_for") or [],
             "work_days": work_days if work_days is not None else current.get("work_days") or [],
+            "doubles": ((None if doubles == AUTO else int(_flag(doubles))) if doubles is not None
+                        else (None if current.get("doubles") is None else int(current["doubles"]))),
         }
         if new["min_hours"] is not None and new["max_hours"] is not None and new["min_hours"] > new["max_hours"]:
             raise StaffSettingsError("minimum hours cannot exceed maximum hours")
@@ -541,15 +555,15 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                  "experienced": experienced, "minor_age_band": minor_age_band,
                  "floor_manager": floor_manager, "paid_hourly": paid_hourly, "acting_manager": acting_manager,
                  "standing_shifts": standing_shifts, "trainee": trainee, "closes_for": closes_for,
-                 "work_days": work_days}
+                 "work_days": work_days, "doubles": doubles}
         sets = [f"{col}=excluded.{col}" for col, v in given.items() if v is not None]
         sets += ["updated_by=excluded.updated_by", "updated_at=excluded.updated_at"]
         conn.execute("""INSERT INTO staff_settings (restaurant_id, employee_name, active, employment_type,
                             min_hours, max_hours, daypart_availability, is_minor, time_windows, certifications,
                             preferred_dayparts, desired_hours, experienced, minor_age_band, floor_manager,
                             paid_hourly, acting_manager, standing_shifts, trainee, closes_for, work_days,
-                            updated_by, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+                            doubles, updated_by, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
                         ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET """ + ", ".join(sets),
                      (restaurant_id, name, new["active"], new["employment_type"], new["min_hours"],
                       new["max_hours"], json.dumps(new["daypart_availability"]), new["is_minor"],
@@ -558,7 +572,7 @@ def upsert(restaurant_id, employee_name, active=None, employment_type=None, min_
                       new["minor_age_band"], new["floor_manager"], new["paid_hourly"],
                       json.dumps(new["acting_manager"]), json.dumps(new["standing_shifts"]),
                       json.dumps(new["trainee"]) if new["trainee"] else None, json.dumps(new["closes_for"]),
-                      json.dumps(new["work_days"]), (updated_by or "").strip()[:120] or None))
+                      json.dumps(new["work_days"]), new["doubles"], (updated_by or "").strip()[:120] or None))
         if time_windows is not None and time_windows != (current.get("time_windows") or {}):
             # The staff app edits these windows on its availability screen
             # and saves against that row's version (save_own_availability).
@@ -582,7 +596,8 @@ _ROSTER_FIELDS = {"employment_type": "employment type", "min_hours": "minimum ho
                   "desired_hours": "desired hours", "experienced": "experienced", "minor_age_band": "minor age band",
                   "floor_manager": "floor manager", "paid_hourly": "paid hourly",
                   "acting_manager": "acting manager dates", "standing_shifts": "standing shifts",
-                  "trainee": "training", "closes_for": "closes for", "work_days": "work days"}
+                  "trainee": "training", "closes_for": "closes for", "work_days": "work days",
+                  "doubles": "works doubles"}
 
 
 def _log_roster_changes(restaurant_id, name, current, new, given, db_path=DB_PATH):
@@ -945,21 +960,24 @@ def _touched_since(restaurant_id, cutoff, today, db_path=DB_PATH) -> set:
         try:
             import models as _m_live
             weeks = conn.execute(
-                "SELECT " + _m_live.live_csv_sql("h") + " AS schedule_csv FROM schedule_history h WHERE "
+                "SELECT h.id FROM schedule_history h WHERE "
                 "h.restaurant_id=? AND " + _m_live.live_where("h") + " AND substr(h.week_end,1,10) >= ?",
                 (restaurant_id, mgr_cutoff)).fetchall()
+            # Their published rows from the shift table (schedule_shifts —
+            # schedule re-audit 10/11/26 ARCH-7).
+            import schedule_shifts
+            week_rows = schedule_shifts.rows_by_week([w["id"] for w in weeks], "live", conn=conn)
         except Exception:
-            weeks = []
+            weeks, week_rows = [], {}
     finally:
         conn.close()
     if weeks:
-        from schedule_versions import rows_from_csv
         try:
             from schedule_rules import manager_role_kind
         except Exception:
             manager_role_kind = None
         for w in weeks:
-            for r in rows_from_csv(w["schedule_csv"]):
+            for r in week_rows.get(int(w["id"])) or []:
                 d = r.get("date") or ""
                 if d >= cutoff or (d >= mgr_cutoff and manager_role_kind and manager_role_kind(r.get("role"))):
                     out.add(name_key(r.get("employee")))
@@ -1218,7 +1236,40 @@ def _event(e):
 def _blank_tally() -> dict:
     return {"shifts": 0, "no_show": 0, "called_out": 0, "short": 0, "late": 0, "timed": 0,
             "w": 0.0, "w_miss": 0.0, "w_absent": 0.0, "w_callout": 0.0, "w_timed": 0.0, "w_late": 0.0,
-            "last_miss": None, "first": None, "last": None}
+            "last_miss": None, "first": None, "last": None, "recent": 0}
+
+
+# A label must be able to come off (schedule re-audit 10/11/26 LEARNING-21):
+# the recency weight decays a person's misses AND their shifts alike, so
+# their rate never drifts back without new shifts — and the solver, steering
+# a risky person away from busy and solo shifts, sends fewer. Each whole
+# clean week since the last miss, after a REDEEM_GRACE_DAYS grace (a label
+# does not flicker the week after a miss), is REDEEM_SHIFTS_PER_CLEAN_WEEK
+# more pseudo-shifts at the restaurant's own base rate (capped at
+# REDEEM_MAX_SHIFTS): two bad weeks
+# in July are no longer "risky" in October. And while someone marked risky
+# has had fewer than EXPLORE_MIN_SHIFTS shifts in the last
+# EXPLORE_WINDOW_DAYS, `explore` is set: the solver stops steering them off
+# shared busy shifts (only a shift they would hold alone stays priced), so
+# the record that could clear them keeps arriving.
+REDEEM_SHIFTS_PER_CLEAN_WEEK = 1.0
+REDEEM_GRACE_DAYS = 14
+REDEEM_MAX_SHIFTS = 26.0
+EXPLORE_WINDOW_DAYS = 28
+EXPLORE_MIN_SHIFTS = 4
+
+
+def redemption_shifts(last_miss, today) -> float:
+    """Pseudo-shifts at the base rate for the clean weeks since `last_miss`
+    (an ISO date) — 0 with no miss on record or one this week."""
+    from datetime import date as _date
+    if not last_miss:
+        return 0.0
+    try:
+        days = (today - _date.fromisoformat(str(last_miss)[:10])).days
+    except (TypeError, ValueError):
+        return 0.0
+    return min(REDEEM_MAX_SHIFTS, max(0, (days - REDEEM_GRACE_DAYS) // 7) * REDEEM_SHIFTS_PER_CLEAN_WEEK)
 
 
 def _add(t, day, outcome, notice, timed, w):
@@ -1263,6 +1314,11 @@ def attendance_tally(events, today=None) -> dict:
         t = tally.setdefault(n, dict(_blank_tally(), days={}))
         _add(t, day, outcome, notice, timed, w)
         try:
+            if 0 <= (today - _date.fromisoformat(str(day)[:10])).days <= EXPLORE_WINDOW_DAYS:
+                t["recent"] += 1
+        except (TypeError, ValueError):
+            pass
+        try:
             wd = _date.fromisoformat(str(day)[:10]).strftime("%A")
         except (TypeError, ValueError):
             wd = None
@@ -1282,12 +1338,15 @@ def attendance_bases(tally) -> dict:
             "late": (sum(t["w_late"] for t in tally.values()) / wt) if wt else 0.0}
 
 
-def _rates(t, base) -> dict:
+def _rates(t, base, today=None) -> dict:
     late = (smoothed_rate(t["w_late"], t["w_timed"], base["late"]) if t["timed"] >= LATE_MIN_SHIFTS else None)
-    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"]),
-            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"]),
-            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"]),
-            "late_rate": late}
+    # The clean weeks since the last miss pull the absence rates back toward
+    # the base (LEARNING-21).
+    prior = NO_SHOW_PRIOR_SHIFTS + (redemption_shifts(t.get("last_miss"), today) if today else 0.0)
+    return {"no_show_rate": smoothed_rate(t["w_miss"], t["w"], base["miss"], prior),
+            "absence_rate": smoothed_rate(t["w_absent"], t["w"], base["absence"], prior),
+            "call_out_rate": smoothed_rate(t["w_callout"], t["w"], base["call_out"], prior),
+            "late_rate": late, "redeemed_shifts": round(prior - NO_SHOW_PRIOR_SHIFTS, 1)}
 
 
 def weighted_attendance(events, today=None, min_shifts=6) -> dict:
@@ -1309,7 +1368,7 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
     for n, t in tally.items():
         if t["shifts"] < min_shifts:
             continue
-        rates = _rates(t, base)
+        rates = _rates(t, base, today)
         rate = rates["no_show_rate"]
         out[n] = {"shifts": t["shifts"], "no_shows": t["no_show"], "called_out": t["called_out"], "late": t["late"],
                   "no_show_rate": rate,
@@ -1320,6 +1379,10 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
                   "late_threshold": LATE_RISK_RATE,
                   "base_rate": round(base["miss"], 3), "no_show_threshold": UNRELIABLE_RATE,
                   "unreliable": rate >= UNRELIABLE_RATE,
+                  "redeemed_shifts": rates["redeemed_shifts"],
+                  # Too few recent shifts to clear a risky label: the solver
+                  # keeps offering them shared shifts (LEARNING-21).
+                  "explore": rate > _exposure_from() and t.get("recent", 0) < EXPLORE_MIN_SHIFTS,
                   "short_rate": round(t["short"] / t["shifts"], 2),
                   "last_miss": t["last_miss"], "since": t["first"], "through": t["last"],
                   "half_life_days": RELIABILITY_HALF_LIFE_DAYS,
@@ -1329,6 +1392,11 @@ def weighted_attendance(events, today=None, min_shifts=6) -> dict:
                   # Saturday (scheduler audit 10/10/26 LEARNING-14).
                   "weekday_rates": _weekday_rates(t, rate)}
     return out
+
+
+def _exposure_from() -> float:
+    from attendance_risk import GRADED_FROM
+    return GRADED_FROM
 
 
 def _weekday_rates(t, person_rate) -> dict:
@@ -1422,6 +1490,9 @@ def reliability(restaurant_id, db_path=DB_PATH, min_shifts=6, today=None) -> dic
     says nothing about attendance (the same rule labor.py's no-show block
     applies).
     """
+    import learning_stats as _ls_gate
+    if _ls_gate.learning_off():
+        return {}  # learning_v2's off week (LEARNING-14)
     # Every shift somebody WATCHED (attendance.reliability_events — memory
     # audit 9/29/26): the outcomes the live check, the close-out and the
     # nightly published-week-vs-punches join recorded, and the shifts from a

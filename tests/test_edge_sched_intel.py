@@ -144,13 +144,18 @@ def test_two_denied_sunday_night_drops_do_not_become_an_avoid(db):
     assert "Ana" not in si.behaviour_preferences(rid)
 
 
-def test_two_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preference(db):
+def test_three_approved_sunday_night_drops_are_an_avoid_and_two_claims_a_preference(db):
     rid = _restaurant(db)
     _request(db, rid, "Ana", "2026-09-06", "5:00pm", "open")
     _request(db, rid, "Ana", "2026-09-13", "5:00pm", "covered", replacement="Ben")
     _request(db, rid, "Cy", "2026-09-20", "5:00pm", "covered", replacement="Ben")
+    # Two drops are no longer an avoid (re-audit 10/11/26 LEARNING-22:
+    # AVOID_MIN_EVENTS); a third is.
+    assert "Sunday night" not in (si.behaviour_preferences(rid).get("Ana") or {}).get("avoids", [])
+    _request(db, rid, "Ana", "2026-09-27", "5:00pm", "open")
     prefs = si.behaviour_preferences(rid)
     assert prefs["Ana"]["avoids"] == ["Sunday night"]
+    assert "dropped 3 of the 3 Sunday dinner shifts" in prefs["Ana"]["evidence"]["Sunday night"]["said"]
     # Schedule audit 10/10/26 LEARNING-15: picking up the only open shifts
     # there were says Ben wants hours, not Sunday nights (this test used to
     # expect "prefers Sunday night" — the flaw itself).
@@ -171,8 +176,12 @@ def test_the_outcomes_job_keeps_a_cursor_and_resumes_after_it(db, monkeypatch):
     conn.commit()
     conn.close()
     seen.clear()
+    # One worker, so the order visited is the order the pass resumes in: with
+    # OUTCOMES_WORKERS (2) one worker could finish its restaurant and append
+    # the wrapped-around first one before the other appended its own.
+    monkeypatch.setattr(strategy_jobs, "OUTCOMES_WORKERS", 1)
     strategy_jobs.run_schedule_outcomes()
-    assert seen and seen[0] == rids[1]
+    assert seen[:2] == [rids[1], rids[2]]
 
 
 def test_the_outcomes_job_only_visits_labor_restaurants(db, monkeypatch):
@@ -236,5 +245,12 @@ def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, 
     monkeypatch.setattr(scheduler.time, "sleep", next_tick)
     with pytest.raises(_StopLoop):
         scheduler.scheduler_loop()
-    assert drafted, "the first tick drafted somebody"
-    assert sorted(set(drafted)) == sorted(rids), drafted
+    # The pass claims and enqueues; the queue's consumer drafts (blind
+    # re-audit 10/11/26 ARCH-10: the queue is the one path). Every restaurant
+    # of the Thursday is queued by the ticks, once each, and nothing is
+    # drafted inline on the scheduler thread.
+    conn = models.get_conn(db)
+    queued = [r[0] for r in conn.execute("SELECT restaurant_id FROM jobs WHERE kind='auto_draft'").fetchall()]
+    conn.close()
+    assert sorted(queued) == sorted(rids), queued
+    assert not drafted, "drafted inline instead of by the queue"

@@ -231,7 +231,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                                 "text": f"Built the schedule for the week of {mdy(sched['week_start'])}."
                                         + (f" {hourly:.0f} of {sched['hours_budget']:.0f} budgeted hourly hours."
                                            if hourly and sched["hours_budget"] else "")})
-            pos = _row(conn, "SELECT business_date, MAX(captured_hour) AS h, MAX(created_at) AS at FROM pos_intraday "
+            pos = _row(conn, "SELECT MAX(created_at) AS at FROM pos_intraday "
                              "WHERE restaurant_id=? AND created_at >= ?", (restaurant_id, day))
             if pos and pos["at"]:
                 working.append({"module": "labor", "text": "Monitoring today's sales hour by hour"})
@@ -271,7 +271,7 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
                     pass
                 entries.append({"at": _iso_z(fc["created_at"]), "module": "inventory", "kind": "projected",
                                 "text": f"Projected {what} from your counts and sales." + corr})
-            counted = _scalar(conn, "SELECT MAX(created_at) FROM inventory_history WHERE restaurant_id=?", (restaurant_id,))
+            counted = _scalar(conn, "SELECT MAX(saved_at) FROM inventory_history WHERE restaurant_id=?", (restaurant_id,))
             if counted and str(counted) >= month:
                 working.append({"module": "inventory", "text": "Checking inventory trends against your last count"})
             loss = _scalar(conn, "SELECT MAX(synced_at) FROM pos_loss_daily WHERE restaurant_id=?", (restaurant_id,))

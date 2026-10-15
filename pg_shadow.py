@@ -21,8 +21,12 @@ drains it to SHADOW_DATABASE_URL every ten minutes (run_shadow_pass,
 bounded, in order, each row retried with backoff; a row the database
 refuses — a double booking in a published week — keeps its error, which is
 itself a finding). backfill() notes the revisions written before the flag.
-compare() counts both sides: the shadow is trusted when they agree.
+compare() checks both sides: the counts, and each sent revision's shifts
+hashed field by field on both sides (blind re-audit 10/11/26 SCALE-10: equal
+counts said nothing about a shift written with the wrong time or person) —
+the shadow is trusted when every hash agrees.
 """
+import hashlib
 import json
 import os
 import time
@@ -133,7 +137,12 @@ def project(conn, restaurant_id, history_id, version) -> dict:
     except Exception:
         tz = "America/Chicago"
     published = v["reason"] == "published"
-    rows = sv.rows_from_csv(v["schedule_csv"])
+    # The revision's rows from the shift table when it is the revision the
+    # table holds (a drain right after the write); an older one's stored
+    # text otherwise — the table keeps one revision per copy
+    # (schedule_shifts.revision_rows, schedule re-audit 10/11/26 ARCH-7).
+    import schedule_shifts
+    rows = schedule_shifts.revision_rows(conn, int(history_id), int(version), v["schedule_csv"])
     shifts = []
     seen = set()
     for i, r in enumerate(rows):
@@ -156,7 +165,7 @@ def project(conn, restaurant_id, history_id, version) -> dict:
                        "role": r.get("role") or None, "business_date": str(r.get("date"))[:10],
                        "start_ts": _iso_utc(start), "end_ts": _iso_utc(end), "scheduled_hours": hours,
                        "notes": r.get("notes") or None, "locked": bool(r.get("locked")), "published": published})
-    events = _events(v, prev, rows)
+    events = _events(v, prev, rows, conn=conn, history_id=int(history_id))
     return {"week": {"id": int(h["id"]), "restaurant_id": int(h["restaurant_id"]),
                      "week_start": str(h["week_start"] or "")[:10], "week_end": str(h["week_end"] or "")[:10] or None,
                      "superseded_by": h["superseded_by"]},
@@ -167,14 +176,18 @@ def project(conn, restaurant_id, history_id, version) -> dict:
             "shifts": shifts, "events": events, "published": published}
 
 
-def _events(v, prev, rows):
+def _events(v, prev, rows, conn=None, history_id=None):
     """The revision's operations on shifts, by shift_id: add / remove /
-    change (before and after), and generate / publish for those kinds."""
+    change (before and after), and generate / publish for those kinds. The
+    revision before is an older one: its stored text (revision_rows)."""
     import schedule_versions as sv
+    import schedule_shifts
     out = []
     if v["reason"] in ("generated", "published"):
         out.append({"kind": "generate" if v["reason"] == "generated" else "publish", "payload": {"rows": len(rows)}})
-    before = {r.get("shift_id"): r for r in (sv.rows_from_csv(prev["schedule_csv"]) if prev else []) if r.get("shift_id")}
+    before_rows = (schedule_shifts.revision_rows(conn, history_id, prev["version"], prev["schedule_csv"])
+                   if prev and conn is not None else (sv.rows_from_csv(prev["schedule_csv"]) if prev else []))
+    before = {r.get("shift_id"): r for r in before_rows if r.get("shift_id")}
     after = {r.get("shift_id"): r for r in rows if r.get("shift_id")}
     for sid in sorted(set(before) | set(after)):
         b, a = before.get(sid), after.get(sid)
@@ -294,10 +307,49 @@ def run_shadow_pass() -> dict:
     return drain()
 
 
-def compare(target, restaurant_id=None, db_path=None) -> dict:
-    """{weeks, revisions, outbox_open, outbox_failed: (source, shadow)} —
-    the source's weeks and revisions the outbox has sent, against the
-    shadow's; `ok` when they agree."""
+_SHIFT_FIELDS = ("shift_id", "person_id", "employee", "role", "business_date", "start_ts", "end_ts",
+                 "scheduled_hours", "notes", "locked", "published")
+
+
+def _norm(field, v):
+    """One shift field as comparable text, whichever side read it (a
+    Postgres timestamptz / date / numeric, or the SQLite stand-in's text)."""
+    import datetime as _dt
+    if v is None:
+        return ""
+    if isinstance(v, _dt.datetime):
+        if v.tzinfo is not None:
+            v = v.astimezone(_dt.timezone.utc)
+        return v.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    if isinstance(v, _dt.date):
+        return v.isoformat()
+    if field in ("locked", "published"):
+        return "1" if v in (True, 1, "1", "true", "t") else "0"
+    if field in ("scheduled_hours", "person_id"):
+        try:
+            return f"{float(v):.4f}"
+        except (TypeError, ValueError):
+            return str(v)
+    return str(v)
+
+
+def shifts_hash(shifts) -> str:
+    """A revision's shifts as one digest: every field of every shift, in
+    shift_id order."""
+    h = hashlib.sha256()
+    for s_ in sorted(shifts, key=lambda r: str(r["shift_id"])):
+        h.update("\x1f".join(_norm(f, s_[f]) for f in _SHIFT_FIELDS).encode())
+        h.update(b"\x1e")
+    return h.hexdigest()
+
+
+def compare(target, restaurant_id=None, db_path=None, max_revisions=500) -> dict:
+    """{weeks, revisions, outbox_open, outbox_failed: (source, shadow),
+    content: {checked, mismatched: [{revision_id, history_id, version,
+    source, shadow}]}} — the source's weeks and revisions the outbox has
+    sent, against the shadow's, and the newest `max_revisions` sent
+    revisions' shifts hashed on both sides; `ok` when the counts agree and
+    no hash differs."""
     src = get_conn(db_path)
     try:
         args = [int(restaurant_id)] if restaurant_id is not None else []
@@ -313,5 +365,33 @@ def compare(target, restaurant_id=None, db_path=None) -> dict:
     weeks = target.execute("SELECT COUNT(*) FROM sched.schedule_weeks WHERE 1=1" + rw, args).fetchone()[0]
     out = {"revisions": (int(sent["n"]), int(revs)), "weeks": (int(sent["w"]), int(weeks)),
            "outbox_open": int(open_), "outbox_failed": int(failed)}
-    out["ok"] = out["revisions"][0] == out["revisions"][1] and out["weeks"][0] == out["weeks"][1]
+    out["content"] = _compare_content(target, restaurant_id, db_path, max_revisions)
+    out["ok"] = out["revisions"][0] == out["revisions"][1] and out["weeks"][0] == out["weeks"][1] \
+        and not out["content"]["mismatched"]
     return out
+
+
+def _compare_content(target, restaurant_id, db_path, max_revisions) -> dict:
+    src = get_conn(db_path)
+    mismatched, checked = [], 0
+    try:
+        args = [int(restaurant_id)] if restaurant_id is not None else []
+        sent = src.execute("SELECT restaurant_id, history_id, version FROM pg_shadow_outbox WHERE sent_at IS NOT NULL"
+                           + (" AND restaurant_id=?" if restaurant_id is not None else "")
+                           + " ORDER BY id DESC LIMIT ?", args + [int(max_revisions)]).fetchall()
+        for r in sent:
+            proj = project(src, r["restaurant_id"], r["history_id"], r["version"])
+            if proj is None:
+                continue
+            rid = proj["revision"]["id"]
+            rows = target.execute("SELECT " + ", ".join(_SHIFT_FIELDS) + " FROM sched.shifts WHERE revision_id = ?",
+                                  (rid,)).fetchall()
+            mine = shifts_hash(proj["shifts"])
+            theirs = shifts_hash([{f: row[i] for i, f in enumerate(_SHIFT_FIELDS)} for row in rows])
+            checked += 1
+            if mine != theirs:
+                mismatched.append({"revision_id": rid, "history_id": int(r["history_id"]),
+                                   "version": int(r["version"]), "source": mine, "shadow": theirs})
+    finally:
+        src.close()
+    return {"checked": checked, "mismatched": mismatched}

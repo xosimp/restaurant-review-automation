@@ -7,6 +7,9 @@ what-if's swaps are taken inside the search and checked with every rule
 (P-33), the six dimensions that had no move have one (SQ-19), and what the
 restaurant's scheduling memory holds is kept (L-3, D-35, L-16).
 """
+import pytest
+import schedule_fixes
+
 import schedule_optimizer as so
 import schedule_rules as sr
 import shift_quality as sq
@@ -117,7 +120,7 @@ def test_a_minor_is_never_given_a_shift_past_their_band():
     not work past 7pm — the add move used to check availability only."""
     names = ["Ann", "Teen", "Kim"]
     c = cons(names, minors={"teen"}, minor_bands={"teen": "14-15"})
-    rows = [row(TUE, "Ann", "5:00pm", "11:00pm"), row(MON, "Teen", "3:00pm", "6:00pm"), row(MON, "Kim", "5:00pm", "11:00pm")]
+    rows = [row(TUE, "Ann", "5:00pm", "11:00pm"), row(MON, "Teen", "3:30pm", "6:30pm"), row(MON, "Kim", "5:00pm", "11:00pm")]
     sig = _sig(names, typical_headcount={("Tuesday", "night"): {"Server": 3}})
     res = so.optimize(rows, {}, signals=sig, constraints=c)
     assert not _on(res["rows"], "Teen", TUE)
@@ -207,9 +210,15 @@ def test_labor_dollars_are_priced_per_person_with_overtime_at_its_premium():
     rows = [row(d, "Ann", "9:00am", "6:00pm") for d in (MON, TUE, WED, THU, FRI)]        # 45h
     assert so.labor_dollars(rows, pricing) == 45 * 20.0 + 5 * 20.0 * 0.5
     assert so.labor_dollars([row(MON, "Bo", "9:00am", "1:00pm")], pricing) == 40.0
-    # a saving earns nothing: the search finishes the draft's quality
+    # A saving is credited at the rate an add is charged (blind re-audit
+    # 10/11/26 LOGIC-23 — it "earned nothing", so no pass ever tightened an
+    # over-staffed week under its budget): 0.5 points per 1% of the draft's
+    # labor dollars, either way.
     q = {"shifts": [{"scored": True, "score": 80, "profile": {"demand": "normal"}}], "raw_score": 80.0}
-    assert so.week_value(q, rows[:1], pricing, so.labor_dollars(rows, pricing)) == 80.0
+    base = so.labor_dollars(rows, pricing)
+    saved = base - so.labor_dollars(rows[:1], pricing)
+    assert so.week_value(q, rows[:1], pricing, base) == pytest.approx(80.0 + 0.5 * saved / base * 100.0)
+    assert so.week_value(q, rows + [row(SAT, "Ann", "9:00am", "1:00pm")], pricing, base) < 80.0
 
 
 # ── P-33: the what-if's best swaps taken inside the search, every rule held ──
@@ -232,7 +241,7 @@ def test_the_what_if_swap_is_taken_inside_the_search_and_checked_with_every_rule
     res = so.optimize(rows, {}, signals=sig, constraints=c)
     assert _on(res["rows"], "Bea", SAT) and _on(res["rows"], "Cal", TUE)
     assert [ch["kind"] for ch in res["changes"]] == ["swap"] and "better arrangement" in res["changes"][0]["reason"]
-    after = sq.compare_candidates(res["rows"], rule_constraints=c, **sig)
+    after = schedule_fixes.compare_candidates(res["rows"], rule_constraints=c, **sig)
     assert after["checked_with"] == "every rule" and not after["swaps"]
 
 
@@ -245,8 +254,8 @@ def test_the_what_if_never_offers_a_swap_a_rule_refuses():
     rows = [row(SAT, "Dee", "5:00pm", "11:00pm", role="Bartender"), row(TUE, "Ann", "11:00am", "4:00pm", role="Bartender")]
     sig = _sig(names, role="Bartender", scores={"Ann": 5, "Dee": 1}, demand_by_day={"Saturday": 40.0},
                typical_headcount={("Saturday", "night"): {"Bartender": 1}, ("Tuesday", "morning"): {"Bartender": 1}})
-    loose = sq.compare_candidates(rows, **sig)
-    held = sq.compare_candidates(rows, rule_constraints=c, **sig)
+    loose = schedule_fixes.compare_candidates(rows, **sig)
+    held = schedule_fixes.compare_candidates(rows, rule_constraints=c, **sig)
     assert held["checked_with"] == "every rule"
     for r in held["rows"]:
         if r["date"] == SAT:
@@ -262,7 +271,7 @@ def test_the_what_if_never_offers_a_pinned_row():
     rows = [dict(row(SAT, "Cal", "4:00pm", "10:00pm"), _pinned="manager_plan"), row(TUE, "Bea", "4:00pm", "10:00pm")]
     sig = _sig(names, scores={"Bea": 5, "Cal": 2}, demand_by_day={"Saturday": 40.0},
                typical_headcount={("Saturday", "night"): {"Server": 1}, ("Tuesday", "night"): {"Server": 1}})
-    out = sq.compare_candidates(rows, rule_constraints=cons(names), **sig)
+    out = schedule_fixes.compare_candidates(rows, rule_constraints=cons(names), **sig)
     assert out["rows"][0]["employee"] == "Cal" and not out["swaps"]
 
 

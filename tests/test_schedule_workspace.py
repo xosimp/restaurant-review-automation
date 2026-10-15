@@ -91,13 +91,15 @@ def test_the_summary_states_its_six_figures_and_labels_savings_a_projection():
     f = _fn("ssRenderSummary")
     # Decisions, not raw breaches (schedule audit 10/10/26 TRUST-22): the
     # fifth tile counts what must be fixed or decided, from the review.
-    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'To fix or decide'", "'Estimated savings'"):
+    for k in ("'Shift quality'", "'Labor'", "'Coverage'", "'Overtime'", "'To fix or decide'",
+              "Under last week"):
         assert k in f
-    # The savings are the server's, on one basis with the draft's labor %
-    # (schedule re-audit 10/4/26 SQ-4): the page's own "rec.pct > lp" put an
-    # all-in recent % against the hourly-only draft, and the "savings" were
-    # the salaries.
-    assert "Projection · not yet earned" in f and "lv.savings" in f and "rec.pct > lp" not in f
+    # Scheduled against scheduled, the server's, on one basis (blind re-audit
+    # 10/11/26 TRUST-7): the "Estimated savings" hero set the recent measured
+    # % against this draft's scheduled one and grew as the week got thinner;
+    # it is an ordinary tile now, never the hero, and never a page figure.
+    assert "Projection · not yet earned" in f and "lv.vs_last_plan" in f and "rec.pct > lp" not in f
+    assert "'Estimated savings'" not in f and "tile('hero'" not in f and "lv.savings" not in f
     for b in ("View the schedule", "Optimize again", ">Review &amp; send<"):
         assert b in f
     # One verdict, the server's (TRUST-4, TRUST-6): never "The week is built".
@@ -262,7 +264,9 @@ def test_publish_is_the_pre_publish_review_of_the_rows_on_screen():
     pub = _fn("ssRenderPublish")
     assert "prRender()" in pub and "All kept" not in pub and "Your edits are saved" not in pub
     assert 'id="ss-pub-alerts"' not in s and '<div id="pr-review" class="pr" aria-live="polite"></div>' in s
-    assert "'/api/labor/publish-review'" in s and "body: JSON.stringify({schedule_id: hid, rows: _schedRows})" in s
+    # The rows on screen, what Send needs first (re-audit 10/11/26 TRUST-26).
+    assert "'/api/labor/publish-review'" in s and \
+        "body: JSON.stringify({schedule_id: hid, rows: _schedRows, sections: 'core'})" in s
     assert ".ss-pub-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch}" in s
     assert ".ss-pub-go{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px;justify-content:center}" in s
     assert ".ss-pub-go .cbtn{height:50px;width:240px;" in s

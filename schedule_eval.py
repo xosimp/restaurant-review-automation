@@ -1,8 +1,7 @@
 """
 schedule_eval.py — the frozen golden evaluation set for schedule generation,
 how an arm's week is scored against the week the owner published, and the
-verdicts the router reads (scheduler audit 10/10/26: RM-1, AI-3, AI-5, AI-6,
-AI-7, AI-8, AI-22, AI-30).
+verdicts the router reads.
 
 Why it exists. The model, effort and contract the schedule runs on were
 decided on ONE stored week with one sample per arm (PROMPT_LIBRARY →
@@ -24,14 +23,18 @@ sent out. Here:
   band, holiday, first week, redo, gate) so a set spans 15-250 staff,
   holiday, first and redo weeks.
 
-  THE SCORE (score_against_published). An arm's rows go through the
-  production post-model path (schedule_engine.post_model_rows: repair_week
-  with the generation's own RepairContext, then the quality gate's fill in
-  code when the gate trips) — never repair_rows alone — and are compared
-  with the week the owner published: row-level precision and recall on
-  (person, date, role family, start within 30 minutes) and the hours by
-  role and day (L1 distance), beside hard breaches, manager minutes,
-  quality and unmet items.
+  THE SCORE (score_arm). FIRST what the arm itself wrote, before any repair
+  (pre_repair_metrics): its hard breaches, its minutes with no manager and
+  the requirement items it leaves unmet; their sum of hard breaches and
+  unmet items is ROUTE_METRIC. Then the rows go through the production
+  post-model path (schedule_engine.post_model_rows: repair_week with the
+  generation's own RepairContext, then the quality gate's fill in code when
+  the gate trips) — never repair_rows alone — with how much the repair
+  changed (rows_repaired, repair_seconds), and are compared with the week
+  the owner published: row-level precision and recall on (person, date,
+  role family, start within 30 minutes) and the hours by role and day (L1
+  distance) — SECONDARY, and in a paired comparison read only on weeks
+  neither arm drafted (anchored).
 
   VARIANCE (summarize_runs). Every arm runs at least RUNS_PER_ARM (3) times
   per week; an arm is reported as the paired mean over weeks with a 90%
@@ -40,10 +43,13 @@ sent out. Here:
   A routing decision needs an interval that excludes zero.
 
   VERDICTS (schedule_eval_verdicts). record_verdict() stores one paired
-  comparison per metric and roster-size band; route_evidence() is what
-  schedule_engine's pre-router reads: a week starts on T4 for its roster
-  size only when a stored verdict says T4 beat T3 there at 90% (AI-3: it was
-  "roster over 120", a size the code itself called untested).
+  comparison per metric and roster-size band (or kind of week: ROUTE_TAGS);
+  route_evidence() and tag_evidence() are what schedule_engine's pre-router
+  reads: a week starts on T4 for its roster size, or for being a holiday,
+  first or many-rule week, only when a stored verdict says T4 beat T3 there
+  at 90% on ROUTE_METRIC. A winner is named only from MIN_VERDICT_WEEKS
+  weeks of MIN_VERDICT_RESTAURANTS learning-eligible restaurants; freeze()
+  takes no demo, test or internal account.
 
 Pure where it can be; the tables are created at boot (init_schedule_eval,
 from models.init_db).
@@ -51,6 +57,17 @@ from models.init_db).
 import json
 
 import zlib
+
+# The verdict readers the pre-router uses live in schedule_context (layer S0,
+# below schedule_engine); re-exported here with the floors they read.
+from schedule_context import (  # noqa: F401
+    MIN_VERDICT_RESTAURANTS, MIN_VERDICT_WEEKS, ROUTE_METRIC, _decisive, _evidence_text, latest_verdict,
+    route_evidence, tag_evidence)
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -65,11 +82,19 @@ RUNS_PER_ARM = 3
 START_TOLERANCE_MINUTES = 30
 # Roster-size bands the verdicts (and the router) are read by: [lo, hi].
 SIZE_BANDS = ((0, 39), (40, 79), (80, 119), (120, 179), (180, 10000))
-# The paired metric the router decides on: agreement with the published
-# week (F1 of row precision and recall) — what an owner keeps, not the
-# internal scorer.
-ROUTE_METRIC = "published_f1"
 VERDICT_METHOD = "paired_cluster_90"
+# The metrics on which smaller is better: a verdict on one of them names
+# arm_a the winner when its interval sits BELOW zero.
+LOWER_IS_BETTER = frozenset({"pre_repair_defects", "hard_before", "unmet_before", "manager_minutes_before",
+                             "rows_repaired", "repair_seconds", "hard", "manager_minutes", "hours_l1",
+                             "hours_l1_share", "hours_over_budget_share", "cost", "seconds"})
+# The metrics anchored to whatever drafted the week the owner published:
+# compared only on weeks neither arm of the pair drafted.
+ANCHORED_METRICS = frozenset({"published_f1", "published_precision", "published_recall", "hours_l1",
+                              "hours_l1_share"})
+# The kinds of week the pre-router knows (schedule_engine.hard_week_signals):
+# a tag sends its weeks to T4 only on a stored verdict for that tag.
+ROUTE_TAGS = ("holiday", "closure", "first_week", "many_rules", "escalated")
 
 _DDL = (
     """CREATE TABLE IF NOT EXISTS schedule_eval_items (
@@ -131,6 +156,13 @@ def init_schedule_eval(db_path=None):
     try:
         for stmt in _DDL:
             conn.execute(stmt)
+        # A verdict for a kind of week (tag) rather than a roster band, and
+        # why it names no winner.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_eval_verdicts)").fetchall()}
+        if "tag" not in cols:
+            conn.execute("ALTER TABLE schedule_eval_verdicts ADD COLUMN tag TEXT")
+        if "note" not in cols:
+            conn.execute("ALTER TABLE schedule_eval_verdicts ADD COLUMN note TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -155,70 +187,83 @@ def band_of(roster_size):
     return SIZE_BANDS[-1]
 
 
-# ── verdicts and the router (AI-3, AI-5) ───────────────────────────────────
+# ── verdicts and the router ───────────────────────────────────
 
-def record_verdict(metric, arm_a, arm_b, band, paired, version=None, run_key=None, db_path=None) -> dict:
-    """Store one paired comparison of arm_a against arm_b on `metric` for a
-    roster-size `band` (lo, hi): `paired` is summarize_pair's dict ({"diff",
-    "ci90", "weeks", "restaurants"}). The winner is named only when the 90%
-    interval excludes zero (arm_a above it: arm_a; below: arm_b)."""
+def verdict_winner(metric, arm_a, arm_b, paired) -> tuple:
+    """(winner or None, why none): arm_a or arm_b when the 90% interval of
+    arm_a minus arm_b excludes zero in the metric's better direction
+    (LOWER_IS_BETTER), and only from MIN_VERDICT_WEEKS weeks of
+    MIN_VERDICT_RESTAURANTS restaurants."""
+    weeks = int(paired.get("weeks") or 0)
+    rests = int(paired.get("restaurants") or 0)
+    if weeks < MIN_VERDICT_WEEKS or rests < MIN_VERDICT_RESTAURANTS:
+        return None, (f"{weeks}/{MIN_VERDICT_WEEKS} weeks from {rests}/{MIN_VERDICT_RESTAURANTS} restaurants — "
+                      "too few to name a winner")
     ci = paired.get("ci90")
-    winner = None
-    if ci and ci[0] is not None and ci[1] is not None:
-        if ci[0] > 0:
-            winner = arm_a
-        elif ci[1] < 0:
-            winner = arm_b
+    if not ci or ci[0] is None or ci[1] is None:
+        return None, "no interval"
+    lower = metric in LOWER_IS_BETTER
+    if ci[0] > 0:
+        return (arm_b if lower else arm_a), ""
+    if ci[1] < 0:
+        return (arm_a if lower else arm_b), ""
+    return None, "the 90% interval includes zero"
+
+
+def record_verdict(metric, arm_a, arm_b, band, paired, version=None, run_key=None, tag=None, db_path=None) -> dict:
+    """Store one paired comparison of arm_a against arm_b on `metric` for a
+    roster-size `band` (lo, hi) — or, with `tag`, for one kind of week
+    (ROUTE_TAGS: holiday, first week ...) whatever its size: `paired` is
+    summarize_pair's dict ({"diff", "ci90", "weeks", "restaurants"}). The
+    winner is named only past the floors and when the interval excludes
+    zero in the metric's better direction (verdict_winner); otherwise the
+    row says why not (`note`)."""
+    ci = paired.get("ci90")
+    winner, note = verdict_winner(metric, arm_a, arm_b, paired)
+    if tag:
+        band = (0, 10000)
     row = {"metric": metric, "arm_a": arm_a, "arm_b": arm_b, "band_lo": int(band[0]), "band_hi": int(band[1]),
            "weeks": int(paired.get("weeks") or 0), "restaurants": int(paired.get("restaurants") or 0),
            "diff": paired.get("diff"), "ci_lo": (ci or (None, None))[0], "ci_hi": (ci or (None, None))[1],
-           "winner": winner, "method": VERDICT_METHOD}
+           "winner": winner, "method": VERDICT_METHOD, "tag": tag, "note": note or None}
     conn = get_conn(db_path)
     try:
         conn.execute(
             "INSERT INTO schedule_eval_verdicts (version, run_key, metric, arm_a, arm_b, band_lo, band_hi, weeks, "
-            "restaurants, diff, ci_lo, ci_hi, winner, method) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "restaurants, diff, ci_lo, ci_hi, winner, method, tag, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (version, run_key, row["metric"], arm_a, arm_b, row["band_lo"], row["band_hi"], row["weeks"],
-             row["restaurants"], row["diff"], row["ci_lo"], row["ci_hi"], winner, VERDICT_METHOD))
+             row["restaurants"], row["diff"], row["ci_lo"], row["ci_hi"], winner, VERDICT_METHOD, tag,
+             row["note"]))
         conn.commit()
     finally:
         conn.close()
     return row
 
 
-def latest_verdict(metric, arm_a, arm_b, roster_size, db_path=None):
-    """The newest stored verdict of arm_a against arm_b on `metric` whose
-    band holds `roster_size`, or None."""
-    n = int(roster_size or 0)
-    conn = get_conn(db_path)
-    try:
-        r = conn.execute(
-            "SELECT * FROM schedule_eval_verdicts WHERE metric=? AND arm_a=? AND arm_b=? AND band_lo<=? "
-            "AND band_hi>=? ORDER BY id DESC LIMIT 1", (metric, arm_a, arm_b, n, n)).fetchone()
-    finally:
-        conn.close()
-    return dict(r) if r else None
+def set_readiness(items) -> dict:
+    """Whether a frozen set can carry a decision: per roster band and per
+    ROUTE_TAG, its weeks and its restaurants against the floors —
+    {"bands": {"lo-hi": {weeks, restaurants, ready}}, "tags": {...},
+    "ready": any band ready, "need": the floors}."""
+    def _cell(group):
+        rests = {it.get("restaurant_id") for it in group}
+        return {"weeks": len(group), "restaurants": len(rests),
+                "ready": len(group) >= MIN_VERDICT_WEEKS and len(rests) >= MIN_VERDICT_RESTAURANTS}
+    bands, tags = {}, {}
+    for it in items or []:
+        lo, hi = band_of(it.get("roster_size"))
+        bands.setdefault(f"{lo}-{hi}", []).append(it)
+        for t in it.get("tags") or []:
+            if t in ROUTE_TAGS:
+                tags.setdefault(t, []).append(it)
+    out = {"bands": {k: _cell(v) for k, v in sorted(bands.items())},
+           "tags": {k: _cell(v) for k, v in sorted(tags.items())}}
+    out["ready"] = any(c["ready"] for c in out["bands"].values())
+    out["need"] = {"weeks": MIN_VERDICT_WEEKS, "restaurants": MIN_VERDICT_RESTAURANTS}
+    return out
 
 
-def route_evidence(roster_size, db_path=None):
-    """Why a week of this roster size starts on T4, or None (AI-3: route by
-    measured evidence). A reason only when the newest stored verdict of T4
-    against T3 for the roster's size band named T4 the winner at 90% on
-    ROUTE_METRIC. Never raises: a store that cannot be read is no
-    evidence, so the week starts where the ladder starts it."""
-    try:
-        v = latest_verdict(ROUTE_METRIC, "T4", "T3", roster_size, db_path=db_path)
-    except Exception as e:
-        print(f"[schedule_eval] route evidence not read: {e!r}")
-        return None
-    if not v or v.get("winner") != "T4":
-        return None
-    return (f"the eval showed T4 better for rosters of {v['band_lo']}-{v['band_hi']} "
-            f"(+{float(v['diff'] or 0):.3f} {ROUTE_METRIC}, 90% CI {float(v['ci_lo']):.3f} to "
-            f"{float(v['ci_hi']):.3f}, {v['weeks']} weeks)")
-
-
-# ── the set: freezing stored generations (AI-6) ────────────────────────────
+# ── the set: freezing stored generations ────────────────────────────
 
 def _week(week_start):
     from datetime import date, timedelta
@@ -229,15 +274,16 @@ def _week(week_start):
 def _published_rows(restaurant_id, week_start, db_path=None):
     """The rows the owner published for that week — its live copy's
     published rows (models.live_week_row, the one definition of the week
-    in force, ARCH-11) — or None when the week was never published."""
-    import schedule_versions as _sv
+    in force) — or None when the week was never published."""
     import models as _m_live
+    import schedule_shifts
     conn = get_conn(db_path)
     try:
         r = _m_live.live_week_row(conn, restaurant_id, str(week_start)[:10])
+        # From the shift table (schedule_shifts).
+        return schedule_shifts.rows_of(r["id"], "live", conn=conn) if (r and r["published_at"]) else None
     finally:
         conn.close()
-    return _sv.rows_from_csv(r["schedule_csv"] or "") if (r and r["published_at"]) else None
 
 
 def item_tags(calls, roster_size, restaurant_id, week_start, extra=(), holidays=None, db_path=None) -> list:
@@ -252,6 +298,11 @@ def item_tags(calls, roster_size, restaurant_id, week_start, extra=(), holidays=
         tags.append("redo")
     if "gate" in kinds:
         tags.append("gate")
+    # Which arm the published week is an edit of: agreement with it is
+    # never read for that arm.
+    by = drafted_by(calls)
+    if by:
+        tags.append(f"drafted:{by}")
     conn = get_conn(db_path)
     try:
         earlier = conn.execute("SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start<? LIMIT 1",
@@ -263,6 +314,26 @@ def item_tags(calls, roster_size, restaurant_id, week_start, extra=(), holidays=
     if holidays and set(_week(week_start)) & set(holidays):
         tags.append("holiday")
     return sorted(set(tags) | set(extra or ()))
+
+
+def _may_teach(restaurant_id, week_start, db_path=None) -> bool:
+    """models.learning_eligible for the item's restaurant and week; a read
+    that fails is no (never freeze what cannot be vouched for)."""
+    try:
+        import models
+        return bool(models.learning_eligible(int(restaurant_id), since=str(week_start or "")[:10] or None,
+                                             db_path=db_path))
+    except Exception as e:
+        _degraded(f"eligibility not read for {restaurant_id}: {e!r}", e)
+        return False
+
+
+def drafted_by(calls) -> str:
+    """The tier production's stored calls drafted the week on ("T3", "T4",
+    "default" for a pinned model), "mixed" for more than one, or "" when no
+    call says — what the week the owner published is anchored to."""
+    tiers = sorted({str(c.get("tier")) for c in calls or [] if c.get("tier")})
+    return tiers[0] if len(tiers) == 1 else ("mixed" if tiers else "")
 
 
 def freeze(version, history_ids, tags=None, db_path=None) -> dict:
@@ -285,7 +356,15 @@ def freeze(version, history_ids, tags=None, db_path=None) -> dict:
             continue
         first = calls[0]
         rid, ws, gid = first.get("restaurant_id"), first.get("week_start"), first.get("generation_id")
-        blob = _sm.context_for(generation_id=gid, db_path=db_path) or _sm.context_for(history_id=hid,
+        # Only a restaurant that may teach (models.learning_eligible — not a
+        # demo, test or internal account, and its data from after its demo
+        # era): a demo copy of a live client is the same data counted twice,
+        # and two such "restaurants" could carry a verdict.
+        if not _may_teach(rid, ws, db_path):
+            skipped.append({"history_id": hid, "why": "a demo, test or internal account (or its demo era) — it "
+                                                      "may not teach"})
+            continue
+        blob =_sm.context_for(generation_id=gid, db_path=db_path) or _sm.context_for(history_id=hid,
                                                                                        db_path=db_path)
         if not blob:
             skipped.append({"history_id": hid, "why": "no stored post-model context"})
@@ -300,7 +379,7 @@ def freeze(version, history_ids, tags=None, db_path=None) -> dict:
         try:
             base = _sfb.base_week(rid, _week(ws), db_path=db_path)
         except Exception as e:
-            print(f"[schedule_eval] base week not read for {hid}: {e!r}")
+            _degraded(f"base week not read for {hid}: {e!r}", e)
             base = {}
         key = f"{rid}:{ws}:{gid}"
         tags_now = item_tags(calls, roster_size, rid, ws, extra=(tags or {}).get(hid) or (),
@@ -343,12 +422,13 @@ def load_items(version, tags=None, db_path=None) -> list:
         out.append({"item_key": r["item_key"], "restaurant_id": r["restaurant_id"], "week_start": r["week_start"],
                     "history_id": r["history_id"], "generation_id": r["generation_id"],
                     "roster_size": r["roster_size"], "tags": t, "calls": _unz(r["calls_z"]) or [],
+                    "drafted_by": next((x.split(":", 1)[1] for x in t if str(x).startswith("drafted:")), ""),
                     "context": _sm.load_context(bytes.fromhex(blob)) if blob else None,
                     "base": holder.get("base") or {}, "published": _unz(r["published_z"]) or []})
     return out
 
 
-# ── the score: against the week the owner published (AI-7) ─────────────────
+# ── the score: against the week the owner published ─────────────────
 
 def _start_min(t):
     from time_utils import parse_clock
@@ -412,35 +492,113 @@ def compare_with_published(rows, published, c=None) -> dict:
             "hours_l1_share": round(l1 / pub_hours, 4) if pub_hours else None}
 
 
+def _sig(r) -> tuple:
+    return (" ".join(str(r.get("employee") or "").split()).lower(), r.get("date") or "",
+            str(r.get("role") or "").strip().lower(), r.get("shift_start") or "", r.get("shift_end") or "")
+
+
+def pre_repair_metrics(rows, item) -> dict:
+    """What the ARM wrote, before any repair — the primary model comparison:
+    the hard breaches in its own rows, the minutes its own rows leave with
+    no manager, and the requirement items its own week leaves unmet
+    (schedule_output.unmet_items, before the gate's fill);
+    `pre_repair_defects` is the hard breaches plus the unmet items
+    (ROUTE_METRIC). None where the item carries no Constraints."""
+    import schedule_rules as _sr
+    ctx = item.get("context") or {}
+    c = ctx.get("constraints")
+    if c is None:
+        return {"hard_before": None, "manager_minutes_before": None, "unmet_before": None,
+                "pre_repair_defects": None}
+    viols = _sr.violations(rows, c)
+    prof = _sr.breach_profile(rows, c, viols)
+    hard = sum(1 for v in viols if v.get("hard"))
+    try:
+        import schedule_output as _so
+        res = ctx.get("result") or {}
+        unmet = len(_so.unmet_items(rows, constraints=c, violations=viols,
+                                    hours_budget=res.get("hours_budget")))
+    except Exception as e:
+        _degraded(f"unmet before repair not read: {e!r}", e)
+        unmet = None
+    return {"hard_before": hard, "manager_minutes_before": int(sum((prof.get("manager") or {}).values())),
+            "unmet_before": unmet, "pre_repair_defects": (hard + unmet) if unmet is not None else None}
+
+
 def score_arm(rows, item, gate=True) -> dict:
-    """One arm's rows for one frozen item, scored as production would see
-    them: through schedule_engine.post_model_rows with the item's own
-    context (the repair loop and the gate's fill), then against the
-    published week, beside hard breaches, manager minutes, quality and the
-    gate."""
+    """One arm's rows for one frozen item: FIRST what the arm itself wrote
+    (pre_repair_metrics — the repair flattens models, so the
+    comparison of models is read before it), then the rows as production
+    would see them — through schedule_engine.post_model_rows with the item's
+    own context (the repair loop and the gate's fill) — with how much the
+    repair had to change (`rows_repaired`, `repair_seconds`), hard breaches,
+    manager minutes, quality, the gate, the hours against the week's budget,
+    and (secondary) agreement with the week the owner published."""
+    import time as _time
     import schedule_engine as _se
     import schedule_rules as _sr
     ctx = item.get("context") or {}
     c = ctx.get("constraints")
+    out = pre_repair_metrics(rows, item)
+    t0 = _time.time()
     post = _se.post_model_rows(rows, ctx, restaurant_id=None, gate=gate)
+    repair_seconds = round(_time.time() - t0, 2)
     final = post["rows"]
     prof = _sr.breach_profile(final, c, post["violations"]) if c is not None else {}
     q = post.get("quality") or {}
-    out = compare_with_published(final, item.get("published") or [], c)
+    out.update(compare_with_published(final, item.get("published") or [], c))
+    budget = float(((ctx.get("result") or {}).get("hours_budget")) or 0)
+    hours = sum(_hours(r) for r in final)
     out.update({"hard": sum(1 for v in post["violations"] if v.get("hard")),
                 "manager_minutes": int(sum((prof.get("manager") or {}).values())) if prof else None,
                 "quality": q.get("score") if q.get("checked") else None,
                 "gate": (post.get("gate") or {}).get("reason"), "gate_kept": (post.get("gate") or {}).get("kept"),
-                "final_rows": len(final)})
+                "final_rows": len(final),
+                "rows_repaired": len({_sig(r) for r in rows or []} ^ {_sig(r) for r in final}),
+                "repair_seconds": repair_seconds,
+                "hours_over_budget_share": round((hours - budget) / budget, 4) if budget > 0 else None})
     return out
 
 
-# ── the code arms (AI-8): no model at all ──────────────────────────────────
+# ── the replay with nothing learned ──
+#
+# The same stored model answer through the production post-model path with
+# every learned input of the frozen context taken out (the memory's
+# enforced signals, reliability, learned preferences, retention, the edit
+# predictor's flags; the weights back to the defaults): what the learners
+# change in the week a manager is handed, on every frozen item, with no
+# customer exposure. Scored against the published week like every arm —
+# which was edited FROM the learning-on draft, so a closeness "gain" is
+# anchored toward learning (the ablation's flaw); read it as influence and
+# as hard breaches, quality and manager minutes. Whether learning makes
+# weeks better is the learning_v2 switchback's question, judged on
+# outcomes.
+
+NO_LEARNING_ARM = "production_no_learning"
+LEARNED_SIGNALS = ("learned", "reliability", "learned_preferences", "retention", "likely_edits")
+
+
+def without_learning(item) -> dict:
+    """A frozen item whose context carries no learned input (above)."""
+    import copy as _copy
+    out = dict(item)
+    ctx = dict(item.get("context") or {})
+    sig = dict(ctx.get("signals") or {})
+    for k in LEARNED_SIGNALS:
+        if k in sig:
+            sig[k] = [] if isinstance(sig[k], list) else {}
+    ctx["signals"] = sig
+    ctx["weights"] = None
+    out["context"] = _copy.copy(ctx)
+    return out
+
+
+# ── the code arms: no model at all ──────────────────────────────────
 
 CODE_ARMS = ("carry_forward", "solver", "solver_v0")
-# The deterministic+critic arm (scheduler audit 10/10/26 AI-8): the
-# "solver" arm's week reviewed by the model (schedule_critic), each edit
-# validated by code — a model arm, run only with --live or an injected call.
+# The deterministic+critic arm: the "solver" arm's week reviewed by the
+# model (schedule_critic), each edit validated by code — a model arm, run
+# only with --live or an injected call.
 CRITIC_ARM = "solver_critic"
 
 
@@ -449,9 +607,9 @@ def code_arm_rows(arm, item) -> list:
     fallback draft would (schedule_fallback): "carry_forward" — the last
     published week before it, on the week's roster and rules (no base: the
     solver); "solver" — the solver-first draft (schedule_cpsat.solver_draft:
-    shapes from the people-on-at-once curve, then CP-SAT — scheduler audit
-    10/10/26 RM-21), falling back to "solver_v0" — SHIFT REQUIREMENTS laid
-    onto the usual shift templates, people by the backtracking solver."""
+    shapes from the people-on-at-once curve, then CP-SAT), falling back to
+    "solver_v0" — SHIFT REQUIREMENTS laid onto the usual shift templates,
+    people by the backtracking solver."""
     import schedule_fallback as _sfb
     ctx = item.get("context") or {}
     c = ctx.get("constraints")
@@ -476,14 +634,14 @@ def code_arm_rows(arm, item) -> list:
                 if got.get("rows"):
                     return got["rows"]
         except Exception as e:
-            print(f"[schedule_eval] solver-first arm fell back to v0: {e!r}")
+            _degraded(f"solver-first arm fell back to v0: {e!r}", e)
     return _sfb.solver_rows(dates, res.get("requirements_by_date") or {}, c, base_rows=base.get("rows") or [],
                             context_rows=[], open_times=res.get("open_times"), close_times=ctx.get("close_times"),
                             signals=ctx.get("signals"), weights=ctx.get("weights"),
                             roster_roles=res.get("roster_roles") or None, max_seconds=10.0)["rows"]
 
 
-# ── variance: runs, paired means and intervals (AI-5) ──────────────────────
+# ── variance: runs, paired means and intervals ──────────────────────
 
 def record_run(run_key, version, item_key, arm, run_index, metrics, cost_usd=None, seconds=None, db_path=None):
     conn = get_conn(db_path)
@@ -518,13 +676,38 @@ def summarize_arm(runs, arm, metric) -> dict:
     return cluster_mean_ci([v for (a, _k), v in item_means(runs, metric).items() if a == arm])
 
 
+ANCHORED_ARMS = ("production", "carry_forward")
+
+
+def anchored(arm, drafted) -> bool:
+    """Whether agreement with a week's published rows says nothing about
+    `arm`: the stored production answer and the carried-forward last week
+    always; a tier arm ("T4" or "T4:claude-opus-5-5/medium/stored") on a
+    week its own tier drafted, or one drafted on more than one tier."""
+    arm = str(arm or "")
+    if arm in ANCHORED_ARMS:
+        return True
+    d = str(drafted or "")
+    if not d:
+        return False
+    if d == "mixed":
+        return arm.split(":", 1)[0] in ("T1", "T2", "T3", "T4", "default")
+    return arm == d or arm.startswith(d + ":")
+
+
 def summarize_pair(runs, arm_a, arm_b, metric) -> dict:
     """arm_a minus arm_b on `metric`, paired by item (each item's mean over
     its runs), with a 90% interval clustered by restaurant: {"diff",
     "ci90", "weeks", "restaurants"}. A decision needs ci90 to exclude 0."""
     from schedule_experiments import cluster_mean_ci
+    if metric in ANCHORED_METRICS:
+        # Agreement with the published week only on weeks neither arm
+        # drafted: the week the owner published is an edit of the arm that
+        # drafted it, and carrying last week forward imitates habit.
+        runs = [r for r in runs if not anchored(arm_a, r.get("drafted_by"))
+                and not anchored(arm_b, r.get("drafted_by"))]
     m = item_means(runs, metric)
-    pairs = [(rid, v - m[(arm_b, key)][1]) for (a, key), (rid, v) in m.items() if a == arm_a and (arm_b, key) in m]
+    pairs =[(rid, v - m[(arm_b, key)][1]) for (a, key), (rid, v) in m.items() if a == arm_a and (arm_b, key) in m]
     s = cluster_mean_ci(pairs)
     return {"diff": s.get("mean"), "ci90": s.get("ci90"), "weeks": s.get("n"), "restaurants": s.get("restaurants")}
 

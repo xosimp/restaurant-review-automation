@@ -39,9 +39,13 @@ struct RosterSettings: Codable, Equatable {
     var standingShifts: [StandingShift]? = nil
     var trainee: TraineeInfo? = nil
     var closesFor: [String]? = nil
+    // Whether they work doubles (blind re-audit 10/11/26 LOGIC-19): true,
+    // false, or nil — their own history decides (a double on a quarter of
+    // the days they worked). Absent on an older server.
+    var doubles: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case active, certifications, experienced, trainee
+        case active, certifications, experienced, trainee, doubles
         case minorAgeBand = "minor_age_band"
         case employmentType = "employment_type"
         case minHours = "min_hours"
@@ -85,6 +89,7 @@ extension RosterSettings {
             $0.targetRole.isEmpty || $0.until.isEmpty ? nil : $0
         }
         closesFor = c.contains(.closesFor) ? c.setupTexts(.closesFor) : nil
+        doubles = c.setupBool(.doubles)
     }
 }
 
@@ -1248,6 +1253,9 @@ final class ScheduleSetupViewModel {
         var standingShifts: [StandingShift]? = nil
         var trainee: TraineeChange? = nil
         var closesFor: [String]? = nil
+        /// Works doubles: yes, never, or from their history — sent as true,
+        /// false or "auto" (LOGIC-19).
+        var doubles: FloorManagerChoice? = nil
 
         /// Yes, no, or back to automatic — sent as true, false or "auto".
         enum FloorManagerChoice: Equatable {
@@ -1276,6 +1284,7 @@ final class ScheduleSetupViewModel {
             case actingManager = "acting_manager"
             case standingShifts = "standing_shifts"
             case closesFor = "closes_for"
+            case doubles
         }
 
         private struct Empty: Encodable {}
@@ -1308,6 +1317,12 @@ final class ScheduleSetupViewModel {
             case nil: break
             }
             try c.encodeIfPresent(closesFor, forKey: .closesFor)
+            switch doubles {
+            case .yes?: try c.encode(true, forKey: .doubles)
+            case .no?: try c.encode(false, forKey: .doubles)
+            case .automatic?: try c.encode("auto", forKey: .doubles)
+            case nil: break
+            }
         }
     }
 
@@ -1344,6 +1359,7 @@ final class ScheduleSetupViewModel {
             if case .set(let t) = v { settings.trainee = t } else { settings.trainee = nil }
         }
         if let v = patch.closesFor { settings.closesFor = v }
+        if let v = patch.doubles { settings.doubles = v.stored }
         next.settings = settings
         roster[index] = next
         savingFor = patch.employeeName
@@ -1506,6 +1522,10 @@ final class ScheduleSetupViewModel {
     // The sync's own sentence — the honest 400 while nothing is live.
     var reservationSyncMessage: String?
 
+    /// The manager rules and the shortest shift as the rules screen states
+    /// them (schedule re-audit 10/11/26 R); nil until the rules load.
+    var managerRules: ManagerRulesSummary?
+
     private struct RulesResponse: Decodable {
         let ok: Bool
         let rules: [String: LooseValue]?
@@ -1532,8 +1552,18 @@ final class ScheduleSetupViewModel {
         let certifications: [String]?
         let reservationFeed: ReservationFeedStatus?
         let reservationProviders: [CodeLabel]?
+        /// Schedule re-audit 10/11/26 (R): where the roster forces a run
+        /// past a limit (STRESS-18), what the punches say about the two
+        /// manager allowances (LOGIC-12) and the second-manager line
+        /// (LOGIC-13). Read loosely — an odd value is that line missing.
+        var managerStructure: LooseValue? = nil
+        var managerAllowancesLearned: LooseValue? = nil
+        var secondManager: LooseValue? = nil
         enum CodingKeys: String, CodingKey {
             case ok, rules, defaults, roles, error, jurisdiction, pack, packs, certifications
+            case managerStructure = "manager_structure"
+            case managerAllowancesLearned = "manager_allowances_learned"
+            case secondManager = "second_manager"
             case roleFloors = "role_floors"
             case roleArrivals = "role_arrivals"
             case rolesWithoutClockIn = "roles_without_clock_in"
@@ -1663,6 +1693,8 @@ final class ScheduleSetupViewModel {
             canEditRules = r.canEdit ?? true
             ruleCertifications = r.certifications ?? []
             reservationFeed = r.reservationFeed
+            managerRules = ManagerRulesSummary(rules: rules, defaults: ruleDefaults, structure: r.managerStructure,
+                                               learned: r.managerAllowancesLearned, second: r.secondManager)
             reservationProviders = r.reservationProviders ?? []
             rulesError = nil
             rulesLoaded = true
@@ -2368,6 +2400,37 @@ final class ScheduleSetupViewModel {
     private struct DecideBody: Encodable {
         let decision: String
         let replacement: String?
+        /// Who runs the floor instead, when approving the drop leaves part
+        /// of the day with no manager (schedule re-audit 10/11/26
+        /// STRESS-16): the server refuses it without one (409 needs_cover).
+        var coveredBy: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case decision, replacement
+            case coveredBy = "covered_by"
+        }
+    }
+
+    /// A drop the server would not approve on a warning: approving it
+    /// leaves the floor with no manager, so it goes only with who runs the
+    /// floor instead (409 `needs_cover`, STRESS-16 — the owner's highest
+    /// rule). Nothing changed; the answer is asked here.
+    struct NeedsCover: Identifiable, Equatable {
+        let requestId: Int
+        let gap: String
+        var replacement: String? = nil
+        var id: Int { requestId }
+    }
+    var needsCover: NeedsCover?
+
+    private struct NeedsCoverBody: Decodable {
+        var needsCover: Bool? = nil
+        var managerGap: String? = nil
+        var error: String? = nil
+        enum CodingKeys: String, CodingKey {
+            case error
+            case needsCover = "needs_cover"
+            case managerGap = "manager_gap"
+        }
     }
 
     private struct DecideResponse: Decodable {
@@ -2430,16 +2493,20 @@ final class ScheduleSetupViewModel {
     /// Approve or deny a hand-back. Naming a replacement on approve covers
     /// the shift outright; the server checks that person is legal for it
     /// and answers 400 with the reason when they are not.
-    func decideShiftRequest(_ id: Int, approve: Bool, replacement: String? = nil) async {
+    func decideShiftRequest(_ id: Int, approve: Bool, replacement: String? = nil, coveredBy: String? = nil) async {
         requestBusyId = id
         requestError = nil
         requestWarning = nil
         defer { requestBusyId = nil }
         do {
+            let who = coveredBy?.trimmingCharacters(in: .whitespacesAndNewlines)
             let r: DecideResponse = try await client.send(
                 "/mobile/api/labor/shift-requests/\(id)/decide", method: .post,
-                body: DecideBody(decision: approve ? "approve" : "deny", replacement: replacement))
+                body: DecideBody(decision: approve ? "approve" : "deny", replacement: replacement,
+                                 coveredBy: (who?.isEmpty ?? true) ? nil : who),
+                hapticOnError: false)
             if r.ok, let updated = r.request {
+                needsCover = nil
                 requestWarning = r.warning
                 if let i = shiftRequests.firstIndex(where: { $0.id == id }) { shiftRequests[i] = updated }
                 Haptic.success()
@@ -2448,7 +2515,17 @@ final class ScheduleSetupViewModel {
                 requestError = r.error ?? "Couldn't decide that."
             }
         } catch let error as APIClient.APIError {
-            requestError = error.message
+            if error.status == 409, let body = error.decodeBody(NeedsCoverBody.self), body.needsCover == true {
+                // Not a failure: nothing changed, and the drop goes only
+                // with who runs the floor instead (STRESS-16).
+                needsCover = NeedsCover(requestId: id,
+                                        gap: body.managerGap ?? body.error ?? "Approving this leaves no manager on the floor.",
+                                        replacement: replacement)
+                Haptic.warning()
+            } else {
+                Haptic.error()
+                requestError = error.message
+            }
         } catch {
             requestError = "Couldn't decide that."
         }

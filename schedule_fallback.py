@@ -1,7 +1,6 @@
 """
 schedule_fallback.py — a week drafted without the model, and the switch that
-says where a draft comes from (scheduler audit 10/10/26: AI-11, AI-26, AI-1,
-AI-8; cross-workstream contract #7).
+says where a draft comes from (cross-workstream contract #7).
 
 The model was a hard dependency: an outage, an AI budget pause, the run's
 cap or a refusal left the owner with no schedule ("No shifts could be
@@ -12,8 +11,20 @@ labelled so; the same drafts are arms of the generation pipeline.
 
 THE SOURCES (draft_source; DRAFT_SOURCES):
 
-  model           the model writes the week (labor.generate_optimized_schedule)
-                  — the default
+  solver          THE DEFAULT: code shapes the week — schedule_shapes (Stage 1:
+                  which shifts) and schedule_cpsat (Stage 2: who works them,
+                  the managers chosen inside the same solve from the manager
+                  plan's candidates) — then the repair loop. No model writes
+                  or names a shift. The model reads the owner's words into
+                  typed rules (owner_rules), writes Cavnar AI's note, and —
+                  the draft_v1 arm code_critic — may critique the week, each
+                  edit validated by code. Where OR-Tools is missing or finds
+                  nothing, the v0 code draft (SHIFT REQUIREMENTS laid onto
+                  the usual shifts, shift_templates, people by
+                  schedule_engine. assign_shape_slots) runs instead.
+  model           an arm, no longer the default: the model writes the week
+                  (labor.generate_optimized_schedule) and the repair loop and
+                  CP-SAT correct it
   carry_forward   the last PUBLISHED week (else, before any, the last week
                   worked — the punches) mapped onto the new dates weekday for
                   weekday; people who left, are off or unavailable that day
@@ -21,24 +32,28 @@ THE SOURCES (draft_source; DRAFT_SOURCES):
                   job as for any draft; then the repair loop and the solver
                   run as on any draft — floors, coverage, closers, the manager
                   rule, overtime, the budget all fixed there
-  solver          code shapes the week: SHIFT REQUIREMENTS' people per role
-                  and daypart laid onto the restaurant's own usual shifts
-                  (shift_templates), people chosen by the solver
-                  (schedule_engine.assign_shape_slots), then the repair loop.
-                  v0 — workstream F replaces the shaping with the stage-1 MIP
-                  and CP-SAT (RM-8, RM-11) behind this same name
 
   Which one: SCHEDULE_DRAFT_SOURCE (env, every restaurant) wins; then the
   week's arm of the "draft_v1" experiment (schedule_experiments — a
-  restaurant's pin there is its own override); else "model". A source
-  other than "model" makes no model call at all.
+  restaurant's pin there is its own override; its control is the solver);
+  else DEFAULT_SOURCE. A code source (CODE_SOURCES) makes no drafting model
+  call on ANY pass — the week, the quality gate's passes, an owner's redo:
+  the engine drafts every asked date in code, and the job never sends the
+  gate's rewrite or a redo to the model.
+
+  The switch was gated on scripts/run_schedule_benchmark.py (14 archetype
+  restaurants, contract #7): the solver arm holds every invariant the
+  carry_forward arm holds (MODULE_OVERVIEW.md has the table).
 
 THE FALLBACK (fallback_whys): on the model source, a trading day the model
-could not write — the provider down, the AI budget paused, the run's cap,
-a refusal, the job's time, a call cut short, a day left empty — is drafted
-by carry_forward (else solver), never left empty; the review says which days
-were "built without the AI model" and why. A redo's unwritten day keeps the
-owner's rows (the caller puts them back), as before. Data that is not
+could not write — the provider down, the AI budget paused, the run's cap, a
+refusal, the job's time, a call cut short, a day left empty — is drafted in
+code (code_order): by the solver first, which solves against the week's SHIFT
+REQUIREMENTS and every rule, and by carry_forward first only where the week
+has no requirements to solve against (the same seeded week was 15 hard
+breaches carried forward, 1 solved); never left empty. The review says which
+days were "built without the AI model" and why. A redo's unwritten day keeps
+the owner's rows (the caller puts them back), as before. Data that is not
 current is never papered over: those days stay unwritten.
 
 Pure but for the reads of the published week; never raises into a
@@ -46,9 +61,19 @@ generation — a fallback that cannot be built leaves the days as they were.
 """
 import os
 from datetime import date as _date, timedelta as _td
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 DRAFT_SOURCES = ("model", "carry_forward", "solver")
 DRAFT_SOURCE_ENV = "SCHEDULE_DRAFT_SOURCE"
+# Where a week's draft comes from when neither the env nor an arm
+# says. The model is an arm: draft_v1's model_draft, or the env.
+DEFAULT_SOURCE = "solver"
+# The sources that never call the drafting model, on any pass.
+CODE_SOURCES = frozenset({"solver", "carry_forward"})
 EXPERIMENT = "draft_v1"
 # The unwritten reasons (schedule_engine._UNWRITTEN_WHY) a code draft fills.
 # Not "data" (the inputs are not current — a draft would hide that) and not
@@ -78,7 +103,8 @@ _WHY_WORDS = {
 
 def draft_source(restaurant_id=None, arms=None) -> str:
     """Where this week's draft comes from: SCHEDULE_DRAFT_SOURCE when it
-    names a source, else the draft_v1 arm's flag, else "model"."""
+    names a source, else the draft_v1 arm's flag, else DEFAULT_SOURCE (the
+    solver)."""
     env = str(os.getenv(DRAFT_SOURCE_ENV, "") or "").strip().lower()
     if env in DRAFT_SOURCES:
         return env
@@ -86,7 +112,20 @@ def draft_source(restaurant_id=None, arms=None) -> str:
         v = str(((a or {}).get("flags") or {}).get("draft_source") or "").strip().lower()
         if v in DRAFT_SOURCES:
             return v
-    return "model"
+    return DEFAULT_SOURCE
+
+
+def code_order(chosen, has_requirements=True) -> tuple:
+    """The code sources a day is drafted from, in the order they are
+    tried: the chosen code source first; for the model source's fallback
+    the solver first — it solves against the week's SHIFT REQUIREMENTS and
+    every rule, where a carried week brings last week's breaches and gaps
+    with it — and carry_forward first only when the week has no
+    requirements to solve against. The other is the last resort, so a day
+    is never left empty while either can draft it."""
+    if chosen == "carry_forward" or (chosen == "model" and not has_requirements):
+        return ("carry_forward", "solver")
+    return ("solver", "carry_forward")
 
 
 def _weekday(d):
@@ -124,7 +163,7 @@ def base_week(restaurant_id, week_dates, shifts=None, db_path=None) -> dict:
             if rows:
                 return {"rows": rows, "source": "published", "week_start": r["week_start"], "week_end": r["week_end"]}
     except Exception as e:
-        print(f"[schedule_fallback] published week not read: {e!r}")
+        _degraded(f"published week not read: {e!r}", e)
     dated = sorted({str(s.get("date") or "")[:10] for s in shifts or [] if str(s.get("date") or "")[:10] < first
                     and len(str(s.get("date") or "")[:10]) == 10})
     if not dated:
@@ -154,7 +193,6 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
     note list (schedule_output.vocabulary_note); engine marks never do."""
     import schedule_output as _so
     import schedule_skeleton as _skel
-    import shift_quality as _sq
     by_day = {}
     for r in (base or {}).get("rows") or []:
         wd = _weekday(r.get("date"))
@@ -175,6 +213,16 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             notes = str(r.get("notes") or "")
             if _skel.is_plan_note(notes) and d in plan_dates:
                 continue                   # the plan's own row is merged by the job
+            # On a date the manager plan covers, EVERY carried row of
+            # somebody who manages that date goes — the plan places the
+            # managers. Only rows with the plan's note used to go, so last
+            # week's hand-written or punched manager shifts sat beside the
+            # plan's: two closing managers, 51.5h and 11.5h of manager
+            # overtime when the model was down. Constraints.manages is the
+            # manager role, the floor-manager certificate, and an acting
+            # manager's dates.
+            if d in plan_dates and constraints is not None and constraints.manages(name, d):
+                continue
             key = constraints.key(name) if constraints is not None else name.lower()
             if roster is not None and key not in roster:
                 dropped.append({"employee": name, "date": d, "why": "not on the roster now"})
@@ -187,21 +235,43 @@ def carry_forward_rows(base, dates, constraints=None, roster_names=None, plan_da
             if not row["shift_start"] or not row["shift_end"]:
                 continue
             if constraints is not None:
-                why = None
-                for part in (_sq.touched_dayparts(row) or [_sq.daypart_of(row["shift_start"])]):
-                    ok, reason = constraints.can_work(name, d, part)
-                    if not ok:
-                        why = reason
-                        break
+                # at the restaurant's own lunch/dinner boundary
+                ok, reason = constraints.can_work_row(name, row)
+                why = None if ok else reason
                 if why is None:
                     ok, reason = constraints.window_ok(name, d, row["shift_start"], row["shift_end"])
                     if not ok:
                         why = reason
+                if why is None:
+                    why = _legal_clash(constraints, row, out)
                 if why:
                     dropped.append({"employee": name, "date": d, "why": why})
                     continue
             out.append(row)
     return {"rows": out, "dropped": dropped}
+
+
+def _legal_clash(constraints, row, carried) -> str:
+    """The label of a LEGAL breach `row` would add to its person's week —
+    the rows carried so far plus everything fixed elsewhere that the sweep
+    reads (Constraints.base_rows: the published tail, and the organisation's
+    other locations' published shifts on these dates) — else "". A shared
+    person North already has on Friday dinner is never carried onto South's
+    Friday dinner: the repair loop cannot move another location's shift, so
+    the double booking reached the saved week as a hard overlap (schedule
+    benchmark, multi_location_org, 10/11/26). Only the legal tier: the
+    restaurant's own limits are the repair loop's to weigh."""
+    import schedule_rules as _rules
+    try:
+        group = constraints.sweep_key(row.get("employee"))
+        mine = [r for r in carried if constraints.sweep_key(r.get("employee")) == group]
+        worse = _rules.regressions(_rules.breach_profile(mine, constraints, person_only=True),
+                                   _rules.breach_profile(mine + [row], constraints, person_only=True),
+                                   upto=_rules.TIER_LEGAL, hard_only=False)
+    except Exception:
+        return ""                          # never costs the carried week
+    worse = [w for w in worse if w.get("tier") == _rules.TIER_LEGAL]
+    return worse[0]["label"] if worse else ""
 
 
 def solver_rows(dates, requirements_by_date, constraints, base_rows=None, context_rows=None, open_times=None,
@@ -215,7 +285,7 @@ def solver_rows(dates, requirements_by_date, constraints, base_rows=None, contex
     plan) held as they are. A slot nobody can legally work is left out,
     never filled illegally."""
     import shift_templates as _tpl
-    import schedule_engine as _se
+    import schedule_solver as _solver_shape
     tpl = _tpl.templates(base_rows or [])
     slots = []
     for d in dates or []:
@@ -237,7 +307,7 @@ def solver_rows(dates, requirements_by_date, constraints, base_rows=None, contex
                                   "shift_end": end, "scheduled_hours": "", "notes": ""})
     if not slots:
         return {"rows": [], "unassigned": [], "stats": {"status": "nothing_to_solve"}}
-    got = _se.assign_shape_slots(slots, list(context_rows or []), constraints, signals=signals, weights=weights,
+    got = _solver_shape.assign_shape_slots(slots, list(context_rows or []), constraints, signals=signals, weights=weights,
                                  roster_roles=roster_roles, only_dates=list(dates or []), max_seconds=max_seconds)
     return {"rows": got["assigned"], "unassigned": got["unassigned"], "stats": got["stats"]}
 
@@ -248,7 +318,7 @@ def _default_times(day, part, open_times=None, close_times=None):
     return (o, "3:00pm") if part == "morning" else ("4:30pm", c)
 
 
-def note_line(source, why, dates, base=None, redo=False) -> str:
+def note_line(source, why, dates, base=None, redo=False, basis=None) -> str:
     """The review's line for days drafted in code: which days, from what,
     and why — "Built without the AI model: Saturday 10/17/26 and Sunday
     10/18/26 — your published week of 10/3/26 carried forward and checked
@@ -262,6 +332,18 @@ def note_line(source, why, dates, base=None, redo=False) -> str:
                 "the week your team last worked (" + mdy(base.get("week_start")) + "–" + mdy(base.get("week_end")) + ")")
         how = f"{what} carried forward and checked against every rule"
     else:
-        how = "your usual crew and shifts, solved against every rule"
+        # Only what was measured is claimed: "your usual crew" was said of
+        # a week that kept 56% of people's usual days, and of a restaurant
+        # with none.
+        b = basis or {}
+        weeks = int(b.get("history_weeks") or 0)
+        pct = (b.get("usual_days") or {}).get("pct")
+        if weeks <= 0:
+            how = "your team and your Role floors (no shift history yet), solved against every rule"
+        elif pct is not None:
+            how = (f"{weeks} week{'s' if weeks != 1 else ''} of your team's shifts — {pct:g}% of their usual "
+                   "days kept — solved against every rule")
+        else:
+            how = f"{weeks} week{'s' if weeks != 1 else ''} of your team's shifts, solved against every rule"
     words = _WHY_WORDS.get(why, _WHY_WORDS["other"])
     return f"{'Redone' if redo else 'Built'} without the AI model: {which} — {how} ({words})."

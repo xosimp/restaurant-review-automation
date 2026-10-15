@@ -10,6 +10,7 @@ than as unit tests of each function, because the failure this engine exists
 to catch is emergent. No single dimension going wrong produces it.
 """
 import os
+import schedule_fixes
 
 import pytest
 
@@ -167,7 +168,10 @@ def test_the_cap_names_which_dimension_did_it():
                         scores={"Sam": 5, "Dana": 5, "Lee": 5})
     shift = out["shifts"][0]
     assert shift["capped_by"] == "coverage"
-    assert shift["score"] == 50, shift["score"]
+    # No cook at all: coverage is held at the absent role's cap, not the
+    # role-blind half of the heads it read before (blind re-audit 10/11/26
+    # LOGIC-14).
+    assert shift["score"] == sq.role_absent_cap(sq.role_criticality("Cook")) == 40, shift["score"]
 
 
 # ── Team composition, not individual ratings ───────────────────────────────
@@ -568,7 +572,7 @@ SAT_KITCHEN_SCORES = {"Jo": 4, "Kim": 4, "Dana": 4, "Lee": 4}
 def test_the_engine_finds_the_swap_that_fixes_eriks_saturday():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(),
         scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
@@ -583,7 +587,7 @@ def test_a_swap_is_never_made_onto_a_day_somebody_cannot_work():
     """A schedule that breaks availability with a better score is not an
     improvement, it is a broken schedule."""
     rows = [row(SAT, "Sam", "Bartender"), row(FRI, "Pat", "Bartender")]
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
         availability={"Pat": {"Saturday"}},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
@@ -608,7 +612,7 @@ def test_a_swap_never_pushes_anybody_over_forty_hours():
     # Without the ceiling this swap is a clear win, which is what makes it
     # a real test of the ceiling rather than of anything else.
     assert sq._swap_is_legal(rows, 3, 4, {}, scores) is False
-    out = sq.compare_candidates(rows, profiles=profiles(), scores=scores,
+    out = schedule_fixes.compare_candidates(rows, profiles=profiles(), scores=scores,
                                 leader_rules=rules)
     final = {}
     for r in out["rows"]:
@@ -629,7 +633,7 @@ def test_a_swap_never_double_books_somebody():
     assert sq._swap_is_legal(rows, 0, 1, {}, scores) is False
     mirrored = [row(SAT, "A", "Cook"), row(FRI, "B", "Cook"), row(SAT, "B", "Cook")]
     assert sq._swap_is_legal(mirrored, 0, 1, {}, scores) is False
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=[sq.ShiftProfile(key="std", min_strength={"Cook": 8},
                                         source="restaurant")], scores=scores)
     seen = set()
@@ -645,7 +649,7 @@ def test_the_comparison_never_rewrites_the_schedule_the_owner_reads():
     a generated schedule dies."""
     rows = [row(SAT, "Sam", "Bartender"), row(FRI, "Pat", "Bartender")]
     before = [dict(r) for r in rows]
-    sq.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
+    schedule_fixes.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Sam": 2},
                           leader_rules=[{"role": "Bartender", "days": ["Saturday"],
                                          "daypart": "night", "min_score": 5}])
     assert rows == before
@@ -653,7 +657,7 @@ def test_the_comparison_never_rewrites_the_schedule_the_owner_reads():
 
 def test_finding_nothing_better_is_a_real_answer():
     rows = [row(SAT, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    out = sq.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Casey": 5})
+    out = schedule_fixes.compare_candidates(rows, profiles=profiles(), scores={"Pat": 5, "Casey": 5})
     assert out["ran"]
     assert out["improvement"] == 0
     assert "strongest team available" in out["verdict"]
@@ -662,7 +666,7 @@ def test_finding_nothing_better_is_a_real_answer():
 def test_every_accepted_swap_says_which_dimensions_it_moved():
     rows = [row(SAT, "Sam", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")] + SAT_KITCHEN_AND_FLOOR
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(), scores={"Pat": 5, "Casey": 4, "Sam": 2, "Alex": 2, **SAT_KITCHEN_SCORES},
         leader_rules=[{"role": "Bartender", "days": ["Saturday"], "daypart": "night",
                        "min_score": 5}])
@@ -675,7 +679,7 @@ def test_every_accepted_swap_says_which_dimensions_it_moved():
 def test_the_comparison_is_bounded_so_a_big_restaurant_stays_fast():
     rows = [row(d, f"E{i}", "Server")
             for d in (MON, TUE, WED, THU, FRI, SAT, SUN) for i in range(12)]
-    out = sq.compare_candidates(rows, profiles=[sq.ShiftProfile()],
+    out = schedule_fixes.compare_candidates(rows, profiles=[sq.ShiftProfile()],
                                 scores={f"E{i}": (i % 5) + 1 for i in range(12)},
                                 max_evaluations=15)
     assert out["evaluated"] <= 15
@@ -699,7 +703,11 @@ def test_a_restaurant_of_only_strong_staff_scores_at_the_top():
     out = sq.score_rows(rows, profiles=profiles(), scores={k: 5 for k in "ABCDEF"},
                         tenure={k: 60 for k in "ABCDEF"})
     assert out["score"] >= 95
-    assert out["band"] == "excellent"
+    # The number is at the top; the band is held by how much of the score
+    # was measured (blind re-audit 10/11/26 LOGIC-15) — ratings and tenure
+    # alone, no sales, no published week, read "good", never "excellent".
+    assert out["measured"]["share"] < sq.BAND_MEASURED_MIN["excellent"]
+    assert out["band"] == "good" and out["measured"]["band_capped_from"] == "excellent"
 
 
 def test_a_two_person_restaurant_is_evaluated_not_skipped():
@@ -1001,7 +1009,10 @@ def test_role_minimums_apply_everywhere_when_there_is_no_history_to_narrow_them(
                         role_minimums={"Bartender": 1, "Cook": 1},
                         scores={"Cook1": 4})
     coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
-    assert coverage["score"] == 50
+    # The bartender minimum binds, and nobody on bar holds coverage at the
+    # absent role's cap (LOGIC-14) — it read a role-blind 50.
+    assert coverage["score"] == sq.role_absent_cap(sq.role_criticality("Bartender"))
+    assert coverage["facts"]["absent_roles"] == ["Bartender"]
 
 
 def test_a_seven_day_run_produces_advice_not_just_a_complaint():
@@ -1022,7 +1033,7 @@ def test_the_comparison_never_recommends_benching_an_unrated_employee():
     round to rating — the exact opposite of what the rating design says."""
     rows = [row(SAT, "Unrated", "Bartender"), row(SAT, "Alex", "Bartender"),
             row(FRI, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    out = sq.compare_candidates(
+    out = schedule_fixes.compare_candidates(
         rows, profiles=profiles(),
         scores={"Pat": 5, "Casey": 5, "Alex": 2})
     # A swap trades two people's shifts, so nobody is taken off the week by
@@ -1160,13 +1171,18 @@ def test_ios_shows_what_the_generator_is_doing_rather_than_a_spinner():
     # The first step names last year's same days only when that input
     # exists (never-say C, NS1 #21), so the view passes the payload's flag.
     assert "ScheduleProgressSteps(lastYearAvailable: viewModel.stats?.lastYearAvailable == true," in view
-    # The step clock runs from the job's start, stretched to the draft time
-    # measured here — never a fixed 62-second model (iOS parity #15).
-    assert "startedAt: viewModel.generationStartedAt" in view and "typical: viewModel.generationTypical" in view
+    # A step ticks only when the job reported it (re-audit 10/11/26
+    # TRUST-21: no timed checkmarks), and the time line runs from the job's
+    # start against the draft time measured here (iOS parity #15).
+    assert "progress: viewModel.generationProgress" in view
+    assert "if let started = viewModel.generationStartedAt" in view and "typical: viewModel.generationTypical" in view
+    # The steps are the job's own reported stages (schedule_engine.
+    # GENERATION_STAGES via schedule-status progress.stages), never a timed
+    # script of stages the pipeline may not run (re-audit 10/11/26 TRUST-21).
     steps = _source("ios/CavnarAI/CavnarAI/Features/Labor/ScheduleProgressSteps.swift")
-    for stage in ("available", "labor target", "operational scores",
-                  "leadership", "strongest team", "quality"):
-        assert stage in steps, stage
+    assert "progress?.stages" in steps and "progress?.currentIndex" in steps
+    import schedule_engine
+    assert [k for k, _label in schedule_engine.GENERATION_STAGES][0] == "inputs"
 
 
 def test_ios_lets_a_manager_move_somebody_and_see_the_score_change():
@@ -1480,7 +1496,10 @@ def test_findings_are_ordered_by_what_they_actually_cost_the_shift():
                         role_minimums={"Cook": 2, "Bartender": 2, "Server": 2},
                         scores={"Rookie": 1, "Pat": 5, "Other": 5})
     weaknesses = out["shifts"][0]["weaknesses"]
-    assert "unfilled" in weaknesses[0], weaknesses
+    # Coverage speaks first: the role with nobody on it, then the count
+    # (LOGIC-14 names an absent role before the unfilled total).
+    assert weaknesses[0].startswith("No server on this shift"), weaknesses
+    assert "unfilled" in weaknesses[1], weaknesses
     # And the lighter finding is still there, just lower down.
     assert any("nobody stronger" in w for w in weaknesses), weaknesses
 
@@ -1498,7 +1517,9 @@ def test_a_person_in_two_roles_at_once_is_counted_once(db_path=None):
     out = sq.score_rows(rows, profiles=[sq.ShiftProfile(key="n", source="restaurant")],
                         role_minimums={"Cook": 1, "Bartender": 1}, scores={"Solo": 5})
     coverage = next(d for d in out["shifts"][0]["dimensions"] if d["key"] == "coverage")
-    assert coverage["score"] == 50, coverage["facts"]
+    # Counted once, as the cook: the bar has nobody, and an absent role
+    # holds coverage at its cap (LOGIC-14) — it read a role-blind 50.
+    assert coverage["score"] == sq.role_absent_cap(sq.role_criticality("Bartender")), coverage["facts"]
     assert coverage["facts"]["role_conflicts"]
     assert any("at the same time" in w for w in out["shifts"][0]["weaknesses"])
 
@@ -1546,7 +1567,7 @@ def test_the_verdict_only_claims_the_roster_is_best_when_it_checked_all_of_it():
         for k in range(2):
             big.append(row((MON, TUE, WED, THU, FRI, SAT, SUN)[(i + k * 3) % 7],
                            f"E{i}", "Server"))
-    out = sq.compare_candidates(big, profiles=[sq.ShiftProfile(
+    out = schedule_fixes.compare_candidates(big, profiles=[sq.ShiftProfile(
         key="n", min_strength={"Server": 30}, source="restaurant")],
         scores={f"E{i}": (i % 5) + 1 for i in range(40)}, max_evaluations=5)
     assert out["legal_swaps"] > out["evaluated"]
@@ -1554,7 +1575,7 @@ def test_the_verdict_only_claims_the_roster_is_best_when_it_checked_all_of_it():
     assert "A wider search might still find something" in out["verdict"]
 
     small = [row(SAT, "Pat", "Bartender"), row(FRI, "Casey", "Bartender")]
-    tiny = sq.compare_candidates(small, profiles=profiles(),
+    tiny = schedule_fixes.compare_candidates(small, profiles=profiles(),
                                  scores={"Pat": 5, "Casey": 5})
     assert "strongest team available" in tiny["verdict"]
 
@@ -1572,8 +1593,8 @@ def test_a_swap_never_moves_somebody_carrying_a_staff_constraint():
     kw = dict(profiles=setup, scores={"Pat": 5, "Sam": 2},
               leader_rules=[{"role": "Bartender", "days": ["Saturday"],
                              "daypart": "night", "min_score": 5}])
-    free = sq.compare_candidates(rows, **kw)
-    bound = sq.compare_candidates(rows, constraints={"Pat": "no weekends"}, **kw)
+    free = schedule_fixes.compare_candidates(rows, **kw)
+    bound = schedule_fixes.compare_candidates(rows, constraints={"Pat": "no weekends"}, **kw)
     assert free["swaps"], free["verdict"]
     assert not bound["swaps"]
     assert bound["evaluated"] == 0

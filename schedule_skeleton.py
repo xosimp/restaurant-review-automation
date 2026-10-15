@@ -9,8 +9,7 @@ draft was built from never asked for one; the rule sat ~70% of the way into
 the prompt, outside PRIORITIES, below a SHIFT REQUIREMENTS table that named
 no manager; and the backstop (schedule_rules.cover_manager_gaps) patched each
 gap afterwards with a block of at least four hours shaped to the gap — a
-manager walking in mid-afternoon (schedule audit 10/3/26 PR-1, P-8, D-4,
-D-5, PR-32).
+manager walking in mid-afternoon.
 
 plan_manager_coverage plans each trading day's manager coverage first, from
 the first person on to the last one out, as real opener and closer shifts
@@ -27,8 +26,8 @@ that hand over with an overlap. Its inputs, in order:
      punches — a salaried manager rarely punches, so the published week is
      their record;
   4. a fair split of what is left: the manager furthest from their weekly
-     cap first, fewest days next — never "salaried first" (E-17: a salaried
-     owner was loaded to 66h because their hours "cost nothing").
+     cap first, fewest days next — never "salaried first" (a salaried owner
+     was loaded to 66h because their hours "cost nothing").
 
 Acting managers (Constraints.acting_managers) take a date's shift only where
 no real manager can. A stretch nobody can legally cover comes back with why;
@@ -50,6 +49,11 @@ import models as _models_mod
 from models import DB_PATH
 import schedule_rules as _rules
 import schedule_time as _stime
+import logging
+
+log = logging.getLogger(__name__)
+
+from schedule_context import degraded as _degraded  # noqa: E402  (the one degradation event)
 
 
 def get_conn(db_path=None):
@@ -64,20 +68,23 @@ PLAN_SOURCE = "manager_plan"            # the "_pinned" value on every row plann
 # so staff never read it; the job's parser and the missing-day check know a
 # planned line by it.
 PLAN_NOTE = "Cavnar AI: manager plan"
-# The "_pinned" value on a row a redo keeps as the owner saved it (re-audit
-# 10/4/26 PIPE-1): no pass changes it; it counts as coverage and hours.
+# The "_pinned" value on a row a redo keeps as the owner saved it: no pass
+# changes it; it counts as coverage and hours.
 KEPT_SOURCE = "kept"
-# The "_pinned" value on a shift the owner locked (schedule audit 10/10/26
-# TRUST-17): a regenerate keeps it exactly (with_locked).
+# The "_pinned" value on a shift the owner locked: a regenerate keeps it
+# exactly (with_locked).
 LOCKED_SOURCE = "locked"
 HANDOFF_MIN = 30                        # two managers overlap this long at a handover
 SINGLE_SHIFT_MAX_MIN = 10 * 60          # a day this long or shorter is one manager's shift
-MIN_SHIFT_MIN = _rules.MANAGER_MIN_SHIFT_MIN   # no planned manager shift is shorter (4h)
+# The longest day the plan runs a leader who sets their own hours on to, to
+# cover a stretch at either end — their own call, never a policy breach
+# (max_shift_applies); past it the plan adds a leg instead.
+LEADER_DAY_MAX_MIN = 15 * 60
 # A salaried manager with no weekly cap of their own, when the restaurant
-# set none either (E-17: SALARIED_HOURS_CAP is seven 12-hour days).
+# set none either (SALARIED_HOURS_CAP is seven 12-hour days).
 SALARIED_WEEK_CAP = _rules.SALARIED_HOURS_CAP   # the one default (Constraints.salaried_limit)
 HISTORY_WEEKS = 12                      # the window "usually works" is read over (models.USUAL_WEEKS)
-USUAL_MIN_WEEKS = 2                     # a weekday is usual once it recurs in two weeks ...
+USUAL_MIN_WEEKS = 2                     # a weekday is usual once it recurs in two weeks...
 USUAL_SHARE = 0.5                       # ... and in half the weeks the person appears in
 EARLIEST_REAL_START = 4 * 60            # a row "starting" before 4am is last night's tail
 MAX_STEPS_PER_DAY = 16
@@ -85,11 +92,7 @@ MAX_STEPS_PER_DAY = 16
 
 # ── small helpers ──────────────────────────────────────────────────────────
 
-def _weekday(iso) -> str:
-    try:
-        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%A")
-    except (TypeError, ValueError):
-        return ""
+_weekday = _stime.weekday_of
 
 
 _DAY_NAMES = {d[:3].lower(): d for d in _rules.DAYS}
@@ -112,15 +115,7 @@ def _clock(value):
     return _rules.parse_minutes(raw)
 
 
-def _span(row):
-    """(start, end) minutes on the row's business date's timeline
-    (schedule_time.span — the one placement, BUGSGEN-8: it applied no night
-    offset, so a 1:00-5:30am porter read as the dawn of its date while the
-    sweep put it after that night's midnight); None when unreadable or
-    longer than a day could be."""
-    sp = _stime.span(row)
-    return sp if sp is not None and 0 < sp[1] - sp[0] <= 16 * 60 else None
-
+_span = _stime.bounded_span
 
 def _night_tail(sp) -> bool:
     """Whether a placed span starts in the small hours of its night (before
@@ -134,13 +129,7 @@ def row_daypart(row) -> str:
     return _stime.primary_daypart(row)
 
 
-def _median(values):
-    xs = sorted(v for v in values if v is not None)
-    if not xs:
-        return None
-    n = len(xs)
-    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
-
+_median = _stime.median
 
 def _down(m, step=15):
     return int(m // step * step)
@@ -162,8 +151,20 @@ def _names(names) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _overlap(a, b) -> int:
-    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+_overlap = _stime.overlap_minutes
+
+_EXTENSION_CLAUSES = ("stays on ", "runs on:")
+
+
+def _one_extension_reason(reason, note) -> str:
+    """A planned row's reason with ONE extension clause — the latest: a row
+    the plan extended twice read "stays on 8:00am–10:00am … stays on
+    8:00am–9:00am …"."""
+    parts = [p for p in str(reason or "").split(" — ")
+             if not any(p.strip().startswith(k) for k in _EXTENSION_CLAUSES)]
+    new = [p for p in str(note or "").split(" — ") if p.strip()]
+    keep = [p for p in parts if p.strip() not in {n.strip() for n in new}]
+    return " — ".join(keep + new)
 
 
 def is_plan_note(notes) -> bool:
@@ -212,10 +213,13 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         try:
             import models as _m_live
             found = conn.execute(
-                "SELECT " + _m_live.live_csv_sql("schedule_history") + " AS schedule_csv FROM schedule_history "
+                "SELECT id FROM schedule_history "
                 "WHERE restaurant_id=? AND " + _m_live.live_where("schedule_history") + " "
                 "AND substr(week_start,1,10) >= ? AND substr(week_start,1,10) <= ? ORDER BY week_start",
                 (restaurant_id, since, until)).fetchall()
+            # Their published rows from the shift table (schedule_shifts).
+            import schedule_shifts
+            found_rows = schedule_shifts.rows_by_week([f["id"] for f in found], "live", conn=conn)
         finally:
             conn.close()
     except Exception as exc:
@@ -223,10 +227,9 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         # recorded, never silent.
         import ops
         ops.capture(exc, job="schedule_manager_plan", context=f"restaurant {restaurant_id} published weeks")
-        found = []
-    from schedule_versions import rows_from_csv
+        found, found_rows = [], {}
     for row in found:
-        for r in rows_from_csv(row["schedule_csv"]):
+        for r in found_rows.get(int(row["id"])) or []:
             if since <= str(r.get("date") or "")[:10] <= until:
                 out.append(dict(r, _source="published"))
     punches = []
@@ -235,7 +238,7 @@ def history_rows(restaurant_id, week_start, shifts=None, weeks: int = HISTORY_WE
         kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
         punches = _sf.person_rows(restaurant_id, since=since, until=until, **kw) or []
     except Exception as exc:
-        print(f"[schedule] punches unavailable to the manager plan for {restaurant_id}: {exc}")
+        _degraded(f"punches unavailable to the manager plan for {restaurant_id}: {exc}", exc)
         punches = []
     if not punches:
         punches = [s for s in (shifts or []) if since <= str(s.get("date") or "")[:10] <= until]
@@ -291,8 +294,8 @@ def usual_shifts(history, names, key_of=None) -> dict:
 
     `key_of` is the Constraints' key (aliases — people's identity): a
     manager's punches carry the POS's spelling ("Gabe Huerta" for "Gabriel
-    Huerta"), and read by the raw name they were nobody's usual days
-    (BUGSGEN-13). Without it, names are folded to lower case."""
+    Huerta"), and read by the raw name they were nobody's usual days.
+    Without it, names are folded to lower case."""
     fold = key_of or (lambda n: " ".join(str(n or "").split()).lower())
     want = {fold(n) for n in (names or ()) if n and str(n).strip()}
     per = {}
@@ -329,8 +332,8 @@ def usual_shifts(history, names, key_of=None) -> dict:
                 slot["roles"][role] = slot["roles"].get(role, 0) + n
             if sp:
                 slot["spans"].append(sp)
-                # The day's daypart by the one rule (BUGSGEN-25): the
-                # core window the day covers most, not its start's side of 3pm.
+                # The day's daypart by the one rule: the core window the day
+                # covers most, not its start's side of 3pm.
                 part = _stime.span_dayparts(sp)[0]
                 if part in parts:
                     parts[part] += 1
@@ -380,7 +383,7 @@ def _rule_spans(c, wd) -> list:
     """When the owner's hours & shift rules put somebody on this weekday —
     a role's earliest start or latest end (role_windows), a role's start or
     end time (role_times) — as short spans around those times: an event
-    day's 7am delivery the owner wrote down is part of the day (ARCH-13)."""
+    day's 7am delivery the owner wrote down is part of the day."""
     out = []
     for by_day in (getattr(c, "role_windows", None) or {}).values():
         w = (by_day or {}).get(wd) or {}
@@ -402,19 +405,25 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
     """(start, end, source) minutes of the day a manager has to be on — the
     check's own requirement (schedule_rules.manager_need: the hours open on
     file and when people are on), over the spans this week is expected to
-    have: the usual first start to the usual last end on file (prep
-    arrives before the doors open), the owner's hours & shift rules for the
-    day, and the close to when the last person usually leaves — at least
-    the longest stay a role must make, at most the longest any role may run
-    past close (schedule audit 10/10/26 ARCH-13: planned to the close plus
-    the longest allowance whatever the night really needs, checked against
-    the hours and the rows). With no close on file, the usual last end.
-    None when neither the hours nor the record say when this day runs."""
+    have: the usual first start to the usual last end on file (prep arrives
+    before the doors open), the owner's hours & shift rules for the day,
+    and the close to when the last person usually leaves — at least the
+    longest stay a role must make, at most the longest any role may run
+    past close (planned to the close plus the longest allowance whatever
+    the night really needs, checked against the hours and the rows). With
+    no close on file, the usual last end. None when neither the hours nor
+    the record say when this day runs."""
     wd = _weekday(date_iso)
     o = _clock((open_times or {}).get(wd))
     # A close at or before the open, or in the small hours, is the next
-    # morning (schedule_time.close_on_timeline, BUGSGEN-22).
+    # morning (schedule_time.close_on_timeline).
     cl = _stime.close_on_timeline(_clock((close_times or {}).get(wd)), o)
+    # Open around the clock from midnight: the business day runs from the
+    # small hours' end for 24 hours (schedule_rules.open_hours) — a window
+    # from 12:00am put a second manager on every midnight.
+    round_clock = o is not None and cl is not None and cl - o >= 23 * 60
+    if round_clock and o < _stime.NIGHT_TAIL_BEFORE:
+        o, cl = _stime.NIGHT_TAIL_BEFORE, _stime.NIGHT_TAIL_BEFORE + 24 * 60
     hist = (spans or {}).get(wd) or {}
     hs, he = hist.get("start"), hist.get("end")
     if o is None and hs is None:
@@ -439,6 +448,8 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
         return None
     start, end = min(s for s, _e in need), max(e for _s, e in need)
     start, end = _down(start), _up(end)
+    if round_clock:
+        start, end = o, o + 24 * 60         # one business day, the next one's manager from its start
     if end - start < 60 or end - start > 24 * 60:
         return None
     if o is not None and cl is not None and start == _down(o):
@@ -455,15 +466,22 @@ def day_window(c, date_iso, open_times=None, close_times=None, spans=None):
 def _week_cap(c, name, line=None, mode=None) -> float:
     """The most a manager is planned in a payroll week: a salaried person's
     own limit, else the restaurant's salaried cap, else SALARIED_WEEK_CAP —
-    never the 84h ceiling (E-17); an hourly person's overtime line. In the
-    plan's later rounds (schedule_rules.FILL_ROUNDS — only for a stretch no
-    manager can cover inside them, sched audit 10/10/26 LOGIC-1) an hourly
-    manager may go past the line to their hours ceiling, then past the
-    restaurant's ceiling to their own maximum (the manager on the floor
-    outranks the restaurant's limits; a person's own maximum stays theirs)."""
-    if c.is_salaried(name):
-        return float(c.salaried_limit(name))
+    never the 84h ceiling; an hourly person's overtime line. In the plan's
+    later rounds (schedule_rules.FILL_ROUNDS — only for a stretch no
+    manager can cover inside them) an hourly manager may go past the line
+    to their hours ceiling, then past the restaurant's ceiling to their own
+    maximum (the manager on the floor outranks the restaurant's limits; a
+    person's own maximum stays theirs)."""
     mode = mode or _rules.FILL_ROUNDS[0]
+    if c.is_salaried(name):
+        # The 55h default is the restaurant's policy, not the person's own
+        # limit: in the last round — a stretch no manager can cover inside
+        # the limits — the manager on the floor outranks it (the tier order:
+        # a one-manager restaurant's week was left unmanaged on Sunday at
+        # 55h). A cap the owner set holds.
+        if not mode[1] and not c.salaried_cap_set(name):
+            return float(_rules.SALARIED_HOURS_MAX)
+        return float(c.salaried_limit(name))
     if mode[0]:
         return float(_rules.overtime_line(c, name, line))
     if mode[1] or c.own_max(name):
@@ -521,7 +539,9 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     acting = {k: set(v or ()) for k, v in (getattr(c, "acting_managers", None) or {}).items()
               if k not in (c.managers or {})}
     max_shift = int(float(c.compliance.get("max_shift_hours") or _rules.DEFAULTS["max_shift_hours"]) * 60)
-    min_len = min(MIN_SHIFT_MIN, max_shift)
+    # No planned manager shift is shorter than the one shortest shift
+    # (contract #2: the plan held its own 4h).
+    min_len = min(_rules.min_shift_minutes(c), max_shift)
     # Rounding a split to the half hour can add up to an hour to a middle
     # leg: the target stays that far under the shift-length rule.
     single_max = max(min_len, min(SINGLE_SHIFT_MAX_MIN, max_shift - 60))
@@ -553,8 +573,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
 
     # Every person by the Constraints' key — the roster's spelling of the
     # one person a name means (aliases) — so a manager whose rows carry
-    # another spelling still counts toward their own hours and days
-    # (BUGSGEN-13).
+    # another spelling still counts toward their own hours and days.
     def hours_in(key, bucket):
         total = float((c.base_hours.get(key) or {}).get(bucket, 0.0) or 0.0)
         for r in prior + plan:
@@ -573,9 +592,9 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                "shift_start": _fmt(s), "shift_end": _fmt(e),
                "notes": f"{PLAN_NOTE} — {reason}", "_pinned": PLAN_SOURCE, "_pin_reason": reason,
                "_plan_source": source}
-        # Its hours from the real span in the restaurant's zone (BUGSGEN-6):
-        # a planned close on the night the clocks go back is an hour longer
-        # than the wall clock, and planned rows are never reconciled later.
+        # Its hours from the real span in the restaurant's zone: a planned
+        # close on the night the clocks go back is an hour longer than the
+        # wall clock, and planned rows are never reconciled later.
         row["scheduled_hours"] = _stime.row_hours_text(row, _rules.tz_of(c))
         return row
 
@@ -587,7 +606,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     # The round the plan is in (schedule_rules.FILL_ROUNDS): inside the
     # overtime line and the restaurant's limits first; a stretch nobody can
     # cover that way is tried again past the line, then past the restaurant's
-    # own limits — never the law or a person's own maximum (LOGIC-1).
+    # own limits — never the law or a person's own maximum.
     cur = {"mode": _rules.FILL_ROUNDS[0]}
 
     def legal(row, without=None, standing=False):
@@ -618,7 +637,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
     # plan (the generation accepts it empty, schedule_engine._trading_weekdays).
     for d in dates:
         wd = _weekday(d)
-        # The one trading-day rule the generation reads too (BUGSGEN-5).
+        # The one trading-day rule the generation reads too.
         if not _rules.trading_day(wd, open_times, close_times, trading):
             continue
         w = day_window(c, d, open_times, close_times, spans)
@@ -800,22 +819,29 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
                 continue
             s0, e0 = sp
             key = c.key(r["employee"])
+            # A leader who sets their own hours is not held to the team's
+            # longest shift (max_shift_applies, the sweep's own rule): the
+            # opener coming in half an hour earlier for the cooks' prep, not
+            # another manager on a seventh day in a row — the plan bought a
+            # policy breach (days in a row, a MUST-FIX) for what the opener's
+            # own day could cover.
+            mx = max_shift if _rules.max_shift_applies(c, key) else max(max_shift, LEADER_DAY_MAX_MIN)
             if gap[0] >= e0:
-                tries = [(s0, ne) for ne in range(min(gap[1], s0 + max_shift), e0, -30)]
+                tries = [(s0, ne) for ne in range(min(gap[1], s0 + mx), e0, -30)]
             elif gap[1] <= s0:
-                tries = [(ns, e0) for ns in range(max(gap[0], e0 - max_shift), s0, 30)]
+                tries = [(ns, e0) for ns in range(max(gap[0], e0 - mx), s0, 30)]
             else:
                 continue
             if not tries or _overlap(tries[0], gap) <= 0:
                 tried.setdefault(r["employee"], f"already on {_fmt(s0)}–{_fmt(e0)}, the longest shift the rules allow"
-                                 if e0 - s0 >= max_shift - 30 else f"already on {_fmt(s0)}–{_fmt(e0)} that day")
+                                 if e0 - s0 >= mx - 30 else f"already on {_fmt(s0)}–{_fmt(e0)} that day")
                 continue
             for ns, ne in tries:
                 covered = _overlap((ns, ne), gap)
                 if covered <= 0:
                     break
                 row = make_row(key, d, ns, ne, r.get("role") or role_of(key), "extended",
-                               r.get("_pin_reason", "") + note)
+                               _one_extension_reason(r.get("_pin_reason", ""), note))
                 ok, why = legal(row, without=r)
                 if not ok:
                     tried.setdefault(r["employee"], why)
@@ -838,7 +864,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         gaps = [g for g in _rules._uncovered([(S, E)], cov) if g[1] > g[0]
                 and not any(m0 <= g[0] and g[1] <= m1 for m0, m1, _w in marked[d])
                 # prep before an opening manager in an hour ahead of the open
-                and not _rules.opening_prep(g, [m0 for m0, _m1 in cov], opens.get(d))]
+                and not _rules.opening_prep(g, [m0 for m0, _m1 in cov], opens.get(d), _rules.opening_lead_minutes(c))]
         if not gaps:
             return False
         gap = max(gaps, key=lambda g: g[1])         # the close first: a manager at close matters most
@@ -850,8 +876,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         # Inside the overtime line and the restaurant's limits first; past
         # the line only when no manager can cover the stretch inside it, and
         # past the restaurant's own limits only when nobody can inside them
-        # (the teammate test, FILL_ROUNDS — LOGIC-1). An hourly manager is
-        # planned past 40h rather than the floor left with nobody running it.
+        # (the teammate test, FILL_ROUNDS). An hourly manager is planned past
+        # 40h rather than the floor left with nobody running it.
         for mode in _rules.FILL_ROUNDS:
             cur["mode"] = mode
             said = ("" if mode == _rules.FILL_ROUNDS[0] else
@@ -902,7 +928,8 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         cov = coverage(d)
         for m0, m1, why in marked[d]:
             for a, b in _rules._uncovered([(m0, m1)], cov):
-                if b > a and not _rules.opening_prep((a, b), [s0 for s0, _e0 in cov], opens.get(d)):
+                if b > a and not _rules.opening_prep((a, b), [s0 for s0, _e0 in cov], opens.get(d),
+                                                     _rules.opening_lead_minutes(c)):
                     uncovered.append({"date": d, "day": _weekday(d), "from": _fmt(a), "to": _fmt(b),
                                       "start": a, "end": b, "minutes": b - a, "why": why})
 
@@ -913,8 +940,7 @@ def plan_manager_coverage(c, week_dates, open_times=None, close_times=None, *, h
         hours[r["employee"]] = round(hours.get(r["employee"], 0.0) + _rules.row_hours(r), 2)
     # The managers' hours on the week's other days, already fixed (a redo's
     # kept days): "Planned manager hours this week" summed only the redone
-    # dates, beside a seam line that counted the whole week (schedule
-    # re-audit 10/4/26 PROMPT-13).
+    # dates, beside a seam line that counted the whole week.
     week = set(c.week_dates or ())
     mine = set(managers) | set(acting)
     kept_hours = {}
@@ -996,9 +1022,15 @@ def plan_for_generation(restaurant_id, c, week_dates, shifts=None, roster_roles=
         rules = _ded.rules_of(rest)
         if rules:
             text = "\n".join(t for t in (getattr(rest, "sched_notes", None) or "", waive_text or "") if t)
+            # Only a waiver the owner confirmed lets the position off; a
+            # sentence read as one but not confirmed leaves it staffed, and
+            # the review says so.
+            waived, pending = _ded.split_waivers(
+                text, rules, _ded.confirmed_waiver_keys(restaurant_id, week_dates, db_path=db_path))
             dplan = _ded.plan(c, sorted(set(dates)) if dates else week_dates, rules, history=history,
                               roster_roles=roster_roles, prior_rows=list(prior_rows or []) + list(plan.get("rows") or []),
-                              waived=_ded.waivers(text, rules))
+                              waived=waived)
+            dplan["unconfirmed_waivers"] = pending
             plan["dedicated"] = dplan
             plan["rows"] = list(plan.get("rows") or []) + dplan["rows"]
     except Exception as exc:
@@ -1021,9 +1053,9 @@ def _plan_rows(pinned_rows, dates=None):
 def priority_line(pinned_rows, plan=None, dates=None) -> str:
     """This restaurant's half of PRIORITIES 1a: who the managers are, and
     how the week covers them — the rule itself is a standing instruction,
-    the same words for every restaurant (schedule_prompt.PRIORITIES, cached
-    — schedule audit 10/3/26 PR-26), so the names live here, at the head
-    of MANAGER COVERAGE. '' with no manager to name."""
+    the same words for every restaurant (schedule_prompt.PRIORITIES,
+    cached), so the names live here, at the head of MANAGER COVERAGE. ''
+    with no manager to name."""
     plan = plan or {}
     names = [f"{m['name']} ({m['role']})" if m.get("role") else m["name"] for m in (plan.get("managers") or [])]
     if not names:
@@ -1071,7 +1103,7 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
     this call writes, each date's manager window, the stretches nobody can
     legally cover (with why), and the week's planned manager hours. A
     separate block, not a SHIFT REQUIREMENTS line: those numbers are built
-    from punches, where managers rarely appear (P-8, D-4)."""
+    from punches, where managers rarely appear."""
     plan = plan or {}
     want = set(dates) if dates else None
     rows = _plan_rows(pinned_rows, dates)
@@ -1097,11 +1129,11 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
     for r in _plan_rows(pinned_rows):
         totals[r["employee"]] = totals.get(r["employee"], 0.0) + _rules.row_hours(r)
     # A redo plans only its dates: the kept days' manager hours are part of
-    # the same week, so "this week" counts them (PROMPT-13).
+    # the same week, so "this week" counts them.
     kept = {n: float(h) for n, h in (plan.get("kept_hours") or {}).items() if h}
     for n, h in kept.items():
         totals[n] = totals.get(n, 0.0) + h
-    # The model is told NOT to write these rows (AI cost audit 10/7/26 #35):
+    # The model is told NOT to write these rows:
     # labor.generate_optimized_schedule merges them in by code and drops any
     # copy the model still writes (merge_pinned_lines, an item_dropped
     # quality event), so "keep every one exactly as written" only paid for
@@ -1121,21 +1153,21 @@ def prompt_block(pinned_rows, plan=None, dates=None) -> str:
 
 def requirements_note() -> str:
     """One line under SHIFT REQUIREMENTS so the table cannot contradict the
-    plan (P-8): its manager-role numbers come from punches."""
+    plan: its manager-role numbers come from punches."""
     return ("\n  Manager coverage is not decided by this table: the MANAGER COVERAGE rows are fixed and added by "
             "code, and they count toward any manager-role number above.")
 
 
 def with_locked(plan, locked_rows) -> dict:
     """The plan with the owner's locked shifts joined to its fixed rows
-    (schedule audit 10/10/26 TRUST-17, contract #4): a shift the owner
-    pinned ("Keep this shift", or one they edited and saved) is kept
-    exactly by a regenerate — merged into every call's answer by code
-    (merge_pinned), restored after the parse (restore_pinned), and never
-    removed, re-timed or re-assigned by a pass (the "_pinned" contract,
-    _kept_rows_moved). A planned row of the same person on the same date
-    that overlaps a locked one gives way: the owner's pin wins. Each locked
-    row carries "_pinned": LOCKED_SOURCE and keeps its `locked` mark."""
+    (contract #4): a shift the owner pinned ("Keep this shift", or one they
+    edited and saved) is kept exactly by a regenerate — merged into every
+    call's answer by code (merge_pinned), restored after the parse
+    (restore_pinned), and never removed, re-timed or re-assigned by a pass
+    (the "_pinned" contract, _kept_rows_moved). A planned row of the same
+    person on the same date that overlaps a locked one gives way: the
+    owner's pin wins. Each locked row carries "_pinned": LOCKED_SOURCE and
+    keeps its `locked` mark."""
     plan = dict(plan or {})
     locked = [dict(r, _pinned=LOCKED_SOURCE, locked=True) for r in (locked_rows or [])
               if r.get("date") and (r.get("employee") or "").strip()]
@@ -1248,13 +1280,12 @@ def plan_reason(notes):
 
 
 def kept_rows(rows) -> list:
-    """A redo's kept days as rows (re-audit 10/4/26 PIPE-1): exactly as the
-    owner saved them — never through the job's parser, whose close cap
-    re-timed a planned manager and opened a no-manager stretch on a day no
-    pass may repair — each carrying "_pinned": PLAN_SOURCE (with its
-    "_pin_reason") for a planned manager row, KEPT_SOURCE for any other.
-    A NEEDS REVIEW mark comes off (PIPE-6): the final sweep marks what is
-    still broken, with today's reason."""
+    """A redo's kept days as rows: exactly as the owner saved them — never
+    through the job's parser, whose close cap re-timed a planned manager
+    and opened a no-manager stretch on a day no pass may repair — each
+    carrying "_pinned": PLAN_SOURCE (with its "_pin_reason") for a planned
+    manager row, KEPT_SOURCE for any other. A NEEDS REVIEW mark comes off:
+    the final sweep marks what is still broken, with today's reason."""
     out = []
     for r in rows or []:
         r = dict(r)
@@ -1270,15 +1301,15 @@ def kept_rows(rows) -> list:
 
 def mark_pins(rows, sent=None) -> list:
     """`rows` with every planned manager row carrying "_pinned" and its
-    "_pin_reason" again (re-audit 10/4/26 UI-6). The pin lives in the week
-    the way it is stored and sent back: the plan's mark in the row's notes
-    (PLAN_NOTE — staff never read it, labor.staff_facing_note). A plan pin a
-    client sent (`sent`, the request's own rows in order, or the row's own
-    "_pinned") is kept too, and a pinned row whose notes lost the mark gets
-    it back, so the stored week keeps it. Apply fixes and Improve used to
-    read only the eight columns and drop the pin, and a reopened week had
-    none. Only the plan's pin is read from a client: a redo's KEPT_SOURCE
-    holds for that job alone. Copies; the input is not changed."""
+    "_pin_reason" again. The pin lives in the week the way it is stored and
+    sent back: the plan's mark in the row's notes (PLAN_NOTE — staff never
+    read it, labor.staff_facing_note). A plan pin a client sent (`sent`, the
+    request's own rows in order, or the row's own "_pinned") is kept too,
+    and a pinned row whose notes lost the mark gets it back, so the stored
+    week keeps it. Apply fixes and Improve used to read only the eight
+    columns and drop the pin, and a reopened week had none. Only the plan's
+    pin is read from a client: a redo's KEPT_SOURCE holds for that job
+    alone. Copies; the input is not changed."""
     out = []
     sent = list(sent or [])
     for i, r in enumerate(rows or []):
@@ -1310,11 +1341,10 @@ def mark_pins(rows, sent=None) -> list:
 
 def carry_pins(rows, stored_rows) -> list:
     """`rows` (a save) with the plan's mark carried from the week as stored
-    (`stored_rows`) onto the row that is still that manager's shift that
-    day — the one row for that person and date — when the save sent it
-    without the mark (re-audit 10/4/26 UI-6): no client can drop a pin. A
-    shift the owner deleted or gave to somebody else is no longer the plan's.
-    Then mark_pins."""
+    (`stored_rows`) onto the row that is still that manager's shift that day
+    — the one row for that person and date — when the save sent it without
+    the mark: no client can drop a pin. A shift the owner deleted or gave to
+    somebody else is no longer the plan's. Then mark_pins."""
     plan = {}
     for r in stored_rows or []:
         if is_plan_note(r.get("notes")):

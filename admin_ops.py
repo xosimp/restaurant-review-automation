@@ -564,17 +564,51 @@ def _memo_key():
             str(getattr(_models_mod, "DB_PATH", "")), getattr(_db_override, "path", None))
 
 
+_SHARED_FLEET_GEN = "admin_fleet_gen"
+
+
+def _shared_fleet_gen():
+    """The fleet memo's generation in the database (a job_cursors row): an
+    admin write on one web worker drops every worker's memo, not only its
+    own (blind re-audit 10/11/26 ARCH-26/SCALE-23). None when unreadable —
+    the process's own generation still holds."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (_SHARED_FLEET_GEN,)).fetchone()
+        finally:
+            conn.close()
+        return row[0] if row else ""
+    except Exception:
+        return None
+
+
 def invalidate_fleet_cache():
     """Drop the memo — every admin write calls this (directly, or through the
-    after-request hook on /admin writes)."""
+    after-request hook on /admin writes) — here and, through the shared
+    generation, in every other process."""
     with _fleet_cv:
         _fleet_state["gen"] += 1
         _fleet_state["memo"] = None
+    try:
+        import uuid as _uuid_fg
+        conn = get_conn()
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (_SHARED_FLEET_GEN, _uuid_fg.uuid4().hex))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("the shared fleet generation was not moved: %s", e)
 
 
 def _fleet_memo(max_age=None):
     m = _fleet_state["memo"]
     if not m or m["key"] != _memo_key() or m["gen"] != _fleet_state["gen"]:
+        return None
+    if m.get("shared") is not None and _shared_fleet_gen() not in (None, m["shared"]):
         return None
     age = time.monotonic() - m["at"]
     ttl = FLEET_TTL_SECONDS if not m["meta"]["errors"] else min(FLEET_TTL_SECONDS, 10.0)
@@ -608,6 +642,8 @@ def _records_cached():
             if not _fleet_state["building"]:
                 _fleet_state["building"] = True
                 gen = _fleet_state["gen"]
+                # Read before the build: a write during it moves this.
+                shared = _shared_fleet_gen()
                 break
             remaining = deadline - time.monotonic()
             if _fleet_state["waiters"] >= FLEET_MAX_WAITERS or remaining <= 0:
@@ -630,7 +666,7 @@ def _records_cached():
         _fleet_state["building"] = False
         if gen == _fleet_state["gen"]:
             _fleet_state["memo"] = {"recs": recs, "d": d, "meta": meta, "at": time.monotonic(), "gen": gen,
-                                    "key": _memo_key()}
+                                    "key": _memo_key(), "shared": shared}
         _fleet_cv.notify_all()
     return recs, d, meta
 
@@ -806,7 +842,8 @@ def _load_with(conn):
     hook_success = ", last_success_at" if "last_success_at" in _columns(conn, "webhooks") else ""
     webhooks = per_rid("SELECT restaurant_id, url, is_active, consecutive_failures, last_status, last_fired_at, "
                        f"disabled_reason{hook_success} FROM webhooks", label="webhooks")
-    client_data = per_rid("SELECT restaurant_id, shifts_csv IS NOT NULL AND shifts_csv != '' AS has_shifts, "
+    import models as _m_cd
+    client_data = per_rid(f"SELECT restaurant_id, {_m_cd.SHIFTS_PRESENT_SQL} AS has_shifts, "
                           "inventory_csv IS NOT NULL AND inventory_csv != '' AS has_inventory, updated_at "
                           "FROM client_data", label="client_data")
     # last_count_at: the newest physical count (the column ordering reads).
@@ -3500,7 +3537,8 @@ def ai_ops(days=30):
                                  f"ROUND(SUM(a.cost_usd),4) AS cost, "
                                  f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN a.cost_usd ELSE 0 END),4) AS data_api_cost, "
                                  f"SUM(CASE WHEN {_OUTCOME_SQL} NOT IN ('ok','blocked') THEN 1 ELSE 0 END) AS not_ok "
-                                 f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? GROUP BY a.restaurant_id ORDER BY cost DESC", (since,))
+                                 f"FROM ai_usage a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.created_at >= ? "
+                                 f"GROUP BY a.restaurant_id, r.name, r.location_group ORDER BY cost DESC", (since,))
     daily = _rows_dict(conn, f"SELECT substr(created_at,1,10) AS day, {calls_sql} AS calls, ROUND(SUM(cost_usd),4) AS cost, "
                              f"ROUND(SUM(CASE WHEN {_VENDOR_SQL}='google_places' THEN cost_usd ELSE 0 END),4) AS data_api_cost "
                              f"FROM ai_usage WHERE created_at >= ? GROUP BY day ORDER BY day", (since,))
@@ -3520,7 +3558,7 @@ def ai_ops(days=30):
                                        SELECT action AS job, model, {_OUTCOME_SQL} AS outcome, COUNT(*) AS n,
                                               MAX(created_at) AS last_at, MAX(id) AS last_id
                                        FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL} NOT IN ('ok','blocked')
-                                       GROUP BY action, model, outcome) g
+                                       GROUP BY 1, 2, 3) g
                                    JOIN ai_usage b ON b.id = g.last_id ORDER BY g.n DESC""", (since,))
     failed_total = _one_dict(conn, f"SELECT COUNT(*) AS n, SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS n_24h FROM ai_usage WHERE created_at >= ? AND {_OUTCOME_SQL}='error'", (_utc_since(1), since)) or {}
     recent = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name, a.action, a.model, {_VENDOR_SQL} AS vendor, a.input_tokens, a.output_tokens, a.cost_usd, a.created_at, "
@@ -4011,7 +4049,7 @@ def notifications(limit=200):
             a_ch = ", a.channels" if "channels" in _columns(conn, "alert_log") else ""
             alerts = _rows_dict(conn, f"SELECT a.id, a.restaurant_id, r.name AS restaurant, a.alert_type, a.review_id, a.fired_at{a_ch} FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id ORDER BY a.id DESC LIMIT ?", (limit,))
             by_type = _rows_dict(conn, "SELECT alert_type, COUNT(*) AS n FROM alert_log WHERE fired_at >= ? GROUP BY alert_type ORDER BY n DESC", (w["week"],))
-            storms = _rows_dict(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id HAVING n >= 10 ORDER BY n DESC", (w["today"],))
+            storms = _rows_dict(conn, "SELECT a.restaurant_id, r.name AS restaurant, COALESCE(r.alert_max_per_day,0) AS cap, COUNT(*) AS n FROM alert_log a LEFT JOIN restaurants r ON r.id=a.restaurant_id WHERE a.fired_at >= ? GROUP BY a.restaurant_id, r.name, r.alert_max_per_day HAVING COUNT(*) >= 10 ORDER BY n DESC", (w["today"],))
             # Storm days over a week, bucketed on Central days (the offset of
             # today is used for the whole week — an hour off across a DST
             # change, never a day).
@@ -4356,11 +4394,15 @@ def jobs():
     # request error is never folded into a job's failure count — the page
     # guessed each group's kind from the newest hundred rows.
     if _has_cols(conn, "job_failures", ("kind",)):
-        grouped = _rows_dict(conn, "SELECT f.job, COALESCE(f.kind,'job') AS kind, COUNT(*) AS n, MAX(f.created_at) AS last_at, "
+        # The kind is folded once in a derived table, so the sample's
+        # subquery compares a grouped column (Postgres refuses a subquery on
+        # an ungrouped f.kind; SQLite took it).
+        grouped = _rows_dict(conn, "SELECT f.job, f.kind, COUNT(*) AS n, MAX(f.created_at) AS last_at, "
                                    "MIN(f.created_at) AS first_at, (SELECT g.error FROM job_failures g WHERE g.job=f.job "
-                                   "AND COALESCE(g.kind,'job')=COALESCE(f.kind,'job') ORDER BY g.id DESC LIMIT 1) AS sample "
-                                   "FROM job_failures f WHERE f.created_at >= datetime('now', '-7 days') "
-                                   "GROUP BY f.job, COALESCE(f.kind,'job') ORDER BY n DESC")
+                                   "AND COALESCE(g.kind,'job')=f.kind ORDER BY g.id DESC LIMIT 1) AS sample "
+                                   "FROM (SELECT job, COALESCE(kind,'job') AS kind, created_at FROM job_failures "
+                                   "WHERE created_at >= datetime('now', '-7 days')) f "
+                                   "GROUP BY f.job, f.kind ORDER BY n DESC")
     else:
         grouped = _rows_dict(conn, "SELECT f.job, COUNT(*) AS n, MAX(f.created_at) AS last_at, MIN(f.created_at) AS first_at, "
                                    "(SELECT g.error FROM job_failures g WHERE g.job=f.job ORDER BY g.id DESC LIMIT 1) AS sample "
@@ -5362,12 +5404,15 @@ def schedule_generations(limit=20, db_path=None):
     conn = get_conn(db_path)
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_history)")}
-        want = [c for c in ("stage_seconds_json", "total_seconds", "review_json") if c in cols]
+        want = [c for c in ("stage_seconds_json", "total_seconds", "review_json", "review_ref") if c in cols]
         rows = conn.execute(
             "SELECT h.id, h.restaurant_id, h.week_start, h.generated_at, h.hours_scheduled, h.hours_budget"
             + "".join(", h." + c for c in want)
             + ", r.name AS restaurant FROM schedule_history h LEFT JOIN restaurants r ON r.id = h.restaurant_id "
             "ORDER BY h.id DESC LIMIT ?", (max(1, min(100, int(limit or 20))),)).fetchall()
+        # The whole review of each (stored once, SCALE-13).
+        import models as _m_rv
+        reviews = {r["id"]: _m_rv.history_review(conn, r) for r in rows}
     finally:
         conn.close()
 
@@ -5378,7 +5423,7 @@ def schedule_generations(limit=20, db_path=None):
             return {}
     for r in rows:
         d = dict(r)
-        review = _load(d.get("review_json")) if "review_json" in d else {}
+        review = reviews.get(d["id"]) or {}
         repair = review.get("repair") or {}
         out["weeks"].append({
             "id": d["id"], "restaurant_id": d["restaurant_id"], "restaurant": d.get("restaurant"),

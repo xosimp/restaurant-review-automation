@@ -32,10 +32,16 @@ def test_required_is_the_larger_of_floor_and_typical_and_the_floor_is_marked():
     by_role = {x["role"]: x for x in night["roles"]}
     # Case-insensitive merge; the owner's spelling wins.
     assert set(by_role) == {"Server", "Line Cook"}
-    assert by_role["Server"] == {"role": "Server", "required": 6, "floor": 0, "typical": 6}
+    # `ledger` (re-audit 10/11/26 LEARNING-27) is additive: every lever that
+    # moved the number, here only the usual crew.
+    assert {k: v for k, v in by_role["Server"].items() if k != "ledger"} == \
+        {"role": "Server", "required": 6, "floor": 0, "typical": 6}
+    assert [e["lever"] for e in by_role["Server"]["ledger"]] == ["usual"]
     assert by_role["Line Cook"]["required"] == 3 and by_role["Line Cook"]["floor"] == 3
     morning = next(r for r in rows if r["daypart"] == "morning")
-    assert morning["roles"] == [{"role": "Line Cook", "required": 1, "floor": 1, "typical": 0}]
+    assert [{k: v for k, v in x.items() if k != "ledger"} for x in morning["roles"]] == \
+        [{"role": "Line Cook", "required": 1, "floor": 1, "typical": 0}]
+    assert [e["lever"] for e in morning["roles"][0]["ledger"]] == ["floor"]
 
 
 def test_a_per_day_floor_overrides_the_role_default_as_the_scorer_reads_it():
@@ -260,9 +266,11 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
     assert prompt.index("PRIORITIES —") < prompt.index("CONTEXT:")
     # The code's own ranked table (schedule_rules.TIER_TABLE — sched audit
     # 10/10/26 LOGIC-20): the restaurant's own limits below the staffing
-    # rules, SHIFT REQUIREMENTS above the budget, leadership a quality.
+    # rules, SHIFT REQUIREMENTS' firm part above the budget (the blind
+    # re-audit of 10/11/26, LOGIC-3/LOGIC-4/P: overtime first, as CP-SAT
+    # holds it), leadership a quality.
     for n, label in ((1, "Hard constraints"), (2, "The owner's staffing rules, then the restaurant's own"),
-                     (3, "Overtime, minimum hours and SHIFT REQUIREMENTS"), (4, "The hourly budget"),
+                     (3, "Overtime, then minimum hours, then SHIFT REQUIREMENTS' firm part"), (4, "The hourly budget"),
                      (5, "Quality preferences")):
         assert f"  {n}. {label}" in prompt
     for gone in ("HIGHEST PRIORITY", "same priority as STAFF CONSTRAINTS", "follow exactly —",
@@ -273,10 +281,11 @@ def test_one_ranked_priority_list_and_no_competing_claims(monkeypatch):
     # claims no rank of its own ("the constraint wins" competed with it).
     assert "STAFF CONSTRAINTS — PRIORITIES 1b." in prompt and "- S0: no Fridays" in prompt
     assert "the constraint wins" not in prompt
-    # Availability is the ROSTER's AVAILABLE column, marked [HARD] (C1,
-    # PR-33: one line per person instead of a block per fact).
+    # Availability is the ROSTER's AVAILABLE column (C1, PR-33: one line
+    # per person instead of a block per fact); the rule and its [HARD] tag
+    # are the rules block's one line (schedule re-audit 10/11/26 AI-15).
     roster = prompt[prompt.index("ROSTER — "):]
-    assert "approved time off (all [HARD])" in roster.split("\n\n")[0]
+    assert "approved time off" in roster.split("\n\n")[0] and "[HARD]" not in roster.split("\n\n")[0]
     assert "  S1 | Server | Server | off Mon |" in roster
     assert "RESTAURANT HOURS & SHIFT RULES (priority 1" in prompt and "Open 11am-10pm" in prompt
 

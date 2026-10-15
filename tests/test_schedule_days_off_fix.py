@@ -7,6 +7,7 @@ shifts to a legal teammate — the least score cost — and never creates a new
 hard breach doing it.
 """
 import schedule_engine as se
+import schedule_fixes
 import schedule_rules as sr
 import shift_quality as sq
 
@@ -41,7 +42,7 @@ def _week():
 
 def _fix(rows, c, **kw):
     v = sr.violations(rows, c)
-    return sq.apply_fixes(rows, sr.fixable(v), roster=["Ana", "Bob", "Cal"],
+    return schedule_fixes.apply_fixes(rows, sr.fixable(v), roster=["Ana", "Bob", "Cal"],
                           rules=se._rules_for_swaps(c), rule_constraints=c,
                           typical_headcount={(d, "night"): {"Server": 2} for d in DAYS}, **kw)
 
@@ -89,7 +90,7 @@ def test_the_teammate_taken_is_the_one_that_costs_the_least_score():
     rows += [_row(0, "Weak"), _row(0, "Strong")]
     profiles = [sq.ShiftProfile(key="n", min_strength={"Server": 4}, source="restaurant")]
     v = sr.violations(rows, c)
-    out = sq.apply_fixes(rows, sr.fixable(v), profiles=profiles, roster=["Ana", "Weak", "Strong"],
+    out = schedule_fixes.apply_fixes(rows, sr.fixable(v), profiles=profiles, roster=["Ana", "Weak", "Strong"],
                          rules=se._rules_for_swaps(c), rule_constraints=c,
                          scores={"Ana": 4, "Weak": 2, "Strong": 5})
     moved = [f for f in out["fixes"] if f["kind"] == "days_off"]
@@ -106,6 +107,6 @@ def test_a_partial_redo_only_hands_over_rows_on_the_editable_days():
 def test_without_the_rules_nothing_is_moved_and_it_says_why():
     rows = _week()
     v = sr.violations(rows, _c())
-    out = sq.apply_fixes(rows, sr.fixable(v), roster=["Ana", "Bob", "Cal"])
+    out = schedule_fixes.apply_fixes(rows, sr.fixable(v), roster=["Ana", "Bob", "Cal"])
     assert out["rows"] == rows
     assert any(u["kind"] == "days_off" for u in out["unfixed"])

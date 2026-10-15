@@ -51,11 +51,14 @@ SQLite stays the default: backend() is "postgres" only when DATABASE_URL is
 a postgres:// URL and DB_BACKEND is not "sqlite". The shadow (pg_shadow)
 writes to SHADOW_DATABASE_URL instead, while SQLite remains the primary.
 """
+import hashlib
 import json
 import os
 import re
 import sqlite3
 import threading
+import time
+import weakref
 
 
 def database_url(name="DATABASE_URL"):
@@ -77,7 +80,7 @@ class TranslationError(ValueError):
 
 # Month-partitioned fact tables on Postgres (scale.md data model): table ->
 # (partition column, extra key columns an upsert's conflict target gains).
-# scripts/pg_copy.py creates them PARTITION BY RANGE on that column, one
+# scripts/run_pg_copy.py creates them PARTITION BY RANGE on that column, one
 # partition a month; retention drops whole partitions (pg_partitions).
 PARTITIONED = {
     "shift_facts": "business_date",
@@ -88,6 +91,10 @@ PARTITIONED = {
     "ai_usage": "created_at",
     "schedule_model_calls": "created_at",
 }
+
+# Python functions the app registers on SQLite connections, defined in SQL
+# on Postgres (0000_sqlite_compat.sql).
+SQL_PORTED_FUNCTIONS = {"cav_name_key"}
 
 WRITE_LOCK_KEY = 7310042026          # the advisory lock BEGIN IMMEDIATE takes
 
@@ -207,7 +214,10 @@ def _timestamp(args, tr) -> str:
     elif unix:
         expr = f"timezone('UTC', to_timestamp(CAST({tr(args[0]).strip()} AS double precision)))"
     else:
-        expr = f"CAST({tr(args[0]).strip()} AS timestamp)"
+        # cavnar_ts (migrations/postgres/0000_sqlite_compat.sql): NULL for
+        # '' or text that is no date, as SQLite's date('') is — a bare CAST
+        # raised (SCALE-9); an offset honoured, the answer in UTC.
+        expr = f"cavnar_ts(CAST({tr(args[0]).strip()} AS text))"
     for m in mods:
         lit = _literal(m)
         if lit is None:
@@ -305,17 +315,528 @@ def glob_regex(pattern) -> str:
     return "".join(out)
 
 
+# SQLite constraint conflict clauses (`UNIQUE (a, b) ON CONFLICT REPLACE`):
+# every plain INSERT into such a table replaces the row it collides with.
+# Postgres has no table-level clause, so translate_ddl drops it and an
+# INSERT into one of these tables becomes an upsert on those columns. The
+# DDL is the source; tests/test_q2_postgres.py holds this map to it.
+CONFLICT_REPLACE = {
+    "labor_daily_history": ("restaurant_id", "date"),
+    "home_dismissals": ("restaurant_id", "key"),
+}
+
+_COMPARISON_OPS = {"=", "==", "!=", "<>", "<", ">", "<=", ">="}
+_BOOLEAN_WORDS = {"IS", "IN", "LIKE", "ILIKE", "GLOB", "NOTGLOB", "BETWEEN", "EXISTS", "NOT", "AND", "OR"}
+_ORDER_END_WORDS = {"LIMIT", "OFFSET", "FETCH", "FOR", "UNION", "EXCEPT", "INTERSECT", "ROWS", "RANGE",
+                    "GROUPS", "RETURNING", "ON"}
+_LIKE_END_WORDS = {"AND", "OR", "THEN", "ELSE", "END", "WHEN", "ORDER", "GROUP", "LIMIT", "HAVING", "UNION",
+                   "EXCEPT", "INTERSECT", "ESCAPE", "IS", "ASC", "DESC", "FROM", "WHERE", "AS", "OFFSET",
+                   "RETURNING", "NOT", "COLLATE", "ON", "JOIN", "LEFT", "INNER", "CROSS", "SET"}
+_SELECT_ITEM_PREV = {"SELECT", "DISTINCT", ","}
+_SQL_KEYWORDS = {"FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "AND", "OR", "AS", "ON",
+                 "JOIN", "LEFT", "INNER", "THEN", "ELSE", "END", "WHEN", "IS", "IN", "NOT", "LIKE", "BETWEEN",
+                 "ASC", "DESC", "COLLATE", "OFFSET", "INTO", "VALUES", "SET", "RETURNING", "WINDOW", "OVER"}
+
+
+def _sig_index(toks, start, step):
+    """The index of the next (step 1) / previous (step -1) significant
+    token from `start` (exclusive), or None."""
+    k = start + step
+    while 0 <= k < len(toks):
+        if toks[k].kind not in ("ws", "comment"):
+            return k
+        k += step
+    return None
+
+
+def _is_boolean(toks) -> bool:
+    """True when the expression `toks` is a comparison / predicate at its
+    own top level (outside parentheses and CASE … END): SQLite gives it the
+    value 0/1, Postgres a boolean that SUM() and friends refuse."""
+    depth = case = 0
+    for t in toks:
+        if t.kind == "op" and t.text == "(":
+            depth += 1
+        elif t.kind == "op" and t.text == ")":
+            depth -= 1
+        elif t.kind == "word" and t.upper == "CASE":
+            case += 1
+        elif t.kind == "word" and t.upper == "END" and case:
+            case -= 1
+        elif depth == 0 and not case:
+            if t.kind == "op" and t.text in _COMPARISON_OPS:
+                return True
+            if t.kind == "word" and t.upper in _BOOLEAN_WORDS:
+                return True
+    return False
+
+
+def _statement_tables(sig) -> set:
+    """Every table named after FROM / JOIN / INTO / UPDATE."""
+    out = set()
+    for i, t in enumerate(sig[:-1]):
+        if t.kind == "word" and t.upper in ("FROM", "JOIN", "INTO", "UPDATE"):
+            nxt = sig[i + 1]
+            if nxt.kind in ("word", "qid") and nxt.upper not in ("SELECT",):
+                out.add(nxt.text.strip('"').lower())
+    return out
+
+
+def _operand_start(toks, end):
+    """The index where the primary expression ending at `end` (inclusive)
+    starts: an identifier chain (a.b), a literal, a parameter, or a
+    parenthesised expression / function call."""
+    t = toks[end]
+    if t.kind == "op" and t.text == ")":
+        depth = 0
+        for k in range(end, -1, -1):
+            if toks[k].kind == "op" and toks[k].text == ")":
+                depth += 1
+            elif toks[k].kind == "op" and toks[k].text == "(":
+                depth -= 1
+                if depth == 0:
+                    p = _sig_index(toks, k, -1)
+                    if p is not None and toks[p].kind == "word" and toks[p].upper not in _SQL_KEYWORDS:
+                        return p
+                    return k
+        raise TranslationError("unbalanced parentheses")
+    start = end
+    while True:
+        p = _sig_index(toks, start, -1)
+        if p is not None and toks[p].kind == "op" and toks[p].text == ".":
+            q = _sig_index(toks, p, -1)
+            if q is not None and toks[q].kind in ("word", "qid"):
+                start = q
+                continue
+        return start
+
+
 class Translator:
     """SQLite SQL -> Postgres SQL. `pk_lookup(table)` -> [primary key
     columns] (or None) — what INSERT OR REPLACE conflicts on and what rowid
-    means; `columns_lookup(table)` -> [columns] for the DO UPDATE list."""
+    means; `columns_lookup(table)` -> [columns] for the DO UPDATE list;
+    `notnull_lookup(table)` -> {columns that can never be NULL} (an ORDER BY
+    on one needs no NULLS clause, so its index still serves the sort);
+    `unique_lookup(table)` -> [[columns] of each unique key], the arbiters an
+    INSERT OR REPLACE may conflict on."""
 
-    def __init__(self, pk_lookup=None, columns_lookup=None):
+    def __init__(self, pk_lookup=None, columns_lookup=None, notnull_lookup=None, unique_lookup=None,
+                 types_lookup=None):
         self.pk_lookup = pk_lookup or (lambda t: None)
         self.columns_lookup = columns_lookup or (lambda t: None)
+        self.notnull_lookup = notnull_lookup or (lambda t: None)
+        self.unique_lookup = unique_lookup or (lambda t: None)
+        # {column: declared type} — an integer column compared with '' (a
+        # NULLIF(col, '') written for SQLite's anything-goes columns).
+        self.types_lookup = types_lookup or (lambda t: None)
+        self._table = None
 
-    # Functions rewritten wherever they appear.
-    def _rewrite(self, toks) -> list:
+    # ── token passes before the function rewrites ───────────────────────────
+
+    def _collate_nocase(self, toks) -> list:
+        """`x COLLATE NOCASE` -> `lower(x)` (Postgres has no "nocase"
+        collation — SCALE-7); in a comparison the other side is lowered too,
+        as SQLite compares both under the collation."""
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "COLLATE":
+                n = _sig_index(toks, i, 1)
+                if n is not None and toks[n].kind == "word" and toks[n].upper == "NOCASE":
+                    end = _sig_index(toks, i, -1)
+                    start = _operand_start(toks, end)
+                    operand = toks[start:end + 1]
+                    rep = [Tok("word", "lower"), Tok("op", "(")] + operand + [Tok("op", ")")]
+                    before = _sig_index(toks, start, -1)
+                    if before is not None and toks[before].kind == "op" and toks[before].text in _COMPARISON_OPS:
+                        lend = _sig_index(toks, before, -1)
+                        lstart = _operand_start(toks, lend)
+                        left = [Tok("word", "lower"), Tok("op", "(")] + toks[lstart:lend + 1] + [Tok("op", ")")]
+                        toks = toks[:lstart] + left + toks[lend + 1:start] + rep + toks[n + 1:]
+                        i = lstart + len(left) + (start - lend - 1) + len(rep)
+                        continue
+                    toks = toks[:start] + rep + toks[n + 1:]
+                    i = start + len(rep)
+                    continue
+            i += 1
+        return toks
+
+    def _is_distinct(self, toks) -> list:
+        """`x IS y` / `x IS NOT y` with y a value (a parameter, a column, an
+        expression) is SQLite's NULL-safe comparison: IS NOT DISTINCT FROM /
+        IS DISTINCT FROM on Postgres, whose IS takes only NULL, TRUE, FALSE.
+        And a bare parameter tested for NULL (`? IS NULL`) is given a type —
+        Postgres cannot infer one ("could not determine data type of
+        parameter")."""
+        out, i = [], 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "IS":
+                n = _sig_index(toks, i, 1)
+                neg = n is not None and toks[n].kind == "word" and toks[n].upper == "NOT"
+                v = _sig_index(toks, n, 1) if neg else n
+                val = toks[v] if v is not None else None
+                if val is not None and not (val.kind == "word" and val.upper in ("NULL", "TRUE", "FALSE",
+                                                                                  "DISTINCT", "JSON")):
+                    out.extend([Tok("word", "IS DISTINCT FROM" if neg else "IS NOT DISTINCT FROM"), Tok("ws", " ")])
+                    i = v
+                    continue
+                if val is not None and val.kind == "word" and val.upper == "NULL":
+                    # `? IS [NOT] NULL`: the parameter typed.
+                    k = len(out) - 1
+                    while k >= 0 and out[k].kind in ("ws", "comment"):
+                        k -= 1
+                    if k >= 0 and out[k].kind == "param":
+                        out[k:k + 1] = [Tok("word", "CAST"), Tok("op", "("), out[k], Tok("ws", " "),
+                                        Tok("word", "AS"), Tok("ws", " "), Tok("word", "text"), Tok("op", ")")]
+            out.append(t)
+            i += 1
+        return out
+
+    def _group_bare(self, toks) -> list:
+        """SELECT a.id, r.name, COUNT(*) … GROUP BY a.id: SQLite takes a
+        bare column beside an aggregate from some row of the group; Postgres
+        refuses it unless it is grouped (it does not see that r.name depends
+        on a.id through the join). Each such bare column becomes MIN(col)
+        under its own name — the same value when it is one per group, as
+        these are. Not when the select has a MIN()/MAX(): there SQLite takes
+        the bare columns from THAT row, which MIN cannot say — such a
+        statement is left to fail loudly and is ported by hand."""
+        out = list(toks)
+        starts = [k for k, t in enumerate(toks) if t.kind == "word" and t.upper == "SELECT"]
+        edits = []
+        for st in starts:
+            depth, frm, grp, end = 0, None, None, len(toks)
+            for k in range(st + 1, len(toks)):
+                x = toks[k]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    if depth == 0:
+                        end = k
+                        break
+                    depth -= 1
+                elif depth == 0 and x.kind == "word":
+                    if x.upper == "FROM" and frm is None:
+                        frm = k
+                    elif x.upper == "GROUP" and frm is not None:
+                        n = _sig_index(toks, k, 1)
+                        if n is not None and toks[n].upper == "BY":
+                            grp = n
+                    elif x.upper in ("UNION", "EXCEPT", "INTERSECT"):
+                        end = k
+                        break
+            if frm is None or grp is None:
+                continue
+            gend = grp + 1
+            depth = 0
+            while gend < end:
+                x = toks[gend]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    depth -= 1
+                elif depth == 0 and x.kind == "word" and x.upper in ("HAVING", "ORDER", "LIMIT", "WINDOW"):
+                    break
+                gend += 1
+            groups = [_render(_significant(g)).replace(" ", "").lower() for g in _split_args(toks[grp + 1:gend])]
+            if any(g.isdigit() for g in groups):
+                continue                         # positional: left as written
+            gnames = {g.split(".")[-1] for g in groups}
+            items = _split_args(toks[st + 1:frm])
+            flat = [x for it in items for x in _significant(it)]
+            if any(x.kind == "word" and x.upper in ("MIN", "MAX") and
+                   flat.index(x) + 1 < len(flat) and flat[flat.index(x) + 1].text == "(" for x in flat):
+                continue
+            pos = st + 1
+            for it in items:
+                sig = _significant(it)
+                expr, alias = sig, None
+                if len(sig) >= 3 and sig[-2].kind == "word" and sig[-2].upper == "AS":
+                    expr, alias = sig[:-2], sig[-1].text
+                elif len(sig) == 4 and sig[-1].kind == "word" and sig[-1].upper not in _SQL_KEYWORDS:
+                    expr, alias = sig[:-1], sig[-1].text
+                bare = (len(expr) == 1 and expr[0].kind in ("word", "qid") and expr[0].upper not in
+                        ("DISTINCT", "NULL", "TRUE", "FALSE", "CURRENT_TIMESTAMP")) or \
+                    (len(expr) == 3 and expr[1].text == "." and expr[2].kind in ("word", "qid"))
+                if bare and expr[-1].text != "*":
+                    text = _render(expr).replace(" ", "").lower()
+                    name = expr[-1].text.strip('"')
+                    if text not in groups and name.lower() not in gnames:
+                        a = toks.index(expr[0], pos)
+                        b = toks.index(expr[-1], a)
+                        edits.append((a, b, alias is None, name))
+                pos += len(it) + 1
+        for a, b, add_alias, name in sorted(edits, reverse=True):
+            rep_toks = [Tok("word", "MIN"), Tok("op", "(")] + out[a:b + 1] + [Tok("op", ")")]
+            if add_alias:
+                rep_toks += [Tok("ws", " "), Tok("word", "AS"), Tok("ws", " "), Tok("word", name)]
+            out[a:b + 1] = rep_toks
+        return out
+
+    def _having_alias(self, toks) -> list:
+        """HAVING n >= 8 where n is a select alias (COUNT(*) AS n): SQLite
+        reads the alias, Postgres only a column. The alias becomes its
+        expression — when the expression binds no parameter (repeating one
+        would shift every later binding)."""
+        sig = _significant(toks)
+        if not any(t.kind == "word" and t.upper == "HAVING" for t in sig):
+            return toks
+        aliases = {}
+        for k, t in enumerate(toks):
+            if t.kind == "word" and t.upper == "AS":
+                n = _sig_index(toks, k, 1)
+                p = _sig_index(toks, k, -1)
+                if n is None or p is None or toks[p].text != ")":
+                    continue
+                start = _operand_start(toks, p)
+                expr = toks[start:p + 1]
+                if not any(x.kind == "param" for x in expr):
+                    aliases[toks[n].text.lower()] = expr
+        if not aliases:
+            return toks
+        out, i, in_having, depth = [], 0, False, 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "HAVING":
+                in_having, depth = True, 0
+            elif in_having and t.kind == "op" and t.text == "(":
+                depth += 1
+            elif in_having and t.kind == "op" and t.text == ")":
+                depth -= 1
+                if depth < 0:
+                    in_having = False
+            elif in_having and depth == 0 and t.kind == "word" and t.upper in ("ORDER", "LIMIT", "UNION", "WINDOW"):
+                in_having = False
+            elif in_having and t.kind == "word" and t.text.lower() in aliases:
+                p = _sig_index(toks, i, -1)
+                n = _sig_index(toks, i, 1)
+                if not ((p is not None and toks[p].text == ".") or (n is not None and toks[n].text in (".", "("))):
+                    out.extend(aliases[t.text.lower()])
+                    i += 1
+                    continue
+            out.append(t)
+            i += 1
+        return out
+
+    def _case_bool(self, toks) -> list:
+        """CASE WHEN … THEN <predicate> ELSE 0 END: SQLite's predicate is
+        an integer, Postgres's a boolean that cannot share a CASE with 0. A
+        predicate branch beside a non-predicate one is cast to INTEGER (a
+        CASE whose every branch is a predicate stays boolean — it may be a
+        WHERE condition)."""
+        out = list(toks)
+        for st in [k for k, t in enumerate(toks) if t.kind == "word" and t.upper == "CASE"][::-1]:
+            depth, case, marks, end = 0, 0, [], None
+            for k in range(st + 1, len(out)):
+                x = out[k]
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    depth -= 1
+                elif x.kind == "word" and x.upper == "CASE":
+                    case += 1
+                elif x.kind == "word" and x.upper == "END":
+                    if case == 0 and depth == 0:
+                        end = k
+                        break
+                    case -= 1
+                elif depth == 0 and case == 0 and x.kind == "word" and x.upper in ("WHEN", "THEN", "ELSE"):
+                    marks.append((k, x.upper))
+            if end is None:
+                continue
+            branches = []                               # (start, stop) of each THEN / ELSE result
+            for n, (k, kind) in enumerate(marks):
+                if kind in ("THEN", "ELSE"):
+                    stop = marks[n + 1][0] if n + 1 < len(marks) else end
+                    branches.append((k + 1, stop))
+            flags = [_is_boolean(out[a:b]) for a, b in branches]
+            if not any(flags) or all(flags):
+                continue
+            for (a, b), is_b in sorted(zip(branches, flags), reverse=True):
+                if is_b:
+                    out[a:b] = [Tok("ws", " "), Tok("word", "CAST"), Tok("op", "("), Tok("op", "("), *out[a:b],
+                                Tok("op", ")"), Tok("ws", " "), Tok("word", "AS"), Tok("ws", " "),
+                                Tok("word", "INTEGER"), Tok("op", ")"), Tok("ws", " ")]
+        return out
+
+    def _truthy_params(self, toks) -> list:
+        """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
+        `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
+        boolean and refuses the smallint a Python int binds as. It becomes
+        `CAST(? AS integer) <> 0` (NULL stays unknown)."""
+        out = list(toks)
+        for k, t in enumerate(toks):
+            if t.kind != "param":
+                continue
+            p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
+            prev = toks[p] if p is not None else None
+            nxt = toks[n] if n is not None else None
+            if not (prev is not None and prev.kind == "word" and prev.upper in ("WHEN", "WHERE", "AND", "OR", "NOT")):
+                continue
+            if not (nxt is None or (nxt.kind == "word" and nxt.upper in ("THEN", "AND", "OR", "ORDER", "GROUP",
+                                                                            "LIMIT")) or
+                    (nxt.kind == "op" and nxt.text in (")", ";"))):
+                continue
+            if prev.upper == "AND":
+                b = _sig_index(toks, p, -1)
+                bb = _sig_index(toks, b, -1) if b is not None else None
+                if bb is not None and toks[bb].kind == "word" and toks[bb].upper == "BETWEEN":
+                    continue                     # x BETWEEN ? AND ?
+            out[k] = Tok("other", f"CAST({_P} AS integer) <> 0")
+        return out
+
+    def _qualify_upsert(self, toks) -> list:
+        """In ON CONFLICT … DO UPDATE SET a = a + excluded.a, SQLite reads a
+        bare `a` as the existing row's; Postgres calls it ambiguous (the row
+        or EXCLUDED). Each bare column of the table there is qualified with
+        the table's name — the assignment targets aside."""
+        sig = _significant(toks)
+        table = _main_table(sig)
+        if not table or not any(t.kind == "word" and t.upper == "CONFLICT" for t in sig):
+            return toks
+        cols = {c.lower() for c in (self.columns_lookup(table) or [])}
+        if not cols:
+            return toks
+        out, i, active, target, depth, in_where = [], 0, False, False, 0, False
+        while i < len(toks):
+            t = toks[i]
+            if not active and t.kind == "word" and t.upper == "SET":
+                prev = next((x for x in reversed(out) if x.kind not in ("ws", "comment")), None)
+                if prev is not None and prev.kind == "word" and prev.upper == "UPDATE":
+                    active, target, depth, in_where = True, True, 0, False
+                out.append(t)
+                i += 1
+                continue
+            if active:
+                if t.kind == "op" and t.text == "(":
+                    depth += 1
+                elif t.kind == "op" and t.text == ")":
+                    depth -= 1
+                    if depth < 0:
+                        active = False
+                elif depth == 0 and t.kind == "word" and t.upper == "RETURNING":
+                    active = False
+                elif depth == 0 and t.kind == "word" and t.upper == "WHERE":
+                    in_where, target = True, False
+                elif depth == 0 and t.kind == "op" and t.text == "," and not in_where:
+                    target = True
+                elif t.kind == "word" and t.text.lower() in cols:
+                    p = _sig_index(toks, i, -1)
+                    n = _sig_index(toks, i, 1)
+                    dotted = (p is not None and toks[p].text == ".") or (n is not None and toks[n].text in (".", "("))
+                    if target:
+                        target = False
+                    elif not dotted:
+                        out.extend([Tok("word", table), Tok("op", "."), t])
+                        i += 1
+                        continue
+            out.append(t)
+            i += 1
+        return out
+
+    def _like_escape(self, toks) -> list:
+        """LIKE -> ILIKE (SQLite's LIKE ignores case) with `ESCAPE ''`:
+        Postgres's LIKE treats a backslash in the pattern as an escape,
+        SQLite's never does."""
+        out, i = [], 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == "word" and t.upper == "LIKE":
+                out.append(Tok("word", "ILIKE"))
+                # The pattern operand runs to the first terminator at its
+                # own depth; an explicit ESCAPE is kept.
+                j, depth, end = i + 1, 0, len(toks)
+                while j < len(toks):
+                    x = toks[j]
+                    if x.kind == "op" and x.text == "(":
+                        depth += 1
+                    elif x.kind == "op" and x.text == ")":
+                        if depth == 0:
+                            end = j
+                            break
+                        depth -= 1
+                    elif depth == 0 and ((x.kind == "op" and x.text in (",", ";")) or
+                                         (x.kind == "word" and x.upper in _LIKE_END_WORDS) or
+                                         (x.kind == "op" and x.text in _COMPARISON_OPS)):
+                        end = j
+                        break
+                    j += 1
+                out.extend(toks[i + 1:end])
+                k = _sig_index(toks, end - 1, 1) if end < len(toks) else None
+                if not (k is not None and toks[k].kind == "word" and toks[k].upper == "ESCAPE"):
+                    # Trailing whitespace stays after the clause.
+                    while out and out[-1].kind == "ws":
+                        out.pop()
+                        end -= 1
+                    out.extend([Tok("ws", " "), Tok("word", "ESCAPE"), Tok("ws", " "), Tok("str", "''")])
+                i = end
+                continue
+            out.append(t)
+            i += 1
+        return out
+
+    def _order_nulls(self, toks) -> list:
+        """SQLite sorts NULL as the smallest value: first ascending, last
+        descending; Postgres the opposite. Every ORDER BY item that can be
+        NULL gets SQLite's NULLS FIRST / NULLS LAST (SCALE-9: the latest
+        published week was a NULL stamp). A bare column the schema declares
+        NOT NULL is left as written, so its index still serves the sort."""
+        sig = _significant(toks)
+        tables = _statement_tables(sig)
+        outer = any(t.kind == "word" and t.upper in ("LEFT", "RIGHT", "FULL", "OUTER", "WITH") for t in sig)
+        out, i = [], 0
+        while i < len(toks):
+            t = toks[i]
+            n = _sig_index(toks, i, 1) if t.kind == "word" and t.upper == "ORDER" else None
+            if n is None or not (toks[n].kind == "word" and toks[n].upper == "BY"):
+                out.append(t)
+                i += 1
+                continue
+            out.extend(toks[i:n + 1])
+            j, depth, item = n + 1, 0, []
+            while j <= len(toks):
+                x = toks[j] if j < len(toks) else None
+                closing = x is None or (depth == 0 and (
+                    (x.kind == "op" and x.text in (",", ";")) or (x.kind == "op" and x.text == ")") or
+                    (x.kind == "word" and x.upper in _ORDER_END_WORDS)))
+                if closing:
+                    out.extend(self._order_item(item, tables, outer))
+                    if x is None or not (x.kind == "op" and x.text == ","):
+                        break
+                    out.append(x)
+                    item = []
+                    j += 1
+                    continue
+                if x.kind == "op" and x.text == "(":
+                    depth += 1
+                elif x.kind == "op" and x.text == ")":
+                    depth -= 1
+                item.append(x)
+                j += 1
+            i = j
+        return out
+
+    def _order_item(self, item, tables, outer) -> list:
+        s = _significant(item)
+        if not s or any(x.kind == "word" and x.upper == "NULLS" for x in s):
+            return item
+        desc = s[-1].kind == "word" and s[-1].upper == "DESC"
+        expr = s[:-1] if s[-1].kind == "word" and s[-1].upper in ("ASC", "DESC") else s
+        if not outer and expr and expr[-1].kind in ("word", "qid") and \
+                (len(expr) == 1 or (len(expr) == 3 and expr[1].text == ".")):
+            col = expr[-1].text.strip('"').lower()
+            having = [tb for tb in tables if col in [c.lower() for c in (self.columns_lookup(tb) or [])]]
+            if having and all(col in {c.lower() for c in (self.notnull_lookup(tb) or ())} for tb in having):
+                return item
+        tail = []
+        while item and item[-1].kind in ("ws", "comment"):
+            tail.insert(0, item.pop())
+        return item + [Tok("ws", " "), Tok("word", "NULLS LAST" if desc else "NULLS FIRST")] + tail
+
+    # ── the function rewrites ───────────────────────────────────────────────
+
+    def _rewrite(self, toks, ddl=False) -> list:
         out, i = [], 0
         while i < len(toks):
             t = toks[i]
@@ -323,13 +844,14 @@ class Translator:
             is_call = t.kind == "word" and nxt is not None and toks[nxt].kind == "op" and toks[nxt].text == "("
             up = t.upper if t.kind == "word" else ""
             if is_call and up in ("DATETIME", "DATE", "TIME", "JULIANDAY", "STRFTIME", "IFNULL", "INSTR",
-                                  "GROUP_CONCAT", "MAX", "MIN", "JSON_EXTRACT", "TOTAL"):
+                                  "GROUP_CONCAT", "MAX", "MIN", "JSON_EXTRACT", "TOTAL", "SUM", "AVG", "ROUND",
+                                  "JSON_VALID", "JSON", "JSON_SET", "JSON_EACH", "NULLIF"):
                 end = _call_end(toks, nxt)
                 inner = toks[nxt + 1:end]
                 args = _split_args(inner)
 
                 def tr(arg):
-                    return _render_marked(self._rewrite(arg))
+                    return _render_marked(self._rewrite(arg, ddl))
                 rep = None
                 if up == "DATETIME":
                     rep = f"to_char({_timestamp(args, tr)}, {_TS_FMT})"
@@ -346,18 +868,51 @@ class Translator:
                 elif up == "INSTR":
                     rep = "STRPOS(" + ",".join(tr(a) for a in args) + ")"
                 elif up == "TOTAL":
-                    rep = "COALESCE(SUM(" + tr(args[0]) + "), 0.0)"
+                    rep = "COALESCE(SUM(" + self._agg_arg(args[0], tr) + "), 0.0)"
+                elif up in ("SUM", "AVG") and len(args) == 1 and _is_boolean(args[0]):
+                    # SUM(status='open'): SQLite counts the 1s; Postgres has
+                    # no sum(boolean) (SCALE-6). NULL stays NULL.
+                    rep = f"{t.text}({self._agg_arg(args[0], tr)})"
+                elif up in ("MAX", "MIN") and len(args) == 1 and _is_boolean(args[0]):
+                    rep = f"{t.text}({self._agg_arg(args[0], tr)})"
                 elif up == "GROUP_CONCAT":
                     sep = tr(args[1]) if len(args) > 1 else "','"
-                    rep = f"string_agg(CAST({tr(args[0]).strip()} AS text), {sep.strip()})"
+                    first = _significant(args[0])
+                    distinct = bool(first) and first[0].kind == "word" and first[0].upper == "DISTINCT"
+                    expr = tr(args[0][args[0].index(first[0]) + 1:] if distinct else args[0]).strip()
+                    # GROUP_CONCAT(DISTINCT x): the DISTINCT leads the
+                    # aggregate's argument list, outside the cast.
+                    rep = f"string_agg({'DISTINCT ' if distinct else ''}CAST({expr} AS text), {sep.strip()})"
                 elif up in ("MAX", "MIN") and len(args) >= 2:
-                    rep = ("GREATEST(" if up == "MAX" else "LEAST(") + ",".join(tr(a) for a in args) + ")"
+                    if ddl:
+                        rep = ("GREATEST(" if up == "MAX" else "LEAST(") + ",".join(tr(a) for a in args) + ")"
+                    else:
+                        # SQLite's scalar MAX(a, b) is NULL when any argument
+                        # is; GREATEST skips NULLs (SCALE-9). Each argument
+                        # appears once, so a parameter is bound once.
+                        vals = ", ".join(f"({tr(a).strip()})" for a in args)
+                        rep = (f"(SELECT CASE WHEN COUNT(_v) < COUNT(*) THEN NULL ELSE {up}(_v) END "
+                               f"FROM (VALUES {vals}) AS _m(_v))")
                 elif up == "JSON_EXTRACT":
-                    path = _literal(args[1]) if len(args) > 1 else None
-                    if path is None or not path.startswith("$"):
-                        raise TranslationError("json_extract with a path that is not a literal")
-                    keys = [k for k in re.split(r"[.\[\]]+", path[1:]) if k]
-                    rep = f"(CAST({tr(args[0]).strip()} AS jsonb) #>> '{{{','.join(keys)}}}')"
+                    rep = self._json_extract(args, tr, out, toks, end)
+                elif up == "NULLIF" and len(args) == 2 and _literal(args[1]) == "" and self._numeric_column(args[0]):
+                    # NULLIF(n, '') on a number column: Postgres cannot read
+                    # '' as a number (and such a column never holds one —
+                    # the copy stored those as NULL), so it is the column.
+                    rep = tr(args[0]).strip()
+                elif up == "ROUND" and len(args) == 2:
+                    # Postgres rounds to places only a numeric (round(double
+                    # precision, integer) does not exist); answered as a
+                    # float by the numeric loader, as SQLite's ROUND is.
+                    rep = f"ROUND(CAST(({tr(args[0]).strip()}) AS numeric), {tr(args[1]).strip()})"
+                elif up == "JSON_VALID" and len(args) == 1:
+                    rep = f"(CAST({tr(args[0]).strip()} AS text) IS JSON)"
+                elif up == "JSON" and len(args) == 1:
+                    rep = f"CAST(CAST({tr(args[0]).strip()} AS jsonb) AS text)"
+                elif up == "JSON_SET" and len(args) >= 3 and len(args) % 2 == 1:
+                    rep = self._json_set(args, tr)
+                elif up == "JSON_EACH":
+                    rep, end = self._json_each(args, tr, toks, end)
                 if rep is not None:
                     out.append(Tok("other", rep))
                     i = end + 1
@@ -370,7 +925,7 @@ class Translator:
                     i = nxt + 1
                     continue
                 if pat.kind == "param":
-                    out.append(Tok("other", f"NOT LIKE replace(replace({_P}, '*', '%'), '?', '_')"))
+                    out.append(Tok("other", f"NOT LIKE replace(replace({_P}, '*', '%'), '?', '_') ESCAPE ''"))
                     i = nxt + 1
                     continue
                 raise TranslationError("NOT GLOB with a pattern that is neither a literal nor a parameter")
@@ -384,7 +939,7 @@ class Translator:
                     i = nxt + 1
                     continue
                 if pat.kind == "param":
-                    out.append(Tok("other", f"LIKE replace(replace({_P}, '*', '%'), '?', '_')"))
+                    out.append(Tok("other", f"LIKE replace(replace({_P}, '*', '%'), '?', '_') ESCAPE ''"))
                     i = nxt + 1
                     continue
                 raise TranslationError("GLOB with a pattern that is neither a literal nor a parameter")
@@ -396,6 +951,120 @@ class Translator:
             i += 1
         return out
 
+    def _json_set(self, args, tr) -> str:
+        """json_set(doc, '$.a.b', v, …) -> nested jsonb_set, as text (the
+        column is TEXT). A json(x) value is inserted as JSON, anything else
+        as its text (SQLite would insert a bound integer as a number). The
+        parent object of each path must exist (jsonb_set creates only the
+        last key)."""
+        doc = f"CAST({tr(args[0]).strip()} AS jsonb)"
+        for k in range(1, len(args), 2):
+            path = _literal(args[k])
+            if path is None or not path.startswith("$"):
+                raise TranslationError("json_set with a path that is not a literal")
+            keys = [x for x in re.split(r"[.\[\]]+", path[1:]) if x]
+            vsig = _significant(args[k + 1])
+            if vsig and vsig[0].kind == "word" and vsig[0].upper == "JSON" and len(vsig) > 1 and vsig[1].text == "(":
+                arg = args[k + 1]
+                o = next(j for j, x in enumerate(arg) if x is vsig[1])
+                inner = arg[o + 1:_call_end(arg, o)]
+                val = f"CAST({tr(inner).strip()} AS jsonb)"
+            elif vsig and vsig[0].kind == "num" and len(vsig) == 1:
+                val = f"to_jsonb({vsig[0].text})"
+            else:
+                val = f"to_jsonb(CAST({tr(args[k + 1]).strip()} AS text))"
+            doc = f"jsonb_set({doc}, '{{{','.join(keys)}}}', {val}, true)"
+        return f"CAST({doc} AS text)"
+
+    def _json_each(self, args, tr, toks, end):
+        """json_each(doc[, '$.path']) alias -> the array's elements as text
+        rows (column `value`) — an object or a non-array is no rows, as the
+        app reads only arrays."""
+        doc = f"CAST({tr(args[0]).strip()} AS jsonb)"
+        if len(args) > 1:
+            path = _literal(args[1])
+            if path is None or not path.startswith("$"):
+                raise TranslationError("json_each with a path that is not a literal")
+            keys = [x for x in re.split(r"[.\[\]]+", path[1:]) if x]
+            doc = f"({doc} #> '{{{','.join(keys)}}}')"
+        n = _sig_index(toks, end, 1)
+        alias = "j"
+        if n is not None and toks[n].kind == "word" and toks[n].upper == "AS":
+            n = _sig_index(toks, n, 1)
+        if n is not None and toks[n].kind == "word" and toks[n].upper not in _SQL_KEYWORDS:
+            alias, end = toks[n].text, n
+        return f"jsonb_array_elements_text(cavnar_json_array({doc})) AS {alias}(value)", end
+
+    def _numeric_column(self, arg) -> bool:
+        sig = _significant(arg)
+        if not self._table or not sig or sig[-1].kind != "word" or \
+                not (len(sig) == 1 or (len(sig) == 3 and sig[1].text == ".")):
+            return False
+        types = self.types_lookup(self._table) or {}
+        typ = str(types.get(sig[-1].text) or types.get(sig[-1].text.lower()) or "").lower()
+        return any(k in typ for k in ("int", "real", "double", "numeric", "float"))
+
+    def _agg_arg(self, arg, tr) -> str:
+        """An aggregate's argument; a predicate counted as SQLite does —
+        1 / 0, NULL kept."""
+        text = tr(arg).strip()
+        return f"CAST(({text}) AS INTEGER)" if _is_boolean(arg) else text
+
+    def _json_extract(self, args, tr, out, toks, end) -> str:
+        """json_extract keeps SQLite's typed answer (SCALE-9): selected as a
+        column it is jsonb, which the driver hands back as the number /
+        string / object it holds; compared with a number it is that number
+        (NULL when it is not one); anywhere else, its text."""
+        path = _literal(args[1]) if len(args) > 1 else None
+        if path is None or not path.startswith("$"):
+            raise TranslationError("json_extract with a path that is not a literal")
+        keys = [k for k in re.split(r"[.\[\]]+", path[1:]) if k]
+        doc = f"CAST({tr(args[0]).strip()} AS jsonb)"
+        keypath = "'{" + ",".join(keys) + "}'"
+        text = f"({doc} #>> {keypath})"
+        prev = next((x for x in reversed(out) if x.kind not in ("ws", "comment")), None)
+        n = _sig_index(toks, end, 1)
+        nxt = toks[n] if n is not None else None
+        # A comparison with a number literal, on either side.
+        numeric = False
+        if nxt is not None and nxt.kind == "op" and nxt.text in _COMPARISON_OPS:
+            m = _sig_index(toks, n, 1)
+            numeric = m is not None and toks[m].kind == "num"
+        if prev is not None and prev.kind == "op" and prev.text in _COMPARISON_OPS:
+            before = [x for x in out if x.kind not in ("ws", "comment")]
+            numeric = numeric or (len(before) >= 2 and before[-2].kind == "num")
+        if numeric:
+            return (f"CAST(CASE WHEN jsonb_typeof({doc} #> {keypath}) = 'number' "
+                    f"THEN {doc} #>> {keypath} END AS double precision)")
+        select_item = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT")) or
+                                            (prev.kind == "op" and prev.text == ","))
+        ends_item = nxt is None or (nxt.kind == "op" and nxt.text == ",") or \
+            (nxt.kind == "word" and (nxt.upper in ("AS", "FROM") or nxt.upper not in _SQL_KEYWORDS))
+        if select_item and ends_item and self._in_select_list(out):
+            return f"({doc} #> {keypath})"
+        return text
+
+    @staticmethod
+    def _in_select_list(out) -> bool:
+        """True when the tokens so far end inside a SELECT's column list
+        (the nearest unclosed SELECT has no FROM yet, at this depth)."""
+        depth = 0
+        for x in reversed(out):
+            if x.kind == "op" and x.text == ")":
+                depth += 1
+            elif x.kind == "op" and x.text == "(":
+                if depth == 0:
+                    return False            # inside a call's arguments
+                depth -= 1
+            elif depth == 0 and x.kind == "word":
+                if x.upper == "SELECT":
+                    return True
+                if x.upper in ("FROM", "WHERE", "SET", "VALUES", "ON", "HAVING", "BY"):
+                    return False
+        return False
+
+    # ── the statement ───────────────────────────────────────────────────────
+
     def translate(self, sql) -> str:
         sql = re.sub(r"\bNOT\s+GLOB\b", "NOTGLOB", sql or "", flags=re.I)
         toks = tokenize(sql)
@@ -404,28 +1073,108 @@ class Translator:
             return sql
         head = [t.upper for t in sig[:4] if t.kind == "word"]
         if head[:1] == ["CREATE"] and "TABLE" in head:
-            return self.translate_ddl(sql)
-        toks = self._rewrite(toks)
+            # Sent with a parameter tuple like every statement: a literal %
+            # (a default's strftime format) is doubled.
+            return self.translate_ddl(sql).replace("%", "%%")
+        if head[:2] == ["ALTER", "TABLE"] and any(t.kind == "word" and t.upper == "ADD" for t in sig):
+            # A column added later gets the type CREATE TABLE would have
+            # given it: BLOB was refused ("type blob does not exist" — and
+            # the boot tolerated it as a missing table), REAL was Postgres's
+            # 4-byte float, INTEGER its 4-byte int.
+            return _column_types(_render(self._rewrite(tokenize(sql), ddl=True))).replace("%", "%%")
+        is_index = head[:1] == ["CREATE"] and "INDEX" in head
+        self._table = _main_table(_significant(toks))
+        toks = self._collate_nocase(toks)
+        toks = self._is_distinct(toks)
+        toks = self._truthy_params(toks)
+        toks = self._group_bare(toks)
+        toks = self._having_alias(toks)
+        toks = self._case_bool(toks)
+        toks = self._qualify_upsert(toks)
+        toks = self._like_escape(toks)
+        toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
+        toks = self._rewrite(toks, ddl=is_index)
         table = _main_table(_significant(toks))
         toks = self._statement(toks, table)
         out = []
-        for t in toks:
+        for k, t in enumerate(toks):
             if t.kind == "param":
                 out.append("%s")
             elif t.kind in ("str", "other", "op", "comment", "dollar"):
                 out.append(t.text.replace("%", "%%").replace(_P, "%s"))
-            elif t.kind == "word" and t.upper == "LIKE":
-                out.append("ILIKE")
             elif t.kind == "word" and t.upper == "ROWID":
-                pk = self.pk_lookup(table) if table else None
-                out.append(pk[0] if pk and len(pk) == 1 else "ctid")
+                p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
+                prev = toks[p] if p is not None else None
+                nxt = toks[n] if n is not None else None
+                if prev is not None and prev.kind == "word" and prev.upper == "AS":
+                    out.append(t.text)                 # an alias named rowid stays rowid
+                    continue
+                owner = table
+                if prev is not None and prev.text == ".":
+                    q = _sig_index(toks, p, -1)
+                    if q is not None:
+                        owner = _alias_table(_significant(toks), toks[q].text) or table
+                pk = self.pk_lookup(owner) if owner else None
+                have = [c.lower() for c in (self.columns_lookup(owner) or [])] if owner else []
+                col = "rowid" if "rowid" in have else (pk[0] if pk and len(pk) == 1 else "ctid")
+                # Selected bare, it is still read back as row["rowid"].
+                selected = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT"))
+                                                 or (prev.kind == "op" and prev.text == ","))
+                ends = nxt is None or (nxt.kind == "op" and nxt.text == ",") or \
+                    (nxt.kind == "word" and nxt.upper == "FROM")
+                top = sum(1 if x.text == "(" else -1 if x.text == ")" else 0
+                          for x in toks[:k] if x.kind == "op") == 0
+                out.append(f"{col} AS rowid" if selected and ends and top and self._in_select_list(toks[:k])
+                           else col)
             else:
                 out.append(t.text)
         return "".join(out).replace("LIMIT -1", "LIMIT ALL")
 
+    def _index_nulls(self, toks) -> list:
+        """CREATE INDEX: each nullable column in SQLite's NULL order (NULLS
+        FIRST ascending, LAST descending) — the same clause _order_nulls
+        gives a query's ORDER BY, so the index serves it."""
+        sig = _significant(toks)
+        on = next((k for k, t in enumerate(sig) if t.kind == "word" and t.upper == "ON"), None)
+        if on is None or on + 2 >= len(sig):
+            return toks
+        table = sig[on + 1].text.strip('"').lower()
+        # The column list's own parentheses, in the full token list.
+        start = next((k for k, t in enumerate(toks) if t is sig[on + 2]), None)
+        if start is None or toks[start].text != "(":
+            return toks
+        end = _call_end(toks, start)
+        items = _split_args(toks[start + 1:end])
+        rebuilt = []
+        for n, item in enumerate(items):
+            if n:
+                rebuilt.append(Tok("op", ","))
+            rebuilt.extend(self._order_item(list(item), {table}, False))
+        return toks[:start + 1] + rebuilt + toks[end:]
+
+    def _arbiter(self, table, cols, part):
+        """The unique key an INSERT OR REPLACE conflicts on: the first whose
+        columns the INSERT names (the primary key first) — SQLite's REPLACE
+        resolves any of them, Postgres needs it named."""
+        keys = list(self.unique_lookup(table) or [])
+        pk = self.pk_lookup(table)
+        if pk and list(pk) not in [list(k) for k in keys]:
+            keys.insert(0, list(pk))
+        named = {c.lower() for c in cols}
+        for k in keys:
+            k = [c for c in k]
+            if part and part not in k:
+                k = k + [part]
+            if all(c.lower() in named for c in k):
+                return k
+        if pk:
+            return list(pk) + ([part] if part and part not in pk else [])
+        return None
+
     def _statement(self, toks, table) -> list:
-        """INSERT OR IGNORE / OR REPLACE / REPLACE INTO, and the partition
-        column on an upsert's conflict target."""
+        """INSERT OR IGNORE / OR REPLACE / REPLACE INTO, a plain INSERT into
+        a table declared ON CONFLICT REPLACE, and the partition column on an
+        upsert's conflict target."""
         sig_idx = [i for i, t in enumerate(toks) if t.kind not in ("ws", "comment")]
         if not sig_idx:
             return toks
@@ -438,6 +1187,8 @@ class Translator:
         elif first == "REPLACE":
             mode = "REPLACE"
             toks[sig_idx[0]] = Tok("word", "INSERT")
+        elif first == "INSERT" and (table or "") in CONFLICT_REPLACE:
+            mode = "DECLARED"
         part = PARTITIONED.get(table or "")
         if part:
             toks = _add_conflict_column(toks, part)
@@ -452,42 +1203,111 @@ class Translator:
         if mode == "IGNORE":
             clause = " ON CONFLICT DO NOTHING "
         else:
-            pk = self.pk_lookup(table)
-            if not pk:
-                raise TranslationError(f"INSERT OR REPLACE into {table!r}: its primary key is unknown")
-            cols = _insert_columns(toks) or self.columns_lookup(table) or []
-            if part and part not in pk:
-                pk = list(pk) + [part]
-            upd = [c for c in cols if c not in pk]
-            clause = (f" ON CONFLICT ({', '.join(pk)}) DO "
+            named = _insert_columns(toks) or self.columns_lookup(table) or []
+            if mode == "DECLARED":
+                key = list(CONFLICT_REPLACE[table])
+            else:
+                key = self._arbiter(table, named, part)
+                if not key:
+                    raise TranslationError(f"INSERT OR REPLACE into {table!r}: its primary key is unknown")
+            pk = [c.lower() for c in (self.pk_lookup(table) or [])]
+            keyl = {c.lower() for c in key}
+            # REPLACE deletes the row it collides with and inserts this one:
+            # every column takes the new row's value (EXCLUDED holds the
+            # defaults of the ones not named), the key and an unnamed
+            # primary key aside.
+            every = self.columns_lookup(table) or named
+            namedl = {c.lower() for c in named}
+            upd = [c for c in every if c.lower() not in keyl and not (c.lower() in pk and c.lower() not in namedl)]
+            clause = (f" ON CONFLICT ({', '.join(key)}) DO "
                       + (("UPDATE SET " + ", ".join(f"{c} = EXCLUDED.{c}" for c in upd)) if upd else "NOTHING") + " ")
         return toks[:at] + [Tok("other", clause)] + toks[at:]
 
     def translate_ddl(self, sql) -> str:
         """CREATE TABLE in SQLite's types -> Postgres's."""
-        toks = self._rewrite(tokenize(sql))
-        text = _render(toks)
-        text = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
-                      "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", text, flags=re.I)
-        text = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\b(?!\s*\()",
-                      "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", text, flags=re.I)
-        text = re.sub(r"\bAUTOINCREMENT\b", "", text, flags=re.I)
-        text = re.sub(r"\bINTEGER\b", "BIGINT", text, flags=re.I)
-        text = re.sub(r"\bREAL\b", "DOUBLE PRECISION", text, flags=re.I)
-        text = re.sub(r"\bBLOB\b", "BYTEA", text, flags=re.I)
-        text = re.sub(r"\bCOLLATE\s+NOCASE\b", "", text, flags=re.I)
+        toks = self._rewrite(tokenize(sql), ddl=True)
+        text = _column_types(_render(toks))
+        # SQLite's constraint conflict clause; a REPLACE one is carried by
+        # CONFLICT_REPLACE into every INSERT on the table.
+        text = re.sub(r"\bON\s+CONFLICT\s+(REPLACE|IGNORE|ABORT|FAIL|ROLLBACK)\b", "", text, flags=re.I)
         text = re.sub(r"\)\s*WITHOUT\s+ROWID\s*$", ")", text.strip(), flags=re.I)
-        return text
+        return _with_rowid(text)
+
+
+ROWID_COLUMN = "rowid BIGINT GENERATED BY DEFAULT AS IDENTITY UNIQUE"
+
+
+def _column_types(text) -> str:
+    """SQLite's column types in Postgres's (CREATE TABLE's and ALTER TABLE
+    ADD COLUMN's alike)."""
+    text = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+                  "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", text, flags=re.I)
+    text = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\b(?!\s*\()",
+                  "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", text, flags=re.I)
+    text = re.sub(r"\bAUTOINCREMENT\b", "", text, flags=re.I)
+    text = re.sub(r"\bINTEGER\b", "BIGINT", text, flags=re.I)
+    text = re.sub(r"\bREAL\b", "DOUBLE PRECISION", text, flags=re.I)
+    text = re.sub(r"\bBLOB\b", "BYTEA", text, flags=re.I)
+    return re.sub(r"\bCOLLATE\s+NOCASE\b", "", text, flags=re.I)
+
+
+def _with_rowid(ddl) -> str:
+    """A table with no integer primary key gains a `rowid` column on
+    Postgres. SQLite gives every such table a rowid that never changes for
+    the life of a row, and the app reads and writes rows by it (people's
+    merge and undo, the name-keyed stores); ctid, its stand-in, moves on
+    every UPDATE, so an undo recorded before a fold restored the wrong row,
+    or none (found running the suite on Postgres, 10/12/26). The column is
+    left out of a `SELECT *` that does not name rowid (PgConnection), as
+    SQLite leaves it out."""
+    if re.search(r"GENERATED\s+BY\s+DEFAULT\s+AS\s+IDENTITY\s+PRIMARY\s+KEY", ddl, re.I) or \
+            re.search(r"\bAS\s+SELECT\b", ddl, re.I):
+        return ddl
+    toks = tokenize(ddl)
+    open_i = next((i for i, t in enumerate(toks) if t.kind == "op" and t.text == "("), None)
+    if open_i is None:
+        return ddl
+    close_i = _call_end(toks, open_i)
+    names = {(_significant(a)[0].text.strip('"').lower() if _significant(a) else "")
+             for a in _split_args(toks[open_i + 1:close_i])}
+    if "rowid" in names:
+        return ddl
+    return _render(toks[:close_i]).rstrip() + ",\n    " + ROWID_COLUMN + "\n" + _render(toks[close_i:])
 
 
 def _main_table(sig):
     """The table a statement writes or reads first (INSERT INTO t, UPDATE t,
-    DELETE FROM t, … FROM t)."""
+    DELETE FROM t, … FROM t) — at the statement's own level first: a
+    subquery in the select list (SELECT CASE WHEN EXISTS (SELECT … FROM
+    rec_events) … FROM rec_instances) does not name it."""
+    first, depth = None, 0
     for i, t in enumerate(sig):
-        if t.kind == "word" and t.upper in ("INTO", "UPDATE", "FROM") and i + 1 < len(sig):
+        if t.kind == "op" and t.text == "(":
+            depth += 1
+        elif t.kind == "op" and t.text == ")":
+            depth -= 1
+        elif t.kind == "word" and t.upper in ("INTO", "UPDATE", "FROM") and i + 1 < len(sig):
             nxt = sig[i + 1]
             if nxt.kind in ("word", "qid") and nxt.upper not in ("SELECT",):
-                return nxt.text.strip('"').lower()
+                name = nxt.text.strip('"').lower()
+                if depth == 0:
+                    return name
+                first = first or name
+    return first
+
+
+def _alias_table(sig, alias):
+    """The table `alias` names (FROM t alias / JOIN t AS alias), or None."""
+    a = alias.strip('"').lower()
+    for i, t in enumerate(sig):
+        if t.kind == "word" and t.upper in ("FROM", "JOIN", "UPDATE", "INTO") and i + 2 < len(sig):
+            tbl, nxt = sig[i + 1], sig[i + 2]
+            if nxt.kind == "word" and nxt.upper == "AS" and i + 3 < len(sig):
+                nxt = sig[i + 3]
+            if tbl.kind in ("word", "qid") and nxt.kind in ("word", "qid") and nxt.text.strip('"').lower() == a:
+                return tbl.text.strip('"').lower()
+            if tbl.kind in ("word", "qid") and tbl.text.strip('"').lower() == a:
+                return a
     return None
 
 
@@ -614,15 +1434,179 @@ def _map_error(e):
             "NotNullViolation" in name or "CheckViolation" in name:
         return sqlite3.IntegrityError(str(e))
     msg = str(e)
-    if "UndefinedTable" in name or "does not exist" in msg:
+    # SQLite's own wording first, so `"duplicate column" in str(e)` and
+    # `"no such table" in str(e)` tests across the app keep meaning what
+    # they meant; Postgres's message follows.
+    if "DuplicateColumn" in name:
+        return sqlite3.OperationalError(f"duplicate column name: {msg}")
+    if "DuplicateTable" in name or "DuplicateObject" in name:
+        return sqlite3.OperationalError(f"table already exists: {msg}")
+    if "UndefinedColumn" in name:
+        return sqlite3.OperationalError(f"no such column: {msg}")
+    if "UndefinedTable" in name or re.search(r"\brelation \S+ does not exist", msg):
         return sqlite3.OperationalError(f"no such table or column: {msg}")
     return sqlite3.OperationalError(msg)
+
+
+# ── statement-level atomicity (SCALE-5, SCALE-8) ────────────────────────────
+#
+# SQLite undoes a failed statement and leaves the transaction as it was; the
+# app relies on that everywhere — init_db's "already applied" ALTERs, the
+# try-INSERT-then-UPDATE idiom, `except sqlite3.OperationalError: pass`
+# around an optional table. Postgres aborts the whole transaction on any
+# error ("current transaction is aborted, commands ignored until end of
+# transaction block"), so the first tolerated error broke every statement
+# after it — the cutover's first boot failed in init_db (blind re-audit
+# 10/11/26 SCALE-5). Here every statement inside an open transaction runs
+# under a savepoint, sent in one round trip with it (psycopg's pipeline
+# mode): on success the savepoint is released, on failure the transaction
+# is rolled back to it and stays usable — SQLite's rule, exactly. A
+# statement that opens the transaction needs no savepoint: on failure the
+# (empty) transaction is rolled back.
+
+_STMT_SAVEPOINT = "cavnar_stmt"
+_TX_CONTROL = re.compile(r"^\s*(SAVEPOINT|RELEASE|ROLLBACK\s+TO)\b", re.I)
+# Schema changes: what the catalog cached (columns, keys, NOT NULLs) and
+# every translation made from it are forgotten after one.
+_DDL = re.compile(r"^\s*(CREATE|ALTER|DROP)\b", re.I)
+
+
+class TransactionLost(Exception):
+    """The transaction failed before this statement and was rolled back."""
+
+
+def _tx_status(raw, hint):
+    """"idle" / "intrans" / "inerror" for a psycopg connection; `hint`
+    (the wrapper's own bookkeeping) for a driver that cannot say."""
+    info = getattr(raw, "info", None)
+    st = getattr(info, "transaction_status", None)
+    if st is None:
+        return "intrans" if hint else "idle"
+    name = getattr(st, "name", str(st)).upper()
+    if name == "INERROR":
+        return "inerror"
+    return "intrans" if name in ("INTRANS", "ACTIVE") else "idle"
+
+
+def _pipeline_ok(raw):
+    try:
+        import psycopg
+        return hasattr(raw, "pipeline") and isinstance(raw, psycopg.Connection) and psycopg.Pipeline.is_supported()
+    except Exception:
+        return False
+
+
+def run_atomic(raw, sql, params=(), in_tx_hint=False):
+    """Execute one statement on the DB-API connection `raw` with SQLite's
+    statement-level atomicity (above). Returns the raw cursor holding the
+    result; raises the driver's error, the transaction intact."""
+    status = _tx_status(raw, in_tx_hint)
+    if status == "inerror":
+        # Only reachable when something drove the raw connection itself and
+        # left it failed: the transaction is already lost. Said once, loudly
+        # (never silently continued as if its earlier writes stood); the
+        # connection is clean for the caller's next statement.
+        _quiet_rollback(raw)
+        raise TransactionLost("the open transaction had already failed and was rolled back")
+    if status == "idle" or _TX_CONTROL.match(sql):
+        cur = raw.cursor()
+        try:
+            cur.execute(sql, params)
+        except Exception:
+            if status == "idle":
+                _quiet_rollback(raw)
+            raise
+        return cur
+    if _pipeline_ok(raw):
+        try:
+            with raw.pipeline():
+                cur = raw.cursor()
+                sp = raw.cursor()
+                _control(sp, f"SAVEPOINT {_STMT_SAVEPOINT}")
+                cur.execute(sql, params)
+                _control(sp, f"RELEASE SAVEPOINT {_STMT_SAVEPOINT}")
+            return cur
+        except Exception:
+            _undo_statement(raw)
+            raise
+    cur = raw.cursor()
+    sp = raw.cursor()
+    _control(sp, f"SAVEPOINT {_STMT_SAVEPOINT}")
+    try:
+        cur.execute(sql, params)
+    except Exception:
+        _undo_statement(raw)
+        raise
+    _control(sp, f"RELEASE SAVEPOINT {_STMT_SAVEPOINT}")
+    return cur
+
+
+def _control(cur, sql):
+    """A savepoint statement, never server-prepared: psycopg prepares a
+    statement after a few runs, and one prepared inside a pipeline that a
+    failed statement aborted does not exist afterwards ("prepared statement
+    _pg3_5 does not exist") — the undo itself then failed and the whole
+    transaction was lost."""
+    try:
+        cur.execute(sql, prepare=False)
+    except TypeError:                 # a DB-API driver without `prepare`
+        cur.execute(sql)
+
+
+def run_atomic_many(raw, sql, rows, in_tx_hint=False):
+    """run_atomic for executemany: the whole batch under one savepoint
+    inside a transaction (one round trip with psycopg's pipelined
+    executemany), rolled back to it as one unit on a failure."""
+    status = _tx_status(raw, in_tx_hint)
+    if status == "inerror":
+        _quiet_rollback(raw)
+        raise TransactionLost("the open transaction had already failed and was rolled back")
+    cur = raw.cursor()
+    if status == "idle":
+        try:
+            cur.executemany(sql, rows)
+        except Exception:
+            _quiet_rollback(raw)
+            raise
+        return cur
+    sp = raw.cursor()
+    _control(sp, f"SAVEPOINT {_STMT_SAVEPOINT}")
+    try:
+        cur.executemany(sql, rows)
+    except Exception:
+        _undo_statement(raw)
+        raise
+    _control(sp, f"RELEASE SAVEPOINT {_STMT_SAVEPOINT}")
+    return cur
+
+
+def _undo_statement(raw):
+    """Back to the statement's savepoint (the transaction before it)."""
+    try:
+        c = raw.cursor()
+        _control(c, f"ROLLBACK TO SAVEPOINT {_STMT_SAVEPOINT}")
+        _control(c, f"RELEASE SAVEPOINT {_STMT_SAVEPOINT}")
+    except Exception:
+        # The savepoint itself is gone (the connection broke): nothing of
+        # the transaction can be kept.
+        _quiet_rollback(raw)
+
+
+def _quiet_rollback(raw):
+    try:
+        raw.rollback()
+    except Exception:
+        pass
 
 
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+(\w+)\s*(?:\(\s*['\"]?(\w+)['\"]?\s*\)|=\s*(\S+))?\s*;?\s*$", re.I)
 _BEGIN = re.compile(r"^\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*;?\s*$", re.I)
 _TRIGGER = re.compile(r"^\s*(CREATE|DROP)\s+TRIGGER\b", re.I)
 _END = re.compile(r"^\s*(COMMIT|END|ROLLBACK)(\s+TRANSACTION)?\s*;?\s*$", re.I)
+# Called with every statement before it runs (models._note_write: a write
+# drops what an open read scope froze of its table — blind re-audit 10/11/26
+# SCALE-24), as the SQLite connection does.
+WRITE_HOOKS = []
 
 
 class PgConnection:
@@ -633,7 +1617,8 @@ class PgConnection:
         self._raw = raw
         self._closed = False
         self._catalog = catalog or Catalog(raw)
-        self._tr = Translator(self._catalog.primary_key, self._catalog.columns)
+        self._tr = Translator(self._catalog.primary_key, self._catalog.columns, self._catalog.notnull,
+                              self._catalog.unique_keys, self._catalog.types)
         self.row_factory = None
         self.isolation_level = ""
         self.text_factory = str
@@ -665,10 +1650,15 @@ class PgConnection:
             cur._load()
             return True
         if _TRIGGER.match(sql):
-            # SQLite's triggers (the boot's tracker change stamps, the intel
-            # features version) are ported as plpgsql once, by the copy
-            # (migrations/postgres/0002_triggers.sql); the boot's own
-            # DROP/CREATE TRIGGER is not Postgres's syntax.
+            # SQLite's triggers (the tracker change stamps, the intel
+            # features version, the append-only ledgers) are not Postgres's
+            # syntax. A boot's CREATE TRIGGER installs that table's plpgsql
+            # form instead (pg_copy.trigger_statements — what the copy
+            # installs too), so a table the boot creates on Postgres gets
+            # its trigger exactly where SQLite's would.
+            m = re.match(r"^\s*CREATE\s+TRIGGER\b.*?\bON\s+\"?(\w+)", sql, re.I | re.S)
+            if m:
+                self._install_triggers_for(m.group(1).lower())
             cur._load()
             return True
         m = _PRAGMA.match(sql)
@@ -698,51 +1688,182 @@ class PgConnection:
         return False
 
     def _run(self, sql, params, cur):
+        # Always a tuple: every literal % was doubled, so the query is
+        # always read for placeholders (never sent with params=None).
         try:
-            raw = self._raw.cursor()
-            # Always a tuple: every literal % was doubled, so the query is
-            # always read for placeholders (never sent with params=None).
-            raw.execute(sql, tuple(params or ()))
-            self._in_tx = True
-            rows = raw.fetchall() if raw.description else []
-            cur._load(rows, raw.description)
-            cur.rowcount = raw.rowcount
-            return raw
+            raw = run_atomic(self._raw, sql, tuple(params or ()), self._in_tx)
         except Exception as e:
             raise _map_error(e) from e
+        self._in_tx = True
+        rows = raw.fetchall() if raw.description else []
+        desc = raw.description
+        if desc and "rowid" not in sql.lower():
+            # A `SELECT *` over a table with the rowid column (_with_rowid)
+            # reads as SQLite's would: without it.
+            drop = [i for i, d in enumerate(desc) if d[0] == "rowid"]
+            if drop:
+                desc = [d for i, d in enumerate(desc) if i not in drop]
+                rows = [tuple(v for i, v in enumerate(r) if i not in drop) for r in rows]
+        cur._load(rows, desc)
+        cur.rowcount = raw.rowcount
+        if _DDL.match(sql):
+            Catalog.forget()
+        return raw
 
     def execute(self, sql, params=(), _cursor=None):
         if self._closed:
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        for hook in WRITE_HOOKS:
+            hook(sql)
         cur = _cursor or PgCursor(self, None)
         if self._special(sql, cur):
             return cur
+        if _CREATE_TABLE.match(sql):
+            return self._create_table(sql, cur)
+        m = _UPDATE_OR.match(sql)
+        if m:
+            return self._update_or_ignore(m, sql, params, cur)
         try:
-            text = self._tr.translate(sql)
+            text, returning = _translate_cached(self, sql)
         except TranslationError as e:
             raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+        self._run(text, params, cur)
+        if returning:
+            got = cur.fetchone()
+            cur.lastrowid = got[0] if got else None
+            cur._rows, cur._pos = [], 0
+        return cur
+
+    def _update_or_ignore(self, m, sql, params, cur):
+        """SQLite's UPDATE OR IGNORE: rows the change would make collide
+        with another on a unique key are left as they are, the rest
+        updated. Postgres has no such clause, so each matching row is
+        updated on its own, a collision skipped (statement-atomic per row).
+        UPDATE OR REPLACE (delete the row collided with) has no faithful
+        row-by-row form and is refused — its call sites say what to delete."""
+        if m.group(1).upper() != "IGNORE":
+            raise sqlite3.OperationalError("not translatable to Postgres: UPDATE OR REPLACE")
+        table = m.group(2)
+        toks = tokenize(sql)
+        where = next((i for i, t in enumerate(toks) if t.kind == "word" and t.upper == "WHERE"), None)
+        set_at = next(i for i, t in enumerate(toks) if t.kind == "word" and t.upper == "SET")
+        set_part = _render(toks[set_at + 1:where] if where is not None else toks[set_at + 1:])
+        n_set = sum(1 for t in toks[set_at + 1:(where if where is not None else len(toks))] if t.kind == "param")
+        params = tuple(params or ())
+        cond = _render(toks[where + 1:]) if where is not None else "1=1"
+        ids = [r[0] for r in self.execute(f"SELECT ctid FROM {table} WHERE {cond}", params[n_set:]).fetchall()]
+        n = 0
+        for ctid in ids:
+            try:
+                n += self.execute(f"UPDATE {table} SET {set_part} WHERE ctid = CAST(? AS tid)",
+                                  params[:n_set] + (ctid,)).rowcount or 0
+            except sqlite3.IntegrityError:
+                continue
+        cur._load()
+        cur.rowcount = n
+        return cur
+
+    def _final_text(self, sql):
+        """(the statement in Postgres's SQL, whether it carries a RETURNING
+        of the integer key the wrapper added for `lastrowid`)."""
+        text = self._tr.translate(sql)
         sig = _significant(tokenize(text))
-        is_insert = bool(sig) and sig[0].upper == "INSERT"
-        if is_insert and not any(t.kind == "word" and t.upper == "RETURNING" for t in sig):
+        if bool(sig) and sig[0].upper == "INSERT" and \
+                not any(t.kind == "word" and t.upper == "RETURNING" for t in sig):
             table = _main_table(sig)
             pk = self._catalog.primary_key(table) if table else None
             if pk and len(pk) == 1 and self._catalog.is_integer(table, pk[0]):
-                text = text.rstrip().rstrip(";") + f" RETURNING {pk[0]}"
-                self._run(text, params, cur)
-                got = cur.fetchone()
-                cur.lastrowid = got[0] if got else None
-                cur._rows, cur._pos = [], 0
-                return cur
-        self._run(text, params, cur)
+                return text.rstrip().rstrip(";") + f" RETURNING {pk[0]}", True
+        return text, False
+
+    def _create_table(self, sql, cur):
+        """A boot's CREATE TABLE. SQLite takes a REFERENCES to a table not
+        created yet (team_messages -> users, which init_auth creates after
+        init_db); Postgres refuses it. So a new table is created without its
+        foreign keys, and each is added — named, once — as soon as the table
+        it points at exists (as the copy adds them after the rows: pg_copy.
+        table_ddl)."""
+        import pg_copy
+        m = _CREATE_TABLE.match(sql)
+        name = m.group(2).strip('"').lower()
+        if self._exists(name):
+            if not m.group(1):
+                raise sqlite3.OperationalError(f"table {name} already exists")
+            cur._load()
+            return cur                            # IF NOT EXISTS: nothing to do
+        pre, post = pg_copy.table_ddl(name, sql)
+        for stmt in pre:
+            self._run(stmt.replace("%", "%%"), (), cur)
+        for fk in post:
+            _PENDING_FKS.setdefault(self._catalog.db_key, {})[fk] = name
+        self._add_ready_foreign_keys()
+        cur._load()
         return cur
 
+    def _exists(self, table):
+        row = run_atomic(self._raw, "SELECT to_regclass(%s) IS NOT NULL", (table,),
+                         _tx_status(self._raw, self._in_tx) != "idle").fetchone()
+        self._in_tx = True
+        return bool(row and row[0])
+
+    def _add_ready_foreign_keys(self):
+        pending = _PENDING_FKS.get(self._catalog.db_key) or {}
+        for fk, table in list(pending.items()):
+            m = re.search(r"\bREFERENCES\s+\"?(\w+)", fk, re.I)
+            if not m or not self._exists(m.group(1).lower()):
+                continue
+            pending.pop(fk, None)
+            cname = "fk_" + hashlib.blake2b(fk.encode(), digest_size=6).hexdigest()
+            stmt = fk.replace(" ADD FOREIGN KEY", f" ADD CONSTRAINT {cname} FOREIGN KEY", 1)
+            try:
+                self._run(stmt, (), PgCursor(self, None))
+            except sqlite3.Error:
+                # A row already points at nothing, or it exists: the table
+                # works without it, as SQLite's did with foreign keys off.
+                pass
+
     def executemany(self, sql, seq):
+        """One statement for many parameter rows, sent as ONE batch
+        (psycopg's executemany, pipelined: a round trip for the whole set,
+        not one a row — people_nightly's and the queue's batched writes were
+        a round trip per row on Postgres). Statement-atomic like execute: a
+        row that fails undoes the whole call, the transaction kept. A
+        statement this layer rewrites itself (UPDATE OR IGNORE, a CREATE
+        TABLE, a PRAGMA) runs row by row as before."""
         cur = PgCursor(self, None)
-        total = 0
-        for params in seq:
-            self.execute(sql, params, _cursor=cur)
-            total += max(0, cur.rowcount or 0)
-        cur.rowcount = total
+        rows = [tuple(p or ()) for p in seq]
+        if self._closed:
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        for hook in WRITE_HOOKS:
+            hook(sql)
+        if not rows:
+            cur.rowcount = 0
+            return cur
+        if _UPDATE_OR.match(sql) or _CREATE_TABLE.match(sql) or _PRAGMA.match(sql) or _BEGIN.match(sql) \
+                or _END.match(sql) or _TRIGGER.match(sql):
+            total = 0
+            for params in rows:
+                self.execute(sql, params, _cursor=cur)
+                total += max(0, cur.rowcount or 0)
+            cur.rowcount = total
+            return cur
+        try:
+            text = _translate_cached(self, sql)[0]
+        except TranslationError as e:
+            raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+        # The RETURNING _final_text adds for lastrowid has no use here
+        # (sqlite3's executemany has no lastrowid either).
+        text = re.sub(r"\s+RETURNING\s+\w+\s*$", "", text) if text.rstrip().upper().startswith("INSERT") \
+            and not re.search(r"\bRETURNING\b", sql, re.I) else text
+        try:
+            raw = run_atomic_many(self._raw, text, rows, self._in_tx)
+        except Exception as e:
+            raise _map_error(e) from e
+        self._in_tx = True
+        cur._load()
+        cur.rowcount = raw.rowcount if raw.rowcount is not None else -1
+        if _DDL.match(sql):
+            Catalog.forget()
         return cur
 
     def executescript(self, script):
@@ -770,8 +1891,32 @@ class PgConnection:
         self._closed = True
         _release(self)
 
-    def create_function(self, *a, **k):
-        raise sqlite3.NotSupportedError("custom SQL functions are SQLite-only")
+    def _install_triggers_for(self, table):
+        import pg_copy
+        for stmt in pg_copy.trigger_statements(self):
+            if stmt.startswith("CREATE OR REPLACE FUNCTION") or f" ON {table} " in stmt + " ":
+                self.execute_native(stmt)
+
+    def execute_native(self, sql, params=()):
+        """A statement in Postgres's own SQL, sent as written (no
+        translation, no TRIGGER/PRAGMA handling) — the boot's plpgsql
+        triggers and the compatibility view. Statement-atomic as execute."""
+        if self._closed:
+            raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+        cur = PgCursor(self, None)
+        # Parameters or not, the driver reads % as a placeholder: a literal
+        # one is doubled when there are none to bind.
+        self._run(sql if params else sql.replace("%", "%%"), params, cur)
+        return cur
+
+    def create_function(self, name, *a, **k):
+        """A Python function SQLite calls from SQL. The ones the app uses
+        exist on Postgres as SQL functions (SQL_PORTED_FUNCTIONS, created by
+        migrations/postgres/0000_sqlite_compat.sql): nothing to register.
+        Any other cannot run on Postgres and says so."""
+        if str(name).lower() in SQL_PORTED_FUNCTIONS:
+            return None
+        raise sqlite3.NotSupportedError(f"custom SQL function {name!r} has no Postgres form")
 
     def __enter__(self):
         return self
@@ -782,6 +1927,114 @@ class PgConnection:
         else:
             self.rollback()
         return False
+
+
+# Translations, per database and statement text: the app runs the same few
+# thousand statements over and over, and a translation is a tokenize plus
+# several passes. Cleared with the catalog (after DDL).
+_TRANSLATIONS = {}
+_TRANSLATIONS_MAX = 8192
+_tr_lock = threading.Lock()
+
+
+def _translate_cached(conn, sql):
+    key = (conn._catalog.db_key, sql)
+    hit = _TRANSLATIONS.get(key)
+    if hit is not None:
+        return hit
+    out = conn._final_text(sql)
+    with _tr_lock:
+        if len(_TRANSLATIONS) >= _TRANSLATIONS_MAX:
+            _TRANSLATIONS.clear()
+        _TRANSLATIONS[key] = out
+    return out
+
+
+_UPDATE_OR = re.compile(r"^\s*UPDATE\s+OR\s+(IGNORE|REPLACE)\s+(\"?[A-Za-z_]\w*\"?)\s+SET\b", re.I)
+
+# Foreign keys of tables created before the table they point at, per
+# database: {ALTER TABLE … ADD FOREIGN KEY …: table}.
+_PENDING_FKS = {}
+_CREATE_TABLE = re.compile(r"^\s*CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?(\"?[A-Za-z_]\w*\"?)\s*\(", re.I)
+
+
+def _forget_translations():
+    with _tr_lock:
+        _TRANSLATIONS.clear()
+
+
+# ── per-resource write locks (SCALE-12) ────────────────────────────────────
+#
+# `BEGIN IMMEDIATE` is SQLite's one writer; on Postgres the dialect layer
+# keeps that meaning with ONE advisory lock (WRITE_LOCK_KEY) — so every job
+# claim, enqueue, model-gateway reservation and rate check serialised
+# platform-wide, SQLite's ceiling kept exactly where Postgres should remove
+# it. The hot paths name what they serialise instead: begin_write(conn,
+# "jobs", grp) takes the lock of that resource only (SQLite: BEGIN
+# IMMEDIATE, as before). The other BEGIN IMMEDIATE sites keep the one lock.
+
+def resource_key(*resource) -> int:
+    """A stable signed 64-bit advisory-lock key for `resource` (the same in
+    every process: Python's hash() is salted per process)."""
+    text = "|".join(str(r) for r in resource)
+    return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "big", signed=True)
+
+
+def begin_write(conn, *resource, lock_now=True):
+    """Open a write transaction for `resource`. SQLite: BEGIN IMMEDIATE (the
+    whole database, as ever). Postgres: a transaction holding the advisory
+    lock of `resource` alone — or none yet with lock_now=False, the caller
+    then taking lock(conn, …) for each resource it touches (a claim, per
+    group)."""
+    if not is_postgres(conn):
+        conn.execute("BEGIN IMMEDIATE")
+        return
+    if not resource and lock_now:
+        raise ValueError("begin_write needs the resource it serialises")
+    conn.execute("BEGIN")
+    if lock_now:
+        lock(conn, *resource)
+
+
+def lock(conn, *resource) -> None:
+    """Inside an open write transaction: on Postgres, wait for and hold the
+    advisory lock of `resource` until the transaction ends; on SQLite a
+    no-op (BEGIN IMMEDIATE already holds the database)."""
+    if is_postgres(conn):
+        conn.execute_native("SELECT pg_advisory_xact_lock(%s)", (resource_key(*resource),))
+
+
+def is_postgres(conn) -> bool:
+    """True for a db_dialect connection (the platform database on
+    Postgres), false for sqlite3's (or models' pooled handle of one)."""
+    return isinstance(conn, PgConnection)
+
+
+MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations", "postgres")
+
+
+def install_compat(conn) -> None:
+    """migrations/postgres/0000_sqlite_compat.sql on `conn` (the boot's, on
+    Postgres): the sqlite_master view the boot's own migrations read. The
+    copy applied it; a database the boot builds itself (a fresh one, CI)
+    needs it before init_db's first read of sqlite_master."""
+    with open(os.path.join(MIGRATIONS_DIR, "0000_sqlite_compat.sql"), encoding="utf-8") as f:
+        for stmt in split_statements(f.read()):
+            conn.execute_native(stmt)
+    conn.commit()
+
+
+def install_triggers(conn) -> int:
+    """The SQLite triggers' plpgsql form (pg_copy.trigger_statements — the
+    tracker change stamp, the intel features' version) on `conn`, re-created
+    from the columns that exist, as the SQLite boot re-creates its own.
+    Returns how many statements ran."""
+    import pg_copy
+    stmts = pg_copy.trigger_statements(conn)
+    for s in stmts:
+        conn.execute_native(s)
+    conn.commit()
+    return len(stmts)
 
 
 def split_statements(script) -> list:
@@ -809,14 +2062,19 @@ class Catalog:
 
     def __init__(self, raw):
         self._raw = raw
+        # One database's catalog is not another's (the platform and the
+        # shadow, a test's databases): cached per database.
+        info = getattr(raw, "info", None)
+        self.db_key = "|".join(str(getattr(info, k, "") or "") for k in ("host", "port", "dbname"))
 
     def _q(self, sql, params):
-        c = self._raw.cursor()
-        c.execute(sql, params)
-        return c.fetchall()
+        # Under the caller's transaction (an INSERT's key lookup), with its
+        # statement atomicity: a failed catalog read never costs the
+        # transaction it is part of.
+        return run_atomic(self._raw, sql, params, _tx_status(self._raw, False) != "idle").fetchall()
 
     def _info(self, table):
-        key = str(table or "").lower()
+        key = (self.db_key, str(table or "").lower())
         with Catalog._lock:
             hit = Catalog._shared.get(key)
         if hit is not None:
@@ -824,30 +2082,41 @@ class Catalog:
         try:
             cols = self._q("SELECT column_name, data_type, is_nullable, column_default, ordinal_position "
                            "FROM information_schema.columns WHERE table_schema = current_schema() "
-                           "AND table_name = %s ORDER BY ordinal_position", (key,))
+                           "AND table_name = %s ORDER BY ordinal_position", (key[1],))
             pk = [r[0] for r in self._q(
                 "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid "
                 "AND a.attnum = ANY(i.indkey) WHERE i.indrelid = to_regclass(%s) AND i.indisprimary "
-                "ORDER BY array_position(i.indkey, a.attnum)", (key,))]
+                "ORDER BY array_position(i.indkey, a.attnum)", (key[1],))]
+            uniques = [list(r[1]) for r in self._q(
+                "SELECT i.indexrelid::regclass::text, array_agg(a.attname::text ORDER BY k.ord), "
+                "bool_or(i.indisprimary) FROM pg_index i "
+                "JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+                "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum "
+                "WHERE i.indrelid = to_regclass(%s) AND i.indisunique AND i.indpred IS NULL "
+                "AND i.indexprs IS NULL GROUP BY 1 ORDER BY 3 DESC, 1", (key[1],))]
         except Exception:
-            try:
-                self._raw.rollback()
-            except Exception:
-                pass
-            return {"columns": [], "pk": [], "types": {}}
+            # run_atomic kept the caller's transaction; answered as unknown.
+            return {"columns": [], "pk": [], "types": {}, "notnull": set(), "uniques": []}
         info = {"columns": [r[0] for r in cols], "pk": pk, "types": {r[0]: r[1] for r in cols},
-                "rows": cols}
+                "rows": cols, "notnull": {r[0] for r in cols if r[2] == "NO"} | set(pk), "uniques": uniques}
+        if not cols:
+            return info               # a table not created yet: never cached as empty
         with Catalog._lock:
             Catalog._shared[key] = info
         return info
 
     @classmethod
     def forget(cls, table=None):
+        """Drop what is known of `table` (every table when None), in every
+        database — after DDL — and every translation made from it."""
         with cls._lock:
             if table is None:
                 cls._shared.clear()
             else:
-                cls._shared.pop(str(table).lower(), None)
+                name = str(table).lower()
+                for k in [k for k in cls._shared if k[1] == name]:
+                    cls._shared.pop(k, None)
+        _forget_translations()
 
     def primary_key(self, table):
         return self._info(table)["pk"] or None if table else None
@@ -855,13 +2124,24 @@ class Catalog:
     def columns(self, table):
         return self._info(table)["columns"] or None if table else None
 
+    def types(self, table):
+        return self._info(table)["types"] if table else {}
+
+    def notnull(self, table):
+        return self._info(table)["notnull"] if table else set()
+
+    def unique_keys(self, table):
+        return self._info(table)["uniques"] if table else []
+
     def is_integer(self, table, column):
         return self._info(table)["types"].get(column) in ("integer", "bigint", "smallint")
 
     def table_info(self, table):
         info = self._info(table)
         out = []
-        for i, (name, dtype, nullable, default, _pos) in enumerate(info.get("rows") or []):
+        # The rowid column (_with_rowid) is SQLite's hidden rowid: not listed.
+        for i, (name, dtype, nullable, default, _pos) in enumerate(
+                r for r in (info.get("rows") or []) if r[0] != "rowid"):
             out.append((i, name, dtype.upper(), 0 if nullable == "YES" else 1, default,
                         (info["pk"].index(name) + 1) if name in info["pk"] else 0))
         return out
@@ -873,41 +2153,238 @@ class Catalog:
                 for i, r in enumerate(rows)]
 
 
-# ── connections, reused per thread ──────────────────────────────────────────
+# ── connections: one bounded pool per process (SCALE-11) ────────────────────
 
-_local = threading.local()
-_POOL_PER_THREAD = 3
+
+_NUMERIC_LOADER = None
+
+
+def _numeric_loader():
+    """psycopg's loader for `numeric` answering as SQLite does: SUM() of
+    integers an int, anything with a fraction a float. Postgres's sum(bigint)
+    and avg() are numeric, which psycopg hands back as Decimal — and
+    Decimal * float raises TypeError in the app's arithmetic (blind re-audit
+    10/11/26, SCALE-9)."""
+    global _NUMERIC_LOADER
+    if _NUMERIC_LOADER is None:
+        from decimal import Decimal
+        from psycopg.adapt import Loader
+
+        class SqliteNumericLoader(Loader):
+            def load(self, data):
+                if isinstance(data, memoryview):
+                    data = bytes(data)
+                d = Decimal(data.decode() if isinstance(data, (bytes, bytearray)) else data)
+                if d.is_nan():
+                    return float("nan")
+                return int(d) if d == d.to_integral_value() and "." not in str(data) else float(d)
+        _NUMERIC_LOADER = SqliteNumericLoader
+    return _NUMERIC_LOADER
 
 
 def _driver_connect(url):
     import psycopg
-    return psycopg.connect(url, autocommit=False, connect_timeout=10)
+    # UTC, as SQLite's datetime('now') is: a stamp with no offset is read
+    # as UTC (cavnar_ts), and now() / CURRENT_DATE agree with the app.
+    raw = psycopg.connect(url, autocommit=False, connect_timeout=10, options="-c timezone=UTC")
+    raw.adapters.register_loader("numeric", _numeric_loader())
+    return raw
+
+
+def _env_int(value, default):
+    try:
+        return max(0, int(value or default))
+    except ValueError:
+        return default
+
+
+class _Pool:
+    """One process's connections to one Postgres URL (SCALE-11). The app
+    opens a connection per unit of work (get_conn … close), often one
+    inside another on the same thread; per-thread idle lists with no cap
+    grew with every thread the process runs (request threads, the
+    scheduler, the queue's and the AI pools: 60-150 a process against
+    Railway's max_connections of 100). Here:
+
+      PG_POOL_MAX (20)       connections a process may have checked out by
+                             threads that held none — the cap that matters;
+      PG_POOL_OVERFLOW (20)  more, only for a thread that already holds one
+                             (a nested get_conn: waiting there on threads
+                             that wait on it would deadlock);
+      PG_POOL_IDLE (5)       idle connections kept for reuse;
+      PG_POOL_MAX_LIFETIME (1800 s) a connection's age before it is retired
+                             at its next return; PG_POOL_IDLE_SECONDS (300)
+                             an idle one's;
+      PG_POOL_TIMEOUT (30 s) how long a checkout waits for a free one
+                             before it fails, said.
+
+    So a process holds at most PG_POOL_MAX + PG_POOL_OVERFLOW connections
+    (40), and the web process plus worker.py at most 80 — under the 100
+    Railway allows, with room for a deploy's overlap at the defaults' idle
+    level. Behind PgBouncer (transaction mode) the same caps apply per
+    process; the advisory locks are transaction-scoped, which it keeps."""
+
+    def __init__(self, url):
+        self.url = url
+        self.cond = threading.Condition()
+        self.idle = []                    # [(raw, born, idle_since)]
+        self.base = 0                     # checked out by a thread holding none
+        self.overflow = 0                 # checked out by a thread already holding one
+        self.opened = 0                   # live raw connections (out + idle)
+
+    def limits(self):
+        # Read each checkout (cheap), so a changed limit needs no restart.
+        return (_env_int(os.getenv("PG_POOL_MAX"), 20), _env_int(os.getenv("PG_POOL_OVERFLOW"), 20),
+                _env_int(os.getenv("PG_POOL_IDLE"), 5), _env_int(os.getenv("PG_POOL_MAX_LIFETIME"), 1800),
+                _env_int(os.getenv("PG_POOL_IDLE_SECONDS"), 300), _env_int(os.getenv("PG_POOL_TIMEOUT"), 30))
+
+    def checkout(self):
+        held = _held()
+        nested = held.get(self.url, 0) > 0
+        cap_base, cap_over, _keep, life, idle_s, timeout = self.limits()
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while True:
+                if nested and self.overflow < cap_over:
+                    kind = "overflow"
+                    self.overflow += 1
+                    break
+                if not nested and self.base < cap_base:
+                    kind = "base"
+                    self.base += 1
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise sqlite3.OperationalError(
+                        f"database connection pool exhausted ({self.base} + {self.overflow} in use; "
+                        f"PG_POOL_MAX={cap_base}, PG_POOL_OVERFLOW={cap_over})")
+                self.cond.wait(left)
+            raw = None
+            now = time.monotonic()
+            while self.idle:
+                r, born, since = self.idle.pop()
+                if now - born > life or now - since > idle_s:
+                    self.opened -= 1
+                    _close_raw(r)
+                    continue
+                raw = (r, born)
+                break
+        held[self.url] = held.get(self.url, 0) + 1
+        try:
+            if raw is None:
+                raw = (_driver_connect(self.url), time.monotonic())
+                with self.cond:
+                    self.opened += 1
+            c = PgConnection(raw[0])
+        except BaseException:
+            self._give_back(kind, None, None)
+            held[self.url] -= 1
+            raise
+        c._url, c._born, c._slot = self.url, raw[1], kind
+        return c
+
+    def checkin(self, conn):
+        held = _held()
+        if held.get(self.url, 0) > 0:
+            held[self.url] -= 1
+        raw, keep = conn._raw, True
+        try:
+            raw.rollback()
+        except Exception:
+            keep = False
+        if keep and getattr(getattr(raw, "info", None), "transaction_status", None) is not None and \
+                getattr(raw.info.transaction_status, "name", "") != "IDLE":
+            keep = False
+        self._give_back(getattr(conn, "_slot", "base"), raw if keep else None, getattr(conn, "_born", 0),
+                        drop=None if keep else raw)
+
+    def _give_back(self, kind, raw, born, drop=None):
+        _cb, _co, keep_n, life, _is, _t = self.limits()
+        with self.cond:
+            if kind == "overflow":
+                self.overflow = max(0, self.overflow - 1)
+            else:
+                self.base = max(0, self.base - 1)
+            if raw is not None and len(self.idle) < keep_n and time.monotonic() - born <= life:
+                self.idle.append((raw, born, time.monotonic()))
+                raw = None
+            closing = raw or drop
+            if closing is not None:
+                self.opened -= 1
+            self.cond.notify()
+        if closing is not None:
+            _close_raw(closing)
+
+    def close_idle(self):
+        with self.cond:
+            idle, self.idle = self.idle, []
+            self.opened -= len(idle)
+        for r, _b, _s in idle:
+            _close_raw(r)
+        return len(idle)
+
+    def stats(self):
+        with self.cond:
+            return {"in_use": self.base + self.overflow, "base": self.base, "overflow": self.overflow,
+                    "idle": len(self.idle), "open": self.opened}
+
+
+_pools = {}
+_pools_lock = threading.Lock()
+_local = threading.local()
+
+
+def _held():
+    h = getattr(_local, "held", None)
+    if h is None:
+        h = _local.held = {}
+    return h
+
+
+def pool(url=None) -> "_Pool":
+    url = url or database_url()
+    with _pools_lock:
+        p = _pools.get(url)
+        if p is None:
+            p = _pools[url] = _Pool(url)
+        return p
+
+
+def pool_stats(url=None) -> dict:
+    """{in_use, base, overflow, idle, open} of this process's pool."""
+    return pool(url).stats()
+
+
+def close_idle(url=None) -> int:
+    """Close the idle connections (every pool when `url` is None): before a
+    database is used as a template, and at a process's end."""
+    with _pools_lock:
+        pools = [p for u, p in _pools.items() if url is None or u == url]
+    return sum(p.close_idle() for p in pools)
 
 
 def connect(url=None) -> PgConnection:
-    """A PgConnection to `url` (DATABASE_URL by default), reused from this
-    thread's idle ones when one is open and idle."""
+    """A PgConnection to `url` (DATABASE_URL by default), from the process's
+    bounded pool (_Pool). close() hands it back; one never closed is handed
+    back when it is collected."""
     url = url or database_url()
     if not url:
         raise sqlite3.OperationalError("DATABASE_URL is not a Postgres URL")
-    idle = getattr(_local, "idle", None)
-    if idle is None:
-        idle = _local.idle = []
-    while idle:
-        u, raw = idle.pop()
-        if u != url:
-            _close_raw(raw)
-            continue
-        try:
-            raw.rollback()
-            c = PgConnection(raw)
-            c._url = url
-            return c
-        except Exception:
-            _close_raw(raw)
-    c = PgConnection(_driver_connect(url))
-    c._url = url
+    p = pool(url)
+    c = p.checkout()
+    c._finalizer = weakref.finalize(c, _collected, p, c._raw, c._slot, c._born, threading.get_ident())
     return c
+
+
+def _collected(p, raw, slot, born, tid):
+    """A PgConnection collected without close(): its transaction rolled
+    back and the connection closed — never pooled (the thread that held it
+    may be gone) — and its slot freed."""
+    try:
+        raw.rollback()
+    except Exception:
+        pass
+    p._give_back(slot, None, born, drop=raw)
 
 
 def _close_raw(raw):
@@ -918,16 +2395,15 @@ def _close_raw(raw):
 
 
 def _release(conn):
-    raw = conn._raw
-    try:
-        raw.rollback()
-    except Exception:
-        _close_raw(raw)
+    fin = getattr(conn, "_finalizer", None)
+    if fin is not None:
+        fin.detach()
+    p = _pools.get(getattr(conn, "_url", None))
+    if p is None:
+        try:
+            conn._raw.rollback()
+        except Exception:
+            pass
+        _close_raw(conn._raw)
         return
-    idle = getattr(_local, "idle", None)
-    if idle is None:
-        idle = _local.idle = []
-    if len(idle) >= _POOL_PER_THREAD:
-        _close_raw(raw)
-        return
-    idle.append((getattr(conn, "_url", None), raw))
+    p.checkin(conn)
