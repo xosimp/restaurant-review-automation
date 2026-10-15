@@ -468,6 +468,10 @@ def test_five_hundred_products_search_stays_small_and_rows_build_on_open(full):
     out = _run(p, "window._bar.state.q='v'; window._bar.state.noRemote=true; var h=window._bar.listHtml(); console.log(h.length); console.log(h);")
     size = int(out.split("\n")[0])
     assert size < 150_000, size
+    # R15: a keystroke never rebuilds the list on its own — both searches wait 150 ms.
+    js = _bar_script()
+    assert "if (QT) clearTimeout(QT);" in js and "QT = setTimeout(function () { QT = null; refreshList(); }, 150);" in js
+    assert "if (PT) clearTimeout(PT);" in js and "PT = setTimeout(function () { PT = null;" in js
     _common(out)
 
 

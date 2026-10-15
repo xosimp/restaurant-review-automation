@@ -247,11 +247,15 @@ def test_the_insights_say_only_what_was_measured(db):
     # increases never make a concentration card (V25 — this test used to pin
     # that tautology). The price-card rules are tests/test_bar_judge.py's.
     held = [r for r in out["price_watch"]["increases"] if r.get("persistent") is True and r.get("kind") == "increase"]
-    assert all(k == "price:" + r["product_key"] for k, r in zip([k for k in keys if k.startswith("price:")], held))
+    # One price card: the held increase worth the most a month forward.
+    held.sort(key=lambda r: -float(r["forward_monthly_usd"] or 0))
+    assert held and [k for k in keys if k.startswith("price:")] == ["price:" + held[0]["product_key"]]
     assert "concentration" not in keys
     assert all(set(i) == {"key", "tone", "headline", "metric", "action", "basis", "confidence"}
                for i in out["insights"])
-    assert not any(i["key"].startswith(("over:", "trend:")) for i in out["insights"]), "no sales: nothing judged"
+    # No sales on file: there is no reading at all, so nothing is judged.
+    assert out["pour_cost"]["available"] is False
+    assert not any(i["key"].startswith(("over", "trend:", "low:")) for i in out["insights"])
     s = out["price_watch"]["summary"]
     assert s["up_n"] == 4 and s["up_impact_90d"] == round(sum(r["impact_90d"] for r in out["price_watch"]["increases"]), 2)
     assert bc.display_name("KETEL ONE VDK 1L") == "Ketel ONE VDK 1L"
