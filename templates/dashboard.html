@@ -22835,6 +22835,11 @@ function _schedHandleResult(data) {
   _schedOverrides = {};
   _schedHistoryId = data.history_id || null;
   _schedWeekDates = data.week_dates || [];
+  // When the week on screen was written: a reopened one says its own day,
+  // a fresh one is today's.
+  // generated_at is UTC ("YYYY-MM-DD HH:MM:SS"), read as the local day.
+  var _ga = data.generated_at ? new Date(String(data.generated_at).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(data.generated_at) ? '' : 'Z')) : null;
+  window._schedBuiltAt = (_ga && !isNaN(_ga)) ? _ga : (data.history_id ? new Date() : null);
   setTimeout(function () { if (window.ssGenState) ssGenState(); }, 0);
   _schedRosterNames = data.roster || [];
   _schedHoliday = data.holiday_lift || {};
@@ -27842,6 +27847,15 @@ function ssGenState() {
   gen.style.background = ''; gen.style.color = ''; gen.style.boxShadow = '';
   gen.textContent = has ? 'Generate a new draft' : 'Generate a draft schedule';
   if (gen.parentNode && gen.parentNode.classList) gen.parentNode.classList[has ? 'add' : 'remove']('two');
+  var when = document.getElementById('ss-draft-when'), at = window._schedBuiltAt;
+  if (has && at && !when) {
+    when = document.createElement('div'); when.id = 'ss-draft-when'; when.className = 'sw-note';
+    gen.parentNode.appendChild(when);
+  }
+  if (when) {
+    if (has && at) when.innerHTML = 'This week\u2019s draft was built <span class="hb-num">' + _escHtml(mdy(at)) + '</span>.';
+    else when.parentNode.removeChild(when);
+  }
 }
 document.addEventListener('change', function (ev) {
   var t = ev.target; if (t && (t.id === 'sched-week-pick' || t.id === 'sched-week-date')) ssGenState();
@@ -40601,7 +40615,7 @@ window.cavPalette = cavPalette;
       for (i = 0; i < ppl.length; i++) if (ppl[i].active && !seen[ppl[i].name]) { seen[ppl[i].name] = 1; names.push(ppl[i].name); }
       _schedBtn = null;
       window._schedQuietOpen = !!opts.quiet;
-      _schedHandleResult({ok: true, history_id: d.id, week_dates: weekDates(d.week_start, d.week_end),
+      _schedHandleResult({ok: true, history_id: d.id, week_dates: weekDates(d.week_start, d.week_end), generated_at: d.generated_at || null,
         preview_rows: rows, schedule_csv: d.schedule_csv || '', summary: d.summary || [], narrative: null,
         quality: d.quality || null, what_if: d.what_if || null, review: d.review || null,
         hours_budget: d.hours_budget, hours_scheduled: d.hours_scheduled, labor_target: d.labor_target,
