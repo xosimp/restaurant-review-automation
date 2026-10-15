@@ -46223,35 +46223,23 @@ function sfw2RuleCheck(chk) {
   }
 
   /* ── the three categories ───────────────────────────────────────────── */
-  /* The cards' charts share one scale (owner, 10/15/26: the range bands were
-     thin and a different height card to card): every card spans the same
-     number of points, centred on its own line and band, so a 6-point range
-     is the same height on beer as on liquor. */
-  function sparkSpan(cs) {
-    var w = 0, i, j;
-    for (i = 0; i < cs.length; i++) {
-      var v = (cs[i].spark || []).slice(), mn = null, mx = null;
-      if (cs[i].range) v.push(cs[i].range[0], cs[i].range[1]);
-      for (j = 0; j < v.length; j++) if (v[j] != null) { mn = mn == null ? v[j] : Math.min(mn, v[j]); mx = mx == null ? v[j] : Math.max(mx, v[j]); }
-      if (mn != null) w = Math.max(w, mx - mn);
-    }
-    return w + 2;
-  }
-  function sparkDomain(sp, band, span) {
-    var v = (sp || []).slice(), mn = null, mx = null, j;
-    if (band) v.push(band[0], band[1]);
-    for (j = 0; j < v.length; j++) if (v[j] != null) { mn = mn == null ? v[j] : Math.min(mn, v[j]); mx = mx == null ? v[j] : Math.max(mx, v[j]); }
-    if (mn == null) return {min: 0, max: span};
-    var lo = Math.max(0, (mn + mx) / 2 - span / 2);
-    return {min: lo, max: lo + span};
+  /* A card's chart fits its own line, and the dashed box spans exactly the
+     line's height, lowest point to highest (owner, 10/15/26: "they should
+     span the total height of the line in each"); the range is the meter's. */
+  function sparkFit(sp) {
+    var mn = null, mx = null, j;
+    for (j = 0; j < (sp || []).length; j++) if (sp[j] != null) { mn = mn == null ? sp[j] : Math.min(mn, sp[j]); mx = mx == null ? sp[j] : Math.max(mx, sp[j]); }
+    if (mn == null) return null;
+    var w = (mx - mn) || 1, pad = w * 0.08;
+    return {min: mn - pad, max: mx + pad, band: [mn, mx]};
   }
   function cats(pc) {
-    var h = '', i, span = sparkSpan(pc.categories);
+    var h = '', i;
     for (i = 0; i < pc.categories.length; i++) {
       var c = pc.categories[i], counted = c.basis === 'counted', v = verdict(c, counted), s = seriesOf(c.key), sp = c.spark || [];
       var jt = c.judge_target || (c.target != null ? {pct: c.target, phrase: phraseOf(c.target_label, c.target)} : null);
       var delta = (!counted && c.prev_pct != null && c.pct != null && !c.incomplete) ? (c.pct - c.prev_pct) : null;
-      var dom = sparkDomain(sp, c.range, span), noise = (pc.trend_noise || {})[c.key];
+      var fit = sparkFit(sp), noise = (pc.trend_noise || {})[c.key];
       h += '<article class="br-card lift br-cat br-rise" style="--s:' + s.css + ';animation-delay:' + (0.08 + i * 0.07) + 's" aria-label="' + esc2(c.label) + '">'
         + '<div class="hd"><span class="nm"><i></i>' + esc2(c.label) + '</span>' + pillHtml(v, true) + '</div>';
       if (c.pct == null) {
@@ -46266,7 +46254,7 @@ function sfw2RuleCheck(chk) {
         // Neutral behind the line (owner, 10/15/26: a coloured band and fill
         // read green): a grey range band and a faint fill; the line keeps
         // its category colour.
-        + (nn(sp) >= 2 ? chart(sp, 'br-spk', {min: dom.min, max: dom.max, css: s.css, area: true, areaOpacity: '.10', band: c.range, bandCss: 'var(--ink3)', hot: false}) : '<div class="br-spk"></div>')
+        + (nn(sp) >= 2 && fit ? chart(sp, 'br-spk', {min: fit.min, max: fit.max, css: s.css, area: true, areaOpacity: '.10', band: fit.band, bandCss: 'var(--ink3)', hot: false}) : '<div class="br-spk"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (v.ctx ? '<div class="br-ctx">' + numify(v.ctx) + '</div>' : '')
@@ -47555,7 +47543,7 @@ function sfw2RuleCheck(chk) {
   /* For the preview harness and tests: the page from a payload, no fetch. */
   window._barRender = function (d) { DATA = d && d.ok ? d : DATA; if (d && d.ok) ST.dir = null; return page(d); };
   window._barSettle = settle;
-  window._bar = {state: ST, prodOptions: prodOptions, sparkSpan: sparkSpan, sparkDomain: sparkDomain, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
+  window._bar = {state: ST, prodOptions: prodOptions, sparkFit: sparkFit, listHtml: listHtml, rowDetail: rowDetail, rowHtml: rowHtml, labelIdx: labelIdx, priceUrl: priceUrl, tipLeft: tipLeft,
                  focusKey: focusKey, refocus: refocus, verdict: verdict, mapBody: mapBody, countsBody: countsBody, prodBody: prodBody,
                  listState: listState, redrawList: redrawList, rerender: rerender, send: send, refusal: refusal, inertApp: inertApp,
                  saveMapping: saveMapping, saveCount: saveCount, setStopped: setStopped, page: page,
