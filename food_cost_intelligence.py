@@ -1191,6 +1191,19 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                    "what sold, over that night's net; this one uses the food cost ledger (COGS) for the month.")
     prime_mtd = cogs_mtd + labor_cost
     prime_pct = round(prime_mtd / net_sales * 100, 1)
+    # The beverage basis (Bar audit R7 / AIX-12): the food ledger's COGS has
+    # no beverage cost in it (alcohol is the Bar's, cogs.is_bar_item), yet
+    # the month's net carries the drink sales — so a bar-heavy month reads
+    # low against a full prime cost. Said, with the drinks' share, and never
+    # set against the 60–65% prime benchmark.
+    bev_mtd = _cogs.beverage_sales_in_window(restaurant_id, month_start, today - timedelta(days=1),
+                                             db_path=db_path)
+    beverage_basis = "excluded" if bev_mtd else "none_measured"
+    if bev_mtd:
+        basis += (f" Beverage cost is not in it: the food ledger holds no alcohol, while net sales include "
+                  f"${bev_mtd:,.0f} of drink sales ({round(bev_mtd / net_sales * 100) if net_sales else 0}% of "
+                  "sales) — so it reads low against a full prime cost and is not comparable with its 60–65% "
+                  "benchmark.")
     scale = days_in_month / days_elapsed
     projected_sales = round(net_sales * scale)
     projected_prime = round(prime_mtd * scale)
@@ -1255,6 +1268,9 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
         "food_cost_pct": fc.get("pct"), "food_cost_target": fc.get("target"),
         "labor_pct": labor_pct,
         "prime_cost_pct": prime_pct,
+        # "excluded": drink sales are in net, beverage cost is not (R7).
+        "beverage_basis": beverage_basis,
+        "beverage_sales_mtd": round(bev_mtd, 2) if bev_mtd else None,
         "projected_sales": projected_sales,
         "projected_prime_cost": projected_prime,
         "forecast_kind": "profitability_month",

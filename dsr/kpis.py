@@ -121,22 +121,98 @@ def _bev_share(metrics):
     return round(sum(bev) / net * 100, 1) if bev else None
 
 
-def _prime(labor_cost, food_cost, net, coverage):
+def _prime(labor_cost, food_cost, net, coverage, bev_sales=None, bev_cost=None):
     """Prime cost % from DOLLARS over one denominator (D1-11): labor $ plus
-    the estimated recipe cost of what sold, over the night's net — never two
-    percentages with different bases added. Withheld (None) unless every
-    part is measured, net is positive and the recipe estimate covers at
-    least block_food.ESTIMATE_MIN_COVERAGE_PCT of the units sold."""
+    the estimated recipe cost of what sold — never two percentages with
+    different bases added. Withheld (None) unless every part is measured,
+    net is positive and the recipe estimate covers at least
+    block_food.ESTIMATE_MIN_COVERAGE_PCT of the units sold.
+
+    The beverage basis (Bar audit R7 / AIX-12): the recipe estimate carries
+    no beverage cost, so over the full net it read ~7 points low at a bar
+    doing 40% of sales in drinks. With `bev_cost` (the night's drink sales at
+    the bar's counted pour cost) it is the full prime cost over the full
+    net. Without it, and with drink sales measured (`bev_sales` > 0), drink
+    sales leave the denominator too — "prime cost excl. beverage", over food
+    and non-alcoholic sales. With no drink sales measured it stays over net."""
     from dsr.block_food import ESTIMATE_MIN_COVERAGE_PCT
     if not (_num(labor_cost) and _num(food_cost) and _num(net) and net > 0 and _num(coverage)):
         return None
     if coverage < ESTIMATE_MIN_COVERAGE_PCT:
         return None
+    if _num(bev_cost) and bev_cost >= 0 and _num(bev_sales) and bev_sales > 0:
+        return round((labor_cost + food_cost + bev_cost) / net * 100, 1)
+    if _num(bev_sales) and bev_sales > 0:
+        base = net - bev_sales
+        return round((labor_cost + food_cost) / base * 100, 1) if base > 0 else None
     return round((labor_cost + food_cost) / net * 100, 1)
 
 
-def _value(key, blocks):
-    """Tonight's value for one KPI, or None (not measured)."""
+def _bev_sales(metrics):
+    """The night's drink (alcohol) sales from its mapped categories, or None
+    when no category is a beverage one (unknown, never 0)."""
+    cats = {k[4:]: v for k, v in (metrics or {}).items() if k.startswith("cat:") and _num(v)}
+    bev = [v for k, v in cats.items() if " ".join(k.lower().split()) in BEVERAGE_CATEGORIES]
+    return round(sum(bev), 2) if bev else None
+
+
+def _bev_history(rid, start, end, db_path):
+    """{date: drink sales} over a window, from the nights' mapped beverage
+    categories (sales.cat:<name>)."""
+    from dsr import store
+    try:
+        names = [n for n in store.metric_names(rid, db_path=db_path)
+                 if n.startswith("sales.cat:") and " ".join(n[10:].lower().split()) in BEVERAGE_CATEGORIES]
+    except Exception:
+        return {}
+    out = {}
+    for n in names:
+        for d, v in _series(rid, n, start, end, db_path).items():
+            out[d] = round(out.get(d, 0.0) + v, 2)
+    return out
+
+
+# A counted pour cost stands for the nights after it this long (a month's
+# count, and its slack); older, the night's beverage cost is not known.
+COUNTED_BEV_DAYS = 45
+
+
+def counted_bev_rate(rid, day, db_path=None):
+    """The bar's counted pour cost that stands for `day` — {pct, from_mdy,
+    to_mdy} from the counted period covering it, else the newest one ending
+    within COUNTED_BEV_DAYS before it; None without two bar counts
+    (bar.counts). Purchases against sales ("bought vs sold") never stand
+    in for it."""
+    if not rid:
+        return None
+    try:
+        from bar import counts as _bcn
+        if len(_bcn._by_date(_bcn._rows(rid, db_path))) < 2:
+            return None
+        block = _bcn.counted(rid, today=day, db_path=db_path)
+    except Exception:
+        return None
+    iso = day.isoformat()
+    best = None
+    for p in block.get("periods") or []:
+        tot = p.get("total") or {}
+        if not p.get("ok") or not _num(tot.get("pct")):
+            continue
+        if p["from"] < iso <= p["to"]:
+            best = p
+            break
+        age = (day - date.fromisoformat(p["to"])).days
+        if 0 <= age <= COUNTED_BEV_DAYS and (best is None or p["to"] > best["to"]):
+            best = p
+    if best is None:
+        return None
+    return {"pct": float(best["total"]["pct"]), "from": best["from"], "to": best["to"],
+            "from_mdy": best["from_mdy"], "to_mdy": best["to_mdy"]}
+
+
+def _value(key, blocks, bev_rate=None):
+    """Tonight's value for one KPI, or None (not measured). `bev_rate` is
+    counted_bev_rate's answer, for prime cost's beverage cost."""
     fact = KPIS[key][1]
     def m(block):
         b = blocks.get(block) or {}
@@ -145,8 +221,10 @@ def _value(key, blocks):
         net, hours = m("sales").get("net"), m("labor").get("hours")
         return round(net / hours, 2) if _num(net) and _num(hours) and hours > 0 else None
     if fact == "derived:prime":
+        bev = _bev_sales(m("sales"))
         return _prime(m("labor").get("cost"), m("food").get("est_food_cost"), m("sales").get("net"),
-                      m("food").get("recipe_coverage_pct"))
+                      m("food").get("recipe_coverage_pct"), bev_sales=bev,
+                      bev_cost=(round(bev * bev_rate["pct"] / 100, 2) if bev and bev_rate else None))
     if fact == "derived:bev_mix":
         return _bev_share(m("sales"))
     block, _, k = fact.partition(".")
@@ -161,7 +239,56 @@ def _value(key, blocks):
 ALL_IN_KEYS = ("labor_pct", "labor_cost", "prime_pct")
 
 
-def _history(key, rid, day, db_path, salaried_share=None):
+def _prime_history(rid, start, end, db_path, lab, bev_rate=None, full=False):
+    """Past nights' prime cost on tonight's basis: excl. beverage when
+    tonight is (`full` False), with beverage at the counted rate when
+    tonight carries it — a night with no drink sales measured is left out of
+    an excl.-beverage series, never compared on another basis."""
+    food, net, cov = (_series(rid, "food.est_food_cost", start, end, db_path),
+                      _series(rid, "sales.net", start, end, db_path),
+                      _series(rid, "food.recipe_coverage_pct", start, end, db_path))
+    bev = _bev_history(rid, start, end, db_path)
+    out = {}
+    for d in lab:
+        b = bev.get(d)
+        if bev and not b:
+            continue
+        cost = round(b * bev_rate["pct"] / 100, 2) if (full and b and bev_rate) else None
+        if full and b and cost is None:
+            continue
+        v = _prime(lab.get(d), food.get(d), net.get(d), cov.get(d), bev_sales=b, bev_cost=cost)
+        if v is not None:
+            out[d] = v
+    return out
+
+
+def prime_basis(blocks, bev_rate=None) -> dict:
+    """{beverage_basis: counted | excluded | none_measured, basis: the
+    sentence} for tonight's prime cost (R7): which beverage cost is in it,
+    and over which sales."""
+    def m(block):
+        b = (blocks or {}).get(block) or {}
+        return (b.get("metrics") or {}) if b.get("status") == dsr.READY else {}
+    cov = m("food").get("recipe_coverage_pct")
+    cov_text = f"{cov:g}% of units sold have a costed recipe" if _num(cov) else "the costed recipes"
+    bev = _bev_sales(m("sales"))
+    if bev and bev_rate:
+        return {"beverage_basis": "counted",
+                "basis": (f"Labor dollars, the estimated recipe cost of food sold ({cov_text}), and drink sales at "
+                          f"the bar's counted pour cost ({bev_rate['pct']:g}%, {bev_rate['from_mdy']}–"
+                          f"{bev_rate['to_mdy']}), over net sales")}
+    if bev:
+        return {"beverage_basis": "excluded",
+                "basis": (f"Labor dollars (the whole team) plus the estimated recipe cost of food sold ({cov_text}), "
+                          f"over food and non-alcoholic sales — drink sales ({fmt(bev, 'money')}) are left out "
+                          "because no counted beverage cost exists yet. Two bar counts make it a full prime "
+                          "cost. Not comparable with a full prime cost or its 60–65% benchmark")}
+    return {"beverage_basis": "none_measured",
+            "basis": (f"Labor dollars plus the estimated recipe cost of what sold ({cov_text}; anything without one, "
+                      "drinks included, isn't in it), over net sales")}
+
+
+def _history(key, rid, day, db_path, salaried_share=None, bev_rate=None):
     """{date: value} for the KPI over the streak window (same-weekday reads
     pick from it) — derived KPIs rebuilt night by night. With a
     salaried_share (the owner's all-in labor), labor %, labor dollars and
@@ -176,20 +303,13 @@ def _history(key, rid, day, db_path, salaried_share=None):
             return lab
         if key == "labor_pct":
             return {d: round(lab[d] / net[d] * 100, 1) for d in lab if net.get(d, 0) > 0}
-        food, cov = (_series(rid, "food.est_food_cost", start, end, db_path),
-                     _series(rid, "food.recipe_coverage_pct", start, end, db_path))
-        out = {d: _prime(lab.get(d), food.get(d), net.get(d), cov.get(d)) for d in lab}
-        return {d: v for d, v in out.items() if v is not None}
+        return _prime_history(rid, start, end, db_path, lab, bev_rate, full=bool(bev_rate))
     if fact == "derived:splh":
         net, hrs = _series(rid, "sales.net", start, end, db_path), _series(rid, "labor.hours", start, end, db_path)
         return {d: round(net[d] / hrs[d], 2) for d in net if d in hrs and hrs[d] > 0}
     if fact == "derived:prime":
-        lab, food, net, cov = (_series(rid, "labor.cost", start, end, db_path),
-                               _series(rid, "food.est_food_cost", start, end, db_path),
-                               _series(rid, "sales.net", start, end, db_path),
-                               _series(rid, "food.recipe_coverage_pct", start, end, db_path))
-        out = {d: _prime(lab.get(d), food.get(d), net.get(d), cov.get(d)) for d in lab}
-        return {d: v for d, v in out.items() if v is not None}
+        lab = _series(rid, "labor.cost", start, end, db_path)
+        return _prime_history(rid, start, end, db_path, lab, bev_rate, full=bool(bev_rate))
     if fact == "derived:bev_mix":
         return {}
     return _series(rid, fact, start, end, db_path)
@@ -306,14 +426,16 @@ def _allowed(key, user, view):
 
 def kpi(key, blocks, restaurant, day, db_path=None, with_peers=True) -> dict | None:
     label, fact, unit, better = KPIS[key]
-    value = _value(key, blocks)
+    rid = getattr(restaurant, "id", None)
+    bev_rate = counted_bev_rate(rid, day, db_path) if key == "prime_pct" else None
+    value = _value(key, blocks, bev_rate=bev_rate)
     if value is None:
         return None
     wd = day.strftime("%A")
-    rid = getattr(restaurant, "id", None)
     lab = ((blocks.get("labor") or {}).get("metrics") or {})
     share = lab.get("salaried_cost") if lab.get("includes_salaries") else None
-    hist = _history(key, rid, day, db_path, salaried_share=share if _num(share) else None) if rid else {}
+    hist = (_history(key, rid, day, db_path, salaried_share=share if _num(share) else None, bev_rate=bev_rate)
+            if rid else {})
     last_week = hist.get((day - timedelta(days=7)).isoformat())
     nights = sorted(d for d in hist if d >= (day - timedelta(days=SPARK_NIGHTS - 1)).isoformat())
     spark = [hist[d] for d in nights] + [value]
@@ -325,10 +447,12 @@ def kpi(key, blocks, restaurant, day, db_path=None, with_peers=True) -> dict | N
            "derived": fact.startswith("derived:"),
            "estimate": key in ("food_pct", "prime_pct")}
     if key == "prime_pct":
-        food = blocks.get("food") or {}
-        cov = (food.get("metrics") or {}).get("recipe_coverage_pct")
-        out["basis"] = (f"Labor dollars plus the estimated recipe cost of what sold ({cov:g}% of units sold have a "
-                        "costed recipe; anything without one, drinks included, isn't in it), over net sales")
+        out.update(prime_basis(blocks, bev_rate))
+        if out["beverage_basis"] == "excluded":
+            # Not a full prime cost: never against the owner's prime goal or
+            # a prime benchmark (60–65%). Its own nights, on the same basis,
+            # still give the change and the streak.
+            out["label"], out["target"], out["peers"] = "Prime cost excl. beverage", None, None
     # a streak needs an unbroken run of measured same weekdays
     run = []
     for w in range(1, STREAK_WEEKS + 1):

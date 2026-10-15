@@ -92,9 +92,17 @@ MODULES = {
                    "does": "Every Google review drafted in your voice for one-click approval, sentiment and topic trends, urgent-review alerts, competitor monitoring."},
     "marketing":  {"key": "marketing", "label": "Marketing intelligence", "live": True,
                    "does": "Social, SMS and email content written in your voice and scheduled from one place, a guest text club, and performance tracking."},
-    "bar":        {"key": "bar", "label": "Bar & Alcohol intelligence", "live": False,
-                   "does": "Upcoming: pour cost vs. target, variance tracking and drink-level margins. Not available today."},
+    # Partly live (barfix Decision 6, 10/15/26): purchase and price tracking
+    # ships inside Food Cost; the opportunity the audit sizes here — pour cost
+    # and variance — is not tracked yet, so `live` stays False for the ROI
+    # and feasibility and `partly_live` gives the honest badge.
+    "bar":        {"key": "bar", "label": "Bar & Alcohol intelligence", "live": False, "partly_live": True,
+                   "badge": "partly live",
+                   "does": "Live today inside Food Cost: bar purchase and price tracking from your distributor invoices "
+                           "— what the bar buys against what it sells, by category, and the price changes that held. "
+                           "Arriving: counted pour cost and variance."},
     "waitlist":   {"key": "waitlist", "label": "Waitlist & guest flow", "live": False,
+                   "badge": "upcoming",
                    "does": "Upcoming: waitlist and turn-time intelligence. Not available today."},
     "operations": {"key": "platform", "label": "Cavnar AI platform (Home brief, Ask Cavnar AI, weekly digest)", "live": True,
                    "does": "One daily brief across every connected module, a weekly AI digest by email, push alerts, and Ask Cavnar AI to question your own numbers in plain English."},
@@ -1359,6 +1367,15 @@ def build_problems(a, cats, scores):
     return cands[:3]
 
 
+def _feasibility(module) -> str:
+    """How much of the module that works on a category ships today."""
+    if module.get("live"):
+        return "Available today"
+    if module.get("partly_live"):
+        return "Partly live: bar purchase and price tracking inside Food Cost"
+    return "Upcoming module"
+
+
 def build_opportunities(cats, scores):
     conf_w = {"high": 1.0, "moderate": 0.8, "low": 0.55, None: 0.4}
     cands = []
@@ -1371,7 +1388,8 @@ def build_opportunities(cats, scores):
         importance = 1.0 + ((100 - s) / 200.0 if s is not None else 0)
         rank = c["likely"] * conf_w.get(c.get("confidence")) * feas * importance
         cands.append({"key": k, "title": label, "opportunity": c["opportunity"], "range": _range_text(c),
-                      "confidence": c.get("confidence"), "feasibility": "Available today" if c["module"]["live"] else "Upcoming module",
+                      "confidence": c.get("confidence"), "feasibility": _feasibility(c["module"]),
+                      "badge": None if c["module"]["live"] else c["module"].get("badge", "upcoming"),
                       "module": c["module"]["label"], "rank": rank})
     cands.sort(key=lambda x: -x["rank"])
     return cands[:3]

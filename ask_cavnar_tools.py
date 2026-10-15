@@ -567,6 +567,17 @@ def _read_food_cost(restaurant_id):
     }
 
 
+def _read_bar(restaurant_id):
+    """The Bar page (Food Cost → Bar), compact (bar_signals.ask_read): bought
+    vs sold by category with its basis — an ESTIMATE (est_* keys), never pour
+    cost — or counted pour cost (measured) once two bar counts bracket the
+    window; whether each reading was judged and why not; invoices not on
+    file; the price changes that held, with their monthly money at usual
+    buying (an estimate) and what was already paid; the order hints."""
+    import bar_signals
+    return bar_signals.ask_read(restaurant_id, today=_local_today_of(restaurant_id))
+
+
 def _read_competitors(restaurant_id, limit=5):
     """The competitor set behind the intel summary — ratings, review counts,
     and what their own reviewers actually say."""
@@ -2925,6 +2936,22 @@ TOOLS = [
         "spec": {
             "name": "read_food_cost",
             "description": "Item-level food cost: critically low, wasted, overstocked, rising supplier prices.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        # The Bar (barfix W9, F4): Food Cost's permission and module flag
+        # (FOOD_COST_VIEW through viewer_restaurant), like the page's route.
+        "kind": "read",
+        "fn": _read_bar,
+        "module": "module_inventory",
+        "spec": {
+            "name": "read_bar",
+            "description": (
+                "The bar: beer, liquor and wine bought from distributors against what the POS sold (bought vs "
+                "sold — an estimate, not pour cost) or counted pour cost once the bar is counted, whether each "
+                "is judged, missing invoices, and bar price changes that held. For liquor cost, pour cost, "
+                "beer or wine cost, distributors and what went up."),
             "input_schema": {"type": "object", "properties": {}},
         },
     },

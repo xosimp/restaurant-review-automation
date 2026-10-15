@@ -99,13 +99,19 @@ def test_a_streak_needs_an_unbroken_run_and_money_moves_in_percent(db):
 
 def test_derived_figures_are_computed_from_the_night(db):
     r = _rest(db)
-    # D1-11: prime cost is DOLLARS over one denominator — $2,430 labor plus
-    # $2,000 of recipe cost over $9,000 net = 49.2% — never labor % (over
+    # D1-11: prime cost is DOLLARS over one denominator — never labor % (over
     # net) plus a food % over the priced dishes' menu revenue (27 + 30.5).
+    # Bar audit R7 (10/15/26): this test pinned $2,430 labor + $2,000 recipe
+    # cost over the FULL $9,000 net = 49.2% — the night's $2,700 of liquor
+    # and beer in the denominator with none of their cost in the numerator.
+    # With no counted beverage cost, drink sales leave the denominator too:
+    # $4,430 over $6,300 = 70.3%, named "excl. beverage", never against a goal.
     rep = _night(db, r.id, SAT, net=9000.0, hours=180.0, labor_pct=27.0,
                  food=({"est_food_cost_pct": 30.5, "est_food_cost": 2000.0, "recipe_coverage_pct": 80.0}, {}))
     k = {x["key"]: x for x in access.render(rep, {"role": "owner"}, r)["kpis"]}
-    assert k["splh"]["value"] == 50.0 and k["prime_pct"]["value_text"] == "49.2%"
+    assert k["splh"]["value"] == 50.0 and k["prime_pct"]["value_text"] == "70.3%"
+    assert k["prime_pct"]["label"] == "Prime cost excl. beverage"
+    assert k["prime_pct"]["beverage_basis"] == "excluded" and k["prime_pct"]["target"] is None
     assert "80% of units sold" in k["prime_pct"]["basis"]
     assert k["bev_mix"]["value_text"] == "30.0%"
     assert k["prime_pct"]["estimate"] and k["food_pct"]["estimate"]

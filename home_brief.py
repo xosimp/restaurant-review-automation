@@ -2282,6 +2282,23 @@ def _build(current_user, present=True, reads=None):
                              "sample": False, "last_data": _inv_state.get("as_of_iso")})
             snapshot[-1]["tip"] = _food_cost_tip(fc_pct, fc_target, recoverable, waste_rate, inv, crit, reorder)
             ask.append("Where are my biggest food cost opportunities?")
+        # The Bar (Food Cost → Bar, barfix W9 / Decision 7): the biggest bar
+        # price increase that HELD and is worth $10 a month or more at usual
+        # buying — never a deal ending, an order-size price or one purchase
+        # at a new price (bar_signals.headline_increases). Its money is an
+        # estimate, said so; no Track metric (nothing here measures a price
+        # conversation). Read whether or not food inventory is counted.
+        try:
+            import bar_signals
+            _bar = bar_signals.home_rec(rid)
+            if _bar:
+                add_rec(_bar["key"], _bar["title"], _bar["why"], _bar["evidence"], _bar["impact"], "inventory",
+                        "Before the next order", "Open the Bar", dollars=_bar["dollars"],
+                        dollars_basis="the price change × what the bar usually buys in a month (an estimate)",
+                        ev=_bar["ev"], sources=data_freshness.sources_for(["bar"]),
+                        if_ignored="the bar keeps paying the higher price on every order", effort="low")
+        except Exception as _bx:
+            print(f"[home_brief] bar price card unavailable rid={rid}: {_bx!r}")
 
     # ── Marketing ───────────────────────────────────────────────────────────
     if "marketing" in active_keys:

@@ -54,12 +54,12 @@ def build(audit, results):
                 "\"How do you know my labor should be lower?\" → We don't assume it should be. We compare against your own sales patterns, your target and the benchmark, and only count the gap above target, at 30–70% recoverable.",
                 "\"Are these savings guaranteed?\" → No. They are identified opportunity ranges from your numbers. Cavnar AI helps identify, monitor and act on them; how much is recovered depends on what is driving the variance.",
                 "\"My POS already has reports.\" → It does, and we read from it. The difference is interpretation: one daily brief across labor, food, reviews and marketing, alerts before payroll or month-end, and the ability to ask questions in plain English.",
-                "\"Does the bar module exist?\" → Not yet. Bar & Alcohol and Waitlist are upcoming. Today's live modules are Reviews, Labor, Food Cost and Marketing. Say that plainly.",
+                "\"Does the bar module exist?\" → Partly. Bar purchase and price tracking is live inside Food Cost: from the distributor invoices, what the bar buys against what it sells by category, and the price changes that held. Counted pour cost and variance are arriving. Waitlist is upcoming. Say that plainly.",
                 "\"Why not ChatGPT?\" → ChatGPT doesn't have your reviews, your shifts or your invoices. Cavnar AI is connected to them and runs every day without being asked.",
             ]},
             {"h": "3 things NOT to promise", "items": [
                 "A specific dollar saving. Say \"roughly $X–$Y of identified opportunity\" and \"how much is recoverable depends on the cause\".",
-                "Features that aren't live: bar/pour-cost tracking, waitlist, automatic actions, anything that \"knows exactly why\" something happened.",
+                "Features that aren't live: counted pour cost and bar variance (purchase and price tracking is live; the purchase ratio is \"bought vs sold\", never pour cost), waitlist, automatic actions, anything that \"knows exactly why\" something happened.",
                 "Security or contract specifics you haven't verified (SOC 2, encryption at rest, refund terms). Say \"let me confirm that and send it to you\".",
             ]},
             {"h": "Cavnar AI in 30 seconds", "items": [
@@ -197,7 +197,7 @@ def build(audit, results):
         ("Will this tell me to cut staff?", "It tells you where labor is running against your own target by day, shift and role, and it builds schedules from your sales patterns. What you do with that is yours."),
         ("How does it know my food cost?", "From your POS: Toast depletion and inventory sync nightly, plus invoices and your menu if it's costed. Without that data it tells you it doesn't know rather than inventing a number."),
         ("Do I have to upload anything?", "No. Toast connects directly and syncs shifts, sales and inventory every night. Upload exists only as an emergency fallback if a connection is down."),
-        ("How does it know if bartenders are overpouring?", "Today it doesn't — bar variance tracking is an upcoming module. What I can size today is the gap from the counts you already do."),
+        ("How does it know if bartenders are overpouring?", "Today it doesn't — bar variance is arriving. What's live is what the bar buys against what it sells and the price changes that held, from your distributor invoices. What I can size today is the gap from the counts you already do."),
         ("Actual vs theoretical food cost?", "Theoretical is what your recipes say it should have cost for what you sold. Actual is what your inventory says you used. The gap is waste, portioning, theft and pricing mistakes."),
         ("Beverage cost vs pour cost?", "Same thing — beverage cost ÷ beverage sales. 'Pour cost' is just how bar people say it, usually per category."),
         ("How accurate is the review analysis?", "It reads every review and groups the themes; you see the actual reviews behind each theme. It's a faster reader, not an oracle — you're one click from the source every time."),
@@ -287,7 +287,7 @@ def build(audit, results):
             ["\"This will eliminate waste.\"", "\"Tracking waste usually cuts it meaningfully — a quarter to half is a fair expectation once people know it's being counted.\""],
             ["\"Cavnar AI guarantees you'll improve margins.\"", "\"Cavnar AI is designed to make the drift visible early. Whether margins move depends on acting on it, and that part is yours.\""],
             ["\"You're losing 20% of your bar inventory.\"", "\"Vendor studies say bars lose a lot to variance; what matters is your number, which is why I asked what the last count showed.\""],
-            ["\"The bar module tracks pour cost.\"", "\"Bar & Alcohol is an upcoming module. Today I can size the opportunity from your counts; the tracking comes when it ships.\""],
+            ["\"The bar module tracks pour cost.\"", "\"Today it tracks what the bar buys against what it sells, and the price changes that held. Counted pour cost and variance are arriving; until then I size the opportunity from your counts.\""],
             ["\"It's SOC 2 / encrypted at rest / bank-grade.\"", "\"Encrypted in transit, hashed passwords, 2FA, login alerts. For anything beyond that let me send you the specifics.\""],
         ]}})
 
@@ -341,7 +341,7 @@ def build(audit, results):
         ]},
         {"h": "What it does NOT do", "items": [
             "Not a POS, payroll or accounting system — it reads from them.",
-            "No bar / pour-cost / variance tracking yet (Bar & Alcohol is upcoming). No waitlist (upcoming).",
+            "No counted pour cost or bar variance yet (arriving); bar purchase and price tracking is live inside Food Cost. No waitlist (upcoming).",
             # It denied auto-approved replies and auto-published schedules,
             # and both exist as opt-ins (NS5 L15) — never tell a
             # prospect the product cannot do what it does.

@@ -9784,6 +9784,7 @@ _NOTIFICATION_LABELS = {
     "order_send_held":  "Supplier order held",
     "order_send_voided": "Supplier order not sent",
     "bar_count_due":    "Count the bar tonight",
+    "bar_price":        "A bar price went up and held",
     # Their own types now (re-audit A-6, A-18): each used to borrow a label
     # that described something else, or none at all.
     "shift_request":    "A staff request needs you",

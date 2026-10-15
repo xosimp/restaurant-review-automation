@@ -412,6 +412,14 @@ JOBS = {
         description="On the last day of the month, tell each restaurant with distributor invoices to count the bar "
                     "tonight (once a day; bounded, resumable)",
         target=("bar.counts", "run_count_reminders"), max_minutes=10),
+    # A bar price increase that held and is worth $25 a month at usual
+    # buying (bar_signals, barfix W9 / Decision 7): pushed once per increase.
+    "bar_price_push": dict(
+        cadence="hourly on Mondays (9am local)", sla_minutes=_H, sends=True, runnable=True,
+        label="Bar price push",
+        description="Push each restaurant's biggest bar price increase that held, worth $25 a month or more, once "
+                    "per increase (push only; bounded, resumable)",
+        target=("bar_signals", "run_price_push"), max_minutes=10),
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Open shifts",

@@ -180,7 +180,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
   <section>
     <h2><span class="k">Top 3 opportunities</span>Ranked by value, confidence and feasibility</h2>
     <div class="items">
-      {% for o in r.opportunities or [] %}<div class="item"><span class="n">{{ loop.index }}</span><div><h4>{{ o.title }}{% if o.feasibility != 'Available today' %}<span class="up">upcoming</span>{% endif %}</h4><p>{{ o.opportunity }}</p><div class="ev">{{ o.module }} · {{ o.feasibility }}{% if o.confidence %} · <span class="conf {{ o.confidence }}">{{ o.confidence }} confidence</span>{% endif %}</div></div><span class="rg">{{ o.range }}<small>per year</small></span></div>
+      {% for o in r.opportunities or [] %}<div class="item"><span class="n">{{ loop.index }}</span><div><h4>{{ o.title }}{% if o.feasibility != 'Available today' %}<span class="up">{{ o.badge or 'upcoming' }}</span>{% endif %}</h4><p>{{ o.opportunity }}</p><div class="ev">{{ o.module }} · {{ o.feasibility }}{% if o.confidence %} · <span class="conf {{ o.confidence }}">{{ o.confidence }} confidence</span>{% endif %}</div></div><span class="rg">{{ o.range }}<small>per year</small></span></div>
       {% else %}<p class="small">No opportunity could be sized reliably with the information provided.</p>{% endfor %}
     </div>
   </section>
@@ -191,7 +191,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
       <thead><tr><th>Area</th><th>Score</th><th>Assessment</th><th>Current state</th></tr></thead>
       <tbody>
       {% for k in ['labor','food','bar','reviews','marketing','waitlist','operations','technology'] %}{% set c = r.categories[k] %}{% set sc = r.scores[k] %}
-        <tr><td><span class="name">{{ c.label }}</span>{% if c.module and not c.module.live %}<span class="up">upcoming</span>{% endif %}</td>
+        <tr><td><span class="name">{{ c.label }}</span>{% if c.module and not c.module.live %}<span class="up">{{ c.module.badge or 'upcoming' }}</span>{% endif %}</td>
           <td>{% if sc.score is not none %}<div class="bar"><i><b class="{% if sc.score >= 75 %}g{% elif sc.score >= 60 %}a{% else %}r{% endif %}" style="width:{{ sc.score }}%"></b></i><span class="num">{{ sc.score }}</span></div>{% else %}<span class="lab">Not assessed</span>{% endif %}</td>
           <td>{{ sc.label }}</td><td>{{ c.current_state }}</td></tr>
       {% endfor %}
@@ -225,7 +225,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
   <section>
     <h2><span class="k">Recommended priorities</span>In order</h2>
     <ol class="prio">
-      {% for o in r.opportunities or [] %}<li><span><b>{{ o.title }}</b> — {{ o.opportunity }}{% if o.feasibility != 'Available today' %} <span class="up">upcoming module</span>{% endif %}</span></li>{% endfor %}
+      {% for o in r.opportunities or [] %}<li><span><b>{{ o.title }}</b> — {{ o.opportunity }}{% if o.feasibility != 'Available today' %} <span class="up">{{ o.badge or 'upcoming' }} module</span>{% endif %}</span></li>{% endfor %}
       {% for f in r.findings or [] if f.title.endswith('Visibility Gap') %}<li><span><b>{{ f.title | replace(' — Visibility Gap','') }}</b> — {{ f.body }}</span></li>{% endfor %}
       {% if not r.opportunities %}<li><span>Share the numbers that were missing from this session so the priorities can be sized.</span></li>{% endif %}
     </ol>
@@ -235,7 +235,7 @@ details .b ul{margin:6px 0 0;padding-left:16px}
     <h2><span class="k">How Cavnar AI can help</span>Findings mapped to what runs today</h2>
     <div class="mods">
       {% for m in r.recommended_modules or [] %}<div class="mod"><div class="for">Recommended</div><h4>{{ m.label }}</h4><p>{{ m.does }}</p></div>{% endfor %}
-      {% for m in r.upcoming_modules or [] %}<div class="mod" style="opacity:.8"><div class="for">Upcoming</div><h4>{{ m.label }}<span class="up">not yet available</span></h4><p>{{ m.does }}</p></div>{% endfor %}
+      {% for m in r.upcoming_modules or [] %}<div class="mod" style="opacity:.8"><div class="for">{{ 'Partly live' if m.partly_live else 'Upcoming' }}</div><h4>{{ m.label }}<span class="up">{{ 'partly live' if m.partly_live else 'not yet available' }}</span></h4><p>{{ m.does }}</p></div>{% endfor %}
       {% if not r.recommended_modules %}<div class="mod"><h4>Cavnar AI platform</h4><p>A daily brief across labor, food cost, reviews and marketing, a weekly AI digest, alerts, and Ask Cavnar AI for plain-English questions about your own numbers.</p></div>{% endif %}
     </div>
     <p class="small" style="margin-top:14px">Cavnar AI is designed to help identify, monitor and act on opportunities like these. Nothing it drafts — review replies, schedules, posts — goes out without your approval.</p>

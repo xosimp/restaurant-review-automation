@@ -71,6 +71,8 @@ _ALERT_NAV = {
     "order_send_voided": "inventory/order",
     # The month-end bar count opens the Bar page (cavNavRegister('bar')).
     "bar_count_due": "bar",
+    # A bar price increase that held opens the Bar page too (bar_signals).
+    "bar_price": "bar",
     "ai_visibility_drop": "intel", "competitor_move": "intel",
     # A quiet night opens Marketing's opportunity feed, where its Fill card
     # is (the web's data-nav="marketing/opportunities"); its push adds the

@@ -974,9 +974,12 @@ def redact_grid(grid, user):
     nightly report — and the labor columns go too for a login without
     LABOR_VIEW, as the nightly report drops its Labor block. Returns a copy;
     None passes through."""
-    from permissions import LABOR_VIEW, LOSS_VIEW
+    from permissions import FOOD_COST_VIEW, LABOR_VIEW, LOSS_VIEW
     if grid is None:
         return None
+    # The bar line is Food Cost's (its route needs FOOD_COST_VIEW), in any view.
+    if grid.get("bar") is not None and not _sees(user, FOOD_COST_VIEW):
+        grid = dict(grid, bar=None)
     if view_for(user) == OWNER:
         return grid
     # Gross goes with the loss lines for a login without LOSS_VIEW (D2-2):

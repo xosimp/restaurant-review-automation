@@ -411,15 +411,40 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 # ingredient with no cost yet, or a line whose quantity or
                 # total was not read, went straight into plate costs (AI-19).
                 line["verified"] = bool(ok is True and cur > 0 and not big)
+        # Alcohol belongs to the Bar (Food Cost → Bar, from the distributor
+        # invoices): a line the Bar's sorter reads as beer, liquor or wine
+        # for sure is never preselected or auto-applied, and says why —
+        # applied here it would count in food cost (Bar audit R8 / AIX-14).
+        alc = _alcohol(extracted.get("supplier"), line["description"], line["unit"])
+        if alc:
+            line.update(alcohol=alc, selected=False, verified=False,
+                        note=(f"reads as {alc} — alcohol is tracked on the Bar page from your distributor "
+                              "invoices; applied here it counts in food cost"))
         lines.append(line)
+    n_alc = sum(1 for l in lines if l.get("alcohol"))
 
     # The same arithmetic the extraction's run was checked with
     # (extraction_verdict), shown to the owner beside the lines.
     total_check = totals_check(lines, extracted.get("invoice_total"))
     return {"supplier": extracted.get("supplier"), "invoice_date": extracted.get("invoice_date"),
             "lines": lines, "total_check": total_check,
+            "alcohol_lines": n_alc,
+            "alcohol_note": ((f"{n_alc} line{'' if n_alc == 1 else 's'} on this invoice read as alcohol. "
+                              "The Bar tracks alcohol from your distributor invoices — leave "
+                              f"{'it' if n_alc == 1 else 'them'} out of food cost.") if n_alc else None),
             "ingredients": [{"id": x["id"], "name": x["name"], "unit": x["unit"]}
                             for x in ingredients]}
+
+
+def _alcohol(supplier, description, unit) -> str | None:
+    """'beer' / 'liquor' / 'wine' when the Bar's sorter reads the line as
+    alcohol with confidence (cogs.alcohol_category: a guess, or a kitchen
+    word like VINEGAR or SAUCE, never warns), else None."""
+    try:
+        import cogs
+        return cogs.alcohol_category(description, supplier=supplier, unit=unit)
+    except Exception:
+        return None
 
 
 def scan(restaurant_id, data, media_type, user_id=None, db_path=DB_PATH, client=None):

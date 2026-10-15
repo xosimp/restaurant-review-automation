@@ -7558,6 +7558,25 @@ _TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.
 # Targets a blank clears back to "not set" (the default or industry range applies).
 _TARGET_CLEARABLE = ("waste_target_pct", "bar_cost_target", "beer_cost_target", "liquor_cost_target",
                      "wine_cost_target")
+# Money targets; every other bounded target is a percent.
+_TARGET_DOLLARS = ("monthly_revenue_target", "weekly_revenue_target", "hourly_rate")
+
+
+def _target_label(k) -> str:
+    """The name the owner reads on Account → Targets ("Alcohol cost
+    target"), never the column (Bar audit V47 / UIX-18)."""
+    try:
+        from change_log import FIELD_LABELS
+        if k in FIELD_LABELS:
+            return FIELD_LABELS[k]
+    except Exception:
+        pass
+    return {"weekly_revenue_target": "Weekly revenue target"}.get(k) or k.replace("_", " ").capitalize()
+
+
+def _target_bound(k, v) -> str:
+    """A bound as the owner types it: $10,000,000 for money, 60% otherwise."""
+    return f"${v:,.0f}" if k in _TARGET_DOLLARS else f"{v:g}%"
 
 
 def _targets_payload(rid):
@@ -7757,9 +7776,10 @@ def _do_targets_set(u):
         try:
             v = float(v)
         except (TypeError, ValueError):
-            return {"ok": False, "error": f"{k.replace('_', ' ')} must be a number."}, 400
+            return {"ok": False, "error": f"{_target_label(k)} must be a number.", "field": k}, 400
         if not lo <= v <= hi:
-            return {"ok": False, "error": f"{k.replace('_', ' ')} must be between {lo:g} and {hi:g}."}, 400
+            return {"ok": False, "error": f"{_target_label(k)} must be between {_target_bound(k, lo)} and "
+                                          f"{_target_bound(k, hi)}.", "field": k}, 400
         upd[k] = v
     if "week_start_day" in b:
         try:

@@ -88,7 +88,10 @@ def _price_cards(pw, pc) -> list:
     for r in rows[:1]:
         up = r["kind"] == "increase"
         reg = r.get("regime") or {}
-        ref = reg.get("reference", r.get("from"))
+        # The usual price BEFORE the change. The regime's reference is the
+        # new usual once a change has held, so the card read "$330 a case
+        # since 9/10/26, from a usual $330" (barfix W9, found on the way).
+        ref = r.get("from") if r.get("from") is not None else reg.get("reference")
         since = reg.get("since_mdy") or r.get("since_mdy") or ""
         unit = r.get("unit") or "unit"
         pct = abs(float(r.get("pct") or 0))

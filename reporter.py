@@ -1632,6 +1632,23 @@ def _follow_through_sections(restaurant_id, owner_view=False, include_results=Tr
     except Exception as e:
         log.warning("digest slow-day block failed: %s", e)
     try:
+        # The bar price increase that held (barfix W9, F4 / Decision 7): the
+        # biggest at $10 a month or more at usual buying (an estimate, said
+        # so), keyed and staged like every digest recommendation; a deal
+        # ending, an order-size price or one purchase at a new price is never
+        # one. Food Cost's, so the owner's digest only.
+        from models import get_restaurant as _gr_bar
+        _r_bar = _gr_bar(restaurant_id) if owner_view else None
+        bl = None
+        if _r_bar is not None and getattr(_r_bar, "module_inventory", 0):
+            import bar_signals
+            bl = bar_signals.digest_line(restaurant_id)
+        if bl and bl["rec"]["key"] not in silenced:
+            out.append(report_eyebrow("Bar prices") + report_paragraph(_html.escape(bl["text"])))
+            shown.append({"key": bl["rec"]["key"], "module": "food", "title": bl["rec"]["title"][:200]})
+    except Exception as e:
+        log.warning("digest bar block failed: %s", e)
+    try:
         import loss_detection
         # Owner-only (LOSS_VIEW): the signal can name an approving manager.
         ls = (loss_detection.signals(restaurant_id) or {}) if owner_view else {}

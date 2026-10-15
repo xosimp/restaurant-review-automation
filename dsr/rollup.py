@@ -335,6 +335,18 @@ def week(restaurant, day, db_path=None):
     if pb:
         ptd = _rows(restaurant, pb[0], end, db_path)
         out["period_to_date"] = dict(_totals(ptd, cats), start=pb[0].isoformat(), end=end.isoformat())
+    # The bar line (barfix W9, F4/R17): the Bar's four-week reading as of the
+    # week's last night with its basis — bought vs sold, never pour cost,
+    # until two counts bracket it — judged or not and why, and the top price
+    # increase that held. Absent (None) for a restaurant with no Bar; the
+    # Food Cost line access.redact_grid withholds without FOOD_COST_VIEW.
+    out["bar"] = None
+    if getattr(restaurant, "module_inventory", 0):
+        try:
+            import bar_signals
+            out["bar"] = bar_signals.dsr_week(restaurant.id, start, end, db_path=db_path)
+        except Exception as e:
+            print(f"[dsr.rollup] bar line unavailable for {getattr(restaurant, 'id', None)}: {e!r}")
     return out
 
 

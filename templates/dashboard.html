@@ -9464,7 +9464,8 @@ svg:hover .hb-xh{opacity:1}
           +(bud!==null?'<em class="bud" style="bottom:'+(bud/mx*100).toFixed(1)+'%"></em>':'')+'</div><span>'+esc(r.l)+'</span></div>';}
       bars+='</div><div class="dr-wleg">'+(anyBud?'<span><i class="met"></i>Made budget</span><span><i class="miss"></i>Under budget</span><span><i class="bud"></i>Budget</span>':'<span><i></i>Net sales</span>')+'</div>';}
     return '<section class="hb-card dr-wsum" aria-label="'+(wk?'The week':'The period')+' so far"><div class="hb-stats">'+tl+'</div>'+bars
-      +(g.story?'<p class="dr-story">'+prose(g.story)+'</p>':'')+'</section>';
+      +(g.story?'<p class="dr-story">'+prose(g.story)+'</p>':'')
+      +(g.bar&&g.bar.text?'<p class="dr-story">'+prose(g.bar.text)+'</p>':'')+'</section>';
   }
   function budToggleLabel(open){
     var bs=document.querySelectorAll('[data-dr="bud-open"]');

@@ -681,6 +681,27 @@ def test_the_owner_sets_and_clears_the_alcohol_targets(db):
     assert status == 403 and models.get_restaurant(rid).bar_cost_target == 20.0
 
 
+def test_a_target_refusal_names_the_owner_label_with_percent(db):
+    """Bar audit V47 / UIX-18: the refusal read "bar cost target must be
+    between 5 and 60." — a column name, no %. It names the row the owner
+    sees, with its unit, and says which field so the screen can show it under
+    that row."""
+    import strategy_routes
+    rid = _restaurant(db)
+    out, status = _call(strategy_routes._do_targets_set, _user(rid), body={"bar_cost_target": 95})
+    assert status == 400
+    assert out["error"] == "Alcohol cost target must be between 5% and 60%."
+    assert out["field"] == "bar_cost_target"
+    out, _ = _call(strategy_routes._do_targets_set, _user(rid), body={"beer_cost_target": "abc"})
+    assert out["error"] == "Beer & seltzer cost target must be a number."
+    out, _ = _call(strategy_routes._do_targets_set, _user(rid), body={"labor_target_pct": 90})
+    assert out["error"] == "Labor target must be between 5% and 80%."
+    out, _ = _call(strategy_routes._do_targets_set, _user(rid), body={"hourly_rate": 1})
+    assert "$2" in out["error"] and "_" not in out["error"]
+    for k in strategy_routes._TARGET_BOUNDS:
+        assert "_" not in strategy_routes._target_label(k), k
+
+
 def test_a_teammate_login_does_not_see_pay_rates(db):
     import strategy_routes
     rid = _restaurant(db)

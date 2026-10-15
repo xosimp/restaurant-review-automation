@@ -42,8 +42,10 @@ log = logging.getLogger(__name__)
 
 # Audit category -> the metric that would show it moving. Only categories
 # with an honest metric appear; `bar` and `waitlist` are sized by the audit
-# but the product has no pour-cost or turn-time data, so they are carried
-# as "not measurable here" rather than silently dropped.
+# but the product has no before-and-after bar variance or turn-time series
+# (the Bar tracks purchases against sales, and pour cost only from the bar's
+# own counts, with no metric archive), so they are carried as "not
+# measurable here" rather than silently dropped.
 CATEGORY_METRIC = {
     "labor": "labor_pct",
     "food": "food_cost_pct",
@@ -52,8 +54,9 @@ CATEGORY_METRIC = {
 }
 
 NOT_MEASURABLE = {
-    "bar": "Cavnar AI has no pour-cost or bar-variance data — this was sized "
-           "from what you told us, and nothing here can check it.",
+    "bar": "Cavnar AI tracks what the bar buys against what it sells, and pour cost only from "
+           "the bar's own counts — it has no bar variance to compare before and after, so this was "
+           "sized from what you told us and nothing here can check it.",
     "waitlist": "Waitlist and turn-time are not modules Cavnar AI runs today.",
     "marketing": "Marketing has no revenue metric — reach and clicks are "
                  "measured, revenue attribution is not.",

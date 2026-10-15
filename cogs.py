@@ -19,6 +19,7 @@ it looks exactly like a real one. That rule is the whole design: see
 `missing` in the returned payload, and note that nothing here ever
 substitutes 0 for an absent measurement.
 """
+import re
 from datetime import date, timedelta
 
 # A four-week window by default: long enough that one heavy delivery week
@@ -70,6 +71,86 @@ def _f(v, default=0.0):
         return default
 
 
+# Alcohol is the Bar's (Food Cost → Bar, from the distributor invoices and
+# the bar's own counts), never food cost: an ingredient filed under one of
+# these categories, or whose name the Bar's sorter reads as beer, liquor or
+# wine for sure, is partitioned out of food purchases and food stock value
+# (Bar audit R8 / AIX-14). Left in, the day an owner put liquor on the count
+# sheet food cost % would carry alcohol COGS over total sales while the Bar
+# counted the same purchases — the two modules summing to more than was spent.
+BAR_INGREDIENT_CATEGORIES = frozenset({
+    "alcohol", "bar", "beer", "beer & seltzer", "liquor", "spirits", "wine", "seltzer", "hard seltzer",
+    "cider", "beverage - alcohol", "alcoholic beverage", "alcoholic beverages", "beer/wine", "beer & wine",
+    "beer and wine", "liquor & spirits", "keg", "kegs"})
+
+
+# The Bar's sorter reads distributor lines, where every product is a drink;
+# on a kitchen's list "WHITE WINE VINEGAR", "VODKA SAUCE", "RUM CAKE" and
+# "COOKING WINE" are food. A kitchen word keeps a name on the food side.
+_KITCHEN_RE = re.compile(r"\b(VINEGAR|SAUCE|CAKE|VINAIGRETTE|BATTER|SOUP|GLAZE|MARINADE|COOKING|DRESSING|"
+                         r"BBQ|BARBECUE|CHEESE|SEASONING|EXTRACT|POWDER|FLAVOU?R(ING)?|REDUCTION|BRAISE|"
+                         r"MUSTARD|SALSA|AIOLI|MARSALA|MIRIN|DIP|BREAD|BRAT|BRATWURST|SAUSAGE|CHICKEN|BEEF|PORK|FISH)\b")
+
+
+def alcohol_category(name, supplier=None, unit=None):
+    """'beer' / 'liquor' / 'wine' when a product name reads as alcohol for
+    sure (the Bar's sorter, bar.classify), else None. A guess, or a name
+    with a kitchen word in it, is never alcohol."""
+    text = " ".join(str(name or "").upper().split())
+    if not text or _KITCHEN_RE.search(text):
+        return None
+    try:
+        from bar.classify import classify
+        got, sure = classify(supplier or "", text, unit)
+    except Exception:
+        return None
+    return got if sure and got in ("beer", "liquor", "wine") else None
+
+
+def is_bar_item(category=None, name=None) -> bool:
+    """True when an ingredient is alcohol: its category says so, or (no
+    category, or a generic beverage one) its name reads as alcohol for sure
+    (alcohol_category). A guess never moves an item."""
+    cat = " ".join(str(category or "").lower().split())
+    if cat in BAR_INGREDIENT_CATEGORIES:
+        return True
+    if cat and cat not in ("beverage", "beverages", "drinks", "other", "misc", "miscellaneous", "dry goods"):
+        return False
+    return alcohol_category(name) is not None
+
+
+def food_stock_value(items) -> float:
+    """Stock value of the food side only (bar items out, never below zero
+    stock): the opening/closing anchor a food COGS window reads."""
+    total = 0.0
+    for it in items or ():
+        if is_bar_item(it.get("category"), it.get("name") or it.get("item")):
+            continue
+        total += max(0.0, _f(it.get("current_stock"))) * _f(it.get("unit_cost"))
+    return round(total, 2)
+
+
+def beverage_sales_in_window(restaurant_id, start, end, db_path=None):
+    """Drink (alcohol) sales over [start, end] from the nightly report's
+    mapped categories (dsr.kpis.BEVERAGE_CATEGORIES, matched whole), or None
+    when no beverage category is on file — unknown, never 0 (R7)."""
+    from models import get_conn, DB_PATH
+    from dsr.kpis import BEVERAGE_CATEGORIES
+    try:
+        conn = get_conn(db_path or DB_PATH)
+        try:
+            rows = conn.execute(
+                "SELECT metric, SUM(value) AS v FROM dsr_metrics WHERE restaurant_id=? AND metric LIKE 'sales.cat:%' "
+                "AND business_date >= ? AND business_date <= ? GROUP BY metric",
+                (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    bev = [_f(r["v"]) for r in rows if " ".join(str(r["metric"])[10:].lower().split()) in BEVERAGE_CATEGORIES]
+    return round(sum(bev), 2) if bev and sum(bev) > 0 else None
+
+
 def purchases_in_window(restaurant_id, start, end, db_path=None):
     """Dollar value of everything received between two dates, inclusive.
 
@@ -78,22 +159,25 @@ def purchases_in_window(restaurant_id, start, end, db_path=None):
     raised a price re-priced every delivery already in the window (MOD-FC-23).
     Rows from before the event carried a price fall back to the current one.
     Returns (dollars, n_events) so a caller can tell "nothing was bought"
-    from "nothing was recorded".
+    from "nothing was recorded". Alcohol (is_bar_item) is the Bar's and is
+    left out of both (R8).
     """
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(e.qty * COALESCE(e.unit_cost, i.unit_cost, 0)), 0) AS total, COUNT(*) AS n "
+        rows = conn.execute(
+            "SELECT i.category, i.name, COALESCE(SUM(e.qty * COALESCE(e.unit_cost, i.unit_cost, 0)), 0) AS total, "
+            "COUNT(*) AS n "
             "FROM ingredient_stock_events e "
             "JOIN ingredients i ON i.id = e.ingredient_id AND i.restaurant_id = e.restaurant_id "
             "WHERE e.restaurant_id=? AND e.event_type='receiving' "
-            "AND e.event_date >= ? AND e.event_date <= ?",
+            "AND e.event_date >= ? AND e.event_date <= ? GROUP BY i.id, i.category, i.name",
             (restaurant_id, start.isoformat(), end.isoformat()),
-        ).fetchone()
+        ).fetchall()
     finally:
         conn.close()
-    return round(_f(row["total"]), 2), int(row["n"] or 0)
+    food = [r for r in rows if not is_bar_item(r["category"], r["name"])]
+    return round(sum(_f(r["total"]) for r in food), 2), int(sum(int(r["n"] or 0) for r in food))
 
 
 def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DAYS):

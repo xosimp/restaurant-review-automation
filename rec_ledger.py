@@ -750,6 +750,7 @@ KIND_TOPIC = {
     "overtime": "overtime", "overtime_move": "overtime", "labor_over": "hours", "labor": "hours",
     "intraday_pulse": "hours", "pulse_cut": "hours",
     "reprice": "pricing", "price_spike": "purchasing", "invoice": "purchasing", "food_cost_driver": "food_cost",
+    "bar_price": "purchasing",      # a bar price increase that held (bar_signals, barfix W9)
     "cut_waste": "waste", "food_waste": "waste", "stock_low": "ordering", "critical_low": "ordering",
     "raise_par": "ordering",          # ordering.par_suggestions (memory audit 9/29/26)
     "stock": "ordering", "diag_food": "food_cost", "food_diagnosis": "food_cost", "insight_food": "food_cost",
