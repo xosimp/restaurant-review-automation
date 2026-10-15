@@ -3,7 +3,7 @@ bar/purchases.py — the restaurant's Fintech invoice lines, each sorted into a
 category (the owner's correction first), with its net cost (a keg's deposit
 taken out).
 """
-from bar.classify import classify, product_key
+from bar.classify import classify, is_mixer, is_rebate, product_key
 from bar.common import get_conn
 
 
@@ -17,7 +17,8 @@ def _lines(restaurant_id, db_path=None) -> list:
     are incomplete), item_code, description, upc, uom, uom_inferred (True
     when a printout line took its unit from the export history), qty,
     unit_price, cost, deposit, adjustment, discount, kind, product_key,
-    category, sure, owner_set, net (cost less a keg's deposit). A line the
+    category, sure, owner_set, net (cost less a keg's deposit), rebate (a
+    product's own discount line, V33), mixer (a cocktail input). A line the
     reader could not parse at all (kind 'unparsed') is left out; its invoice
     reads unbalanced."""
     conn = get_conn(db_path)
@@ -34,6 +35,9 @@ def _lines(restaurant_id, db_path=None) -> list:
             "SELECT product_key, category FROM bar_product_categories WHERE restaurant_id=?", (int(restaurant_id),))}
     finally:
         conn.close()
+    # Decision 3: cocktail mixers stay non-alcoholic unless the owner counts them.
+    from bar.products import settings
+    count_mixers = settings(restaurant_id, db_path)["count_mixers"]
     out = []
     # A per-unit charge line ("charge") belongs to the item it charges on: it
     # takes that item's category, never one of its own — wherever the item
@@ -52,10 +56,18 @@ def _lines(restaurant_id, db_path=None) -> list:
             cat, sure = item_cat[key]
         if key in overrides and r["kind"] not in ("fee", "adjustment", "keg_credit") and r["uom"] != "DS":
             cat, sure = overrides[key], True
+        # A product's own discount or rebate lowers its category's cost (V33);
+        # a cocktail mixer is non-alcoholic unless the owner counts it as
+        # liquor (Decision 3: bar.products.settings count_mixers).
+        rebate = is_rebate(r["description"], r["kind"])
+        mixer = cat == "na" and r["kind"] in ("item", "charge") and is_mixer(r["description"])
+        if mixer and count_mixers and key not in overrides:
+            cat = "liquor"
         # A keg's $30 deposit inside its cost comes back with the empty: it is
         # never counted as what the beer cost.
         net = float(r["cost"] or 0) - (float(r["deposit"] or 0) if r["kind"] == "item" else 0.0)
         r.update(product_key=key, category=cat, sure=sure, owner_set=key in overrides, net=net,
+                 rebate=rebate, mixer=mixer,
                  balanced=None if r["balanced"] is None else bool(r["balanced"]),
                  uom_inferred=bool(r["uom_inferred"]))
         out.append(r)

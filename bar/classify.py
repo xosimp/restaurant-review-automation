@@ -16,14 +16,14 @@ from fintech_invoices import distributor_key, item_key
 _KEG_RE = re.compile(r"\b(1/2\s*BB|1/2BBL|1/2\s*BARREL|1/4\s*BB|1/6\s*BB|1/6BBL|BBL|BARREL|KEG|50L|30L|20L|K\s+1/2|K\s+50L|SIXTEL)\b")
 _FEE_RE = re.compile(r"\b(SERVICE\s*CHARGE|SALES\s*TAX|TAX|FUEL|DELIVERY|FREIGHT|SURCHARGE|DISCOUNT|REVERSAL|"
                      r"SUMMARY\s*LEVEL|ADJUSTMENT)\b")
-_SUPPLY_RE = re.compile(r"\b(COASTERS?|GLASSWARE|GLASS|BUCKET|NAPKINS?|STRAWS?|PICKS?|SLEEVE|TAP\s*HANDLE|CO2|"
+_SUPPLY_RE = re.compile(r"\b(COASTERS?|GLASSWARE|GLASS|BUCKET|NAPKINS?|STRAWS?|PICKS?|SLEEVE|TAP\s*HANDLE|HANDLE|CO2|"
                         r"CUPS?|LIDS?|TOWELS?|OPENER)\b")
 _SELTZER_RE = re.compile(r"\b(SELTZER|SLTZR|THC|RTD|SUN\s*CRUISER|HIGH\s*NOON|WHITE\s*CLAW|TRULY|NUTRL|SURFSIDE|CUTWATER|TWISTED\s*TEA|CIDER|LEMONADE\s+HARD)\b")
 _NA_RE = re.compile(r"\b(RED\s*BULL|GINGER\s*BEER|PUREE|PSNFRT|SYRUP|OLIVE\s*BRINE|BRINE|PELLEGRINO|TOPO\s*CHICO|LA\s*CROIX|MIXER|MIX|JUICE|SODA|TONIC|WATER|COFFEE|ESPRESSO|"
                     r"GRENADINE|FEVER[\s-]*TREE|MONIN|BARRITTS|REAL\s+\w+|NA\b|N/A|NON[\s-]*ALC|ZERO\s*PROOF|COLD\s*BREW)")
-_WINE_RE = re.compile(r"\b(CHARD|CHARDONNAY|CAB|CABERNET|CAB\s*SAUV|PINOT|P\s*GRIGIO|PROSECCO|CHAMP|CHAMPAGNE|BRUT|ROSE|"
+_WINE_RE = re.compile(r"\b(CHARD|CHARDONNAY|CAB|CABERNET|CAB\s*SAUV|PINOT|P\s*GRIGIO|PROSECCO|CHAMP|CHAMPAGNE|BRUT|"
                       r"MERLOT|SAUV|SAUVIGNON|MOSCATO|RIESLING|MALBEC|ZIN|ZINFANDEL|RED\s*BLEND|WINE|CAVA|LAMBRUSCO|"
-                      r"BURGUNDY|SHIRAZ|SYRAH|SANGIOVESE|CHIANTI|TEMPRANILLO|VINHO|SPARKLING|NOIR|P\s*NOIR|CHENIN|BLANC|"
+                      r"BURGUNDY|SHIRAZ|SYRAH|SANGIOVESE|CHIANTI|TEMPRANILLO|VINHO|NOIR|P\s*NOIR|CHENIN|BLANC|"
                       r"PETER\s*VELLA|SOUVERAIN|SON\s*CUTRER|AUSTIN|TORRESELLA|ZARDETTO|WYCLIFF|BOX\s*\d+L|\d\s*B\s+5L)\b")
 _LIQUOR_RE = re.compile(r"\b(VODKA|VDK|TEQ|TEQUILA|WHSKY|WHISKY|WHISKEY|WHSK|BRBN|BOURBON|RUM|GIN|SCOTCH|LIQ|LIQUEUR|"
                         r"CORDIAL|SCHNAPPS|JAGERMEISTER|FIREBALL|TRIPLE\s*SEC|VERMOUTH|APEROL|CAMPARI|BAILEYS|KAHLUA|"
@@ -35,10 +35,40 @@ _LIQUOR_RE = re.compile(r"\b(VODKA|VDK|TEQ|TEQUILA|WHSKY|WHISKY|WHISKEY|WHSK|BRB
                         r"KOVAL|RUMCHATA|HORNITOS|TEREMANA|LUNAZUL|1800|BBN|SCHNPS|CURACAO|LIMONCELLO|BITTERS?|VERM|ELDER|"
                         r"J\s*WALKER|JOHNNIE\s*WALKER|JACK\s*DANIELS?|HAYDENS?|JAMES\s*E\s*PEPPER|HENRY\s*AND\s*SONS|MCGILLS|DEKUYPER|"
                         r"PALLINI|CARPANO|BITTERMENS)\b")
-_BEER_RE = re.compile(r"(\d+NR\b|\d+CN\b|\bMHL\b)|\b(BTL|BTLS|CAN|CANS|NR|LN|12Z|16Z|19\.2Z|24Z|25Z|24/12|2/12|4/6|6/4|LAGER|IPA|ALE|STOUT|PILS|"
-                      r"PILSNER|PORTER|LITE|LIGHT|ULTRA|MILLER|COORS|BUD|BUDWEISER|MICHELOB|MODELO|CORONA|STELLA|"
+_BEER_RE = re.compile(r"(\d+NR\b|\d+CN\b|\bMHL\b)|\b(NR|LN|12Z|16Z|19\.2Z|24Z|25Z|24/12|2/12|4/6|6/4|LAGER|IPA|STOUT|PILS|"
+                      r"PILSNER|PORTER|LITE|ULTRA|MILLER|COORS|BUD|BUDWEISER|MICHELOB|MODELO|CORONA|STELLA|"
                       r"GUINNESS|HEINEKEN|BLUE\s*MOON|GOOSE\s*ISLAND|REVOLUTION|HALF\s*ACRE|3\s*FLOYDS|DAISY\s*CUTTER|"
                       r"KROMBACH|PACIFICO|YUENGLING|LAGUNITAS|BELLS|ANTI[\s-]*HERO|HAZY|WHEAT|HEFE|OKTOBERFEST)\b")
+# Weak words (V28, 10/15/26): each says beer or wine only as a guess — a
+# bottle, a can, an ale (ginger ale), light (Light rum), rosé or sparkling
+# (sparkling water) — so a product sorted by one of them alone reaches the
+# owner's "to check" list instead of passing as sure.
+_WEAK_BEER_RE = re.compile(r"\b(BTL|BTLS|BOTTLES?|CAN|CANS|ALE|LIGHT)\b")
+_WEAK_WINE_RE = re.compile(r"\b(ROSE|ROSÉ|SPARKLING)\b")
+# Non-alcoholic words that win over every alcohol word (TOPO CHICO SPARKLING
+# WATER was wine, CANADA DRY GINGER ALE beer, HEINEKEN 0.0 beer) unless the
+# line also says it is spiked.
+_NA_FIRST_RE = re.compile(r"(\b0\.0\b|0\.0%|\bNA\s+BEER\b|\bN/A\b|\bNON[\s-]*ALC\w*|\bALCOHOL[\s-]*FREE\b|"
+                          r"\bZERO\s*PROOF\b|\bSPARKLING\s+WATER\b|\bMINERAL\s+WATER\b|\bGINGER\s+ALE\b|"
+                          r"\bGINGER\s+BEER\b|\bCLUB\s+SODA\b|\bTONIC\s+WATER\b|\bTOPO\s*CHICO\b|\bPELLEGRINO\b|"
+                          r"\bLA\s*CROIX\b|\bATHLETIC\s+BREW\w*|\bRED\s*BULL\b)")
+_SPIKED_RE = re.compile(r"\b(HARD|SPIKED|SELTZER|SLTZR|VODKA|VDK|TEQUILA|TEQ|RUM|GIN|WHISKEY|WHISKY|COCKTAIL|CKTL)\b")
+# A keg deposit or an empty coming back is a deposit, never beer (V28 / V4).
+_DEPOSIT_RE = re.compile(r"\b(KEG\s+DEPOSIT|DEPOSIT|EMPTY|EMPTIES|EMPTYS)\b")
+# Bottled in bond is a whiskey word, not a bottle of beer.
+_BOND_RE = re.compile(r"\b(BTL|BOTTLED)\s+IN\s+BOND\b|\bBIB\b")
+# A product's own discount or rebate (Superior's "AB 2 PRODUCT DISCOUNT",
+# -$80): it lowers what that product's category cost (V33), never a fee.
+_REBATE_RE = re.compile(r"\b(DISCOUNT|DISC|REBATE|ALLOWANCE|PROMO\s+CREDIT)\b")
+_REBATE_NOT_RE = re.compile(r"\b(SUMMARY\s*LEVEL|INVOICE|PAYMENT|EARLY\s+PAY|CASH)\b")
+# Cocktail inputs: non-alcoholic, but bought for drinks the POS sells as
+# liquor (Decision 3, 10/15/26). They stay non-alcoholic; the Bar shows
+# "mixers bought" beside liquor, and the owner can count them as liquor.
+_MIXER_RE = re.compile(r"\b(RED\s*BULL|GINGER\s*BEER|PUREE|PSNFRT|SYRUP|OLIVE\s*BRINE|BRINE|MIXER|MIX|JUICE|"
+                       r"SODA|TONIC|GRENADINE|FEVER[\s-]*TREE|MONIN|BARRITTS|REAL\s+\w+|COLD\s*BREW|ESPRESSO|"
+                       r"CONCENTRATE|SOUR|LIME\s*JUICE|BLOODY|MARGARITA|CHERRIES|OLIVES)\b")
+
+
 # Distributors whose book is mostly beer, mostly spirits, or mostly wine:
 # the fallback when no word decides (a guess, flagged for the owner).
 _BEER_HOUSES = ("CHICAGO BEVERAGE", "WINDY CITY", "EUCLID", "ELGIN", "SUPERIOR", "SCHAMBERGER", "LAKESHORE",
@@ -63,6 +93,10 @@ def init_bar_cost(db_path=None):
         conn.commit()
     finally:
         conn.close()
+    # The owner's pack, link, deal-sheet, drink-map and pour settings
+    # (bar.products, 10/15/26), created at boot beside this one.
+    from bar.products import init_bar_products
+    init_bar_products(db_path)
 
 
 def product_key(distributor, item_code, description) -> str:
@@ -112,27 +146,29 @@ def migrate_product_keys(conn) -> int:
     return moved
 
 
-def classify(distributor, description, uom=None, kind="item") -> tuple:
-    """(category, confident) for one invoice line's product."""
-    k = str(kind or "item")
-    u = str(uom or "").upper()
-    if k in ("fee", "adjustment"):
-        return "fee", True
-    if k == "keg_credit" or u == "DS":
-        return "deposit", True
+def is_rebate(description, kind="item") -> bool:
+    """A product's own discount or rebate line (an item line saying DISCOUNT
+    or REBATE about a product, not an invoice-level summary): it lowers that
+    product's category cost (V33). A fee or adjustment line stays a fee."""
+    if str(kind or "item") not in ("item", "charge"):
+        return False
     d = " " + re.sub(r"\s+", " ", str(description or "").upper()) + " "
-    dist = str(distributor or "").upper()
-    if _FEE_RE.search(d):
-        return "fee", True
-    if _SUPPLY_RE.search(d) and not _LIQUOR_RE.search(d):
-        return "supplies", True
-    if any(h in dist for h in _NA_HOUSES):
-        return "na", True
-    if u in ("KE", "KG") or _KEG_RE.search(d):
-        return "beer", True
+    return bool(_REBATE_RE.search(d)) and not _REBATE_NOT_RE.search(d)
+
+
+def is_mixer(description) -> bool:
+    """A cocktail input (Red Bull, purée, syrup, olive brine, cold brew
+    concentrate, juice, tonic): non-alcoholic, bought for drinks sold as
+    liquor (Decision 3)."""
+    d = " " + re.sub(r"\s+", " ", str(description or "").upper()) + " "
+    return bool(_MIXER_RE.search(d))
+
+
+def _by_words(d, dist) -> tuple:
+    """(category, confident) from the description's words alone, or None."""
     if _SELTZER_RE.search(d):
         return "beer", True
-    if _LIQUOR_RE.search(d):
+    if _BOND_RE.search(d) or _LIQUOR_RE.search(d):
         return "liquor", True
     if _WINE_RE.search(d):
         return "wine", True
@@ -140,13 +176,56 @@ def classify(distributor, description, uom=None, kind="item") -> tuple:
         return "na", True
     if _BEER_RE.search(d):
         return "beer", True
+    # A weak word alone is a guess the owner confirms (V28).
+    if _WEAK_WINE_RE.search(d):
+        return "wine", False
+    if _WEAK_BEER_RE.search(d):
+        return "beer", False
+    return None
+
+
+def _by_house(dist) -> tuple:
     if any(h in dist for h in _BEER_HOUSES):
         return "beer", False
     if any(h in dist for h in _SPIRIT_HOUSES):
         return "liquor", False
     if any(h in dist for h in _WINE_HOUSES):
         return "wine", False
-    return "other", False
+    return None
+
+
+def classify(distributor, description, uom=None, kind="item") -> tuple:
+    """(category, confident) for one invoice line's product.
+
+    Order (V28, 10/15/26): fees and deposits first; a product's own discount
+    or rebate takes that product's category (V33); supplies; non-alcoholic
+    words that beat every alcohol word (sparkling water, ginger ale, 0.0, NA
+    beer) unless the line is spiked; kegs; then the description's words, a
+    weak word alone (BTL, CAN, ALE, LIGHT, ROSE, SPARKLING) only a guess;
+    then the distributor's house, a guess."""
+    k = str(kind or "item")
+    u = str(uom or "").upper()
+    if k in ("fee", "adjustment"):
+        return "fee", True
+    d = " " + re.sub(r"\s+", " ", str(description or "").upper()) + " "
+    dist = str(distributor or "").upper()
+    if k == "keg_credit" or u == "DS" or _DEPOSIT_RE.search(d):
+        return "deposit", True
+    if is_rebate(description, k):
+        rest = _REBATE_RE.sub(" ", d)
+        # "AB 2 PRODUCT DISCOUNT": no product word, the house decides (a guess).
+        return _by_words(rest, dist) or _by_house(dist) or ("fee", False)
+    if _FEE_RE.search(d):
+        return "fee", True
+    if _SUPPLY_RE.search(d) and not _LIQUOR_RE.search(d):
+        return "supplies", True
+    if any(h in dist for h in _NA_HOUSES):
+        return "na", True
+    if _NA_FIRST_RE.search(d) and not _SPIKED_RE.search(d):
+        return "na", True
+    if u in ("KE", "KG") or _KEG_RE.search(d):
+        return "beer", True
+    return _by_words(d, dist) or _by_house(dist) or ("other", False)
 
 
 def set_category(restaurant_id, key, category, user_id=None, db_path=None) -> dict:
