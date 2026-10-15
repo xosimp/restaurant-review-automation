@@ -83,6 +83,74 @@ def match(lines, menu, sold=None) -> list:
     return out
 
 
+# ── reading Back Office's Consolidated Product Mix (text of the PDF) ────────
+#
+# The 10/5/26 import filed every line under the category header BELOW it,
+# not the one above it: 102 beers (Miller Lite, Coors Light ...) landed in
+# "White Wine", "Gameday" held wines and sodas, "(Modifiers)" wings and
+# tenders (bar audit 10/14/26 RPW-14 / V41). A P-Mix lists a category's
+# header, then its lines, then (often) its total: a header names the lines
+# BELOW it until the next header, and a total line closes a category and
+# never names one.
+_PMIX_LINE = re.compile(r"^\s*(\d{1,6})\s+(.+?)\s+(-?[\d,]+(?:\.\d+)?)\s+\$?(-?[\d,]+\.\d{2})\b")
+_PMIX_TOTAL = re.compile(r"\btotals?\b", re.I)
+_PMIX_NOISE = re.compile(r"^\s*(?:page\s+\d|plu\b|item\b|consolidated|product\s+mix|printed|run\s+date|"
+                         r"date\s+range|\d{1,2}/\d{1,2}/\d{2,4}\s*[-–]\s*\d{1,2}/\d{1,2}/\d{2,4})", re.I)
+
+
+def parse_pmix(text) -> list:
+    """[{plu, name, qty, gross, category}] from the text of Back Office's
+    Consolidated Product Mix: each line under the category header ABOVE it
+    (the module note). A line before any header has category None."""
+    out, category = [], None
+    for raw in str(text or "").splitlines():
+        line = raw.rstrip()
+        if not line.strip() or _PMIX_NOISE.match(line):
+            continue
+        m = _PMIX_LINE.match(line)
+        if m:
+            out.append({"plu": m.group(1), "name": m.group(2).strip(), "qty": float(m.group(3).replace(",", "")),
+                        "gross": float(m.group(4).replace(",", "")), "category": category})
+            continue
+        if _PMIX_TOTAL.search(line):
+            continue                     # a total closes a category; it never names the lines above it
+        if not re.search(r"\d\.\d{2}\b", line):
+            category = line.strip()      # a header: it names the lines BELOW it
+    return out
+
+
+def recategorise(restaurant_id, text, db_path=DB_PATH) -> dict:
+    """Re-file every non-manual pos_item_plus row under the category its
+    P-Mix line sits under (parse_pmix) — the repair for the 10/5/26 import
+    (V41). Idempotent; a row the P-Mix doesn't list, or a manual row, is
+    left as it is. {changed, unchanged, not_in_pmix, manual}."""
+    parsed = {(str(r["plu"]), normalize(r["name"])): r["category"] for r in parse_pmix(text)}
+    conn = get_conn(db_path)
+    out = {"changed": 0, "unchanged": 0, "not_in_pmix": 0, "manual": 0}
+    try:
+        rows = conn.execute("SELECT plu, bo_name, bo_category, how FROM pos_item_plus WHERE restaurant_id=?",
+                            (restaurant_id,)).fetchall()
+        for r in rows:
+            if r["how"] == "manual":
+                out["manual"] += 1
+                continue
+            key = (str(r["plu"]), normalize(r["bo_name"]))
+            if key not in parsed:
+                out["not_in_pmix"] += 1
+                continue
+            if parsed[key] == r["bo_category"]:
+                out["unchanged"] += 1
+                continue
+            conn.execute("UPDATE pos_item_plus SET bo_category=?, updated_at=datetime('now') WHERE restaurant_id=? "
+                         "AND plu=? AND bo_name=? AND COALESCE(how, '') != 'manual'",
+                         (parsed[key], restaurant_id, r["plu"], r["bo_name"]))
+            out["changed"] += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return out
+
+
 def save(restaurant_id, rows, source, provider="rpower", db_path=DB_PATH) -> dict:
     """Write matched rows; a manual row stays as the owner set it. Returns
     {"written", "kept_manual", "unmatched"}."""
