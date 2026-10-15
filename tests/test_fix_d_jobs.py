@@ -317,3 +317,18 @@ def test_one_jobs_history_route(db, monkeypatch):
     assert len(d["runs"]) == 2 and d["runs"][0]["state"] == "partial" and d["runs"][0]["manual"]
     assert c.get("/admin/api/jobs/nope/runs").status_code == 404
     assert c.get("/admin/api/backup").get_json()["status"]["state"] == "never"
+
+
+def test_a_job_that_runs_on_one_weekday_has_a_weekly_sla():
+    """bar_price_push (Mondays only) shipped with the hourly 3-hour SLA, and the
+    platform watch texted the owner every hour from Thursday 10/15/26 that it
+    had not run. A job the loop gates to one weekday is late only after a week."""
+    import re
+    import jobs_registry
+    import scheduler
+    src = inspect.getsource(scheduler)
+    gated = set(re.findall(r'weekday\(\) *== *\d[^\n]*?claim_period\("([a-z_]+)"', src))
+    assert "bar_price_push" in gated and len(gated) >= 10, "the pattern still finds the weekday jobs"
+    short = {n: jobs_registry.JOBS[n]["sla_minutes"] for n in gated
+             if jobs_registry.JOBS[n]["sla_minutes"] < jobs_registry._W}
+    assert not short, short

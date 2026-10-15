@@ -415,7 +415,9 @@ JOBS = {
     # A bar price increase that held and is worth $25 a month at usual
     # buying (bar_signals, barfix W9 / Decision 7): pushed once per increase.
     "bar_price_push": dict(
-        cadence="hourly on Mondays (9am local)", sla_minutes=_H, sends=True, runnable=True,
+        # Runs only on Mondays, so its SLA is the week's: with _H the watch
+        # texted "no successful run in 3.1h" every hour from Thursday 10/15/26.
+        cadence="hourly on Mondays (9am local)", sla_minutes=_W, sends=True, runnable=True,
         label="Bar price push",
         description="Push each restaurant's biggest bar price increase that held, worth $25 a month or more, once "
                     "per increase (push only; bounded, resumable)",
