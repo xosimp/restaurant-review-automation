@@ -50,7 +50,10 @@ class Ledger:
         by_cat, by_dist = defaultdict(list), defaultdict(list)
         for l in rows:
             by_cat[l["category"]].append(l)
-            by_dist[l["distributor"]].append(l)
+            # A Back Office entry (kind 'backoffice': a check-paid house, a
+            # store run) buys, but it is no delivery rhythm to watch.
+            if l.get("kind") != "backoffice":
+                by_dist[l["distributor"]].append(l)
         self._cat = {c: (ls, [_day(l) for l in ls]) for c, ls in by_cat.items()}
         self._dist = {d: (ls, [_day(l) for l in ls]) for d, ls in by_dist.items()}
         # Per distributor: its days, its pour spend per day and its spend

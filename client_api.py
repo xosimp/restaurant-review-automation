@@ -11849,6 +11849,20 @@ def food_cost_cogs(current_user):
     return _m("mobile_food_cost_cogs")(current_user)
 
 
+@client_bp.route("/api/food-cost/purchases")
+@login_required
+def food_cost_purchases(current_user):
+    """Web twin — the one body is mobile_api.mobile_food_cost_purchases."""
+    return _m("mobile_food_cost_purchases")(current_user)
+
+
+@client_bp.route("/api/food-cost/purchases/vendor", methods=["POST"])
+@login_required
+def food_cost_purchase_vendor(current_user):
+    """Web twin — the one body is mobile_api.mobile_food_cost_purchase_vendor."""
+    return _m("mobile_food_cost_purchase_vendor")(current_user)
+
+
 @client_bp.route("/api/food-cost/bar")
 @login_required
 def food_cost_bar(current_user):

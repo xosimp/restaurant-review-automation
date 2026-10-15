@@ -94,6 +94,10 @@ READERS = {
     # (source 'backoffice'). UNVERIFIED: built without a sample — the expected
     # headers are in bar.counts and docs/plans/BACK_OFFICE_INTEGRATION.md.
     "backoffice_valuation": "bar.counts:read_valuation_file",
+    # Back Office's Invoices By Vendor printout (PDF) and its Chart of
+    # Accounts CSV (backoffice_ap, 10/15/26): food purchases for Food Cost,
+    # alcohol bought outside Fintech for the Bar.
+    "backoffice_ap": "backoffice_ap:read_file",
 }
 
 

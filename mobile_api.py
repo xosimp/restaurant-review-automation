@@ -2994,6 +2994,58 @@ def mobile_food_cost_bar(current_user):
     return jsonify(**out)
 
 
+@mobile_bp.route("/food-cost/purchases", methods=["GET"])
+@mobile_login_required
+def mobile_food_cost_purchases(current_user):
+    """Food bought vs sold from Back Office (backoffice_ap.food_bought_vs_sold,
+    10/15/26): {ok, available, basis "purchases", label, window, months,
+    by_category, vendors, unknown_vendors, note, suppliers: [{vendor,
+    vendor_key, category, source, why}], can_change}. Purchase-based - never
+    called food cost; gated with Food Cost (FOOD_COST_VIEW)."""
+    import backoffice_ap as _bo
+    from permissions import is_principal
+    rid = current_user["restaurant_id"]
+    try:
+        out = _bo.food_bought_vs_sold(rid, today=_bar_count_today(rid))
+        sup = _bo.vendor_categories(rid)
+        names = {e["vendor_key"]: e["vendor"] for e in _bo.entries(rid)}
+        out["suppliers"] = sorted(({"vendor": names.get(k, k), "vendor_key": k, **v} for k, v in sup.items()),
+                                  key=lambda x: (x["category"] != "unknown", x["vendor"]))
+    except Exception as e:
+        _bar_capture(e, "food_purchases", rid)
+        return jsonify(ok=False, error="Your supplier purchases couldn't be read just now. Cavnar AI has been told; "
+                                       "try again in a minute."), 500
+    out["can_change"] = bool(is_principal(current_user))
+    return jsonify(ok=True, **out)
+
+
+@mobile_bp.route("/food-cost/purchases/vendor", methods=["POST"])
+@mobile_login_required
+def mobile_food_cost_purchase_vendor(current_user):
+    """{vendor, category}: what one Back Office supplier's itemized invoices
+    count as (food, na_beverage, beer, wine, liquor, bar_consumables,
+    other_purchase, not_cogs). The account holder's alone; logged."""
+    import backoffice_ap as _bo
+    from permissions import principal_only
+    refused = principal_only(current_user, "how suppliers are sorted")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    vendor = str(b.get("vendor") or "").strip()[:200]
+    if not vendor:
+        return jsonify(ok=False, error="Pick the supplier."), 400
+    try:
+        res = _bo.set_vendor_category(rid, vendor, str(b.get("category") or ""), user_id=_bar_viewer(current_user))
+    except ValueError as e:
+        return jsonify(ok=False, error=e.args[0]), 400
+    except Exception as e:
+        _bar_capture(e, "food_purchases", rid)
+        return jsonify(ok=False, error="That couldn't be saved just now. Try again in a minute."), 500
+    _log_account_event(rid, "purchase_vendor_sorted", current_user, detail=f"{vendor}: {res['category']}"[:300])
+    return jsonify(**res)
+
+
 @mobile_bp.route("/food-cost/bar/expected-prices", methods=["GET"])
 @mobile_login_required
 def mobile_bar_expected_prices(current_user):

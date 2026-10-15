@@ -4752,6 +4752,9 @@ def init_db(db_path: str = DB_PATH):
     # The bar's shelf counts by category (bar.counts — counted pour cost, F1).
     from bar.counts import init_bar_counts
     init_bar_counts(db_path)
+    # Back Office's invoices and chart of accounts (backoffice_ap, 10/15/26).
+    from backoffice_ap import init_backoffice_ap
+    init_backoffice_ap(db_path)
     # Bought vs rung's owner-confirmed cocktail specs (bar.variance) and the
     # bar's waste log (bar.waste) — F2 / F14, bar fix round 10/15/26.
     from bar.variance import init_bar_variance
@@ -15745,6 +15748,7 @@ ACCOUNT_EVENT_TYPES = (
     # Which POS sales count as beer, liquor, wine (bar.mapping, bar fix round
     # 10/15/26 V7): the account holder's choice, `detail` naming what moved.
     "bar_mapping_changed",
+    "purchase_vendor_sorted",
     # The account holder's other Bar writes (bar fix round 10/15/26, V21):
     # a product re-sorted, a distributor marked stopped, the bar settings, a
     # product's pack or link, the deal sheet, a POS drink's product — the
@@ -15795,6 +15799,7 @@ ACCOUNT_EVENT_LABELS = {
     "bar_count_removed": "Bar count removed",
     # `detail` names each POS category and where it now counts ("Beer › 56. Brunch Drinks: liquor").
     "bar_mapping_changed": "Bar sales mapping changed",
+    "purchase_vendor_sorted": "Supplier sorted for food cost",
     # `detail` carries the date, product, amount and why — never a dollar.
     "bar_waste_logged": "Bar waste logged",
     "bar_waste_removed": "Bar waste entry removed",

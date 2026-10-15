@@ -72,6 +72,15 @@ def _week_after(day) -> str:
     return (got + timedelta(days=LATEST_AFTER_RECEIPT_DAYS)).isoformat()
 
 
+def _outside(restaurant_id, win, db_path):
+    try:
+        import backoffice_ap
+        return backoffice_ap.outside_fintech_summary(restaurant_id, (win or {}).get("from"), (win or {}).get("to"),
+                                                     db_path=db_path)
+    except Exception:
+        return {"available": False}
+
+
 def build(restaurant_id, db_path=None, today=None) -> dict:
     """The Bar page's payload."""
     today = today or date.today()
@@ -117,7 +126,9 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     sales = Sales({k: v for k, v in sales_detail["by_category"].items() if k in ("beer", "liquor", "wine")})
     sales_gaps = sorted(d for d, n in (sales_detail.get("nights") or {}).items() if n.get("gap"))
     feed = _feed_status(restaurant_id, db_path, today)
-    inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines})
+    # "Invoices through" is the Fintech feed; a Back Office entry buys but is not the feed.
+    inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines if l.get("kind") != "backoffice"}
+                       or {str(l["invoice_date"])[:10] for l in lines})
     products = _products(lines)
     other_spend = round(sum(p["spend"] for p in products if p["category"] == "other"), 2)
     # Counted pour cost from the bar's shelf counts (bar.counts, F1),
@@ -155,7 +166,7 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     return {"ok": True, "available": True,
             "as_of": inv_dates[-1], "as_of_mdy": _mdy(inv_dates[-1]),
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
-                         "count": len({(l["distributor"], l["invoice_number"]) for l in lines})},
+                         "count": len({(l["distributor"], l["invoice_number"]) for l in lines if l.get("kind") != "backoffice"})},
             "held_future": held_rows,
             "held_old": held_old,
             "feed": feed or {"invoices_through": fresh.get("invoices_through"),
@@ -165,6 +176,8 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
                              "stale_days": fresh.get("stale_days")},
             "pour_cost": pour,
             "counted": counted,
+            # Alcohol in the window paid through Back Office and not on Fintech.
+            "outside_fintech": _outside(restaurant_id, win, db_path),
             "price_watch": prices,
             "insights": _insights(pour, prices, to_check),
             "variance": ops["variance"],

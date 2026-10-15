@@ -77,6 +77,10 @@ _SOURCES = (
     ("bar_drink_map", "COUNT(*), MAX(set_at)"),
     ("bar_drink_specs", "COUNT(*), MAX(set_at), SUM(oz)"),
     ("bar_waste", "COUNT(*), MAX(id), MAX(entered_at)"),
+    # Back Office's entries and how they sort (backoffice_ap, 10/15/26).
+    ("bo_invoices", "COUNT(*), MAX(updated_at), SUM(amount)"),
+    ("bo_gl_accounts", "COUNT(*), MAX(updated_at)"),
+    ("bo_vendor_categories", "COUNT(*), MAX(set_at)"),
     # The ticket archive (variance reads ~8 weeks of pos_ticket_lines): a
     # night archived or re-archived writes its pos_archive_days row, so the
     # day rows stand for the lines without scanning them.

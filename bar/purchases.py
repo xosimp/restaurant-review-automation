@@ -8,7 +8,7 @@ from bar.common import get_conn
 from bar.ledger import Lines
 
 
-def _lines(restaurant_id, db_path=None) -> list:
+def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
     """Every dated invoice line of the restaurant, in date order. Each row:
     distributor, distributor_key (canonical: one key whatever the file's
     spelling), invoice_id, invoice_number, invoice_date, ref_invoice_number
@@ -91,4 +91,22 @@ def _lines(restaurant_id, db_path=None) -> list:
                  balanced=None if r["balanced"] is None else bool(r["balanced"]),
                  uom_inferred=bool(r["uom_inferred"]))
         out.append(r)
+    # Alcohol paid through Back Office that no Fintech invoice carries (a
+    # wine house paid by check, a liquor-store run; backoffice_ap, 10/15/26):
+    # purchase lines of kind 'backoffice' - counted in bought vs sold, never
+    # in the price watch, the product list or the gap detector.
+    try:
+        import backoffice_ap
+        extra = backoffice_ap.outside_fintech(restaurant_id, db_path)["lines"] if backoffice else []
+    except Exception as e:                  # Back Office never costs the Bar its page
+        import logging
+        logging.getLogger(__name__).warning("bar: Back Office lines unread rid=%s: %s", restaurant_id, e)
+        extra = []
+    if extra:
+        for x in extra:
+            if x["mixer"] and count_mixers:
+                x["category"] = "liquor"
+        merged = sorted(list(out) + extra, key=lambda l: str(l["invoice_date"])[:10])
+        out = Lines()
+        out.extend(merged)
     return out
