@@ -46395,7 +46395,7 @@ function sfw2RuleCheck(chk) {
   /* ── bought vs rung, waste, keg yield, comps (W6b: F2, F12, F14) ───── */
   var WREASONS = [['spill', 'Spill'], ['breakage', 'Breakage'], ['comp', 'Comped off the POS'], ['line_clean', 'Line cleaning'], ['other', 'Other']];
   var WUNITS = [['each', 'bottles or cans'], ['oz', 'oz'], ['keg', 'kegs']];
-  var THEO = {owner_pour: 'your pour', default_pour: 'the default pour', one_each: 'one a drink', recipe_card: 'the recipe card', rpower_alt_qty: 'the POS’s own quantity', rpower_cost: 'the POS’s own cost'};
+  var THEO = {owner_pour: 'your pour', stated_pour: 'the size on the button', default_pour: 'the default pour', one_each: 'one a drink', recipe_card: 'the recipe card', rpower_alt_qty: 'the POS’s own quantity', rpower_cost: 'the POS’s own cost'};
   function units(n, word) { var v = Math.round((+n || 0) * 10) / 10; return hn(v.toLocaleString('en-US')) + ' ' + esc2(word === 'oz' ? 'oz' : (Math.abs(v) === 1 ? word : word + 's')); }
   function barProducts(cat) {
     var ps = (DATA && DATA.products) || [], out = [], i;

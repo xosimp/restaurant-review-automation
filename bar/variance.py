@@ -414,6 +414,10 @@ def _pour_target(m, prod, cfg, item_name):
     oz, label, _yield = pour_for(prod.category, pk, cfg)
     if oz is None:
         return "each", None, "one_each", None
+    if pk.get("each") == "keg" and stated_oz(item_name):
+        # "Dos Equis 22oz" pours 22, not the 16 oz default (10/15/26: five
+        # 22oz drafts matched without a pour were counted at 16).
+        return "oz", stated_oz(item_name), "stated_pour", None
     if prod.category == "wine" and pk.get("each") != "keg" and WHOLE_BOTTLE_RE.search(str(item_name or "")):
         return "each", None, "one_each", f"{item_name} read as a whole bottle from its POS name"
     return "oz", oz, "default_pour", f"assumes the {label} (no pour set for {item_name or 'this drink'})"
@@ -540,6 +544,17 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     # by name the first night it sells — no reload of the cards needed.
     by_name = {(k[0], " ".join(str(n or "").lower().split())): k[1] for k, n in item_names.items()}
     suggested = []
+    # A drink with a confirmed recipe card pours what the card says: a
+    # single-product match on the same button would count it twice (10/15/26:
+    # the Salted Caramel Tini's Ketel One, once at 1.68 oz and again at 1.5).
+    carded = set()
+    for s in specs:
+        iid = s["item_id"] or by_name.get((s["provider"], " ".join(str(s["item_name"] or "").lower().split())))
+        if s["status"] == "confirmed" and s["product_key"] and iid:
+            carded.add((s["provider"], str(iid)))
+    for k in list(targets):
+        if k in carded:
+            del targets[k]
     for s in specs:
         if not s["item_id"]:
             s["item_id"] = by_name.get((s["provider"], " ".join(str(s["item_name"] or "").lower().split())))

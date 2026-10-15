@@ -524,3 +524,38 @@ def test_the_routes_have_their_mobile_twins():
     for path in ("/api/food-cost/bar/waste", "/api/food-cost/bar/waste/<int:entry_id>",
                  "/api/food-cost/bar/drink-specs", "/api/food-cost/bar/drink-spec"):
         assert path in rules and "/mobile" + path in rules, path
+
+
+def test_a_draft_with_no_pour_set_pours_the_size_its_name_states(db):
+    # 10/15/26: "Dos Equis 22oz" matched without a pour was counted at 16 oz.
+    rid = _rid(db)
+    _invoice(db, rid, "K1", _iso(0), [("3003", "MILLER LITE 1/2 BBL", "KE", 1, 125.0)])
+    _invoice(db, rid, "K2", _iso(30), [("3003", "MILLER LITE 1/2 BBL", "KE", 1, 125.0)])
+    _nights(db, rid, 0, 34)
+    _map(db, rid, "D22", "lakeshore beverage|3003")
+    _map(db, rid, "D16", "lakeshore beverage|3003")
+    for i in range(10):
+        _ring(db, rid, i, "D22", "Miller Lite 22oz", "Beer", "Draft")
+        _ring(db, rid, i, "D16", "Miller Lite Draft", "Beer", "Draft")
+    k = _item(bv.compute(rid, today=TODAY, db_path=db), "miller")
+    assert k["rung_units"] == 10 * 22 + 10 * 16
+    assert "stated_pour" in k["theoretical_basis"] and "default_pour" in k["theoretical_basis"]
+
+
+def test_a_confirmed_recipe_card_is_counted_once_even_with_a_match(db, tmp_path):
+    # 10/15/26: the Salted Caramel Tini had a match (Ketel One 1.5 oz) and a
+    # confirmed card (1.68 oz) — its vodka was counted twice.
+    rid = _rid(db)
+    _miller(db, rid)
+    _invoice(db, rid, "A3", _iso(1), [("4004", "KETEL ONE VODKA 750ML", "BO", 6, 22.0)])
+    cards = {"recipes": [{"name": "Salted Caramel Tini", "alcoholic": True, "rpower_item": "Salt Caramel Tini",
+                          "ingredients": [{"item": "Ketel One Vodka", "amount": 1.68, "unit": "oz"}]}]}
+    path = tmp_path / "cards.json"
+    path.write_text(json.dumps(cards))
+    for i in range(10):
+        _ring(db, rid, 10, "T1", "Salt Caramel Tini", "Liquor", "Cocktails", sales=13.0)
+    _map(db, rid, "T1", "lakeshore beverage|4004", pour_oz=1.5)
+    bv.load_recipe_cards(rid, path=str(path), db_path=db)
+    bv.set_drink_spec(rid, bv.drink_specs(rid, db_path=db)[0]["id"], confirm=True, db_path=db)
+    k = _item(bv.compute(rid, today=TODAY, db_path=db), "ketel")
+    assert k["rung_units"] == 16.8 and k["theoretical_basis"] == ["recipe_card"]
