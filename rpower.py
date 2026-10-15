@@ -878,7 +878,7 @@ def fetch_sales_catalog(restaurant_id: int) -> dict:
         dep_id = _id(c.get("slsdep_mid"))
         dep = (deps.get(dep_id or "") or {}).get("name")
         categories.append({
-            "category_id": str(mid), "name": clean_item_name(c.get("name")) or None,
+            "category_id": str(mid), "name": (str(c.get("name") or "").strip() or None),
             "department_id": dep_id, "department": (str(dep).strip() or None) if dep else None,
             "is_bar": 1 if _num(c.get("is_bar")) else 0,
             "alt_qty_unit": (str(c.get("alt_qty_unit") or "").strip() or None),
@@ -1764,12 +1764,10 @@ def sync_to_db(restaurant_id: int) -> dict:
                 # units only, then nothing until a day goes missing again.
                 inventory_ledger.backfill_item_sales(restaurant_id, days=60)
                 # The Daily Sales Report's grids for the nights before it
-                # started (dsr.backfill): figures only, no reports or email.
-                from models import get_restaurant as _get_r_dsr
-                _r_dsr = _get_r_dsr(restaurant_id)
-                if _r_dsr is not None and getattr(_r_dsr, "dsr_enabled", 0):
-                    from dsr import backfill as _dsr_backfill
-                    _dsr_backfill.backfill(_r_dsr, days=60)
+                # started are their own job now (strategy_jobs.
+                # run_dsr_backfill, `dsr_backfill`, after this sync): a
+                # failure there used to be swallowed here with no job_runs
+                # row (bar audit 10/14/26 RPW-13 / R11).
             except Exception as _menu_e:
                 log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
         except Exception as e:
@@ -2108,7 +2106,9 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         cat_id = _id((menu_rows.get(item_mid or "") or {}).get("slscat_mid"))
         cat = cat_rows.get(cat_id or "") or {}
         dep = dep_rows.get(_id(cat.get("slsdep_mid")) or "") or {}
-        return (cat_id, (clean_item_name(cat.get("name")) or None),
+        # Spelled exactly as fetch_day_sales spells it (the report's
+        # `sales.depcat:` keys), so the two meet on one name.
+        return (cat_id, ((cat.get("name") or "").strip() or None),
                 ((dep.get("name") or "").strip() or (UNASSIGNED_DEPARTMENT if item_mid else None)))
 
     raw_lines = _paged(token, "ticketsales/getbybusinessdate",

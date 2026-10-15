@@ -1837,6 +1837,21 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_tickets", "type_discnt", "REAL NOT NULL DEFAULT 0"),
         ("pos_tickets", "type_promo", "REAL NOT NULL DEFAULT 0"),
         ("pos_tickets", "type_comp", "REAL NOT NULL DEFAULT 0"),
+        # Archive layout 4 (bar fix round 10/15/26, F5): each line's
+        # department and sales category as RPOWER filed it, RPOWER's cost /
+        # discounted / aqu_count / fraction, and the modifier links read from
+        # ticketitem (parent_atom, mod_level — never summed for sales).
+        ("pos_ticket_lines", "department", "TEXT"),
+        ("pos_ticket_lines", "sales_category", "TEXT"),
+        ("pos_ticket_lines", "category_id", "TEXT"),
+        ("pos_ticket_lines", "cost", "REAL"),
+        ("pos_ticket_lines", "discounted", "REAL"),
+        ("pos_ticket_lines", "aqu_count", "REAL"),
+        ("pos_ticket_lines", "fraction", "REAL"),
+        ("pos_ticket_lines", "atom", "TEXT"),
+        ("pos_ticket_lines", "parent_atom", "TEXT"),
+        ("pos_ticket_lines", "mod_level", "INTEGER"),
+        ("pos_ticket_lines", "parent_line_id", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -4733,6 +4748,16 @@ def init_db(db_path: str = DB_PATH):
     # The bar's shelf counts by category (bar.counts — counted pour cost, F1).
     from bar.counts import init_bar_counts
     init_bar_counts(db_path)
+    # The Bar's POS side (bar fix round 10/15/26): the POS's own sales
+    # catalog and menu (pos_archive), the owner's bar mapping and each
+    # night's drink sales net of check discounts (bar.mapping), and the
+    # RPOWER request budget every process shares (rpower).
+    from pos_archive import init_pos_catalog
+    init_pos_catalog(db_path)
+    from bar.mapping import init_bar_mapping
+    init_bar_mapping(db_path)
+    from rpower import init_rate_limit
+    init_rate_limit(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
@@ -15646,6 +15671,9 @@ ACCOUNT_EVENT_TYPES = (
     # the admin (re-audit 2 RX-01: they were logged and never shown).
     "event_follow_set", "event_game_removed", "event_game_restored",
     "demand_signals_saved", "demand_signal_deleted",
+    # Which POS sales count as beer, liquor, wine (bar.mapping, bar fix round
+    # 10/15/26 V7): the account holder's choice, `detail` naming what moved.
+    "bar_mapping_changed",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -15688,6 +15716,8 @@ ACCOUNT_EVENT_LABELS = {
     # `detail` carries the count date and the categories, never a dollar.
     "bar_counted": "Bar counted",
     "bar_count_removed": "Bar count removed",
+    # `detail` names each POS category and where it now counts ("Beer › 56. Brunch Drinks: liquor").
+    "bar_mapping_changed": "Bar sales mapping changed",
     "auto_publish_changed": "Automatic schedule publishing changed",
     "auto_order_changed": "Trusted supplier orders changed",
     "auto_draft_changed": "Automatic schedule drafting changed",

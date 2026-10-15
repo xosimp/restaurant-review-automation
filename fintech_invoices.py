@@ -24,8 +24,9 @@ is never overwritten by the printout of the same invoice. `balanced` says
 whether the lines add up to the invoice total; a file that is neither
 format is kept as 'unrecognized' and nothing is written from it.
 
-Nothing here is owner-facing yet: it is the cost source the bar module
-(pour cost, price changes per distributor) will read.
+The Bar page reads these tables (since 10/14/26: bar.purchases._lines, behind
+the bar_cost facade) for its purchases, price watch and bought-vs-sold
+reading; nothing else owner-facing does.
 """
 import csv
 import hashlib

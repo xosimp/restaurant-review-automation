@@ -110,6 +110,9 @@ KINDS = {
     "auto_draft": ("generation", "scheduled", 2),
     "learner": ("bulk", "bulk", 2),
     "email_intake": ("bulk", "bulk", 4),
+    # The nightly POS archive, one row per restaurant (strategy_jobs.
+    # run_pos_archive; bar audit 10/14/26 R2).
+    "pos_archive": ("bulk", "bulk", 2),
     # The owner's notes and staff notes read into typed rules when they are
     # SAVED, one batched call (owner_rules.queue_read — blind re-audit
     # 10/11/26 AI-22): never in a generation's critical path.
@@ -125,6 +128,7 @@ HANDLERS = {
     "auto_draft": "strategy_jobs:run_queued_auto_draft",
     "learner": "strategy_jobs:run_queued_learner",
     "email_intake": "email_intake:run_queued",
+    "pos_archive": "strategy_jobs:run_queued_pos_archive",
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
 }
