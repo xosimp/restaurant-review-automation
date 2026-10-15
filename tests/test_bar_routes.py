@@ -589,9 +589,27 @@ def test_build_scales_linearly(monkeypatch):
 def test_price_kinds_filter_as_a_comma_list():
     rows = [{"product_key": f"d|{i}", "name": f"Item {i}", "kind": k, "change": 1, "since": "2026-10-01"}
             for i, k in enumerate(["increase", "deal", "deal_ended", "tier", "decrease"])]
-    got = bcache.price_rows({"price_watch": {"events": rows}}, kind="deal_ended, deal,tier")
+    got = bcache.price_rows({"price_watch": {"events": rows}}, kind="deal_ended, deal,tier", list_name="events")
     assert sorted(r["kind"] for r in got["rows"]) == ["deal", "deal_ended", "tier"] and got["total"] == 3
     assert set(got) == {"ok", "total", "offset", "limit", "rows"}
+
+
+def test_price_directions_read_the_pages_own_segments():
+    """up = the increases that held, down = the decreases, all = those plus
+    unconfirmed, deals and tiers — never the minor rows; `list` names one."""
+    def row(i, kind, ch):
+        return {"product_key": f"d|{i}", "name": f"Item {i}", "kind": kind, "change": ch, "since": "2026-10-01"}
+    pw = {"increases": [row(1, "increase", 5)], "decreases": [row(2, "decrease", -5)],
+          "unconfirmed": [row(3, "increase", 4)], "deals": [row(4, "deal", -9), row(5, "deal_ended", 9)],
+          "tiers": [row(6, "tier", -2)], "minor": [row(7, "increase", 0.1)]}
+    pw["events"] = [r for k in ("increases", "decreases", "unconfirmed", "deals", "tiers", "minor") for r in pw[k]]
+    p = {"price_watch": pw}
+    keys = lambda got: sorted(r["product_key"] for r in got["rows"])
+    assert keys(bcache.price_rows(p, dir="up")) == ["d|1"]
+    assert keys(bcache.price_rows(p, dir="down")) == ["d|2"]
+    assert keys(bcache.price_rows(p, dir="all")) == ["d|1", "d|2", "d|3", "d|4", "d|5", "d|6"]
+    assert keys(bcache.price_rows(p, dir="all", kind="deal_ended,deal,tier")) == ["d|4", "d|5", "d|6"]
+    assert keys(bcache.price_rows(p, dir="up", list_name="events")) == ["d|1", "d|3", "d|5", "d|7"]
 
 
 def test_the_deal_sheet_is_on_the_page_and_its_own_route(db, monkeypatch):

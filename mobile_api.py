@@ -3011,7 +3011,7 @@ def _bar_page_args():
 @mobile_login_required
 def mobile_bar_prices(current_user):
     """The price watch a page at a time: ?offset=&limit=(≤200)&q=&dir=up|down|all
-    &kind=&cat=&dist=&sort=money|pct|newest&list=events|increases|… →
+    &kind=&cat=&dist=&sort=money|pct|newest[&list=events|increases|…] →
     {ok, total, offset, limit, rows} (bar.cache.price_rows)."""
     import bar.cache as _bcache
     rid = current_user["restaurant_id"]
@@ -3020,7 +3020,7 @@ def mobile_bar_prices(current_user):
         payload = _bcache.full(rid, today=_bar_count_today(rid))
         out = _bcache.price_rows(payload, dir=a.get("dir") or "all", kind=a.get("kind"), cat=a.get("cat"),
                                  dist=a.get("dist"), sort=a.get("sort") or "money",
-                                 list_name=a.get("list") or "events", **_bar_page_args())
+                                 list_name=a.get("list") or None, **_bar_page_args())
     except ValueError as e:
         return jsonify(ok=False, error=(e.args[0] if e.args else "Check the filters.")), 400
     except Exception as e:

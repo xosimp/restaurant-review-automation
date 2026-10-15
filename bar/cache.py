@@ -255,16 +255,24 @@ PRICE_SORTS = ("money", "pct", "newest")
 PRICE_DIRS = ("up", "down", "all")
 
 
+# The rows each direction reads when no list is named — the page's own
+# segments: up = the increases that held, down = the decreases, all = those
+# plus the unconfirmed changes, deals and order-size tiers (never `minor`).
+DIR_LISTS = {"up": ("increases",), "down": ("decreases",),
+             "all": ("increases", "decreases", "unconfirmed", "deals", "tiers")}
+
+
 def price_rows(payload, offset=0, limit=50, q=None, dir="all", kind=None, cat=None, dist=None, sort="money",
-               list_name="events") -> dict:
+               list_name=None) -> dict:
     """{ok, total, offset, limit, rows} — the price watch's rows, filtered
-    and sorted: q (product name, description or distributor contains),
-    dir up|down|all (the change's sign), kind (increase|decrease|deal|
-    deal_ended|tier), cat (category key), dist (distributor contains), sort
-    money (forward monthly dollars, largest move first) | pct | newest —
-    kind may name several, comma-separated (deal_ended,deal,tier);
-    list_name one of PRICE_LISTS (events: every row). Raises ValueError with
-    an owner sentence on a bad parameter."""
+    and sorted: dir up|down|all picks the rows as the page does (DIR_LISTS)
+    unless list_name names one of PRICE_LISTS (events: every row, then dir
+    filters by the change's sign); kind (increase|decrease|deal|deal_ended|
+    tier, several comma-separated: deal_ended,deal,tier); q (product name,
+    description, distributor or key contains); cat (category key); dist
+    (distributor contains); sort money (forward monthly dollars, largest
+    move first) | pct | newest. Raises ValueError with an owner sentence on
+    a bad parameter."""
     offset, limit = _bounds(offset, limit)
     dir = (dir or "all").lower()
     sort = (sort or "money").lower()
@@ -272,9 +280,19 @@ def price_rows(payload, offset=0, limit=50, q=None, dir="all", kind=None, cat=No
         raise ValueError("Direction is up, down or all.")
     if sort not in PRICE_SORTS:
         raise ValueError("Sort by money, pct or newest.")
-    if list_name not in PRICE_LISTS:
+    if list_name not in (None, "") and list_name not in PRICE_LISTS:
         raise ValueError("That isn't one of the price watch's lists.")
-    rows = ((payload or {}).get("price_watch") or {}).get(list_name) or []
+    pw = (payload or {}).get("price_watch") or {}
+    if list_name:
+        rows = pw.get(list_name) or []
+    else:
+        rows, seen = [], set()
+        for name in DIR_LISTS[dir]:
+            for r in pw.get(name) or []:
+                k = (r.get("product_key"), r.get("uom"), r.get("kind"), r.get("since")) if isinstance(r, dict) else id(r)
+                if k not in seen:
+                    seen.add(k)
+                    rows.append(r)
     qq, dd, cc = _text(q), _text(dist), _text(cat, 40)
     kinds = {k.strip() for k in _text(kind, 200).split(",") if k.strip()}
     out = []
