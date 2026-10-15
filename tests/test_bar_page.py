@@ -280,6 +280,19 @@ def test_the_page_never_says_four_weeks_for_a_shorter_window(db_path):
     _common(html)
 
 
+def test_spend_sections_state_their_period_and_the_hero_its_own(full):
+    """V46: the distributors' and the products' spend are every invoice on
+    file — each says its dates — while the hero's "bought" is the window's."""
+    inv = full["invoices"]
+    html = _render(full)
+    assert f"Distributors · {inv['from_mdy']} – {inv['to_mdy']}" in _text(html)
+    hero = _text(html[html.index('class="br-card br-hero'):html.index('class="br-cats"')])
+    w = full["pour_cost"]["window"]
+    assert f"{w['from_mdy']} – {w['to_mdy']}" in hero and "bought from distributors" in hero
+    out = _run(full, "window._bar.setData(%s); console.log(window._bar.prodBody());" % json.dumps(full, default=str))
+    assert f"Spend is every invoice on file, {inv['from_mdy']} – {inv['to_mdy']}." in _text(out)
+
+
 def test_the_page_renders_the_no_overlap_state(full):
     """EDG list 48: invoices on file but no sales overlapping them: the page
     says so and draws no figure."""
@@ -414,6 +427,8 @@ def test_only_decreases_opens_on_all_and_up_names_what_came_down(full):
     p["price_watch"]["decreases"] = [dn]
     html = _render(p)
     assert 'data-br-dir="all" aria-pressed="true"' in html and 'data-br-row="' in html
+    assert 'id="br-live" aria-live="polite"' in html                      # V48: a polite live count
+    assert re.search(r"@media \(pointer:coarse\)\{[^}]*\.br-seg \.cbtn[^}]*min-height:44px", _bar_css())
     out = _run(p, "window._bar.state.dir='up'; console.log(window._bar.listHtml());")
     assert "No price went up and held" in out and "came down" in out and 'data-br-dir="down"' in out
 
@@ -433,7 +448,8 @@ def test_an_unchanged_reading_is_never_a_red_drop(full):
     p = json.loads(json.dumps(full, default=str))
     p["pour_cost"]["total"]["prev_pct"] = p["pour_cost"]["total"]["pct"]
     html = _render(p)
-    assert "−0.0" not in html and "br-delta bad" not in html and "unchanged" in html
+    hero = html[html.index('class="br-card br-hero'):html.index('class="br-cats"')]
+    assert "−0.0" not in html and "br-delta bad" not in html and "unchanged" in hero
 
 
 def test_five_hundred_products_search_stays_small_and_rows_build_on_open(full):
@@ -464,7 +480,7 @@ def test_a_long_name_wraps_to_two_lines_and_the_detail_says_it_in_full(full):
     css = _bar_css()
     assert "-webkit-line-clamp:2" in css[css.index(".br-nm b{"):][:200]
     out = _run(p, "console.log(window._bar.rowDetail(%s));" % json.dumps(p["price_watch"]["increases"][0]))
-    assert long in out
+    assert 'class="br-full">' + long in out          # the detail's own heading, not a control's label
 
 
 def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
@@ -665,12 +681,22 @@ def test_small_red_text_clears_four_and_a_half_to_one_on_the_dark_surface():
     css = _bar_css()
     for sel in (".br-delta.bad", ".br-ov.bad", ".br-li .r.bad", ".br-err"):
         assert re.search(re.escape(sel) + r"\{[^}]*color:var\(--br-red-text\)", css), sel
+    # The register's other two: a price row's change figure and a bad insight's kicker.
+    js = _bar_script()
+    assert "increase: {c: 'var(--br-up)', ct: 'var(--br-red-text)'" in js
+    assert "(x.tone === 'bad' ? ';--ct:var(--br-red-text)' : '')" in js
 
 
 def test_print_keeps_the_bar_page():
     block = _media(_bar_css(), "@media print")
     assert '#bar[role="dialog"]' in block and "display:block!important" in block
-    assert "body.dn-open>*:not(#bar){display:none!important}" in block
+    # Only while the Bar is the open page (the DNA page sets dn-open too).
+    assert "body.dn-open:has(>#bar:not([hidden]))>*:not(#bar){display:none!important}" in block
+    # The global print block hides every .cbtn; a Price watch row's header is
+    # one, so the Bar's block prints it (V49: rows printed empty otherwise).
+    assert "#bar .br-row .cbtn.br-rh{display:grid!important" in block
+    glob = _media(_src(), "@media print{\n  @page")
+    assert ".cbtn" in glob.split("{display:none!important}")[0]
 
 
 def test_motion_tokens_and_the_draw_in():

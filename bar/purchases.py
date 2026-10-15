@@ -17,7 +17,8 @@ def _lines(restaurant_id, db_path=None) -> list:
     do not add up to its total or a line could not be read: its categories
     are incomplete), item_code, description, upc, uom, uom_inferred (True
     when a printout line took its unit from the export history), qty,
-    unit_price, cost, deposit, adjustment, discount, kind, product_key,
+    unit_price, cost, deposit, adjustment, discount, kind, received_at (when
+    the file carrying the invoice arrived, or None), product_key,
     category, sure, owner_set, net (cost less a keg's deposit), rebate (a
     product's own discount line, V33), mixer (a cocktail input). A line the
     reader could not parse at all (kind 'unparsed') is left out; its invoice
@@ -27,8 +28,10 @@ def _lines(restaurant_id, db_path=None) -> list:
         rows = conn.execute(
             "SELECT i.id AS invoice_id, i.distributor, i.distributor_key, i.invoice_number, i.invoice_date, "
             "i.ref_invoice_number, i.po_number, i.balanced, l.item_code, l.description, l.upc, l.uom, "
-            "l.uom_inferred, l.qty, l.unit_price, l.cost, l.deposit, l.adjustment, l.discount, l.kind "
+            "l.uom_inferred, l.qty, l.unit_price, l.cost, l.deposit, l.adjustment, l.discount, l.kind, "
+            "f.created_at AS received_at "
             "FROM fintech_invoice_lines l JOIN fintech_invoices i ON i.id=l.invoice_id "
+            "LEFT JOIN fintech_files f ON f.id=i.file_id "
             "WHERE i.restaurant_id=? AND i.invoice_date IS NOT NULL AND l.kind<>'unparsed' "
             "ORDER BY i.invoice_date, i.id, l.line_no",
             (int(restaurant_id),)).fetchall()

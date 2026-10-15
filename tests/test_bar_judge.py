@@ -855,7 +855,40 @@ def test_a_future_dated_invoice_is_held_for_a_check(db_path):
     out = bc.build(rid, db_path=db_path, today=T)
     assert out["as_of"] == "2026-10-06"
     assert out["held_future"][0]["invoice_number"] == "TYPO" and out["held_future"][0]["date_mdy"] == "10/2/27"
-    assert not any(r.get("to") == 350.0 for r in out["price_watch"]["increases"])
+    # Never a price point anywhere in the watch (one purchase can't be an
+    # increase anyway, so every list and every row's history is checked).
+    pw = out["price_watch"]
+    rows = [r for k in ("events", "increases", "decreases", "unconfirmed", "deals", "tiers", "minor") for r in pw[k]]
+    assert not any(350.0 in (r.get("from"), r.get("to")) for r in rows)
+    assert not any(h["date"] > "2026-10-14" for r in rows for h in r.get("history") or [])
+    # ...and the product's latest purchase is the last real one.
+    titos = [p for p in out["products"] if "TITOS" in p["product"]]
+    assert titos and all(p["last"] == "2026-10-06" for p in titos), titos
+
+
+def test_a_date_more_than_a_week_after_its_file_arrived_stays_held(db_path):
+    """V35: "10/20/26" typed for 10/2/26 in a file received 10/2 is held
+    while 10/20 is ahead — and still held once 10/20 has passed (the date
+    check was only "after today" before). A date within the week counts."""
+    rid = _rid(db_path)
+    _liquor_db(db_path, rid, start=date(2026, 8, 25), weeks=6)
+    res = fi.ingest_file(rid, "typo.csv", (HEAD + _row("Breakthru Beverage", "LATE", date(2026, 10, 20), "9031",
+                                                        "TITOS VDK 1L", "CA", 1, 350.0)
+                                           + _row("Breakthru Beverage", "SOON", date(2026, 10, 6), "9031",
+                                                  "TITOS VDK 1L", "CA", 1, 300.0)).encode(), db_path=db_path)
+    conn = models.get_conn(db_path)
+    conn.execute("UPDATE fintech_files SET created_at='2026-10-02 14:00:00' WHERE id=?", (res["file_id"],))
+    conn.commit()
+    conn.close()
+    _sales_db(db_path, rid, date(2026, 8, 25), 60, Liquor=200)
+    for today in (date(2026, 10, 10), date(2026, 10, 25)):
+        out = bc.build(rid, db_path=db_path, today=today)
+        held = {h["invoice_number"]: h for h in out["held_future"]}
+        assert list(held) == ["LATE"], (today, out["held_future"])
+        assert held["LATE"]["received_mdy"] == "10/2/26" and held["LATE"]["date_mdy"] == "10/20/26"
+        assert out["as_of"] == "2026-10-06", today
+        titos = [p for p in out["products"] if "TITOS" in p["product"]]
+        assert titos and all(p["last"] == "2026-10-06" for p in titos)
 
 
 def test_an_invoice_years_before_joining_is_held_for_a_check(db_path):

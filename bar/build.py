@@ -1,6 +1,7 @@
 """
 bar/build.py — the Bar page's payload, assembled from the package's reads.
 """
+import functools
 from datetime import date, timedelta
 
 from bar.common import LABELS, _mdy
@@ -52,6 +53,25 @@ def oldest_believable(restaurant):
     return (joined - timedelta(days=OLDEST_BEFORE_JOINING_DAYS)).isoformat()
 
 
+# An invoice dated more than this long after its file arrived is held (V35).
+LATEST_AFTER_RECEIPT_DAYS = 7
+
+
+def _latest_believable(received_at) -> str:
+    """The latest invoice date believed for a file received at
+    `received_at` (ISO): a week after it; "9999" when unknown."""
+    return _week_after(str(received_at or "")[:10])
+
+
+@functools.lru_cache(maxsize=4096)
+def _week_after(day) -> str:
+    try:
+        got = date.fromisoformat(day)
+    except ValueError:
+        return "9999"
+    return (got + timedelta(days=LATEST_AFTER_RECEIPT_DAYS)).isoformat()
+
+
 def build(restaurant_id, db_path=None, today=None) -> dict:
     """The Bar page's payload."""
     today = today or date.today()
@@ -64,19 +84,26 @@ def build(restaurant_id, db_path=None, today=None) -> dict:
     # restaurant joined Cavnar AI, is a typo or a mis-read: held for a date
     # check, never the page's "as of", the latest price, or a month row
     # stretching back a decade (V35).
+    # A date more than a week after its file arrived is held the same way —
+    # still held once that date has passed (10/20 typed for 10/2).
     today_iso = today.isoformat()
     restaurant = _restaurant(restaurant_id, db_path)
     floor = oldest_believable(restaurant) or ""
+
+    def ahead(l):
+        d = str(l["invoice_date"])[:10]
+        return d > today_iso or d > _latest_believable(l.get("received_at"))
     # One index over the lines and one over the sales serve every window the
     # page reads (bar.ledger, V17).
-    lines = Lines(l for l in all_lines if floor <= str(l["invoice_date"])[:10] <= today_iso)
+    lines = Lines(l for l in all_lines if floor <= str(l["invoice_date"])[:10] and not ahead(l))
 
     def held_of(keep):
-        rows = sorted({(l["distributor"], l["invoice_number"], str(l["invoice_date"])[:10])
-                       for l in all_lines if keep(str(l["invoice_date"])[:10])})
-        return [{"distributor": d, "invoice_number": n, "date": x, "date_mdy": _mdy(x)} for d, n, x in rows]
-    held_rows = held_of(lambda d: d > today_iso)
-    held_old = held_of(lambda d: d < floor)
+        rows = sorted({(l["distributor"], l["invoice_number"], str(l["invoice_date"])[:10],
+                        str(l.get("received_at") or "")[:10]) for l in all_lines if keep(l)})
+        return [{"distributor": d, "invoice_number": n, "date": x, "date_mdy": _mdy(x),
+                 "received_mdy": _mdy(r) if r else None} for d, n, x, r in rows]
+    held_rows = held_of(ahead)
+    held_old = held_of(lambda l: str(l["invoice_date"])[:10] < floor)
     if not lines:
         return {"ok": True, "available": False, "held_future": held_rows, "held_old": held_old,
                 "why_not": ("Every invoice on file is dated after today — they're held for a date check."

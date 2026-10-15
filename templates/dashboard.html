@@ -45738,7 +45738,10 @@ function sfw2RuleCheck(chk) {
 /* Print (V49): the Bar prints as itself — Price watch to a distributor
    meeting — on the print block's light paper. */
 @media print{
-  body.dn-open>*:not(#bar){display:none!important}
+  body.dn-open:has(>#bar:not([hidden]))>*:not(#bar){display:none!important}
+  /* A Price watch row's header is a button: printed as its row (the global block hides .cbtn). */
+  #bar .br-row .cbtn.br-rh{display:grid!important;background:none!important;box-shadow:none!important}
+  #bar .br-row .br-rh .br-cv{display:none!important}
   #bar[role="dialog"],#bar.dn{display:block!important;position:static!important;inset:auto!important;background:var(--paper)!important;color:var(--ink)!important}
   html[data-theme] #bar{--hb-line:rgba(22,19,15,.18);--hb-line2:rgba(22,19,15,.10)}
   #bar .dn-bar,#bar .br-tools,#bar .br-showall,#bar .br-form,#bar .br-own{display:none!important}
@@ -46012,8 +46015,8 @@ function sfw2RuleCheck(chk) {
     var hf = d.held_future || [];
     if (hf.length) {
       var li = '';
-      for (i = 0; i < hf.length; i++) li += '<li><b>' + esc2(hf[i].distributor) + '</b> #' + esc2(hf[i].invoice_number) + ' · dated ' + hn(hf[i].date_mdy) + '</li>';
-      out.push('<div class="br-warn info"><b>' + hn(hf.length) + ' ' + plural(hf.length, 'invoice is', 'invoices are') + ' dated after today</b> and held for a date check — they count once the date arrives or is corrected.<ul>' + li + '</ul></div>');
+      for (i = 0; i < hf.length; i++) li += '<li><b>' + esc2(hf[i].distributor) + '</b> #' + esc2(hf[i].invoice_number) + ' · dated ' + hn(hf[i].date_mdy) + (hf[i].received_mdy ? ', its file arrived ' + hn(hf[i].received_mdy) : '') + '</li>';
+      out.push('<div class="br-warn info"><b>' + hn(hf.length) + ' ' + plural(hf.length, 'invoice is', 'invoices are') + ' dated after today or more than a week after the file arrived</b> and held for a date check — they count once the date is corrected, or arrives if it’s within a week of the file.<ul>' + li + '</ul></div>');
     }
     var ho = d.held_old || [];
     if (ho.length) {
@@ -46777,7 +46780,9 @@ function sfw2RuleCheck(chk) {
       + (s.total > s.rows.length ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary" data-br-pmore="1">Show ' + hn(Math.min(PAGE, s.total - s.rows.length)) + ' more · ' + hn(s.total - s.rows.length) + ' left</button></div>' : '');
   }
   function prodBody() {
-    return '<p class="br-note">Cavnar AI sorts each product from its name, unit and distributor. Change one and it stays that way.</p>'
+    var inv = (DATA && DATA.invoices) || {};
+    return '<p class="br-note">Cavnar AI sorts each product from its name, unit and distributor. Change one and it stays that way.'
+      + (inv.from_mdy ? ' Spend is every invoice on file, ' + hn(inv.from_mdy) + ' – ' + hn(inv.to_mdy) + '.' : '') + '</p>'
       + '<div class="br-tools"><input class="br-q" id="br-pq" type="search" placeholder="Search a product" aria-label="Search products" value="' + esc2(ST.prodQ) + '"></div>'
       + '<div id="br-plist">' + prodRows() + '</div>';
   }
