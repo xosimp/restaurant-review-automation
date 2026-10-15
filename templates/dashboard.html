@@ -45824,6 +45824,10 @@ function sfw2RuleCheck(chk) {
    (owner, 10/15/26: each value's error line made it taller, and the row
    centred them, so the date sat lower); the date box is the values' height. */
 .br-cnt .br-form .br-in2.date{height:44px;line-height:42px;-webkit-appearance:none;appearance:none}
+/* The waste log's Log it sits on the row's input line at their height
+   (owner, 10/15/26: it floated above the Note box, shorter). */
+#br-wform{align-items:flex-end}
+#br-wform>.cbtn{height:44px}
 .br-ok{font-size:13.5px;color:var(--hb-good);min-height:18px}
 .br-err{display:block;font-size:13.5px;color:var(--br-red-text);margin-top:4px;line-height:1.45}
 .br-ch-h{display:grid;gap:6px;margin-top:12px}
@@ -46424,11 +46428,23 @@ function sfw2RuleCheck(chk) {
         + '<input class="br-in2" style="width:90px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" aria-label="Ounces a drink">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
+  // A recipe card's ingredient: the owner picks or keeps the product it
+  // pours, then confirms (owner, 10/15/26: a card with no matching product
+  // had no Confirm at all — Girls Deserve's gin, the dirty martini).
   function specRow(s) {
-    return '<div class="br-card br-li"><div class="n"><b>' + esc2(s.item_name) + '</b><span>Recipe card: ' + (s.oz != null ? hn(s.oz + ' oz') + ' ' : '') + esc2(s.ingredient) + '</span></div>'
-      + '<div class="m">' + (s.product_key ? 'Poured from ' + esc2(prodName(s.product_key)) : 'No product on the invoices matches it yet') + (s.status === 'confirmed' ? ' · confirmed' : ' · a suggestion until you confirm it') + '</div>'
-      + '<div class="r">' + (OWNER && s.status !== 'confirmed' ? (s.product_key ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="confirm">Confirm</button> ' : '')
-        + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="remove">Not this</button>' : '') + '</div></div>';
+    var name = s.product || (s.product_key ? prodName(s.product_key) : null), can = OWNER && s.status !== 'confirmed';
+    var opts = '<option value="">Pick the product…</option>', ps = barProducts(null), i, have = false;
+    for (i = 0; i < ps.length && i < 400; i++) {
+      var sel = ps[i].product_key === s.product_key;
+      if (sel) have = true;
+      opts += '<option value="' + esc2(ps[i].product_key) + '"' + (sel ? ' selected' : '') + '>' + esc2(ps[i].product) + '</option>';
+    }
+    if (s.product_key && !have) opts += '<option value="' + esc2(s.product_key) + '" selected>' + esc2(name || s.product_key) + '</option>';
+    return '<div class="br-card br-li vm"><div class="n"><b>' + esc2(s.item_name) + '</b><span>Recipe card: ' + (s.oz != null ? hn(s.oz + ' oz') + ' ' : '') + esc2(s.ingredient) + '</span></div>'
+      + '<div class="m">' + (s.status === 'confirmed' ? 'Poured from ' + esc2(name || '—') + ' · confirmed' : (s.product_key ? 'Suggested: ' + esc2(name || s.product_key) : 'No product on the invoices matches it yet — pick it')) + '</div>'
+      + '<div class="r">' + (can ? '<div class="br-form br-vmf"><select class="br-sel" data-br-specp="' + esc2(s.id) + '" aria-label="Product ' + esc2(s.item_name) + ' pours for ' + esc2(s.ingredient) + '">' + opts + '</select>'
+        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="confirm">Confirm</button>'
+        + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="remove">Not this</button></div>' : '') + '</div></div>';
   }
   function prodName(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
   function varSec(d) {
@@ -47382,7 +47398,11 @@ function sfw2RuleCheck(chk) {
         ownerWrite('/api/food-cost/bar/drink-map', vb, 'Matched — it counts in bought vs rung now', t);
       } else if (a('data-br-spec') != null) {
         var act = a('data-act'), sb = {id: +a('data-br-spec')};
-        if (act === 'confirm') sb.confirm = true; else sb.remove = true;
+        if (act === 'confirm') {
+          var spk = valOf(attrSel('data-br-specp', a('data-br-spec')));
+          if (!spk) { say('Pick the product it pours first.', 'error'); return; }
+          sb.confirm = true; sb.product_key = spk;
+        } else sb.remove = true;
         ST.specs = null;
         ownerWrite('/api/food-cost/bar/drink-spec', sb, act === 'confirm' ? 'Confirmed — the recipe card counts now' : 'Set aside — it won’t be suggested again', t);
       } else if (a('data-br-varall') != null) { ST.varAll = !ST.varAll; rerender(DATA); }

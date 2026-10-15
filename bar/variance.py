@@ -508,6 +508,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         mode, oz, basis, assume = _pour_target(m, p, cfg, item_names.get(k))
         targets[k].append((ck, mode, oz, basis, assume))
     specs = drink_specs(restaurant_id, db_path)
+    _names = product_names(lines=lines)
     suggested = []
     for s in specs:
         if s["status"] != "confirmed":
@@ -656,7 +657,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
            "unmapped": unmapped_rows[:MAX_UNMAPPED], "unmapped_total": len(unmapped_rows),
            "unmapped_sales_usd": round(sum(u["sales_usd"] for u in unmapped_rows), 2),
            "totals": totals, "incomplete_distributors": sorted(gapped),
-           "suggestions": [_spec_public(s) for s in suggested[:MAX_SUGGESTIONS]],
+           "suggestions": [_spec_public(s, _names) for s in suggested[:MAX_SUGGESTIONS]],
            "suggestions_total": len(suggested),
            "note": ("Comps are poured, not paid: shown apart, never counted as rung. A POS drink not matched to a "
                     "product is left out and named, never counted as zero.")}
@@ -675,9 +676,25 @@ def _r(v, n=1):
     return None if v is None else round(v, n)
 
 
-def _spec_public(s) -> dict:
-    return {k: s[k] for k in ("id", "provider", "item_name", "item_id", "ingredient", "product_key", "oz",
-                              "status", "recipe", "note")}
+def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
+    """{product_key: the product's readable name} from the purchase lines —
+    what a recipe card names as "Poured from" (10/15/26: a key the page's
+    product list didn't carry read as "euclid beverage north aurora|3101756")."""
+    if lines is None:
+        from bar.purchases import _lines
+        lines = _lines(restaurant_id, db_path)
+    out = {}
+    for l in lines or []:
+        if l.get("product_key") and l.get("description"):
+            out.setdefault(l["product_key"], display_name(l["description"]))
+    return out
+
+
+def _spec_public(s, names=None) -> dict:
+    out = {k: s[k] for k in ("id", "provider", "item_name", "item_id", "ingredient", "product_key", "oz",
+                             "status", "recipe", "note")}
+    out["product"] = (names or {}).get(s.get("product_key")) if s.get("product_key") else None
+    return out
 
 
 def _totals(items, cat_sales, mapped_sales) -> dict:

@@ -754,3 +754,19 @@ def test_the_range_bands_are_ember_never_green():
         rule = blk[blk.index(sel):blk.index("}", blk.index(sel))]
         assert "--br-range" in rule and "--hb-good" not in rule and "--green" not in rule, sel
     assert "bandCss: counted ?" not in blk and "opts.bandCss || 'var(--br-range)'" in blk
+
+
+def test_every_unconfirmed_recipe_card_can_pick_its_product_and_names_it():
+    # 10/15/26: a card with no matching product had no Confirm (Girls
+    # Deserve's gin, the dirty martini), and a product the page's list didn't
+    # carry read as its key ("euclid beverage north aurora|3101756").
+    import bar.variance as bv
+    row = {"id": 1, "provider": "rpower", "item_name": "Girls Deserve", "item_id": "9", "ingredient": "Gin",
+           "product_key": "euclid|3101756", "oz": 1, "status": "suggested", "recipe": None, "note": None}
+    assert bv._spec_public(row, {"euclid|3101756": "Tanqueray Gin 1L"})["product"] == "Tanqueray Gin 1L"
+    assert bv._spec_public(dict(row, product_key=None), {})["product"] is None
+    src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
+    body = src[src.index("  function specRow(s) {"):src.index("  function prodName(key)")]
+    assert 'data-br-specp="' in body and 'data-act="confirm">Confirm' in body and "Pick the product" in body
+    handler = src[src.index("a('data-br-spec') != null"):src.index("a('data-br-varall')")]
+    assert "sb.product_key = spk" in handler and "Pick the product it pours first." in handler

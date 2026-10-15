@@ -2880,7 +2880,8 @@ def mobile_bar_drink_specs(current_user):
     from permissions import is_principal
     rid = current_user["restaurant_id"]
     try:
-        rows = [_bv._spec_public(s) for s in _bv.drink_specs(rid)]
+        _names = _bv.product_names(rid)
+        rows = [_bv._spec_public(s, _names) for s in _bv.drink_specs(rid)]
     except Exception as e:
         _bar_capture(e, "bar_drink_specs", rid)
         return jsonify(ok=False, error=_BAR_READ_FAILED), 500
