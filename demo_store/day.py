@@ -477,7 +477,7 @@ def business_day(day: date) -> dict:
     for _ in range(cat_n):
         no += 1
         need = _at(day, rng.choice([11.5, 12.0, 17.0, 17.5]))
-        tk = _Ticket(no=no, open=need - timedelta(hours=rng.uniform(20, 70)), room="Takeout", guests=20,
+        tk = _Ticket(no=no, open=need - timedelta(hours=rng.uniform(20, 70)), room="Takeout", guests=1,
                      kind="catering", hh=False, meal=_meal(day, need), pcenter="Catering", table="To Go",
                      server=online["mid"], need=need)
         ring(tk, w.item_by_name()["Game Day Wing Party Pack" if gameday or rng.random() < 0.5 else "Taco Bar for 20"],

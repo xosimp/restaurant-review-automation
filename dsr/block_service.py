@@ -318,7 +318,7 @@ def collect(ctx):
                          "AND cancelled=0", args)
     if not tickets:
         return dsr.block(dsr.UNAVAILABLE, source=provider, reason=REASON_EMPTY, block_name="service")
-    lines = _rows(ctx, "SELECT kind, sales, loss_amount, reason, approver_id FROM pos_ticket_lines "
+    lines = _rows(ctx, "SELECT kind, sales, loss_amount, reason, approver_id, item_name FROM pos_ticket_lines "
                        "WHERE restaurant_id=? AND provider=? AND business_date=? AND kind IN "
                        "('comp','discount','refund','void')", args)
     punches = _rows(ctx, "SELECT * FROM pos_punches WHERE restaurant_id=? AND provider=? AND business_date=?", args)

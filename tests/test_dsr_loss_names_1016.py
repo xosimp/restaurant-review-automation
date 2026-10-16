@@ -26,3 +26,13 @@ def test_a_shared_pos_login_is_marked_never_read_as_a_person():
                        {"employee_name": "Callisandra Plauda", "role": "Bartender PM", "edited_by": "m1", "clock_in": None}],
                       {"m1": "Erik Baylis"})
     assert [e["shared_login"] for e in edits] == [True, False]
+
+
+def test_the_nights_loss_lines_are_read_with_their_item_name():
+    # The fix above read item_name from rows the night's query never selected
+    # (Halsted & Rye's report still said "No reason given", 10/16/26).
+    import inspect
+    src = inspect.getsource(bs)
+    q = src[src.index('lines = _rows(ctx, "SELECT'):]
+    q = q[:q.index("args)")]
+    assert "item_name" in q.split("FROM pos_ticket_lines")[0]

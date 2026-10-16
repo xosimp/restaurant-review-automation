@@ -408,6 +408,7 @@ def fill_reviews(rid, days=HISTORY_DAYS):
         conn.close()
     avg = sum(x["rating"] for x in rows) / max(1, len(rows))
     models.update_restaurant(rid, {"reviews_live": 1})
+    models.update_last_fetched(rid)
     _say(f"reviews: {len(rows)} ({new} new), average {avg:.2f}")
 
 
@@ -841,6 +842,7 @@ def _refresh_reviews(rid, start, end) -> int:
                           response_status=x["response_status"], posted_at=x["posted_at"], processed=True)
             for x in rows]
     new, _ = models.save_reviews(objs)
+    models.update_last_fetched(rid)
     conn = models.get_conn()
     try:
         for x in rows:
@@ -1021,6 +1023,7 @@ def refresh(rid, today=None) -> dict:
     step("kitchen", lambda: _refresh_kitchen(rid, start, end))
     step("bo_counts", lambda: __import__("backoffice_counts").save_counts(rid, _bo_count_book(end, 2)).get("periods"))
     step("schedules", lambda: fill_schedules(rid, weeks=1))
+    step("closeout", lambda: _refresh_closeout(rid, end))
 
     def _marketing():
         import models
@@ -1082,8 +1085,9 @@ def run_refresh() -> dict:
     return {"attempted": len(ids), "ok": ok, "failed": failed, "skipped": 0, "hit_bound": False}
 
 
-ALL_STEPS = ("settings", "pos", "schedules", "dsr", "purchasing", "bar", "kitchen", "bo_counts", "reviews", "neighborhood",
-             "marketing", "people", "intel", "finish")
+# The nightly report reads the kitchen, the reviews and the close-out: it is built after them.
+ALL_STEPS = ("settings", "pos", "schedules", "purchasing", "bar", "kitchen", "bo_counts", "reviews", "neighborhood",
+             "marketing", "people", "closeouts", "intel", "dsr", "finish")
 
 
 def run_all(steps=ALL_STEPS) -> int:
@@ -1167,3 +1171,63 @@ def fill_bo_counts(rid, weeks=20):
     end = api.business_today() - timedelta(days=1)
     got = backoffice_counts.save_counts(rid, _bo_count_book(end, weeks))
     _say(f"Back Office counts: {got.get('periods')} weekly periods")
+
+
+# ── the manager's close-out, filed each night ──────────────────────────────
+
+_WELL = ["Kitchen held ticket times under 12 minutes through the rush.", "Patio turned three times — great weather.",
+         "Bar ran clean on the game: towers and wings flew.", "New bartender held the rail solo after 10 — strong night.",
+         "Brunch waitlist moved fast; hosts quoted accurately.", "Big Cubs crowd pregame, everyone out by first pitch.",
+         "Zero comps from the kitchen tonight.", "Regulars from the Thursday trivia crowd came back for the game."]
+_WRONG = ["Ran low on brioche by 9 — order more for Saturday.", "Two tables waited 20+ minutes on apps during the rush.",
+          "Fryer 2 was slow to recover; wings backed up around kickoff.", "One walk-out at the rail, about $48.",
+          "Host stand quoted 20 minutes, ran 40. Need a second host on game days.",
+          "Dish pit got buried after 8 — call in a second dishwasher for big nights.", ""]
+_EQUIP = ["Fryer 2 thermostat running hot — tech booked.", "Keg cooler at 39°F, watching it.",
+          "Ice machine slow in the afternoon heat.", "", "", ""]
+_VIP = ["Alderman's office party of 12 in the back room.", "Regular Tom W. brought his softball team.", "", "", ""]
+_SHIFT = ["Closed out clean; drawers balanced.", "Drawer 2 over $4, recounted.", "Patio furniture stacked, rain tomorrow.",
+          "Restocked the walk-in for brunch.", "Left notes for the AM manager on the keg order."]
+
+
+def _closeout_fields(day: date) -> dict:
+    import random
+    rng = random.Random(f"hr-closeout|{day}")
+    return {"went_well": rng.choice(_WELL), "went_wrong": rng.choice(_WRONG), "equipment": rng.choice(_EQUIP),
+            "vip_guests": rng.choice(_VIP), "maintenance": "", "shift_notes": rng.choice(_SHIFT), "general_notes": ""}
+
+
+def _closer(day: date) -> str:
+    from demo_store import day as D
+    mgrs = [s for s in D.roster_for(day) if s["job"] == "Manager"]
+    return max(mgrs, key=lambda s: s["end"])["name"] if mgrs else "Marcus Bell"
+
+
+def fill_closeouts(rid, nights=35):
+    import closeout
+    today = api.business_today()
+    n = 0
+    for i in range(nights, 0, -1):
+        d = today - timedelta(days=i)
+        from demo_store import calendar as cal
+        if cal.is_closed(d):
+            continue
+        closeout.save(rid, _closeout_fields(d), submitted_by=_closer(d), business_date=d.isoformat())
+        n += 1
+    _say(f"close-outs: {n} nights filed")
+
+
+def _refresh_closeout(rid, day) -> str:
+    """Last night's close-out, then last night's report again if it went out without one."""
+    import closeout
+    import models
+    from demo_store import calendar as cal
+    from dsr import pipeline, store as dsr_store
+    if cal.is_closed(day) or closeout.get(rid, day.isoformat()):
+        return "on file"
+    closeout.save(rid, _closeout_fields(day), submitted_by=_closer(day), business_date=day.isoformat())
+    rep = dsr_store.get_report(rid, day)
+    if rep and rep.get("status") in dsr_store.FINISHED:
+        pipeline.run_night(models.get_restaurant(rid), day, pipeline.TRIGGER_MANUAL, force=True)
+        return "filed; report re-run"
+    return "filed"

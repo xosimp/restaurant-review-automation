@@ -547,7 +547,7 @@ STAFF = [
     ("Nia", "Robinson", "Busser", 0, (), 20, "2025-12-08"),
 ]
 # Shared POS logins (RPOWER keeps them as employee records): never people.
-STATIONS = [("Bar", "Station", "Bartender"), ("Online", "Orders", "Server")]
+STATIONS = [("Bar", "Station", "Bartender"), ("Online", "Pickup", "Server")]
 
 # The server whose comps run well above the rest (the loss-prevention story).
 COMP_HEAVY = "Jordan Reyes"
