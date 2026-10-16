@@ -540,7 +540,7 @@ STAFF = [
     ("Lily", "Nakamura", "Host", 0, (), 24, "2025-03-31"),
     ("Grace", "Adebayo", "Host", 0, (), 22, "2024-10-14"),
     ("Ella", "Harrington", "Host", 0, (), 18, "2026-03-09"),
-    ("Zoe", "Martinez", "Host", 0, (), 20, "2025-11-03"),
+    ("Zoe", "Halvorsen", "Host", 0, (), 20, "2025-11-03"),
     ("Javier", "Solis", "Busser", 0, (), 30, "2024-03-25"),
     ("Malik", "Greene", "Busser", 0, (), 26, "2025-05-12"),
     ("Owen", "Dvorak", "Busser", 0, ("Barback",), 22, "2026-01-26"),
