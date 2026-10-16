@@ -13494,6 +13494,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 #panel-inventory .lb2-sg .k span{white-space:nowrap}
 #panel-inventory .hb-kicker{font-size:12.5px}
 .fc2-sample{margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
+/* Back Office as the source (10/16/26): real data from exported reports, said plainly — not a sample banner. */
+.fc2-src{margin-bottom:14px;padding:12px 16px;border-radius:12px;background:var(--sf-recess);border:1px solid var(--hb-line2);font-size:14.5px;line-height:1.5;color:var(--ink2)}
+.fc2-src b{color:var(--ink)}
 .fc2-sample b{color:var(--ember)}
 .fc2-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:20px}
 .fc2-hero-nums{display:flex;gap:40px;flex-wrap:wrap}
@@ -13989,7 +13992,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      "This week · On track" over a three-week-old count). #}
   {% set _if = source_fresh.inventory if (source_fresh and source_fresh.inventory) else None %}
   {% set _inv_stale = inv.is_live and _if and (_if.state in ('stale', 'unknown') or _if.error) %}
-  {% if not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
+  {% set _bo = food_source if (food_source and food_source.on_file) else None %}
+  {% if not inv.is_live and _bo %}{% set _head = 'Read from your Back Office reports' %}{% set _tone = 'neutral' %}
+  {% elif not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
   {% elif _inv_stale %}{% set _head = 'Counts are out of date' %}{% set _tone = 'warn' %}
   {% elif inv.benchmark_state == 'not_measured' %}{% set _head = 'No waste logged this week' %}{% set _tone = 'neutral' %}
   {% elif inv.benchmark_state == 'no_data' %}{% set _head = 'Tracking this week' %}{% set _tone = 'neutral' %}
@@ -14001,6 +14006,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# The zeros below are placeholders, not measurements. Saying so beats
      showing "$0 waste this week" as if it had been counted. #}
   <div class="fc2-sample"><b>Analysis unavailable.</b> The food cost figures couldn't be computed just now — reload in a moment. Nothing below has been measured.</div>
+  {% elif not inv.is_live and _bo %}
+  {# Back Office has no API (owner, 10/16/26): its exported reports are read
+     instead - real data, named as such, and no sample figure beside it. #}
+  <div class="fc2-src"><b>From your Back Office reports.</b> Back Office has no API, so Cavnar AI reads the reports it exports{% if _bo.invoices_through %} — invoices through {{ _bo.invoices_through|format_date }}{% endif %}{% if _bo.recipes_loaded %}, and its recipe book{% endif %}. Waste and stock on hand come with your first count.</div>
   {% elif not inv.is_live %}
   <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect your POS — to see your real numbers.</div>
   {% endif %}
@@ -14042,18 +14051,19 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        chips are gone (#25): one opportunity figure on the page, the
        CFO's ranked monthly at-stake, with its basis beside it. #}
     <div class="fc2-top-right">
-      <div class="hb-pulse">
+      {% if inv.is_live or not _bo %}<div class="hb-pulse">
         <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="fc2-chip-waste">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
         <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
         {# A balance is not a verdict: a neutral chip (#31). #}
         <span class="hb-chip {{ 'sample' if not inv.is_live else 'neutral' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
-      </div>
+      </div>{% endif %}
       <div class="fc2-hero-nums">
         <div id="fc2-fcp" class="fc2-fcp fc2-pos fc2-hero-fcp" hidden></div>
         {# The week's waste, measured from the count; its band verdict in words under it. #}
         {# Green at or near the target, red over it (owner, 9/26/26). #}
         {% set _wtone = 'good' if (inv.is_live and not _inv_stale and _wl in ['Under target','Near target']) else ('bad' if (inv.is_live and not _inv_stale and _wl in ['Over target','Well over target']) else '') %}
-        <div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>
+        {% if not inv.is_live and _bo %}<div class="n fc2-waste-n"><div class="big"><span id="inv-week-waste" class="hb-num">—</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>Comes with your first count</span></div></div>
+        {% else %}<div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>{% endif %}
       </div>
     </div>
   </div>

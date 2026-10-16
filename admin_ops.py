@@ -852,6 +852,11 @@ def _load_with(conn):
     ingredients = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(updated_at) AS cost_updated_at, "
                           "MAX(last_recount_at) AS last_count_at "
                           "FROM ingredients WHERE COALESCE(is_active,1)=1 GROUP BY restaurant_id", label="ingredients")
+    # Back Office has no API: its exported reports are imported (backoffice_ap)
+    # and are Food Cost's real data — never "connected", still configured
+    # (owner, 10/16/26: EJ's read "on but not configured").
+    backoffice = per_rid("SELECT restaurant_id, COUNT(*) AS n, MAX(invoice_date) AS through, MAX(created_at) AS imported "
+                         "FROM bo_invoices GROUP BY restaurant_id", label="bo_invoices", optional=True)
     recipes = per_rid("""SELECT mi.restaurant_id AS restaurant_id, COUNT(DISTINCT mi.id) AS items,
                                 COUNT(DISTINCT ri.menu_item_id) AS mapped
                          FROM menu_items mi LEFT JOIN recipe_ingredients ri ON ri.menu_item_id=mi.id
@@ -1041,7 +1046,7 @@ def _load_with(conn):
     d = dict(now=w["now"], windows=w, rests=rests, users=by_rid, reviews=reviews, ai_month=ai_month,
              ai_today=ai_today, ai_prev=ai_prev, ai_week=ai_week, ai_failed_week=ai_failed_week,
              ai_owner_trigger=bool(owner_sum), emails=emails, pushes=pushes, tokens=tokens, alerts=alerts,
-             webhooks=webhooks, client_data=client_data, ingredients=ingredients, marketing=marketing,
+             webhooks=webhooks, client_data=client_data, ingredients=ingredients, backoffice=backoffice, marketing=marketing,
              recipes=recipes, labor_days=labor_days, labor_last=labor_last, contacts=contacts, routing=routing,
              stale_issues=stale_issues, sched_posts=sched_posts, schedules=schedules,
              owner_logins=owner_logins, owner_sessions=owner_sessions, team_seen=team_seen,
@@ -1489,6 +1494,7 @@ def _modules_for(r, d):
     rv = d["reviews"].get(rid, {})
     cd = d["client_data"].get(rid, {})
     ing = d["ingredients"].get(rid, {})
+    bo = (d.get("backoffice") or {}).get(rid, {}) or {}
     mk = d["marketing"].get(rid, {})
     sc = d["schedules"].get(rid, {})
     pos_state = _pos_state_for(r, d)
@@ -1506,9 +1512,13 @@ def _modules_for(r, d):
                       or bool(pos_state.get("last_synced")),
          "last_data": labor_last or (pos_state.get("last_synced") if pos else None) or cd.get("updated_at")},
         {"key": "inventory", "label": "Food Cost", "enabled": bool(r.get("module_inventory")),
-         "configured": bool(ing.get("n")) or bool(cd.get("has_inventory")),
-         "receiving": bool(ing.get("last_count_at")) or bool(cd.get("has_inventory")),
-         "last_data": ing.get("last_count_at") or cd.get("updated_at")},
+         "configured": bool(ing.get("n")) or bool(cd.get("has_inventory")) or bool(bo.get("n")),
+         "receiving": bool(ing.get("last_count_at")) or bool(cd.get("has_inventory")) or bool(bo.get("n")),
+         "last_data": ing.get("last_count_at") or cd.get("updated_at") or bo.get("imported"),
+         # Fed only by Back Office's reports: judged by its last import,
+         # not by a counts snapshot that would read "not connected".
+         "fed_by": "backoffice" if bo.get("n") and not ing.get("n") and not cd.get("has_inventory") else None,
+         "source": "Back Office reports (no API) · invoices through " + str(bo.get("through")) if bo.get("n") else None},
         {"key": "marketing", "label": "Marketing", "enabled": bool(r.get("module_marketing")),
          "configured": bool(r.get("ig_token") or r.get("gmb_refresh_token") or r.get("voice_notes")),
          "receiving": bool(mk.get("pieces")), "last_data": mk.get("last_at")},
@@ -1529,6 +1539,10 @@ def _modules_for(r, d):
             m["state"] = "unconfigured"
         elif not m["receiving"]:
             m["state"] = "no_data"
+        elif m.get("fed_by") == "backoffice":
+            # Back Office's reports come weekly at best: stale past two weeks.
+            age = _age_days(m["last_data"])
+            m["state"] = "stale" if age is not None and age > 14 else "healthy"
         elif dh_key.get(m["key"]) in dh_states:
             s = dh_states[dh_key[m["key"]]]
             st = s.get("state")

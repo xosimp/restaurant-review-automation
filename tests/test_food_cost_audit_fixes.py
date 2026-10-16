@@ -6,6 +6,7 @@ to be, because in most cases the old behaviour looked perfectly reasonable
 from the call site and only became visibly wrong two or three files away.
 """
 import json
+import os
 from datetime import date, timedelta
 
 import pytest
@@ -525,3 +526,46 @@ def test_the_dashboard_withholds_food_cost_from_a_role_denied_it():
     panel = html.index('id="panel-inventory"')
     assert "{% if mod_inventory %}" in html[panel - 200:panel], \
         "the panel itself must be gated, not just the tab button"
+
+
+def test_recipe_coverage_counts_the_back_office_book_and_leaves_drinks_out(db_path, monkeypatch):
+    """Owner, 10/16/26: EJ's 238 Back Office recipes were loaded and the card
+    read 0% — it counted only recipes typed into Cavnar AI, and it listed
+    Titos and Diet Coke among the "dishes uncosted"."""
+    import backoffice_recipes
+    rid = _restaurant(db_path)
+    _dish(db_path, rid, "Smash Burger", 15.0, [], sold=30)       # costed by the Back Office book
+    _dish(db_path, rid, "Side Ranch", 1.0, [], sold=10)          # no recipe anywhere
+    tito = _dish(db_path, rid, "Titos", 9.0, [], sold=50)        # a drink: never a food recipe
+    conn = get_conn(db_path)
+    conn.execute("UPDATE menu_items SET pos_category='30. Vodka' WHERE id=?", (tito,))
+    conn.commit()
+    conn.close()
+    backoffice_recipes.load(rid, {"recipes": [{"name": "Classic Smash", "group": "BURGERS", "ingredients": []}],
+                                  "items": [], "pos_names": {"Classic Smash": ["Smash  Burger"]}}, db_path=db_path)
+    monkeypatch.setattr(ledger, "_drink_categories", lambda r: {"30. vodka"})
+    out = ledger.recipe_coverage(rid)
+    assert out["units_sold"] == 40.0 and out["coverage_pct"] == 75.0
+    assert out["backoffice_dishes"] == 1 and out["drinks_left_out"] == 1
+    assert [g["name"] for g in out["uncovered_top"]] == ["Side Ranch"]
+
+
+def test_back_office_is_a_food_cost_source_without_an_api(db_path):
+    """Owner, 10/16/26: Food Cost read "on but not configured" in admin and the
+    page showed sample figures while EJ's food was read from Back Office."""
+    import backoffice_ap
+    rid = _restaurant(db_path)
+    assert backoffice_ap.feed_state(rid, db_path=db_path)["on_file"] is False
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO bo_invoices (restaurant_id, vendor, vendor_key, entry_key, invoice_number, entry_kind, itemized, "
+                 "invoice_date, amount, gl, file_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (rid, "GFS", "gfs", "k1", "9041", "invoice", 0, "2026-10-15", 100.0, "4030", None, "2026-10-15 22:00:00", "2026-10-15 22:00:00"))
+    conn.commit()
+    conn.close()
+    st = backoffice_ap.feed_state(rid, db_path=db_path)
+    assert st["on_file"] and st["invoices_through"] == "2026-10-15"
+    import admin_ops
+    src = open(admin_ops.__file__, encoding="utf-8").read()
+    assert '"fed_by": "backoffice"' in src and 'or bool(bo.get("n"))' in src
+    tpl = open(os.path.join(os.path.dirname(admin_ops.__file__), "templates", "dashboard.html"), encoding="utf-8").read()
+    assert "From your Back Office reports." in tpl and "{% if inv.is_live or not _bo %}<div class=\"hb-pulse\">" in tpl

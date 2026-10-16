@@ -882,7 +882,16 @@ def index(current_user):
         _viewer = _viewer_name(current_user, restaurant)
     except Exception:
         _viewer = restaurant.owner_name or current_user.get("username") or ""
+    # Back Office as Food Cost's source (backoffice_ap.feed_state): it has no
+    # API, so it is never "connected", but its imported reports are real data —
+    # the page names it and shows no sample figure beside it (10/16/26).
+    try:
+        from backoffice_ap import feed_state as _bo_feed
+        _food_source = _bo_feed(restaurant.id)
+    except Exception:
+        _food_source = None
     return render_template('dashboard.html',
+        food_source=_food_source,
         viewer_name=_viewer,
         social_channels=_social_channels,
         show_welcome=show_welcome,

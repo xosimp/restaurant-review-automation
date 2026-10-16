@@ -814,6 +814,42 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
     }
 
 
+def _backoffice_recipe_names(restaurant_id) -> set:
+    """The POS item names the restaurant's Back Office recipe book is
+    matched to (backoffice_recipes, pos_names), lower-cased — empty when
+    there is no book."""
+    try:
+        import backoffice_recipes
+        bk, _at = backoffice_recipes.book(restaurant_id)
+    except Exception:
+        return set()
+    names = set()
+    for lst in ((bk or {}).get("pos_names") or {}).values():
+        for n in lst or ():
+            names.add(" ".join(str(n).lower().split()))
+    return names
+
+
+def _drink_categories(restaurant_id) -> set:
+    """POS item categories (lower-cased) the bar mapping files as a drink —
+    beer, liquor, wine or non-alcoholic — read through each category's
+    department in the POS's sales catalog. Empty without a catalog."""
+    try:
+        from bar.mapping import Mapping, key_for
+        m = Mapping(restaurant_id)
+    except Exception:
+        return set()
+    out = set()
+    for (dep, name), info in (m.catalog or {}).items():
+        try:
+            kind = m.resolve(*key_for(info.get("department") or dep, info.get("name") or name)).get("kind")
+        except Exception:
+            continue
+        if kind in ("beer", "liquor", "wine", "na"):
+            out.add(str(info.get("name") or name).strip().lower())
+    return out
+
+
 def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> dict:
     """What share of what this restaurant sold is accounted for by a recipe.
 
@@ -827,7 +863,7 @@ def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> 
     try:
         window_start = (local_today(restaurant_id) - timedelta(days=days - 1)).isoformat()
         rows = conn.execute(
-            "SELECT s.menu_item_id AS mid, m.name AS name, SUM(s.qty_sold) AS qty, "
+            "SELECT s.menu_item_id AS mid, m.name AS name, m.pos_category AS cat, SUM(s.qty_sold) AS qty, "
             "       (SELECT COUNT(*) FROM recipe_ingredients ri WHERE ri.menu_item_id=s.menu_item_id) AS n "
             "FROM menu_item_sales s JOIN menu_items m ON m.id = s.menu_item_id "
             "WHERE s.restaurant_id=? AND s.business_date>=? "
@@ -836,11 +872,26 @@ def recipe_coverage(restaurant_id: int, days: int = _POPULARITY_WINDOW_DAYS) -> 
         ).fetchall()
     finally:
         conn.close()
+    # A dish is covered by a recipe in Cavnar AI's editor OR by the
+    # restaurant's Back Office recipe book matched to its POS name (owner,
+    # 10/16/26: EJ's 238 Back Office recipes were loaded, yet the card read
+    # 0% — it only counted recipe_ingredients).
+    bo = _backoffice_recipe_names(restaurant_id)
+    # Drinks have no food recipe: a POS category the bar mapping files as
+    # beer, liquor, wine or non-alcoholic is left out (owner, 10/16/26: Titos
+    # and Diet Coke were listed as "dishes uncosted").
+    drinks = _drink_categories(restaurant_id)
+    n_all = len(rows)
+    rows = [r for r in rows if str(r["cat"] or "").strip().lower() not in drinks]
+    def _has(r):
+        return (r["n"] or 0) > 0 or " ".join(str(r["name"] or "").lower().split()) in bo
     total = sum(float(r["qty"] or 0) for r in rows)
-    covered = sum(float(r["qty"] or 0) for r in rows if (r["n"] or 0) > 0)
+    covered = sum(float(r["qty"] or 0) for r in rows if _has(r))
     gaps = [{"name": r["name"], "units_sold": round(float(r["qty"] or 0), 2)}
-            for r in rows if not (r["n"] or 0)]
+            for r in rows if not _has(r)]
     return {
+        "backoffice_dishes": sum(1 for r in rows if not (r["n"] or 0) and _has(r)),
+        "drinks_left_out": n_all - len(rows),
         "window_days": days,
         "units_sold": round(total, 2),
         "units_covered": round(covered, 2),

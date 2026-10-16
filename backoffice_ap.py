@@ -800,6 +800,35 @@ def _account_label(name) -> str:
     return re.sub(r"^\d+\s*", "", str(name or "")).strip().capitalize() or str(name)
 
 
+def feed_state(restaurant_id, db_path=None) -> dict:
+    """Back Office as a data source, for the pages that ask "is Food Cost
+    set up?" (owner, 10/16/26: EJ's read "on but not configured" and the
+    page showed sample figures while its food was read from Back Office).
+    Back Office has no API — Cavnar AI reads the reports it exports — so it
+    is never "connected", but it is real data: {files, last_import,
+    invoices_through, recipes_loaded}; files 0 when nothing came in."""
+    out = {"files": 0, "last_import": None, "invoices_through": None, "recipes_loaded": None}
+    conn = get_conn(db_path)
+    try:
+        for sql, keys in (("SELECT COUNT(*), MAX(created_at) FROM bo_files WHERE restaurant_id=?", ("files", "last_import")),
+                          ("SELECT MAX(invoice_date) FROM bo_invoices WHERE restaurant_id=?", ("invoices_through",)),
+                          ("SELECT loaded_at FROM bo_recipe_books WHERE restaurant_id=?", ("recipes_loaded",))):
+            try:
+                row = conn.execute(sql, (int(restaurant_id),)).fetchone()
+            except Exception:
+                continue          # a table not created yet: that part is not on file
+            if row:
+                for i, k in enumerate(keys):
+                    out[k] = row[i]
+    finally:
+        conn.close()
+    out["files"] = int(out["files"] or 0)
+    if not out["last_import"]:
+        out["last_import"] = out["recipes_loaded"]
+    out["on_file"] = bool(out["files"] or out["invoices_through"] or out["recipes_loaded"])
+    return out
+
+
 def food_bought_vs_sold(restaurant_id, today=None, db_path=None) -> dict:
     """Food Cost's purchase-based reading from Back Office: {available,
     basis, window {from, to, days, purchases, sales, pct, nights}, months:
