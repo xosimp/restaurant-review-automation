@@ -45703,7 +45703,7 @@ function sfw2RuleCheck(chk) {
 .br-hx span{position:absolute;bottom:0;transform:translateX(-50%);white-space:nowrap}
 .br-hx span.first{transform:none}.br-hx span.last{transform:translateX(-100%)}
 .br-hr>.br-empty{margin:auto 0}
-.br-hero::before{content:"";position:absolute;left:-18%;top:-55%;width:72%;height:150%;background:radial-gradient(closest-side,color-mix(in srgb,var(--ember) 15%,transparent),transparent 74%);pointer-events:none}
+.br-hero::before{content:"";position:absolute;left:-18%;top:-55%;width:72%;height:150%;background:var(--ember);-webkit-mask:url(/static/img/glow/mask-bloom-v1.png) 0 0/100% 100% no-repeat;mask:url(/static/img/glow/mask-bloom-v1.png) 0 0/100% 100% no-repeat;pointer-events:none}
 .br-hero>*{position:relative}
 .br-hero .dn-k{margin-bottom:14px}
 .br-big{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:clamp(68px,8.4vw,108px);line-height:.92;letter-spacing:-.035em;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -45945,7 +45945,7 @@ function sfw2RuleCheck(chk) {
 .br-dr .m>span{display:block;font-size:13px;color:var(--ink3)}
 /* Bar counts: the counted period as its equation. */
 .br-eq{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:26px 28px;overflow:hidden}
-.br-eq::before{content:"";position:absolute;right:-12%;top:-60%;width:55%;height:180%;background:radial-gradient(closest-side,color-mix(in srgb,var(--br-range) 14%,transparent),transparent 72%);pointer-events:none}
+.br-eq::before{content:"";position:absolute;right:-12%;top:-60%;width:55%;height:180%;background:var(--br-range);-webkit-mask:url(/static/img/glow/mask-bloom-v1.png) 0 0/100% 100% no-repeat;mask:url(/static/img/glow/mask-bloom-v1.png) 0 0/100% 100% no-repeat;pointer-events:none}
 .br-eq>*{position:relative}
 .br-eq .t .v{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
 .br-eq .t .l{font-size:13.5px;color:var(--ink3);margin-top:2px}
@@ -45996,7 +45996,7 @@ function sfw2RuleCheck(chk) {
    bars, Purchasing a ledger, Matching a workspace queue, Inventory a form.
    One raised surface per thing that is one thing; rows inside a surface sit
    on spacing, not on more cards. */
-#bar{--br-hair:color-mix(in srgb,var(--ink) 8%,transparent);--br-hair2:color-mix(in srgb,var(--ink) 5%,transparent);--br-plate:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,transparent),color-mix(in srgb,var(--surface) 82%,var(--bg-base)));--br-lit:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--c,var(--ember)) 16%,transparent),transparent 60%)}
+#bar{--br-hair:color-mix(in srgb,var(--ink) 8%,transparent);--br-hair2:color-mix(in srgb,var(--ink) 5%,transparent);--br-plate:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,transparent),color-mix(in srgb,var(--surface) 82%,var(--bg-base)));--br-lit:url(/static/img/glow/lit-ember2-v1.png) 0 0/100% 100% no-repeat}
 #br-tabsa{height:0}
 /* Overview's figures (hero, alerts, category cards, mixers). Not .br-figs:
    that is the hero's own figures row (flex, wrapping). */
@@ -46004,6 +46004,9 @@ function sfw2RuleCheck(chk) {
 .br-tabsw{position:sticky;top:0;z-index:6;margin:0 -8px 18px;padding:14px 8px 16px;background:linear-gradient(var(--bg-base) 72%,color-mix(in srgb,var(--bg-base) 0%,transparent))}
 .br-tabs{position:relative;display:flex;gap:2px;padding:5px;border-radius:16px;background:var(--sf-recess);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 4%,transparent),inset 0 0 0 1px var(--br-hair2);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .br-tabs::-webkit-scrollbar{display:none}
+/* Once the page runs under it the switcher lifts off it (owner, 10/16/26). */
+.br-tabs{transition:box-shadow .3s var(--br-ease,ease)}
+.br-tabsw.stuck .br-tabs{box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 6%,transparent),inset 0 0 0 1px var(--br-hair2),0 14px 34px -12px rgba(0,0,0,.85),0 4px 10px -4px rgba(0,0,0,.6)}
 .br-tink{position:absolute;left:0;top:5px;bottom:5px;width:0;border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,var(--ink) 4%),var(--surface));box-shadow:0 1px 0 color-mix(in srgb,var(--ink) 9%,transparent) inset,0 6px 18px -8px rgba(0,0,0,.55),0 0 0 1px var(--br-hair);transition:transform .42s var(--br-ease),width .42s var(--br-ease);pointer-events:none}
 .br-tink::after{content:"";position:absolute;left:22%;right:22%;bottom:-1px;height:2px;border-radius:2px;background:var(--ember);box-shadow:0 0 12px color-mix(in srgb,var(--ember) 60%,transparent)}
 #bar .cbtn.br-tab{position:relative;z-index:1;flex:1 0 auto;min-height:44px;padding:0 20px;border:0;border-radius:12px;background:transparent;box-shadow:none;color:var(--ink3);font:600 15px/1 'Apfel Grotezk',sans-serif;letter-spacing:.01em;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:color .25s ease}
@@ -46061,6 +46064,8 @@ function sfw2RuleCheck(chk) {
 #bar .cbtn.br-sig:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
 #bar .cbtn.br-sig.lead{grid-column:span 2;grid-row:span 2;padding:30px 30px 24px;min-height:350px;justify-content:flex-end}
 .br-sig.t-bad{--c:var(--red)}.br-sig.t-warn{--c:var(--amber)}.br-sig.t-good{--c:var(--green)}.br-sig.t-act{--c:var(--ember)}.br-sig.t-info{--c:var(--blue)}
+/* Each tone's corner wash is an error-diffused image (scripts/render_glows.py), never a gradient: they banded (owner, 10/16/26). */
+.br-sig.t-bad{--br-lit:url(/static/img/glow/lit-red-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-warn{--br-lit:url(/static/img/glow/lit-amber-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-good{--br-lit:url(/static/img/glow/lit-green-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-act{--br-lit:url(/static/img/glow/lit-ember-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-info{--br-lit:url(/static/img/glow/lit-blue-v1.png) 0 0/100% 100% no-repeat}
 .br-sig .f{font:600 34px/1.05 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
 .br-sig .f small{font-size:.5em;font-weight:500;color:var(--ink2);margin-left:2px}
 .br-sig.lead .f{font-size:64px}
@@ -46073,7 +46078,7 @@ function sfw2RuleCheck(chk) {
 #bar .cbtn.br-sig:hover .go svg{transform:translateX(4px)}
 .br-sig::before{content:"";position:absolute;left:22px;top:0;width:36px;height:3px;border-radius:0 0 3px 3px;background:var(--c);box-shadow:0 0 14px var(--c)}
 .br-sig.lead::before{left:30px;width:56px}
-.br-sig.lead::after{content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--c) 22%,transparent),transparent);pointer-events:none}
+.br-sig.lead::after{content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;background:var(--c);-webkit-mask:url(/static/img/glow/mask-halo-v1.png) 0 0/100% 100% no-repeat;mask:url(/static/img/glow/mask-halo-v1.png) 0 0/100% 100% no-repeat;pointer-events:none}
 
 .br-insg{display:flex;flex-direction:column;gap:14px}
 .br-feat{--c:var(--ember2);position:relative;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:16px 40px;align-items:start;padding:30px 32px 28px;border-radius:24px;border:1px solid var(--br-hair2);background:var(--br-lit),var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
@@ -46213,7 +46218,7 @@ function sfw2RuleCheck(chk) {
 .br-rr .v>span:not(.hb-num){display:block;margin-top:3px;font:400 13px/1.3 'Apfel Grotezk',sans-serif;color:var(--ink3)}
 
 /* Matching: a workspace — progress, a queue to clear, recipe cards by drink. */
-.br-mhead{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:24px;align-items:center;padding:26px 28px;border-radius:24px;border:1px solid var(--br-hair2);background:radial-gradient(90% 120% at 0% 0%,color-mix(in srgb,var(--ember) 13%,transparent),transparent 62%),var(--br-plate);box-shadow:var(--elev-1)}
+.br-mhead{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:24px;align-items:center;padding:26px 28px;border-radius:24px;border:1px solid var(--br-hair2);background:url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat,var(--br-plate);box-shadow:var(--elev-1)}
 .br-mhead .br-mpr{display:flex;align-items:center;gap:20px;min-width:0}
 .br-ring{flex:0 0 auto;width:84px;height:84px;transform:rotate(-90deg)}
 .br-ring circle{fill:none;stroke-width:8}
@@ -46256,7 +46261,9 @@ function sfw2RuleCheck(chk) {
 .br-nm2 .a>span,.br-nm2 .b>span{display:block;margin-top:5px;font-size:13.5px;color:var(--ink3)}
 .br-nm2 .ar{color:var(--ember2);display:flex}
 .br-nm2 .act{display:flex;gap:6px;align-items:center;white-space:nowrap}
-.br-rcps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+/* Recipe cards flow as balanced columns, so a short card never leaves a hole beside a tall one (owner, 10/16/26). */
+.br-rcps{column-count:2;column-gap:14px}
+.br-rcps>.br-rcp{break-inside:avoid;margin-bottom:14px;width:100%}
 .br-rcp{display:flex;flex-direction:column;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
 .br-rcp>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:20px 22px 14px}
 .br-rcp>header b{display:block;font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink)}
@@ -46282,7 +46289,7 @@ function sfw2RuleCheck(chk) {
 .br-cstat .cs>span{font:600 13px/1.2 'Apfel Grotezk',sans-serif;color:var(--ink3)}
 .br-cstat .cs b{font:600 22px/1.15 'Space Grotesk',sans-serif;color:var(--ink)}
 .br-cstat .cs small{font-size:13.5px;line-height:1.4;color:var(--ink3)}
-.br-cform{padding:24px 26px;border-radius:24px;border:1px solid var(--br-hair2);background:radial-gradient(80% 100% at 100% 0%,color-mix(in srgb,var(--ember) 9%,transparent),transparent 60%),var(--br-plate);box-shadow:var(--elev-1)}
+.br-cform{padding:24px 26px;border-radius:24px;border:1px solid var(--br-hair2);background:url(/static/img/glow/corner-tr-ember-v1.png) 0 0/100% 100% no-repeat,var(--br-plate);box-shadow:var(--elev-1)}
 .br-cform .top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
 .br-cform .dt{display:flex;flex-direction:column;gap:6px;font:600 13px/1 'Apfel Grotezk',sans-serif;color:var(--ink3)}
 .br-cform .pg{display:flex;align-items:center;gap:10px;font:500 14px/1 'Space Grotesk',sans-serif;color:var(--ink2)}
@@ -46316,7 +46323,8 @@ function sfw2RuleCheck(chk) {
   .br-tabsw{margin-bottom:14px;padding-top:10px}
   .br-top{margin-bottom:32px}
   #bar .cbtn.br-tab{padding:0 14px;font-size:14.5px}
-  .br-feat,.br-insl,.br-rcps,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
+  .br-feat,.br-insl,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
+  .br-rcps{column-count:1}
   .br-sigs,.br-sigs.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   #bar .cbtn.br-sig.lead,#bar .br-sigs.few .cbtn.br-sig.lead{grid-column:span 2;grid-row:auto;min-height:200px}
   #bar .cbtn.br-sig{min-height:0;padding:18px 16px 14px;border-radius:18px}
@@ -46421,7 +46429,11 @@ function sfw2RuleCheck(chk) {
                 {key: 'beer', label: 'Beer & seltzer', css: 'var(--br-beer)'},
                 {key: 'liquor', label: 'Liquor', css: 'var(--br-liquor)'},
                 {key: 'wine', label: 'Wine', css: 'var(--br-wine)'}];
-  function esc2(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  /* RPOWER joins an item and its modifier group with a backtick (char 96:
+     "Old Fashioned", backtick, "Liquor Add-On"); the page reads it as a dot
+     (owner, 10/16/26). No id, product key, distributor or category key holds one. */
+  var BTICK = String.fromCharCode(96);
+  function esc2(v) { return String(v == null ? '' : v).split(BTICK).join(' · ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function hn(t) { return '<span class="hb-num">' + esc2(t) + '</span>'; }
   function money(v) { var n = Math.round(+v || 0); return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US'); }
   function money2(v) { var n = +v || 0; return (n < 0 ? '−$' : '$') + Math.abs(n).toFixed(2); }
@@ -46932,7 +46944,7 @@ function sfw2RuleCheck(chk) {
     return '<div class="br-mrow' + (sg ? ' sg' : '') + '" data-br-nm="' + esc2(String(u.item || '').toLowerCase()) + '"><div class="n"><b>' + esc2(u.item) + '</b><span><i class="br-swt" style="--s:' + seriesOf(u.category).css + '"></i>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' sold · ' + hn(money(u.sales_usd)) + '</span>'
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
       + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : '<span class="nos">No suggestion — pick it</span>') + '</div>'
-      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '</select>'
+      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
         + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
@@ -47265,15 +47277,21 @@ function sfw2RuleCheck(chk) {
     if (ST.mapErr) return '<div class="br-empty">' + esc2(ST.mapErr) + '</div>';
     var m = ST.map;
     if (!m) return pulse('Loading the bar mapping');
-    var es = m.entries || [], opts = m.options || [], can = m.can_change !== false && OWNER, act = '', actRest = '', idle = '', na = 0, nAct = 0, i;
+    var es = m.entries || [], opts = m.options || [], can = m.can_change !== false && OWNER, act = '', actRest = '', other = '', idle = '', na = 0, nAct = 0, nDrink = 0, nOther = 0, i;
+    // Drink categories - and anything still needing a word - show; the food
+    // and other categories already read "Not bar" fold under one line, so the
+    // list is the few that matter (owner, 10/16/26).
     for (i = 0; i < es.length; i++) {
-      if (es[i].sales_28d > 0) { if (nAct < SHOW_FIRST) act += mapRow(es[i], opts, can); else actRest += mapRow(es[i], opts, can); nAct++; }
-      else { idle += mapRow(es[i], opts, can); na++; }
+      var e = es[i], notBar = e.choice === 'not_bar' && !e.needs_you;
+      if (!(e.sales_28d > 0)) { idle += mapRow(e, opts, can); na++; continue; }
+      nAct++;
+      if (notBar) { other += mapRow(e, opts, can); nOther++; }
+      else { if (nDrink < 6) act += mapRow(e, opts, can); else actRest += mapRow(e, opts, can); nDrink++; }
     }
     if (!es.length) return '<div class="br-empty">No POS sales categories on file yet — they come in with the nightly report.</div>';
-    // The three biggest categories show; the rest fold (owner, 10/15/26).
     return '<div class="br-map">' + act + '</div>'
-      + (actRest ? '<details class="br-more" id="br-maprest"' + (ST.det['br-maprest'] ? ' open' : '') + '><summary>' + hn(nAct - SHOW_FIRST) + ' more ' + plural(nAct - SHOW_FIRST, 'category', 'categories') + ' with sales</summary><div class="br-map">' + actRest + '</div></details>' : '')
+      + (actRest ? '<details class="br-more" id="br-maprest"' + (ST.det['br-maprest'] ? ' open' : '') + '><summary>' + hn(nDrink - 6) + ' more drink ' + plural(nDrink - 6, 'category', 'categories') + '</summary><div class="br-map">' + actRest + '</div></details>' : '')
+      + (nOther ? '<details class="br-more" id="br-mapother"' + (ST.det['br-mapother'] ? ' open' : '') + '><summary>' + hn(nOther) + ' food and other ' + plural(nOther, 'category', 'categories') + ' — not bar</summary><div class="br-map">' + other + '</div></details>' : '')
       + (na ? '<details class="br-more" id="br-mapidle"' + (ST.det['br-mapidle'] ? ' open' : '') + '><summary>' + hn(na) + ' ' + plural(na, 'category', 'categories') + ' with no sales in 28 days</summary><div class="br-map">' + idle + '</div></details>' : '')
       + '<div class="br-mapft">' + (can
           ? '<button type="button" class="cbtn cbtn-primary" data-br-mapconfirm="1">' + (m.mapping_needed ? 'Confirm these ' + hn(nAct) + ' ' + plural(nAct, 'category', 'categories') : 'Confirmed — confirm again') + '</button><span class="br-note" style="margin:0">A change saves on its own; Confirm says the rest are right as they stand.</span>'
@@ -47698,7 +47716,21 @@ function sfw2RuleCheck(chk) {
         + (tot > un.length ? ' The ' + hn(un.length) + ' with the most sales show; the rest come up as these are matched.' : ''), null,
         '<input class="br-q br-mq" id="br-mq" type="search" placeholder="Find a drink" aria-label="Find a drink to match" aria-controls="br-unm-list">')
       + '<div class="br-mlist" id="br-unm-list">' + h + (rest ? fold('br-unm-rest', hn(un.length - FIRST) + ' more', null, rest, 'br-mlist') : '') + '</div>'
-      + '<div class="br-empty" id="br-mq-none" hidden>No drink matches that.</div></section>';
+      + '<div class="br-empty" id="br-mq-none" hidden>No drink matches that.</div>' + setAsideList(v) + '</section>';
+  }
+  /* What is not a drink to match, named with why (owner, 10/16/26): add-ons,
+     "Up", open-price keys, a bucket's price line, NA beers, and whatever the
+     owner set aside - one fold under the queue, the owner's own with Undo. */
+  function setAsideList(v) {
+    var xs = v.set_aside || [], h = '', i;
+    if (!xs.length) return '';
+    for (i = 0; i < xs.length; i++) {
+      var x = xs[i];
+      h += '<div class="br-mrow aside"><div class="n"><b>' + esc2(x.item) + '</b><span><i class="br-swt" style="--s:' + seriesOf(x.category).css + '"></i>' + esc2(LABELS[x.category] || x.category || '') + ' · ' + hn(x.rung_units) + ' sold · ' + hn(money(x.sales_usd)) + '</span></div>'
+        + '<div class="m"><span class="nos">' + esc2(x.label) + '</span></div><div class="r">'
+        + (OWNER && x.owner ? '<button type="button" class="cbtn cbtn-ghost cbtn-sm" data-br-unaside="' + esc2(x.item_id) + '" data-provider="' + esc2(x.provider) + '">Undo</button>' : '') + '</div></div>';
+    }
+    return fold('br-aside', 'Set aside, not matched · ' + hn(xs.length) + ' · ' + hn(money(v.set_aside_sales_usd || 0)) + ' sold', null, '<div class="br-mlist">' + h + '</div>', '');
   }
   function nameMatches(d) {
     var sg = (d.margins || {}).suggestions || [], h = '', i;
@@ -47806,9 +47838,8 @@ function sfw2RuleCheck(chk) {
     if (pc.available) f = hero(d, pc) + alerts(d, pc) + cats(pc) + mixersHtml(d);
     else f = '<div class="dn-k">Bar · invoices ' + hn((d.invoices || {}).from_mdy) + '–' + hn((d.invoices || {}).to_mdy) + '</div><h1 class="dn-read" style="font-size:32px">Prices first; bought vs sold once sales are on file.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>' + alerts(d, pc);
     h += '<div id="br-tabsa"></div>'
-      + panel('overview', '<div class="br-top">' + f + '</div>' + overview(d, pc)) + panel('cost', costPanel(d)) + panel('buying', buyPanel(d))
-      + panel('match', matchPanel(d)) + panel('stock', stockPanel(d))
-      + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
+      + panel('overview', '<div class="br-top">' + f + '</div>' + overview(d, pc) + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>')
+      + panel('cost', costPanel(d)) + panel('buying', buyPanel(d)) + panel('match', matchPanel(d)) + panel('stock', stockPanel(d));
     return h;
   }
   function skeleton() {
@@ -47853,7 +47884,7 @@ function sfw2RuleCheck(chk) {
   /* Focus survives a re-render (V30): the focused control's own key, found again. */
   var FKEYS = ['data-br-cat', 'data-br-map', 'data-br-cnt', 'data-br-row', 'data-br-dir', 'data-br-series', 'data-br-more', 'data-br-mixers',
                'data-br-cdel', 'data-br-pack', 'data-br-link', 'data-br-exp', 'data-br-dm', 'data-br-pmore', 'data-br-why', 'data-br-mapconfirm',
-               'data-br-wlog', 'data-br-vmap', 'data-br-specall', 'data-br-ladall', 'data-br-credall'];
+               'data-br-wlog', 'data-br-vmap', 'data-br-unaside', 'data-br-specall', 'data-br-ladall', 'data-br-credall'];
   function focusKey(el) {
     if (!el || !el.getAttribute) return null;
     if (el.id) return '#' + el.id;
@@ -48086,6 +48117,7 @@ function sfw2RuleCheck(chk) {
       + '<span class="dn-bar-t">Bar</span><span class="dn-bar-r" id="br-asof"></span></div><div class="dn-scroll" id="br-scroll"><div class="dn-wrap" id="br-body"></div></div>';
     document.body.appendChild(el);
     $id('br-close').addEventListener('click', function () { window.barClose(); });
+    $id('br-scroll').addEventListener('scroll', function () { var w = $id('br-tabsw'); if (w) w.classList.toggle('stuck', this.scrollTop > 8); }, {passive: true});
     window.addEventListener('resize', function () { if (OPEN) inkMove(true); });
     el.addEventListener('keydown', function (e) {
       var t = e.target;
@@ -48142,7 +48174,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -48215,9 +48247,11 @@ function sfw2RuleCheck(chk) {
       } else if (a('data-br-vmap') != null) {
         var vid = a('data-br-vmap'), vk = valOf(attrSel('data-br-vmapto', vid)), oz = +valOf(attrSel('data-br-vmapoz', vid)).replace(/[^\d.]/g, '');
         if (!vk) { say('Pick what it pours from first.', 'error'); return; }
-        var vb = {provider: a('data-provider'), item_id: vid, product_key: vk};
-        if (oz > 0) vb.pour_oz = oz;
-        ownerWrite('/api/food-cost/bar/drink-map', vb, 'Matched — it counts in bought vs sold now', t);
+        var vb = {provider: a('data-provider'), item_id: vid, product_key: vk}, skip = vk.indexOf('skip:') === 0;
+        if (oz > 0 && !skip) vb.pour_oz = oz;
+        ownerWrite('/api/food-cost/bar/drink-map', vb, skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now', t);
+      } else if (a('data-br-unaside') != null) {
+        ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-unaside'), product_key: null}, 'Back in Drinks to match', t);
       } else if (a('data-br-spec') != null) {
         var act = a('data-act'), sb = {id: +a('data-br-spec')};
         if (act === 'confirm') {
@@ -48600,7 +48634,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .cp-card,[data-theme="dark"] .kx-card,[data-theme="dark"] #bar .br-card,[data-theme="dark"] .sw .lb2-preview,[data-theme="dark"] .sw-side,[data-theme="dark"] #bar .br-insl{
   border-color:transparent;
   background:
-    linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,0) 46%) padding-box,
+    url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     var(--cv-rim) border-box;
   box-shadow:var(--cv-lip),var(--cv-drop);
@@ -48619,7 +48653,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .ss-tile.hero,[data-theme="dark"] .kx-hero,[data-theme="dark"] #ss-settings-setup #ss-settings{
   border-color:transparent;
   background:
-    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.068),rgba(255,228,200,.05) 14%,rgba(255,228,200,.034) 28%,rgba(255,228,200,.02) 42%,rgba(255,228,200,.01) 56%,rgba(255,228,200,.004) 68%,rgba(255,228,200,0) 80%) padding-box,
+    url(/static/img/glow/keylight-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,#fff 4%),color-mix(in srgb,var(--surface) 84%,#000)) padding-box,
     linear-gradient(162deg,rgba(255,240,222,.30),rgba(255,240,222,.08) 14%,rgba(255,255,255,.03) 48%,rgba(255,255,255,.025) 72%,color-mix(in srgb,var(--ember) 30%,transparent)) border-box;
   box-shadow:inset 0 1px 0 rgba(255,248,238,.085),inset 0 -1px 0 rgba(0,0,0,.4),
@@ -48630,7 +48664,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] #bar .br-card.br-hero:hover,[data-theme="dark"] .ss-tile.hero:hover,[data-theme="dark"] .kx-hero:hover{transform:none}
 /* Food Cost's waste shell keeps its step-darker ground: the chart well inside it is the object. */
 [data-theme="dark"] .lb2-hero.fc2-wt-shell{background:
-    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.05),rgba(255,228,200,.036) 14%,rgba(255,228,200,.024) 28%,rgba(255,228,200,.014) 42%,rgba(255,228,200,.007) 56%,rgba(255,228,200,.002) 68%,rgba(255,228,200,0) 80%) padding-box,
+    url(/static/img/glow/keylight-soft-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,#1b1815,#141210) padding-box,
     linear-gradient(162deg,rgba(255,240,222,.22),rgba(255,240,222,.06) 14%,rgba(255,255,255,.025) 60%,color-mix(in srgb,var(--ember) 24%,transparent)) border-box}
 
@@ -48643,8 +48677,7 @@ function sfw2RuleCheck(chk) {
   border-color:transparent;
   background:
     linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
-    linear-gradient(112deg,transparent 34%,rgba(255,244,236,.028) 44%,rgba(255,244,236,.01) 50%,transparent 58%) padding-box,
-    radial-gradient(110% 150% at 0% 0%,color-mix(in srgb,var(--ember) 13.00%,transparent) 0%,color-mix(in srgb,var(--ember) 10.14%,transparent) 9%,color-mix(in srgb,var(--ember) 7.54%,transparent) 18%,color-mix(in srgb,var(--ember) 5.33%,transparent) 27%,color-mix(in srgb,var(--ember) 3.51%,transparent) 36%,color-mix(in srgb,var(--ember) 2.08%,transparent) 45%,color-mix(in srgb,var(--ember) 1.04%,transparent) 54%,color-mix(in srgb,var(--ember) 0.39%,transparent) 63%,color-mix(in srgb,var(--ember) 0.00%,transparent) 72%) padding-box,
+    url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
     linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
   -webkit-backdrop-filter:blur(16px) saturate(135%);backdrop-filter:blur(16px) saturate(135%);
@@ -48675,21 +48708,21 @@ function sfw2RuleCheck(chk) {
 
 /* ── Signal ────────────────────────────────────────────────────────────── */
 [data-theme="dark"] .hb-card.rail,[data-theme="dark"] .hb-notice,[data-theme="dark"] .sb-card.worst,[data-theme="dark"] .pr-verdict,[data-theme="dark"] #bar .br-warn{
-  --cv-tone:var(--hb-warn,var(--amber));
+  --cv-tone:var(--hb-warn,var(--amber));--cv-spill:url(/static/img/glow/signal-amber-v1.png) 0 0/100% 100% no-repeat;
   border-left:1px solid transparent;
   background:
-    linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 11%,transparent),color-mix(in srgb,var(--cv-tone) 3%,transparent) 22%,transparent 46%) padding-box,
-    linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0) 46%) padding-box,
+    var(--cv-spill) padding-box,
+    url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
   box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
     -10px 0 26px -18px color-mix(in srgb,var(--cv-tone) 75%,transparent),var(--cv-lip),var(--cv-drop);
 }
-[data-theme="dark"] .hb-card.rail.good,[data-theme="dark"] .pr-verdict.green{--cv-tone:var(--hb-good,var(--green))}
-[data-theme="dark"] .sb-card.worst,[data-theme="dark"] .pr-verdict.red{--cv-tone:var(--hb-bad,var(--red))}
-[data-theme="dark"] .hb-card.rail.ember,[data-theme="dark"] .hb-notice{--cv-tone:var(--ember)}
+[data-theme="dark"] .hb-card.rail.good,[data-theme="dark"] .pr-verdict.green{--cv-tone:var(--hb-good,var(--green));--cv-spill:url(/static/img/glow/signal-green-v1.png) 0 0/100% 100% no-repeat}
+[data-theme="dark"] .sb-card.worst,[data-theme="dark"] .pr-verdict.red{--cv-tone:var(--hb-bad,var(--red));--cv-spill:url(/static/img/glow/signal-red-v1.png) 0 0/100% 100% no-repeat}
+[data-theme="dark"] .hb-card.rail.ember,[data-theme="dark"] .hb-notice{--cv-tone:var(--ember);--cv-spill:url(/static/img/glow/signal-ember-v1.png) 0 0/100% 100% no-repeat}
 [data-theme="dark"] .pr-verdict.amber,[data-theme="dark"] #bar .br-warn{--cv-tone:var(--amber)}
-[data-theme="dark"] #bar .br-warn.info{--cv-tone:color-mix(in srgb,var(--ink) 55%,transparent)}
+[data-theme="dark"] #bar .br-warn.info{--cv-tone:color-mix(in srgb,var(--ink) 55%,transparent);--cv-spill:url(/static/img/glow/signal-ink-v1.png) 0 0/100% 100% no-repeat}
 
 @media (prefers-reduced-motion:reduce){
   [data-theme="dark"] .hb-card,[data-theme="dark"] .lb2-op,[data-theme="dark"] .sb-card,[data-theme="dark"] .ss-tile,[data-theme="dark"] .cal-card,

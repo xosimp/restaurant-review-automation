@@ -869,7 +869,8 @@ def test_bought_vs_rung_and_the_mapping_show_three_rows_and_fold_the_rest():
     var = src[src.index("  function costVar(d) {"):src.index("  function kegs(d) {")]
     assert 'id="br-varrest"' in var and "i < SHOW_FIRST" in var
     body = src[src.index("  function mapBody() {"):src.index("  /* ── how every product is sorted")]
-    assert 'id="br-maprest"' in body and "nAct < SHOW_FIRST" in body
+    # Drink categories first; food and other "Not bar" ones fold (owner, 10/16/26).
+    assert 'id="br-maprest"' in body and 'id="br-mapother"' in body and "nDrink < 6" in body
 
 
 def test_the_category_charts_never_wear_the_app_wide_green_sp_class():

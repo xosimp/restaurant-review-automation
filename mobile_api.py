@@ -3390,7 +3390,10 @@ def mobile_bar_drink_map(current_user):
         if not on_menu:
             raise ValueError("That drink isn't on this restaurant's POS menu.")
         key = b.get("product_key")
-        key = _bed.check_product_key(rid, key) if key not in (None, "") else None
+        if key not in (None, "") and str(key).startswith("skip:"):
+            pass                                  # set aside: bar.margins.set_drink_map checks the reason
+        else:
+            key = _bed.check_product_key(rid, key) if key not in (None, "") else None
         oz = _bar_num(b.get("pour_oz"), "A pour is a number of ounces.")
         before = next((m.get("product_key") for m in _bmar.drink_map(rid)
                        if m.get("provider") == provider and str(m.get("item_id")) == item_id), None)

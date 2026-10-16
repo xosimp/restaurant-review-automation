@@ -559,3 +559,29 @@ def test_a_confirmed_recipe_card_is_counted_once_even_with_a_match(db, tmp_path)
     bv.set_drink_spec(rid, bv.drink_specs(rid, db_path=db)[0]["id"], confirm=True, db_path=db)
     k = _item(bv.compute(rid, today=TODAY, db_path=db), "ketel")
     assert k["rung_units"] == 16.8 and k["theoretical_basis"] == ["recipe_card"]
+
+
+def test_what_is_not_a_drink_to_match_is_set_aside_by_its_name():
+    """EJ's RPOWER lines (owner, 10/16/26): add-ons, "Up", open-price keys, a
+    bucket's own price line and NA beers are no drink to match; a bucket's
+    beer line ("Miller Lite`Bucket") is."""
+    r = bv.set_aside_reason
+    assert r("Old Fashioned`Liquor Add-On") == "add_on" and r("Red Bull`Liquor Add-On") == "add_on"
+    assert r("Up") == "style" and r("Tall") == "style"
+    assert r("Open Beer") == "open_price" and r("Open Liquor") == "open_price"
+    assert r("Domestic Bucket") == "bucket" and r("Surfside Bucket") == "bucket"
+    assert r("Miller Lite`Bucket") is None, "the bucket's beer line is matched, not set aside"
+    assert r("Heniken 0.0") == "non_alcoholic" and r("Corona NA") == "non_alcoholic" and r("Blue Moon N/A") == "non_alcoholic"
+    assert r("Knob Creek") is None and r("Corona Extra") is None and r("Upside Down Cake Shot") is None
+
+
+def test_the_owner_can_set_a_drink_aside_and_it_never_reads_as_a_match(db):
+    import bar.margins as bm
+    rid = _rid(db)
+    bm.set_drink_map(rid, "rpower", "K1", "skip:not_on_invoices", db_path=db)
+    assert bm.drink_map(rid, db_path=db) == []
+    assert bm.set_aside_map(rid, db_path=db) == {("rpower", "K1"): "not_on_invoices"}
+    with pytest.raises(ValueError):
+        bm.set_drink_map(rid, "rpower", "K1", "skip:because", db_path=db)
+    bm.set_drink_map(rid, "rpower", "K1", None, db_path=db)
+    assert bm.set_aside_map(rid, db_path=db) == {}

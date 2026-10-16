@@ -34,11 +34,17 @@ def drink_margin(cost_per_drink, menu_price, cost_before=None) -> dict:
     return out
 
 
+# The owner's word that a POS item is not to be matched at all, kept in the
+# same table under a "skip:<reason>" key (owner, 10/16/26). drink_map never
+# returns those rows; set_aside_map does.
+SKIP_REASONS = {"not_a_drink": "Not a drink", "not_on_invoices": "Not bought on any invoice"}
+
+
 def drink_map(restaurant_id, db_path=None) -> list:
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT provider, item_id, product_key, pour_oz FROM bar_drink_map WHERE restaurant_id=?",
-                            (int(restaurant_id),)).fetchall()
+        rows = conn.execute("SELECT provider, item_id, product_key, pour_oz FROM bar_drink_map WHERE restaurant_id=? "
+                            "AND product_key NOT LIKE 'skip:%'", (int(restaurant_id),)).fetchall()
     except Exception:
         rows = []
     finally:
@@ -46,10 +52,25 @@ def drink_map(restaurant_id, db_path=None) -> list:
     return [dict(r) for r in rows]
 
 
+def set_aside_map(restaurant_id, db_path=None) -> dict:
+    """{(provider, item_id): reason} - the POS items the owner set aside."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT provider, item_id, product_key FROM bar_drink_map WHERE restaurant_id=? "
+                            "AND product_key LIKE 'skip:%'", (int(restaurant_id),)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return {(r["provider"], str(r["item_id"])): r["product_key"][5:] for r in rows}
+
+
 def set_drink_map(restaurant_id, provider, item_id, key, pour_oz=None, user_id=None, db_path=None) -> dict:
     """The owner's word that a POS item is one bought product at a pour
     (no pour: a bottle or can sold as it comes). An empty key clears it."""
-    oz = float(pour_oz) if pour_oz not in (None, "") else None
+    if key and str(key).startswith("skip:") and str(key)[5:] not in SKIP_REASONS:
+        raise ValueError("Set it aside as not a drink, or as not bought on any invoice.")
+    oz = float(pour_oz) if pour_oz not in (None, "") and not str(key or "").startswith("skip:") else None
     # 128 oz: a tower pours 100 (3 L, Will 10/15/26), a gallon pitcher 128.
     if oz is not None and not 0.25 <= oz <= 128:
         raise ValueError("A pour is between 0.25 and 128 oz.")

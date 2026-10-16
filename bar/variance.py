@@ -82,6 +82,40 @@ SPEC_STATUSES = ("suggested", "confirmed")
 RECIPE_CARDS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "docs", "clients", "simple-ejs", "bar_recipes.json")
 LABELS = {"bought_vs_rung": "Bought vs sold, by product", "variance": "Variance"}
+
+# POS items that are not a drink to match, set aside and named rather than
+# asked about (owner, 10/16/26, from EJ's RPOWER lines): an add-on rings on its
+# own $0 or $3 line after the drink it changes; "Up" is how a martini is
+# served; an open-price key has no product behind it; a bucket's own line is
+# its price - its beers ring as the "<beer>`Bucket" lines after it; a 0.0 or
+# NA beer has no alcohol. Each reason's sentence is shown beside the item.
+SET_ASIDE = {
+    "add_on": "An add-on — the drink it was added to carries the liquor",
+    "style": "How a drink is served, not a drink",
+    "open_price": "An open-price key — typed in by hand, no product behind it",
+    "bucket": "A bucket's price — its beers ring on the lines after it and count there",
+    "non_alcoholic": "Non-alcoholic — no alcohol to count",
+    "not_a_drink": "You set it aside: not a drink",
+    "not_on_invoices": "You set it aside: not bought on any invoice",
+}
+_STYLE_WORDS = {"up", "neat", "rocks", "on the rocks", "tall", "short", "dirty", "extra dirty", "dry", "wet"}
+
+
+def set_aside_reason(item_name):
+    """The SET_ASIDE key a POS item's own name says, or None."""
+    n = " ".join(str(item_name or "").split())
+    base, _, group = n.partition("`")
+    if group and re.search(r"add[- ]?on", group, re.I):
+        return "add_on"
+    if base.lower() in _STYLE_WORDS:
+        return "style"
+    if re.match(r"open\s+(beer|liquor|wine|bar|drink|cocktail|shot)s?\b", base, re.I):
+        return "open_price"
+    if not group and re.search(r"\bbucket$", base, re.I):
+        return "bucket"
+    if re.search(r"(\b0\.0\b|\bn/?a$|\bnon[- ]?alc|\bzero proof\b)", base, re.I):
+        return "non_alcoholic"
+    return None
 # Ingredient words that are alcohol (a recipe card lists juices and syrups too).
 _SPIRIT_RE = re.compile(r"vodka|gin\b|rum\b|bourbon|whiske?y|scotch|rye\b|tequila|mezcal|blanco|reposado|"
                         r"liqueur|vermouth|aperol|campari|amaro|brandy|cognac|schnapps|triple\s*sec|cointreau|"
@@ -516,6 +550,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     # The owner's map and confirmed specs: (provider, item_id) → [(ck, mode, oz, basis, assumption)].
     targets = defaultdict(list)
     dmap = drink_map(restaurant_id, db_path)
+    from bar.margins import set_aside_map
+    owner_aside = set_aside_map(restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
         item_names = {}
@@ -583,6 +619,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         mapping = Mapping(restaurant_id, db_path)
     from bar.mapping import key_for
     unmapped = {}
+    aside = {}
+    aside_sales = defaultdict(float)
     drink_items = set()     # POS items sold as beer, liquor or wine under the mapping
     cat_sales = defaultdict(float)
     mapped_sales = defaultdict(float)
@@ -607,6 +645,15 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         tg = targets.get(k)
         if not tg:
             pure_mod = par is not None and (DOUBLE_RE.search(str(r.get("item_name") or "")) or _f(r["sales"]) == 0)
+            why = owner_aside.get(k) or set_aside_reason(r["item_name"])
+            if is_drink and kind == "sale" and r["item_id"] and not pure_mod and qty and why:
+                a = aside.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"], "category": bar_kind,
+                                         "reason": why, "label": SET_ASIDE.get(why, why), "owner": k in owner_aside,
+                                         "rung_units": 0.0, "sales_usd": 0.0})
+                a["rung_units"] += qty
+                a["sales_usd"] += _f(r["sales"])
+                aside_sales[bar_kind] += _f(r["sales"])
+                continue
             if is_drink and kind == "sale" and r["item_id"] and not pure_mod and qty:
                 u = unmapped.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"],
                                             "category": bar_kind, "rung_units": 0.0, "sales_usd": 0.0,
@@ -704,8 +751,16 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         u["sales_usd"] = round(u["sales_usd"], 2)
     for u in unmapped_rows[:MAX_UNMAPPED]:
         u["suggest"] = suggest_pour(u["item"], u["category"], _cands) or None
+    # Set-aside sales are no drink to match: out of the matched share's base.
+    for kk, v in aside_sales.items():
+        cat_sales[kk] = max(0.0, cat_sales[kk] - v)
+    aside_rows = sorted(aside.values(), key=lambda a: -a["sales_usd"])
+    for a in aside_rows:
+        a["rung_units"] = _r(a["rung_units"])
+        a["sales_usd"] = round(a["sales_usd"], 2)
     totals = _totals(items, cat_sales, mapped_sales)
-    out = {"available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
+    out = {"set_aside": aside_rows, "set_aside_total": len(aside_rows),
+           "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),"available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
            "span": span_out, "items": items[:MAX_ITEMS], "items_total": len(items),
            "unmapped": unmapped_rows[:MAX_UNMAPPED], "unmapped_total": len(unmapped_rows),
            "unmapped_sales_usd": round(sum(u["sales_usd"] for u in unmapped_rows), 2),
