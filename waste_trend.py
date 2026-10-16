@@ -152,7 +152,7 @@ def _iso_key(day):
         return None
 
 
-def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None):
+def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None, include_unmeasured=False):
     """The restaurant's weekly waste series, oldest first, one entry per
     ISO week. When a week holds several snapshots (the insight ran more
     than once), the most recent one is that week's figure. `limit` keeps
@@ -162,7 +162,13 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
     `since` / `until` (dates, inclusive) bound which snapshot rows are read
     and parsed at all. A caller that needs only the counts near two dates —
     cogs.build_food_cost_pct — used to JSON-parse every snapshot the
-    restaurant had ever written on each request (MOD-FC-18)."""
+    restaurant had ever written on each request (MOD-FC-18).
+
+    Back Office counts (backoffice_counts, 10/16/26) are merged in, each one
+    taking its ISO week's slot: waste measured count to count. A count with
+    no measured waste (the first one) carries only a stock value, returned
+    with waste None when `include_unmeasured` — food cost % brackets a
+    window with it; the trend never charts it as a week of $0."""
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -249,10 +255,27 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
         if key not in buckets:
             order.append(key)
         buckets[key] = week  # rows arrive oldest→newest, so the last one wins
+    try:
+        import backoffice_counts as _bc
+        counted = _bc.waste_weeks(restaurant_id, db_path=db_path)
+    except Exception:
+        counted = []
+    extra = 0
+    for w in counted:
+        if w["waste"] is None and not include_unmeasured:
+            continue
+        if (since and w["week_end"] < str(since)[:10]) or (hi and w["week_end"] > hi):
+            continue
+        key = _iso_key(w["week_end"])
+        if key not in buckets:
+            order.append(key)
+            extra += key not in seen
+        buckets[key] = w
+    order.sort()
     weeks = [buckets[k] for k in order]
     # total is every week on file, not just the ones fetched — build_waste_trend
     # decides which range buttons to offer from it.
-    total = total_weeks
+    total = total_weeks + extra
     if limit and len(weeks) > limit:
         weeks = weeks[-limit:]
     return weeks, total
@@ -614,6 +637,26 @@ def _empty_state(weeks_have, is_live):
     }
 
 
+_NTH = {3: "third", 4: "fourth", 5: "fifth", 6: "sixth", 7: "seventh"}
+
+
+def _count_empty_state(counts_have, measured):
+    """The empty state for a restaurant whose waste comes from Back Office
+    counts (backoffice_counts): what a count measures, and how many it takes."""
+    need = WEEKS_FOR_COMPARISON + 1
+    return {
+        "title": "Your waste trend starts with your first count" if not counts_have else
+                 "Waste appears after your next count",
+        "reason": ("Waste is measured between two Back Office counts: what the kitchen used — food on hand, plus "
+                   "food bought, minus food left — against what the recipes say the dishes sold should have used."),
+        "needed": "Submit each week's inventory in Back Office; Cavnar AI reads the submitted counts.",
+        "when": ("The first waste figure appears after the second count, a comparison after the third, and a "
+                 f"trend line after the {_NTH.get(WEEKS_FOR_TREND + 1, str(WEEKS_FOR_TREND + 1) + 'th')}."),
+        "weeks_have": counts_have, "weeks_needed": need, "unit": "counts submitted",
+        "measured": measured,
+    }
+
+
 def implied_target_weekly(analysis=None, weeks=None, target_pct=WASTE_TARGET_PCT):
     """The target line in dollars: the target % band applied to what the
     restaurant actually buys in a week. The live analysis is the best
@@ -666,6 +709,21 @@ def get_waste_target_pct(restaurant_id, db_path=None):
     return pct
 
 
+def _empty_for(restaurant_id, weeks_have, is_live, db_path=None):
+    """A restaurant on Back Office (counts or invoices on file) is measured
+    count to count, never a "sample pantry" (EJ's, 10/16/26: the card said
+    sample while its food was read from Back Office)."""
+    try:
+        import backoffice_ap as _bo
+        import backoffice_counts as _bc
+        cs = _bc.counts(restaurant_id, db_path)
+        if cs or _bo.feed_state(restaurant_id, db_path).get("on_file"):
+            return _count_empty_state(len(cs), weeks_have)
+    except Exception:
+        pass
+    return _empty_state(weeks_have, is_live)
+
+
 def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True, db_path=None, target_pct=None):
     """The whole card payload for one restaurant and one range."""
     range_key = range_key if range_key in RANGE_WEEKS else "8w"
@@ -711,5 +769,5 @@ def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True
         "stats": stats,
         "observations": waste_trend_observations(stats, weeks, target_pct),
         "categories": categories,
-        "empty": _empty_state(len(weeks), is_live) if len(weeks) < WEEKS_FOR_COMPARISON else None,
+        "empty": _empty_for(restaurant_id, len(weeks), is_live, db_path) if len(weeks) < WEEKS_FOR_COMPARISON else None,
     }

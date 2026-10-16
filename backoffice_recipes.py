@@ -358,18 +358,20 @@ def _pos_sales(restaurant_id, names, start, end, db_path=None) -> dict:
     return {r["item_name"]: (float(r["units"] or 0), float(r["sales"] or 0)) for r in rows}
 
 
-def plates(restaurant_id, today=None, db_path=None) -> dict:
+def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dict:
     """{available, why_not?, loaded_at, window, plates: [{name, group,
     cost, complete, missing, lines, pos_names, units, sales, price,
     cost_pct, margin}], summary, prices, note}. Menu recipes with POS sales
-    first, by what they sold."""
+    first, by what they sold. `start`/`end` (dates) price the sales of
+    another window — a count period's (backoffice_counts) — at today's
+    prices; the default is the four weeks to yesterday."""
     from time_utils import mdy
     bk, loaded = book(restaurant_id, db_path)
     if not bk:
         return {"available": False, "why_not": "No Back Office recipes are loaded for this restaurant yet."}
     today = today or date.today()
-    end = today - timedelta(days=1)
-    start = end - timedelta(days=WINDOW_DAYS - 1)
+    end = end or (today - timedelta(days=1))
+    start = start or (end - timedelta(days=WINDOW_DAYS - 1))
     c = _Coster(bk, _invoice_prices(restaurant_id, db_path), today)
     pos_names = bk.get("pos_names") or {}
     menu = [r for r in bk["recipes"] if _is_menu(r) and (not r["group"].endswith("MODS") or r["name"] in pos_names)]
@@ -405,7 +407,7 @@ def plates(restaurant_id, today=None, db_path=None) -> dict:
         srcs["unpriced" if "error" in p else p["source"]] += 1
     return {"available": True, "loaded_at": loaded, "basis": "recipes",
             "window": {"from": start.isoformat(), "to": end.isoformat(), "from_mdy": mdy(start.isoformat()),
-                       "to_mdy": mdy(end.isoformat()), "days": WINDOW_DAYS},
+                       "to_mdy": mdy(end.isoformat()), "days": (end - start).days + 1},
             "plates": out, "summary": summary, "prices": srcs,
             "note": ("What each dish's recipe costs at today's supplier prices: the latest invoice line for each "
                      "item, read the way the supplier bills it, else Back Office's last price. A dish with an "

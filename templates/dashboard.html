@@ -29950,7 +29950,7 @@ function wtRenderEmpty(d){
   var h='<div class="fc2-wt-empty">'+(typeof cavnarHearthSvg==='function'?cavnarHearthSvg():'')
     +'<div class="t">'+wtEsc(e.title||'No waste history yet')+'</div>'
     +'<div class="r">'+wtEsc(e.reason||'')+'</div>'
-    +'<div class="prog"><span class="hb-num">'+have+' of '+need+'</span> weeks recorded<span class="bar"><i style="width:'+Math.round(Math.min(1,have/need)*100)+'%"></i></span></div>'
+    +'<div class="prog"><span class="hb-num">'+have+' of '+need+'</span> '+wtEsc(e.unit||'weeks recorded')+'<span class="bar"><i style="width:'+Math.round(Math.min(1,have/need)*100)+'%"></i></span></div>'
     +'<div class="steps"><div class="step"><b>What fills it</b>'+wtEsc(e.needed||'')+'</div><div class="step"><b>When it appears</b>'+wtEsc(e.when||'')+'</div></div></div>';
   var chart=document.getElementById('fc2-wt-chart');if(chart)chart.innerHTML=h;
 }

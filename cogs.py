@@ -529,7 +529,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
     weeks, _total = load_waste_history(
         restaurant_id, None, db_path=db_path,
         since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
-        until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS))
+        until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS), include_unmeasured=True)
 
     # Owner-facing reasons (they reach Track warnings and the Food Cost
     # tab): dates M/D/YY (re-audit A34).

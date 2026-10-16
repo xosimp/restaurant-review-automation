@@ -133,6 +133,30 @@ def init_backoffice_ap(db_path=None):
             payload TEXT NOT NULL,
             source TEXT,
             loaded_at TEXT NOT NULL)""")
+        # Inventory counts read from Back Office's submitted inventories
+        # (backoffice_counts): one row per inventory GL account per period,
+        # and the count sheets' item rows behind them.
+        conn.execute("""CREATE TABLE IF NOT EXISTS bo_inventory_counts (
+            restaurant_id INTEGER NOT NULL,
+            period_end TEXT NOT NULL,
+            period_start TEXT,
+            gl TEXT NOT NULL,
+            gl_name TEXT,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (restaurant_id, period_end, gl))""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS bo_inventory_count_items (
+            restaurant_id INTEGER NOT NULL,
+            period_end TEXT NOT NULL,
+            location TEXT NOT NULL,
+            line_no INTEGER NOT NULL,
+            item TEXT NOT NULL,
+            gl_name TEXT,
+            unit TEXT,
+            qty REAL,
+            total REAL,
+            PRIMARY KEY (restaurant_id, period_end, location, line_no))""")
         conn.execute("""CREATE TABLE IF NOT EXISTS bo_vendor_categories (
             restaurant_id INTEGER NOT NULL,
             vendor_key TEXT NOT NULL,

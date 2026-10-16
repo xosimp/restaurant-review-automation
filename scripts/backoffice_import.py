@@ -4,7 +4,9 @@ Chart of Accounts), the Invoices By Vendor page printed to PDF, or one
 invoice's Edit Invoice page printed to PDF (its line items, each with its GL
 account), or the restaurant's recipe book read from Back Office's recipe
 and item pages (JSON: backoffice_recipes.load, e.g.
-docs/clients/simple-ejs/back_office_recipes.json). Dry run by default (parses and reports, writes nothing); --apply
+docs/clients/simple-ejs/back_office_recipes.json), or submitted inventory
+counts ({"inventory_counts": …}, from scripts/backoffice_read_counts.js run in
+a signed-in Back Office tab; backoffice_counts.save_counts). Dry run by default (parses and reports, writes nothing); --apply
 stores it. `--file -`
 reads the file from stdin, so a file on a laptop reaches production with
 
@@ -31,6 +33,21 @@ def main(argv=None):
     content = sys.stdin.buffer.read() if a.file == "-" else open(a.file, "rb").read()
     name = a.name or os.path.basename(a.file)
     import backoffice_ap as bo
+    if b'"inventory_counts"' in content[:200]:
+        import backoffice_counts as bc
+        b = json.loads(content.decode("utf-8-sig"))
+        if a.apply:
+            out = dict(bc.save_counts(a.rid, b), kind="inventory_counts")
+        else:
+            ps = b.get("inventory_counts") or []
+            out = {"kind": "inventory_counts", "periods": [
+                {"end": p.get("end"), "status": p.get("status"), "accounts": len(p.get("gls") or []),
+                 "items": len(p.get("items") or []),
+                 "food": round(sum(float(g.get("amount") or 0) for g in p.get("gls") or []
+                                   if bc.category(g.get("name")) == "food"), 2)} for p in ps]}
+        out["applied"] = bool(a.apply)
+        print(json.dumps(out, indent=1, default=str))
+        return 0
     if name.lower().endswith(".json") and b'"invoices"' in content[:200]:
         b = json.loads(content.decode("utf-8-sig"))
         vendors = [v for v in (a.vendors or "").split("|") if v.strip()] or None
