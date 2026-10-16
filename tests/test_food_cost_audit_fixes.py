@@ -571,4 +571,7 @@ def test_back_office_is_a_food_cost_source_without_an_api(db_path):
     assert "From your Back Office reports." in tpl and "{% if inv.is_live or not _bo %}<div class=\"hb-pulse\">" in tpl
     # Behind an "i" by the heading, not a banner; the coverage line in plain words (10/16/26).
     assert 'data-itip="fc2-bo-tip"' in tpl and 'class="fc2-src"' not in tpl
+    # Back Office on file is never "Sample data" (10/16/26: the banner came back when the note moved).
+    assert "{% elif not inv.is_live and not _bo %}\n  <div class=\"fc2-sample\"><b>Sample data.</b>" in tpl
+    assert "word-spacing:normal;text-wrap:pretty" in tpl
     assert "has a recipe, so its ingredient cost is known" in tpl and "uncosted" not in tpl and "is costed by a recipe" not in tpl

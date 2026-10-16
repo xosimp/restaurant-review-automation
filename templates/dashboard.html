@@ -13500,7 +13500,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
 .cbtn.cav-ib:hover,.cbtn.cav-ib[aria-expanded="true"]{color:var(--ink);border-color:var(--ember2);background:color-mix(in srgb,var(--ember) 10%,transparent)}
 .cbtn.cav-ib:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
-.cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;text-transform:none;white-space:normal;text-align:left}
+.cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;word-spacing:normal;text-wrap:pretty;text-transform:none;white-space:normal;text-align:left}
+/* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
 @media (max-width:640px){.cav-itp{left:auto;right:-8px}}
@@ -14013,7 +14014,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# The zeros below are placeholders, not measurements. Saying so beats
      showing "$0 waste this week" as if it had been counted. #}
   <div class="fc2-sample"><b>Analysis unavailable.</b> The food cost figures couldn't be computed just now — reload in a moment. Nothing below has been measured.</div>
-  {% elif not inv.is_live %}
+  {% elif not inv.is_live and not _bo %}
   <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect your POS — to see your real numbers.</div>
   {% endif %}
   <div class="hb-top">
