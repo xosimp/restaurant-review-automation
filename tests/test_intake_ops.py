@@ -601,3 +601,42 @@ def test_a_late_feed_with_a_held_file_says_it_is_held_and_where_to_release_it(db
     sh = data_health.health_rows(rid, db_path=db)["invoices"]
     assert "1 file came and is held, unread" in sh["last_error"] and "Release" in sh["last_error"]
     assert sh["error_class"] == "held"
+
+
+UNSIGNED = {"spf": "gray", "dkim": "gray", "dmarc": "fail"}      # Fintech's own mail, 10/15 and 10/16/26
+
+
+def _unsigned_email(db, monkeypatch, rid, eid, body, auth=UNSIGNED):
+    email_intake.receive({"email_id": eid, "to": [ROUTE], "from": "processor@fintech.net"}, db_path=db)
+    _stub_resend(monkeypatch, eid, {"from": "processor@fintech.net", "authentication": auth},
+                 [{"id": "a", "filename": "d.txt", "download_url": "u", "size": len(body)}], {"u": body})
+    return email_intake.process(eid, db_path=db)
+
+
+def test_unsigned_mail_whose_file_vouches_for_itself_is_read_without_a_release(db, monkeypatch):
+    """Owner, 10/16/26 ("I shouldn't have to keep doing this"): Fintech's mail
+    went out unsigned twice. From a listed sender, unsigned (not forged), its
+    file read without writing names only a store and a distributor already on
+    file: it is read, and marked as having vouched for itself."""
+    rid = _rid(db)
+    _route(db, rid)
+    fi.ingest_file(rid, "first.txt", _printout("10/09/2026"), db_path=db)
+    body = _printout("10/14/2026").replace(b"101153056", b"101153099")
+    out = _unsigned_email(db, monkeypatch, rid, "u1", body)
+    assert out["status"] == "done" and out["files"][0]["vouched"] is True
+    assert _rows(db, "SELECT COUNT(*) AS n FROM fintech_invoices WHERE restaurant_id=?", (rid,))[0]["n"] == 2
+
+
+def test_unsigned_mail_with_a_new_distributor_or_a_forged_signature_stays_held(db, monkeypatch):
+    rid = _rid(db)
+    _route(db, rid)
+    fi.ingest_file(rid, "first.txt", _printout("10/09/2026"), db_path=db)
+    stranger = _printout("10/14/2026").replace(b"Chicago Beverage System, Inc dba Windy City", b"Acme Liquor Wholesale") \
+        .replace(b"101153056", b"55501")
+    out = _unsigned_email(db, monkeypatch, rid, "u2", stranger)
+    assert out["status"] == "held_auth"
+    row = _rows(db, "SELECT detail FROM email_intake WHERE email_id='u2'")[0]
+    assert "didn't vouch for themselves" in row["detail"] and "new to this restaurant" in row["detail"]
+    forged = {"spf": "fail", "dkim": "gray", "dmarc": "fail"}
+    good = _printout("10/14/2026").replace(b"101153056", b"101153098")
+    assert _unsigned_email(db, monkeypatch, rid, "u3", good, auth=forged)["status"] == "held_auth"

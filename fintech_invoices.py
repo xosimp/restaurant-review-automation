@@ -1083,6 +1083,44 @@ def _status(res, parsed) -> str:
     return "unchanged"
 
 
+def vouch(restaurant_id, filename, content, db_path=None) -> tuple:
+    """(ok, why) — whether a file's own contents vouch for it when its email
+    could not be authenticated (email_intake.process, owner 10/16/26: Fintech's
+    mail went out unsigned on 10/15 and 10/16 and both files sat held). Read
+    without writing: it must parse as a Fintech file with dated invoices,
+    every store in it must be one this restaurant's invoices already carry or
+    its store map names, and every distributor one it already buys from. A
+    new store or a new distributor is exactly what a forged file would bring,
+    so either keeps the email held."""
+    import email_intake
+    try:
+        fmt, _kept, invoices = read(filename, content)
+    except email_intake.FileRefused as e:
+        return False, e.detail
+    dated = [i for i in invoices if i.get("invoice_date")]
+    if not fmt or not dated:
+        return False, "it doesn't read as a Fintech invoice file"
+    rid = int(restaurant_id)
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT DISTINCT location_id, distributor_key FROM fintech_invoices WHERE restaurant_id=?",
+                            (rid,)).fetchall()
+    finally:
+        conn.close()
+    known_locs = {location_key(r["location_id"]) for r in rows} | set(location_map(rid, db_path))
+    known_locs.discard(None)
+    known_dists = {r["distributor_key"] for r in rows if r["distributor_key"]}
+    if not known_dists:
+        return False, "no invoices on file yet to check it against"
+    new_locs = sorted({location_key(i.get("location_id")) for i in dated} - known_locs - {None})
+    if new_locs:
+        return False, f"store {', '.join(new_locs)} is new to this restaurant"
+    new_dists = sorted({i.get("distributor") or "" for i in dated if distributor_key(i.get("distributor")) not in known_dists})
+    if new_dists:
+        return False, f"{', '.join(new_dists[:3])} {'is' if len(new_dists) == 1 else 'are'} new to this restaurant"
+    return True, f"{len(dated)} invoices from distributors and a store already on file"
+
+
 def ingest_file(restaurant_id, filename, content, intake_id=None, db_path=None):
     """email_intake's reader for kind 'fintech'. Returns {"status": stored
     (an invoice written) | duplicate (the same file again) | unrecognized

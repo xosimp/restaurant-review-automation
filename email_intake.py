@@ -221,6 +221,26 @@ def sender_allowed(sender, allowed) -> bool:
     return addr in allowed or domain in allowed
 
 
+# Readers whose files can vouch for themselves when the email can't
+# (fintech_invoices.vouch): the file is parsed, never written, and must name
+# only stores and distributors the restaurant's invoices already carry.
+VOUCHERS = {"fintech": "fintech_invoices:vouch"}
+
+
+def _voucher(kind):
+    import importlib
+    mod, fn = VOUCHERS[kind].split(":")
+    return getattr(importlib.import_module(mod), fn)
+
+
+def _unsigned_not_forged(auth) -> bool:
+    """Neither SPF nor DKIM failed - the mail was unsigned (gray / unknown),
+    not caught forged. A DMARC fail on its own only says neither passed."""
+    if not isinstance(auth, dict):
+        return False
+    return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
+
+
 def auth_verdict(auth) -> tuple:
     """(passed, why) from Resend's `authentication` on a received email —
     {spf, dkim, dmarc}, each pass | fail | gray | processing_failed |
@@ -588,12 +608,40 @@ def process(email_id, db_path=None, released=False):
                         "held, never read", processed_at=_now())
             return {"status": "held_sender"}
         passed, why = auth_verdict(auth)
-        if not passed:
+        unsigned = not passed and _unsigned_not_forged(auth) and row["kind"] in VOUCHERS
+        if not passed and not unsigned:
             _set(email_id, db_path, status="held_auth", sender=sender[:300], subject=subject[:500], auth=auth_json,
                  detail=f"Resend could not vouch for the sender ({why}) — held, never read", processed_at=_now())
             return {"status": "held_auth"}
+    else:
+        unsigned = False
     listing = _api_get(f"/emails/receiving/{email_id}/attachments")
     attachments = listing.get("data") or []
+    fetched = {}
+    if unsigned:
+        # Unsigned, not forged, from a listed sender to the secret address: the
+        # files must vouch for themselves before any is read (owner, 10/16/26 -
+        # Fintech's mail went out unsigned twice and both files sat held).
+        whys = []
+        for att in attachments:
+            name = att.get("filename") or "attachment"
+            if att.get("size") and att["size"] > MAX_ATTACHMENT_BYTES:
+                whys.append(f"{name}: too large")
+                continue
+            url = att.get("download_url") or _api_get(f"/emails/receiving/{email_id}/attachments/{att.get('id')}").get("download_url")
+            try:
+                fetched[att.get("id") or name] = _download(url)
+            except AttachmentTooLarge:
+                whys.append(f"{name}: too large")
+                continue
+            ok, vwhy = _voucher(row["kind"])(row["restaurant_id"], name, fetched[att.get("id") or name], db_path=db_path)
+            if not ok:
+                whys.append(f"{name}: {vwhy}")
+        if whys or not attachments:
+            _set(email_id, db_path, status="held_auth", sender=sender[:300], subject=subject[:500], auth=auth_json,
+                 detail=f"Resend could not vouch for the sender ({why}) and the files didn't vouch for themselves "
+                        f"({'; '.join(whys) or 'no file attached'}) — held, never read", processed_at=_now())
+            return {"status": "held_auth"}
     if not attachments:
         if GMAIL_FORWARDING in sender.lower():
             _set(email_id, db_path, status="gmail_confirmation", sender=sender[:300], subject=subject[:500],
@@ -614,18 +662,24 @@ def process(email_id, db_path=None, released=False):
         if size and size > MAX_ATTACHMENT_BYTES:
             results.append({"file": name, "status": "too_large"})
             continue
-        url = att.get("download_url")
-        if not url:
-            detail = _api_get(f"/emails/receiving/{email_id}/attachments/{att.get('id')}")
-            url = detail.get("download_url")
-        try:
-            content = _download(url)
-        except AttachmentTooLarge:
-            results.append({"file": name, "status": "too_large"})
-            continue
+        if (att.get("id") or name) in fetched:
+            content = fetched[att.get("id") or name]
+        else:
+            url = att.get("download_url")
+            if not url:
+                detail = _api_get(f"/emails/receiving/{email_id}/attachments/{att.get('id')}")
+                url = detail.get("download_url")
+            try:
+                content = _download(url)
+            except AttachmentTooLarge:
+                results.append({"file": name, "status": "too_large"})
+                continue
         res = reader(row["restaurant_id"], name, content, row["id"], db_path=db_path) or {}
         results.append({"file": name, **res})
     status, read = email_status(results)
+    if unsigned:
+        for r in results:          # read because the file vouched for itself (fintech_invoices.vouch)
+            r["vouched"] = True
     _set(email_id, db_path, status=status, sender=sender[:300], subject=subject[:500], files=len(read), auth=auth_json,
          detail=json.dumps(results, default=str)[:4000], processed_at=_now())
     if row["kind"] == "fintech":
