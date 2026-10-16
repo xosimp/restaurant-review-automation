@@ -2286,12 +2286,17 @@ def _line_from_state(raw):
     return OperationalLine(text, fields) if fields is not None else text
 
 
+DIAGNOSIS_MAX_TOKENS = 1600
+
+
 def diagnosis_request(state) -> dict:
     """The request for one cluster's call — what create_with_retry sends
     and what the batch sends. The static rules ride in a cached system
     block (#63); the cluster's evidence is the message."""
     from ai_utils import model_for
-    return dict(model=model_for("review_diagnosis"), max_tokens=800,
+    # 1600 (10/16/26): at 800, 8 of 57 in 30 days were truncated and refused
+    # (the average answer was 637) — the cluster kept a stale diagnosis.
+    return dict(model=model_for("review_diagnosis"), max_tokens=DIAGNOSIS_MAX_TOKENS,
                 system=[{"type": "text", "text": DIAGNOSE_SYSTEM, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": state["user"]}])
 

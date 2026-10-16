@@ -45,7 +45,10 @@ SUMMARY_MAX_TURNS = 30
 SUMMARY_TURN_CHARS = 1500
 SUMMARY_MAX_ITEMS = 6
 SUMMARY_ITEM_CHARS = 220
-SUMMARY_MAX_TOKENS = 700
+# 1500 (10/16/26): at 700, 4 of 8 summaries in two weeks ran out mid-JSON
+# (stop_reason max_tokens; the average was 613) — the notes were dropped
+# and the call still paid for.
+SUMMARY_MAX_TOKENS = 1500
 SUMMARY_RATE_PER_HOUR = 30
 SUMMARY_LISTS = (("aim", "What the owner is trying to do"), ("decisions", "Decided"),
                  ("figures", "Figures read"), ("proposals", "Proposed"),
