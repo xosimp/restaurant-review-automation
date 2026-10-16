@@ -890,8 +890,17 @@ def index(current_user):
         _food_source = _bo_feed(restaurant.id)
     except Exception:
         _food_source = None
+    # Food made and not sold, from the POS (pos_food_waste), for a kitchen
+    # with no waste log or count yet: its real waste, never the sample's.
+    _food_waste = None
+    if _food_source and _food_source.get("on_file") and not (inv or {}).get("is_live"):
+        try:
+            from pos_food_waste import remakes as _remakes
+            _food_waste = _remakes(restaurant.id)
+        except Exception:
+            _food_waste = None
     return render_template('dashboard.html',
-        food_source=_food_source,
+        food_source=_food_source, food_waste=_food_waste,
         viewer_name=_viewer,
         social_channels=_social_channels,
         show_welcome=show_welcome,

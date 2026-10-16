@@ -13707,6 +13707,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-col .none{font-size:13px;color:var(--ink3);padding:16px 0 6px 12px}
 .fc2-ok{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:15px;color:var(--hb-good);font-weight:500}
 .fc2-ok i{width:8px;height:8px;border-radius:50%;background:var(--hb-good);box-shadow:0 0 8px var(--hb-good)}
+/* Waiting on a count (10/16/26): a neutral line, not a green all-clear. */
+.fc2-ok.fc2-wait{color:var(--ink2)}.fc2-ok.fc2-wait i{background:var(--ink3);box-shadow:none}
 .fc2-pw .row{display:flex;align-items:flex-start;gap:12px;padding:11px 0 11px 12px;border-top:1px solid var(--hb-line2);position:relative}
 .fc2-pw .row:first-of-type{border-top:none}
 .fc2-pw .row::before{content:'';position:absolute;left:0;top:11px;bottom:11px;width:2.5px;border-radius:2px;background:var(--hb-warn)}
@@ -14001,6 +14003,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% set _if = source_fresh.inventory if (source_fresh and source_fresh.inventory) else None %}
   {% set _inv_stale = inv.is_live and _if and (_if.state in ('stale', 'unknown') or _if.error) %}
   {% set _bo = food_source if (food_source and food_source.on_file) else None %}
+  {# Food made and not sold, from the POS (pos_food_waste, 10/16/26): a Back Office kitchen's real waste. #}
+  {% set _fw = food_waste if (_bo and not inv.is_live and food_waste and food_waste.available) else None %}
   {% if not inv.is_live and _bo %}{% set _head = 'Read from your Back Office reports' %}{% set _tone = 'neutral' %}
   {% elif not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
   {% elif _inv_stale %}{% set _head = 'Counts are out of date' %}{% set _tone = 'warn' %}
@@ -14066,7 +14070,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {# The week's waste, measured from the count; its band verdict in words under it. #}
         {# Green at or near the target, red over it (owner, 9/26/26). #}
         {% set _wtone = 'good' if (inv.is_live and not _inv_stale and _wl in ['Under target','Near target']) else ('bad' if (inv.is_live and not _inv_stale and _wl in ['Over target','Well over target']) else '') %}
-        {% if not inv.is_live and _bo %}<div class="n fc2-waste-n"><div class="big"><span id="inv-week-waste" class="hb-num">—</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>Comes with your first count</span></div></div>
+        {% if not inv.is_live and _bo %}<div class="n fc2-waste-n"><div class="big"><span id="inv-week-waste" class="hb-num">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{% if _fw and _fw['items'] %}food made and not sold, from your POS{% else %}Comes with your first count{% endif %}</span></div></div>
         {% else %}<div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>{% endif %}
       </div>
     </div>
@@ -14159,7 +14163,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       {# Auto-order where the order is (Friction #27): the same switch as
          Account -> Automation & AI, on /api/food-cost/auto-order. #}
       <span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Send <select id="fc2-autoorder-day" class="ac-select day-pick" onchange="fc2SaveAutoOrderDay(this)" aria-label="Day trusted supplier orders go out"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select> orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span></div></div>
-    {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
+    {% if not inv.is_live and _bo %}
+    {# An order list reads the shelf against its pars: without a count there is nothing true to say (10/16/26). #}
+    <div class="fc2-ok fc2-wait"><i></i>Your order list comes with your first kitchen count — it reads what is on the shelf against your pars.</div>
+    {% elif inv.critical_low or inv.reorder_soon or inv.order_reduction %}
     <div class="fc2-orders">
       {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
       <div class="fc2-col {{ _grp }}">
@@ -14199,12 +14206,23 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      (owner, 9/26/26): what to buy first, then what the shelves hold —
      with room between them and the order above (10/2/26). #}
   <div class="lb2-sig lb2-sig-2 fc2-stock-sig" data-nav="inventory/stock">
+    {% if not inv.is_live and _bo %}
+    {# A Back Office kitchen (10/16/26): waste is what its POS says was made and not sold, at plate cost; stock over
+       par needs a count, and says so. #}
+    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span><small>last 7 days</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-waste"></div>
+      <div class="cap"><span>dishes made and not sold, from your POS comps and voids, at plate cost{% if _fw and _fw.uncosted %} · {{ _fw.uncosted|length }} more with no recipe cost{% endif %}</span></div></div>
+    <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">—</span><small>sitting over par</small></div>
+      <div class="fc2-ledger" id="fc2-ledger-stock"></div>
+      <div class="cap"><span>comes with your first kitchen count</span></div></div>
+    {% else %}
     <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost, largest first</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
       <div class="fc2-ledger" id="fc2-ledger-stock"></div>
       <div class="cap"><span>current stock vs. par level</span></div></div>
+    {% endif %}
   </div>
 
   <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu">
@@ -14319,11 +14337,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
   <script>
   var _wasteDonutData=[
-    {% for item in inv.waste_items %}{"name":"{{item.item|e}}","cost":{{item.waste_cost|round(2)}},"pct":{{item.waste_pct}},"qty":"{{item.waste_last_week|int if item.waste_last_week % 1 == 0 else item.waste_last_week|round(1)}} {{item.unit}}"},{% endfor %}
+    {% if _fw %}{% for item in _fw['items'] %}{"name":{{ item.name|tojson }},"cost":{{ item.cost|round(2) }},"detail":{{ ((item.qty|round(1)|string).replace('.0','') ~ ' made and not sold · ' ~ item.reason ~ ' · $' ~ ('%.2f'|format(item.plate_cost)) ~ ' a plate')|tojson }}},{% endfor %}
+    {% elif _bo and not inv.is_live %}{% else %}{% for item in inv.waste_items %}{"name":"{{item.item|e}}","cost":{{item.waste_cost|round(2)}},"pct":{{item.waste_pct}},"qty":"{{item.waste_last_week|int if item.waste_last_week % 1 == 0 else item.waste_last_week|round(1)}} {{item.unit}}"},{% endfor %}{% endif %}
   ];
   var _ostockDonutData=[
-    {% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}
+    {% if not (_bo and not inv.is_live) %}{% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}{% endif %}
   ];
+  var _fc2CountFirst={{ 'true' if (_bo and not inv.is_live) else 'false' }};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
   // dollars counting up beside it, sorted by cost (same chart as iOS).
@@ -14341,7 +14361,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     var el=document.getElementById(id);if(!el)return;
     if(el.dataset.done)return;el.dataset.done='1';
     var rows=(data||[]).slice().sort(function(a,b){return b[key]-a[key];}).slice(0,6);
-    if(!rows.length){el.innerHTML='<div class="fc2-empty">'+(amber?'Nothing over par this week':'No waste logged this week')+'</div>';return;}
+    if(!rows.length){el.innerHTML='<div class="fc2-empty">'+(amber?(_fc2CountFirst?'Comes with your first kitchen count':'Nothing over par this week'):(_fc2CountFirst?'Nothing made and not sold on your POS these 7 days':'No waste logged this week'))+'</div>';return;}
     var max=rows[0][key]||1,h='';
     for(var i=0;i<rows.length;i++){var r=rows[i];
       h+='<div class="r"><div><div class="nm" title="'+_mmEsc(r.name)+'">'+_mmEsc(r.name)+'</div><div class="bar"><i class="'+(amber?'amber':'')+'" style="transition-delay:'+(i*120)+'ms;width:'+Math.max(4,Math.round(r[key]/max*100))+'%"></i></div><div class="sub">'+_mmEsc(detailFn(r))+'</div></div><div class="v '+(amber?'amber':'')+'" data-n="'+Math.round(r[key])+'">$0</div></div>';}
@@ -14356,7 +14376,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         for(var k=0;k<vs.length;k++){(function(v,delay){setTimeout(function(){if(typeof countUp==='function')countUp(v,parseInt(v.getAttribute('data-n'),10),1400,'$','',0);else v.textContent='$'+v.getAttribute('data-n');},delay);})(vs[k],k*120);}});});
     });
   }
-  function renderWasteDonut(){_fc2Ledger('fc2-ledger-waste',_wasteDonutData,'cost',function(r){return r.qty+' wasted · '+r.pct+'% of stock';},false);}
+  function renderWasteDonut(){_fc2Ledger('fc2-ledger-waste',_wasteDonutData,'cost',function(r){return r.detail||(r.qty+' wasted · '+r.pct+'% of stock');},false);}
   function renderOstockDonut(){_fc2Ledger('fc2-ledger-stock',_ostockDonutData,'cost',function(r){return r.stock+' on hand · par '+r.par;},true);}
   function loadMenuMargins(){
     var el = document.getElementById('mm-body');
