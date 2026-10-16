@@ -82,7 +82,38 @@ def _outside(restaurant_id, win, db_path):
 
 
 def build(restaurant_id, db_path=None, today=None) -> dict:
-    """The Bar page's payload."""
+    """The Bar page's payload, with `pos_names`: {POS button name: the name
+    an owner reads} for every drink it names (owner, 10/16/26: "Gl Whitehave
+    SB" is Whitehaven Sauvignon Blanc by the glass). Display only — the POS
+    name stays the key the page sends back."""
+    out = _build(restaurant_id, db_path=db_path, today=today)
+    if out.get("available"):
+        out["pos_names"] = pos_name_map(out)
+    return out
+
+
+def pos_name_map(payload) -> dict:
+    """{POS name: readable name} for the POS drinks a payload names, only
+    where the two differ."""
+    from bar.common import pos_display_name
+    v, m = payload.get("variance") or {}, payload.get("margins") or {}
+    names = set()
+    for u in v.get("unmapped") or []:
+        names.add(u.get("item"))
+    for x in v.get("items") or []:
+        names.update(x.get("drinks") or [])
+    for s in v.get("suggestions") or []:
+        names.add(s.get("item_name"))
+    for r in (m.get("rows") or []) + (m.get("suggestions") or []):
+        names.add(r.get("item"))
+    out = {}
+    for n in names:
+        if n and pos_display_name(n) != n:
+            out[n] = pos_display_name(n)
+    return out
+
+
+def _build(restaurant_id, db_path=None, today=None) -> dict:
     today = today or date.today()
     all_lines = _lines(restaurant_id, db_path)
     if not all_lines:

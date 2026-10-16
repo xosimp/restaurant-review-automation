@@ -167,7 +167,7 @@ def test_a_double_modifier_doubles_the_pour_and_an_add_on_follows_its_parent(db)
     _ring(db, rid, 30, "V1", "Titos (Liquor Add-Ons)", "Liquor", "Vodka", qty=0, sales=3.0, parent=comped,
           ticket="TC")
     res = bv.compute(rid, today=TODAY, db_path=db)
-    t = _item(res, "titos")
+    t = _item(res, "tito's")
     assert t["unit"] == "oz"
     # 9 singles + one double = 11 pours of 1.5 oz; the add-on is comped (follows its parent).
     assert t["rung_units"] == 16.5 and t["comped_units"] == 1.5
@@ -182,7 +182,7 @@ def test_a_default_pour_is_said_as_an_assumption(db):
     _map(db, rid, "V1", "lakeshore beverage|2002")            # no pour set
     for i in range(4):
         _ring(db, rid, 29, "V1", "Titos Soda", "Liquor", "Vodka")
-    t = _item(bv.compute(rid, today=TODAY, db_path=db), "titos")
+    t = _item(bv.compute(rid, today=TODAY, db_path=db), "tito's")
     assert t["rung_units"] == 6.0 and "default_pour" in t["theoretical_basis"]
     assert any("assumes the 1.5 oz pour" in a for a in t["assumes"]) and t["confidence"] != "high"
 
@@ -197,7 +197,7 @@ def test_rpower_alternate_quantity_is_the_theoretical_source_when_kept(db):
     c.close()
     _map(db, rid, "V1", "lakeshore beverage|2002", pour_oz=1.5)
     _ring(db, rid, 29, "V1", "Titos Soda", "Liquor", "Vodka", category_id="cat-v", aqu_count=2.0)
-    t = _item(bv.compute(rid, today=TODAY, db_path=db), "titos")
+    t = _item(bv.compute(rid, today=TODAY, db_path=db), "tito's")
     assert t["rung_units"] == 2.0 and "rpower_alt_qty" in t["theoretical_basis"]
 
 

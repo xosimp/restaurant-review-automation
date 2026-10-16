@@ -142,7 +142,7 @@ def test_every_product_the_audit_judged_reads_as_its_verdict(ejs, desc, kind, pe
 
 def test_the_ejs_increases_are_only_the_true_one(ejs):
     pw = ejs["pw"]
-    assert [r["name"] for r in pw["increases"]] == ["White Claw BLK Chry 6CN"]
+    assert [r["name"] for r in pw["increases"]] == ["White Claw Black Cherry"]
     s = pw["summary"]
     assert s["up_n"] == 1 and s["up_forward_monthly_usd"] == pw["increases"][0]["forward_monthly_usd"]
     # The page's old #1 insight and both 'biggest' tiles were false; none of
@@ -168,7 +168,7 @@ def test_ultra_is_a_tier_and_its_real_change_is_two_dollars_a_keg(ejs):
     assert r["persistent"] and not r["listed"] and r in ejs["pw"]["minor"]
     # The latest order (2 kegs at $115 after 3 at $110) is the order size.
     assert r["latest"]["kind"] == "tier"
-    lad = next(l for l in ejs["pw"]["ladders"] if l["name"].startswith("Ultra"))
+    lad = next(l for l in ejs["pw"]["ladders"] if l["name"].startswith("Michelob Ultra"))
     assert [(t["label"], t["price"]) for t in lad["tiers"]] == [("1 keg", 125.0), ("2 kegs", 115.0),
                                                                ("3+ kegs", 110.0)]
     # "Ordering 3 kegs saves $15 a keg; you ordered 1 keg 3 times in 90 days."
@@ -191,7 +191,7 @@ def test_was_since_is_the_start_of_the_previous_price(ejs):
 
 def test_ejs_credits_are_credits_not_prices(ejs):
     cr = {(c["kind"], c["name"][:10]): c for c in ejs["pw"]["credits"]}
-    m = cr[("credit", "Modelo ESP")]
+    m = cr[("credit", "Modelo Esp")]
     assert (m["original_price"], m["rebilled_price"], m["units"], m["credit_usd"]) == (180.0, 160.0, 5.0, 100.0)
     e = cr[("credit", "Eagle Park")]
     assert e["credit_usd"] == 70.0
@@ -220,7 +220,7 @@ def test_case_and_bottle_buys_compare_per_bottle_and_name_the_premium(ejs):
     w = sc["Woodford"]
     assert (w["units_per_case"], w["per_bottle_in_case"], w["bottle_price"], w["premium_pct"]) == (6, 42.5, 57.29, 34.8)
     assert sc["Fireball"]["premium_pct"] == 17.3 and sc["Fireball"]["assumes"] == "assumes 12 a case"
-    assert sc["DON Juli"]["premium_pct"] == 15.2
+    assert sc["Don Juli"]["premium_pct"] == 15.2
 
 
 def test_ejs_rows_carry_the_contract(ejs):

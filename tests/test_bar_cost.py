@@ -241,7 +241,7 @@ def test_the_insights_say_only_what_was_measured(db):
     out = bc.build(rid, db_path=db, today=date(2026, 10, 1))
     keys = [i["key"] for i in out["insights"]]
     top = out["price_watch"]["increases"][0]
-    assert top["name"] == "ST Germain Liqueur 750ML"  # +$18 x 7 > +$20 x 6
+    assert top["name"] == "St. Germain Liqueur 750ml"  # +$18 x 7 > +$20 x 6
     # A single higher purchase is not a change that held (Bar audit V2/V24):
     # a price card needs W5's kind "increase" and `persistent`; and four
     # increases never make a concentration card (V25 — this test used to pin
@@ -258,7 +258,7 @@ def test_the_insights_say_only_what_was_measured(db):
     assert not any(i["key"].startswith(("over", "trend:", "low:")) for i in out["insights"])
     s = out["price_watch"]["summary"]
     assert s["up_n"] == 4 and s["up_impact_90d"] == round(sum(r["impact_90d"] for r in out["price_watch"]["increases"]), 2)
-    assert bc.display_name("KETEL ONE VDK 1L") == "Ketel ONE VDK 1L"
+    assert bc.display_name("KETEL ONE VDK 1L") == "Ketel One Vodka 1L"
 
 
 def test_the_owners_own_targets_judge_the_bar_when_set(db):
@@ -293,3 +293,25 @@ def test_the_owners_own_targets_judge_the_bar_when_set(db):
     assert pc["total"]["target"] == 25.0
     keys = [i["key"] for i in out["insights"]]
     assert "over_target:liquor" in keys
+
+
+def test_drink_names_read_as_an_owner_would_say_them():
+    """Owner, 10/16/26: "there shouldn't be any weird abbreviations ... owners
+    should be able to look at a drink name and immediately tell what it is"."""
+    from bar.common import display_name, pos_display_name
+    for raw, want in (("TITOS VDK HANDMADE 1L", "Tito's Vodka Handmade 1L"),
+                      ("N WHSTL GUMMYPALOOZA 1/2 BBL", "Noon Whistle Gummypalooza ½ Barrel"),
+                      ("CH SOUVERAIN SAUV BL CALIF 750ML", "Chateau Souverain Sauvignon Blanc California 750ml"),
+                      ("COORS LT 24NR LSE", "Coors Light"), ("GREY GOOSE VODKA 80 1.0L", "Grey Goose Vodka 1L"),
+                      ("DON JULIO TEQ BL 6B 1L", "Don Julio Tequila Blanco 1L"), ("BM NA 6CN", "Blue Moon Non-Alcoholic"),
+                      ("GUINNESS DRAUGHT K 50L (13.2G)", "Guinness Draught 50L Keg"),
+                      ("BULLEIT WHSKY 90 STRAIGHT RYE 1L", "Bulleit Whiskey Straight Rye 1L"),
+                      ("GOOSE ISLAND 312 URBAN WHEAT 24 CAN 12OZ", "Goose Island 312 Urban Wheat 12oz")):
+        assert display_name(raw) == want, raw
+    for raw, want in (("Gl Whitehave SB", "Whitehaven Sauvignon Blanc (glass)"), ("Btl Chataeu Merlt", "Chateau Merlot (bottle)"),
+                      ("Angry Orch 22oz", "Angry Orchard 22oz"), ("JW Black", "Johnnie Walker Black"),
+                      ("Coors Light`Bucket", "Coors Light (bucket)"), ("GUINESS 0.0", "Guinness 0.0"),
+                      ("312 Wheat AleÀÀ?", "312 Wheat Ale"), ("Miller Lite 22oz", "Miller Lite 22oz")):
+        assert pos_display_name(raw) == want, raw
+    # The matchers still meet the POS's own words: no accent in a product name.
+    assert all(ord(c) < 128 or c in "½⅙¼" for c in display_name("CH ESCLANS WHISPER ANGEL ROSE 25 750ML"))

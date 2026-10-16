@@ -724,7 +724,7 @@ def test_the_deal_sheet_is_on_the_page_and_its_own_route(db, monkeypatch):
                                                               "note": "Q4"}).get_json()["id"]
     page = cl.get("/api/food-cost/bar").get_json()
     row = page["expected_prices"][0]
-    assert row["id"] == eid and row["product"] == "Titos VDK 1L" and row["min_qty"] == 3 and row["price"] == 280
+    assert row["id"] == eid and row["product"] == "Tito's Vodka 1L" and row["min_qty"] == 3 and row["price"] == 280
     assert (row["valid_from_mdy"], row["valid_to_mdy"], row["note"]) == ("10/1/26", "12/31/26", "Q4")
     got = cl.get("/mobile/api/food-cost/bar/expected-prices", headers=MOBILE).get_json()
     assert got["ok"] and [r["id"] for r in got["rows"]] == [eid] and got["can_change"] is True

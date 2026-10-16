@@ -211,7 +211,7 @@ def test_the_weekly_values_are_a_table_and_the_chart_takes_the_keyboard(full):
 
 def test_price_watch_opens_on_what_went_up_and_held_biggest_money_first(full):
     pw = full["price_watch"]
-    assert {r["name"] for r in pw["increases"]} >= {"Titos Handmade Vodka 1L"}
+    assert {r["name"] for r in pw["increases"]} >= {"Tito's Handmade Vodka 1L"}
     html = _render(full)
     rows = re.findall(r'data-br-row="([^"]+)"', html)
     assert rows and len(rows) == len(pw["increases"])
@@ -517,7 +517,7 @@ def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
     conn.close()
     p = bc.build(rid, db_path=db_path, today=date(2026, 10, 14))
     out = _run(p, "window._bar.state.dir='deals'; console.log(window._bar.listHtml());")
-    son = out[out.index("SON Cutrer"):]
+    son = out[out.index("Sonoma-Cutrer"):]
     son = son[:son.index("</article>")]
     assert "Deal ended" in son and "not a price change" in son and "M8 13V3" not in son
     html = _render(p)
@@ -805,9 +805,9 @@ def test_an_unmatched_drink_comes_with_a_checked_suggestion():
              {"kind": "item", "category": "liquor", "description": "TITOS VDK HANDMADE 1L", "uom": "CA", "product_key": "t"}]
     c = bv.pour_candidates(lines)
     assert "d" not in c                                                    # a discount is never a pour
-    assert bv.suggest_pour("Miller Lite 22oz", "beer", c) == {"product_key": "keg", "product": "Lite 1/2 BBL", "oz": 22.0}
+    assert bv.suggest_pour("Miller Lite 22oz", "beer", c) == {"product_key": "keg", "product": "Miller Lite ½ Barrel", "oz": 22.0}
     assert bv.suggest_pour("Miller Lite", "beer", c)["product_key"] == "cans"   # no draft size: the cans
-    assert bv.suggest_pour("Titos", "liquor", c) == {"product_key": "t", "product": "Titos VDK Handmade 1L", "oz": None}
+    assert bv.suggest_pour("Titos", "liquor", c) == {"product_key": "t", "product": "Tito's Vodka Handmade 1L", "oz": None}
     assert bv.suggest_pour("Blue Moon 22oz", "beer", c) == {}
     src = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()
     row = src[src.index("  function varUnmapped(u) {"):src.index("  function specRow(s) {")]
@@ -824,7 +824,7 @@ def test_margins_suggest_only_drinks_with_the_same_beer_and_towers_at_100_oz():
     c = bv.pour_candidates(lines)
     assert bv.suggest_pour("Coors Banquet", "beer", c) == {}
     assert bv.suggest_pour("Coors Light", "beer", c)["product_key"] == "cl"
-    assert bv.suggest_pour("Stella Tower", "beer", c) == {"product_key": "st", "product": "Stella Artois 1/2 BL 13.2", "oz": 100.0}
+    assert bv.suggest_pour("Stella Tower", "beer", c) == {"product_key": "st", "product": "Stella Artois ½ Barrel", "oz": 100.0}
     src = open(os.path.join(ROOT, "bar", "margins.py"), encoding="utf-8").read()
     assert "drink_items is not None and k not in drink_items" in src and '"pour_oz": stated_oz(' in src
     page = open(os.path.join(ROOT, "templates", "dashboard.html"), encoding="utf-8").read()

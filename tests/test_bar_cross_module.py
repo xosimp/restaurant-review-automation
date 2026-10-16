@@ -88,7 +88,7 @@ def test_read_bar_types_bought_vs_sold_as_an_estimate_and_prices_that_held(db_pa
     assert facts["purchase_ratio.est_pct"].kind == "estimate" and facts["purchase_ratio.est_pct"].unit == "%"
     assert facts["purchase_ratio.purchases_usd"].kind == "measured"
     up = out["changes_that_held"][0]
-    assert up["product"].startswith("Titos") and up["kind"] == "increase" and up["price_was"] == 300.0
+    assert up["product"].startswith("Tito's") and up["kind"] == "increase" and up["price_was"] == 300.0
     assert facts["changes_that_held.0.est_forward_monthly_usd"].kind == "estimate"
     assert facts["changes_that_held.0.est_forward_monthly_usd"].period == "month"
     assert facts["changes_that_held.0.already_paid_usd"].kind == "measured"
@@ -223,7 +223,7 @@ def test_dsr_week_bar_line_names_its_basis_and_is_absent_without_a_bar(db_path):
     line = bar_signals.dsr_week(rid, TODAY - timedelta(days=6), TODAY, db_path=db_path, p=p)
     assert line["available"] and line["basis"] == "purchases" and line["label"] == "Bought vs sold"
     assert "bought vs sold" in line["text"] and "pour cost" not in line["text"].lower()
-    assert line["top_price_increase"]["name"].startswith("Titos")
+    assert line["top_price_increase"]["name"].startswith("Tito's")
     none_rid = _rid(db_path, name="No bar")
     assert bar_signals.dsr_week(none_rid, TODAY - timedelta(days=6), TODAY, db_path=db_path) is None
 

@@ -45579,7 +45579,7 @@ function sfw2RuleCheck(chk) {
     if (el) return el;
     el = document.createElement('div'); el.id = 'dna'; el.className = 'dn'; el.hidden = true;
     el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Restaurant DNA');
-    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-glass cbtn-sm" id="dn-close" aria-label="Back to the dashboard">← Back</button>'
+    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-secondary cbtn-sm dn-back" id="dn-close" aria-label="Back to the dashboard"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>Back</button>'
       + '<span class="dn-bar-t">Restaurant DNA</span><span class="dn-bar-r" id="dn-asof"></span></div><div class="dn-scroll" id="dn-scroll"><div class="dn-wrap" id="dn-body"></div></div>';
     document.body.appendChild(el);
     document.getElementById('dn-close').addEventListener('click', function () { dnaClose(); });
@@ -45616,7 +45616,7 @@ function sfw2RuleCheck(chk) {
       }
       var sc = document.getElementById('dn-scroll'); if (sc) sc.scrollTop = 0;
       paint();
-      var cb = document.getElementById('dn-close'); if (cb) cb.focus();
+      el.setAttribute('tabindex', '-1'); try { el.focus({preventScroll: true}); } catch (e) { el.focus(); }
     }
     return false;
   };
@@ -45690,6 +45690,9 @@ function sfw2RuleCheck(chk) {
 /* The Bar's top bar has no edges (owner, 10/15/26: "we dont need lines on the header
    perimeter"): no hairline under it and no tinted band to draw one above. */
 #bar .dn-bar{border-bottom:0;background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none}
+/* Back is the app's secondary button on the Bar and DNA pages (10/16/26); the page, not the button, takes focus on open. */
+.dn-bar .cbtn.dn-back{gap:6px;padding-left:12px}
+#bar:focus,#dna:focus,.dn:focus{outline:none}
 [data-theme="dark"] #bar{--hb-line:rgba(240,235,224,.14);--hb-line2:rgba(240,235,224,.07)}
 /* --br-red-text: red for SMALL text (V31) — --red is 3.85:1 on the dark
    surface; mixed 70% into the ink it is ~5.3:1. --red stays for dots,
@@ -46011,7 +46014,10 @@ function sfw2RuleCheck(chk) {
 /* Overview's figures (hero, alerts, category cards, mixers). Not .br-figs:
    that is the hero's own figures row (flex, wrapping). */
 .br-top{margin-bottom:44px}
-.br-tabsw{position:sticky;top:0;z-index:6;margin:0 -8px 18px;padding:14px 8px 16px;background:linear-gradient(var(--bg-base) 72%,color-mix(in srgb,var(--bg-base) 0%,transparent))}
+/* Opaque while stuck (owner, 10/16/26: the page showed through): the band is the page's own ground, wide enough
+   to cover the cards' shadows, with a fade from full opacity under it so nothing scrolls visibly behind the tabs. */
+.br-tabsw{position:sticky;top:0;z-index:6;margin:0 -28px 18px;padding:14px 28px 10px;background:var(--bg-base)}
+.br-tabsw::after{content:"";position:absolute;left:0;right:0;top:100%;height:26px;background:linear-gradient(var(--bg-base),color-mix(in srgb,var(--bg-base) 0%,transparent));pointer-events:none}
 .br-tabs{position:relative;display:flex;gap:2px;padding:5px;border-radius:16px;background:var(--sf-recess);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 4%,transparent),inset 0 0 0 1px var(--br-hair2);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .br-tabs::-webkit-scrollbar{display:none}
 /* Once the page runs under it the switcher lifts off it (owner, 10/16/26). */
@@ -46028,7 +46034,7 @@ function sfw2RuleCheck(chk) {
 .br-tdot{width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 10px var(--ember)}
 .br-panel{padding-top:8px}
 /* A product's "Sold as" drinks: three chips, the rest behind "+N more". */
-.br-soldas{display:flex;gap:14px;align-items:flex-start;margin-top:12px;padding-top:12px;border-top:1px solid var(--hb-line2)}
+.br-soldas{display:flex;gap:14px;align-items:flex-start;margin-top:12px}
 .br-soldas .k{flex:0 0 auto;font-size:14px;color:var(--ink3);padding-top:5px}
 .br-soldas .v{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
 .br-dchip{display:inline-flex;align-items:center;min-height:28px;padding:3px 11px;border-radius:999px;font-size:13.5px;color:var(--ink2);background:color-mix(in srgb,var(--ink) 6%,transparent);border:1px solid var(--hb-line2)}
@@ -46138,7 +46144,12 @@ function sfw2RuleCheck(chk) {
 .br-vr .br-cv{color:var(--ink3);transition:transform .3s var(--br-ease)}
 .br-vr[open] .br-cv{transform:rotate(180deg)}
 .br-vrb{padding:2px 22px 20px}
-.br-vrb .br-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px 22px;padding:16px 18px;border-radius:16px;background:var(--sf-recess)}
+/* One line of figures (owner, 10/16/26: the row was too tall, "Counted at" and its value stacked, and each fact
+   drew a hairline under it): label and value side by side, the facts wrapping as a line, no rules. */
+.br-vrb .br-facts{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 34px;margin-top:0;padding:12px 18px;border-radius:14px;background:var(--sf-recess)}
+.br-vrb .br-facts>div{display:flex;align-items:baseline;gap:9px;padding:0;box-shadow:none;min-width:0}
+.br-vrb .br-facts>div>span{white-space:nowrap;color:var(--ink3)}
+.br-vrb .br-facts b{text-align:left;font-weight:600}
 .br-vrb .br-note{margin-top:12px}
 .br-more>.br-vlist,.br-more>.br-kegs,.br-more>.br-mlist,.br-more>.br-dlist{margin-top:10px}
 
@@ -46951,10 +46962,10 @@ function sfw2RuleCheck(chk) {
     var sg = u.suggest || null;
     // One row of the matching queue: the drink and what it sold, the
     // suggestion when there is one, and the match on the same line.
-    return '<div class="br-mrow' + (sg ? ' sg' : '') + '" data-br-nm="' + esc2(String(u.item || '').toLowerCase()) + '"><div class="n"><b>' + esc2(u.item) + '</b><span><i class="br-swt" style="--s:' + seriesOf(u.category).css + '"></i>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' sold · ' + hn(money(u.sales_usd)) + '</span>'
+    return '<div class="br-mrow' + (sg ? ' sg' : '') + '" data-br-nm="' + esc2((String(u.item || '') + ' ' + posName(u.item)).toLowerCase()) + '"><div class="n"><b>' + esc2(posName(u.item)) + '</b><span><i class="br-swt" style="--s:' + seriesOf(u.category).css + '"></i>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' sold · ' + hn(money(u.sales_usd)) + '</span>'
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
       + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : '<span class="nos">No suggestion — pick it</span>') + '</div>'
-      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(u.item) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
+      + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(posName(u.item)) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
         + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
@@ -46968,11 +46979,14 @@ function sfw2RuleCheck(chk) {
     var st = s.status === 'confirmed' ? 'Poured from ' + esc2(name || '—') : (s.product_key ? 'Suggested: ' + esc2(name || s.product_key) : 'No product on the invoices matches it yet — pick it');
     return '<div class="br-ing' + (s.status === 'confirmed' ? ' ok' : (s.product_key ? '' : ' miss')) + '"><span class="oz">' + (s.oz != null ? hn(s.oz) + '<small>oz</small>' : '—') + '</span>'
       + '<span class="n"><b>' + esc2(s.ingredient) + '</b><span>' + st + '</span></span>'
-      + (can ? '<span class="br-form br-vmf"><select class="br-sel" data-br-specp="' + esc2(s.id) + '" aria-label="Product ' + esc2(s.item_name) + ' pours for ' + esc2(s.ingredient) + '">' + opts + '</select>'
+      + (can ? '<span class="br-form br-vmf"><select class="br-sel" data-br-specp="' + esc2(s.id) + '" aria-label="Product ' + esc2(posName(s.item_name)) + ' pours for ' + esc2(s.ingredient) + '">' + opts + '</select>'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="confirm">Confirm</button>'
         + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-br-spec="' + esc2(s.id) + '" data-act="remove">Not this</button></span>'
         : (s.status === 'confirmed' ? '<span class="br-stc ok">Confirmed</span>' : '')) + '</div>';
   }
+  /* A POS drink as an owner reads it (bar.build.pos_name_map, 10/16/26): the
+     POS name stays the key; only what is shown changes. */
+  function posName(n) { var m = (DATA && DATA.pos_names) || {}; return m[n] || n; }
   function prodCat(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; key && i < ps.length; i++) if (ps[i].product_key === key) return ps[i].category; return null; }
   function prodName(key) { var ps = (DATA && DATA.products) || [], i; for (i = 0; i < ps.length; i++) if (ps[i].product_key === key) return ps[i].product; return key; }
   var SHOW_FIRST = 3;
@@ -47516,7 +47530,7 @@ function sfw2RuleCheck(chk) {
      so a bottle poured into a dozen cocktails doesn't stretch its row
      (owner, 10/16/26). */
   function soldAs(drinks, id) {
-    var ds = drinks || [], SHOW = 3, k = id + '-sold', i, chips = function (a) { var o = ''; for (i = 0; i < a.length; i++) o += '<span class="br-dchip">' + esc2(a[i]) + '</span>'; return o; };
+    var ds = drinks || [], SHOW = 3, k = id + '-sold', i, chips = function (a) { var o = ''; for (i = 0; i < a.length; i++) o += '<span class="br-dchip">' + esc2(posName(a[i])) + '</span>'; return o; };
     if (!ds.length) return '';
     return '<div class="br-soldas"><span class="k">Sold as</span><div class="v">' + chips(ds.slice(0, SHOW))
       + (ds.length > SHOW ? '<details class="br-more br-soldmore" id="' + k + '"' + (ST.det[k] ? ' open' : '') + '><summary>+' + hn(ds.length - SHOW) + ' more</summary>' + chips(ds.slice(SHOW)) + '</details>' : '')
@@ -47591,7 +47605,7 @@ function sfw2RuleCheck(chk) {
     if (!rows.length) return '';
     for (i = 0; i < rows.length; i++) {
       var r = rows[i], up = r.cost_pct_before != null && r.cost_pct > r.cost_pct_before;
-      var tr = '<tr><td><b>' + esc2(r.item) + '</b><span class="m">' + esc2(r.product) + ' · ' + esc2(r.pour_label || '') + '</span></td><td class="n">' + hn(price(r.price)) + '</td><td class="n">' + hn(money2(r.cost)) + '</td>'
+      var tr = '<tr><td><b>' + esc2(posName(r.item)) + '</b><span class="m">' + esc2(r.product) + ' · ' + esc2(r.pour_label || '') + '</span></td><td class="n">' + hn(price(r.price)) + '</td><td class="n">' + hn(money2(r.cost)) + '</td>'
         + '<td class="n"><span class="br-pbar' + (up ? ' up' : '') + '"><i style="width:' + Math.min(100, Math.max(2, r.cost_pct)).toFixed(1) + '%"></i></span><b>' + hn(r.cost_pct + '%') + '</b>' + (r.cost_pct_before != null ? '<span class="m">was ' + hn(r.cost_pct_before + '%') + (r.changed_mdy ? ' before ' + hn(r.changed_mdy) : '') + '</span>' : '') + '</td>'
         + '<td class="n">' + (r.restore_price != null && up ? '<b class="bad">' + hn(price(r.restore_price)) + '</b><span class="m">restores the margin</span>' : '<span class="m">—</span>') + '</td></tr>';
       if (i < 8) h += tr; else rest += tr;
@@ -47747,7 +47761,7 @@ function sfw2RuleCheck(chk) {
     if (!sg.length) return '';
     for (i = 0; i < sg.length && i < 20; i++) {
       var s = sg[i];
-      h += '<div class="br-nm2"><span class="a"><b>' + esc2(s.item) + '</b><span>on the POS</span></span><span class="ar" aria-hidden="true">' + ARROW_GO + '</span>'
+      h += '<div class="br-nm2"><span class="a"><b>' + esc2(posName(s.item)) + '</b><span>on the POS</span></span><span class="ar" aria-hidden="true">' + ARROW_GO + '</span>'
         + '<span class="b"><b>' + esc2(s.product) + '</b><span>' + (s.pour_oz ? hn(s.pour_oz + ' oz') + ' · ' : '') + (s.match != null && !isNaN(+s.match) ? '<span class="br-mc">' + hn(Math.round(+s.match * 100) + '%') + ' name match</span>' : 'matched by name') + '</span></span>'
         + '<span class="act">' + (OWNER ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="' + esc2(s.product_key) + '"' + (s.pour_oz ? ' data-oz="' + esc2(String(s.pour_oz)) + '"' : '') + '>Yes, that’s it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="">No</button>' : '') + '</span></div>';
     }
@@ -47768,7 +47782,7 @@ function sfw2RuleCheck(chk) {
       var g = groups[i], done = 0, rh = '', j;
       for (j = 0; j < g.rows.length; j++) { if (g.rows[j].status === 'confirmed') done++; rh += specRow(g.rows[j]); }
       var st = done === g.rows.length ? '<span class="br-stc ok">Confirmed</span>' : '<span class="br-stc">' + hn(done) + ' of ' + hn(g.rows.length) + ' confirmed</span>';
-      h += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(g.name) + '</b>' + (g.recipe && g.recipe !== g.name ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
+      h += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(posName(g.name)) + '</b>' + (g.recipe && g.recipe !== g.name && g.recipe !== posName(g.name) ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
     }
     var more = !ST.specs && (v.suggestions_total || 0) > sg.length;
     return '<section class="br-sec2" id="br-specs">' + head('Recipe cards', hn(groups.length) + ' ' + plural(groups.length, 'cocktail'), 'Each cocktail’s spirits from its recipe card, against the bought product its name matches best. A card counts in bought vs sold once its ingredients are confirmed; until then it is only a suggestion.')
@@ -48123,7 +48137,7 @@ function sfw2RuleCheck(chk) {
     if (el) return el;
     el = document.createElement('div'); el.id = 'bar'; el.className = 'dn'; el.hidden = true;
     el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Bar');
-    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-glass cbtn-sm" id="br-close" aria-label="Back to Food Cost">← Back</button>'
+    el.innerHTML = '<div class="dn-bar"><button type="button" class="cbtn cbtn-secondary cbtn-sm dn-back" id="br-close" aria-label="Back to Food Cost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>Back</button>'
       + '<span class="dn-bar-t">Bar</span><span class="dn-bar-r" id="br-asof"></span></div><div class="dn-scroll" id="br-scroll"><div class="dn-wrap" id="br-body"></div></div>';
     document.body.appendChild(el);
     $id('br-close').addEventListener('click', function () { window.barClose(); });
@@ -48331,7 +48345,7 @@ function sfw2RuleCheck(chk) {
       }
       var sc = $id('br-scroll'); if (sc) sc.scrollTop = 0;
       paint();
-      var cb = $id('br-close'); if (cb) cb.focus();
+      el.setAttribute('tabindex', '-1'); try { el.focus({preventScroll: true}); } catch (e) { el.focus(); }
     }
     return false;
   };
