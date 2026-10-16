@@ -750,13 +750,22 @@ _NOT_ITEM_RE = re.compile(r"discount|deposit|empties|fee\b|charge|credit|handle"
 # A beer's variety must agree (owner, 10/15/26: "Coors Banquet" was offered
 # Coors Light 24 cans): Light, Ultra, Banquet, Original, Zero are different beers.
 _VARIANTS = {"lite": "lite", "light": "lite", "lt": "lite", "ultra": "ultra", "banquet": "banquet",
-             "original": "original", "zero": "zero", "amber": "amber", "black": "black"}
+             "original": "original", "zero": "na", "amber": "amber", "black": "black"}
+# Non-alcoholic is a variety of its own (owner, 10/15/26: "Corona NA" was
+# offered Corona Extra, "Blue Moon N/A" a blue curacao): NA, N/A, 0.0, zero,
+# non-alcoholic, alcohol-free — read from the raw name, where "N/A" and "0.0"
+# are not words.
+_NA_RE = re.compile(r"(?<![a-z0-9])(n\s*/\s*a|na|0\.0|non[\s-]?alc\w*|no[\s-]?alc\w*|alcohol[\s-]?free)(?![a-z0-9])", re.I)
 
 
 def variants(text) -> set:
     """The varieties a name states, from its raw text (a 2-letter "LT" too)."""
-    toks = re.findall(r"[a-z]+", str(text or "").lower()) if isinstance(text, str) else list(text or ())
-    return {_VARIANTS[w] for w in toks if w in _VARIANTS}
+    raw = str(text or "").lower() if isinstance(text, str) else " ".join(text or ())
+    toks = re.findall(r"[a-z]+", raw)
+    out = {_VARIANTS[w] for w in toks if w in _VARIANTS}
+    if _NA_RE.search(raw):
+        out.add("na")
+    return out
 
 
 def stated_oz(name):

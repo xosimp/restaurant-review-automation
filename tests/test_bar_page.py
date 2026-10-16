@@ -961,7 +961,7 @@ def test_every_workflow_control_survives_the_redesign(full):
                 'id="br-q"', 'id="br-fsort"', 'data-br-series="total"', 'data-br-lazy="mapping"', 'data-br-lazy="products"', 'data-br-lazy="counts"',
                 'id="br-mq"', 'data-br-go="br-unm"'):
         assert ctl in html, ctl
-    assert "40%" in _text(html[html.index('id="br-namem"'):]) and "check it" in _text(html[html.index('id="br-namem"'):])
+    assert "40% name match" in _text(html[html.index('id="br-namem"'):])
 
 
 def test_the_board_ranks_by_dollars_and_fills_its_grid(full):
@@ -994,3 +994,21 @@ def test_recipe_cards_are_grouped_one_card_a_cocktail():
     cards = re.findall(r'<article class="br-rcp', out)
     assert len(cards) == 2 and "1 of 2 confirmed" in _text(out) and "0 of 1 confirmed" in _text(out)
     assert out.index("Longisland") < out.index("Chocolate Martini")
+
+
+def test_non_alcoholic_is_its_own_variety_and_weak_name_matches_are_hidden():
+    # Will, 10/15/26: "Corona NA" was offered Corona Extra and "Blue Moon N/A" a
+    # blue curacao; weak name matches are hidden, not just flagged.
+    import bar.variance as bv
+    for n in ("Corona NA", "Blue Moon N/A", "Heniken 0.0", "Heineken Zero", "Guinness Non-Alcoholic", "BM NA 6CN"):
+        assert "na" in bv.variants(n), n
+    for n in ("Corona Extra", "Pina Colada", "Banana Daiquiri", "Coors Light"):
+        assert "na" not in bv.variants(n), n
+    lines = [{"kind": "item", "category": "beer", "description": "CORONA EX 24-12OZ LP NR", "uom": "CA", "product_key": "cx"},
+             {"kind": "item", "category": "beer", "description": "CORONA NA 12OZ-12PK NR", "uom": "CA", "product_key": "cna"}]
+    c = bv.pour_candidates(lines)
+    assert bv.suggest_pour("Corona NA", "beer", c)["product_key"] == "cna"
+    assert bv.suggest_pour("Corona Extra", "beer", c)["product_key"] == "cx"
+    assert bv.suggest_pour("Corona NA", "beer", bv.pour_candidates(lines[:1])) == {}      # no NA on file: nothing, never the regular
+    import bar.margins as bm
+    assert bm._brand_words("Titos VDK Handmade 1L") == {"titos", "vdk"} and bm._brand_words("White Claw Mango 6CN") == {"white", "claw"}

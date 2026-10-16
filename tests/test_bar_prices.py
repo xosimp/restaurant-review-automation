@@ -642,3 +642,21 @@ def test_the_build_payload_carries_the_new_blocks(db_path):
     pw = out["price_watch"]
     for k in ("credits", "ladders", "split_case", "tier_flags", "deals", "tiers", "unconfirmed", "minor", "events"):
         assert k in pw, k
+
+
+def test_a_name_match_on_a_flavour_or_a_style_alone_is_hidden(db_path):
+    # Will, 10/15/26: "hide weak name matches" — "Mango Mojito" was offered
+    # White Claw Mango and "Gl Moet Brut" Zardetto Prosecco Brut (40% each);
+    # "Titos Vodka" (also 40%) names the brand and stays.
+    rid = _rid(db_path)
+    rows = (_buys(BT, "9008508", "TITOS VDK HANDMADE 1L", "CA", [("2026-08-01", 1, 240), ("2026-09-15", 1, 240)])
+            + _buys(BT, "8954304", "WHITE CLAW MANGO 6CN", "CA", [("2026-08-01", 1, 30), ("2026-09-15", 1, 30)]))
+    _store(db_path, rid, rows)
+    conn = models.get_conn(db_path)
+    for item, name, price in (("11", "Titos Vodka", 9.0), ("13", "Mango Mojito", 12.0)):
+        conn.execute("INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price) "
+                     "VALUES (?,?,?,?,?,?,?)", (rid, "rpower", item, "1", name, "Regular", price))
+    conn.commit()
+    conn.close()
+    out = bm.margins(rid, bp.analyse(_lines(rid, db_path), TODAY), db_path=db_path)
+    assert {s["item"] for s in out["suggestions"]} == {"Titos Vodka"}

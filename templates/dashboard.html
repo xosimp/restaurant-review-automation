@@ -46235,7 +46235,6 @@ function sfw2RuleCheck(chk) {
 .br-nm2{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1.2fr) auto;gap:16px;align-items:center;padding:16px 22px}
 .br-nm2+.br-nm2::before{content:"";position:absolute;left:22px;right:22px;top:0;height:1px;background:var(--br-hair2)}
 .br-mc{font:600 12.5px/1 'Space Grotesk',sans-serif;padding:3px 7px;border-radius:999px;color:var(--ink);background:color-mix(in srgb,var(--green) 20%,transparent)}
-.br-mc.weak{background:color-mix(in srgb,var(--amber) 24%,transparent)}
 .br-nm2 b{display:block;font-size:15.5px;font-weight:600;color:var(--ink)}
 .br-nm2 .a>span,.br-nm2 .b>span{display:block;margin-top:5px;font-size:13.5px;color:var(--ink3)}
 .br-nm2 .ar{color:var(--ember2);display:flex}
@@ -47681,11 +47680,11 @@ function sfw2RuleCheck(chk) {
     if (!sg.length) return '';
     for (i = 0; i < sg.length && i < 20; i++) {
       var s = sg[i];
-      h += '<div class="br-nm2' + (s.match != null && +s.match < 0.5 ? ' weak' : '') + '"><span class="a"><b>' + esc2(s.item) + '</b><span>on the POS</span></span><span class="ar" aria-hidden="true">' + ARROW_GO + '</span>'
-        + '<span class="b"><b>' + esc2(s.product) + '</b><span>' + (s.pour_oz ? hn(s.pour_oz + ' oz') + ' · ' : '') + (s.match != null && !isNaN(+s.match) ? '<span class="br-mc' + (+s.match < 0.5 ? ' weak' : '') + '">' + hn(Math.round(+s.match * 100) + '%') + ' name match</span>' + (+s.match < 0.5 ? ' · check it' : '') : 'matched by name') + '</span></span>'
+      h += '<div class="br-nm2"><span class="a"><b>' + esc2(s.item) + '</b><span>on the POS</span></span><span class="ar" aria-hidden="true">' + ARROW_GO + '</span>'
+        + '<span class="b"><b>' + esc2(s.product) + '</b><span>' + (s.pour_oz ? hn(s.pour_oz + ' oz') + ' · ' : '') + (s.match != null && !isNaN(+s.match) ? '<span class="br-mc">' + hn(Math.round(+s.match * 100) + '%') + ' name match</span>' : 'matched by name') + '</span></span>'
         + '<span class="act">' + (OWNER ? '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="' + esc2(s.product_key) + '"' + (s.pour_oz ? ' data-oz="' + esc2(String(s.pour_oz)) + '"' : '') + '>Yes, that’s it</button> <button type="button" class="cbtn cbtn-text cbtn-sm" data-br-dm="' + esc2(s.item_id) + '" data-provider="' + esc2(s.provider) + '" data-product="">No</button>' : '') + '</span></div>';
     }
-    return '<section class="br-sec2" id="br-namem">' + head('Name matches to check', hn(Math.min(sg.length, 20)), 'Cavnar AI paired these POS drinks with a product by name. A yes saves the match and the drink’s cost shows under Cost; a no sets the suggestion aside.')
+    return '<section class="br-sec2" id="br-namem">' + head('Name matches to check', hn(Math.min(sg.length, 20)), 'Cavnar AI paired these POS drinks with a product by name — only where half the words match or the drink names the product’s brand; a pairing on a flavour or a style alone is never offered. A yes saves the match and the drink’s cost shows under Cost; a no sets the suggestion aside.')
       + '<div class="br-nml">' + h + '</div></section>';
   }
   /* Recipe cards grouped by cocktail: one card a drink, its ingredients in it. */

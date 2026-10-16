@@ -104,6 +104,12 @@ def _series_for(analysis, key):
     return found[0][1] if found else None
 
 
+def _brand_words(name) -> set:
+    """The first two words of a product's name: on a distributor's invoice,
+    its brand."""
+    return {t.replace("'", "") for t in re.findall(r"[a-z0-9']+", str(name or "").lower())[:2]}
+
+
 def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=20, drink_items=None) -> dict:
     """{rows: [{provider, item_id, item, price, product_key, product, pour_label,
     cost, cost_pct, cost_pct_before, restore_price, changed_mdy}], suggestions:
@@ -159,7 +165,12 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
         want = variants(item["name"])
         pool = {pk: v for pk, v in vprod.items() if variants(v[0]) == want}
         pk, name, score = _best_product(" ".join(sorted(w)), pool)
-        if pk and score >= 0.3:
+        # A weak name match is not shown at all (owner, 10/15/26: "hide weak
+        # name matches"): it needs half its words shared, or the product's
+        # brand — the first two words of its invoice name ("TITOS", "WILLIAM
+        # WYCLIFF") — never only a flavour or a style ("Mango Mojito" is not
+        # White Claw Mango; "Moet Brut" is not Zardetto Prosecco Brut).
+        if pk and (score >= 0.5 or (_brand_words(name) & w)):
             sugg.append({"provider": k[0], "item_id": k[1], "item": item["name"], "price": item["price"],
                          "product_key": pk, "product": name, "match": round(score, 2),
                          "pour_oz": stated_oz(item["name"])})
