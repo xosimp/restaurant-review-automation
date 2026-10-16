@@ -297,7 +297,7 @@ def week_rows(grid, restaurant_name):
         rows.append([(f"Gross totals cover {gd} of {measured} measured nights: on the others the POS didn't "
                       f"report everything the gross includes.", "muted")])
     if t.get("gross_mixed"):
-        rows.append([("Gross mixes two definitions this week (items only, and everything rung incl. tax and "
+        rows.append([("Gross mixes two definitions this week (items only, and everything on the POS incl. tax and "
                       "voids): the gross setting changed inside it.", "muted")])
     widths = [30] + [13 if t != "text" else 14 for _h, _k, t in cols] + [24, 22, 36]
     merges = [f"A1:{col_letter(width - 1)}1"]

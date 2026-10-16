@@ -301,10 +301,10 @@ def collect(ctx):
 # adds the tax and the voided lines back. To verify against RPower's own
 # totals (detail.source_checks) on the first live night.
 GROSS_BASES = {
-    "items": {"gross": "items at the price rung, before discounts and comps; no tax, tips, gift cards, "
+    "items": {"gross": "items at the price charged, before discounts and comps; no tax, tips, gift cards, "
                        "refunds or voids",
               "net": "gross less discounts and comps"},
-    "all": {"gross": "everything rung: items at the price rung before discounts and comps, plus tax and "
+    "all": {"gross": "everything on the POS: items at the price charged before discounts and comps, plus tax and "
                      "voided lines",
             "net": "gross less comps, discounts, voids and tax"},
 }

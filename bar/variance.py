@@ -38,7 +38,7 @@ A POS item in a beer, liquor or wine category (the bar mapping) that is not
 matched to a product is EXCLUDED and NAMED (`unmapped`) — never counted as 0
 rung, which would read as a whole product's purchases gone missing.
 
-The label: "Bought vs rung" until two bar counts bracket the span; then
+The label: "Bought vs sold, by product" until two bar counts bracket the span; then
 "Variance" — each category's used dollars from the counts (bar.counts:
 begin + bought − end) against the theoretical dollars of what was rung,
 withheld until the matched drinks carry CATEGORY_COVERAGE_FLOOR of the
@@ -81,7 +81,7 @@ _ALT_ML_RE = re.compile(r"\bml\b|millilit", re.I)
 SPEC_STATUSES = ("suggested", "confirmed")
 RECIPE_CARDS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "docs", "clients", "simple-ejs", "bar_recipes.json")
-LABELS = {"bought_vs_rung": "Bought vs rung", "variance": "Variance"}
+LABELS = {"bought_vs_rung": "Bought vs sold, by product", "variance": "Variance"}
 # Ingredient words that are alcohol (a recipe card lists juices and syrups too).
 _SPIRIT_RE = re.compile(r"vodka|gin\b|rum\b|bourbon|whiske?y|scotch|rye\b|tequila|mezcal|blanco|reposado|"
                         r"liqueur|vermouth|aperol|campari|amaro|brandy|cognac|schnapps|triple\s*sec|cointreau|"
@@ -352,7 +352,7 @@ def _span(lines, nights, today, counted=None) -> dict:
     if not inv:
         return {"why": "No distributor invoices yet."}
     if not pos:
-        return {"why": "No POS item sales archived yet — bought vs rung needs the POS's ticket lines."}
+        return {"why": "No POS item sales archived yet — bought vs sold needs the POS's ticket lines."}
     for p in reversed((counted or {}).get("periods") or []):
         if not p.get("ok"):
             continue
@@ -367,7 +367,7 @@ def _span(lines, nights, today, counted=None) -> dict:
     days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
     if days < MIN_SPAN_DAYS:
         return {"why": (f"Invoices and POS item sales overlap for {days} day{'s' if days != 1 else ''} "
-                        f"({_mdy(start)}–{_mdy(end)}); bought vs rung needs {MIN_SPAN_DAYS}.")}
+                        f"({_mdy(start)}–{_mdy(end)}); bought vs sold needs {MIN_SPAN_DAYS}.")}
     return {"from": start, "to": end, "basis": "bought_vs_rung", "period": None}
 
 
@@ -454,7 +454,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     if trading and len(have) < ARCHIVE_COVERAGE_FLOOR * len(trading):
         return {"variance": {"available": False, "basis": None, "span": span_out, "items": [], "unmapped": [],
                              "why": (f"The POS archive has {len(have)} of the {len(trading)} trading nights "
-                                     f"{_mdy(start)}–{_mdy(end)}; bought vs rung needs "
+                                     f"{_mdy(start)}–{_mdy(end)}; bought vs sold needs "
                                      f"{int(ARCHIVE_COVERAGE_FLOOR * 100)}% so a missing night never reads as "
                                      "drinks gone missing.")},
                 "keg_yield": [], "span": span_out, "products": {}}
@@ -712,16 +712,16 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
            "totals": totals, "incomplete_distributors": sorted(gapped),
            "suggestions": [_spec_public(s, _names) for s in suggested[:MAX_SUGGESTIONS]],
            "suggestions_total": len(suggested),
-           "note": ("Comps are poured, not paid: shown apart, never counted as rung. A POS drink not matched to a "
+           "note": ("Comps are poured, not paid: shown apart, never counted as sold. A POS drink not matched to a "
                     "product is left out and named, never counted as zero.")}
     if not items:
         out["why"] = ("No POS drink is matched to a bought product yet. Match a drink to what you buy and its "
-                      "bought vs rung appears here.")
+                      "bought vs sold appears here.")
     if sp["basis"] == "variance":
         out.update(basis="variance", label=LABELS["variance"], item_basis="bought_vs_rung",
                    categories=_counted_variance(sp["period"], totals),
-                   item_note="Counts are by category, so each product reads bought vs rung; a category's "
-                             "variance is what the counts say it used against what was rung.")
+                   item_note="Counts are by category, so each product reads bought vs sold; a category's "
+                             "variance is what the counts say it used against what was sold.")
     return {"variance": out, "keg_yield": _keg_yield(kegs, cfg), "span": span_out, "products": prods,
             "drink_items": drink_items}
 
@@ -949,7 +949,7 @@ def bar_blocks(restaurant_id, today=None, db_path=None, lines=None, counted=None
     except Exception:
         log.exception("[bar.variance] unread for %s", restaurant_id)
         return {"variance": {"available": False, "basis": None, "items": [], "unmapped": [],
-                             "why": "Bought vs rung couldn't be read just now."},
+                             "why": "Bought vs sold couldn't be read just now."},
                 "bar_ops": {"waste": None, "keg_yield": [], "comps": {"owner_only": True}}}
     return {"variance": res["variance"], "drink_items": res.get("drink_items"),
             "bar_ops": {"waste": res.get("waste"), "keg_yield": res["keg_yield"],

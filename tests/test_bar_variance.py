@@ -135,7 +135,7 @@ def test_units_bought_against_units_rung_and_the_gap_at_unit_cost(db):
     _miller(db, rid)
     res = bv.compute(rid, today=TODAY, db_path=db)
     v = res["variance"]
-    assert v["available"] and v["basis"] == "bought_vs_rung" and v["label"] == "Bought vs rung"
+    assert v["available"] and v["basis"] == "bought_vs_rung" and v["label"] == "Bought vs sold, by product"
     m = _item(res, "miller")
     assert m["unit"] == "each" and m["bought_units"] == 48 and m["rung_units"] == 40
     assert m["gap_units"] == 8 and m["gap_usd"] == 16.0          # $48 a case ÷ 24 = $2 a can

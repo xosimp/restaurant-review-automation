@@ -247,8 +247,8 @@ def _edits(punches, names):
 
 
 # What the register says when nothing was paid out of, or into, the drawer.
-REGISTER_NO_PAYOUTS = ("No payouts or pay-ins were rung on the POS this night. Petty cash and check requests show "
-                       "here once they're rung as payouts in the POS.")
+REGISTER_NO_PAYOUTS = ("No payouts or pay-ins were entered on the POS this night. Petty cash and check requests show "
+                       "here once they're entered as payouts in the POS.")
 
 
 def _register(payments, payouts):

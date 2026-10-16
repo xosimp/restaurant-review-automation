@@ -371,7 +371,7 @@ struct DSRSettingsSheet: View {
                     Task { await viewModel.save("dsr_gross_basis", .string(b)) }
                 })) {
                     Text("Items only").tag("items")
-                    Text("Everything rung").tag("all")
+                    Text("Everything on the POS").tag("all")
                 }
                 .pickerStyle(.menu)
                 .tint(Color.cavnarEmber2)

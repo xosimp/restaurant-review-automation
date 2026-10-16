@@ -173,7 +173,7 @@ def test_the_scheme_picker_has_every_scheme_and_keeps_a_custom_one():
     save = _fn("saveDsrSetting")
     assert "if (v === 'custom')" in save and "_dsrLengths(" in save
     assert "field === 'dsr_gross_basis'" in save
-    assert 'id="as-dsr-gross"' in SRC and '<option value="all">Everything rung (items, tax and voids)</option>' in SRC
+    assert 'id="as-dsr-gross"' in SRC and '<option value="all">Everything on the POS (items, tax and voids)</option>' in SRC
     assert "fiscal_years: list" in _fn("_dsrSaveYears") and 'id="as-dsr-years"' in SRC
 
 

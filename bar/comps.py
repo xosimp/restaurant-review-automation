@@ -247,7 +247,7 @@ def comps_block(restaurant_id, today=None, db_path=None) -> dict:
     all_base = tally([r for i, s in enumerate(shifts) if s["date"] not in games for r in on_shift.get(i, [])])
     out["shifts"] = {"available": True, "by_bartender": rows_out, "min_shifts": MIN_SHIFTS,
                      "baseline_rate_pct": public(all_base)["rate_pct"],
-                     "outside": dict(public(tally(outside)), why="rung outside every scheduled bartender's shift")}
+                     "outside": dict(public(tally(outside)), why="sold outside every scheduled bartender's shift")}
     return out
 
 

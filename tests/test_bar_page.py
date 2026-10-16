@@ -525,20 +525,24 @@ def test_deal_endings_and_order_sizes_are_named_never_increases(db_path):
     _no_pour_cost_for_a_purchase_ratio(html)
 
 
-def test_variance_waste_keg_yield_and_comps_render_from_the_payload(full):
-    p = json.loads(json.dumps(full, default=str))
-    p["variance"] = {"available": True, "basis": "bought_vs_rung", "label": "Bought vs rung",
+def _variance_payload(drinks=("Miller Lite Btl",), confidence="high"):
+    return {"available": True, "basis": "bought_vs_rung", "label": "Bought vs sold, by product",
                      "span": {"from_mdy": "9/1/26", "to_mdy": "10/1/26"},
                      "items": [{"product_key": "k|1", "product": "Miller Lite 24/12 CAN", "category": "beer", "unit": "each",
                                 "unit_word": "can", "bought_units": 48, "rung_units": 40, "comped_units": 1, "gap_units": 8,
-                                "gap_usd": 16.0, "theoretical_basis": ["one_each"], "drinks": ["Miller Lite Btl"],
-                                "confidence": "high", "assumes": [], "waste_units": 3, "waste_entries": 1}],
+                                "gap_usd": 16.0, "theoretical_basis": ["one_each"], "drinks": list(drinks),
+                                "confidence": confidence, "assumes": [], "waste_units": 3, "waste_entries": 1}],
                      "items_total": 1, "unmapped": [{"provider": "rpower", "item_id": "B9", "item": "Bud Light Btl",
                                                      "category": "beer", "rung_units": 10, "sales_usd": 50.0, "spec_suggested": False}],
                      "unmapped_total": 1, "unmapped_sales_usd": 50.0, "totals": {"gap_usd": 16.0, "comped_usd": 2.0},
                      "suggestions": [{"id": 1, "provider": "rpower", "item_name": "Espresso Martini", "item_id": "E1",
                                       "ingredient": "Ketel One Vodka", "product_key": "k|9", "oz": 1.5, "status": "suggested"}],
-                     "suggestions_total": 1, "note": "Comps are poured, not paid: shown apart, never counted as rung."}
+                     "suggestions_total": 1, "note": "Comps are poured, not paid: shown apart, never counted as sold."}
+
+
+def test_variance_waste_keg_yield_and_comps_render_from_the_payload(full):
+    p = json.loads(json.dumps(full, default=str))
+    p["variance"] = _variance_payload()
     p["bar_ops"] = {"waste": {"entries": 1, "by_reason": [{"reason": "breakage", "label": "Breakage", "entries": 1}],
                               "recent": [{"id": 7, "waste_date_mdy": "9/6/26", "product": "Miller Lite 24/12 CAN", "qty": 3,
                                           "unit": "each", "reason_label": "Breakage"}],
@@ -549,7 +553,7 @@ def test_variance_waste_keg_yield_and_comps_render_from_the_payload(full):
                     "comps": {"owner_only": True}}
     html = _render(p)
     text = _text(html)
-    assert "Bought vs rung" in text and "Bud Light Btl" in text and "never counted as zero" in text
+    assert "Bought vs sold, by product" in text and "Bud Light Btl" in text and "never counted as zero" in text
     assert "poured, not paid" in text and 'data-br-vmap="B9"' in html
     assert 'data-br-spec="1" data-act="confirm"' in html
     # No assumption text under a row (owner, 10/15/26): the figures say it.
@@ -1024,3 +1028,23 @@ def test_overviews_figures_wrapper_is_not_the_heros_own_figures_row(full):
     assert html.count('class="br-figs"') == 1, "only the hero's own figures row"
     src = open(DASHBOARD, encoding="utf-8").read()
     assert ".br-figs{margin-bottom" not in src
+
+
+def test_the_page_says_sold_never_rung_and_rows_carry_no_confidence_word(full):
+    """'Rung' is POS jargon no owner uses: bought vs SOLD, 'Sold as', pints
+    sold (owner, 10/16/26). A row's confidence word is gone, and a product
+    sold as many drinks shows three before '+N more'."""
+    p = json.loads(json.dumps(full, default=str))
+    p["variance"] = _variance_payload(drinks=["Drink %d" % i for i in range(7)], confidence="medium")
+    items = p["variance"]["items"]
+    html = _render(p)
+    assert not re.search(r"\b(rung|rang)\b", _text(html), re.I)
+    for row in re.findall(r'<details class="br-vr".*?</details>\s*</div></details>', html, re.S):
+        assert "confidence" not in _text(row).lower()
+    if items:
+        sold = html[html.index('class="br-soldas"'):]
+        sold = sold[:sold.index('</div></div>') + 12]
+        first = sold[:sold.index("br-soldmore")]
+        assert first.count('class="br-dchip"') == 3 and "+4 more" in _text(sold)
+    src = open(DASHBOARD, encoding="utf-8").read()
+    assert ".dn-foot{margin-top:56px;font-size:14.5px" in src
