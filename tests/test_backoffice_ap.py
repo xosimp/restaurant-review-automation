@@ -216,7 +216,9 @@ def test_the_food_cost_card_says_bought_vs_sold_and_loads_beside_the_cfo_read():
     import os
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "dashboard.html"),
                encoding="utf-8").read()
-    fn = src[src.index("function fc2LoadBo(){"):src.index("function fc2LoadCfo(){")]
+    # The bought-vs-sold card alone: the plate card's code follows it, and its
+    # margin line rightly names the food cost target.
+    fn = src[src.index("function fc2LoadBo(){"):src.index("var FC2_PL_SHOW=")]
     # The basis ("Purchase-based: ...", the server's note) sits behind the card's "i" (owner, 10/16/26: no pill).
     assert "Food bought vs sold" in fn and 'data-itip="fc2-bo-note"' in fn and "Purchase-based · not a count" not in fn
     assert "<th class=\"n\">Bought from suppliers</th><th class=\"n\">Food sales</th>" in fn          # the months have headings
