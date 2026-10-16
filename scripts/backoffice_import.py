@@ -26,10 +26,23 @@ def main(argv=None):
     ap.add_argument("--file", required=True, help="a path, or - for stdin")
     ap.add_argument("--name", default=None, help="the file's name (with --file -)")
     ap.add_argument("--apply", action="store_true", help="store it (default: dry run)")
+    ap.add_argument("--vendors", default=None, help="an invoice book: only these vendors, |-separated")
     a = ap.parse_args(argv)
     content = sys.stdin.buffer.read() if a.file == "-" else open(a.file, "rb").read()
     name = a.name or os.path.basename(a.file)
     import backoffice_ap as bo
+    if name.lower().endswith(".json") and b'"invoices"' in content[:200]:
+        b = json.loads(content.decode("utf-8-sig"))
+        vendors = [v for v in (a.vendors or "").split("|") if v.strip()] or None
+        if a.apply:
+            out = dict(bo.save_invoice_book(a.rid, b, vendors=vendors), kind="invoice_book")
+        else:
+            sel = [i for i in b.get("invoices") or []
+                   if not vendors or str(i.get("vendor") or "").strip().upper() in {v.strip().upper() for v in vendors}]
+            out = {"kind": "invoice_book", "invoices": len(sel), "lines": sum(len(i.get("items") or []) for i in sel)}
+        out["applied"] = bool(a.apply)
+        print(json.dumps(out, indent=1, default=str))
+        return 0
     if name.lower().endswith(".json"):
         import backoffice_recipes as br
         b = json.loads(content.decode("utf-8-sig"))

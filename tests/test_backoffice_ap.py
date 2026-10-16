@@ -350,3 +350,29 @@ def test_an_invoice_page_stores_its_lines_and_the_invoice_counts_once(db):
     bo.read_file(rid, "ibv.txt", _printout().encode(), db_path=db)
     rows = [e for e in bo.entries(rid, db_path=db) if e["invoice_number"] == "9041200735"]
     assert round(sum(e["amount"] for e in rows), 2) == 900.0, "the printout's amount, once"
+
+
+def test_invoices_read_from_back_office_pages_split_by_account_and_count_once(db):
+    """Back Office's Edit Invoice pages read straight off the site (owner,
+    10/16/26): each invoice stored as a printed page would be - lines by GL,
+    the invoice under the printout's key - and a vendor filter keeps the
+    distributors Fintech already carries out."""
+    rid = _rid(db)
+    bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
+    bo.read_file(rid, "ibv.txt", _printout().encode(), db_path=db)
+    book = {"invoices": [
+        {"vendor": "GORDON FOOD SERVICE", "number": "9041200735", "date": _d(5)[6:] + "-" + _d(5)[:2] + "-" + _d(5)[3:5],
+         "total": "$900.00", "items": [
+            {"sku": "197761", "name": "BEEF BRISKET", "gl": "4030 MEAT", "unit": "Case", "qty": "50.00", "amt": "10.00",
+             "ext": "500.00"},
+            {"sku": "162080", "name": "FOAM CUP 24 OZ", "gl": "4888 RESTAURANT SUPPLIES", "unit": "Case", "qty": "1.00",
+             "amt": "400.00", "ext": "400.00"}]},
+        {"vendor": "BREAKTHRU BEVERAGE IL", "number": "129053835", "date": "2026-09-29", "total": "$26.31",
+         "items": [{"sku": "9797344", "name": "BUCHANANS COCONUT", "gl": "4370 LIQUOR", "unit": "Bottle", "qty": "1.00",
+                    "amt": "26.31", "ext": "26.31"}]}]}
+    out = bo.save_invoice_book(rid, book, vendors=["Gordon Food Service"], db_path=db)
+    assert out == {"invoices": 1, "lines": 2, "skipped": []}
+    rows = [e for e in bo.entries(rid, db_path=db) if e["invoice_number"] == "9041200735"]
+    assert sorted((e["gl"], e["category"], e["amount"]) for e in rows) == [
+        ("4030", "food", 500.0), ("4888", "not_cogs", 400.0)]
+    assert round(sum(e["amount"] for e in rows), 2) == 900.0, "the printout's invoice, once"

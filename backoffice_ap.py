@@ -397,6 +397,47 @@ def save_invoice_page(restaurant_id, inv, file_id=None, db_path=None) -> dict:
     return {"written": n}
 
 
+def save_invoice_book(restaurant_id, book, vendors=None, db_path=None) -> dict:
+    """Store invoices read from Back Office's own Edit Invoice pages (JSON:
+    {"invoices": [{vendor, number, date (ISO), total ("$1,234.56"), items:
+    [{sku, name, gl ("4030 MEAT"), unit, qty, amt, ext}]}]}) — each exactly as
+    a printed invoice page would be (save_invoice_page): its lines, and the
+    invoice under the printout's own key, so nothing counts twice. `vendors`
+    limits it to those names (case-blind). {invoices, lines, skipped}."""
+    want = {str(v).strip().upper() for v in vendors} if vendors else None
+    n_inv = n_lines = 0
+    skipped = []
+    for inv in (book or {}).get("invoices") or []:
+        vendor = " ".join(str(inv.get("vendor") or "").split())
+        if not vendor or not inv.get("number") or not inv.get("date"):
+            skipped.append({"why": "no vendor, number or date", "number": inv.get("number")})
+            continue
+        if want is not None and vendor.upper() not in want:
+            continue
+        lines = []
+        for it in inv.get("items") or []:
+            ext = _money(it.get("ext")) if it.get("ext") not in (None, "") else None
+            if ext is None:
+                continue
+            gl = re.match(r"\s*(\d+)", str(it.get("gl") or ""))
+            lines.append({"item_code": (str(it.get("sku") or "").strip() or None), "description": it.get("name"),
+                          "gl": gl.group(1) if gl else None, "purchase_unit": it.get("unit") or None,
+                          "qty": _money(it.get("qty")) if it.get("qty") not in (None, "") else None,
+                          "unit_amount": _money(it.get("amt")) if it.get("amt") not in (None, "") else None,
+                          "ext_amount": round(ext, 2)})
+        if not lines:
+            skipped.append({"why": "no line items", "vendor": vendor, "number": inv.get("number")})
+            continue
+        total = round(_money(inv["total"]), 2) if inv.get("total") else None
+        page = {"vendor": vendor, "invoice_number": str(inv["number"]).strip(), "date": str(inv["date"])[:10],
+                "total": total, "lines": lines,
+                "adds_up": total is not None and abs(sum(l["ext_amount"] for l in lines) - total) < 0.02}
+        save_invoice_page(restaurant_id, page, db_path=db_path)
+        n_inv += 1
+        n_lines += len(lines)
+    return {"invoices": n_inv, "lines": n_lines, "skipped": skipped}
+
+
 # ── the intake reader ─────────────────────────────────────────────────────
 
 def _text_of(filename, content):
