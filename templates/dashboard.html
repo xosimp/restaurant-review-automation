@@ -203,10 +203,10 @@ html{background:var(--bg-base);min-height:100%}
 #notif-badge{position:absolute;top:2px;right:0;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:var(--red);color:var(--paper);font-family:'Space Grotesk',sans-serif;font-size:10.5px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 0 0 2px var(--hdr-bg)}
 #notif-badge.dot{top:8px;right:8px;min-width:0;width:8px;height:8px;padding:0;background:var(--ink3)}
 .hdr-dot{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 0 2px var(--hdr-bg),0 0 8px var(--ember)}
-.hdr-pop,.hb-tip{--hp-bg:rgba(255,255,255,.96);--hp-ring:rgba(14,12,10,.06);--hp-hover:rgba(14,12,10,.035);--hp-act-bg:#f7f6f5;--hp-tile:rgba(14,12,10,.045);--hp-tile-on:color-mix(in srgb,var(--ember) 10%,transparent);--hp-field:rgba(14,12,10,.045);--hp-bubble:rgba(14,12,10,.055);--hp-av:linear-gradient(160deg,#ece7df,#d9d2c6);
+.hdr-pop,.hb-tip,.cav-itp{--hp-bg:rgba(255,255,255,.96);--hp-ring:rgba(14,12,10,.06);--hp-hover:rgba(14,12,10,.035);--hp-act-bg:#f7f6f5;--hp-tile:rgba(14,12,10,.045);--hp-tile-on:color-mix(in srgb,var(--ember) 10%,transparent);--hp-field:rgba(14,12,10,.045);--hp-bubble:rgba(14,12,10,.055);--hp-av:linear-gradient(160deg,#ece7df,#d9d2c6);
   --hp-shadow:0 1px 2px rgba(14,12,10,.04),0 14px 34px -14px rgba(14,12,10,.20),0 36px 70px -34px rgba(14,12,10,.26);--hp-lift:0 1px 2px rgba(14,12,10,.04),0 8px 20px -14px rgba(14,12,10,.28);
   position:absolute;right:-2px;top:calc(100% + 12px);width:min(400px,calc(100vw - 24px));z-index:999;border-radius:22px;background:var(--hp-bg);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);overflow:hidden;color:var(--ink);font-family:'Apfel Grotezk',sans-serif}
-[data-theme="dark"] .hdr-pop,[data-theme="dark"] .hb-tip{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
+[data-theme="dark"] .hdr-pop,[data-theme="dark"] .hb-tip,[data-theme="dark"] .cav-itp{--hp-bg:rgba(30,27,23,.96);--hp-ring:rgba(255,255,255,.07);--hp-hover:rgba(255,255,255,.045);--hp-act-bg:#282521;--hp-tile:rgba(255,255,255,.055);--hp-tile-on:rgba(212,88,58,.16);--hp-field:rgba(255,255,255,.06);--hp-bubble:rgba(255,255,255,.075);--hp-av:linear-gradient(160deg,#3d362f,#2a2520);
   --hp-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 18px 44px -14px rgba(0,0,0,.62),0 44px 90px -36px rgba(0,0,0,.62);--hp-lift:inset 0 1px 0 rgba(255,255,255,.04),0 10px 24px -14px rgba(0,0,0,.62)}
 .hdr-pop.hp-msg{width:min(380px,calc(100vw - 24px))}
 /* What's new rows (the bell's row language): tag tile | tag, date, title,
@@ -13494,9 +13494,16 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 #panel-inventory .lb2-sg .k span{white-space:nowrap}
 #panel-inventory .hb-kicker{font-size:12.5px}
 .fc2-sample{margin-bottom:14px;padding:10px 14px;border-radius:10px;background:var(--hb-tint);border:1px solid var(--hb-line2);font-size:12.5px;color:var(--ink2)}
-/* Back Office as the source (10/16/26): real data from exported reports, said plainly — not a sample banner. */
-.fc2-src{margin-bottom:14px;padding:12px 16px;border-radius:12px;background:var(--sf-recess);border:1px solid var(--hb-line2);font-size:14.5px;line-height:1.5;color:var(--ink2)}
-.fc2-src b{color:var(--ink)}
+/* Info tip (10/16/26): an "i" that opens a short explanation on a click — the hover card's surface; one open at a
+   time; a click outside or Esc closes it. For a sentence an owner may want, never one they must read first. */
+.cav-it{position:relative;display:inline-flex;vertical-align:middle;margin-left:12px}
+.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
+.cbtn.cav-ib:hover,.cbtn.cav-ib[aria-expanded="true"]{color:var(--ink);border-color:var(--ember2);background:color-mix(in srgb,var(--ember) 10%,transparent)}
+.cbtn.cav-ib:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
+.cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;text-transform:none;white-space:normal;text-align:left}
+.cav-itp[hidden]{display:none}
+.cav-itp b{color:var(--ink);font-weight:600}
+@media (max-width:640px){.cav-itp{left:auto;right:-8px}}
 .fc2-sample b{color:var(--ember)}
 .fc2-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:20px}
 .fc2-hero-nums{display:flex;gap:40px;flex-wrap:wrap}
@@ -14006,10 +14013,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# The zeros below are placeholders, not measurements. Saying so beats
      showing "$0 waste this week" as if it had been counted. #}
   <div class="fc2-sample"><b>Analysis unavailable.</b> The food cost figures couldn't be computed just now — reload in a moment. Nothing below has been measured.</div>
-  {% elif not inv.is_live and _bo %}
-  {# Back Office has no API (owner, 10/16/26): its exported reports are read
-     instead - real data, named as such, and no sample figure beside it. #}
-  <div class="fc2-src"><b>From your Back Office reports.</b> Back Office has no API, so Cavnar AI reads the reports it exports{% if _bo.invoices_through %} — invoices through {{ _bo.invoices_through|format_date }}{% endif %}{% if _bo.recipes_loaded %}, and its recipe book{% endif %}. Waste and stock on hand come with your first count.</div>
   {% elif not inv.is_live %}
   <div class="fc2-sample"><b>Sample data.</b> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week — or connect your POS — to see your real numbers.</div>
   {% endif %}
@@ -14019,7 +14022,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          direction over many weeks. Both were unqualified, so "On track" could
          sit six inches above "Waste is climbing" with nothing explaining how
          both were true. Each now says which question it answers. #}
-      <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span></h1>
+      <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span>{% if not inv.is_live and _bo %}{# Back Office has no API (owner, 10/16/26): what that means sits behind an "i" by the heading it explains, not in a banner. #}<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="fc2-bo-tip" aria-expanded="false" aria-controls="fc2-bo-tip" aria-label="About your Back Office reports">i</button><span class="cav-itp" id="fc2-bo-tip" role="tooltip" hidden><b>From your Back Office reports.</b> Back Office has no API, so Cavnar AI reads the reports it exports{% if _bo.invoices_through %} — invoices through {{ _bo.invoices_through|format_date }}{% endif %}{% if _bo.recipes_loaded %}, and its recipe book{% endif %}. Waste and stock on hand come with your first count.</span></span>{% endif %}</h1>
       {# Food | Bar (owner, 10/14/26): Bar opens its own page over the dashboard at /bar, the way Restaurant DNA does.
          Bar fix round (V48): not tabs - Food is where you are, Bar is a link to its own page. #}
       <nav class="br-fsw fc2-sub" aria-label="Food Cost section"><span class="on" aria-current="page">Food</span><a href="/bar" data-bar-open="1">Bar</a></nav>
@@ -29793,6 +29796,20 @@ function fc2LoadWasteSources(){
     })
     .catch(function(){host.hidden=true;});
 }
+/* Info tips (.cav-it): one open at a time; a click outside or Esc closes them. */
+function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p)p.hidden=!on;if(b)b.setAttribute('aria-expanded',on?'true':'false');}
+document.addEventListener('click',function(e){
+  var t=e.target;if(!t||!t.closest)return;
+  if(t.closest('.cav-itp'))return;
+  var b=t.closest('[data-itip]'),id=b?b.getAttribute('data-itip'):null,open=document.querySelectorAll('.cav-itp:not([hidden])'),i;
+  for(i=0;i<open.length;i++)if(open[i].id!==id)cavItipSet(open[i].id,false);
+  if(b){var p=document.getElementById(id);cavItipSet(id,!!(p&&p.hidden));}
+});
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Escape')return;
+  var open=document.querySelectorAll('.cav-itp:not([hidden])'),i;
+  for(i=0;i<open.length;i++){cavItipSet(open[i].id,false);var b=document.querySelector('[data-itip="'+open[i].id+'"]');if(b)b.focus();}
+});
 function fc2LoadRecipeCoverage(){
   var host=document.getElementById('fc2-cov');if(!host)return;
   fetch('/api/food-cost/recipe-coverage',{headers:{'Accept':'application/json'}})
@@ -29803,12 +29820,12 @@ function fc2LoadRecipeCoverage(){
       var tone=pct>=90?'good':(pct>=70?'warn':'bad');
       var h='<span class="k">Recipe coverage</span>'
         +'<span class="v '+tone+'"><span class="hb-num">'+pct+'%</span></span>'
-        +'<span class="d">of what you sold over the last '+d.window_days+' days is costed by a recipe';
+        +'<span class="d">of the food you sold in the last '+d.window_days+' days has a recipe, so its ingredient cost is known';
       if(d.uncovered_count>0){
         var names=[];
         for(var i=0;i<d.uncovered_top.length&&i<2;i++)names.push(wtEsc(d.uncovered_top[i].name));
-        h+=' — '+d.uncovered_count+' dish'+(d.uncovered_count===1?'':'es')+' uncosted'
-          +(names.length?' ('+names.join(', ')+')':'');
+        h+=' · '+d.uncovered_count+' dish'+(d.uncovered_count===1?' has':'es have')+' no recipe yet'
+          +(names.length?', like '+names.join(' and '):'');
       }
       h+='</span>';
       host.innerHTML=h;host.hidden=false;

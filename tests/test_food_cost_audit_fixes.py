@@ -569,3 +569,6 @@ def test_back_office_is_a_food_cost_source_without_an_api(db_path):
     assert '"fed_by": "backoffice"' in src and 'or bool(bo.get("n"))' in src
     tpl = open(os.path.join(os.path.dirname(admin_ops.__file__), "templates", "dashboard.html"), encoding="utf-8").read()
     assert "From your Back Office reports." in tpl and "{% if inv.is_live or not _bo %}<div class=\"hb-pulse\">" in tpl
+    # Behind an "i" by the heading, not a banner; the coverage line in plain words (10/16/26).
+    assert 'data-itip="fc2-bo-tip"' in tpl and 'class="fc2-src"' not in tpl
+    assert "has a recipe, so its ingredient cost is known" in tpl and "uncosted" not in tpl and "is costed by a recipe" not in tpl
