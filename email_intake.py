@@ -873,6 +873,12 @@ def _watch_one(restaurant_id, since, db_path=None, today=None) -> bool:
                          "AND status<>'purged'",
                          (int(restaurant_id),)).fetchone()
         tzr = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (int(restaurant_id),)).fetchone()
+        # A file that came and was held is not a feed that stopped: say so,
+        # and where to release it (EJ's 10/15-10/16/26: Fintech's own mail
+        # failed DMARC twice, the files sat held, the issue read "failing").
+        held = conn.execute("SELECT COUNT(*) AS n, MAX(received_at) AS at FROM email_intake WHERE restaurant_id=? "
+                            "AND kind='fintech' AND status IN ('held_sender','held_auth')",
+                            (int(restaurant_id),)).fetchone()
     finally:
         conn.close()
     tz = (tzr["timezone"] if tzr else None) or None
@@ -885,8 +891,14 @@ def _watch_one(restaurant_id, since, db_path=None, today=None) -> bool:
     import data_health
     from bar.feed import invoices_through
     what = "No Fintech file since" if f and f["at"] else "No Fintech file yet since the address was made on"
-    data_health.record_attempt(restaurant_id, "invoices", False, provider="fintech", error_class="empty",
-                               error=f"{what} {mdy(last_day)} ({missed} business days)",
+    n_held = int((held["n"] if held else 0) or 0)
+    err = f"{what} {mdy(last_day)} ({missed} business days)"
+    if n_held:
+        err += (f" — {n_held} {'file' if n_held == 1 else 'files'} came and {'is' if n_held == 1 else 'are'} held, "
+                "unread: the sender's mail failed its checks. Open the client, find it under Last 20 emails and "
+                "press Release once you know it is theirs")
+    data_health.record_attempt(restaurant_id, "invoices", False, provider="fintech",
+                               error_class="held" if n_held else "empty", error=err,
                                data_through=invoices_through(restaurant_id, db_path=db_path), db_path=db_path)
     return True
 

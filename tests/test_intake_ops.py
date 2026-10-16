@@ -585,3 +585,19 @@ def test_the_intake_jobs_are_scheduled_jobs():
         assert jobs_registry.JOBS[name]["target"] == ("email_intake", fn)
         assert f'run_job("{name}"' in src
         assert jobs_registry.JOBS[name]["sends"] is False
+
+
+def test_a_late_feed_with_a_held_file_says_it_is_held_and_where_to_release_it(db):
+    """EJ's 10/15-10/16/26: Fintech's own mail failed DMARC twice, both files
+    sat held, and the console read only "sync failing"."""
+    rid = _rid(db)
+    _route(db, rid)
+    res = fi.ingest_file(rid, "daily.txt", _printout("10/12/2026"), db_path=db)
+    _exec(db, "UPDATE fintech_files SET created_at='2026-10-12 14:00:00' WHERE id=?", (res["file_id"],))
+    _exec(db, "INSERT INTO email_intake (email_id, address, restaurant_id, kind, sender, subject, status, received_at) "
+              "VALUES ('h1', ?, ?, 'fintech', 'processor@fintech.net', 'HHB, LLC: fintech.net has generated a file', "
+              "'held_auth', '2026-10-13 20:27:42')", (ROUTE, rid))
+    email_intake.watch_feeds(db_path=db, today=date(2026, 10, 14))
+    sh = data_health.health_rows(rid, db_path=db)["invoices"]
+    assert "1 file came and is held, unread" in sh["last_error"] and "Release" in sh["last_error"]
+    assert sh["error_class"] == "held"

@@ -776,7 +776,10 @@ def _load_with(conn):
     # 'blocked': a budget, a breaker, the readiness gate) is not a call — it
     # counts in none of these aggregates (#48).
     ai_cols = _columns(conn, "ai_usage")
-    llm_only = " AND COALESCE(vendor,'anthropic')='anthropic'" if "vendor" in ai_cols else ""
+    # A Places row written during a deploy has no vendor; its model names it
+    # (ai_utils._PLACES_ROW_SQL) - a Places timeout is no AI call that failed.
+    llm_only = (" AND COALESCE(vendor,'anthropic')='anthropic' AND COALESCE(model,'') NOT LIKE 'google-places%'"
+                if "vendor" in ai_cols else " AND COALESCE(model,'') NOT LIKE 'google-places%'")
     sent_only = f" AND {_OUTCOME_SQL} <> 'blocked'" if "outcome" in ai_cols else ""
     owner_sum = (', SUM(CASE WHEN "trigger"=\'owner\' THEN 1 ELSE 0 END) AS owner_calls'
                  if "trigger" in ai_cols else "")
