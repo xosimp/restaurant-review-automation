@@ -48538,5 +48538,170 @@ function sfw2RuleCheck(chk) {
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',relabelPick);else relabelPick();
 })();
 </script>
+<style id="cv-cards">
+/* ══ Card materials (10/15/26) ═══════════════════════════════════════════
+   Five materials, one light. Every card on the dashboard is one of them,
+   chosen by what it holds, never by the module it sits in:
+     Slate       the everyday card - a matte machined plate
+     Pedestal    the page's one hero - polished rim, overhead key light,
+                 a floor shadow with the ember's bloom under it
+     Ember glass the AI speaking - translucent, lit from its own corner
+     Instrument  a chart's well - recessed, dark top lip, lit lower lip
+     Signal      an operational status - an LED edge in the status tone
+   One key light for the whole page, above and slightly left: every top
+   edge catches it, every lower edge falls away from it, every shadow
+   drops down. A card under the pointer warms where the pointer is
+   (--cv-x/--cv-y from cvLight, --cv-spec 0 -> 1). The rim is a
+   border-box gradient behind a transparent border, so no material uses a
+   pseudo-element and none of the cards' own ::before/::after decorations
+   are touched. Dark only (owner, 10/1/26); the light theme keeps the
+   older staircase. DESIGN_SYSTEM.md section 4, "Card materials". */
+@property --cv-spec{syntax:'<number>';inherits:false;initial-value:0}
+[data-theme="dark"]{
+  --cv-plate-top:color-mix(in srgb,var(--surface) 100%,#fff 2.5%);
+  --cv-plate-bot:color-mix(in srgb,var(--surface) 90%,#000);
+  --cv-key:255,238,218;
+  --cv-rim:linear-gradient(180deg,rgba(255,244,230,.15),rgba(255,244,230,.055) 16%,rgba(255,255,255,.035) 62%,rgba(0,0,0,.28));
+  --cv-drop:0 1px 0 rgba(0,0,0,.55),0 2px 4px -1px rgba(0,0,0,.38),0 18px 36px -22px rgba(0,0,0,.78);
+  --cv-drop-up:0 1px 0 rgba(0,0,0,.55),0 4px 8px -2px rgba(0,0,0,.4),0 28px 48px -24px rgba(0,0,0,.85);
+  --cv-lip:inset 0 1px 0 rgba(255,246,236,.055),inset 0 -1px 0 rgba(0,0,0,.32);
+  --cv-ease:cubic-bezier(.2,.9,.3,1);
+}
+
+/* ── Slate ─────────────────────────────────────────────────────────────── */
+[data-theme="dark"] .hb-card,[data-theme="dark"] .hb-sig.cards .hb-sg,[data-theme="dark"] .lb2-op,
+[data-theme="dark"] .sb-card,[data-theme="dark"] .sb-tile,[data-theme="dark"] .fc2-cfo,[data-theme="dark"] .fc2-block,
+[data-theme="dark"] .dr-sec,[data-theme="dark"] .ss-tile,[data-theme="dark"] .ss-pub-card,[data-theme="dark"] .ss-crew-role,
+[data-theme="dark"] .ss-bn,[data-theme="dark"] .pr-sec,[data-theme="dark"] .ac-card,[data-theme="dark"] .cal-card,
+[data-theme="dark"] .cp-card,[data-theme="dark"] .kx-card,[data-theme="dark"] #bar .br-card,[data-theme="dark"] .sw .lb2-preview,[data-theme="dark"] .sw-side,[data-theme="dark"] #bar .br-insl{
+  border-color:transparent;
+  background:
+    radial-gradient(520px circle at var(--cv-x,50%) var(--cv-y,-40%),rgba(var(--cv-key),calc(.055 * var(--cv-spec))),transparent 62%) padding-box,
+    linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,0) 46%) padding-box,
+    linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
+    var(--cv-rim) border-box;
+  box-shadow:var(--cv-lip),var(--cv-drop);
+  transition:--cv-spec .45s var(--cv-ease),box-shadow .32s var(--cv-ease),transform .32s var(--cv-ease);
+}
+/* What can be acted on lifts toward the light; what is only read warms. */
+[data-theme="dark"] .hb-card.lift:hover,[data-theme="dark"] .hb-card.hb-rec:hover,[data-theme="dark"] .hb-sig.cards .hb-sg:hover,
+[data-theme="dark"] .lb2-op:hover,[data-theme="dark"] .sb-card:hover,[data-theme="dark"] .ss-tile:hover,[data-theme="dark"] .cal-card:hover,
+[data-theme="dark"] .cp-card:hover{transform:translateY(-2px);box-shadow:var(--cv-lip),var(--cv-drop-up)}
+[data-theme="dark"] .hb-card:hover,[data-theme="dark"] .hb-sig.cards .hb-sg:hover,[data-theme="dark"] .lb2-op:hover,[data-theme="dark"] .sb-card:hover,
+[data-theme="dark"] .sb-tile:hover,[data-theme="dark"] .fc2-cfo:hover,[data-theme="dark"] .fc2-block:hover,[data-theme="dark"] .dr-sec:hover,
+[data-theme="dark"] .ss-tile:hover,[data-theme="dark"] .ss-pub-card:hover,[data-theme="dark"] .ss-crew-role:hover,[data-theme="dark"] .ss-bn:hover,
+[data-theme="dark"] .pr-sec:hover,[data-theme="dark"] .ac-card:hover,[data-theme="dark"] .cal-card:hover,[data-theme="dark"] .cp-card:hover,
+[data-theme="dark"] .kx-card:hover,[data-theme="dark"] #bar .br-card:hover{--cv-spec:1}
+/* A plate's inner tile is pressed into it, not stacked on it. */
+[data-theme="dark"] .hb-stat{background:linear-gradient(180deg,rgba(0,0,0,.16),rgba(0,0,0,.05)),var(--hb-inner,transparent);border-color:rgba(0,0,0,.34);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.32),0 1px 0 rgba(255,246,236,.035)}
+
+/* ── Pedestal ──────────────────────────────────────────────────────────── */
+[data-theme="dark"] .lb2-hero,[data-theme="dark"] .rv2-hero,[data-theme="dark"] .hb-card.hero.hb-focus,[data-theme="dark"] #bar .br-card.br-hero,
+[data-theme="dark"] .ss-tile.hero,[data-theme="dark"] .kx-hero,[data-theme="dark"] #ss-settings-setup #ss-settings{
+  border-color:transparent;
+  background:
+    radial-gradient(640px circle at var(--cv-x,50%) var(--cv-y,-50%),rgba(var(--cv-key),calc(.07 * var(--cv-spec))),transparent 60%) padding-box,
+    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.068),rgba(255,228,200,.018) 45%,transparent 70%) padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,#fff 4%),color-mix(in srgb,var(--surface) 84%,#000)) padding-box,
+    linear-gradient(162deg,rgba(255,240,222,.30),rgba(255,240,222,.08) 14%,rgba(255,255,255,.03) 48%,rgba(255,255,255,.025) 72%,color-mix(in srgb,var(--ember) 30%,transparent)) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,248,238,.085),inset 0 -1px 0 rgba(0,0,0,.4),
+    0 1px 0 rgba(0,0,0,.6),0 3px 7px -2px rgba(0,0,0,.45),0 34px 64px -30px rgba(0,0,0,.9),0 56px 100px -64px color-mix(in srgb,var(--ember) 42%,transparent);
+  transition:--cv-spec .5s var(--cv-ease),box-shadow .4s var(--cv-ease),transform .4s var(--cv-ease);
+}
+[data-theme="dark"] .lb2-hero:hover,[data-theme="dark"] .rv2-hero:hover,[data-theme="dark"] .hb-card.hero.hb-focus:hover,
+[data-theme="dark"] #bar .br-card.br-hero:hover,[data-theme="dark"] .ss-tile.hero:hover,[data-theme="dark"] .kx-hero:hover{--cv-spec:1;transform:none}
+/* Food Cost's waste shell keeps its step-darker ground: the chart well inside it is the object. */
+[data-theme="dark"] .lb2-hero.fc2-wt-shell{background:
+    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.05),transparent 62%) padding-box,
+    linear-gradient(180deg,#1b1815,#141210) padding-box,
+    linear-gradient(162deg,rgba(255,240,222,.22),rgba(255,240,222,.06) 14%,rgba(255,255,255,.025) 60%,color-mix(in srgb,var(--ember) 24%,transparent)) border-box}
+
+/* ── Ember glass ───────────────────────────────────────────────────────
+   Glass, not a glowing outline: the ember enters at the top-left corner
+   and dies within a quarter of the edge; the rest of the rim is a cool,
+   clear edge. A 1px specular catch runs in from that corner along the
+   top, and one faint diagonal sheen crosses the pane. */
+[data-theme="dark"] .lb2-ai,[data-theme="dark"] .cp-ai,[data-theme="dark"] .rv-diag,[data-theme="dark"] #bar .br-feat{
+  border-color:transparent;
+  background:
+    linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
+    radial-gradient(420px circle at var(--cv-x,0%) var(--cv-y,0%),color-mix(in srgb,var(--ember) calc(9% * var(--cv-spec)),transparent),transparent 60%) padding-box,
+    linear-gradient(112deg,transparent 34%,rgba(255,244,236,.028) 44%,rgba(255,244,236,.01) 50%,transparent 58%) padding-box,
+    radial-gradient(110% 150% at 0% 0%,color-mix(in srgb,var(--ember) 13%,transparent),color-mix(in srgb,var(--ember) 3.5%,transparent) 36%,transparent 62%) padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  -webkit-backdrop-filter:blur(16px) saturate(135%);backdrop-filter:blur(16px) saturate(135%);
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent);
+  transition:--cv-spec .5s var(--cv-ease),box-shadow .35s var(--cv-ease);
+}
+[data-theme="dark"] .lb2-ai:hover,[data-theme="dark"] .cp-ai:hover,[data-theme="dark"] .rv-diag:hover,[data-theme="dark"] #bar .br-feat:hover{--cv-spec:1}
+/* Inside a pedestal the glass sits on the plate, not on the canvas. */
+[data-theme="dark"] .lb2-hero .lb2-ai{box-shadow:inset 0 1px 0 rgba(255,222,204,.08),0 1px 0 rgba(0,0,0,.4),0 10px 22px -18px rgba(0,0,0,.7)}
+
+/* ── Instrument ────────────────────────────────────────────────────────── */
+[data-theme="dark"] .fc2-wt,[data-theme="dark"] .lb2-hero.fc2-wt-shell .fc2-wt,[data-theme="dark"] .dr-gridbox,[data-theme="dark"] .ss-hweek{
+  border-color:transparent;
+  background:
+    radial-gradient(rgba(255,240,226,.03) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 62%,#000),color-mix(in srgb,var(--surface) 74%,#000)) padding-box,
+    linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,.25) 40%,rgba(255,246,236,.075)) border-box;
+  box-shadow:inset 0 3px 8px -2px rgba(0,0,0,.6),inset 0 18px 30px -24px rgba(0,0,0,.7),0 1px 0 rgba(255,246,236,.04);
+}
+
+/* An empty state is the tray where the thing will go: the instrument's
+   recess, no reticle, a dashed rim in the ink (never ember - nothing is
+   being said yet). */
+[data-theme="dark"] .pe:not(.fc2-wt-empty){
+  background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 64%,#000),color-mix(in srgb,var(--surface) 76%,#000));
+  border:1px dashed rgba(255,240,226,.11);
+  box-shadow:inset 0 3px 10px -3px rgba(0,0,0,.6),inset 0 20px 34px -26px rgba(0,0,0,.7),0 1px 0 rgba(255,246,236,.035);
+}
+
+/* ── Signal ────────────────────────────────────────────────────────────── */
+[data-theme="dark"] .hb-card.rail,[data-theme="dark"] .hb-notice,[data-theme="dark"] .sb-card.worst,[data-theme="dark"] .pr-verdict,[data-theme="dark"] #bar .br-warn{
+  --cv-tone:var(--hb-warn,var(--amber));
+  border-left:1px solid transparent;
+  background:
+    linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 11%,transparent),color-mix(in srgb,var(--cv-tone) 3%,transparent) 22%,transparent 46%) padding-box,
+    linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0) 46%) padding-box,
+    linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
+    linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
+  box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
+    -10px 0 26px -18px color-mix(in srgb,var(--cv-tone) 75%,transparent),var(--cv-lip),var(--cv-drop);
+}
+[data-theme="dark"] .hb-card.rail.good,[data-theme="dark"] .pr-verdict.green{--cv-tone:var(--hb-good,var(--green))}
+[data-theme="dark"] .sb-card.worst,[data-theme="dark"] .pr-verdict.red{--cv-tone:var(--hb-bad,var(--red))}
+[data-theme="dark"] .hb-card.rail.ember,[data-theme="dark"] .hb-notice{--cv-tone:var(--ember)}
+[data-theme="dark"] .pr-verdict.amber,[data-theme="dark"] #bar .br-warn{--cv-tone:var(--amber)}
+[data-theme="dark"] #bar .br-warn.info{--cv-tone:color-mix(in srgb,var(--ink) 55%,transparent)}
+
+@media (prefers-reduced-motion:reduce){
+  [data-theme="dark"] .hb-card,[data-theme="dark"] .lb2-op,[data-theme="dark"] .sb-card,[data-theme="dark"] .ss-tile,[data-theme="dark"] .cal-card,
+  [data-theme="dark"] .cp-card,[data-theme="dark"] .hb-sig.cards .hb-sg{transform:none!important;transition:none}
+}
+@media print{[data-theme="dark"] [class]{--cv-spec:0}}
+</style>
+<script>
+/* cvLight - the pointer warms the card it is over (see #cv-cards). One
+   delegated listener, one frame per move, nothing while the pointer is
+   still or coarse (touch), nothing under Reduce Motion. */
+(function(){
+  var SEL='#bar .br-feat,#bar .br-insl,.hb-card,.hb-sig.cards .hb-sg,.lb2-op,.sb-card,.sb-tile,.fc2-cfo,.fc2-block,.dr-sec,.ss-tile,.ss-pub-card,.ss-crew-role,.ss-bn,.pr-sec,.ac-card,.cal-card,.cp-card,.kx-card,#bar .br-card,.lb2-hero,.rv2-hero,.kx-hero,.lb2-ai,.cp-ai,.rv-diag';
+  var mq=window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)'):null;
+  if(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches)return;
+  var pend=null,ev=null;
+  function frame(){
+    pend=null;if(!ev||(mq&&mq.matches))return;
+    var t=ev.target,el=t&&t.closest?t.closest(SEL):null;
+    // The innermost material wins: a glass read inside a pedestal lights itself, not the plate.
+    if(!el)return;
+    var r=el.getBoundingClientRect();
+    el.style.setProperty('--cv-x',Math.round(ev.clientX-r.left)+'px');
+    el.style.setProperty('--cv-y',Math.round(ev.clientY-r.top)+'px');
+  }
+  document.addEventListener('pointermove',function(e){ev=e;if(pend===null)pend=window.requestAnimationFrame(frame);},{passive:true});
+})();
+</script>
 </body>
 </html>

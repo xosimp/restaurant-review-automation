@@ -419,6 +419,31 @@ border, radius 14, padding 20/22, `0 2px 10px rgba(14,12,10,.05)`. Header is
 (flex, space-between, 11px vertical, hairline top border); helper text is
 `.ac-note`; status line is `.ac-status`.
 
+**Web — card materials (10/15/26, `<style id="cv-cards">` at the foot of
+`dashboard.html`, dark only).** Five materials and one light — above and a
+little left — so every top edge catches it, every lower edge falls away and
+every shadow drops down. A card takes the material of what it holds, never
+of the module it sits in; existing classes are mapped onto them in that one
+block (no markup changes). The rim is a border-box gradient behind a
+transparent border, so no material uses a pseudo-element and a card's own
+`::before`/`::after` decoration survives.
+
+| Material | Physical idea | What wears it |
+|---|---|---|
+| **Slate** | A matte machined plate: top-lit face, bevelled rim bright at the top and gone at the foot, a contact shadow and a soft ambient drop | The everyday card — `.hb-card`, `.hb-sg` tiles, `.lb2-op`, `.sb-card`/`.sb-tile`, `.fc2-cfo`, `.fc2-block`, `.dr-sec`, the Studio's `.ss-*` cards and `.sw-side`, `.pr-sec`, `.ac-card`, `.cal-card`, `.cp-card`, `.kx-card`, the Bar's `.br-card` and `.br-insl`. Its inner `.hb-stat` tiles are pressed into it (inset), not stacked on it |
+| **Pedestal** | The page's one hero: a polished rim that catches the overhead key light and the ember at its far corner, a warm key light falling across the top of the face, a deep floor shadow with the ember's bloom under it | `.lb2-hero`, `.rv2-hero`, `.hb-card.hero.hb-focus`, the Bar's `.br-hero`, `.ss-tile.hero`, `.kx-hero`, the Studio's setup panel. One per page |
+| **Ember glass** | The AI speaking: a translucent pane lit from its top-left corner — the ember enters there and dies within a quarter of the rim (never a glowing outline), a 1px specular catch runs in along the top, one faint diagonal sheen | `.lb2-ai` (every module's read), `.cp-ai`, `.rv-diag`, the Bar's featured insight `.br-feat` |
+| **Instrument** | A chart's well: recessed below the face — dark top lip, lit lower lip, an inner top shadow and a faint 20px reticle | `.fc2-wt`, `.dr-gridbox`, `.ss-hweek`; an empty state `.pe` is the same tray without the reticle and with a dashed ink rim |
+| **Signal** | An operational status: an LED edge in the status tone (`--cv-tone`: amber, green, red; ember only for the product's own notice) with its spill into the face | `.hb-card.rail`, `.hb-notice`, `.sb-card.worst`, `.pr-verdict`, the Bar's `.br-warn` (`.info` in the ink) |
+
+Interaction: the card under the pointer warms where the pointer is
+(`cvLight` sets `--cv-x`/`--cv-y`; `--cv-spec` is a registered `@property`
+that eases 0 → 1 over 450–500ms), and only a card that can be acted on
+lifts — 2px toward the light, its drop lengthening. Pedestals warm but never
+move; instruments neither warm nor move. No pointer light on a coarse
+pointer or under Reduce Motion, which also drops the lift. A new card
+picks one of the five; a sixth material needs a reason none of these fits.
+
 **Web — Home language (`hb-*`)**, reused by Reviews (`rv2-`), Food Cost
 (`fc2-`), Intel (`in2-`) and Ask (`ask-`): `.hb-kicker` label, `.hb-sig`
 three-column signal grid, `.hb-act` two-column action grid, `.hb-row` list
