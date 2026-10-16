@@ -473,7 +473,7 @@ def fill_kitchen(rid, weeks=6):
                 conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
                              (menu_rows[m["mid"]], ids[k], round(q, 5)))
             linked += 1
-        # Deliveries, from the kitchen invoices.
+        # What came in, from the kitchen invoices (for the counts below).
         by_sku = {v[3]: k for k, v in w.FOOD_ITEMS.items()}
         got = {}
         for inv in P.food_invoices(start, today - timedelta(days=1)):
@@ -484,11 +484,11 @@ def fill_kitchen(rid, weeks=6):
                 per_pack = w.FOOD_ITEMS[k][5]
                 catch = abs(float(l["qty"]) - round(float(l["qty"]))) > 0.01
                 qty = float(l["qty"]) if catch else float(l["qty"]) * per_pack
+                # Deliveries arrive on Back Office invoices and are never logged here: the
+                # store is a Back Office kitchen (cogs._backoffice_components), so food cost
+                # runs Back Office count to count over food sales.
                 got.setdefault(inv["date"], {}).setdefault(k, 0.0)
                 got[inv["date"]][k] += qty
-                conn.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, "
-                             "event_date, source, note) VALUES (?,?,?,?,?,?,?)",
-                             (rid, ids[k], "receiving", round(qty, 2), inv["date"].isoformat(), "invoice", inv["number"]))
         # Weekly counts (Monday morning) and logged waste, on a running stock.
         stock = {k: round(use[k] * 5.5, 2) for k in w.FOOD_ITEMS}
         conn.execute("DELETE FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='recount'", (rid,))
@@ -858,6 +858,33 @@ def _refresh_reviews(rid, start, end) -> int:
     return new
 
 
+def _stock_since_count(conn, rid, ing, day) -> float:
+    """An ingredient's stock on the morning of `day`: its last count, plus what the invoices
+    brought since, less each night's use (recipes and loss) and the waste logged."""
+    from demo_store import purchasing as P
+    key = next((k for k, v in w.FOOD_ITEMS.items() if v[0] == ing["name"]), None)
+    last = conn.execute("SELECT qty, event_date FROM ingredient_stock_events WHERE restaurant_id=? AND ingredient_id=? "
+                        "AND event_type='recount' AND event_date<? ORDER BY event_date DESC, id DESC LIMIT 1",
+                        (rid, ing["id"], day.isoformat())).fetchone()
+    if key is None or last is None:
+        return float(ing["current_stock"] or 0)
+    since = date.fromisoformat(str(last["event_date"])[:10])
+    q = float(last["qty"] or 0)
+    for inv in P.food_invoices(since, day - timedelta(days=1)):
+        for l in inv["lines"]:
+            if l.get("item_code") == w.FOOD_ITEMS[key][3]:
+                catch = abs(float(l["qty"]) - round(float(l["qty"]))) > 0.01
+                q += float(l["qty"]) if catch else float(l["qty"]) * w.FOOD_ITEMS[key][5]
+    d = since
+    while d < day:
+        q = max(0.0, q - P._usage_cached(d)["food"].get(key, 0.0) * P.FOOD_LOSS)
+        d += timedelta(days=1)
+    wasted = conn.execute("SELECT COALESCE(sum(qty),0) s FROM ingredient_stock_events WHERE restaurant_id=? AND "
+                          "ingredient_id=? AND event_type='waste' AND source='logged' AND event_date>=? AND event_date<?",
+                          (rid, ing["id"], since.isoformat(), day.isoformat())).fetchone()["s"]
+    return max(0.0, q - float(wasted or 0))
+
+
 def _refresh_kitchen(rid, start, end) -> dict:
     """Deliveries, POS depletion, logged waste and the Monday count for the days after the ledger's last."""
     import json
@@ -888,19 +915,7 @@ def _refresh_kitchen(rid, start, end) -> dict:
     for d in days:
         conn = models.get_conn()
         try:
-            for inv in invoices.get(d, []):
-                for l in inv["lines"]:
-                    k = by_sku.get(l.get("item_code"))
-                    if not k or w.FOOD_ITEMS[k][0] not in ids:
-                        continue
-                    catch = abs(float(l["qty"]) - round(float(l["qty"]))) > 0.01
-                    qty = float(l["qty"]) if catch else float(l["qty"]) * w.FOOD_ITEMS[k][5]
-                    iid = ids[w.FOOD_ITEMS[k][0]]
-                    if not conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND ingredient_id=? "
-                                        "AND event_type='receiving' AND note=?", (rid, iid, inv["number"])).fetchone():
-                        conn.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, "
-                                     "event_date, source, note) VALUES (?,?,?,?,?,?,?)",
-                                     (rid, iid, "receiving", round(qty, 2), d.isoformat(), "invoice", inv["number"]))
+            pass
             conn.commit()
         finally:
             conn.close()
@@ -933,7 +948,7 @@ def _refresh_kitchen(rid, start, end) -> dict:
                 items, value = [], 0.0
                 for r in conn.execute("SELECT * FROM ingredients WHERE restaurant_id=? AND COALESCE(is_active,1)=1",
                                       (rid,)).fetchall():
-                    q = round(max(0.0, float(r["current_stock"] or 0) * rng.uniform(0.95, 1.01)), 2)
+                    q = round(max(0.0, _stock_since_count(conn, rid, r, d) * rng.uniform(0.95, 1.01)), 2)
                     conn.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, "
                                  "event_date, source, note) VALUES (?,?,?,?,?,?,?)",
                                  (rid, r["id"], "recount", q, d.isoformat(), "count", "Monday kitchen count"))
@@ -1004,6 +1019,7 @@ def refresh(rid, today=None) -> dict:
     step("back_office", lambda: _save_food(rid, P.food_invoices(start, end)))
     step("reviews", lambda: _refresh_reviews(rid, start, end))
     step("kitchen", lambda: _refresh_kitchen(rid, start, end))
+    step("bo_counts", lambda: __import__("backoffice_counts").save_counts(rid, _bo_count_book(end, 2)).get("periods"))
     step("schedules", lambda: fill_schedules(rid, weeks=1))
 
     def _marketing():
@@ -1066,7 +1082,7 @@ def run_refresh() -> dict:
     return {"attempted": len(ids), "ok": ok, "failed": failed, "skipped": 0, "hit_bound": False}
 
 
-ALL_STEPS = ("settings", "pos", "schedules", "dsr", "purchasing", "bar", "kitchen", "reviews", "neighborhood",
+ALL_STEPS = ("settings", "pos", "schedules", "dsr", "purchasing", "bar", "kitchen", "bo_counts", "reviews", "neighborhood",
              "marketing", "people", "intel", "finish")
 
 
@@ -1083,3 +1099,71 @@ def run_all(steps=ALL_STEPS) -> int:
             globals()["fill_" + s](rid)
         _say(f"  [{s}] {time.time() - t:.0f}s")
     return rid
+
+
+# ── Back Office's weekly inventory: one value per inventory account ─────────
+#
+# Back Office keeps inventory as weekly periods (Wednesday to Tuesday), each
+# submitted period a dollar value per inventory account (backoffice_counts).
+# The values come from the store's own stock, run forward from a fixed day
+# with every delivery and every night's use (recipes plus what the kitchen
+# loses), so a period's count is the same whenever it is written.
+
+_COUNT_ANCHOR = date(2026, 3, 3)          # a Tuesday: the run starts here, half a week of stock on hand
+_INV_ACCOUNTS = {"FOOD - MEAT": ("1411", "MEAT INVENTORY"), "FOOD - POULTRY": ("1412", "POULTRY INVENTORY"),
+                 "FOOD - SEAFOOD": ("1413", "SEAFOOD INVENTORY"), "FOOD - PRODUCE": ("1414", "PRODUCE INVENTORY"),
+                 "FOOD - DAIRY": ("1415", "DAIRY INVENTORY"), "FOOD - BAKERY": ("1416", "BAKERY INVENTORY"),
+                 "FOOD - DRY GOODS": ("1417", "DRY GOODS INVENTORY"), "FOOD - FROZEN": ("1418", "FROZEN INVENTORY")}
+_BAR_ACCOUNTS = (("1421", "BEER INVENTORY", 4600), ("1422", "LIQUOR INVENTORY", 11800), ("1423", "WINE INVENTORY", 3300))
+
+
+def _bo_count_book(through: date, weeks: int) -> dict:
+    import random
+    from demo_store import purchasing as P
+    by_sku = {v[3]: k for k, v in w.FOOD_ITEMS.items()}
+    stock = {}
+    first_use = P._usage_cached(_COUNT_ANCHOR)["food"]
+    for k in w.FOOD_ITEMS:
+        stock[k] = first_use.get(k, 0.0) * 3.5
+    deliveries = {}
+    for inv in P.food_invoices(_COUNT_ANCHOR, through):
+        for l in inv["lines"]:
+            k = by_sku.get(l.get("item_code"))
+            if k:
+                catch = abs(float(l["qty"]) - round(float(l["qty"]))) > 0.01
+                q = float(l["qty"]) if catch else float(l["qty"]) * w.FOOD_ITEMS[k][5]
+                deliveries.setdefault(inv["date"], {}).setdefault(k, 0.0)
+                deliveries[inv["date"]][k] += q
+    periods = []
+    d = _COUNT_ANCHOR
+    while d <= through:
+        for k, q in (deliveries.get(d) or {}).items():
+            stock[k] += q
+        for k, q in P._usage_cached(d)["food"].items():
+            stock[k] = max(0.0, stock[k] - q * P.FOOD_LOSS)
+        if d.weekday() == 1 and d > _COUNT_ANCHOR:            # Tuesday: the period closes, the count is submitted
+            rng = random.Random(f"hr-bo-count|{d}")
+            gls = {}
+            for k, v in w.FOOD_ITEMS.items():
+                gl, name = _INV_ACCOUNTS[v[1]]
+                gls.setdefault((gl, name), 0.0)
+                gls[(gl, name)] += stock[k] * v[7] / v[5] * rng.uniform(0.97, 1.02)
+            out = [{"gl": gl, "name": name, "amount": round(a, 2)} for (gl, name), a in sorted(gls.items())]
+            out += [{"gl": gl, "name": name, "amount": round(base * rng.uniform(0.88, 1.12), 2)}
+                    for gl, name, base in _BAR_ACCOUNTS]
+            periods.append({"start": (d - timedelta(days=6)).isoformat(), "end": d.isoformat(), "status": "Submitted",
+                            "gls": out, "items": []})
+        d += timedelta(days=1)
+    return {"inventory_counts": periods[-weeks:]}
+
+
+def fill_bo_counts(rid, weeks=20):
+    import backoffice_ap
+    import backoffice_counts
+    from demo_store import purchasing as P
+    backoffice_ap.save_coa(rid, [{"gl": g, "name": n, "subtype": "Purchase Inventory",
+                                  "category": backoffice_ap.gl_category("Purchase Inventory", n)}
+                                 for g, n in list(_INV_ACCOUNTS.values()) + [(a, b) for a, b, _c in _BAR_ACCOUNTS]])
+    end = api.business_today() - timedelta(days=1)
+    got = backoffice_counts.save_counts(rid, _bo_count_book(end, weeks))
+    _say(f"Back Office counts: {got.get('periods')} weekly periods")
