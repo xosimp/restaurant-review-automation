@@ -384,6 +384,9 @@ class Restaurant:
     # Comps and voids as a % of gross item sales, the most the owner accepts
     # (Simple EJ's, 10/15/26: Erik's 2%). None = no target of their own.
     comp_void_target_pct: Optional[float] = None
+    # A dish's margin % at or above this reads green on Plate costs (None =
+    # 100 minus the food cost target, cogs.dish_reference) - 10/16/26.
+    plate_margin_target_pct: Optional[float] = None
     monthly_revenue_target: float        = 0.0
     hours_notes: Optional[str]           = None
     role_rates_json: Optional[str]       = None
@@ -1529,6 +1532,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "liquor_cost_target", "REAL"),
         ("restaurants", "wine_cost_target", "REAL"),
         ("restaurants", "comp_void_target_pct", "REAL"),
+        ("restaurants", "plate_margin_target_pct", "REAL"),
         ("restaurants", "monthly_revenue_target", "REAL"),
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
@@ -5303,7 +5307,9 @@ OWNER_TARGET_FIELDS = ("labor_target_pct", "food_cost_target", "waste_target_pct
                        "bar_cost_target", "beer_cost_target", "liquor_cost_target", "wine_cost_target",
                        # Comps & voids (10/15/26): logged as a target; Ask shows it to a login
                        # with Food Cost (thresholds.TARGET_MODULES), like the alcohol targets.
-                       "comp_void_target_pct")
+                       "comp_void_target_pct",
+                       # Plate costs' margin line (10/16/26).
+                       "plate_margin_target_pct")
 # The alcohol targets, by the Bar page category each judges (None = overall).
 BAR_TARGET_FIELDS = {None: "bar_cost_target", "beer": "beer_cost_target", "liquor": "liquor_cost_target",
                      "wine": "wine_cost_target"}
@@ -5396,7 +5402,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","bar_cost_target","beer_cost_target","liquor_cost_target","wine_cost_target","comp_void_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
+        "hourly_rate","labor_target_pct","week_start_day","role_strength_json","shift_leader_rules_json","quality_weights_json","quality_tuning_json","monthly_revenue_target","hours_notes","role_rates_json","salaried_staff_json","person_rates_json","kitchen_stations_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","waste_target_pct","bar_cost_target","beer_cost_target","liquor_cost_target","wine_cost_target","comp_void_target_pct","plate_margin_target_pct","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","fb_page_name","ig_username","ga4_property_id","gsc_site_url","web_analytics_synced_at","web_analytics_error","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","demo_cleared_at","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires","gmb_revoked_at","labor_standards_json",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","admin_control_until","admin_control_note","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","issue_texts","staff_signin_notify","marketing_emails_opt_out","mailing_address","monthly_review_enabled","timezone","onboarding_dismissed",
@@ -6262,6 +6268,7 @@ def _restaurant_from_row(row) -> Restaurant:
         liquor_cost_target=row["liquor_cost_target"] if "liquor_cost_target" in row.keys() and row["liquor_cost_target"] is not None else None,
         wine_cost_target=row["wine_cost_target"] if "wine_cost_target" in row.keys() and row["wine_cost_target"] is not None else None,
         comp_void_target_pct=row["comp_void_target_pct"] if "comp_void_target_pct" in row.keys() and row["comp_void_target_pct"] is not None else None,
+        plate_margin_target_pct=row["plate_margin_target_pct"] if "plate_margin_target_pct" in row.keys() and row["plate_margin_target_pct"] is not None else None,
         monthly_revenue_target=float(row["monthly_revenue_target"]) if "monthly_revenue_target" in row.keys() and row["monthly_revenue_target"] else 0.0,
         hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
         email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",

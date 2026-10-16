@@ -35,7 +35,7 @@ def test_the_target_is_a_restaurant_column_on_every_touch_point():
         '"comp_void_target_pct"' in src[src.index("def update_restaurant"):][:8000]
     assert 'comp_void_target_pct=row["comp_void_target_pct"]' in src
     routes = (ROOT / "strategy_routes.py").read_text()
-    assert '"comp_void_target_pct": (0.1, 25.0)' in routes and '"wine_cost_target", "comp_void_target_pct")' in routes
+    assert '"comp_void_target_pct": (0.1, 25.0)' in routes and '"wine_cost_target", "comp_void_target_pct", "plate_margin_target_pct")' in routes
     # The figure behind it is LOSS_VIEW's, so is its target.
     get = routes[routes.index("def _do_targets_get"):routes.index("def _do_targets_set")]
     assert "_loss_viewer(u)" in get and 't["comp_void_target_pct"] = None' in get
@@ -51,6 +51,6 @@ def test_the_target_saves_and_reads_back(tmp_path):
 
 def test_the_card_and_the_targets_page_carry_it():
     html = (ROOT / "templates" / "dashboard.html").read_text()
-    assert 'data-tg="comp_void_target_pct"' in html and "comp_void_target_pct: 1}" in html
+    assert 'data-tg="comp_void_target_pct"' in html and "comp_void_target_pct: 1, plate_margin_target_pct: 1}" in html
     loss = html[html.index("function lossHtml(svc)"):html.index("function registerHtml(")]
     assert "L.comp_void" in loss and "Comps &amp; voids" in loss and "your '" in loss

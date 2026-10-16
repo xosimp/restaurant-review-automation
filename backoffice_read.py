@@ -81,21 +81,21 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         return out
     pct = 100.0 * bought / fsales
     facts["pct"] = round(pct, 1)
-    lines = []
-    first_line = (f"{_money(bought)} of food bought against {_money(fsales)} of food sales — "
-                  f"{_pct(pct)} bought vs sold")
+    # A headline and labelled points, never one paragraph (owner, 10/16/26:
+    # "too big of a paragraph"): what moved, then each figure on its own row.
+    lead = f"{_pct(pct)} bought vs sold"
+    points = [("Bought", f"{_money(bought)} of food against {_money(fsales)} of food sales")]
     if pf > 0:
         prev = 100.0 * pb / pf
         facts["prev_pct"] = round(prev, 1)
         if abs(pct - prev) >= 0.5:
-            first_line += f", {'up' if pct > prev else 'down'} from {_pct(prev)} the week before"
+            lead += f" — {'up' if pct > prev else 'down'} from {_pct(prev)} the week before"
         else:
-            first_line += ", level with the week before"
-    lines.append(first_line + ".")
+            lead += " — level with the week before"
     if ff > 0:
         facts["four_week_pct"] = round(100.0 * fb / ff, 1)
-        lines.append(f"Over the four weeks to {mdy(e)} it is {_pct(100.0 * fb / ff)}; one week moves with "
-                     "when deliveries land.")
+        points.append(("Four weeks", f"{_pct(100.0 * fb / ff)} to {mdy(e)} — steadier than one week, which moves "
+                                     "with when deliveries land"))
     pl = br.plates(restaurant_id, today=today, db_path=db_path, start=start, end=end)
     rp = ((pl.get("summary") or {}).get("cost_pct")) if pl.get("available") else None
     measured = [p for p in bc.waste_periods(restaurant_id, today=today, db_path=db_path)
@@ -103,20 +103,19 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
     if measured:
         m = measured[-1]
         facts.update(counted_waste=m["waste"], counted_used=m["used"], recipe_pct=m["recipe_pct"])
-        lines.append(f"Counted {mdy(m['start'])} – {mdy(m['end'])}: the kitchen used {_money(m['used'])} of food, "
-                     f"and {_money(m['waste'])} of it is more than the recipes call for "
-                     f"({_pct(m['used_pct'])} used vs {_pct(m['recipe_pct'])} by recipe).")
+        points.append(("Counted", f"{mdy(m['start'])} – {mdy(m['end'])}: {_money(m['used'])} of food used, "
+                                  f"{_pct(m['used_pct'])} of food sales"))
+        points.append(("Beyond recipes", f"{_money(m['waste'])} more than the recipes call for "
+                                         f"({_pct(m['recipe_pct'])} by recipe)"))
     elif rp is not None:
         gap = pct - rp
         facts.update(recipe_pct=rp, gap_usd=round(fsales * gap / 100.0, 2))
-        line = f"The dishes sold that week cost {_pct(rp)} of their price by Back Office's recipes"
+        points.append(("By recipe", f"{_pct(rp)} — what the dishes sold should have used"))
         if gap > 0:
-            line += (f", so about {_money(fsales * gap / 100.0)} of the food bought is not in a recipe — waste, "
-                     "portions, staff meals, items no recipe lists, and stock still on the shelf")
-        line += "."
+            points.append(("Not in a recipe", f"about {_money(fsales * gap / 100.0)}: waste, portions, staff meals, "
+                                              "items no recipe lists, and stock still on the shelf"))
         if not bc.counts(restaurant_id, db_path):
-            line += " Weekly counts in Back Office take the shelf out of it."
-        lines.append(line)
+            points.append(("Next", "weekly counts in Back Office separate stock on the shelf from waste"))
     # The account that moved most against its own weekly average of the four
     # weeks before — over the weeks whose invoices are split by account
     # (their lines on file), never a week whose food sits in "Not split yet".
@@ -139,10 +138,23 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
     if moves:
         n, v, a = moves[0]
         facts["mover"] = {"account": n, "week": round(v, 2), "prior_avg": round(a, 2), "prior_weeks": len(prior)}
-        lines.append(f"{n} ran {_money(v)}, {abs(v - a) / a * 100:.0f}% {'above' if v > a else 'below'} its "
-                     f"weekly average of the {len(prior)} weeks before.")
+        points.append((n, f"{_money(v)}, {abs(v - a) / a * 100:.0f}% {'above' if v > a else 'below'} its "
+                           f"weekly average of the {len(prior)} weeks before"))
     if feed.get("invoices_through") and feed["invoices_through"] < e:
-        lines.append(f"Back Office invoices are on file through {mdy(feed['invoices_through'])}, so the week's "
-                     "purchases may be short.")
-    out["text"] = " ".join(lines)
+        points.append(("Invoices", f"on file through {mdy(feed['invoices_through'])}, so the week's purchases "
+                                   "may be short"))
+    out["lead"], out["points"] = lead + ".", [{"label": k, "text": v} for k, v in points]
+    # The phone and the cache read plain text: the headline, then a line per point.
+    out["text"] = out["lead"] + "\n" + "\n".join(f"• {k}: {v}." for k, v in points)
     return out
+
+
+def food_read_html(read) -> str:
+    """The web's markup for a read: the headline, then one labelled row per
+    point (`.ai-pts`, DESIGN_SYSTEM → AI read). Every value is escaped."""
+    from markupsafe import escape
+    if not read.get("points"):
+        return '<p style="margin:0;line-height:1.7">' + str(escape(read.get("text") or "")) + "</p>"
+    rows = "".join(f'<div class="r"><span class="k">{escape(p["label"])}</span><span class="v">{escape(p["text"])}</span></div>'
+                   for p in read["points"])
+    return f'<p class="ai-lead">{escape(read["lead"])}</p><div class="ai-pts">{rows}</div>'

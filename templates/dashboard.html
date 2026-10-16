@@ -1425,6 +1425,15 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .ask-panel, .ai-feed, #explain-modal .box{-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:var(--elev-float)}
 /* ai tier: what Cavnar AI wrote, lit warm and tied to its evidence */
 .lb2-ai{background:var(--sf-ai),var(--surface);border:1px solid var(--sf-ai-line);border-radius:14px;box-shadow:var(--glow-ember);position:relative}
+/* An AI read in points (owner, 10/16/26: "too big of a paragraph"): the
+   headline, then one labelled row per figure - the label in a fixed column,
+   the figure beside it; rows spaced, no hairlines. */
+.lb2-ai .ai-lead{margin:0 0 12px;font-size:17px;line-height:1.5;font-weight:600;color:var(--ink);white-space:normal}
+.lb2-ai .ai-pts{display:flex;flex-direction:column;gap:9px;white-space:normal}
+.lb2-ai .ai-pts .r{display:grid;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:baseline}
+.lb2-ai .ai-pts .k{font-size:11.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.lb2-ai .ai-pts .v{font-size:15.5px;line-height:1.55;color:var(--ink2)}
+@media (max-width:560px){.lb2-ai .ai-pts .r{grid-template-columns:1fr;gap:2px}}
 .lb2-ai .tag:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ember);box-shadow:0 0 8px var(--ember);margin:0 8px 1px 0;vertical-align:middle;animation:hbBreath 2.4s ease-in-out infinite}
 .ask-b.ai .bb{background:var(--sf-ai),var(--paper2);border-color:var(--sf-ai-line);box-shadow:inset 2px 0 0 var(--ember2)}
 .hb-card.hb-rec{box-shadow:0 2px 6px rgba(14,12,10,.06),0 28px 60px -26px rgba(14,12,10,.30),0 0 0 1px color-mix(in srgb,var(--ember) 7%,transparent)}
@@ -12245,6 +12254,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Details and the Staffing review sit closer to the card above (9/26/26). */
 #lb2-money-all{margin-top:14px}
 .lb2-sig-2.fc2-stock-sig{margin-top:48px}
+/* Cash sitting over par's empty box runs the full height of Biggest waste
+   items beside it (owner, 10/16/26): the column is a flex column and the
+   box takes what is left under its heading. */
+.fc2-stock-sig .lb2-sg{display:flex;flex-direction:column}
+.fc2-stock-sig #fc2-ledger-stock{flex:1;display:flex;flex-direction:column}
+.fc2-stock-sig #fc2-ledger-stock>.fc2-empty{flex:1;justify-content:center}
 #lb2-details{margin-top:30px}
 /* Inside the Staffing review disclosure the summary's own rule is the
    line; the grid's second one under it doubled it (9/25/26). */
@@ -13931,6 +13946,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-row>summary .n.p{color:var(--ink2)}
 .fc2-pl-head{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px}
 .fc2-pl-head span+span{text-align:right}
+/* The headings sort (owner, 10/16/26): the sortable-table button and chevron, right-aligned over figures. */
+.fc2-pl-head .csort-btn{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:none;border:0;box-shadow:none;height:auto;min-height:0;padding:0;margin:0;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.fc2-pl-head span+span .csort-btn{flex-direction:row-reverse}
+.fc2-pl-head .csort-btn:hover{color:var(--ink)}
+.fc2-pl-head .csort-btn:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+.fc2-pl-head .csort-ic{display:inline-block;width:8px;height:8px;opacity:.35;color:var(--ink3);transition:transform .15s ease,opacity .15s ease}
+.fc2-pl-head .csort-ic svg{display:block;width:8px;height:8px}
+.fc2-pl-head [aria-sort] .csort-ic{opacity:1;color:var(--ember)}
+.fc2-pl-head [aria-sort] .csort-btn{color:var(--ink)}
+.fc2-pl-head [aria-sort="descending"] .csort-ic{transform:rotate(180deg)}
+.fc2-pl-row>summary .n.good{color:var(--hb-good)}
 .fc2-pl-lines{padding:2px 0 12px 12px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink3)}
 .fc2-pl-lines .l{display:flex;gap:10px;justify-content:space-between}
 .fc2-pl-lines .l .n{font-family:'Space Grotesk',sans-serif;color:var(--ink2);white-space:nowrap}
@@ -14167,7 +14193,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      place. The section inside keeps its id and data-nav, so a deep
      link (inventory/count) opens its row first (cavNavSection opens
      the closest <details>). Each loader fills its row's line. #}
-  <div class="fc2-sec fc2-worksec" id="fc2-work"{% if _boh_recipes %} data-boh-recipes="1"{% endif %}>
+  <div class="fc2-sec fc2-worksec" id="fc2-work"{% if _boh_recipes %} data-boh-recipes="1"{% endif %} hidden>
     <div class="hd"><div><div class="hb-kicker">This week’s work</div><h2>{% if _boh_recipes %}Count and order{% else %}Count, order, keep the recipes current{% endif %}</h2></div></div>
     <details class="hb-results fc2-work" id="fc2-work-count" hidden>
       <summary><span class="hb-kicker">Count sheet</span><span id="fc2-work-count-line"></span></summary>
@@ -15282,7 +15308,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    this doesn't also push spacing/size around on the shared Labor/Food
    Cost sections that reuse .lb2-hero / .lb2-ai. */
 .in2-rating-hero .big{margin-top:12px}
-#panel-competitor .lb2-ai .tag{margin-bottom:14px}
 #panel-competitor .lb2-ai{font-size:16px}
 /* AI search presence results (rebuilt 9/26/26). Each block is a recessed
    card; the header's flag wraps under its label rather than running into
@@ -16310,6 +16335,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
               <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-food_cost_target" min="5" max="80" step="0.5" style="width:96px" aria-label="Food cost target %" data-tg="food_cost_target"></div></div>
             <div class="ac-row"><div class="l"><b>Waste target</b><span>Waste as a % of purchases. Blank uses Cavnar AI&rsquo;s starting 4.5%.</span></div>
               <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-waste_target_pct" min="0" max="50" step="0.5" style="width:96px" aria-label="Waste target %" data-tg="waste_target_pct"></div></div>
+            <div class="ac-row"><div class="l"><b>Plate margin target</b><span>A dish&rsquo;s margin as a % of its price; at or above it the margin reads green on Plate costs. Blank uses 100 minus your food cost target (70% at 30%).</span></div>
+              <div class="c"><input class="ac-input ac-num" type="number" id="as-tg-plate_margin_target_pct" min="30" max="95" step="0.5" style="width:96px" placeholder="Not set" aria-label="Plate margin target %" data-tg="plate_margin_target_pct"></div></div>
         </div>
         </details>
         {# Alcohol targets (bar fix round 10/15/26, V1/V47): one name with the Bar page - bought vs sold until two bar counts bracket a window, then pour cost (counted). Blank shows the published range as context, never a verdict. #}
@@ -29330,28 +29357,68 @@ function fc2PlRow(p){
   if(p.suspect)sub.push('<span class="miss">'+e(p.suspect)+'</span>');
   h+='<details class="fc2-pl-row"><summary><span class="d">'+e(p.name)+(sub.length?'<small>'+sub.join(' · ')+'</small>':'')+'</span>';
   h+='<span class="n p">'+(p.price==null?'—':fc2PlMoney(p.price))+'</span><span class="n">'+cost+'</span>';
-  h+='<span class="n x">'+(p.cost_pct==null?'—':e(p.cost_pct)+'%')+'</span><span class="n x">'+(p.margin==null?'—':fc2PlMoney(p.margin))+'</span></summary><div class="fc2-pl-lines">';
+  var mt=_fc2Pl.d&&_fc2Pl.d.margin_target,good=mt&&p.margin_pct!=null&&p.margin_pct>=mt.pct;
+  h+='<span class="n x">'+(p.cost_pct==null?'—':e(p.cost_pct)+'%')+'</span><span class="n x'+(good?' good':'')+'"'+(p.margin_pct!=null?' title="'+e(p.margin_pct)+'% of the price"':'')+'>'+(p.margin==null?'—':fc2PlMoney(p.margin))+'</span></summary><div class="fc2-pl-lines">';
   for(i=0;i<p.lines.length;i++){var l=p.lines[i];
     h+='<div class="l"><span>'+(l.qty==null?'':'<span class="hb-num">'+e(l.qty)+'</span> ')+e(l.unit)+' '+e(l.name)+(l.per?' · '+e(l.per)+(l.source==='invoice'?' (invoice)':' (Back Office)'):'')+(l.flag?' · '+e(l.flag):'')+'</span>'+(l.missing?'<span class="miss">'+e(l.missing)+'</span>':'<span class="n">'+fc2PlMoney(l.cost)+'</span>')+'</div>';}
   for(i=0;i<p.missing.length;i++){var m=p.missing[i];if(m.via)h+='<div class="l"><span>'+e(m.via)+' › '+e(m.name)+'</span><span class="miss">'+e(m.reason)+'</span></div>';}
   return h+'</div></details>';
 }
+// Each column sorts (owner, 10/16/26): a click sorts it highest first (a
+// dish's name A to Z), a second click flips it; a dish with no figure in that
+// column always sorts last. Unsorted, dishes run by what they sold.
+var _fc2Pl={d:null,k:null,desc:true};
+var FC2_PL_COLS=[['name','Dish',''],['price','Price',''],['cost','Cost',''],['cost_pct','Cost %','x'],['margin','Margin','x']];
+var FC2_PL_CHEV='<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function fc2PlSorted(){
+  var ps=(_fc2Pl.d.plates||[]).slice(),k=_fc2Pl.k,desc=_fc2Pl.desc;
+  if(!k)return ps;
+  for(var i=0;i<ps.length;i++)ps[i]._o=i;
+  ps.sort(function(a,b){
+    var x=a[k],y=b[k];
+    if(k==='cost'){x=a.complete?x:null;y=b.complete?y:null;}
+    var nx=(x==null),ny=(y==null);
+    if(nx||ny)return nx===ny?a._o-b._o:(nx?1:-1);
+    var c=(k==='name')?String(x).localeCompare(String(y)):(x-y);
+    if(c===0)return a._o-b._o;
+    return (k==='name'?!desc:desc)?-c:c;
+  });
+  return ps;
+}
+function fc2PlRender(){
+  var host=document.getElementById('fc2-pl'),d=_fc2Pl.d;if(!host||!d)return;
+  var w=d.window||{},s=d.summary||{},ps=fc2PlSorted(),h='',i,rows='',rest='',hd='';
+  h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from Back Office recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
+  if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>what the recipes cost for the dishes that sold, at today’s prices · the fully priced dishes, <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> sold</span></div>';
+  for(i=0;i<FC2_PL_COLS.length;i++){var c=FC2_PL_COLS[i],on=_fc2Pl.k===c[0];
+    var dir=on?((c[0]==='name'?!_fc2Pl.desc:_fc2Pl.desc)?'descending':'ascending'):'';
+    hd+='<span class="'+c[2]+'"'+(on?' aria-sort="'+dir+'"':'')+'><button type="button" class="cbtn cbtn-text cbtn-inline csort-btn" data-pl-sort="'+c[0]+'" title="Sort by '+c[1].toLowerCase()+'"><span>'+c[1]+'</span><span class="csort-ic">'+FC2_PL_CHEV+'</span></button></span>';}
+  h+='<div class="fc2-pl-head">'+hd+'</div><div class="fc2-pl-list">';
+  for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
+  h+=rows+'</div>';
+  if(rest)h+='<details class="fc2-pl-more"'+(_fc2Pl.more?' open':'')+'><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
+  var pr=d.prices||{},mt=d.margin_target;
+  h+='<div class="fc2-cfo-basis">'+(mt?'Margins in green are at or above <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span> of the price ('+fc2BoEsc(mt.source==='set'?'your plate margin target':'100 minus the food cost target')+'; set it in Account → Targets). ':'')+'Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from Back Office: <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'')+'</div></div>';
+  host.innerHTML=h;host.hidden=false;
+}
 function fc2LoadPlates(){
   var host=document.getElementById('fc2-pl');if(!host)return;
+  if(!host.getAttribute('data-pl-wired')){
+    host.setAttribute('data-pl-wired','1');
+    host.addEventListener('click',function(ev){
+      var b=ev.target&&ev.target.closest?ev.target.closest('[data-pl-sort]'):null;if(!b)return;
+      var k=b.getAttribute('data-pl-sort');
+      if(_fc2Pl.k===k)_fc2Pl.desc=!_fc2Pl.desc;else{_fc2Pl.k=k;_fc2Pl.desc=true;}
+      var more=host.querySelector('.fc2-pl-more');_fc2Pl.more=!!(more&&more.open);
+      fc2PlRender();
+      var nb=host.querySelector('[data-pl-sort="'+k+'"]');if(nb)nb.focus();
+    });
+  }
   fetch('/api/food-cost/plates',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
       if(!d||!d.ok||!d.available||!(d.plates||[]).length){host.hidden=true;return;}
-      var w=d.window||{},s=d.summary||{},ps=d.plates,h='',i,rows='',rest='';
-      h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from Back Office recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
-      if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>what the recipes cost for the dishes that sold, at today’s prices · the fully priced dishes, <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> sold</span></div>';
-      h+='<div class="fc2-pl-head"><span>Dish</span><span>Price</span><span>Cost</span><span class="x">Cost %</span><span class="x">Margin</span></div><div class="fc2-pl-list">';
-      for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
-      h+=rows+'</div>';
-      if(rest)h+='<details class="fc2-pl-more"><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
-      var pr=d.prices||{};
-      h+='<div class="fc2-cfo-basis">Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from Back Office: <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'')+'</div></div>';
-      host.innerHTML=h;host.hidden=false;
+      _fc2Pl.d=d;fc2PlRender();
     })['catch'](function(){host.hidden=true;});
 }
 function fc2LoadCfo(){
@@ -29706,9 +29773,12 @@ var FC2_ICON={
 function fc2WorkRow(key,line){
   var row=document.getElementById('fc2-work-'+key);if(!row)return;
   var ln=document.getElementById('fc2-work-'+key+'-line');
-  if(line===null){row.hidden=true;return;}
-  if(ln)ln.innerHTML=line;
-  row.hidden=false;
+  if(line===null){row.hidden=true;}
+  else{if(ln)ln.innerHTML=line;row.hidden=false;}
+  /* The section shows only while one of its rows does (owner, 10/16/26: a
+     "This week's work" heading over nothing). */
+  var sec=document.getElementById('fc2-work');
+  if(sec)sec.hidden=!sec.querySelector(':scope>details.fc2-work:not([hidden])');
 }
 function fc2BlockHead(icon,kicker,title,cnt,sub){
   return '<div class="fc2-bh"><span class="ob-tile" aria-hidden="true">'+icon+'</span><div><div class="k">'+esc(kicker)+'</div><h3>'+esc(title)+(cnt?'<span class="cnt hb-num">'+esc(cnt)+'</span>':'')+'</h3>'+(sub?'<div class="sub">'+esc(sub)+'</div>':'')+'</div></div>';
@@ -41366,7 +41436,7 @@ window.cavPalette = cavPalette;
   function tgRender() {
     var card = $id('as-tg-card'); if (!card || !_tg) return;
     var t = _tg.targets || {}, ro = !_tg.can_edit, k;
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'plate_margin_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate', 'week_start_day'];
     for (k = 0; k < ids.length; k++) {
       var el = $id('as-tg-' + ids[k]); if (!el) continue;
       var v = t[ids[k]];
@@ -41442,7 +41512,7 @@ window.cavPalette = cavPalette;
     function p(v) { return (v === null || v === undefined || v === '') ? null : '<span class="hb-num">' + e(String(+v)) + '%</span>'; }
     function line(parts) { var o = [], i; for (i = 0; i < parts.length; i++) o.push(e(parts[i][0]) + ' ' + (parts[i][1] || 'not set')); return o.join(' · '); }
     var put = function (id, h) { var el = $id('as-tg-g-' + id + '-sum'); if (el) el.innerHTML = h; };
-    put('cost', line([['Labor', p(t.labor_target_pct)], ['Food', p(t.food_cost_target)], ['Waste', p(t.waste_target_pct)]]));
+    put('cost', line([['Labor', p(t.labor_target_pct)], ['Food', p(t.food_cost_target)], ['Waste', p(t.waste_target_pct)], ['Plate margin', p(t.plate_margin_target_pct)]]));
     put('bar', line([['Overall', p(t.bar_cost_target)], ['Beer', p(t.beer_cost_target)], ['Liquor', p(t.liquor_cost_target)], ['Wine', p(t.wine_cost_target)]]));
     var wk = +t.weekly_revenue_target > 0 ? '<span class="hb-num">$' + Math.round(+t.weekly_revenue_target).toLocaleString('en-US') + '</span> a week' : null;
     put('sales', line([['Revenue', wk], ['Comps & voids', p(t.comp_void_target_pct)]]));
@@ -41463,7 +41533,7 @@ window.cavPalette = cavPalette;
   function tgRate(v) { var n = +v; return '$' + (n % 1 ? n.toFixed(2) : String(n)); }
   function tgNotes(t) {
     var notes = t.set_notes || {}, goals = {labor_target_pct: (t.labor || {}).goal, food_cost_target: (t.food || {}).goal};
-    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
+    var ids = ['labor_target_pct', 'food_cost_target', 'waste_target_pct', 'bar_cost_target', 'beer_cost_target', 'liquor_cost_target', 'wine_cost_target', 'comp_void_target_pct', 'plate_margin_target_pct', 'monthly_revenue_target', 'weekly_revenue_target', 'hourly_rate'], i;
     for (i = 0; i < ids.length; i++) {
       var inp = $id('as-tg-' + ids[i]), row = inp && inp.closest ? inp.closest('.ac-row') : null, l = row ? row.querySelector('.l') : null;
       if (!l) continue;
@@ -41553,7 +41623,7 @@ window.cavPalette = cavPalette;
     if (!f && role === null) return;
     var rev = f === 'monthly_revenue_target' || f === 'weekly_revenue_target';
     // A blank clears the waste and alcohol targets back to "not set".
-    var clearable = {waste_target_pct: 1, bar_cost_target: 1, beer_cost_target: 1, liquor_cost_target: 1, wine_cost_target: 1, comp_void_target_pct: 1};
+    var clearable = {waste_target_pct: 1, bar_cost_target: 1, beer_cost_target: 1, liquor_cost_target: 1, wine_cost_target: 1, comp_void_target_pct: 1, plate_margin_target_pct: 1};
     if (f) body[f] = t.value === '' ? (clearable[f] ? null : (rev ? 0 : '')) : +t.value;
     else {
       // Only this role changes: a role whose box isn't on screen (its

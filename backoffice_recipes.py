@@ -358,6 +358,22 @@ def _pos_sales(restaurant_id, names, start, end, db_path=None) -> dict:
     return {r["item_name"]: (float(r["units"] or 0), float(r["sales"] or 0)) for r in rows}
 
 
+def margin_target(restaurant) -> dict:
+    """The margin % at or above which a dish's margin reads green on Plate
+    costs (owner, 10/16/26): the owner's plate margin target; else 100 minus
+    the food cost target the page's dishes are already judged against
+    (cogs.dish_reference - the owner's, or Cavnar AI's starting 30%). The
+    common 28-35% food cost range is a 65-72% margin; nothing here calls it
+    an industry figure. {pct, source: set | food_cost_target, label}."""
+    own = getattr(restaurant, "plate_margin_target_pct", None) if restaurant is not None else None
+    if own is not None:
+        return {"pct": float(own), "source": "set", "label": f"your plate margin target, {float(own):g}%"}
+    import cogs
+    ref = cogs.dish_reference(restaurant) or {"pct": 30.0, "basis": "Cavnar AI's starting food cost target, 30%"}
+    pct = round(100.0 - float(ref["pct"]), 1)
+    return {"pct": pct, "source": "food_cost_target", "label": f"{pct:g}% — 100 minus {ref['basis']}"}
+
+
 def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dict:
     """{available, why_not?, loaded_at, window, plates: [{name, group,
     cost, complete, missing, lines, pos_names, units, sales, price,
@@ -389,6 +405,7 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dic
              "complete": complete, "missing": res["missing"], "lines": res["lines"], "pos_names": names,
              "units": round(units), "sales": round(sales, 2), "price": round(price, 2) if price else None,
              "cost_pct": round(100 * res["cost"] / price, 1) if (price and complete) else None,
+             "margin_pct": round(100 - 100 * res["cost"] / price, 1) if (price and complete) else None,
              "margin": round(price - res["cost"], 2) if (price and complete) else None}
         if p["cost_pct"] is not None and p["cost_pct"] < SUSPECT_PCT:
             p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — Back Office's recipe may be missing "

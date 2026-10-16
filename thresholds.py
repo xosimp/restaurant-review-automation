@@ -490,7 +490,7 @@ TARGET_MODULES = {_TARGET_FIELDS["labor"][0]: "labor", _TARGET_FIELDS["food"][0]
                   **{f: "inventory" for f in BAR_TARGET_KINDS.values()},
                   # The comps & voids target is a % like the bar's (10/15/26); the
                   # comps and voids themselves stay the owner's (access.LOSS_VIEW).
-                  "comp_void_target_pct": "inventory"}
+                  "comp_void_target_pct": "inventory", "plate_margin_target_pct": "inventory"}
 
 
 def bar_target_value(raw):

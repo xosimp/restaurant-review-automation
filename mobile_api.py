@@ -3039,6 +3039,8 @@ def mobile_food_cost_plates(current_user):
     rid = current_user["restaurant_id"]
     try:
         out = _br.plates(rid, today=_bar_count_today(rid))
+        # The margin that reads green, the owner's or 100 minus the food cost target.
+        out["margin_target"] = _br.margin_target(get_restaurant(rid))
     except Exception as e:
         _bar_capture(e, "food_plates", rid)
         return jsonify(ok=False, error="Your plate costs couldn't be read just now. Cavnar AI has been told; "

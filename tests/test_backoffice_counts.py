@@ -134,9 +134,15 @@ def test_the_read_states_measured_figures_and_never_example_data(db):
     assert (out["week_start"], out["week_end"]) == (s.isoformat(), e.isoformat())
     f = out["facts"]
     assert f["bought"] == 2000.0 and f["food_sales"] == 1400.0 and f["pct"] == round(100 * 2000 / 1400, 1)
-    assert "$2,000 of food bought against $1,400 of food sales" in out["text"]
-    assert "Back Office's recipes" in out["text"] and "example" not in out["text"].lower()
-    assert "Weekly counts in Back Office" in out["text"], "no counts on file yet"
+    assert out["lead"].startswith(f"{f['pct']}% bought vs sold"), "a headline, then points - never one paragraph"
+    labels = [p["label"] for p in out["points"]]
+    assert labels[0] == "Bought" and "By recipe" in labels and "Next" in labels, "no counts on file yet"
+    assert out["points"][0]["text"] == "$2,000 of food against $1,400 of food sales"
+    assert out["text"].split("\n")[1] == "• Bought: $2,000 of food against $1,400 of food sales."
+    assert "example" not in out["text"].lower()
+    html = brd.food_read_html(dict(out, points=out["points"] + [{"label": "<b>", "text": "<i>"}]))
+    assert '<p class="ai-lead">' in html and html.count('<div class="r">') == len(labels) + 1
+    assert "&lt;b&gt;" in html and "<i>" not in html, "every value escaped"
     assert brd.food_read(_rid(db), restaurant=_R(2), today=today, db_path=db) is None, "no Back Office food"
 
 
@@ -173,3 +179,34 @@ def test_a_kitchen_logging_deliveries_here_keeps_its_own_path(db):
     import cogs
     rid = _rid(db)
     assert cogs._backoffice_components(rid, TODAY, 28, db_path=db) is None, "no Back Office invoices"
+
+
+# ── Plate costs' margin line (backoffice_recipes.margin_target) ───────────
+
+def test_the_margin_line_is_the_owners_target_else_100_minus_the_food_cost_target(db):
+    import models
+    rid = _rid(db)
+    r = models.get_restaurant(rid, db_path=db)
+    t = br.margin_target(r)
+    assert t["source"] == "food_cost_target" and t["pct"] == round(100 - float(__import__("cogs").dish_reference(r)["pct"]), 1)
+    models.update_restaurant(rid, {"plate_margin_target_pct": 72.5}, db_path=db)
+    r = models.get_restaurant(rid, db_path=db)
+    assert r.plate_margin_target_pct == 72.5, "whitelisted, hydrated"
+    assert br.margin_target(r) == {"pct": 72.5, "source": "set", "label": "your plate margin target, 72.5%"}
+    models.update_restaurant(rid, {"plate_margin_target_pct": None}, db_path=db)
+
+
+def test_plates_carry_each_dishes_margin_percent(db):
+    rid = _kitchen(db)
+    sammy = [p for p in br.plates(rid, today=TODAY, db_path=db)["plates"] if p["name"] == "MELTY BRISKET SAMMY"][0]
+    assert sammy["margin_pct"] == round(100 - 100 * (4.455 + 0.125 + 0.5) / 18.0, 1)
+
+
+def test_the_plate_card_sorts_and_colours_margins_against_the_target():
+    import os
+    html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates/dashboard.html")).read()
+    js = html[html.index("var _fc2Pl="):html.index("function fc2LoadCfo")]
+    for k in ("name", "price", "cost", "cost_pct", "margin"):
+        assert "['" + k + "'," in js, k
+    assert "data-pl-sort" in js and "aria-sort" in js and "p.margin_pct>=mt.pct" in html
+    assert 'data-tg="plate_margin_target_pct"' in html, "the owner sets it in Account -> Targets"

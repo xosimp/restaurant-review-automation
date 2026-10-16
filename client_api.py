@@ -5100,12 +5100,16 @@ def inv_insight_api(current_user):
         # is_live travels with the insight so the UI can say whose numbers
         # these are instead of presenting example data as the owner's own.
         import response_validation as _rv_food
+        _bo_read = food_read_backoffice(rid, restaurant) if not is_live else None
+        if _bo_read:
+            from backoffice_read import food_read_html
+            return jsonify(insight=food_read_html(_bo_read), is_live=False, source="back_office", recs=[],
+                           validation=None)
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
                        # Read from a back-office system's real figures, not the
                        # sample pantry: the page shows no "example data" caveat.
-                       source=("back_office" if (not is_live and food_read_backoffice(rid, restaurant)) else
-                               ("live" if is_live else "sample")),
+                       source="live" if is_live else "sample",
                        recs=flat_recs(recs),
                        # The Response Validation verdict the read carries
                        # (workstream A); None until the text is a Validated str.

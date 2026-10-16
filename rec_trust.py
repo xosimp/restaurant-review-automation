@@ -337,7 +337,8 @@ _TARGET_SOURCES = {"labor_target_pct": ("labor", "your labor target"),
                    "bar_cost_target": (BAR_TARGET_SOURCE, "your alcohol cost target"),
                    "beer_cost_target": (BAR_TARGET_SOURCE, "your beer cost target"),
                    "liquor_cost_target": (BAR_TARGET_SOURCE, "your liquor cost target"),
-                   "wine_cost_target": (BAR_TARGET_SOURCE, "your wine cost target")}
+                   "wine_cost_target": (BAR_TARGET_SOURCE, "your wine cost target"),
+                   "plate_margin_target_pct": ("inventory", "your plate margin target")}
 
 
 def owner_changes(restaurant_id, db_path=None, since_days=CHANGES_LOOKBACK_DAYS) -> list:

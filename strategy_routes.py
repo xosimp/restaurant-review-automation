@@ -7567,10 +7567,12 @@ _TARGET_BOUNDS = {"labor_target_pct": (5.0, 80.0), "food_cost_target": (5.0, 80.
                   "bar_cost_target": (5.0, 60.0), "beer_cost_target": (5.0, 60.0),
                   "liquor_cost_target": (5.0, 60.0), "wine_cost_target": (5.0, 60.0),
                   # Comps and voids, % of gross item sales (the most accepted).
-                  "comp_void_target_pct": (0.1, 25.0)}
+                  "comp_void_target_pct": (0.1, 25.0),
+                  # A dish's gross margin % that reads green on Plate costs.
+                  "plate_margin_target_pct": (30.0, 95.0)}
 # Targets a blank clears back to "not set" (the default or industry range applies).
 _TARGET_CLEARABLE = ("waste_target_pct", "bar_cost_target", "beer_cost_target", "liquor_cost_target",
-                     "wine_cost_target", "comp_void_target_pct")
+                     "wine_cost_target", "comp_void_target_pct", "plate_margin_target_pct")
 # Money targets; every other bounded target is a percent.
 _TARGET_DOLLARS = ("monthly_revenue_target", "weekly_revenue_target", "hourly_rate")
 
@@ -7679,6 +7681,8 @@ def _targets_payload(rid):
             "liquor_cost_target": r.liquor_cost_target, "wine_cost_target": r.wine_cost_target,
             # Comps and voids as % of gross item sales (None = not set).
             "comp_void_target_pct": getattr(r, "comp_void_target_pct", None),
+            # Plate costs' margin line (None = 100 minus the food cost target).
+            "plate_margin_target_pct": getattr(r, "plate_margin_target_pct", None),
             # The same target by the week (models.weekly_revenue_target):
             # owners who plan by the week set this one; the monthly follows.
             "weekly_revenue_target": weekly_revenue_target(r),
