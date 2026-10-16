@@ -45991,9 +45991,9 @@ function sfw2RuleCheck(chk) {
    One raised surface per thing that is one thing; rows inside a surface sit
    on spacing, not on more cards. */
 #bar{--br-hair:color-mix(in srgb,var(--ink) 8%,transparent);--br-hair2:color-mix(in srgb,var(--ink) 5%,transparent);--br-plate:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,transparent),color-mix(in srgb,var(--surface) 82%,var(--bg-base)));--br-lit:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--c,var(--ember)) 16%,transparent),transparent 60%)}
-#br-tabsa{height:0}
-.br-tabsw{position:sticky;top:0;z-index:6;margin:44px -8px 0;padding:12px 8px 14px;background:linear-gradient(var(--bg-base) 72%,color-mix(in srgb,var(--bg-base) 0%,transparent))}
-.br-tabs{position:relative;display:flex;gap:2px;padding:5px;border-radius:16px;background:var(--sf-recess);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 4%,transparent),inset 0 0 0 1px var(--br-hair2);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#br-tabsa{height:0;margin-top:44px}
+.br-tabsw{position:sticky;top:0;z-index:6;display:flex;justify-content:center;margin:0 -8px 26px;padding:14px 8px 16px;background:linear-gradient(var(--bg-base) 72%,color-mix(in srgb,var(--bg-base) 0%,transparent))}
+.br-tabs{position:relative;display:inline-flex;max-width:100%;gap:2px;padding:5px;border-radius:16px;background:var(--sf-recess);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 4%,transparent),inset 0 0 0 1px var(--br-hair2);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .br-tabs::-webkit-scrollbar{display:none}
 .br-tink{position:absolute;left:0;top:5px;bottom:5px;width:0;border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,var(--ink) 4%),var(--surface));box-shadow:0 1px 0 color-mix(in srgb,var(--ink) 9%,transparent) inset,0 6px 18px -8px rgba(0,0,0,.55),0 0 0 1px var(--br-hair);transition:transform .42s var(--br-ease),width .42s var(--br-ease);pointer-events:none}
 .br-tink::after{content:"";position:absolute;left:22%;right:22%;bottom:-1px;height:2px;border-radius:2px;background:var(--ember);box-shadow:0 0 12px color-mix(in srgb,var(--ember) 60%,transparent)}
@@ -46296,7 +46296,8 @@ function sfw2RuleCheck(chk) {
   .br-mrow .r{grid-column:span 2}
 }
 @media (max-width:760px){
-  .br-tabsw{margin-top:32px}
+  .br-tabsw{margin-bottom:20px;padding-top:10px}
+  #br-tabsa{margin-top:32px}
   #bar .cbtn.br-tab{padding:0 14px;font-size:14.5px}
   .br-feat,.br-insl,.br-rcps,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
   .br-sigs,.br-sigs.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
@@ -47348,7 +47349,7 @@ function sfw2RuleCheck(chk) {
       var k = TABS[i].k, on = ST.tab === k;
       h += '<button type="button" class="cbtn br-tab" role="tab" id="br-t-' + k + '" data-br-tab="' + k + '" aria-controls="br-p-' + k + '" aria-selected="' + (on ? 'true' : 'false') + '" tabindex="' + (on ? '0' : '-1') + '"><span class="tx">' + TABS[i].t + '</span>' + tabBadge(d, k) + '</button>';
     }
-    return '<div id="br-tabsa"></div><div class="br-tabsw" id="br-tabsw"><div class="br-tabs" role="tablist" aria-label="Bar views"><span class="br-tink" aria-hidden="true"></span>' + h + '</div></div>';
+    return '<div class="br-tabsw" id="br-tabsw"><div class="br-tabs" role="tablist" aria-label="Bar views"><span class="br-tink" aria-hidden="true"></span>' + h + '</div></div>';
   }
   function panel(k, body) {
     return '<div class="br-panel" role="tabpanel" id="br-p-' + k + '" aria-labelledby="br-t-' + k + '" data-br-panel="' + k + '"' + (ST.tab === k ? '' : ' hidden') + '>'
@@ -47385,9 +47386,9 @@ function sfw2RuleCheck(chk) {
     inkMove();
     /* A switch made below the fold starts the new view at its top, under
        the stuck tabs — never halfway down a view you haven't read. */
-    var a = $id('br-tabsa'), sc = $id('br-scroll');
-    if (changed && !quiet && a && sc && a.getBoundingClientRect().top < sc.getBoundingClientRect().top) {
-      sc.scrollTop += a.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+    var a = $id('br-tabsa'), sc = $id('br-scroll'), tw = $id('br-tabsw'), th = tw ? tw.offsetHeight : 0;
+    if (changed && !quiet && a && sc && a.getBoundingClientRect().top < sc.getBoundingClientRect().top + th) {
+      sc.scrollTop += a.getBoundingClientRect().top - sc.getBoundingClientRect().top - th;
     }
     if (focus) { var bt = $id('br-t-' + k); if (bt) bt.focus(); }
   }
@@ -47769,13 +47770,14 @@ function sfw2RuleCheck(chk) {
       return '<div class="dn-k">Bar</div><div class="br-empty">The bar’s numbers couldn’t be read just now. Try again in a minute.</div>';
     }
     if (!d.available) return '<div class="dn-k">Bar</div><h1 class="dn-read" style="font-size:32px">Your bar page is waiting on invoices.</h1><div class="br-empty">' + esc2(d.why_not || '') + '</div>' + alerts(d, {});
-    var pc = d.pour_cost || {}, h = '';
+    // The five views' switcher sits above the hero, centred (owner,
+    // 10/15/26); the figures stay on every view, the panels follow them.
+    initTab();
+    var pc = d.pour_cost || {}, h = tabsHtml(d);
     if (pc.available) h += hero(d, pc) + alerts(d, pc) + cats(pc) + mixersHtml(d);
     else h += '<div class="dn-k">Bar · invoices ' + hn((d.invoices || {}).from_mdy) + '–' + hn((d.invoices || {}).to_mdy) + '</div><h1 class="dn-read" style="font-size:32px">Prices first; bought vs sold once sales are on file.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>' + alerts(d, pc);
-    // The figures stay on top; everything else is one of five views
-    // (owner, 10/15/26 redesign).
-    initTab();
-    h += tabsHtml(d)
+    // Everything below the figures is one of five views (owner, 10/15/26).
+    h += '<div id="br-tabsa"></div>'
       + panel('overview', overview(d, pc)) + panel('cost', costPanel(d)) + panel('buying', buyPanel(d))
       + panel('match', matchPanel(d)) + panel('stock', stockPanel(d))
       + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';

@@ -907,8 +907,9 @@ def test_keg_yield_shows_three_and_folds_the_rest_and_the_page_flows(full):
     assert len(re.findall(r"<b>Keg \d", shown)) == 3 and len(re.findall(r"<b>Keg \d", folded)) == 2
     assert "2 more kegs" in _text(folded)
     assert "ssumes" not in _text(html)
-    # The figures, then the five views in their order (10/15/26 redesign).
-    marks = ('class="br-card br-hero', 'id="br-tabsw"', 'What deserves a look', 'id="br-var"', 'id="br-keg"',
+    # The view switcher above the figures, then the five views in their
+    # order (10/15/26 redesign; the switcher moved above the hero 10/15/26).
+    marks = ('id="br-tabsw"', 'class="br-card br-hero', 'id="br-tabsa"', 'What deserves a look', 'id="br-var"', 'id="br-keg"',
              'id="br-prices"', 'id="br-unm"', 'id="br-mapsec"', 'id="br-counts"', 'id="br-waste"')
     for m in ('class="br-card br-hero', 'id="br-tabsw"', 'id="br-keg"', 'id="br-prices"', 'id="br-mapsec"', 'id="br-counts"', 'id="br-waste"'):
         assert m in html, m
