@@ -10762,10 +10762,30 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-callout .dot{width:6px;height:6px;border-radius:50%;background:var(--hb-bad);flex-shrink:0;margin-top:4px;box-shadow:0 0 6px var(--hb-bad)}
 .lb2-hoverdot{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px rgba(0,0,0,.1),0 2px 6px rgba(0,0,0,.25);pointer-events:none;z-index:3;transition:left .07s linear,top .07s linear}
 .lb2-hoverdot[hidden]{display:none}
+/* Hourly only beside the all-in line (Erik, 10/16/26): a dashed warm-white
+   line over the ember one, its own hover dot, and a legend naming both. */
+.hb-cl>.lb2-hourly{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;color:var(--ink2)}
+.lb2-hoverdot.h{background:var(--ink2)}
+.lb2-leg{display:flex;gap:16px;justify-content:flex-end;margin:14px 0 -10px;font-size:12.5px;color:var(--ink3)}
+.lb2-leg[hidden]{display:none}
+.lb2-leg span{display:inline-flex;align-items:center;gap:7px}
+.lb2-leg i{display:inline-block;width:18px;height:0;border-top:2.5px solid var(--ember2)}
+.lb2-leg .h i{border-top:2px dashed var(--ink2)}
+.lb2-tip-two{display:flex;gap:16px}
+.lb2-tip.two{min-width:228px}
+.lb2-tip.two .lb2-tip-row b{white-space:nowrap}
+.lb2-tip-k{font-size:10.5px;font-weight:600;color:var(--ink3);margin:2px 0 3px;white-space:nowrap}
+.lb2-tip-sub{font-size:11px;color:var(--ink3);margin-top:4px}
+.lb2-tip-row b i{font-style:normal;font-weight:500;color:var(--ink3)}
+.lb2-tip-pct.h{color:var(--ink2)}
 .lb2-tip{position:absolute;top:0;transform:translate(-50%,calc(-100% - 14px));background:var(--surface);border:1px solid var(--hb-line);border-radius:10px;padding:9px 12px;min-width:148px;box-shadow:0 12px 28px rgba(0,0,0,.2);pointer-events:none;z-index:4;transition:left .07s linear,top .07s linear}
 .lb2-tip.right{transform:translate(-85%,calc(-100% - 14px))}
 .lb2-tip.below{transform:translate(-50%,14px)}
 .lb2-tip.right.below{transform:translate(-85%,14px)}
+/* Neither above nor below has room for the tip (both figures in it, 10/16/26):
+   it opens beside the point, its top set in px so it stays inside the hero. */
+.lb2-tip.side{transform:translate(18px,0)}
+.lb2-tip.side.right{transform:translate(calc(-100% - 18px),0)}
 .lb2-tip[hidden]{display:none}
 .lb2-tip-d{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
 .lb2-tip-pct{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--hb-good);line-height:1}
@@ -10880,7 +10900,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 .lb2-money .x{font-family:'Space Grotesk',sans-serif;font-size:17.5px;font-weight:600;color:var(--ink);margin-top:2px}
 .lb2-money .x.good{color:var(--hb-good)}.lb2-money .x.bad{color:var(--hb-bad)}.lb2-money .x.warn{color:var(--hb-warn)}
 .lb2-range{display:flex;gap:2px}
-.lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;color:var(--ink3);cursor:pointer}
+.lb2-range button{background:none;border:none;border-radius:999px;padding:5px 11px;font-family:'Apfel Grotezk',sans-serif;font-size:12.5px;font-weight:600;color:var(--ink3);cursor:pointer}
+.lb2-range button .hb-num{font-family:'Space Grotesk',sans-serif}
 .lb2-range button.on{background-color:var(--hb-tint2);color:var(--ember)}
 /* schedule tools */
 .lb2-sched{margin-top:34px}
@@ -12371,8 +12392,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      The week radar is the third view of the same question ("By weekday"),
      not a separate chart further down. #}
   <section class="lb2-hero" aria-label="Labor % by day">
-    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor % by day</div><div class="lb2-hero-when">{% if labor.date_range and labor.date_range.start and labor.date_range.end %}<span class="hb-num">{{ labor.date_range.start|format_date }}</span> – <span class="hb-num">{{ labor.date_range.end|format_date }}</span>{% else %}{{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}{% endif %}</div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend">8 weeks</button><button onclick="switchPerfTab('weekday')" id="perf-tab-weekday">By weekday</button></div></div>
-    <div id="lb2-hero-chart"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
+    <div class="hd"><div><div class="hb-kicker" id="lb2-hero-kicker">Labor % by day</div><div class="lb2-hero-when">{% if labor.date_range and labor.date_range.start and labor.date_range.end %}<span class="hb-num">{{ labor.date_range.start|format_date }}</span> – <span class="hb-num">{{ labor.date_range.end|format_date }}</span>{% else %}{{ 'last ' ~ _days ~ ' days' if _days else 'this period' }}{% endif %}</div><div class="delta" id="lb2-hero-delta">{% if labor.trend_delta is not none and labor.trend_delta != 0 %}<span class="hb-num">{{ '+' if labor.trend_delta > 0 }}{{ labor.trend_delta|round(1) }} pts</span> <span>vs the previous period</span>{% endif %}</div></div><div class="lb2-range" id="lb2-hero-range"><button class="on" onclick="switchPerfTab('daily')" id="perf-tab-dow">Daily</button><button onclick="switchPerfTab('trend')" id="perf-tab-trend"><span class="hb-num">8</span> weeks</button><button onclick="switchPerfTab('weekday')" id="perf-tab-weekday">By weekday</button></div></div>
+    <div class="lb2-leg" id="lb2-hero-leg" hidden aria-label="Lines"><span class="a"><i></i>With salaries</span><span class="h"><i></i>Hourly only</span></div><div id="lb2-hero-chart"><div class="hb-load" style="height:190px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
     <div class="lb2-dow-wrap" id="lb2-hero-dow" hidden>
       <div class="lb2-sg"><div class="k"><span>Which weekday runs heaviest</span><i id="lb2-radar-flag"></i></div><div class="v"><span id="lb2-radar-n" class="hb-num">—</span><small id="lb2-radar-cap">heaviest day</small></div><div id="lb2-radar"><div class="hb-load" style="height:210px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span>labor % per weekday · dashed ring = target</span></div></div>
     </div>
@@ -21555,7 +21576,7 @@ function switchPerfTab(tab){
   if(t)t.classList.toggle('on',!wk&&_perfTab==='trend');if(d)d.classList.toggle('on',!wk&&_perfTab!=='trend');if(w)w.classList.toggle('on',wk);
   var ch=document.getElementById('lb2-hero-chart'),dw=document.getElementById('lb2-hero-dow'),kick=document.getElementById('lb2-hero-kicker');
   if(ch)ch.hidden=wk;if(dw)dw.hidden=!wk;
-  if(wk){if(kick)kick.textContent='Labor % by weekday';renderWeekRadar();return;}
+  if(wk){if(kick)kick.textContent='Labor % by weekday';var lg=document.getElementById('lb2-hero-leg');if(lg)lg.hidden=true;renderWeekRadar();return;}
   if(_perfTab==='trend'&&!_laborTrendLoaded)loadLaborTrend(true);else renderLaborHero();
 }
 
@@ -32263,7 +32284,12 @@ function loadLaborTrend(force){
 }
 function _laborDaily(){
   var bd=window.laborByDay||{},keys=Object.keys(bd).sort(),out=[];
-  for(var i=0;i<keys.length;i++){var d=bd[keys[i]]||{},sv=+d.sales||0,c=+d.labor_cost||0;if(sv>0&&keys[i])out.push({label:keys[i],pct:Math.round(c/sv*1000)/10,sales:sv,labor_cost:c,actual:+d.actual||0});}
+  for(var i=0;i<keys.length;i++){var d=bd[keys[i]]||{},sv=+d.sales||0,c=+d.labor_cost||0;if(sv>0&&keys[i]){
+    // A day carries its hourly labor apart when salaries are in its figure
+    // (labor.analyse_shifts, hourly_labor_cost): both lines draw (Erik, 10/16/26).
+    var hc=(d.hourly_labor_cost!=null&&d.salaried_cost)?+d.hourly_labor_cost:null;
+    out.push({label:keys[i],pct:Math.round(c/sv*1000)/10,sales:sv,labor_cost:c,actual:+d.actual||0,
+      hourly_cost:hc,hourly_pct:hc==null?null:Math.round(hc/sv*1000)/10});}}
   return out;
 }
 var _WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -32321,13 +32347,24 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
     var xPct=(xy[0]/LB2_W*100).toFixed(2),yPct=(xy[1]/LB2_H*100).toFixed(2);
     dot.style.left=xPct+'%';dot.style.top=yPct+'%';dot.style.background=over?'#e3333f':'#e8956a';dot.hidden=false;
     var dateLine=trend?C.esc(p.label):(_laborWeekday(p.label)+' '+C.mdy(p.label));
-    var html='<div class="lb2-tip-d">'+dateLine+'</div><div class="lb2-tip-pct '+(over?'bad':'good')+'">'+pct.toFixed(1)+'%<span>'+(over?(pct-target).toFixed(1)+' over target':'at or under target')+'</span></div>';
+    var hasH=!trend&&p.hourly_pct!=null,dot2=document.getElementById('lb2-chart-hoverdot2');
+    var html='<div class="lb2-tip-d">'+dateLine+'</div>';
+    if(hasH){
+      // Both side by side, each named, so the tip is no taller for the second.
+      html+='<div class="lb2-tip-two"><div><div class="lb2-tip-k">With salaries</div><div class="lb2-tip-pct '+(over?'bad':'good')+'">'+pct.toFixed(1)+'%</div></div>'
+        +'<div><div class="lb2-tip-k">Hourly only</div><div class="lb2-tip-pct h">'+p.hourly_pct.toFixed(1)+'%</div></div></div>'
+        +'<div class="lb2-tip-sub">'+(over?(pct-target).toFixed(1)+' pts over target with salaries':'at or under target with salaries')+'</div>';
+    } else {
+      html+='<div class="lb2-tip-pct '+(over?'bad':'good')+'">'+pct.toFixed(1)+'%<span>'+(over?(pct-target).toFixed(1)+' over target':'at or under target')+'</span></div>';
+    }
     if(p.sales)html+='<div class="lb2-tip-row"><span>Sales</span><b>$'+Math.round(p.sales).toLocaleString()+'</b></div>';
-    if(p.labor_cost)html+='<div class="lb2-tip-row"><span>Labor cost</span><b>$'+Math.round(p.labor_cost).toLocaleString()+'</b></div>';
+    if(p.labor_cost)html+='<div class="lb2-tip-row"><span>Labor cost</span><b>$'+Math.round(p.labor_cost).toLocaleString()+(hasH?' <i>· $'+Math.round(p.hourly_cost).toLocaleString()+' hourly</i>':'')+'</b></div>';
+    if(dot2){if(hasH){var xy2=_lb2xy(i,n,p.hourly_pct,min,rng);dot2.style.left=(xy2[0]/LB2_W*100).toFixed(2)+'%';dot2.style.top=(xy2[1]/LB2_H*100).toFixed(2)+'%';dot2.hidden=false;}else dot2.hidden=true;}
     if(p.actual)html+='<div class="lb2-tip-row"><span>Hours</span><b>'+Math.round(p.actual)+'h</b></div>';
     var tnote=(trend&&window.memTrendNote)?memTrendNote(p,i>0?pts[i-1]:null):'';
     if(tnote)html+='<div class="lb2-tip-row"><span>'+C.esc(tnote)+'</span></div>';
     tip.innerHTML=html;
+    tip.classList.toggle('two',hasH);
     tip.style.left=xPct+'%';
     tip.style.top=yPct+'%';
     tip.classList.toggle('right',xy[0]>LB2_W*0.62);
@@ -32340,9 +32377,15 @@ function _wireLaborHover(container,pts,vals,target,trend,min,rng){
     var hr=hero.getBoundingClientRect(),sr=svg.getBoundingClientRect();
     var ptY=sr.top+xy[1]/LB2_H*sr.height,th=tip.offsetHeight+22;
     var above=ptY-hr.top,below=hr.bottom-ptY;
-    tip.classList.toggle('below',th>above&&below>above);
+    tip.classList.remove('side');
+    if(th>above&&th>below){
+      // Room on neither side: beside the point, kept inside the hero.
+      var cr=container.getBoundingClientRect(),h0=tip.offsetHeight;
+      var topPx=Math.max(hr.top+8,Math.min(hr.bottom-h0-8,ptY-h0/2))-cr.top;
+      tip.classList.add('side');tip.style.top=topPx.toFixed(0)+'px';
+    } else tip.classList.toggle('below',th>above&&below>above);
   }
-  function hide(){tip.hidden=true;dot.hidden=true;}
+  function hide(){tip.hidden=true;dot.hidden=true;var d2=document.getElementById('lb2-chart-hoverdot2');if(d2)d2.hidden=true;}
   if(_lb2HoverBound){svg.removeEventListener('mousemove',_lb2HoverBound.move);svg.removeEventListener('mouseleave',_lb2HoverBound.hide);svg.removeEventListener('touchmove',_lb2HoverBound.touch);}
   var onMove=function(e){move(e.clientX);};
   var onTouch=function(e){if(e.touches&&e.touches[0]){move(e.touches[0].clientX);e.preventDefault();}};
@@ -32367,8 +32410,22 @@ function renderLaborHero(){
     when.innerHTML=(w0&&w0.start&&w1&&w1.end)?'<span class="hb-num">'+C.esc(C.mdy(w0.start))+'</span> – <span class="hb-num">'+C.esc(C.mdy(w1.end))+'</span>':when.getAttribute('data-window');}
   if(pts.length<2){el.innerHTML='<div class="hb-empty" style="height:190px;display:flex;align-items:center">'+(trend?'The weekly trend appears after a couple of periods.':'Daily labor % appears once shifts and sales are in.')+'</div>';return;}
   var vals=pts.map(function(p){return p.pct;});
-  var lo=Math.min(Math.min.apply(null,vals),target)-3,hi=Math.max(Math.max.apply(null,vals),target)+3,rng=(hi-lo)||1;
-  el.innerHTML=C.glowLine(vals,LB2_W,LB2_H,'#e8956a',{pad:LB2_PAD,floor:lo,ceil:hi,target:target})
+  // Hourly only, beside the all-in line, on the same scale: daily, and only
+  // when salaries are in the figure (a viewer who can't see them gets one line).
+  var hv=null;
+  if(!trend){hv=pts.map(function(p){return p.hourly_pct;});for(var q=0;q<hv.length;q++){if(hv[q]==null){hv=null;break;}}}
+  var all=hv?vals.concat(hv):vals;
+  var lo=Math.min(Math.min.apply(null,all),target)-3,hi=Math.max(Math.max.apply(null,all),target)+3,rng=(hi-lo)||1;
+  var hl='';
+  if(hv){var hp=[];for(var q2=0;q2<hv.length;q2++)hp.push(_lb2xy(q2,hv.length,hv[q2],lo,rng));
+    hl='<svg class="lb2-hourly" viewBox="0 0 '+LB2_W+' '+LB2_H+'" preserveAspectRatio="none" aria-hidden="true"><path d="'+C.smooth(hp)+'" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="6 5" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';}
+  // The hourly line sits inside the chart's own box (.hb-cl), over the
+  // glow and under the hover layer, so it stretches exactly as the curve does.
+  var gline=C.glowLine(vals,LB2_W,LB2_H,'#e8956a',{pad:LB2_PAD,floor:lo,ceil:hi,target:target});
+  if(hl)gline=gline.replace(/<\/div>$/,hl+'</div>');
+  var leg=document.getElementById('lb2-hero-leg');if(leg)leg.hidden=!hv;
+  el.innerHTML=gline
+    +'<div class="lb2-hoverdot h" id="lb2-chart-hoverdot2" hidden></div>'
     +_laborCallout(pts,vals,target,trend,lo,rng)
     +'<div class="lb2-tip" id="lb2-chart-tip" hidden></div>'
     +'<div class="lb2-hoverdot" id="lb2-chart-hoverdot" hidden></div>'
