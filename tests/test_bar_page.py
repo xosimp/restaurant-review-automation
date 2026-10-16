@@ -1012,3 +1012,15 @@ def test_non_alcoholic_is_its_own_variety_and_weak_name_matches_are_hidden():
     assert bv.suggest_pour("Corona NA", "beer", bv.pour_candidates(lines[:1])) == {}      # no NA on file: nothing, never the regular
     import bar.margins as bm
     assert bm._brand_words("Titos VDK Handmade 1L") == {"titos", "vdk"} and bm._brand_words("White Claw Mango 6CN") == {"white", "claw"}
+
+
+def test_overviews_figures_wrapper_is_not_the_heros_own_figures_row(full):
+    """Overview's figures sit in .br-top. Wrapping them in .br-figs - the
+    hero's own flex, wrapping figures row - shrink-wrapped the hero to its
+    content and spaced its two figures 44px apart (owner, 10/16/26)."""
+    html = _render(full)
+    top = html.index('<div class="br-top">')
+    assert top < html.index('class="br-card br-hero') < html.index('class="br-cats"')
+    assert html.count('class="br-figs"') == 1, "only the hero's own figures row"
+    src = open(DASHBOARD, encoding="utf-8").read()
+    assert ".br-figs{margin-bottom" not in src

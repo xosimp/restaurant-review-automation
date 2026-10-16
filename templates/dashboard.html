@@ -45992,7 +45992,9 @@ function sfw2RuleCheck(chk) {
    on spacing, not on more cards. */
 #bar{--br-hair:color-mix(in srgb,var(--ink) 8%,transparent);--br-hair2:color-mix(in srgb,var(--ink) 5%,transparent);--br-plate:linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,transparent),color-mix(in srgb,var(--surface) 82%,var(--bg-base)));--br-lit:radial-gradient(120% 90% at 0% 0%,color-mix(in srgb,var(--c,var(--ember)) 16%,transparent),transparent 60%)}
 #br-tabsa{height:0}
-.br-figs{margin-bottom:44px}
+/* Overview's figures (hero, alerts, category cards, mixers). Not .br-figs:
+   that is the hero's own figures row (flex, wrapping). */
+.br-top{margin-bottom:44px}
 .br-tabsw{position:sticky;top:0;z-index:6;margin:0 -8px 18px;padding:14px 8px 16px;background:linear-gradient(var(--bg-base) 72%,color-mix(in srgb,var(--bg-base) 0%,transparent))}
 .br-tabs{position:relative;display:flex;gap:2px;padding:5px;border-radius:16px;background:var(--sf-recess);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 4%,transparent),inset 0 0 0 1px var(--br-hair2);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .br-tabs::-webkit-scrollbar{display:none}
@@ -46297,7 +46299,7 @@ function sfw2RuleCheck(chk) {
 }
 @media (max-width:760px){
   .br-tabsw{margin-bottom:14px;padding-top:10px}
-  .br-figs{margin-bottom:32px}
+  .br-top{margin-bottom:32px}
   #bar .cbtn.br-tab{padding:0 14px;font-size:14.5px}
   .br-feat,.br-insl,.br-rcps,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
   .br-sigs,.br-sigs.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
@@ -47781,7 +47783,7 @@ function sfw2RuleCheck(chk) {
     if (pc.available) f = hero(d, pc) + alerts(d, pc) + cats(pc) + mixersHtml(d);
     else f = '<div class="dn-k">Bar · invoices ' + hn((d.invoices || {}).from_mdy) + '–' + hn((d.invoices || {}).to_mdy) + '</div><h1 class="dn-read" style="font-size:32px">Prices first; bought vs sold once sales are on file.</h1><div class="br-empty">' + esc2(pc.why_not || '') + '</div>' + alerts(d, pc);
     h += '<div id="br-tabsa"></div>'
-      + panel('overview', '<div class="br-figs">' + f + '</div>' + overview(d, pc)) + panel('cost', costPanel(d)) + panel('buying', buyPanel(d))
+      + panel('overview', '<div class="br-top">' + f + '</div>' + overview(d, pc)) + panel('cost', costPanel(d)) + panel('buying', buyPanel(d))
       + panel('match', matchPanel(d)) + panel('stock', stockPanel(d))
       + '<p class="dn-foot">' + esc2(d.basis || '') + '</p>';
     return h;
@@ -48566,6 +48568,10 @@ function sfw2RuleCheck(chk) {
   --cv-drop-up:0 1px 0 rgba(0,0,0,.55),0 4px 8px -2px rgba(0,0,0,.4),0 28px 48px -24px rgba(0,0,0,.85);
   --cv-lip:inset 0 1px 0 rgba(255,246,236,.055),inset 0 -1px 0 rgba(0,0,0,.32);
   --cv-ease:cubic-bezier(.2,.9,.3,1);
+  /* A 64px tile of ±3-level grey noise over each material's own gradients:
+     the page-wide grain (cavnar-grain.js) is not enough for a wash inside a
+     card on Safari - it rang in 20px bands (owner, 10/16/26). */
+  --cv-dither:url("data:image/png;base64,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") 0 0/64px 64px;
 }
 
 /* ── Slate ─────────────────────────────────────────────────────────────── */
@@ -48576,7 +48582,8 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .cp-card,[data-theme="dark"] .kx-card,[data-theme="dark"] #bar .br-card,[data-theme="dark"] .sw .lb2-preview,[data-theme="dark"] .sw-side,[data-theme="dark"] #bar .br-insl{
   border-color:transparent;
   background:
-    radial-gradient(520px circle at var(--cv-x,50%) var(--cv-y,-40%),rgba(var(--cv-key),calc(.055 * var(--cv-spec))),transparent 62%) padding-box,
+    var(--cv-dither) padding-box,
+    radial-gradient(340px circle at var(--cv-x,50%) var(--cv-y,-40%),rgba(var(--cv-key),calc(0.0550 * var(--cv-spec))) 0%,rgba(var(--cv-key),calc(0.0413 * var(--cv-spec))) 12%,rgba(var(--cv-key),calc(0.0292 * var(--cv-spec))) 25%,rgba(var(--cv-key),calc(0.0192 * var(--cv-spec))) 38%,rgba(var(--cv-key),calc(0.0121 * var(--cv-spec))) 50%,rgba(var(--cv-key),calc(0.0066 * var(--cv-spec))) 62%,rgba(var(--cv-key),calc(0.0028 * var(--cv-spec))) 75%,rgba(var(--cv-key),calc(0.0007 * var(--cv-spec))) 88%,rgba(var(--cv-key),calc(0.0000 * var(--cv-spec))) 100%) padding-box,
     linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,0) 46%) padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     var(--cv-rim) border-box;
@@ -48601,8 +48608,9 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .ss-tile.hero,[data-theme="dark"] .kx-hero,[data-theme="dark"] #ss-settings-setup #ss-settings{
   border-color:transparent;
   background:
-    radial-gradient(640px circle at var(--cv-x,50%) var(--cv-y,-50%),rgba(var(--cv-key),calc(.07 * var(--cv-spec))),transparent 60%) padding-box,
-    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.068),rgba(255,228,200,.018) 45%,transparent 70%) padding-box,
+    var(--cv-dither) padding-box,
+    radial-gradient(440px circle at var(--cv-x,50%) var(--cv-y,-50%),rgba(var(--cv-key),calc(0.0700 * var(--cv-spec))) 0%,rgba(var(--cv-key),calc(0.0525 * var(--cv-spec))) 12%,rgba(var(--cv-key),calc(0.0371 * var(--cv-spec))) 25%,rgba(var(--cv-key),calc(0.0245 * var(--cv-spec))) 38%,rgba(var(--cv-key),calc(0.0154 * var(--cv-spec))) 50%,rgba(var(--cv-key),calc(0.0084 * var(--cv-spec))) 62%,rgba(var(--cv-key),calc(0.0035 * var(--cv-spec))) 75%,rgba(var(--cv-key),calc(0.0008 * var(--cv-spec))) 88%,rgba(var(--cv-key),calc(0.0000 * var(--cv-spec))) 100%) padding-box,
+    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.068),rgba(255,228,200,.05) 14%,rgba(255,228,200,.034) 28%,rgba(255,228,200,.02) 42%,rgba(255,228,200,.01) 56%,rgba(255,228,200,.004) 68%,rgba(255,228,200,0) 80%) padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 100%,#fff 4%),color-mix(in srgb,var(--surface) 84%,#000)) padding-box,
     linear-gradient(162deg,rgba(255,240,222,.30),rgba(255,240,222,.08) 14%,rgba(255,255,255,.03) 48%,rgba(255,255,255,.025) 72%,color-mix(in srgb,var(--ember) 30%,transparent)) border-box;
   box-shadow:inset 0 1px 0 rgba(255,248,238,.085),inset 0 -1px 0 rgba(0,0,0,.4),
@@ -48613,7 +48621,8 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] #bar .br-card.br-hero:hover,[data-theme="dark"] .ss-tile.hero:hover,[data-theme="dark"] .kx-hero:hover{--cv-spec:1;transform:none}
 /* Food Cost's waste shell keeps its step-darker ground: the chart well inside it is the object. */
 [data-theme="dark"] .lb2-hero.fc2-wt-shell{background:
-    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.05),transparent 62%) padding-box,
+    var(--cv-dither) padding-box,
+    radial-gradient(120% 75% at 42% -18%,rgba(255,228,200,.05),rgba(255,228,200,.036) 14%,rgba(255,228,200,.024) 28%,rgba(255,228,200,.014) 42%,rgba(255,228,200,.007) 56%,rgba(255,228,200,.002) 68%,rgba(255,228,200,0) 80%) padding-box,
     linear-gradient(180deg,#1b1815,#141210) padding-box,
     linear-gradient(162deg,rgba(255,240,222,.22),rgba(255,240,222,.06) 14%,rgba(255,255,255,.025) 60%,color-mix(in srgb,var(--ember) 24%,transparent)) border-box}
 
@@ -48626,9 +48635,10 @@ function sfw2RuleCheck(chk) {
   border-color:transparent;
   background:
     linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
-    radial-gradient(420px circle at var(--cv-x,0%) var(--cv-y,0%),color-mix(in srgb,var(--ember) calc(9% * var(--cv-spec)),transparent),transparent 60%) padding-box,
+    var(--cv-dither) padding-box,
+    radial-gradient(320px circle at var(--cv-x,0%) var(--cv-y,0%),color-mix(in srgb,var(--ember) calc(9.000% * var(--cv-spec)),transparent) 0%,color-mix(in srgb,var(--ember) calc(6.750% * var(--cv-spec)),transparent) 12%,color-mix(in srgb,var(--ember) calc(4.770% * var(--cv-spec)),transparent) 25%,color-mix(in srgb,var(--ember) calc(3.150% * var(--cv-spec)),transparent) 38%,color-mix(in srgb,var(--ember) calc(1.980% * var(--cv-spec)),transparent) 50%,color-mix(in srgb,var(--ember) calc(1.080% * var(--cv-spec)),transparent) 62%,color-mix(in srgb,var(--ember) calc(0.450% * var(--cv-spec)),transparent) 75%,color-mix(in srgb,var(--ember) calc(0.108% * var(--cv-spec)),transparent) 88%,color-mix(in srgb,var(--ember) calc(0.000% * var(--cv-spec)),transparent) 100%) padding-box,
     linear-gradient(112deg,transparent 34%,rgba(255,244,236,.028) 44%,rgba(255,244,236,.01) 50%,transparent 58%) padding-box,
-    radial-gradient(110% 150% at 0% 0%,color-mix(in srgb,var(--ember) 13%,transparent),color-mix(in srgb,var(--ember) 3.5%,transparent) 36%,transparent 62%) padding-box,
+    radial-gradient(110% 150% at 0% 0%,color-mix(in srgb,var(--ember) 13.00%,transparent) 0%,color-mix(in srgb,var(--ember) 10.14%,transparent) 9%,color-mix(in srgb,var(--ember) 7.54%,transparent) 18%,color-mix(in srgb,var(--ember) 5.33%,transparent) 27%,color-mix(in srgb,var(--ember) 3.51%,transparent) 36%,color-mix(in srgb,var(--ember) 2.08%,transparent) 45%,color-mix(in srgb,var(--ember) 1.04%,transparent) 54%,color-mix(in srgb,var(--ember) 0.39%,transparent) 63%,color-mix(in srgb,var(--ember) 0.00%,transparent) 72%) padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
     linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
   -webkit-backdrop-filter:blur(16px) saturate(135%);backdrop-filter:blur(16px) saturate(135%);
@@ -48643,6 +48653,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .fc2-wt,[data-theme="dark"] .lb2-hero.fc2-wt-shell .fc2-wt,[data-theme="dark"] .dr-gridbox,[data-theme="dark"] .ss-hweek{
   border-color:transparent;
   background:
+    var(--cv-dither) padding-box,
     radial-gradient(rgba(255,240,226,.03) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 62%,#000),color-mix(in srgb,var(--surface) 74%,#000)) padding-box,
     linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,.25) 40%,rgba(255,246,236,.075)) border-box;
@@ -48663,6 +48674,7 @@ function sfw2RuleCheck(chk) {
   --cv-tone:var(--hb-warn,var(--amber));
   border-left:1px solid transparent;
   background:
+    var(--cv-dither) padding-box,
     linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 11%,transparent),color-mix(in srgb,var(--cv-tone) 3%,transparent) 22%,transparent 46%) padding-box,
     linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0) 46%) padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
