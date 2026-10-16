@@ -29546,7 +29546,7 @@ function fc2LoadFoodCostPct(){
       for(var i=0;i<miss.length&&i<3;i++)why.push((miss[i].component||'')+' \u2014 '+(miss[i].why||''));
       host.innerHTML='<div class="v neutral"><span class="hb-num">—</span></div>'
         +'<div class="k">Food cost</div>'
-        +'<div class="d" title="'+wtEsc(why.join('; '))+'">Not enough recorded to work it out yet</div>';
+        +'<div class="d" title="'+wtEsc(why.join('; '))+'">'+wtEsc(d.unmeasured_line||'Not enough recorded to work it out yet')+'</div>';
       host.hidden=false;
     })
     .catch(function(){ host.hidden=true; });

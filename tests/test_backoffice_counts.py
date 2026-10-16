@@ -147,3 +147,29 @@ def test_the_page_steps_aside_for_back_office_recipes_and_prices():
     assert '{% if _boh_recipes %} hidden{% endif %}' in html and '{% if _boh_prices %} hidden{% endif %}' in html
     assert "d.source!=='back_office'" in html, "a Back Office read carries no example-data caveat"
     assert "food_week.start_mdy" in html, "the read names the restaurant's own week"
+
+
+# ── Food cost % for a Back Office kitchen (cogs._backoffice_components) ───
+
+def test_food_cost_runs_count_to_count_on_back_office_invoices_and_food_sales(db):
+    import cogs
+    rid = _kitchen(db)
+    out = cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)
+    assert out["ok"] is False and out["source"] == "back_office"
+    assert out["unmeasured_line"] == "Comes with your second Back Office count"
+    a, b = TODAY - timedelta(days=15), TODAY - timedelta(days=1)
+    bc.save_counts(rid, {"inventory_counts": [_count(a, 1000.0)]}, db_path=db)
+    assert cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)["unmeasured_line"] == \
+        "Comes with your next Back Office count"
+    bc.save_counts(rid, {"inventory_counts": [_count(b, 900.0)]}, db_path=db)
+    out = cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)
+    assert out["ok"] and (out["start"], out["end"]) == ((a + timedelta(days=1)).isoformat(), b.isoformat())
+    assert (out["opening"], out["purchases"], out["closing"]) == (1000.0, 2000.0, 900.0)
+    assert out["net_sales"] == 14 * 200.0, "food sales, never net sales with the bar in it"
+    assert out["pct"] == round(2100.0 / 2800.0 * 100, 1) and out["window_days"] == 14
+
+
+def test_a_kitchen_logging_deliveries_here_keeps_its_own_path(db):
+    import cogs
+    rid = _rid(db)
+    assert cogs._backoffice_components(rid, TODAY, 28, db_path=db) is None, "no Back Office invoices"

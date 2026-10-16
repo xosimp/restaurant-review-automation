@@ -492,6 +492,69 @@ def _engine_industry_food_cost(restaurant):
     return ind
 
 
+def _backoffice_components(restaurant_id, today, days, db_path=None):
+    """Food cost's components for a kitchen on Back Office, or None when it
+    is not one (Back Office food on file and no delivery ever logged here).
+
+    The window runs count to count: closing is the latest submitted count on
+    or before `today`, opening the earlier count nearest `days` before it —
+    never a trailing window whose edges miss the counts by days. Purchases
+    are Back Office's food invoices in between; sales the nightly report's
+    food categories (backoffice_ap._food_sales), not net sales."""
+    from models import get_conn, DB_PATH
+    import backoffice_ap as bo
+    import backoffice_counts as bc
+    from time_utils import mdy
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        logged = conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='receiving' "
+                              "LIMIT 1", (restaurant_id,)).fetchone()
+    except Exception:
+        logged = None
+    finally:
+        conn.close()
+    if logged or not bo.feed_state(restaurant_id, db_path).get("invoices_through"):
+        return None
+    cs = [c for c in bc.counts(restaurant_id, db_path) if c["end"] <= today.isoformat()]
+    base = {"start": today - timedelta(days=days - 1), "end": today, "days": days, "opening": None,
+            "opening_day": None, "closing": None, "closing_day": None, "purchases": None, "n_receipts": 0,
+            "food_sales": None, "missing": [], "unmeasured_line": None,
+            "basis": ("COGS = food on hand at one Back Office count + food bought on Back Office invoices − food on "
+                      "hand at the next count, divided by the POS's food sales for the same days.")}
+    if len(cs) < 2:
+        base["missing"].append({"component": "two inventory counts",
+                                "why": (f"one count submitted in Back Office ({mdy(cs[0]['end'])}); food cost "
+                                        "needs the next one" if cs else "no inventory submitted in Back Office yet")})
+        base["unmeasured_line"] = ("Comes with your next Back Office count" if cs
+                                   else "Comes with your second Back Office count")
+        return base
+    close = cs[-1]
+    target = (date.fromisoformat(close["end"]) - timedelta(days=days)).isoformat()
+    open_ = min(cs[:-1], key=lambda c: abs((date.fromisoformat(c["end"]) - date.fromisoformat(target)).days))
+    start = date.fromisoformat(open_["end"]) + timedelta(days=1)
+    end = date.fromisoformat(close["end"])
+    n_days = (end - start).days + 1
+    food = [e for e in bo.entries(restaurant_id, start=start.isoformat(), end=end.isoformat(), db_path=db_path)
+            if e["category"] == "food"]
+    sales = bo._food_sales(restaurant_id, start.isoformat(), end.isoformat(), db_path)
+    nights = sum(1 for v in sales.values() if v > 0)
+    base.update(start=start, end=end, days=n_days, opening=open_["food"], opening_day=open_["end"],
+                closing=close["food"], closing_day=close["end"],
+                purchases=round(sum(float(e["amount"]) for e in food), 2), n_receipts=len(food),
+                food_sales=round(sum(sales.values()), 2) if sales else None,
+                basis=(f"COGS = food on hand at the {mdy(open_['end'])} Back Office count + food bought on Back "
+                       f"Office invoices − food on hand at the {mdy(close['end'])} count, divided by the POS's "
+                       f"food sales for {mdy(start.isoformat())} to {mdy(end.isoformat())}."))
+    if not food:
+        base["missing"].append({"component": "purchases", "why": "no Back Office food invoices between the counts"})
+        base["purchases"] = None
+    if not sales or nights < 0.8 * n_days:
+        base["missing"].append({"component": "food sales",
+                                "why": f"the nightly report has food sales for {nights} of {n_days} days"})
+        base["food_sales"] = None
+    return base
+
+
 def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, today=None):
     """Actual food cost % for one restaurant over the trailing `days`.
 
@@ -523,62 +586,77 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
     target = _tgt["pct"] if _tgt else None
     owners_target = bool(_tgt and _tgt["alerts_allowed"])
 
-    missing = []
-    # Only the snapshots that can be the opening or closing count are read:
-    # within SNAPSHOT_TOLERANCE_DAYS of the window's edges (MOD-FC-18).
-    weeks, _total = load_waste_history(
-        restaurant_id, None, db_path=db_path,
-        since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
-        until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS), include_unmeasured=True)
+    bo = _backoffice_components(restaurant_id, today, days, db_path)
+    unmeasured_line = None
+    if bo is not None:
+        # A kitchen on Back Office (no deliveries logged here, Back Office
+        # food on file): count to count from its submitted inventories, its
+        # Back Office food invoices between them, over the POS's FOOD sales
+        # (10/16/26) - net sales carried the bar, which a food cost % never does.
+        start, end, days = bo["start"], bo["end"], bo["days"]
+        opening, opening_day = bo["opening"], bo["opening_day"]
+        closing, closing_day = bo["closing"], bo["closing_day"]
+        purchases, n_receipts = bo["purchases"], bo["n_receipts"]
+        net_sales, last_delivery = bo["food_sales"], None
+        missing, basis, unmeasured_line = bo["missing"], bo["basis"], bo["unmeasured_line"]
+        from time_utils import mdy as _mdy
+    else:
+        missing = []
+        # Only the snapshots that can be the opening or closing count are read:
+        # within SNAPSHOT_TOLERANCE_DAYS of the window's edges (MOD-FC-18).
+        weeks, _total = load_waste_history(
+            restaurant_id, None, db_path=db_path,
+            since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
+            until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS), include_unmeasured=True)
 
-    # Owner-facing reasons (they reach Track warnings and the Food Cost
-    # tab): dates M/D/YY (re-audit A34).
-    from time_utils import mdy as _mdy
-    opening, opening_day = inventory_value_near(weeks, start)
-    if opening is None:
-        missing.append({
-            "component": "opening inventory",
-            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(start)}",
-        })
+        # Owner-facing reasons (they reach Track warnings and the Food Cost
+        # tab): dates M/D/YY (re-audit A34).
+        from time_utils import mdy as _mdy
+        opening, opening_day = inventory_value_near(weeks, start)
+        if opening is None:
+            missing.append({
+                "component": "opening inventory",
+                "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(start)}",
+            })
 
-    closing, closing_day = inventory_value_near(weeks, end)
-    if closing is None:
-        missing.append({
-            "component": "closing inventory",
-            "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(end)}",
-        })
+        closing, closing_day = inventory_value_near(weeks, end)
+        if closing is None:
+            missing.append({
+                "component": "closing inventory",
+                "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(end)}",
+            })
 
-    # Two snapshots that are actually the same count can't bracket a period.
-    if opening_day and closing_day and opening_day == closing_day:
-        missing.append({
-            "component": "a second inventory count",
-            "why": "opening and closing resolve to the same count, so nothing brackets the window",
-        })
-        closing = None
+        # Two snapshots that are actually the same count can't bracket a period.
+        if opening_day and closing_day and opening_day == closing_day:
+            missing.append({
+                "component": "a second inventory count",
+                "why": "opening and closing resolve to the same count, so nothing brackets the window",
+            })
+            closing = None
 
-    # COGS rests on the deliveries logged in the window: with none, food
-    # cost % would read opening − closing alone and look excellent exactly
-    # when the owner stopped logging deliveries (DH3-4). Withheld, naming
-    # the last delivery that was logged.
-    purchases, n_receipts = purchases_in_window(restaurant_id, start, end, db_path=db_path)
-    last_delivery = None
-    if n_receipts == 0:
-        try:
-            last_delivery = last_delivery_date(restaurant_id, db_path=db_path)
-        except Exception:
-            last_delivery = None
-        missing.append({
-            "component": "purchases",
-            "why": (f"deliveries not logged since {_mdy(last_delivery)}" if last_delivery
-                    else "no deliveries have been logged"),
-        })
+        # COGS rests on the deliveries logged in the window: with none, food
+        # cost % would read opening − closing alone and look excellent exactly
+        # when the owner stopped logging deliveries (DH3-4). Withheld, naming
+        # the last delivery that was logged.
+        purchases, n_receipts = purchases_in_window(restaurant_id, start, end, db_path=db_path)
+        last_delivery = None
+        if n_receipts == 0:
+            try:
+                last_delivery = last_delivery_date(restaurant_id, db_path=db_path)
+            except Exception:
+                last_delivery = None
+            missing.append({
+                "component": "purchases",
+                "why": (f"deliveries not logged since {_mdy(last_delivery)}" if last_delivery
+                        else "no deliveries have been logged"),
+            })
 
-    net_sales, sales_why = net_sales_in_window(restaurant_id, start, end)
-    if net_sales is None:
-        missing.append({"component": "net sales", "why": sales_why or "unavailable"})
+        net_sales, sales_why = net_sales_in_window(restaurant_id, start, end)
+        if net_sales is None:
+            missing.append({"component": "net sales", "why": sales_why or "unavailable"})
 
-    basis = (f"COGS = opening inventory + purchases − closing inventory, over "
-             f"{_mdy(start)} to {_mdy(end)}, divided by POS net sales for the same days.")
+        basis = (f"COGS = opening inventory + purchases − closing inventory, over "
+                 f"{_mdy(start)} to {_mdy(end)}, divided by POS net sales for the same days.")
 
     payload = {
         "ok": False,
@@ -599,6 +677,10 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "missing": missing,
         "basis": basis,
         "label": None, "tone": None, "variance_pts": None,
+        # What the owner reads in place of the figure, when a source can say
+        # exactly what it waits on ("Comes with your second count…").
+        "unmeasured_line": unmeasured_line,
+        "source": "back_office" if bo is not None else "inventory",
     }
     if missing:
         return payload
