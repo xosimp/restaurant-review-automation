@@ -399,3 +399,14 @@ def test_performance_budget_ask():
     cold = _p95(lambda i=0: validate(answer, Ctx(surface="ask", context_text=corpus + f" run {i}",
                                                  confidence={"pct": 45})), 10)
     assert cold <= 100.0, f"Ask legacy cold p95 {cold:.1f} ms"
+
+
+def test_a_discount_is_dollars_not_a_count_because_its_name_holds_the_letters():
+    """EJ's 10/15/26: sales.discounts $381.45 read as a count ("dis-COUNT-s")
+    and the night's summary was refused for writing "$381.45" as dollars."""
+    import response_validation as rv
+    units = {f.key: f.unit for f in rv.facts_from_dict({"sales": {"discounts": 381.45, "comps": 120.0},
+                                                         "review_count": 12, "accounts": 3})}
+    assert units["sales.discounts"] == "$" and units["sales.comps"] == "$"
+    assert units["review_count"] == "count"
+    assert units["accounts"] != "count"

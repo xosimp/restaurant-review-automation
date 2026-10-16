@@ -563,11 +563,14 @@ _UNIT_FROM_KEY = (
     ("%", re.compile(r"pct|percent|(?:^|[._])(?:rate|share|margin|ratio_pct)(?:$|[._])")),
     ("★", re.compile(r"rating|stars?(?:$|[._])")),
     ("h", re.compile(r"hours|(?:^|[._])(?:hrs|h)(?:$|[._])")),
-    ("count", re.compile(r"count|(?:^|[._])(?:n|num|number|reviews|covers|orders|transactions|shifts|items|"
-                         r"guests|posts|no_shows|visits)(?:$|[._])")),
+    # "count" not inside "discount" or "account": EJ's $381.45 of discounts
+    # (sales.discounts, 10/15/26) read as a count and the night's summary was
+    # refused for writing it as dollars.
+    ("count", re.compile(r"(?<!dis)(?<!ac)count|(?:^|[._])(?:n|num|number|reviews|covers|orders|transactions|"
+                         r"shifts|items|guests|posts|no_shows|visits)(?:$|[._])")),
     ("$", re.compile(r"dollars|cost|sales|(?:^|[._])(?:net|gross)(?:$|[._])|revenue|waste|saving|budget|spend|"
-                     r"premium|recoverable|at_stake|price|amount|usd|ticket|comps|voids|refunds|payroll|value|"
-                     r"monthly|weekly|annual|gap")),
+                     r"premium|recoverable|at_stake|price|amount|usd|ticket|comps|voids|refunds|discount|payroll|"
+                     r"value|monthly|weekly|annual|gap")),
 )
 _PERIOD_FROM_KEY = (
     ("month", re.compile(r"monthly|(?:^|[._])(?:mo|per_month|month)(?:$|[._])")),
