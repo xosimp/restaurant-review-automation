@@ -163,22 +163,40 @@ def _sane(per_base, base, gl):
 def item_price(item, invoices, today=None) -> dict:
     """One inventory item's price per its base unit (the vendor's pack unit,
     else its purchase unit): {base, per_base, source: invoice | back_office,
-    date, vendor, sku, flag?} or {error}."""
+    date, vendor, sku, flag?} or {error}.
+
+    Every way the item is bought is a candidate — vendor rows with an invoice
+    line, newest invoice first, then Back Office's own prices, newest purchase
+    first — and the first one that passes `_sane` prices it. One row set up
+    wrong (EJ's Spanish onions, GFS 591122: a 50 lb sack entered as bought "by
+    the Pound" at $39.26) no longer leaves the item unpriced while the same
+    item's other rows carry a real price; the refusal rides along as a flag."""
     today = today or date.today()
     vendors = item.get("vendors") or []
-    best = None
-    for v in vendors:
-        line = invoices.get(_sku(v.get("sku")))
-        if line and (best is None or str(line["invoice_date"] or "") > str(best[1]["invoice_date"] or "")):
-            best = (v, line)
-    if best:
-        v, line = best
-    else:
-        dated = sorted((v for v in vendors if _ok(_num(v.get("price")))),
-                       key=lambda v: _mdy_us(v.get("last_purchased")) or "", reverse=True)
-        if not dated:
-            return {"error": "no price in Back Office and no invoice line"}
-        v, line = dated[0], None
+    billed = sorted(((v, invoices.get(_sku(v.get("sku")))) for v in vendors
+                     if invoices.get(_sku(v.get("sku")))),
+                    key=lambda c: str(c[1]["invoice_date"] or ""), reverse=True)
+    listed = sorted(((v, None) for v in vendors if _ok(_num(v.get("price")))),
+                    key=lambda c: _mdy_us(c[0].get("last_purchased")) or "", reverse=True)
+    if not billed and not listed:
+        return {"error": "no price in Back Office and no invoice line"}
+    first_err = None
+    for v, line in billed + listed:
+        got = _candidate_price(item, v, line, today)
+        if "error" not in got:
+            if first_err:
+                skipped = first_err
+                note = (f"{skipped.get('vendor') or 'one vendor'} {skipped.get('sku') or ''}".strip()
+                        + f" refused ({skipped['error']}); priced from another way it is bought")
+                got["flag"] = (got["flag"] + "; " + note) if got.get("flag") else note
+            return got
+        first_err = first_err or got
+    return first_err
+
+
+def _candidate_price(item, v, line, today) -> dict:
+    """One vendor row's price per base unit, from its invoice line when there
+    is one, else Back Office's price for it; {error} when it is not sane."""
     pu = v.get("purchase_unit") or "Each"
     per_pack = _num(v.get("per_pack"))
     base = v.get("pack_unit") or pu
@@ -199,7 +217,8 @@ def item_price(item, invoices, today=None) -> dict:
             t = WEIGHT if _dim(lu) == "w" else VOLUME
             per_base = amt * t[base] / t[lu]
         else:
-            return {"error": f"the invoice bills it per {lu}; Back Office sets it up as a {pu}"}
+            return {"error": f"the invoice bills it per {lu}; Back Office sets it up as a {pu}",
+                    "vendor": v.get("vendor"), "sku": v.get("sku")}
         src, when = "invoice", line["invoice_date"]
     else:
         per_base = _num(v.get("price")) / pack
@@ -208,7 +227,7 @@ def item_price(item, invoices, today=None) -> dict:
             flag = "Back Office's price is from over four months ago"
     why = _sane(per_base, base, item.get("gl"))
     if why:
-        return {"error": why, "source": src, "date": when}
+        return {"error": why, "source": src, "date": when, "vendor": v.get("vendor"), "sku": v.get("sku")}
     y = _num(str(v.get("yield") or "100").rstrip("%"))
     if _ok(y) and 0 < y < 100:
         per_base = per_base * 100.0 / y

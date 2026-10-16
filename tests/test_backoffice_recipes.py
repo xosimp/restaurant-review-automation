@@ -96,6 +96,22 @@ def test_a_catch_weight_case_is_a_price_per_pound_and_impossible_prices_are_refu
     assert "four months" in br.item_price(old, {}, date(2026, 10, 15))["flag"]
 
 
+def test_a_row_set_up_wrong_falls_back_to_another_way_the_item_is_bought():
+    """EJ's 10/16/26: GFS 591122 is a sack entered as bought "by the Pound"
+    at $39.26, so it is refused - but the same onions' 30 lb case on the 10/5
+    invoice is a real price, and eleven dishes sat unpriced for want of it."""
+    onions = dict(BOOK["items"][2], vendors=BOOK["items"][2]["vendors"] + [
+        _v(sku="438261", per_pack="30.00", pack_unit="Pound", price="$55.97")])
+    inv = {"591122": {"purchase_unit": "Pound", "qty": 4.0, "unit_amount": 39.26, "invoice_date": "2026-10-15"},
+           "438261": {"purchase_unit": "Case", "qty": 1.0, "unit_amount": 55.97, "invoice_date": "2026-10-05"}}
+    p = br.item_price(onions, inv, TODAY)
+    assert p["sku"] == "438261" and p["source"] == "invoice" and abs(p["per_base"] - 55.97 / 30) < 1e-9
+    assert "591122 refused" in p["flag"] and "case price" in p["flag"], "the refusal is named, not hidden"
+    p = br.item_price(onions, {"591122": inv["591122"]}, TODAY)
+    assert p["sku"] == "438261" and p["source"] == "back_office", "Back Office's own price when no invoice is sane"
+    assert "case price" in br.item_price(BOOK["items"][2], inv, TODAY)["error"], "no sane row: still refused"
+
+
 def test_a_kitchen_unit_converts_by_the_items_own_conversion():
     v = BOOK["items"][1]["vendors"][0]
     assert abs(br._base_per(2.0, "Tbsp", "Pound", v) - 2 / 32) < 1e-9, "1 Pound = 32 Tbsp"
