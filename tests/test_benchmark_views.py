@@ -134,10 +134,10 @@ def test_card_routes_exist_on_web_and_mobile():
 
 def test_web_draws_the_card_on_every_module_and_home():
     dash = _read("templates", "dashboard.html")
-    for m in ("labor", "reviews", "marketing"):
+    for m in ("reviews", "marketing"):
         assert f'data-bm-module="{m}"' in dash, m
-    # Food Cost's was removed on the web (owner, 10/16/26); the phone keeps its own.
-    assert 'data-bm-module="food_cost"' not in dash
+    # Food Cost's and Labor's were removed on the web (owner, 10/16/26); the phone keeps its own.
+    assert 'data-bm-module="food_cost"' not in dash and 'data-bm-module="labor"' not in dash
     assert "window.cavBench.strip(document.getElementById('hb-bench'))" in dash
     assert "window.cavBench.locations(g.location_compare)" in dash
     assert "'/api/benchmarks/card?module='" in dash

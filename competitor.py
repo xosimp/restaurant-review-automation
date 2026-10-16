@@ -909,18 +909,38 @@ _NOT_A_BUSINESS = {
 # checked by an older version is checked again on its next open
 # (current_intel), even when the engine's own version has not moved. 2: the
 # prompt's own greeting ("Hi Erik, here is...") read as an invented
-# business and held every recommendation back (9/24/26).
-INTEL_CHECK = 2
+# business and held every recommendation back (9/24/26). 3: a run that is
+# in the data the model saw ("Bingo Night" in a competitor's reviews) or a
+# sentence's opening verb ("Promote LED") did the same (10/16/26).
+INTEL_CHECK = 3
 
 
-def _invented_competitors(text: str, competitors: list) -> list:
+# A recommendation opens with its verb ("Promote LED wall nights…"): a
+# capitalised verb at the start of a sentence or bullet is sentence case,
+# never the first word of a business name (EJ's, 10/16/26: "Promote LED"
+# held every recommendation back as an invented competitor).
+_LEAD_VERBS = {
+    "add", "advertise", "ask", "boost", "bring", "build", "bundle", "check", "claim", "create", "cut", "double",
+    "drop", "extend", "feature", "fix", "highlight", "host", "introduce", "invite", "keep", "launch", "lean",
+    "list", "lower", "make", "market", "match", "offer", "open", "partner", "plan", "post", "promote", "push",
+    "put", "raise", "respond", "reply", "reward", "run", "schedule", "set", "showcase", "spotlight", "sponsor",
+    "start", "test", "track", "train", "try", "update", "use", "watch",
+}
+
+
+def _invented_competitors(text: str, competitors: list, evidence: str = "") -> list:
     """Capitalised multi-word names in the insight that are not in the list.
 
     Deliberately narrow: only runs of two or more capitalised words, which
     is what a restaurant name looks like and what a sentence opener does
-    not. A single capitalised word is far too noisy to flag.
+    not. A single capitalised word is far too noisy to flag. A run the model
+    was handed (`evidence`: its prompt and the reviews in it) is in the data
+    — "Bingo Night" from Rec Haus's own reviews is an event, not an invented
+    business (EJ's, 10/16/26) — and a sentence's opening verb is dropped
+    before the run is judged (_LEAD_VERBS).
     """
     import re as _re
+    ev = " ".join(str(evidence or "").lower().split())
     known = set()
     for c in competitors or []:
         n = (c.get("name") or "").strip().lower()
@@ -932,6 +952,16 @@ def _invented_competitors(text: str, competitors: list) -> list:
     out = []
     for m in _re.finditer(r"\b([A-Z][\w&\'-]+(?:\s+[A-Z][\w&\'-]+){1,3})\b", text or ""):
         phrase = m.group(1).strip()
+        words = phrase.split()
+        before = (text or "")[:m.start()].rstrip(" *_")
+        if words[0].lower() in _LEAD_VERBS and (not before or before[-1] in ".!?:\n-•]" or
+                                                _re.search(r"(?:^|\n)\s*\d+[.)]$", before)):
+            words = words[1:]
+            if len(words) < 2:
+                continue
+            phrase = " ".join(words)
+        if ev and " ".join(phrase.lower().split()) in ev:
+            continue  # in the data the model was handed
         if phrase.upper() == phrase and phrase.replace(" ", "") .isalpha():
             continue  # an ALL-CAPS section header
         if any(w.upper() in _NOT_A_BUSINESS for w in phrase.split()):
@@ -1359,7 +1389,9 @@ def _checked_intel(checked, ctx, competitors, restaurant_name="", own_price_leve
     # Every name the read may use — the competitors, the restaurant and its
     # owner (the prompt opens the read with "Hi <owner>") — is a known name.
     allowed = [{"name": n} for n in (getattr(ctx, "names_allowed", None) or ()) if n]
-    invented = _invented_competitors(text, list(competitors or []) + [{"name": restaurant_name or ""}] + allowed)
+    evidence = " ".join([getattr(ctx, "context_text", "") or ""] + list(getattr(ctx, "untrusted", None) or []))
+    invented = _invented_competitors(text, list(competitors or []) + [{"name": restaurant_name or ""}] + allowed,
+                                     evidence=evidence)
     if invented:
         notes.append("names a business that is not in your competitor list: " + ", ".join(invented[:3]))
         validation.update({

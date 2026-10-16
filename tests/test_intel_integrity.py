@@ -1194,3 +1194,29 @@ def test_the_cuisine_questions_ask_for_the_concept_not_a_signature_dish(db_path,
     text = " | ".join(sent)
     assert "sports bars" in text and "wood-fired pizza" not in text, sent
     assert "Best sports bars near Geneva" in text
+
+
+# ── An invented competitor, not an event or a verb (10/16/26) ─────────────
+
+_COMPS = [{"name": "Rec Haus"}, {"name": "The Hive Tavern & Eatery"}, {"name": "Flagship on the Fox"}]
+
+
+def test_an_event_from_the_reviews_and_an_opening_verb_are_not_invented_businesses():
+    """EJ's 10/13/26 read held both recommendations back for 'Bingo Night'
+    (Rec Haus's own event, in the reviews the model was handed) and
+    'Promote LED' (the recommendation's verb and an acronym)."""
+    text = ("Recommendations:\n1. Promote LED wall nights for Bears games. [R3]\n"
+            "2. Add a Bingo Night on Tuesdays to match Rec Haus. [R4]")
+    ev = "Rec Haus: we love Bingo Night and the free arcade cards!"
+    assert competitor._invented_competitors(text, _COMPS, evidence=ev) == []
+    assert competitor._invented_competitors(text, _COMPS) == ["Bingo Night"], "only the data clears an event"
+
+
+def test_a_business_in_none_of_the_data_is_still_named():
+    text = "- Copper Kettle Brewhouse is pulling your Thursday crowd.\n- Highlight Copper Kettle Brewhouse in your ads."
+    assert competitor._invented_competitors(text, _COMPS, evidence="reviews about Rec Haus") == [
+        "Copper Kettle Brewhouse"], "a verb is dropped, the name after it is still judged"
+
+
+def test_a_stored_read_is_checked_again_under_the_new_check():
+    assert competitor.INTEL_CHECK == 3
