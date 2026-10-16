@@ -107,3 +107,43 @@ def test_a_kitchen_without_back_office_keeps_the_sample_message(db):
     rid = _rid(db)
     out = waste_trend.build_waste_trend(rid, db_path=db, is_live=False)
     assert "sample pantry" in out["empty"]["reason"]
+
+
+# ── Food Cost's read for a Back Office kitchen (backoffice_read) ──────────
+
+class _R:
+    def __init__(self, dow=None, wsd=0):
+        self.fiscal_week_start_dow, self.week_start_day = dow, wsd
+
+
+def test_the_read_covers_the_last_complete_fiscal_week():
+    import backoffice_read as brd
+    from datetime import date
+    # EJ's week runs Wednesday to Tuesday; on Friday 10/16/26 the last whole one is 10/7 - 10/13.
+    assert brd.fiscal_week(_R(2), date(2026, 10, 16)) == (date(2026, 10, 7), date(2026, 10, 13))
+    assert brd.fiscal_week(_R(2), date(2026, 10, 14)) == (date(2026, 10, 7), date(2026, 10, 13)), "a Wednesday"
+    assert brd.fiscal_week(_R(None, 0), date(2026, 10, 16)) == (date(2026, 10, 5), date(2026, 10, 11))
+
+
+def test_the_read_states_measured_figures_and_never_example_data(db):
+    import backoffice_read as brd
+    rid = _kitchen(db)
+    today = TODAY
+    out = brd.food_read(rid, restaurant=_R(today.weekday()), today=today, db_path=db)
+    s, e = today - timedelta(days=7), today - timedelta(days=1)
+    assert (out["week_start"], out["week_end"]) == (s.isoformat(), e.isoformat())
+    f = out["facts"]
+    assert f["bought"] == 2000.0 and f["food_sales"] == 1400.0 and f["pct"] == round(100 * 2000 / 1400, 1)
+    assert "$2,000 of food bought against $1,400 of food sales" in out["text"]
+    assert "Back Office's recipes" in out["text"] and "example" not in out["text"].lower()
+    assert "Weekly counts in Back Office" in out["text"], "no counts on file yet"
+    assert brd.food_read(_rid(db), restaurant=_R(2), today=today, db_path=db) is None, "no Back Office food"
+
+
+def test_the_page_steps_aside_for_back_office_recipes_and_prices():
+    import os
+    html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates/dashboard.html")).read()
+    assert 'data-bm-module="food_cost"' not in html, "How you compare left Food Cost (10/16/26)"
+    assert '{% if _boh_recipes %} hidden{% endif %}' in html and '{% if _boh_prices %} hidden{% endif %}' in html
+    assert "d.source!=='back_office'" in html, "a Back Office read carries no example-data caveat"
+    assert "food_week.start_mdy" in html, "the read names the restaurant's own week"

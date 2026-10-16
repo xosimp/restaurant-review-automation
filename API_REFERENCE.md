@@ -853,6 +853,7 @@ Until web and iOS read the object, the text keeps the legacy trailing
 `UNVERIFIED: …` line whenever the verdict has a caveat or withholds controls;
 its words are the caveats. The object appears on:
 - **Food read** — `GET /api/inv-insight` (cached and stale paths too) and the mobile food analytics payload.
+- **Food read for a Back Office kitchen** (10/16/26) — with no inventory connected and Back Office food on file, `GET /api/inv-insight` and `/mobile/api/food-cost/analytics` carry `backoffice_read.food_read`'s text (the last complete fiscal week, measured figures only, no model call) instead of the sample notice; `/api/inv-insight` adds `source: back_office | live | sample` (the web shows no example-data caveat for `back_office`) and the mobile payload's `week_start` / `week_end` are that fiscal week.
 - **Labor read** — `GET /api/labor-insight` (cached and stale paths too) and all three mobile labor returns.
 - **Reviews read** and **Marketing read** — their insight payloads (web and mobile). The Reviews read's
   `figures_verified` / `causes_verified` / `names_verified` now derive from the verdict's codes, and its

@@ -14038,6 +14038,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% set _if = source_fresh.inventory if (source_fresh and source_fresh.inventory) else None %}
   {% set _inv_stale = inv.is_live and _if and (_if.state in ('stale', 'unknown') or _if.error) %}
   {% set _bo = food_source if (food_source and food_source.on_file) else None %}
+  {# A kitchen whose recipes and invoices live in a back-office system
+     (Back Office today, other BOH APIs later) reads them from there: the
+     plate costs card is its recipes and margins, and the invoices are its
+     prices - so the page's own recipe builder, menu margins and price
+     typing step aside for it (owner, 10/16/26: "redundant"). A kitchen
+     with no such system keeps them; they are its only way in. #}
+  {% set _boh_recipes = _bo and _bo.recipes_loaded and not inv.is_live %}
+  {% set _boh_prices = _bo and _bo.invoices_through and not inv.is_live %}
   {# Food made and not sold, from the POS (pos_food_waste, 10/16/26): a Back Office kitchen's real waste. #}
   {% set _fw = food_waste if (_bo and not inv.is_live and food_waste and food_waste.available) else None %}
   {% if not inv.is_live and _bo %}{% set _head = 'Read from your Back Office reports' %}{% set _tone = 'neutral' %}
@@ -14151,8 +14159,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="fc2-wt-obs" id="fc2-wt-obs" hidden></div>
     </div>
   </section>
-  <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {{ inv.week_start }} – {{ inv.week_end }}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
-  <section class="hb-card bm-card" data-bm-module="food_cost" hidden aria-label="How you compare" data-nav="inventory/compare"></section>
+  <div class="lb2-ai"><div class="tag">Cavnar AI's read on your food cost · week of {% if _bo and food_week and not inv.is_live %}{{ food_week.start_mdy }} – {{ food_week.end_mdy }}{% else %}{{ inv.week_start }} – {{ inv.week_end }}{% endif %}</div><div class="insight-text insight-loading" id="inv-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Counting the pantry…</span></div></div></div>
 
 
   {# This week's work (density round #8): the count sheet, the suppliers
@@ -14160,8 +14167,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      place. The section inside keeps its id and data-nav, so a deep
      link (inventory/count) opens its row first (cavNavSection opens
      the closest <details>). Each loader fills its row's line. #}
-  <div class="fc2-sec fc2-worksec" id="fc2-work">
-    <div class="hd"><div><div class="hb-kicker">This week’s work</div><h2>Count, order, keep the recipes current</h2></div></div>
+  <div class="fc2-sec fc2-worksec" id="fc2-work"{% if _boh_recipes %} data-boh-recipes="1"{% endif %}>
+    <div class="hd"><div><div class="hb-kicker">This week’s work</div><h2>{% if _boh_recipes %}Count and order{% else %}Count, order, keep the recipes current{% endif %}</h2></div></div>
     <details class="hb-results fc2-work" id="fc2-work-count" hidden>
       <summary><span class="hb-kicker">Count sheet</span><span id="fc2-work-count-line"></span></summary>
     <section id="fc2-count" class="fc2-block" aria-label="Count sheet" data-nav="inventory/count" hidden></section>
@@ -14260,7 +14267,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {% endif %}
   </div>
 
-  <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu">
+  <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu"{% if _boh_recipes %} hidden{% endif %}>
     <div class="hd"><div><div class="hb-kicker">Your dishes</div><h2>Margin and what guests say</h2><div class="sub">One move for each dish, from your recipes, POS sales and reviews.</div></div></div>
     <div id="fc2-score-body"><div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div></div>
     <div id="fc2-reprice-body"></div>
@@ -14273,7 +14280,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
   </div>
 
-  <div class="fc2-sec" id="fc2-invoice" data-nav="inventory/invoices">
+  <div class="fc2-sec" id="fc2-invoice" data-nav="inventory/invoices"{% if _boh_prices %} hidden{% endif %}>
     <div class="hd"><div><div class="hb-kicker">Prices</div><h2>Scan a supplier invoice</h2><div class="sub">Nothing changes until you confirm each line.</div></div>
       <div><input type="file" id="fc2-inv-file" accept="image/jpeg,image/png,image/webp,application/pdf" style="display:none" onchange="fc2InvoiceScan(this)"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="document.getElementById('fc2-inv-file').click()">Upload invoice</button></div></div>
     {# Scanned invoices still waiting on the owner (U2-2): they used to live
@@ -14415,6 +14422,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   function renderOstockDonut(){_fc2Ledger('fc2-ledger-stock',_ostockDonutData,'cost',function(r){return r.stock+' on hand · par '+r.par;},true);}
   function loadMenuMargins(){
     var el = document.getElementById('mm-body');
+    var menu = document.getElementById('fc2-menu');
+    if (!el || (menu && menu.hidden)) return;
     el.innerHTML = cavnarLoading('Working out plate costs…',22,'working');
     fetch('/api/food-cost/menu-profitability').then(apiJson).then(function(d){
       if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
@@ -29210,7 +29219,7 @@ function invRenderInsight(el,d,animate){
   _invInsightFull=html;
   el.classList.remove('insight-loading');
   el.innerHTML='';
-  if(d.is_live===false){
+  if(d.is_live===false&&d.source!=='back_office'){
     el.appendChild(aiCaveat('Example data','This is a sample pantry, not your numbers. Connect your POS or upload a count to see your own.'));
     /* d.insight is the server's format_insight_html (model prose escaped
        there), so it renders as markup here too, not as raw tags. */
@@ -29562,6 +29571,8 @@ function fc2LoadFoodCostPct(){
 // worth of recipes); the POS's own dishes are drafted with one button.
 function fc2LoadRecipeDrafts(msg){
   var el=document.getElementById('fc2-recipes');if(!el)return;
+  /* Recipes from a back-office system: the plate costs card shows them. */
+  var wk=document.getElementById('fc2-work');if(wk&&wk.getAttribute('data-boh-recipes')){fc2WorkRow('recipes',null);return;}
   fetch('/api/food-cost/recipes',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok)return;
     var src=d.source||{},synced=!!src.synced,label=src.label||'your inventory system',rs=d.recipes||[],i,j;
@@ -33843,6 +33854,7 @@ document.addEventListener('click',function(ev){
   function _fcMoney(v,dp){return v==null?'—':'$'+Number(v).toFixed(dp==null?2:dp);}
   function loadFcMenu(){
     var sb=document.getElementById('fc2-score-body');if(!sb)return;
+    var fm=document.getElementById('fc2-menu');if(fm&&fm.hidden)return;
     fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(apiJson).then(function(d){
       if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
       var rows=d.dishes||[];

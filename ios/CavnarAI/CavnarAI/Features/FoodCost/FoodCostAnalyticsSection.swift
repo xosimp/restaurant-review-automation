@@ -205,8 +205,6 @@ struct FoodCostAnalyticsSection: View {
                         }
                         CavnarWebLinkRow(title: "Waste trend", subtitle: "Every week on file, against your target",
                                          path: "inventory/waste-trend", actionLabel: "Open on the web")
-                        CavnarWebLinkRow(title: "How you compare", subtitle: "Food cost against restaurants like yours",
-                                         path: "inventory/compare", actionLabel: "Open on the web")
                     }
                 }
                 .transition(.opacity)

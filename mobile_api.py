@@ -3655,6 +3655,9 @@ def mobile_food_cost_analytics(current_user):
         # the rest of the payload is unchanged.
         insight_error = None
         _recs = []
+        # A Back Office kitchen's read covers its last fiscal week, and the
+        # week it names is that one, not the sample pantry's seven days.
+        _bo_week = (_capi.food_read_backoffice(rid, restaurant) or {}) if not is_live else {}
         try:
             insight = _capi.food_insight_text(rid, restaurant, items, is_live, analysis)
             import data_freshness as _df_mfood
@@ -3710,8 +3713,8 @@ def mobile_food_cost_analytics(current_user):
             annual_recoverable_basis=analysis.get("annual_recoverable_basis"),
             total_stock_value=analysis.get("total_stock_value", 0),
             total_items=analysis.get("total_items", 0),
-            week_start=analysis.get("week_start", ""),
-            week_end=analysis.get("week_end", ""),
+            week_start=_bo_week.get("start_mdy") or analysis.get("week_start", ""),
+            week_end=_bo_week.get("end_mdy") or analysis.get("week_end", ""),
             last_updated=analysis.get("last_updated", ""),
             # The window label used to be hardcoded to "today back six days"
             # regardless of when anything was counted. These two say whether

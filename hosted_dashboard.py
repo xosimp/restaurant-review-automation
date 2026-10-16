@@ -899,8 +899,21 @@ def index(current_user):
             _food_waste = _remakes(restaurant.id)
         except Exception:
             _food_waste = None
+    # The week a Back Office kitchen's read covers: its last complete fiscal
+    # week (backoffice_read.fiscal_week), not the sample pantry's seven days
+    # ending today (owner, 10/16/26: "week of 10/10 – 10/16").
+    _food_week = None
+    if _food_source and _food_source.get("on_file") and not (inv or {}).get("is_live"):
+        try:
+            from backoffice_read import fiscal_week as _fwk
+            from time_utils import mdy as _mdy_fw
+            from models import _restaurant_today as _rt_fw
+            _ws, _we = _fwk(restaurant, _rt_fw(restaurant.id))
+            _food_week = {"start_mdy": _mdy_fw(_ws.isoformat()), "end_mdy": _mdy_fw(_we.isoformat())}
+        except Exception:
+            _food_week = None
     return render_template('dashboard.html',
-        food_source=_food_source, food_waste=_food_waste,
+        food_source=_food_source, food_waste=_food_waste, food_week=_food_week,
         viewer_name=_viewer,
         social_channels=_social_channels,
         show_welcome=show_welcome,

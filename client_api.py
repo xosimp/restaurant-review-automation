@@ -136,6 +136,10 @@ def food_insight_text(rid, restaurant, items, is_live, analysis):
     keeps the read in insight_store keyed on its own prompt, so the same
     figures give the same words until a figure changes."""
     from inventory import get_claude_insights
+    if not is_live:
+        bo_read = food_read_backoffice(rid, restaurant)
+        if bo_read:
+            return bo_read["text"]
     cache_key = "inv-insight:%s:%s" % (rid, _analysis_fingerprint(analysis))
     insight = _cache_get(cache_key)
     if insight is None:
@@ -144,6 +148,29 @@ def food_insight_text(rid, restaurant, items, is_live, analysis):
                                       restaurant_id=rid, items=items, is_live=is_live)
         _cache_set(cache_key, insight)
     return insight
+
+
+def food_read_backoffice(rid, restaurant=None):
+    """The Food Cost read for a kitchen on Back Office with no inventory
+    connected (backoffice_read.food_read: its last complete fiscal week,
+    measured figures only, no model call) — instead of the sample pantry's
+    "example data" notice beside its real Back Office figures (owner,
+    10/16/26). None when Back Office has no food on file. Cached on the
+    figures it reads, like the model read."""
+    try:
+        import backoffice_ap as _bo_r
+        feed = _bo_r.feed_state(rid)
+        if not feed.get("on_file"):
+            return None
+        key = "inv-insight:%s:bo:%s:%s" % (rid, feed.get("invoices_through"), feed.get("last_import"))
+        got = _cache_get(key)
+        if got is None:
+            from backoffice_read import food_read
+            got = food_read(rid, restaurant=restaurant) or {}
+            _cache_set(key, got)
+        return got or None
+    except Exception:
+        return None
 
 
 def _analysis_fingerprint(analysis) -> str:
@@ -5075,6 +5102,10 @@ def inv_insight_api(current_user):
         import response_validation as _rv_food
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
+                       # Read from a back-office system's real figures, not the
+                       # sample pantry: the page shows no "example data" caveat.
+                       source=("back_office" if (not is_live and food_read_backoffice(rid, restaurant)) else
+                               ("live" if is_live else "sample")),
                        recs=flat_recs(recs),
                        # The Response Validation verdict the read carries
                        # (workstream A); None until the text is a Validated str.

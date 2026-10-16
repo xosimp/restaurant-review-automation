@@ -91,15 +91,17 @@ def test_every_web_row_path_lands_on_the_web():
 
 def test_the_sweep_paths_point_at_their_sections():
     html = _html()
-    for nav in ("inventory/waste-trend", "inventory/compare", "inventory/stock", "inventory/prices",
+    for nav in ("inventory/waste-trend", "inventory/stock", "inventory/prices",
                 "intel/history", "labor/score"):
         assert f'data-nav="{nav}"' in html, nav
     # Operational Score opens its panel before the router scrolls to it.
     assert "if (p.rest[0] === 'score')" in html and "toggleTeamPanel()" in html
     assert 'path: "labor/score"' in _swift("Features/Labor/TeamStrengthSection.swift")
     food = _swift("Features/FoodCost/FoodCostAnalyticsSection.swift")
-    for nav in ("inventory/waste-trend", "inventory/compare", "inventory/stock", "inventory/prices"):
+    for nav in ("inventory/waste-trend", "inventory/stock", "inventory/prices"):
         assert f'path: "{nav}"' in food, nav
+    # Food Cost's How you compare was removed on both (owner, 10/16/26).
+    assert 'data-nav="inventory/compare"' not in html and 'path: "inventory/compare"' not in food
     assert 'path: "intel/history"' in _swift("Features/Intel/IntelView.swift")
 
 
