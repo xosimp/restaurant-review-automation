@@ -8966,7 +8966,7 @@ svg:hover .hb-xh{opacity:1}
       if(!E.length)h+='<div class="dr-loss-top"><div class="v hb-num">0</div><div class="s">No punch was edited for this night.</div></div>';
       else{h+='<div class="dr-loss-top"><div class="v hb-num">'+esc(cnt(E.length))+'</div><div class="s">punch'+(E.length===1?'':'es')+' a manager edited</div></div>';
         for(i=0;i<E.length&&i<8;i++){var x=E[i];
-          h+='<div class="dr-edit-r"><div class="n">'+esc(x.employee)+(x.role?' <small>'+esc(x.role)+'</small>':'')+'</div><div class="m">'+(x.clock_in?hn(esc(clock(x.clock_in)))+'–'+hn(esc(x.clock_out?clock(x.clock_out):'open')):'')+(isNum(x.hours)?' · '+hn(x.hours.toFixed(2))+'h':'')
+          h+='<div class="dr-edit-r"><div class="n">'+esc(x.employee)+(x.shared_login?' <small>shared POS login — not one person'+(x.role?' · '+esc(x.role):'')+'</small>':(x.role?' <small>'+esc(x.role)+'</small>':''))+'</div><div class="m">'+(x.clock_in?hn(esc(clock(x.clock_in)))+'–'+hn(esc(x.clock_out?clock(x.clock_out):'open')):'')+(isNum(x.hours)?' · '+hn(x.hours.toFixed(2))+'h':'')
             +' · edited by '+esc(x.edited_by)+(x.edited_at?' at '+hn(esc(clock(x.edited_at))):'')+(x.code?' · RPOWER code '+esc(x.code):'')+'</div></div>';}
         if(E.length>8)h+='<div class="dr-note">'+hn(E.length-8)+' more in the POS.</div>';}
       h+='</section>';}
@@ -13832,6 +13832,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pos:hover{box-shadow:var(--elev-hero);transform:translateY(-1px)}
 .fc2-pos:before{content:'';position:absolute;left:0;top:0;right:0;height:3px;background:linear-gradient(90deg,var(--ember),var(--ember2) 55%,transparent);pointer-events:none}
 .fc2-cov.fc2-pos{flex-direction:column;align-items:flex-start;gap:2px;font-size:14px}
+/* Recipe coverage is a reading, not a lit card (owner, 10/16/26): no ember edge, no hover glow. */
+.fc2-cov.fc2-pos:before{display:none}
+.fc2-cov.fc2-pos:hover{box-shadow:var(--elev-card);transform:none}
 .fc2-cov.fc2-pos .k{font-size:12.5px}
 .fc2-cov.fc2-pos .v{font-size:34px;line-height:1.1;margin-top:2px}
 .fc2-cov.fc2-pos .d{color:var(--ink3);line-height:1.5;margin-top:4px}
@@ -13880,12 +13883,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-cfo-hd .cav-it{margin-left:8px}.fc2-cfo-hd .cbtn.cav-ib{width:22px;height:22px;min-height:22px;min-width:22px;font-size:12px}
 /* Food bought vs sold (owner, 10/16/26): the figure and its two sums, a month table with headings, where the money
    went as two ranked lists, and the suppliers to sort — no pill, no rule over the first month, no small print. */
-.fc2-bo-top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px 40px;flex-wrap:wrap}
-.fc2-bo-fig span{max-width:30ch}
-.fc2-bo-stats{display:flex;gap:36px}
-.fc2-bo-stats>div{display:flex;flex-direction:column;gap:4px}
-.fc2-bo-stats span{font-size:13.5px;color:var(--ink3)}
-.fc2-bo-stats b{font:600 24px/1.1 'Space Grotesk',sans-serif;color:var(--ink)}
+.fc2-bo-fig{align-items:center;gap:8px 20px}
+.fc2-bo-fig .tx{display:flex;flex-direction:column;gap:4px;min-width:0}
+.fc2-bo-fig .tx .l1{font:600 13px/1.2 'Apfel Grotezk',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.fc2-bo-fig .tx .l2{font-size:16px;line-height:1.45;color:var(--ink2)}
+.fc2-bo-fig .tx .l2 span{font-size:inherit;color:var(--ink)}
 .fc2-bo-tbl{width:100%;border-collapse:collapse;font-size:15px;margin-top:22px}
 .fc2-bo-tbl th{padding:0 0 10px;text-align:left;font:600 12.5px/1.2 'Apfel Grotezk',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
 .fc2-bo-tbl th.n{text-align:right}
@@ -14247,7 +14249,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cap"><span>dishes made and not sold, from your POS comps and voids, at plate cost{% if _fw and _fw.uncosted %} · {{ _fw.uncosted|length }} more with no recipe cost{% endif %}</span></div></div>
     <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">—</span><small>sitting over par</small></div>
       <div class="fc2-ledger" id="fc2-ledger-stock"></div>
-      <div class="cap"><span>comes with your first kitchen count</span></div></div>
+    </div>
     {% else %}
     <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
@@ -29267,8 +29269,9 @@ function fc2LoadBo(){
       // The basis behind an "i", not a line of small print (owner, 10/16/26).
       h+='<div class="fc2-cfo-hd"><span class="t">Food bought vs sold</span><span class="m">from Back Office · <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span>'
         +(d.note?'<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="fc2-bo-note" aria-expanded="false" aria-controls="fc2-bo-note" aria-label="How food bought vs sold is read">i</button><span class="cav-itp" id="fc2-bo-note" role="tooltip" hidden>'+fc2BoEsc(d.note)+'</span></span>':'')+'</div><div class="fc2-cfo-bd">';
-      h+='<div class="fc2-bo-top"><div class="fc2-bo-fig"><b class="hb-num">'+(w.pct==null?'—':fc2BoEsc(w.pct)+'%')+'</b><span>of food sales went to food suppliers in the last four weeks</span></div>'
-        +'<div class="fc2-bo-stats"><div><span>Bought from suppliers</span><b class="hb-num">'+fc2Money(w.purchases)+'</b></div><div><span>Food sales</span><b class="hb-num">'+fc2Money(w.sales)+'</b></div></div></div>';
+      // The figure says what it is beside it, once (owner, 10/16/26: the two sums repeated the table's headings).
+      h+='<div class="fc2-bo-fig"><b class="hb-num">'+(w.pct==null?'—':fc2BoEsc(w.pct)+'%')+'</b><div class="tx"><span class="l1">bought vs sold, last four weeks</span>'
+        +'<span class="l2"><span class="hb-num">'+fc2Money(w.purchases)+'</span> paid to food suppliers on <span class="hb-num">'+fc2Money(w.sales)+'</span> of food sales'+(w.pct!=null?' — about <span class="hb-num">$'+Math.round(w.pct)+'</span> of every <span class="hb-num">$100</span>':'')+'</span></div></div>';
       if(ms.length){h+='<table class="fc2-bo-tbl"><thead><tr><th>Month</th><th class="n">Bought from suppliers</th><th class="n">Food sales</th><th class="n">Bought vs sold</th></tr></thead><tbody>';
         for(i=0;i<ms.length;i++){var m=ms[i];h+='<tr><td>'+fc2BoEsc(m.label)+(m.partial?' <span class="pt">so far</span>':'')+'</td><td class="n">'+fc2Money(m.purchases)+'</td><td class="n">'+fc2Money(m.sales)+'</td><td class="n"><b>'+(m.pct==null?'—':fc2BoEsc(m.pct)+'%')+'</b></td></tr>';}
         h+='</tbody></table>';}
@@ -29299,7 +29302,7 @@ document.addEventListener('change',function(ev){
     body:JSON.stringify({vendor:t.getAttribute('data-fc2-bo-sort'),category:t.value})})
     .then(function(r){return r.json();})
     .then(function(r){
-      if(r&&r.ok){toast('Saved — the supplier is sorted');fc2LoadBo();}
+      if(r&&r.ok){toast('Saved — the supplier is sorted','success');fc2LoadBo();}
       else toast((r&&r.error)||'That couldn’t be saved just now.','error');
     })['catch'](function(){toast('That couldn’t be saved just now.','error');});
 });

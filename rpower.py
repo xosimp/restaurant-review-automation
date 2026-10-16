@@ -1371,7 +1371,7 @@ _STATION_WORDS = frozenset((
     "upstairs downstairs main front back floor foh boh kitchen expo line prep "
     "server servers busser bussers barback bartender cashier counter register "
     "station shared house tips tip pool training trainee manager mgr test "
-    "generic staff team service system admin").split())
+    "generic staff team service system admin rpower").split())
 
 
 def _name_words(name) -> list:

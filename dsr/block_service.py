@@ -168,6 +168,12 @@ def _servers(tickets, punches, is_station_name):
     return shown, below, floor
 
 
+def _discount_name(name):
+    """A POS discount button's name without its menu suffix ("Mgr 100% Comp`ITEM")."""
+    n = str(name or "").split("`")[0].strip()
+    return n or None
+
+
 def _loss(lines, names, sales_metrics):
     """{"given": {...}, "voids": {...}} — money given away (comps,
     discounts, refunds) by reason and approver, and voided lines apart."""
@@ -176,8 +182,11 @@ def _loss(lines, names, sales_metrics):
         for r in rows:
             amt = abs(float(r.get("loss_amount") if r.get("loss_amount") is not None else r.get("sales") or 0))
             total += amt
-            reason = r.get("reason") or NO_REASON
             kind = r["kind"]
+            # A discount says what it is by its own name ("50% Staff Disc",
+            # "Industry 20%", "Mgr 100% Comp"): RPOWER sends no reason with
+            # one (owner, 10/16/26: $381 read "No reason given").
+            reason = r.get("reason") or (_discount_name(r.get("item_name")) if kind == "discount" else None) or NO_REASON
             k = (kind, reason)
             g = by_reason.setdefault(k, {"kind": kind, "reason": reason, "lines": 0, "amount": 0.0})
             g["lines"] += 1
@@ -237,7 +246,14 @@ def _edits(punches, names):
     for p in punches:
         if not p.get("edited_by"):
             continue
-        out.append({"employee": p.get("employee_name") or "Unknown", "role": p.get("role"),
+        # A shared POS login ("Night Bar", "Pm Host", "To Am", RPOWER's own)
+        # is no one person (owner, 10/16/26: they read as role names).
+        try:
+            from rpower import is_station_name
+            shared = is_station_name(p.get("employee_name"), [p.get("role")] if p.get("role") else ())
+        except Exception:
+            shared = False
+        out.append({"employee": p.get("employee_name") or "Unknown", "role": p.get("role"), "shared_login": shared,
                     "clock_in": p.get("clock_in"), "clock_out": p.get("clock_out"),
                     "hours": round(_hours(p), 2),
                     "edited_by": names.get(p["edited_by"]) or "Not recorded",
