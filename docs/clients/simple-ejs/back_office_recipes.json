@@ -1,5 +1,5 @@
 {
- "source": "Back Office (Buyers Edge) \u2192 Menu Engineering \u2192 Unit Recipes, and Inventory \u2192 Items ~ Unit; read 10/15/26 from Erik's login, Simple EJs #7101",
+ "source": "Back Office (Buyers Edge) → Menu Engineering → Unit Recipes, and Inventory → Items ~ Unit; read 10/15/26 from Erik's login, Simple EJs #7101",
  "note": "bo_cost is Back Office's own figure and is wrong wherever an item's pack is set up differently from how the supplier bills it (catch-weight brisket, bacon, onions by the sack, milk by the gallon). Cost plates from invoice prices, not from bo_cost. Each vendor's weight_per_unit / volume_per_unit is Back Office's conversion for one of that vendor's pack units (or purchase unit when there is no pack), e.g. butter blend: 1 Pound = 32.4 Tbsp.",
  "recipes": [
   {
@@ -12843,7 +12843,30 @@
   ],
   "MOD- ADD FALAFEL": [
    "Add Falafel"
+  ],
+  "GRUYERE, BRISKET & CHILE FRIES- SINGLE": [
+   "Pers Brisk Fries"
+  ],
+  "GRUYERE, BRISKET & CHILE FRIES- TABLE": [
+   "Tbl Brisk Fries"
+  ],
+  "COTIJA & CHIMICHURRI FRIES- SINGLE": [
+   "Pers Chili Fries"
+  ],
+  "COTIJA & CHIMICHURRI FRIES- TABLE": [
+   "Tbl Chili Fries"
+  ],
+  "BUTTERMILK STACK": [
+   "Stack Attack"
   ]
  },
- "pos_names_note": "Each Back Office menu recipe and the RPOWER item names it rings as (Simple EJ's, matched 10/15/26). Left out where the match is not certain: Add Brisket (2 or 6 oz), Add Bacon ($2.99 / $4.99), Pers/Tbl Brisk and Chili Fries (which of Gruyere, Brisket & Chile / Cotija & Chimichurri), K/ Chicken Sand (fried or grilled), Stack Attack, Hellfire."
+ "pos_names_note": "Each Back Office menu recipe and the RPOWER item names it rings as (Simple EJ's, matched 10/15/26; 10/16/26 the fries and Stack Attack confirmed against simpleejs.com/menu and /brunch by name and price: Pers/Tbl Brisk Fries $8.99/$30.99 = Gruyere Bechamel, Brisket & Pickled Fresno Chiles; Pers/Tbl Chili Fries $7.99/$26.99 = Cotija & Calabrian Chili Chimichurri; Stack Attack $12.99 = the buttermilk pancakes). Left out where the match is not certain: Add Brisket (2 or 6 oz), Add Bacon ($2.99 / $4.99); pos_notes says why a dish has no item of its own.",
+ "pos_notes": {
+  "KIDS FRIED CHICKEN SANDWICH": "RPOWER rings the fried and the grilled one as K/ Chicken Sand, so it can't say which",
+  "KIDS GRILLED CHICKEN SANDWICH": "RPOWER rings the fried and the grilled one as K/ Chicken Sand, so it can't say which",
+  "HELLFIRE MAC & CHEESE": "rings as Mac & Cheese plus an $8 Hellfire upgrade, so its sales sit under Mac & Cheesetopia",
+  "FALAFEL WINGS": "no RPOWER item of its own in the last 60 days",
+  "SMASHBURGER- CLASSIC STYLE SUB BEYOND MEAT": "a Beyond patty is a swap on the burger, with no RPOWER item of its own",
+  "SMASHBURGER- EJ'S STYLE SUB BEYOND MEAT": "a Beyond patty is a swap on the burger, with no RPOWER item of its own"
+ }
 }

@@ -45,3 +45,32 @@ def test_a_date_beside_a_persons_figure_qualifies_it_never_takes_it():
     assert "F2" not in _p("Check Slaone Arado's 47.8hr week (9/23) — highest single overtime premium on file, $65.88.")
     assert "F2" in _p("Check Gideon Kopalchick's week (9/23) — overtime premium $65.88.")
     assert "F2" in _p("9/23 brought in $40.10.")
+
+
+# EJ's labor read, 10/16/26: two false "attached to the wrong day" flags.
+DAYS = [Fact("labor.pct", 56.5, "%", "measured", "period", entity="Wednesday"),
+        Fact("labor.pct", 52.8, "%", "measured", "period", entity="Thursday"),
+        Fact("labor.pct", 52.5, "%", "measured", "period", entity="Monday"),
+        Fact("labor.target", 35.5, "%", "plan"),
+        Fact("labor.avg_rate", 11.2, "", "measured", entity="Tuesday")]
+
+
+def _d(text, prompt=""):
+    return rv.validate(text, Ctx(restaurant_id=1, surface="labor_insight", facts=DAYS, context_text=prompt)).codes
+
+
+def test_a_paired_run_binds_in_order_beside_another_figure_in_the_sentence():
+    """'(56.5% and 52.8% labor) — both well above the 35.5% target': three
+    figures, two days - the run after the days pairs, the target is apart."""
+    assert "F2" not in _d("Review Wednesday and Thursday staffing (56.5% and 52.8% labor) — both well above the 35.5% target.")
+    assert "F2" in _d("Review Wednesday and Thursday staffing (52.8% and 56.5% labor) — both well above the 35.5% target.")
+
+
+def test_a_count_of_reviews_is_never_a_days_figure():
+    """'Tuesdays and Mondays (11 reviews)' matched Tuesday's 11.2 within a
+    count's half-unit and read as attached to Monday. A count of reviews is
+    backed by a figure bound to nothing - the prompt's - or by nothing."""
+    text = "Guests complain about service on Tuesdays and Mondays (11 reviews) — watch Monday's 52.5% labor next."
+    codes = _d(text, prompt="Service complaints: 11 reviews mention slow service on Mondays and Tuesdays.")
+    assert "F2" not in codes and "F1" not in codes
+    assert "F1" in _d(text), "with no such count anywhere, it is not in the data - never 'the wrong day'"

@@ -176,7 +176,12 @@ def test_ejs_recipe_book_is_whole_and_every_pos_match_names_a_real_recipe():
     b = json.load(open(os.path.join(ROOT, "docs/clients/simple-ejs/back_office_recipes.json")))
     br.validate(b)
     names = {r["name"] for r in b["recipes"]}
-    assert set(b["pos_names"]) <= names
+    assert set(b["pos_names"]) <= names and set(b.get("pos_notes") or {}) <= names
+    assert not set(b["pos_names"]) & set(b.get("pos_notes") or {}), "a note is only for a dish with no POS item"
+    # Confirmed against simpleejs.com by name and price (10/16/26).
+    assert b["pos_names"]["GRUYERE, BRISKET & CHILE FRIES- SINGLE"] == ["Pers Brisk Fries"]
+    assert b["pos_names"]["COTIJA & CHIMICHURRI FRIES- SINGLE"] == ["Pers Chili Fries"]
+    assert b["pos_names"]["BUTTERMILK STACK"] == ["Stack Attack"]
     assert sum(1 for r in b["recipes"] if r["group"].startswith("MENU ITEM")) >= 140
     out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts/backoffice_import.py"), "--rid", "1",
                           "--file", os.path.join(ROOT, "docs/clients/simple-ejs/back_office_recipes.json")],

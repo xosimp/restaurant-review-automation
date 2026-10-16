@@ -402,6 +402,9 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dic
         price = sales / units if units > 0 else None
         complete = not res["missing"]
         p = {"name": r["name"], "group": r["group"].split(">")[-1], "cost": round(res["cost"], 2),
+             # Why a dish with no POS item of its own has none (the book's
+             # pos_notes: a POS line two recipes share, an upgrade line).
+             "pos_note": None if names else (bk.get("pos_notes") or {}).get(r["name"]),
              "complete": complete, "missing": res["missing"], "lines": res["lines"], "pos_names": names,
              "units": round(units), "sales": round(sales, 2), "price": round(price, 2) if price else None,
              "cost_pct": round(100 * res["cost"] / price, 1) if (price and complete) else None,

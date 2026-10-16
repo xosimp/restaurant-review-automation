@@ -200,7 +200,7 @@ from itertools import combinations
 import ai_guard as _g
 from confidence_engine import HIGH_AT, MEDIUM_AT
 
-VERSION = "rv2"   # rv2 (9/29/26): a paired list binds its figures in order (F2)
+VERSION = "rv3"   # rv3 (10/16/26): a paired run binds in order beside another figure; a count of reviews is never a day's figure (F2). rv2 (9/29/26): a paired list binds its figures in order (F2)
 
 # ── closed vocabularies ─────────────────────────────────────────────────────
 
@@ -343,6 +343,13 @@ def _entity_kind(e) -> str:
     return "date" if _DATE_ENTITY_RE.match(str(e or "").strip()) else "name"
 
 
+_GUEST_COUNT_KEY_RE = re.compile(r"review|rating|guest|cover|complain|mention|comment", re.I)
+# A count of what guests wrote or did, right after the figure: "11 reviews",
+# "4 service complaints", "38 guests" — never a day's or a person's figure.
+_COUNT_OF_GUESTS_RE = re.compile(
+    r"\s*(?:[a-z-]+\s+){0,2}(?:reviews?|complaints?|mentions?|ratings?|guests?|comments?|covers)\b", re.I)
+
+
 def _paired_entity(t, c, claims, mentions):
     """The name a figure binds to in a paired list, or None. Within one
     sentence, N names mentioned together, then N figures with no name among
@@ -355,8 +362,24 @@ def _paired_entity(t, c, claims, mentions):
     hi = min(ends) if ends else len(t)
     figs = sorted((cc for cc in claims if lo <= cc["start"] < hi), key=lambda cc: cc["start"])
     names = [(p, n) for p, n in mentions if lo <= p < hi]
-    if len(names) < 2 or len(figs) != len(names):
+    if len(names) < 2:
         return None
+    if len(figs) != len(names):
+        # The paired run alone: the figures right after the names, joined
+        # only by "and", "&" or commas. "Wednesday and Thursday staffing
+        # (56.5% and 52.8% labor) — both well above the 35.5% target" pairs
+        # 56.5% with Wednesday although the target is a third figure in the
+        # sentence (EJ's labor read, 10/16/26: 56.5% read as Thursday's).
+        after = [cc for cc in figs if cc["start"] > names[-1][0]]
+        run = after[:1]
+        for cc in after[1:]:
+            if re.fullmatch(r"[\s,]*(?:and|&)?[\s,]*", t[run[-1]["end"]:cc["start"]]):
+                run.append(cc)
+            else:
+                break
+        if len(run) != len(names) or not any(cc["start"] == c["start"] for cc in run):
+            return None
+        figs = run
     if any(p > figs[0]["start"] for p, _n in names):
         return None               # a name among the figures: not a paired list
     idx = next((i for i, cc in enumerate(figs) if cc["start"] == c["start"]), None)
@@ -2902,6 +2925,23 @@ class _Run:
                     self.emit("F1", "withhold", "drop", c["raw"], "not in the facts",
                               f"Some figures here aren't in your data: {c['raw']}.")
                 continue
+            if how == "direct" and ctype == "count" and _COUNT_OF_GUESTS_RE.match(t, c["end"]):
+                # "11 reviews" counts reviews: a day's or a person's figure
+                # that happens to round to it never backs it (EJ's labor
+                # read, 10/16/26: Tuesday's 11.93 did, then read as Monday's).
+                # A figure of that kind does (a competitor's review count,
+                # bound to its name as ever), or one bound to nothing, or
+                # the prompt's own.
+                kin = [f for f in facts if f.entity is None or _GUEST_COUNT_KEY_RE.search(str(f.key or ""))]
+                if not kin and self.hybrid:
+                    kin = self._context_facts(ctype, c["value"], tol)
+                if not kin:
+                    self.emit("F1", "withhold", "drop", c["raw"], "not in the facts",
+                              f"Some figures here aren't in your data: {c['raw']}.")
+                    continue
+                if all(f.entity is None for f in kin):
+                    continue
+                facts = kin
             if how == "direct" and mentions:
                 before = [n for p, n in mentions if p < c["start"]]
                 here = before[-1] if before else mentions[0][1]
