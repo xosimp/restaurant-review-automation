@@ -278,7 +278,7 @@ POLICIES = {p.workflow: p for p in (
     _p("food_cost_diagnosis", "analyst", "food_cost_diagnosis", ladder=("T2",), batch=True,
        caps=Caps(calls=1, usd=0.05, seconds=120), delivery="background"),
     _p("dsr_narrative", "analyst", "dsr_narrative", ladder=("T2", "T3"), batch=True,
-       escalate_on=("schema_fail",), max_escalations=1, reviewer="rules", shadow_rate=0.2,
+       escalate_on=("schema_fail", "validation_refuse"), max_escalations=1, reviewer="rules", shadow_rate=0.2,
        caps=Caps(calls=3, usd=0.25, seconds=300), delivery="background",
        context=_ANALYST_CTX + ("sales_trend", "labor_trend", "alerts", "memory"),
        note="a Haiku rubric scores ~20% in shadow (do the priorities follow from the night)"),

@@ -604,11 +604,18 @@ def test_a_monthly_figure_must_be_a_monthly_fact_never_a_night_multiplied(monkey
     _it("The manager says the patio ran full. The kitchen kept up.", "closeout.callouts"),       # closeout only
 ])
 def test_a_lead_that_fails_verification_refuses_the_whole_narrative(monkeypatch, rest, db_path, lead):
+    """A refused lead is rewritten once, one tier up, told which figure failed
+    (owner, 10/16/26); the fake answers the same twice, so it is held back."""
     r = strong_reply()
     r["executive_summary"] = lead
-    out, _ = _run(monkeypatch, rest, db_path, strong_night(), r)
+    out, client = _run(monkeypatch, rest, db_path, strong_night(), r)
     assert out == {"ok": False, "narrative": None,
                    "reason": "The summary was held back — its opening stated a figure the night's numbers don't back up."}
+    assert len(client.calls) == 2
+    first, second = client.calls
+    assert first["model"] == ai_utils.SONNET and second["model"] == ai_utils.SONNET_55
+    note = second["messages"][0]["content"]
+    assert "AN EARLIER DRAFT OF THIS WAS SET ASIDE" in note and "the executive_summary was refused" in note
     # Nothing from a refused narrative reached the ledger.
     assert rec_ledger.silenced_keys(rest.id, db_path=db_path) == set()
     conn = __import__("models").get_conn(db_path)
@@ -616,6 +623,31 @@ def test_a_lead_that_fails_verification_refuses_the_whole_narrative(monkeypatch,
         assert conn.execute("SELECT COUNT(*) FROM rec_instances").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_a_refused_lead_rewritten_with_traceable_figures_reaches_the_owner(monkeypatch, rest, db_path):
+    """The retry is the point (owner, 10/16/26): the first lead states a
+    figure nothing backs; the rewrite, told which, passes the same check and
+    the night has its summary."""
+    bad = strong_reply()
+    bad["executive_summary"] = _it("Saturday did $24,000 net. Labor ran 24.2%.", "sales.net", "labor.pct")
+    good = strong_reply()
+
+    class _Two(_Client):
+        def create(self, **kw):
+            self.reply = bad if not self.calls else good
+            return _Client.create(self, **kw)
+    client = _Two()
+    monkeypatch.setattr(ai_utils, "get_client", lambda timeout=None: client)
+    facts = strong_night()
+    out = narrative.write(_ctx(rest, db_path, facts["business_date"]), facts)
+    assert out["ok"] and out["narrative"]["executive_summary"]["text"][:120] == good["executive_summary"]["text"][:120]
+    assert len(client.calls) == 2 and "the executive_summary was refused" in client.calls[1]["messages"][0]["content"]
+
+
+def test_the_lead_is_asked_for_few_figures_each_traced():
+    assert "at most four of them" in narrative.SYSTEM_PROMPT
+    assert "A star rating is a figure too" in narrative.SYSTEM_PROMPT
 
 
 # ── the injection is contained ──────────────────────────────────────────────

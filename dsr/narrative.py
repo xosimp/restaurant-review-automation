@@ -2058,7 +2058,7 @@ EVIDENCE RULES. A line that breaks one is deleted before the owner reads it; an 
 10. YESTERDAY'S PRIORITIES are the last report's actions for the night and what happened to each. Never repeat one the owner already answered or that the ledger shows done; when one is still open and still matters, carry it on in your own words. When tonight's facts measure one (its "compare with" keys), you may say how it came out, citing those keys — tonight's figures only, never one from that section. The prediction review says how the last report's predictions about tonight held: when they have been missing, say a forecast with that caution.
 
 WHAT TO WRITE
-- executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in the night's facts drove it, then what to watch. Measured figures only.
+- executive_summary: 2 to 3 sentences. Lead with the result that mattered most and what in the night's facts drove it, then what to watch. Measured figures only, and at most four of them: every one a cited fact's value or derived from cited facts as rule 2 allows, with each fact it comes from in "cites". A star rating is a figure too: write one only when a cited fact or list holds it. When the facts do not settle a figure, leave it out — a shorter summary is always fine; one wrong figure deletes the whole summary.
 - Money given away: comps, discounts and refunds are one figure. Never call comps low, minimal or a win while discounts or refunds that night are larger; name the discounts beside them. Voids are their own line and never "zero" when the service block lists voided lines.
 - Labor for the owner: when labor.salaried_total_pct is under THE NIGHT'S FACTS it is the owner's real labor — the hourly labor plus the night's share of the salaries — and the target judges it. Everywhere but operations_summary, state labor with labor.salaried_total_pct (its gap with labor.salaried_vs_target_pts and labor.target_pct), not labor.pct, and call it labor with salaries.
 - operations_summary: 2 sentences for the floor manager, who never sees the budget, prime cost, food cost, salaries, or comps, voids and refunds. For labor there use labor.pct, never a labor.salaried_* key, and never mention salaries. Operations only: sales volume and traffic, labor, service, reviews, and what to do tomorrow. Cite none of those owner-only figures (no sales.budget*, sales.vs_budget*, prime_cost*, comps, voids, refunds or food.* key) and do not mention them in words. Measured figures only. Write it whenever sales and one more operations block are measured — every report, the manager's included, opens with a summary; leave it out only when the operations figures cannot carry it.
@@ -2602,12 +2602,14 @@ def _write(ctx, facts):
 # ── the night as a workflow run (AI orchestration, owner-approved 10/7/26) ──
 #
 # The narrative is the "dsr_narrative" workflow (ai_workflows): Sonnet 5
-# (T2) writes it; Sonnet 5.5 at medium thinking (T3) writes it again only on
-# a SCHEMA failure the salvage could not repair (an answer that does not
-# parse, a lead in the wrong shape, an injected field or action) — with the
-# shape check's reasons as its notes. A lead whose figures do not trace, a
-# model refusal or a cut-off answer is never escalated: the first is the
-# figure check doing its job, the others are not the shape. One run per
+# (T2) writes it; Sonnet 5.5 at medium thinking (T3) writes it again on a
+# SCHEMA failure the salvage could not repair (an answer that does not parse,
+# a lead in the wrong shape, an injected field or action), and — since
+# 10/16/26 — on a lead whose figures do not trace, with the check's reasons
+# as its notes; the rewrite passes the same figure check or the night is
+# held back as before (one extra call; EJ's had six such nights in 60 days,
+# each refused for one figure). A model refusal or a cut-off answer is never
+# escalated: neither is the shape nor a figure. One run per
 # night under subject "dsr:<date>" in ai_runs, every rung tried and why.
 #
 # Through Message Batches the batch item IS the T2 attempt: it carries the
@@ -2781,8 +2783,15 @@ def _assemble(ctx, facts, clean, state, declined, model, msg=None, shape_dropped
     if lead_why:
         _quality("validation_refused", rid,
                  f"dsr narrative lead refused: {lead_why} — {clean['executive_summary']['text'][:160]}")
+        # The retry is told exactly which figure failed (it escalates once on
+        # validation_refuse: owner, 10/16/26 - six of EJ's openings in 60
+        # days were held back, each for one figure). The same check judges it.
         return (_refused("The summary was held back — its opening stated a figure the night's numbers don't back up."),
-                orch.Verdict.failed("validation_refuse", f"the opening: {lead_why}", label="refuse"))
+                orch.Verdict.failed("validation_refuse",
+                                    f"the executive_summary was refused: {lead_why}. Rewrite it with only figures "
+                                    "that are a cited fact's value or derived from cited facts as the rules allow, "
+                                    "citing every fact a figure comes from — or leave that figure out",
+                                    label="refuse"))
     dropped = list(shape_dropped or ()) + dropped
     n_failed_check = len(dropped)          # verify's and the salvage's drops: a line that failed its check
     body["actions_tomorrow"] = settle_actions(body["actions_tomorrow"], F, ctx, declined, dropped)
