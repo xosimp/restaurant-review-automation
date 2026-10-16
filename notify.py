@@ -440,6 +440,12 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
         _sms_local.last = res
         return res
 
+    if rid:
+        import demo_store
+        if demo_store.is_simulated(rid):
+            # The showcase demo (Halsted & Rye) never texts anyone.
+            return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
+                                   permanent=True))
     if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
                           "the number replied STOP", db_path=db_path)

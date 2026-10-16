@@ -5607,6 +5607,13 @@ def scheduler_loop():
                 from strategy_jobs import run_pos_archive
                 _ops.run_job("pos_archive", run_pos_archive)
 
+            # 6am daily — Halsted & Rye, the showcase demo: the night's
+            # invoices, reviews, kitchen count and schedule (demo_store.build
+            # .run_refresh; the POS side is the jobs above). Sends nothing.
+            if _due(now, 6) and _ops.claim_period("demo_store_refresh", str(today)):
+                from demo_store.build import run_refresh
+                _ops.run_job("demo_store_refresh", run_refresh)
+
             # 3:30am — refresh the Stripe subscription mirror and record
             # where Stripe and the local billing state disagree
             # (billing_jobs.reconcile_stripe: bounded, resumable, reads

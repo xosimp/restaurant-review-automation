@@ -13909,8 +13909,15 @@ def learns_for_itself(restaurant, since=None, db_path=None) -> bool:
     r = restaurant
     if isinstance(r, int):
         r = get_restaurant(r, db_path or DB_PATH)
-    if r is None or _learning_get(r, "is_demo"):
+    if r is None:
         return False
+    if _learning_get(r, "is_demo"):
+        # The showcase demo (demo_store, Halsted & Rye) learns from its own
+        # simulated record so its screens show what learning looks like; it
+        # still teaches nobody else (learning_eligible leaves every demo out).
+        import demo_store
+        if not demo_store.is_simulated(r):
+            return False
     override = str(_learning_get(r, "learning_override") or "").strip().lower()
     if override == "exclude" or _learning_get(r, "exclude_from_learning"):
         return False

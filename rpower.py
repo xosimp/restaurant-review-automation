@@ -336,6 +336,13 @@ def _request(token: str, path: str, params: dict = None) -> object:
     """
     import requests
 
+    # Halsted & Rye, the showcase demo (demo_store): a demo-store token is
+    # answered by the simulated store with RPOWER's own records, never sent
+    # to rpowerpos.com.
+    if str(token or "").startswith("demo-store:"):
+        from demo_store import api as _demo_api
+        return _demo_api.respond(token, path, params)
+
     url = f"{BASE_URL}/{path.lstrip('/')}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     last_error = None
@@ -1975,6 +1982,9 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
     RPOWER's per-employee structure. Times are local wall
     clock, matching what RPOWER documents and what the timeclock returns.
     """
+    import demo_store
+    if demo_store.is_simulated(restaurant_id):
+        return {"ok": False, "error": "This is a demo store: a schedule is never pushed to a POS from it."}
     token, base = _ctx(restaurant_id)
     payload, by_employee, skipped = _schedule_payload(restaurant_id, base, shifts, job_codes)
     if not by_employee:

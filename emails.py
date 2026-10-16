@@ -432,7 +432,7 @@ def not_sent(reason: str, error: str = None) -> SendResult:
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 # SendResult.reason values a retry will not change.
-_REFUSED_REASONS = {"suppressed", "rejected", "flood_guard", "no_recipient"}
+_REFUSED_REASONS = {"suppressed", "rejected", "flood_guard", "no_recipient", "demo_store"}
 
 # A suppressed address still gets security mail — locking someone out of
 # their own account because a newsletter bounced would be a worse failure
@@ -549,6 +549,14 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                             reason="not_configured" if not key else "no_recipient")
         _record(restaurant_id, email_type, to_email, subject, result, log_send)
         return result
+
+    # The showcase demo (demo_store, Halsted & Rye) never sends: its people
+    # are fictional and its addresses reserved (.example). No email_log row —
+    # nothing happened.
+    if restaurant_id:
+        import demo_store
+        if demo_store.is_simulated(restaurant_id):
+            return SendResult(False, error="demo store: email is never sent", attempts=0, reason="demo_store")
 
     operator = is_operator_mail(email_type, recipients)
 

@@ -8505,7 +8505,10 @@ def _do_ai_visibility_inner(rid, force=False):
         _aivis_cache.pop(rid, None)
         return {"ok": False, "error": "Restaurant not found"}, 404
 
-    if not force:
+    import demo_store
+    if not force or demo_store.is_simulated(r):
+        # Halsted & Rye (the showcase demo) is fictional: its stored runs
+        # are shown, nothing is ever asked of Perplexity about it.
         return _aivis_serve_stored(rid, r)
 
     # The burst limit guards live runs only: a read costs nothing (#98).

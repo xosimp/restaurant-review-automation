@@ -132,6 +132,16 @@ JOBS = {
         cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Loss sync", description="Pull comps, voids and refunds from POSes that report them",
         target=("strategy_jobs", "run_loss_sync"), max_minutes=45, retry=True),
+    # Halsted & Rye, the showcase demo (demo_store): what reaches a real
+    # store from outside its POS — invoices, reviews, the kitchen count, the
+    # coming week's schedule — written for the night, so the demo is current
+    # whenever it is opened. The POS side is the ordinary nightly jobs.
+    "demo_store_refresh": dict(
+        cadence="6am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        label="Showcase demo upkeep", description="Halsted & Rye (demo_store): the night's distributor and kitchen "
+                                                  "invoices, reviews, kitchen count, posts, next week's schedule "
+                                                  "and month-end bar count; sends nothing",
+        target=("demo_store.build", "run_refresh"), max_minutes=20),
     "pos_archive": dict(
         cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="POS archive", description="Queue one archive row per restaurant whose POS can archive (job_queue "

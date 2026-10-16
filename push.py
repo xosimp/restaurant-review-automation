@@ -1172,6 +1172,16 @@ def _badge_for(device_token_row, db_path):
 
 
 def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
+    try:
+        _rid = (data or {}).get("restaurant_id") or device_token_row["restaurant_id"]
+    except Exception:
+        _rid = None
+    if _rid:
+        import demo_store
+        if demo_store.is_simulated(_rid):
+            # The showcase demo (Halsted & Rye) never pushes, even to a phone
+            # signed in to it for a demo.
+            return {"ok": False, "error": "demo store: push is never sent"}
     priority = priority_of(alert_type)
     aps = {"alert": {"title": title, "body": body}, "sound": "default"}
     level = _INTERRUPTION.get(priority)

@@ -5029,6 +5029,12 @@ def places_request(endpoint, params, restaurant_id=_UNSET, action=None, timeout=
     rid = _context_restaurant() if restaurant_id is _UNSET else restaurant_id
     act = action or (_CTX.get() or {}).get("action") or "places"
     sku_model = f"google-places-{kind}"
+    if rid:
+        import demo_store
+        if demo_store.is_simulated(rid):
+            # The showcase demo is a fictional restaurant: Google is never
+            # asked about it (its competitors and reviews are its own).
+            raise PlacesUnavailable("demo", "Google Places is not used for a demo store.")
     if not (params or {}).get("key"):
         log_blocked(rid, act, sku_model, "no_key", detail="GOOGLE_PLACES_API_KEY is not set", vendor="google_places")
         raise PlacesUnavailable("no_key", "Google Places isn't configured on this server.")
