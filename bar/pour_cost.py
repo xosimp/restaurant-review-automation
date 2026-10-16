@@ -207,7 +207,7 @@ def _gaps(lines, start, end, sales=None, owner_stopped=()) -> list:
     return out
 
 
-def _total(cats) -> dict:
+def _total(cats, mixed=0.0) -> dict:
     """The total over the categories measured on BOTH sides and complete
     (V10): {purchases, sales, pct, ratio, partial, excluded:[{key, label,
     why, text}], included}. A category bought with no sales on the report,
@@ -230,12 +230,16 @@ def _total(cats) -> dict:
                         "text": f"{c['label']} sold {_money(s)} with no {c['label'].lower()} invoices on file"})
         elif b > 0 and s > 0:
             inc.append(c)
-    bought = sum(c["_bought"] for c in inc)
+    # Alcohol bought mixed (a store's receipt: beer, wine and liquor at once)
+    # belongs to the total alone — never to one category (owner, 10/16/26).
+    mixed = float(mixed or 0) if inc else 0.0
+    bought = sum(c["_bought"] for c in inc) + mixed
     sold = sum(c["_sold"] for c in inc)
     ratio = bought / sold if sold > 0 and bought > 0 else None
     return {"purchases": round(bought, 2), "sales": round(sold, 2), "_bought": bought, "_sold": sold,
             "ratio": ratio, "pct": round(ratio * 100, 1) if ratio is not None else None,
-            "partial": bool(exc), "excluded": exc, "included": [c["key"] for c in inc]}
+            "partial": bool(exc), "excluded": exc, "included": [c["key"] for c in inc],
+            "mixed_alcohol": round(mixed, 2)}
 
 
 def _read(lines, sales, start, end, owner_stopped=()) -> dict:
@@ -252,7 +256,8 @@ def _read(lines, sales, start, end, owner_stopped=()) -> dict:
             cats[c]["incomplete"] = True
         if c in bad:
             cats[c]["unbalanced"] = True
-    return {"cats": cats, "gaps": gaps, "total": _total(cats), "unbalanced": sorted(bad)}
+    mixed = sum(l["net"] for l in ledger_of(lines).in_cat("alcohol_mixed", start, end))
+    return {"cats": cats, "gaps": gaps, "total": _total(cats, mixed), "unbalanced": sorted(bad)}
 
 
 def _public(row) -> dict:

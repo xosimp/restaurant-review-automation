@@ -3008,9 +3008,17 @@ def mobile_food_cost_purchases(current_user):
     try:
         out = _bo.food_bought_vs_sold(rid, today=_bar_count_today(rid))
         sup = _bo.vendor_categories(rid)
-        names = {e["vendor_key"]: e["vendor"] for e in _bo.entries(rid)}
-        out["suppliers"] = sorted(({"vendor": names.get(k, k), "vendor_key": k, **v} for k, v in sup.items()),
-                                  key=lambda x: (x["category"] != "unknown", x["vendor"]))
+        es = _bo.entries(rid)
+        names = {e["vendor_key"]: e["vendor"] for e in es}
+        # What each supplier was paid on file, so a supplier to sort says
+        # how much rides on it (owner, 10/16/26).
+        paid, n = {}, {}
+        for e in es:
+            paid[e["vendor_key"]] = paid.get(e["vendor_key"], 0.0) + float(e["amount"] or 0)
+            n[e["vendor_key"]] = n.get(e["vendor_key"], 0) + 1
+        out["suppliers"] = sorted(({"vendor": names.get(k, k), "vendor_key": k, "amount": round(paid.get(k, 0.0), 2),
+                                    "entries": n.get(k, 0), **v} for k, v in sup.items()),
+                                  key=lambda x: (x["category"] != "unknown", -x["amount"], x["vendor"]))
     except Exception as e:
         _bar_capture(e, "food_purchases", rid)
         return jsonify(ok=False, error="Your supplier purchases couldn't be read just now. Cavnar AI has been told; "

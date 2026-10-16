@@ -91,3 +91,16 @@ def test_get_conn_resolves_through_models_at_call_time(monkeypatch):
         pass
     assert seen == [("nowhere.db",)]
     assert bar.common.get_conn is bar_cost.get_conn
+
+
+def test_alcohol_bought_mixed_counts_in_the_total_and_in_no_one_category():
+    # Owner, 10/16/26: Binny's sells every kind of alcohol on one receipt — it
+    # can't be called beer, wine or liquor.
+    import backoffice_ap
+    from bar import pour_cost as pc
+    assert "alcohol_mixed" in backoffice_ap.CATEGORIES
+    cats = {c: {"key": c, "label": c, "_bought": b, "_sold": s, "incomplete": False}
+            for c, b, s in (("beer", 200.0, 1000.0), ("liquor", 150.0, 1000.0), ("wine", 100.0, 300.0))}
+    t = pc._total(cats, mixed=50.0)
+    assert t["purchases"] == 500.0 and t["mixed_alcohol"] == 50.0 and t["pct"] == round(500 / 2300 * 100, 1)
+    assert pc._total(cats)["purchases"] == 450.0

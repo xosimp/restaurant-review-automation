@@ -45,8 +45,11 @@ from fintech_invoices import distributor_key, invoice_key
 
 log = logging.getLogger(__name__)
 
-CATEGORIES = ("food", "na_beverage", "beer", "wine", "liquor", "bar_consumables", "discount", "other_purchase",
-              "inventory_adjustment", "not_cogs", "unknown")
+CATEGORIES = ("food", "na_beverage", "beer", "wine", "liquor", "alcohol_mixed", "bar_consumables", "discount",
+              "other_purchase", "inventory_adjustment", "not_cogs", "unknown")
+# A store that sells every kind of alcohol on one receipt (Binny's, a
+# liquor-store run; owner, 10/16/26) is "alcohol_mixed": counted in the
+# Bar's total, never in beer, wine or liquor alone (bar.pour_cost._total).
 POUR = ("beer", "wine", "liquor")
 # A check-mode entry Back Office records when it pays an invoice sits up to
 # this many days after the Fintech invoice it pays (EJ's: a catch-up batch on
@@ -568,7 +571,7 @@ def vendor_categories(restaurant_id, rows=None, db_path=None) -> dict:
 
 def set_vendor_category(restaurant_id, vendor, category, user_id=None, db_path=None) -> dict:
     if category not in CATEGORIES or category == "unknown":
-        raise ValueError("Pick food, a beverage category, other purchase or not cost of goods.")
+        raise ValueError("Pick food, alcohol (mixed, or one kind), non-alcoholic drinks, other purchases or not food or drink.")
     vk = distributor_key(vendor) or str(vendor).lower()
     conn = get_conn(db_path)
     try:
@@ -697,7 +700,7 @@ def outside_fintech(restaurant_id, db_path=None) -> dict:
     has its amount, dated from MATCH_DAYS_BEFORE before to MATCH_DAYS_AFTER
     after it was paid (each Fintech invoice matched once)."""
     rows = [r for r in entries(restaurant_id, db_path=db_path)
-            if r["category"] in POUR + ("bar_consumables",)]
+            if r["category"] in POUR + ("alcohol_mixed", "bar_consumables")]
     if not rows:
         return {"lines": [], "matched": 0, "entries": []}
     fins = _fintech_invoices(restaurant_id, db_path)
