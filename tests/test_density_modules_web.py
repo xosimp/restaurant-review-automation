@@ -212,7 +212,10 @@ def test_marketing_header_is_the_shared_one_and_the_calendar_stacks_on_a_phone()
 
 def test_chips_on_constants_are_neutral():
     s = _src()
-    assert '<span class="hb-chip neutral"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _lt|int }}%</span>' in s
+    # Labor's target chip repeated the target said beside the labor % (text-
+    # reduction round 10/17/26): it is gone, never a toned chip in its place.
+    assert '<span class="hb-num stat-n">{{ _lt|int }}%</span></span><span class="l">{{ _tl }}</span>' not in s
+    assert "{% if _tbad == 'warn' %}starting {% endif %}target</span>" in s
     assert "{{ 'sample' if not inv.is_live else 'neutral' }}\"><span class=\"dot\"><b></b><i></i></span><span class=\"v\"><span class=\"hb-num\">${{ inv.total_stock_value" in s
     assert "{{ 'neutral' if comp_count else 'sample' }}" in s
     assert ".hb-chip.neutral .dot{display:none}" in s

@@ -105,17 +105,20 @@ def test_the_schedule_and_upload_buttons_moved_off_the_header():
 
 
 def test_the_date_range_no_longer_repeats_the_target_next_to_it():
-    """The target already has its own stat chip a few inches to the
-    right ("26% target") — restating it in the date-range line too was
-    redundant. The chip stays; only the inline repeat is gone."""
+    """The target is said once, beside the labor % it judges ("26%
+    target") — restating it in the date-range line too was redundant, and
+    the stat chip that repeated it went in the text-reduction round
+    (10/17/26)."""
     panel = _labor_panel()
     m = re.search(r'<div class="lb2-daterange">(.*?)</div>', panel)
     assert m, "couldn't find the date-range row"
     assert "target" not in m.group(1).lower()
     assert 'id="labor-period"' in m.group(1)
-    # the stat chip still carries it, further along in the header
-    # (its label is the server's — "your target" or "Cavnar's starting target", re-audit #10)
-    assert re.search(r'<span class="l">\{\{ _tl \}\}</span>', panel)
+    # whose target it is (the server's "your target" or "Cavnar AI's
+    # starting target", re-audit #10) rides on the figure's title, and a
+    # starting target says so in its label
+    assert 'class="lb2-vs" title="{{ _tl[:1]|upper }}{{ _tl[1:] }}"' in panel
+    assert not re.search(r'<span class="l">\{\{ _tl \}\}</span>', panel)
 
 
 def test_the_stale_gap_paragraph_is_gone():
@@ -197,8 +200,8 @@ def test_sales_and_labor_stack_with_a_tight_gap():
 
 def test_cavnar_ai_gets_its_name_in_the_labor_consultant_box():
     panel = _labor_panel()
-    assert "Cavnar AI's read on your labor" in panel
-    assert "Cavnar's read on your labor" not in panel
+    assert "Cavnar AI's read</div>" in panel
+    assert "Cavnar's read" not in panel
 
 
 def test_labor_body_text_below_the_consultant_box_was_actually_enlarged():
@@ -256,7 +259,6 @@ def test_the_headline_numbers_are_opted_into_the_count_up_mechanism():
         # costed_labor: the days carrying sales, the same days as the % (NS3 H4)
         r'<span class="hb-num stat-n">\$\{\{ \(labor\.costed_labor if labor\.costed_labor is not none else labor\.total_labor_cost\)\|int\|format_num \}\}</span>',
         r'class="hb-num pct stat-n[^"]*">\{\{ _lp \}\}%</span>',
-        r'<span class="hb-num stat-n">\{\{ _lt\|int \}\}%</span>',
         r'<span class="hb-num stat-n">\{\{ labor\.overstaffed_days\|length \}\}</span>',
         r'<span class="hb-num stat-n">\{\{ _ot \}\}</span>',
         r'<span class="hb-num stat-n">\{\{ labor\.role_summary\|length if labor\.role_summary else 0 \}\}</span>',

@@ -916,11 +916,16 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None, cost_basis:
         trim = round(excess / rate, 1) if rate and excess and not withheld else None
         pts = round(float(o.get("labor_pct") or 0) - (target or 0), 1) if target else None
         cons = weekday_consistency(o.get("day"), over_dates)
-        say = (f"{o.get('day')} ran {_n1(o.get('labor_pct'))}% labor on {_money(o.get('sales'))} in sales"
-               + (f" — {_n1(pts)} points over your {_n1(target)}% target." if pts is not None else "."))
-        if trim:
-            say += (f" About {_n1(trim)} fewer hours would have put it on target"
-                    + (f" — the {big[0].lower()} crew was the biggest, with {len(big[1])} on." if big and len(big[1]) > 1 else "."))
+        # One line the chips don't already carry (text-reduction round
+        # 10/17/26): the labor %, the sales, the points over and the hours
+        # to trim are the card's own chips and pill, and Explain why keeps
+        # the arithmetic. What is left is where to start.
+        if big and len(big[1]) > 1:
+            say = f"Start with the {big[0].lower()} crew — {len(big[1])} on."
+        elif pts is not None:
+            say = f"Over your {_n1(target)}% target on the day's sales."
+        else:
+            say = "Over target on the day's sales."
         over.append({"kind": "overstaffed", "title": o.get("day"), "date": o.get("date"),
                      "dollars": 0.0 if withheld else excess,
                      "dollars_text": "—" if withheld else _money(excess),
@@ -945,9 +950,7 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None, cost_basis:
     for u in a.get("understaffed_days") or []:
         pts = round((target or 0) - float(u.get("labor_pct") or 0), 1) if target else None
         cons = weekday_consistency(u.get("day"), lean_dates)
-        say = (f"{u.get('day')} did {_money(u.get('sales'))} on {_n1(u.get('labor_pct'))}% labor"
-               + (f" — {_n1(pts)} points under target on one of your strongest days." if pts is not None else ".")
-               + " Before adding anyone, check that day's reviews and ticket times for slow service.")
+        say = "Check that day's reviews and ticket times before adding anyone."
         lean.append({"kind": "lean", "title": u.get("day"), "date": u.get("date"),
                      "dollars": float(u.get("sales") or 0), "dollars_text": _money(u.get("sales")),
                      "label": "in sales", "pct_text": _n1(u.get("labor_pct")),
@@ -997,11 +1000,13 @@ def staffing_board(analysis: dict, shifts: list, rate: float = None, cost_basis:
                 given[(wk, n)] = given.get((wk, n), 0.0) + extra
                 mate = {"name": n, "hours_text": _n1(h)}
         prem = x["dollars"]
-        say = (f"{emp} worked {_n1(x['hours'])}h the week of {x['week']} — {_n1(extra)}h past 40"
-               + (f", about {_money(prem)} over straight time." if prem else "."))
         if mate:
-            say += (f" {mate['name']} ({_role_words(role)}) worked {mate['hours_text']}h that week — giving them "
-                    f"those hours at straight time saves that premium.")
+            say = (f"{mate['name']} ({_role_words(role)}) worked {mate['hours_text']}h that week — "
+                   f"room at straight time.")
+        elif role:
+            say = f"No one else in the role had {_n1(extra)}h free that week."
+        else:
+            say = "Hours past 40 are paid at time and a half."
         x.update({"dollars_text": _money(prem) if prem else "—", "label": "overtime premium",
                   "hours_text": _n1(x["hours"]), "extra_text": _n1(extra),
                   "severity": "high" if extra >= 10 else "medium", "mate": mate, "say": say,
@@ -2560,12 +2565,12 @@ This is read on a phone screen — brevity is the whole point. Every sentence yo
 
 Write a short consultant note structured exactly like this:
 
-Opening: Start with "{greeting}" then ONE sentence with the key number and THE SINGLE BIGGEST OPPORTUNITY given above, with its own figure. Maximum 2 sentences total — never 3+.
+Opening: Start with "{greeting}" then ONE sentence, at most 25 words, with the key number and THE SINGLE BIGGEST OPPORTUNITY given above, with its own figure. One sentence after the greeting — never 2+.
 
 Recommendations:
-1. [One concrete, actionable scheduling suggestion. Hard cap: 20 words. Lead with the action, not the reasoning — "Trim Wednesday staffing by 1" beats "Because Wednesday has historically run high on labor percentage, consider trimming..."]
-2. [Only if the figures above support a second one — same 20-word cap.]
-3. [Only if the figures above support a third one — same 20-word cap.]
+1. [One concrete, actionable scheduling suggestion. Hard cap: 15 words. Lead with the action, not the reasoning — "Trim Wednesday staffing by 1" beats "Because Wednesday has historically run high on labor percentage, consider trimming..."]
+2. [Only if the figures above support a second one — same 15-word cap.]
+3. [Only if the figures above support a third one — same 15-word cap.]
 
 Tone: warm, direct, human — but terse, like a text message from a sharp consultant, not a report. Use the owner name once, not twice. Every number must be real and specific; never pad a sentence just to sound thorough.
 Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400).
