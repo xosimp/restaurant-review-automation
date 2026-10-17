@@ -12357,7 +12357,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            are costed_labor - the days that carry sales, the same days as the
            % (labor.py NS3 H4) - so the salaries line below adds up. #}
         {% set _gap_ok = labor.is_live and savings_breakdown and savings_breakdown.labor_monthly > 0 %}
-        <div class="lb2-bn"><span class="l">{{ 'Labor with salaries' if labor.includes_salaries else 'Labor' }}</span><span class="row"><span class="hb-num stat-n">${{ (labor.costed_labor if labor.costed_labor is not none else labor.total_labor_cost)|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="Your labor target"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
+        <div class="lb2-bn"><span class="l">{{ 'Labor with salaries' if labor.includes_salaries else 'Labor' }}</span><span class="row"><span class="hb-num stat-n">${{ (labor.costed_labor if labor.costed_labor is not none else labor.total_labor_cost)|int|format_num }}</span><span class="hb-num pct stat-n {{ 'good' if _lp <= _lt else 'bad' }}">{{ _lp }}%</span><span class="lb2-vs" title="{{ _tl[:1]|upper }}{{ _tl[1:] }}"><span class="hb-num">{{ _lt|round(1)|string|replace('.0', '') }}%</span> {% if _tbad == 'warn' %}starting {% endif %}target</span><span class="lb2-gap" id="gap-amount"{% if not _gap_ok %} hidden{% endif %}>{% if _gap_ok %}<span class="hb-num">${{ savings_breakdown.labor_monthly|format_num }}</span>/mo over {{ _tl }}{% endif %}</span></span></div>
         {# Labor % is ALL-IN, salaries included, and the target judges it
            (owner, 9/30/26: "Erik only cares about that labor %, it's the
            real %"; this reverses 9/28's hourly headline). The shifts alone
@@ -12385,9 +12385,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <span id="labor-gap-banner" hidden></span>
     </div>
     <div class="hb-pulse">
-      {# The target is a constant, not a status: a neutral chip (#31). Labor %
-         itself is said once, in the header beside its gap (#26). #}
-      <span class="hb-chip neutral"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _lt|int }}%</span></span><span class="l">{{ _tl }}</span></span>
+      {# The target is said once, beside the labor % it judges (text-reduction
+         round 10/17/26: the neutral target chip repeated it). #}
       <span class="hb-chip {{ 'warn' if labor.overstaffed_days|length else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ labor.overstaffed_days|length }}</span></span><span class="l">overstaffed days</span></span>
       <span class="hb-chip {{ 'bad' if _ot else 'good' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num stat-n">{{ _ot }}</span></span><span class="l">in overtime</span></span>
     </div>
@@ -12422,7 +12421,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
     <span id="perf-period-label" hidden></span>
   </section>
-  <div class="lb2-ai"><div class="tag">Cavnar AI's read on your labor</div><div class="insight-text insight-loading" id="labor-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your shifts…</span></div></div></div>
+  <div class="lb2-ai"><div class="tag">Cavnar AI's read</div><div class="insight-text insight-loading" id="labor-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your shifts…</span></div></div></div>
   <div class="diag" id="lb2-diag" hidden></div>
 
   <!-- Ops tiles: what the owner feeds the labor read. Two real cards, each
@@ -12432,13 +12431,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <section class="lb2-op" id="lb2-timeoff" aria-label="Time off">
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 15.5l2 2 4-4"/></svg></span><div class="hd-t"><div class="k">Time off</div><div class="v" id="lb2-timeoff-v"><span class="hb-num" id="lb2-timeoff-n">&ndash;</span><small id="lb2-timeoff-flag">loading</small></div></div></div>
       <div id="lb2-timeoff-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
-      <div class="cap"><span>asked for in the staff portal &middot; an approved range is kept off the next draft</span></div>
     </section>
     <section class="lb2-op" id="lb2-covers" aria-label="Covers">
       <div class="hd"><span class="ic ob-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3"/></svg></span><div class="hd-t"><div class="k">Covers</div><div class="v" id="lb2-covers-v"><span class="hb-num" id="lb2-covers-n">&ndash;</span><small id="lb2-covers-flag">loading</small></div></div></div>
       <div id="lb2-covers-body" class="lb2-op-body"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       <div class="ac-inline lb2-op-form"><input type="date" class="ac-input" id="lb2-cov-date" aria-label="Date" style="max-width:150px"><input type="number" class="ac-input ac-num" id="lb2-cov-n" min="0" step="1" placeholder="covers" aria-label="Covers" style="max-width:110px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="lb2SaveCover(this)">Save</button></div>
-      <div class="cap"><span>the one figure that tells a lean day from a short one &middot; read by the labor analysis</span></div>
     </section>
   </div>
   {# Staffing review (was "Every day and person"; in the Studio from 10/2/26,
@@ -12464,14 +12461,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% if _sb %}
   <div class="sb">
     <div class="sb-sum">
-      <div class="sb-tile hero"><div class="k">At stake in this window</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s">{# The two parts do not overlap and add up to the total (9/25/26 audit); on the assumed wage the dollars above target are withheld (labor.staffing_board). #}{% if _sb.summary.dollars_withheld %}{{ _sb.summary.withheld_text }}{% if _sb.summary.ot %} · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}{% else %}<span class="hb-num">{{ _sb.summary.over_text }}</span> above target at straight time + <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}</div></div>
-      <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced in this window</div>{% endif %}</div>
-      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{% if _sb.summary.quick.kind == 'overtime' %}from {% endif %}{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix here</div>{% endif %}</div>
+      <div class="sb-tile hero"><div class="k">At stake</div><div class="v hb-num">{{ _sb.summary.at_stake_text }}</div><div class="s">{# The two parts do not overlap and add up to the total (9/25/26 audit); on the assumed wage the dollars above target are withheld (labor.staffing_board). #}{% if _sb.summary.dollars_withheld %}{{ _sb.summary.withheld_text }}{% if _sb.summary.ot %} · <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}{% else %}<span class="hb-num">{{ _sb.summary.over_text }}</span> above target at straight time + <span class="hb-num">{{ _sb.summary.ot_text }}</span> overtime premium{% endif %}</div></div>
+      <div class="sb-tile"><div class="k">Costliest</div>{% if _sb.summary.biggest %}<div class="v">{{ _sb.summary.biggest.title }}</div><div class="s"><span class="hb-num">{{ _sb.summary.biggest.dollars_text }}</span> {{ _sb.summary.biggest.label }}</div>{% else %}<div class="v">—</div><div class="s">Nothing priced</div>{% endif %}</div>
+      <div class="sb-tile"><div class="k">Fastest win</div>{% if _sb.summary.quick %}<div class="v">{{ _sb.summary.quick.why[:1]|upper }}{{ _sb.summary.quick.why[1:] }}</div><div class="s">{% if _sb.summary.quick.kind == 'overtime' %}from {% endif %}{{ _sb.summary.quick.title }}</div>{% else %}<div class="v">—</div><div class="s">Nothing to fix</div>{% endif %}</div>
     </div>
     {% set _lanes = [
-      ('over', 'Overstaffed days', 'Labor above ' ~ _tl ~ ' on the day’s own sales', _sb.overstaffed, 'No day ran over your target in this window.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
-      ('lean', 'Strong days run lean', 'Big sales on a thin crew — check service first', _sb.lean, 'No strong day ran lean in this window.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
-      ('ot', 'Overtime', 'Hours past 40 in a week, at the premium', _sb.overtime, 'No one went past 40 hours in this window.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
+      ('over', 'Overstaffed days', 'Over ' ~ _tl ~ ' on the day’s sales', _sb.overstaffed, 'No day over target.', '<path d="M4 17l5-5 4 4 7-8"/><path d="M15 8h5v5"/>'),
+      ('lean', 'Strong days run lean', 'Big sales, thin crew', _sb.lean, 'No strong day ran lean.', '<path d="M4 7l5 5 4-4 7 8"/><path d="M15 16h5v-5"/>'),
+      ('ot', 'Overtime', 'Past 40 hours in a week', _sb.overtime, 'No one past 40 hours.', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
     ] %}
     {% for key, title, sub, items, empty, icon in _lanes %}
     <section class="sb-lane" data-tone="{{ key }}"{% if key == 'ot' %} id="lb2-ot-lane"{% endif %} aria-label="{{ title }}">
@@ -12489,7 +12486,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         </div>
         <div class="sb-title">{{ x.title }}<small>{% if key == 'ot' %}{{ x.role }}{% if x.role %} · {% endif %}week of {{ x.week }}{% else %}{{ x.date }}{% endif %}</small></div>
         <div class="sb-fig"><b class="hb-num">{{ x.dollars_text }}</b><span>{{ x.label }}</span></div>
-        <p class="sb-say">{{ x.say }}</p>
+        {% if x.say %}<p class="sb-say">{{ x.say }}</p>{% endif %}
         <div class="sb-chips">
           {% if key == 'over' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span><span><b class="hb-num">{{ x.sales_text }}</b> sales</span>{% if x.trim_text %}<span>trim <b class="hb-num">~{{ x.trim_text }}h</b></span>{% endif %}
           {% elif key == 'lean' %}<span><b class="hb-num">{{ x.pct_text }}%</b> labor</span>{% if x.covers %}<span><b class="hb-num">{{ x.covers }}</b> covers</span>{% endif %}{% if x.spc_text %}<span><b class="hb-num">{{ x.spc_text }}</b> a cover</span>{% endif %}
@@ -12511,7 +12508,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {% endfor %}
   </div>
   {% else %}
-  <div class="hb-empty" style="margin-top:10px">Staffing cards show once your own shifts are in — sample data is never scored here.</div>
+  <div class="hb-empty" style="margin-top:10px">Shows once your own shifts are in. Sample data is never scored.</div>
   {% endif %}
   </details>
   {# Details sit under Time off and Covers (owner, 10/2/26). #}
@@ -12519,7 +12516,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      dollars go by role, and how the percentage is measured against the
      target and the industry mark - collapsed, one summary line. #}
   <details class="hb-results lb2-details" id="lb2-details">
-    <summary><span class="hb-kicker">Details</span><span>Where the labor dollars go by role · how is this measured?</span></summary>
+    <summary><span class="hb-kicker">Details</span><span>By role · how it's measured</span></summary>
   <div class="lb2-sig lb2-sig-2" id="lb-panel-analytics">
     <div class="lb2-sg"><div class="k"><span>Where the labor dollars go</span></div><div class="v"><span class="hb-num stat-n">{{ labor.role_summary|length if labor.role_summary else 0 }}</span><small>roles · {{ labor.date_range.start|format_date if labor.date_range and labor.date_range.start }} – {{ labor.date_range.end|format_date if labor.date_range and labor.date_range.end }}</small></div>
       {% if labor.role_summary %}<div class="lb2-donut"><div class="ring"><svg id="role-donut-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg><div class="tot"><div id="role-donut-total"></div><div>total</div></div></div><div id="role-donut-legend"></div></div>{% else %}<div class="hb-empty" style="height:150px;display:flex;align-items:center">Role breakdown appears once shifts carry a role.</div>{% endif %}
@@ -12694,7 +12691,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="ss-hero">
           <div class="ss-kick">Setup</div>
           <h1>Next week, drafted by Cavnar AI</h1>
-          <p>Pick the week and press Generate. Everything else is already set; open a tab only to change it.</p>
         </div>
         <div id="ss-settings-setup">
         <aside class="sw-side sw-left" id="ss-settings" aria-label="How the next draft is built">
@@ -12722,14 +12718,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="sw-k">Labor target</div>
             <div class="sw-tgt"><input class="ac-input ac-num" type="number" id="sw-target" min="5" max="60" step="0.5" value="{{ _lt }}" aria-label="Labor target %"><span>% of sales</span><span class="ac-status" id="sw-target-status"></span></div>
             </div></div>
-            <div id="sw-par" class="sw-note">The draft keeps labor at or under this. It is a ceiling, not a quota.</div>
+            <div id="sw-par" class="sw-note">A ceiling, not a quota.</div>
             {% if labor.is_live %}{# The owner's words for this draft, once, on Basic (owner, 10/14/26: it sat under every tab). #}
             <div class="sw-gen-ask" style="margin-top:14px"><label class="sw-lbl" for="sfw1-instr">Anything for this week? <small>optional</small></label>
             <input type="text" class="ac-input" id="sfw1-instr" maxlength="500" placeholder="e.g. Homecoming Saturday — one more bartender after 8pm" autocomplete="off"></div>{% endif %}
           </section>
           <section class="sw-sec" data-ss-panel="forecast" hidden>
             <div class="sw-k">Forecast</div>
-            <div id="sw-forecast" class="sw-body"><div class="sw-note">Built from your sales by weekday when the draft runs. Each day's bar is the hours its forecast calls for.</div></div>
+            <div id="sw-forecast" class="sw-body"><div class="sw-note">From your sales by weekday.</div></div>
             {% if labor_upcoming %}
             {# A calendar of holidays, not a forecast: nothing in this restaurant's
                own data backs "expect elevated covers" or "your busiest Sundays
@@ -12740,7 +12736,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <div class="sw-sub">Holidays ahead</div>
         <ul class="lb2-events">
           {% for event in labor_upcoming %}
-          <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check how this day ran for you last year before you build the schedule.{% endif %}</span></li>
+          <li><span class="d"></span><span><b>{{ event.name }}</b> — <span class="hb-num">{{ event.date|format_date if (event.date and not event.date_str) else event.date_str }}</span> {% if event.days_away == 0 %}(today){% elif event.days_away == 1 %}(tomorrow){% else %}(<span class="hb-num">{{ event.days_away }}</span> days away){% endif %}<br>{% if event.label %}{{ event.label }}{% if event.claim_kind == 'measured' %} <span class="ck-tag" data-claim="measured">Measured</span>{% endif %}{% else %}Holiday — check last year's day first.{% endif %}</span></li>
           {% endfor %}
         </ul>
             {% endif %}
@@ -12769,7 +12765,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
             <label class="sw-lbl" for="sw-notes">How you like the week built</label>
             <textarea class="ac-input sw-notes" id="sw-notes" rows="3" maxlength="2000" placeholder="e.g. Keep two cooks on Friday lunch. Open with a bartender on game days. Fewer servers after 9pm Sunday to Thursday."></textarea>
             <span class="ac-status" id="sw-notes-status"></span>
-            <div class="sw-note" style="margin-top:12px">These are about the whole restaurant, and every draft reads them. A rule about one person — “no Tuesdays”, “out 12/20–12/28”, “only closes on weekends” — belongs in that person’s scheduling notes: dated, ended on their own, and kept as a hard rule. <span id="sw-ai-people"></span></div>
+            <div class="sw-note" style="margin-top:12px">Every draft reads these. A rule about one person (“no Tuesdays”, “out 12/20–12/28”) goes in their scheduling notes, kept as a hard rule. <span id="sw-ai-people"></span></div>
             <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="swOpenTeam('notes')">Scheduling notes for one person in Labor →</button>
             {# Each sentence as Cavnar AI reads it (schedule_note_rules): a
                minimum the owner confirms becomes a floor code enforces, every
@@ -12783,7 +12779,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
                saved on its own change (ssLoadAdvanced). #}
             <div id="ss-adv" class="sw-body"><div class="dr-pulse" style="margin:14px 0"><i></i></div></div>
             <div class="sw-sub">Redo some days</div>
-            <div class="sw-note" id="ss-adv-empty">Appears once a week is open: tick the days and Cavnar AI rewrites only those.</div>
+            <div class="sw-note" id="ss-adv-empty">Open a week, then tick the days to rewrite.</div>
             <!-- Redo some days: one checkbox per date, regenerated against the
                  same draft (POST /api/generate-schedule {dates, history_id}). -->
             <div id="sched-redo" class="sched-redo" style="display:none"></div>
@@ -12815,7 +12811,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="sw-center" id="sw-center">
       <div class="sw-idle" id="sw-idle">
         <div class="sw-idle-t">No week open</div>
-        <div class="sw-note">Generate a draft in Setup, or open one Cavnar AI already drafted.</div>
+        <div class="sw-note">Generate one in Setup, or open a draft.</div>
         {# A drafted week staff don't have yet, one tap back into the editor (#4). #}
         <div class="lb2-ro" id="sched-reopen" hidden></div>
       </div>
@@ -12826,13 +12822,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:12px">Schedule generated</div>
       <div style="font-size:14px;color:var(--paper);font-weight:600;margin-bottom:8px">Your CSV is downloading now</div>
       <div style="font-size:12px;color:#c0b8b0;line-height:1.7;margin-bottom:16px">
-        Cavnar AI drafted a schedule from your shift data against your {{labor_target|default(30.0)}}% labor goal.
-        Check it before you send it — a draft can still miss a rule or run over target.
+        Drafted against your {{labor_target|default(30.0)}}% labor target. Check it before you send it.
       </div>
       <div style="background:#1e1a14;border-radius:8px;padding:12px 14px;margin-bottom:16px">
         <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Gap to target / mo</div>
         <div style="font-size:13px;color:var(--paper);font-weight:700">{% if labor.is_live and labor.potential_savings_monthly %}~${{ labor.potential_savings_monthly|int|format_num }}/mo{% else %}—{% endif %}</div>
-        <div style="font-size:11px;color:var(--ink3);margin-top:2px">available, not captured — the gap above target projected from this window, not a measured result</div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:2px">projected, not captured</div>
       </div>
       <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="cbtn cbtn-primary cbtn-lg cbtn-block">Got it — open the CSV ✓</button>
     </div>
@@ -12891,7 +12886,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <tbody id="sched-tbody"></tbody>
         </table>
         <div id="sched-table-foot">
-          <span class="cap">Tap a row for why that person is on it &middot; the pencil edits it</span>
+          <span class="cap">Tap a row for why</span>
           <button type="button" class="cbtn cbtn-soft cbtn-sm" data-sched-add="1">+ Add a shift</button>
           <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-sm" onclick="downloadScheduleFromPreview()">Download CSV</button>
           <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-muted cbtn-sm" data-print="schedule-preview-panel" title="Print this week, or save it as a PDF from the print dialog">Print</button>
@@ -12901,7 +12896,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            "edited" version; nothing can be sent to staff until then. -->
       <div id="sched-edit-bar">
         <span class="st">Unsaved edits</span>
-        <span class="sr-note">Save to re-score the week and keep it &mdash; or send, which saves them first.</span>
+        <span class="sr-note">Send saves them too.</span>
         <!-- What the edits move: hours, overtime-priced dollars, overtime
              hours — from POST /api/labor/schedule/violations with baseline_rows. -->
         <span id="sched-edit-cost" class="sched-cost"></span>
@@ -12927,7 +12922,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <button type="button" role="tab" data-ss-rtab="shift" aria-selected="false">Shift</button>
         <button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm ss-rcollapse" onclick="ssRightCollapse(true)" aria-label="Hide this column to give the schedule the full width" title="Hide this column"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
-      <div class="sw-rhint" id="sw-rhint">Open or generate a week to see its score, warnings, coverage and cost here.</div>
+      <div class="sw-rhint" id="sw-rhint">Open a week to see its score and warnings.</div>
       <section class="sw-sec" data-sw="quality" data-ss-of="overview">
         <div class="sw-k">Shift quality</div>
         <!-- Shift Quality — the schedule graded the way an operator reads one.
@@ -12974,18 +12969,19 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
       </section>
       <section class="sw-sec" data-sw="asked" data-ss-of="overview">
-        <div class="sw-k">What this draft was asked to do</div>
         <!-- The soft requirements the reviews and the nightly reports put on
              this week, each marked applied or not from the rows on screen;
              the pattern clashes left out; a trimmed stored week says so
-             (memory round 9/29/26, cav-mem-wb memSchedExtras). -->
-        <div id="sw-asked"></div>
+             (memory round 9/29/26, cav-mem-wb memSchedExtras). Folded in
+             the text-reduction round (10/17/26): reasons, not the score. -->
+        <details class="co-more sw-fold"><summary>What this draft was asked to do</summary>
+        <div id="sw-asked"></div></details>
       </section>
       <section class="sw-sec" data-sw="req" data-ss-of="overview">
-        <div class="sw-k">Shift requirements</div>
         <!-- The SHIFT REQUIREMENTS the week was written and scored to, each
              with why it moved off the usual (schedule audit 10/3/26 E). -->
-        <div id="sfw1-req"></div>
+        <details class="co-more sw-fold"><summary>Shift requirements</summary>
+        <div id="sfw1-req"></div></details>
       </section>
       <section class="sw-sec" data-sw="cost" data-ss-of="overview">
         <div class="sw-k">Cost</div>
@@ -13023,7 +13019,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div id="sw-fix"></div>
       </section>
       <section class="sw-sec" data-sw="shift" data-ss-of="shift">
-        <div id="ss-shift"><div class="sw-note">Click a shift in the week to see who is on it, why, and what else could work.</div></div>
+        <div id="ss-shift"><div class="sw-note">Click a shift to see who's on it and why.</div></div>
       </section>
     </aside>
     </div>
@@ -13034,7 +13030,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-pub">
         <div class="ss-kick">Publish</div>
         <h1 id="ss-pub-title">Send the week to staff</h1>
-        <p class="ss-pub-sub" id="ss-pub-sub">Everything that matters before the week goes out, checked against today’s time off and availability. Nothing goes out until you press the button.</p>
+        <p class="ss-pub-sub" id="ss-pub-sub">Nothing goes out until you send it.</p>
         <!-- The pre-publish review (schedule audit 10/10/26 RM-6): one server
              payload, every line with its action (cav-pr). Send waits for each
              must-fix item and each decision that holds the send. -->
@@ -13095,7 +13091,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-crew">
         <div class="ss-kick">Crew</div>
         <h1>Your usual crew, shift by shift</h1>
-        <p class="ss-crew-lede">Each cell is how many of the role are on at once through the heart of the shift (11am–2:30pm, 5:30–8:30pm): what your clock-ins show you usually run, then this draft. Where the draft runs leaner, answer once: keep your usual every week (it becomes that shift's minimum, reviewed in a season), add one for this week only, or keep the saving.</p>
+        <p class="ss-crew-lede">People on at once, your usual against this draft. Where it runs leaner, answer once.</p>
+        <details class="co-more ss-crew-how"><summary>How it's read</summary><div class="sw-note" style="margin-top:8px">Counted through the heart of the shift (11am–2:30pm, 5:30–8:30pm) from your clock-ins. Keep your usual makes it that shift's minimum, reviewed in a season; Add 1 is this week only; Leaner is fine keeps the saving.</div></details>
         <div class="ss-crew-bar" id="ss-crew-bar" role="group" aria-label="Show"></div>
         <div id="ss-crew-body"><div class="dr-pulse" role="status" aria-label="Loading your crew"><i></i></div></div>
       </div>
@@ -13112,7 +13109,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-crew">
         <div class="ss-kick">Bench</div>
         <h1>What could go wrong, priced before it does</h1>
-        <p class="ss-crew-lede">Replay a past night with a different crew, line up a paid stand-by for the nights most likely to lose someone, see how firm each published shift is, and act on events that changed after you published. Every figure comes from your own nights; where there aren't enough yet, it says so.</p>
+        <p class="ss-crew-lede">Every figure is from your own nights; where there aren't enough yet, it says so.</p>
         <div id="ss-bench-body" class="ss-bn-grid"></div>
       </div>
     </section>
@@ -13135,7 +13132,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      side of the schedule); labor/inbox links open the Studio there. #}
   <details class="hb-results lb2-inbox" id="lb2-inbox" data-nav="labor/inbox">
     <summary><span class="hb-kicker">Team inbox</span><span id="lb2-inbox-sum">Messages from staff, who's running late, announcements</span></summary>
-    <div class="lb2-intro">Staff reach the manager on duty from the app; you answer here and it goes to their phone. An announcement goes to each person's phone, and they tap Got it.</div>
+    <div class="lb2-intro">Replies and announcements go to staff phones.</div>
     <div id="lb2-inbox-late" class="ac-rows" hidden></div>
     <div class="hb-kicker" style="margin-top:18px">Messages</div>
     <div id="lb2-inbox-threads" class="ac-rows" aria-live="polite"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
@@ -13164,7 +13161,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
      data-nav="labor/team" is on the Roster row, so a deep link or a person
      link opens this first (cavNavSection opens the closest <details>). #}
   <details class="hb-results lb2-team" id="lb2-team" open>
-    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster and availability, operational score, rules, closers, events, open shifts, what the record says, task sheets</span></summary>
+    <summary><span class="hb-kicker">Team &amp; rules</span><span>Roster, scores, rules, closers, events, open shifts, task sheets</span></summary>
   <!-- Roster & settings — the facts the schedule respects about each
        person: on the roster or not, full or part time, hours, mornings or
        nights per day, under 18. Each change is one POST and one toast. -->
@@ -13175,7 +13172,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </div>
     <div id="roster-panel" style="display:none">
       <div class="lb2-avail">
-        <div class="lb2-intro">Each setting here is a rule the next draft keeps. Tap a name for the week grid.</div>
+        <div class="lb2-intro">The next draft keeps each setting. Tap a name for the week.</div>
         <div id="roster-body"><div class="hb-skel" style="width:60%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:80%;height:14px;margin-bottom:10px"></div><div class="hb-skel" style="width:70%;height:14px"></div></div>
         <!-- Employee Availability Manager, merged into Roster & settings
              (density round #28): one place for who can work when. -->
@@ -22706,12 +22703,12 @@ function lb2LoadTimeOff(){
     if(nEl)nEl.textContent=String(pend?pend:rows.length);
     if(flag)flag.textContent=pend?(pend===1?'request waiting on you':'requests waiting on you'):(rows.length?(rows.length===1?'request, answered':'requests, all answered'):'no requests yet');
     if(vEl)vEl.className='v'+(pend?' warn':(rows.length?' good':''));
-    if(!rows.length){el.textContent='No requests yet. Staff ask for dates in the portal and the answer lands here.';return;}
+    if(!rows.length){el.textContent='None yet. Staff ask in the portal; approved dates stay off the next draft.';return;}
     var h='';
     // One place answers a request (density round #27): Waiting on you at the
     // top of the page. This tile is the count and the record - a pending
     // row says where it is answered, with no buttons of its own.
-    if(pend)h+='<div class="ac-row"><div class="l"><b>'+pend+' waiting on you</b><span>answered in Waiting on you, at the top of Labor</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="var w=document.getElementById(\'lb2-wait\');if(w&&!w.hidden)w.scrollIntoView({behavior:\'smooth\',block:\'start\'})">Answer →</button></div></div>';
+    if(pend)h+='<div class="ac-row"><div class="l"><b>'+pend+' waiting on you</b><span>answer them at the top of Labor</span></div><div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="var w=document.getElementById(\'lb2-wait\');if(w&&!w.hidden)w.scrollIntoView({behavior:\'smooth\',block:\'start\'})">Answer →</button></div></div>';
     // "10/7/26, until 4:00pm": the part of the day when it is only part
     // (schedule audit 10/3/26 D-39, the server's span_label).
     for(var i=0;i<rows.length;i++){var q=rows[i];if(q.status==='pending')continue;var when=q.span_label||(q.start_date===q.end_date?mdy(q.start_date):(mdy(q.start_date)+' \u2013 '+mdy(q.end_date)));
@@ -22729,7 +22726,7 @@ document.addEventListener('click',function(e){
     done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);
   }).catch(function(){done();});
 });
-var LB2_COV_SHOWN=16;
+var LB2_COV_SHOWN=8;
 function lb2CovChips(days,max){var h='',i;for(i=0;i<days.length&&i<max;i++)h+='<span><b class="hb-num">'+esc(days[i].covers)+'</b>'+esc(mdy(days[i].date))+'</span>';return h;}
 function lb2CoversAll(){
   var days=window._lb2CovDays||[],m=document.getElementById('lb2-cov-modal');if(!m||!days.length)return;
@@ -22754,13 +22751,13 @@ function lb2LoadCovers(){
     // (covers.sync_from_pos), so the card no longer offers a night's POS count
     // for a tap (owner, 10/2/26).
     var oh='';
-    if(!days.length){el.innerHTML=esc('No cover counts yet. Without them a lean day and a short-staffed one look the same to the analysis.')+oh;return;}
+    if(!days.length){el.innerHTML=esc('No counts yet. Without them a lean day and a short one look the same.')+oh;return;}
     // Filled nightly from the POS guest count (covers.sync_from_pos, owner
     // 9/30/26); a count typed here always wins over it.
     var fromPos=0;for(i=0;i<days.length;i++)if(days[i].source==='pos')fromPos++;
-    var h=fromPos?'<div class="lb2-intro" style="margin-bottom:8px">Filled each night from your POS guest count. A number you enter below replaces that night\u2019s.</div>':'';
-    // Four full rows in the card (owner, 10/1/26); the rest in a modal, so
-    // the card stops growing with every night.
+    var h=fromPos?'<div class="lb2-intro" style="margin-bottom:8px">From your POS each night; a count you enter wins.</div>':'';
+    // Two rows in the card (text-reduction round 10/17/26; four rows,
+    // owner 10/1/26); the rest in a modal, so the card never grows.
     window._lb2CovDays=days;
     h+='<div class="lb2-cov">'+lb2CovChips(days,LB2_COV_SHOWN)+'</div>';
     if(days.length>LB2_COV_SHOWN)h+='<button type="button" class="cbtn cbtn-text cbtn-sm lb2-cov-all" onclick="lb2CoversAll()">Show all <span class="hb-num">'+days.length+'</span> nights</button>';
@@ -28229,7 +28226,6 @@ function ssRenderSummary() {
   // draft's scheduled one, so it grew as the week got thinner).
   var rev = +d.projected_revenue, vp = (lv && lv.vs_last_plan) || null;
   var sav = (vp && vp.value != null) ? +vp.value : null;
-  var basisWord = lv ? (lv.basis === 'all_in' ? 'all-in' : 'hourly pay only') : '';
   var sc = q.score, band = q.band ? String(q.band) : '';
   var C = 2 * Math.PI * 30, off = sc != null ? C * (1 - Math.max(0, Math.min(100, +sc)) / 100) : C;
   function tile(cls, k, v, s, extra, attrs) { return '<div class="ss-tile ' + cls + (extra && extra.indexOf('ss-math') > -1 ? ' has-math" tabindex="0' : '') + '"' + (attrs || '') + '><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + '</div>' + (extra || '') + '</div>'; }
@@ -28243,23 +28239,17 @@ function ssRenderSummary() {
   // lines that put most weeks in amber; the reason a cap bit leads (TRUST-29).
   var qcls = pq.grade === 'good' ? 'good' : (pq.grade === 'weak' ? 'warn' : '');
   h += tile(sc == null ? '' : qcls, 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
-            (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · graded from the finished week, out of 100' : 'Graded from the finished week')))
-              // What the score stands on and what it has meant here (blind
-              // re-audit 10/11/26 LOGIC-15, TRUST-31): the server's words,
-              // a dash below the sample floor with the floor in its title.
-              + (pq.measured_text ? '<br>' + _numText(pq.measured_text) : '')
-              + (sc == null ? '' : (pq.outcome_text ? '<br>' + _numText(pq.outcome_text)
-                : '<br><span title="' + _escHtml((pq.outcome_link && pq.outcome_link.note) || '') + '">Your high- against low-scoring weeks: —</span>')),
+            (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · out of 100' : 'Out of 100'))),
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
   // One grade with iOS (TRUST-7): the server's - over at any amount past the
   // target, neutral with none; the basis named on the tile (TRUST-30).
   var lgr = lv && lv.grade ? lv.grade : 'no_target';
   h += tile(lp === null ? '' : (lgr === 'over' ? 'bad' : (lgr === 'under' ? 'good' : '')), (lv && lv.label) || 'Labor', lp === null ? '—' : '<span class="hb-num">' + lp + '</span><small>%</small>',
             lp === null ? (pnum && pnum.labor_missing && pnum.labor_missing.text ? _numText(pnum.labor_missing.text) : 'Needs a sales forecast for this week')
-              : 'of forecast sales, ' + basisWord + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'the hourly budget is' : 'your target is') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
+              : 'of forecast sales' + (tgt ? ' · ' + (lv.target_basis === 'hourly' ? 'hourly budget' : 'target') + ' <span class="hb-num">' + tgt + '%</span>' : ''),
             lv && lv.text ? '<div class="s" style="margin-top:4px">' + _numText(lv.text) + '</div>' : '');
   h += tile(cov == null ? '' : (cov >= 90 ? 'good' : (cov >= 75 ? 'warn' : 'bad')), 'Coverage', cov == null ? '—' : '<span class="hb-num">' + Math.round(cov) + '</span><small>%</small>',
-            'of the people each shift needs, on it');
+            'of the crew each shift needs');
   // Overtime that was not priced is a dash, never a green "nobody past 40h"
   // (TRUST-32, the iOS rule), and the line is per restaurant, not 40.
   var ot = (pc && pc.overtime_hours !== undefined && pc.overtime_hours !== null) ? +pc.overtime_hours : null;
@@ -28280,23 +28270,30 @@ function ssRenderSummary() {
   h += tile('', sav !== null && sav < 0 ? 'Over last week’s plan' : 'Under last week’s plan',
             sav === null ? '—' : '<span class="hb-num">' + _schedMoney(Math.abs(sav)) + '</span>',
             sav === null ? (vp && vp.withheld ? _numText(vp.withheld) : 'Needs a published week priced with its forecast')
-              : 'its <span class="hb-num">' + vp.last_pct + '%</span> scheduled against this draft’s <span class="hb-num">' + lv.pct + '%</span> (' + basisWord + '), on <span class="hb-num">' + _schedMoney(rev) + '</span> forecast sales',
+              : 'planned <span class="hb-num">' + vp.last_pct + '%</span> · this draft <span class="hb-num">' + lv.pct + '%</span>',
             '<span class="tag">Projection · not yet earned</span>' + _ssPlanMath(lv, rev));
   h += '</div>';
   // How far to trust the figures above (TRUST-19): the labor range from the
   // measured forecast error, its record, and last week's projection against
   // what ran - the server's own sentences, never a figure of the page's.
+  // The range stays in view; the record behind it, what the quality score
+  // stands on and what it has meant here sit under "How sure" (text-
+  // reduction round 10/17/26; blind re-audit 10/11/26 LOGIC-15, TRUST-31).
   var pn = pd ? (pd.numbers || {}) : {}, plp = pn.labor_pct || {}, tr = [];
-  if (plp.low != null && plp.high != null) tr.push('Labor likely <span class="hb-num">' + plp.low + '–' + plp.high + '%</span>.');
   if (plp.track_record) tr.push(_numText(plp.track_record));
   if (pn.last_week && pn.last_week.text) tr.push(_numText(pn.last_week.text));
-  if (tr.length) h += '<div class="pr-meta" style="margin-top:12px">' + tr.join(' ') + '</div>';
+  if (pq.measured_text) tr.push(_numText(pq.measured_text));
+  if (sc != null) tr.push(pq.outcome_text ? _numText(pq.outcome_text)
+    : '<span title="' + _escHtml((pq.outcome_link && pq.outcome_link.note) || '') + '">Your high- against low-scoring weeks: —</span>');
+  var lik = (plp.low != null && plp.high != null) ? 'Labor likely <span class="hb-num">' + plp.low + '–' + plp.high + '%</span>' : '';
+  if (lik && !tr.length) h += '<div class="pr-meta" style="margin-top:12px">' + lik + '.</div>';
+  else if (tr.length) h += '<details class="co-more ss-sum-sure"><summary>' + (lik ? lik + '<small>how sure</small>' : 'How sure') + '</summary><div class="pr-meta" style="margin-top:8px">' + tr.join('<br>') + '</div></details>';
   /* Who the week leaves off (TRUST-13; why.left_off) sits on the Summary, not Team (owner, 10/14/26). */
   h += '<div class="sfw1-notes" id="sfw1-sum"></div><div id="ss-team-leftoff"></div><div class="ss-sum-go">'
     + '<button type="button" class="cbtn cbtn-primary cbtn-lg" data-ss-go="schedule">View the schedule</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" onclick="ssOptimize(this)">Optimize again</button>'
     + '<button type="button" class="cbtn cbtn-secondary cbtn-lg" data-ss-go="publish">Review &amp; send</button></div>'
-    + '<div class="ss-sum-note">Optimize again makes legal changes that raise the score and lists each one; nothing is kept until you save.</div>';
+    + '<div class="ss-sum-note">Optimize again lists each change; nothing is kept until you save.</div>';
   el.innerHTML = h;
   if (window.sfw1RenderNotes) sfw1RenderNotes();
   if (window.prTeamRender) prTeamRender(true);
@@ -28352,15 +28349,15 @@ var SS_CREW_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sat
 // One card per capability; each is fetched on its own from
 // /api/labor/bench?part=... so a slow one never holds the others.
 var SS_BENCH_PARTS = [
-  ['what_if', 'What a cut costs the guest', 'Replay your last four of a weekday with one more or one fewer person, from your own ticket times and punches.'],
-  ['standby', 'Stand-by for no-shows', 'The nights this week most likely to lose someone, a person off who could be on call, and what it costs against what a short night costs you.'],
-  ['events', 'Events that changed after you published', 'A game added, moved or cancelled since the week went out: the change in people your own nights measure, priced.'],
-  ['ladder', 'How firm each shift is', 'Firm, likely or tentative, as your staff see it, and how often each person’s published shifts were changed.'],
-  ['strength', 'Bench strength', 'Where one absence leaves a gap, who to train next, and when the hours will need another hire.'],
-  ['tips', 'Tip opportunity', 'Which shifts are worth the most in tips, and who is next for one. Only you see this.'],
+  ['what_if', 'What a cut costs the guest', 'Your last four of a weekday, replayed with one more or one fewer.'],
+  ['standby', 'Stand-by for no-shows', 'The nights most likely to lose someone, and who could be on call.'],
+  ['events', 'Events that changed after you published', 'A game added, moved or cancelled since the week went out, priced.'],
+  ['ladder', 'How firm each shift is', 'Firm, likely or tentative, and how often each person’s shifts changed.'],
+  ['strength', 'Bench strength', 'Where one absence leaves a gap, who to train next, and when to hire.'],
+  ['tips', 'Tip opportunity', 'The shifts worth the most in tips. Only you see this.'],
   ['retention', 'People to keep', 'Warning signs on the schedule side. Only you see this; nobody is told.'],
-  ['org', 'Your other locations', 'Staff at your other locations who opted in to pick up shifts here.'],
-  ['outcomes', 'Cavnar AI weeks against yours', 'What actually happened in the weeks Cavnar AI drafted and the weeks built without it.']
+  ['org', 'Your other locations', 'Staff there who opted in to pick up shifts here.'],
+  ['outcomes', 'Cavnar AI weeks against yours', 'How Cavnar AI’s weeks ran against the ones built without it.']
 ];
 var _ssBench = {};
 function ssBenchHid() { return (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : ''; }
@@ -28563,18 +28560,18 @@ function ssCrewDraw() {
       + '<span class="hb-num">' + (+d.open || 0) + '</span> to answer</span>';
   }
   if (!d.has_usual) {
-    body.innerHTML = '<div class="ss-crew-empty">Cavnar AI learns each role’s usual crew from your clock-ins. Connect your POS or upload a few weeks of shifts, and every role and shift fills in here.</div>';
+    body.innerHTML = '<div class="ss-crew-empty">Learned from your clock-ins. Connect your POS or upload a few weeks of shifts.</div>';
     return;
   }
   var roles = (d.roles || []).filter(function (r) {
     if (_ssCrewShow !== 'diff' || !d.week_start) return true;
     return ssCrewRoleOpen(r);
   });
-  var legend = '<div class="ss-crew-legend"><span><i style="background:var(--green)"></i>The draft matches your usual</span>'
-    + '<span><i style="background:var(--amber)"></i>The draft runs leaner</span><span><i style="background:var(--ink3)"></i>The draft runs heavier</span>'
-    + '<span><i style="background:var(--red)"></i>Under a minimum you set</span><span>Every number is people on at once</span></div>';
+  var legend = '<div class="ss-crew-legend"><span><i style="background:var(--green)"></i>Matches your usual</span>'
+    + '<span><i style="background:var(--amber)"></i>Leaner</span><span><i style="background:var(--ink3)"></i>Heavier</span>'
+    + '<span><i style="background:var(--red)"></i>Under your minimum</span></div>';
   // No week built yet: the usual crew alone, nothing to compare or answer.
-  if (!d.week_start) legend = '<div class="ss-crew-legend"><span>Your usual crew per shift, people on at once. Build a week and each shift shows the draft beside it.</span></div>';
+  if (!d.week_start) legend = '<div class="ss-crew-legend"><span>Your usual crew. Build a week to compare.</span></div>';
   if (!roles.length) {
     body.innerHTML = legend + '<div class="ss-crew-empty">This draft matches your usual crew on every shift.</div>';
     return;
@@ -39993,7 +39990,7 @@ function sfw1RatingLine(s) {
   function questionHtml(p) {
     var names = p.unknown_pattern || [], h = '', i, j;
     h += '<div class="sfw1-q" id="sfw1-q"><div class="k">A question for you</div><h3>' + e(p.question) + '</h3>'
-      + '<p>Cavnar AI plans your managers’ shifts first so every minute on the floor has a manager. It had no standing shifts or past schedules for these managers, so this week is an even split. Tell it their real days and every draft will keep them.</p>';
+      + '<p>No standing shifts or past schedules for these managers, so this week is an even split. Tell Cavnar AI their real days and every draft keeps them.</p>';
     if (!canEdit()) return h + '<p>Only the account owner or a manager who drafts schedules can set these.</p></div>';
     var av = p.unknown_availability || {};
     for (i = 0; i < names.length; i++) {
@@ -40246,7 +40243,7 @@ function sfw1RatingLine(s) {
     var el = $id('sfw1-req'); if (!el) return;
     var req = S.req || [], h = '', i, j;
     if (!req.length) { el.innerHTML = ''; if (window.swActive) swActive(); return; }
-    h += '<div class="sw-note" style="margin-bottom:6px">Who each shift was written and scored for, and why a number moved off the usual.</div><div class="sfw1-req">';
+    h += '<div class="sfw1-req">';
     for (i = 0; i < req.length; i++) {
       var r = req[i] || {}, rl = [];
       for (j = 0; j < (r.roles || []).length; j++) rl.push(n(sfw1ReqRole(r.roles[j])));
@@ -42065,7 +42062,7 @@ window.cavPalette = cavPalette;
     var list = d.must_fix || [], groups = d.must_fix_groups || [], h = '', i, j, done = {};
     if (!list.length) return '';
     h += '<section class="pr-sec"><div class="pr-k">Must fix before sending · <span class="hb-num">' + list.length + '</span></div>'
-      + '<div class="pr-sub">The law is fixed or the week doesn’t go. A manager gap is covered by a manager or owner on your roster. Anything else is fixed, or sent past on its own with a reason.</div>';
+      + '<div class="pr-sub">The law is fixed or the week doesn’t go. Anything else is fixed or sent past with a reason.</div>';
     for (i = 0; i < groups.length; i++) {
       var g = groups[i];
       if (g.count <= 1) continue;
@@ -42124,7 +42121,7 @@ window.cavPalette = cavPalette;
     if (hold) {
       var gnum = window.prGate ? prGate().decide : hold;
       h += '<section class="pr-sec"><div class="pr-k">Decide before sending · <span class="hb-num">' + gnum + '</span></div>'
-        + '<div class="pr-sub">These hold the send. One tap each; the button says whether it is for this week or every week.</div>';
+        + '<div class="pr-sub">These hold the send. One tap each.</div>';
       for (i = 0; i < groups.length; i++) {
         var g = groups[i];
         if (g.count <= 1) continue;
@@ -42139,7 +42136,7 @@ window.cavPalette = cavPalette;
     }
     if (sug) {
       h += '<section class="pr-sec"><div class="pr-k">Suggestions · <span class="hb-num">' + sug + '</span></div>'
-        + '<div class="pr-sub">None of these hold the send. An answer is kept, so it isn’t asked again while it holds.</div>';
+        + '<div class="pr-sub">None hold the send. An answer is kept.</div>';
       for (i = 0; i < list.length; i++) if (!list[i].holds && !S.dismissed[list[i].key]) h += decideItemHtml(list[i], i);
       h += '</section>';
     }
@@ -42149,7 +42146,7 @@ window.cavPalette = cavPalette;
     var list = d.always_overridden || [], h = '', i, j;
     if (!list.length) return '';
     h += '<section class="pr-sec"><div class="pr-k">Rules you always send past</div>'
-      + '<div class="pr-sub">A rule you overrule every week is a rule worth changing - or keeping on purpose.</div>';
+      + '<div class="pr-sub">Worth changing, or keeping on purpose.</div>';
     for (i = 0; i < list.length; i++) {
       h += '<div class="pr-it"><div class="t">' + nt(list[i].text) + '</div><div class="pr-acts">';
       for (j = 0; j < (list[i].actions || []).length; j++) h += btn(list[i].actions[j].label + (list[i].actions[j].scope === 'every' && list[i].actions[j].action === 'post' ? ' · standing' : ''), 'aov', i, j, j ? 'cbtn-secondary' : 'cbtn-primary');
@@ -42166,7 +42163,7 @@ window.cavPalette = cavPalette;
       var cls = lp.grade === 'over' ? 'bad' : (lp.grade === 'under' ? 'good' : '');
       var sub = (lp.low != null && lp.high != null ? 'likely <span class="hb-num">' + lp.low + '–' + lp.high + '%</span>' : '')
         + (lp.target != null ? (lp.low != null ? ' · ' : '') + (lp.target_basis === 'hourly' ? 'the hourly budget is ' : 'your target ') + '<span class="hb-num">' + lp.target + '%</span>' : '')
-        + (lp.track_record ? '<br>' + nt(lp.track_record) : '<br>No measured forecast weeks yet, so no range.')
+        + (lp.track_record ? '<br>' + nt(lp.track_record) : '')
         + (lp.other_basis_note ? '<br>' + nt(lp.other_basis_note) : '');
       h += kv(e(lp.label || 'Labor') + ' of forecast sales', lp.value + '%', cls, sub);
     }
@@ -42186,7 +42183,7 @@ window.cavPalette = cavPalette;
                     vp.value != null ? _schedMoney(Math.abs(vp.value)) : '—', '',
                     nt(vp.text || vp.withheld || '') + (vp.value != null ? ' <span class="tag">Projection · not yet earned</span>' : ''));
     if (n.last_week) h += '<div class="pr-meta">' + nt(n.last_week.text) + '</div>';
-    return h ? '<section class="pr-sec"><div class="pr-k">The numbers, with their track record</div>' + h + '</section>' : '';
+    return h ? '<section class="pr-sec"><div class="pr-k">The numbers</div>' + h + '</section>' : '';
   }
   function linesHtml(title, lines) {
     var h = '', i;
@@ -42197,7 +42194,7 @@ window.cavPalette = cavPalette;
     var c = d.changed || {};
     var h = linesHtml('Against last week', c.vs_last_week || []) + linesHtml('Against your usual crew', c.vs_usual || [])
       + linesHtml('Against your last draft', c.vs_last_draft || []) + linesHtml('What Cavnar AI changed', c.cavnar_changes || []);
-    return h ? '<section class="pr-sec"><div class="pr-k">What changed</div>' + h + '</section>' : '';
+    return h ? '<details class="pr-sec pr-fyi"><summary>What changed</summary>' + h + '</details>' : '';
   }
   function fragileHtml(d) {
     var list = d.fragile || [], h = '', i;
@@ -42225,7 +42222,7 @@ window.cavPalette = cavPalette;
       for (i = 0; i < l.length; i++) h += '<div class="pr-it"><b>' + e(l[i].name) + '</b> — ' + nt(l[i].reason) + '</div>';
     }
     if (!h && d.explain_pending) h = '<div class="dr-pulse wide" role="status" aria-label="Weighing who else could take each shift"><i></i></div>';
-    return h ? '<section class="pr-sec"><div class="pr-k">Why these people</div>' + h + '</section>' : '';
+    return h ? '<details class="pr-sec pr-fyi"><summary>Why these people</summary>' + h + '</details>' : '';
   }
   function sureHtml(d) {
     var s = d.sure || {}, q = d.quality || {}, h = '', i, cf = s.confidence || {};
@@ -42233,8 +42230,11 @@ window.cavPalette = cavPalette;
     // "—" until enough of them are measured (TRUST-6).
     h += kv('How sure', cf.pct != null ? cf.pct + '%' : '—', '', nt((cf.basis || []).join(' · ') || 'Nothing measured yet') + (cf.meaning ? '<br>' + e(cf.meaning) + '.' : ''));
     if (q.score != null) h += kv('Shift quality', q.score + '<small>/100</small>', q.grade === 'good' ? 'good' : (q.grade === 'weak' ? 'bad' : ''), nt((q.lead ? q.lead + '. ' : '') + (q.text || '')));
-    for (i = 0; i < (s.lines || []).length; i++) h += '<div class="pr-meta">' + nt(s.lines[i]) + '</div>';
-    return '<section class="pr-sec"><div class="pr-k">How sure we are</div>' + h + '</section>';
+    // The forecast's record is already under the labor figure above.
+    var tr = ((d.numbers || {}).labor_pct || {}).track_record;
+    for (i = 0; i < (s.lines || []).length; i++) if (s.lines[i] !== tr) h += '<div class="pr-meta">' + nt(s.lines[i]) + '</div>';
+    // Folded, with the confidence % in its summary so it stays in view.
+    return '<details class="pr-sec pr-fyi"><summary>How sure we are · <span class="hb-num">' + (cf.pct != null ? cf.pct + '%' : '—') + '</span></summary>' + h + '</details>';
   }
   function fyiHtml(d) {
     var list = d.fyi || [], h = '', i;
@@ -42255,7 +42255,7 @@ window.cavPalette = cavPalette;
     n = (dr.dates || []).length;
     h = '<section class="pr-sec pr-drift"><div class="pr-k">Built <span class="hb-num">' + e(dr.built_mdy || '') + '</span>'
       + (dr.days_ago ? ', <span class="hb-num">' + dr.days_ago + '</span> day' + (dr.days_ago === 1 ? '' : 's') + ' ago' : '') + '</div>'
-      + '<div class="pr-sub">Since then things changed under it, so some problems below are new:</div>';
+      + '<div class="pr-sub">Things changed since, so some problems below are new:</div>';
     for (i = 0; i < dr.reasons.length; i++) h += '<div class="pr-it">' + nt(dr.reasons[i]) + '</div>';
     if (n) h += '<div class="pr-acts"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-pr="drift" data-n="0" data-j="0">Rebuild '
       + (n === 1 ? 'that day' : 'these <span class="hb-num">' + n + '</span> days') + '</button></div>';
