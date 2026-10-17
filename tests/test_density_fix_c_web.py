@@ -271,3 +271,12 @@ def test_the_schedule_link_prints_the_date_once():
     s = _read("staff_schedule.html")
     assert "{{ s.day or s.date_label }}" not in s
     assert '{% if s.day %}<span class="day">{{ s.day }}</span>{% endif %}<span class="date">{{ s.date_label }}</span>' in s
+
+
+def test_ask_answers_carry_no_evidence_block():
+    # Owner, 10/17/26: Ask is for quick answers - no sources line, confidence,
+    # freshness notes or verification Why? under an answer.
+    i = SRC.index("_askDone = true;")
+    j = SRC.index("// Streamed, because the tool loop", i)
+    assert "_appendAskCavnarEvidence(d)" not in SRC[i:j]
+    assert "_appendAskCavnarFeedback(d.message_id)" in SRC[i:j]

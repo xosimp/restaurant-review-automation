@@ -18525,10 +18525,10 @@ window.sendAskCavnar = function() {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
       if (window.askRefreshConversations) askRefreshConversations(true);
-      // What the answer rests on: which modules it consulted, how sure it
-      // is, and whether any figure in it failed verification against what
-      // the model was actually handed.
-      _appendAskCavnarEvidence(d);
+      // No evidence block under an answer (owner, 10/17/26: "ask cavnar should not have all of this - its
+      // for quick answers only"): the sources line, the confidence meter, the freshness notes, the
+      // verification counts and their Why? are gone from the panel. _appendAskCavnarEvidence is kept,
+      // uncalled - candidate for future cleanup after additional verification (CLAUDE.md).
       // Anything that leaves the building comes back as a proposal, never
       // as something already done — render the confirm card.
       (d.proposals || []).forEach(_appendAskCavnarProposal);
