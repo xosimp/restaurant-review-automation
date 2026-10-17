@@ -245,6 +245,21 @@ def _complete_through_for(restaurant_id):
         return None
 
 
+def local_complete_through(restaurant_id):
+    """The restaurant's last complete business date (complete_through) — the
+    default "through" of every POS window in the food and bar readers
+    (food & bar audit 10/16/26 POS-17/18): never the server's date, which is
+    tomorrow after 7pm Central on a UTC host, and never the night still
+    trading between midnight and the 5am boundary. Falls back to the
+    restaurant's calendar yesterday when the row cannot be read."""
+    from datetime import timedelta
+    ct = _complete_through_for(restaurant_id)
+    if ct is not None:
+        return ct
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True).date() - timedelta(days=1)
+
+
 # Automatic recovery (DH5-7): a failed sync is retried this many hours after
 # each failure — +1h after the nightly one, then +3h, then +6h — by the
 # hourly retry sweep (scheduler.run_pos_retry, until 11am local). Never
@@ -317,7 +332,7 @@ def _reopen_moved_nights(restaurant_id, mismatches):
     version only when the POS's own figure changed). Only where the archive
     is built as the DSR's net, so a mismatch means the POS moved rather than
     two ways of counting; only nights the sweep still looks at."""
-    from datetime import date, timedelta
+    from datetime import timedelta
     from dsr import pipeline, store
     from models import get_restaurant
     name, _mod = connected_provider(restaurant_id)
@@ -326,7 +341,8 @@ def _reopen_moved_nights(restaurant_id, mismatches):
     r = get_restaurant(restaurant_id)
     if r is None or not getattr(r, "dsr_enabled", 1):
         return
-    since = date.today() - timedelta(days=pipeline.SWEEP_LOOKBACK_DAYS)
+    from time_utils import restaurant_now
+    since = restaurant_now(r, naive=True).date() - timedelta(days=pipeline.SWEEP_LOOKBACK_DAYS)
     nights = sorted({m["date"] for m in mismatches if str(m.get("date") or "") >= since.isoformat()})
     if not nights:
         return
@@ -563,7 +579,15 @@ def fetch_business_days(restaurant_id, start_date, end_date):
     fn = getattr(mod, "fetch_business_days", None)
     if fn is None:
         raise POSCapabilityError(f"{name} does not report daily sales through Cavnar AI yet")
-    return fn(restaurant_id, start_date, end_date), name
+    try:
+        return fn(restaurant_id, start_date, end_date), name
+    except Exception as e:
+        # A page load asked for days the provider's archive does not hold
+        # (rpower.RPowerArchiveMiss, POS-13): the POS cannot answer it NOW,
+        # which is "unknown" to every caller, never a failed sync.
+        if getattr(e, "archive_miss", False):
+            raise POSCapabilityError(str(e)) from e
+        raise
 
 
 def fetch_order_selections(restaurant_id, business_date):
