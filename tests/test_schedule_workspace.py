@@ -19,7 +19,9 @@ def _fn(name):
 
 
 def _kickers(block):
-    return re.findall(r'<div class="sw-k">([^<]+)</div>', block)
+    # A section's heading is its .sw-k, or the summary of a folded one
+    # (text-reduction round 10/17/26: the reasons fold, the score doesn't).
+    return re.findall(r'<div class="sw-k">([^<]+)</div>|<details class="co-more sw-fold"><summary>([^<]+)</summary>', block)
 
 
 def test_three_panels_in_order_with_the_asked_for_sections():
@@ -40,7 +42,7 @@ def test_three_panels_in_order_with_the_asked_for_sections():
     # clashes (memory round 9/29/26, UI wave B), in the Overview after Labor.
     # "Shift requirements": who each shift was written and scored for, and why
     # a number moved (schedule fix round 10/3/26, UI W1), before Cost.
-    assert _kickers(right) == ["Shift quality", "Coverage", "Labor", "What this draft was asked to do",
+    assert ["".join(k) for k in _kickers(right)] == ["Shift quality", "Coverage", "Labor", "What this draft was asked to do",
                                "Shift requirements", "Cost",
                                "Warnings", "Opportunities", "AI suggestions", "Apply fixes"]
     assert re.findall(r'data-ss-rtab="(\w+)"', right) == ["overview", "fix", "shift"]

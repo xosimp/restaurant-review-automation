@@ -12946,18 +12946,19 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
       </section>
       <section class="sw-sec" data-sw="asked" data-ss-of="overview">
-        <div class="sw-k">What this draft was asked to do</div>
         <!-- The soft requirements the reviews and the nightly reports put on
              this week, each marked applied or not from the rows on screen;
              the pattern clashes left out; a trimmed stored week says so
-             (memory round 9/29/26, cav-mem-wb memSchedExtras). -->
-        <div id="sw-asked"></div>
+             (memory round 9/29/26, cav-mem-wb memSchedExtras). Folded in
+             the text-reduction round (10/17/26): reasons, not the score. -->
+        <details class="co-more sw-fold"><summary>What this draft was asked to do</summary>
+        <div id="sw-asked"></div></details>
       </section>
       <section class="sw-sec" data-sw="req" data-ss-of="overview">
-        <div class="sw-k">Shift requirements</div>
         <!-- The SHIFT REQUIREMENTS the week was written and scored to, each
              with why it moved off the usual (schedule audit 10/3/26 E). -->
-        <div id="sfw1-req"></div>
+        <details class="co-more sw-fold"><summary>Shift requirements</summary>
+        <div id="sfw1-req"></div></details>
       </section>
       <section class="sw-sec" data-sw="cost" data-ss-of="overview">
         <div class="sw-k">Cost</div>
@@ -39967,7 +39968,7 @@ function sfw1RatingLine(s) {
   function questionHtml(p) {
     var names = p.unknown_pattern || [], h = '', i, j;
     h += '<div class="sfw1-q" id="sfw1-q"><div class="k">A question for you</div><h3>' + e(p.question) + '</h3>'
-      + '<p>Cavnar AI plans your managers’ shifts first so every minute on the floor has a manager. It had no standing shifts or past schedules for these managers, so this week is an even split. Tell it their real days and every draft will keep them.</p>';
+      + '<p>No standing shifts or past schedules for these managers, so this week is an even split. Tell Cavnar AI their real days and every draft keeps them.</p>';
     if (!canEdit()) return h + '<p>Only the account owner or a manager who drafts schedules can set these.</p></div>';
     var av = p.unknown_availability || {};
     for (i = 0; i < names.length; i++) {
@@ -40220,7 +40221,7 @@ function sfw1RatingLine(s) {
     var el = $id('sfw1-req'); if (!el) return;
     var req = S.req || [], h = '', i, j;
     if (!req.length) { el.innerHTML = ''; if (window.swActive) swActive(); return; }
-    h += '<div class="sw-note" style="margin-bottom:6px">Who each shift was written and scored for, and why a number moved off the usual.</div><div class="sfw1-req">';
+    h += '<div class="sfw1-req">';
     for (i = 0; i < req.length; i++) {
       var r = req[i] || {}, rl = [];
       for (j = 0; j < (r.roles || []).length; j++) rl.push(n(sfw1ReqRole(r.roles[j])));
