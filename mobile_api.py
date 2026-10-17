@@ -3006,19 +3006,9 @@ def mobile_food_cost_purchases(current_user):
     from permissions import is_principal
     rid = current_user["restaurant_id"]
     try:
-        out = _bo.food_bought_vs_sold(rid, today=_bar_count_today(rid))
-        sup = _bo.vendor_categories(rid)
-        es = _bo.entries(rid)
-        names = {e["vendor_key"]: e["vendor"] for e in es}
-        # What each supplier was paid on file, so a supplier to sort says
-        # how much rides on it (owner, 10/16/26).
-        paid, n = {}, {}
-        for e in es:
-            paid[e["vendor_key"]] = paid.get(e["vendor_key"], 0.0) + float(e["amount"] or 0)
-            n[e["vendor_key"]] = n.get(e["vendor_key"], 0) + 1
-        out["suppliers"] = sorted(({"vendor": names.get(k, k), "vendor_key": k, "amount": round(paid.get(k, 0.0), 2),
-                                    "entries": n.get(k, 0), **v} for k, v in sup.items()),
-                                  key=lambda x: (x["category"] != "unknown", -x["amount"], x["vendor"]))
+        # One read of the entries and their categories for the whole request
+        # (backoffice_ap.purchases_view; SCALE-04, fix round 10/16/26).
+        out = _bo.purchases_view(rid, today=_bar_count_today(rid))
     except Exception as e:
         _bar_capture(e, "food_purchases", rid)
         return jsonify(ok=False, error="Your supplier purchases couldn't be read just now. Cavnar AI has been told; "
@@ -3061,17 +3051,56 @@ def mobile_food_cost_purchase_vendor(current_user):
         return refused
     rid = current_user["restaurant_id"]
     b = request.get_json(silent=True) or {}
-    vendor = str(b.get("vendor") or "").strip()[:200]
+    vendor = str(b.get("vendor") or "").strip()
+    category = str(b.get("category") or "").strip()
     if not vendor:
         return jsonify(ok=False, error="Pick the supplier."), 400
+    if len(vendor) > 200 or len(category) > 40:
+        return jsonify(ok=False, error="That supplier or category is too long."), 400
     try:
-        res = _bo.set_vendor_category(rid, vendor, str(b.get("category") or ""), user_id=_bar_viewer(current_user))
+        # A supplier not on this restaurant's Back Office invoices is refused
+        # (set_vendor_category raises; SEC-04, fix round 10/16/26).
+        res = _bo.set_vendor_category(rid, vendor, category, user_id=_bar_viewer(current_user))
     except ValueError as e:
         return jsonify(ok=False, error=e.args[0]), 400
     except Exception as e:
         _bar_capture(e, "food_purchases", rid)
         return jsonify(ok=False, error="That couldn't be saved just now. Try again in a minute."), 500
     _log_account_event(rid, "purchase_vendor_sorted", current_user, detail=f"{vendor}: {res['category']}"[:300])
+    return jsonify(**res)
+
+
+@mobile_bp.route("/food-cost/purchases/entry", methods=["POST"])
+@mobile_login_required
+def mobile_food_cost_purchase_entry(current_user):
+    """{vendor_key, entry_key, decision count | not_purchase | null}: the
+    account holder's word on one Back Office alcohol entry the Bar holds
+    as "to confirm" (paid in Back Office to a Fintech distributor, no
+    Fintech invoice matches it; backoffice_ap.decide_entry, fix round
+    10/16/26 LEAD-01). 'count' adds it to the Bar's purchases,
+    'not_purchase' sets it aside, null asks again. Logged."""
+    import backoffice_ap as _bo
+    from permissions import principal_only
+    refused = principal_only(current_user, "how Back Office entries count")
+    if refused:
+        return refused
+    rid = current_user["restaurant_id"]
+    b = request.get_json(silent=True) or {}
+    vk, ek = str(b.get("vendor_key") or "").strip(), str(b.get("entry_key") or "").strip()
+    decision = b.get("decision")
+    if not vk or not ek or len(vk) > 200 or len(ek) > 200:
+        return jsonify(ok=False, error="Pick the Back Office entry."), 400
+    if decision is not None and not isinstance(decision, str):
+        return jsonify(ok=False, error="Say count it or set it aside."), 400
+    try:
+        res = _bo.decide_entry(rid, vk, ek, decision or None, user_id=_bar_viewer(current_user))
+    except ValueError as e:
+        return jsonify(ok=False, error=e.args[0]), 400
+    except Exception as e:
+        _bar_capture(e, "food_purchases", rid)
+        return jsonify(ok=False, error="That couldn't be saved just now. Try again in a minute."), 500
+    _log_account_event(rid, "purchase_vendor_sorted", current_user,
+                       detail=f"{res['vendor']} Back Office entry {ek}: {res['decision'] or 'to confirm'}"[:300])
     return jsonify(**res)
 
 
