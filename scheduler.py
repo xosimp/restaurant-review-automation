@@ -3770,8 +3770,14 @@ def run_food_cost_diagnoses():
     restaurant over the drivers food_cost_intelligence.cost_drivers already
     ranked, so it runs here rather than on the critical path of a page load.
     The insight endpoint and the morning brief both READ what this writes.
+
+    Queue work (Food Cost audit 10/16/26 SCALE-07): one food_cost_diagnosis
+    job_queue row per restaurant (fci.fan_out_diagnoses; the per-restaurant
+    body — budget skip, cancelling its unlanded batch item, the cache
+    invalidation — is fci.run_queued_diagnosis), drained by the queue
+    worker. The briefs wait on the queued rows (_morning_input_pending).
     """
-    from models import get_conn, get_restaurant
+    from models import get_conn
     import food_cost_intelligence as fci
     _collect_before_cancelling("food_cost_diagnoses")
     conn = get_conn()
@@ -3779,55 +3785,7 @@ def run_food_cost_diagnoses():
         "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()
     ).fetchall()
     conn.close()
-    c = {"diagnosed": 0, "skipped": 0, "failed": 0}
-    lock = threading.Lock()
-
-    def _one(rid):
-        try:
-            r = get_restaurant(rid)
-            # A restaurant whose AI budget is spent gets no diagnosis rather
-            # than a refused call and a captured exception.
-            if r and _ai_budget_spent(rid):
-                with lock:
-                    c["skipped"] += 1
-                return
-            # Its batched read (#58) has not landed by now: stopped waiting
-            # for, and written synchronously below. One that landed is
-            # reused by diagnose()'s evidence-hash rule.
-            _cancel_open_batch_items(fci.BATCH_WORKFLOW, rid)
-            out = fci.diagnose(rid)
-            if out and out.get("ok"):
-                with lock:
-                    c["diagnosed"] += 1
-                # A fresh cause makes every cached food-cost narrative for
-                # this restaurant out of date — it is what the narrative is
-                # now built around.
-                try:
-                    from client_api import invalidate_insight_cache
-                    invalidate_insight_cache(rid)
-                except Exception:
-                    pass
-            else:
-                with lock:
-                    c["skipped"] += 1
-        except Exception as e:
-            with lock:
-                c["failed"] += 1
-            log.error(f"Food cost diagnosis failed for restaurant {rid}: {e}")
-            _ops.capture(e, job="food_cost_diagnoses", context=f"restaurant_id={rid}")
-
-    # Bounded and resumable (#84): a Sonnet call per restaurant walked the
-    # whole fleet serially on the loop thread with no bound and no cursor.
-    # DIAGNOSES_WORKERS at once (AI cost audit 10/7/26 #53).
-    _done, ran_out = resumable_sweep(FOOD_COST_DIAGNOSES_CURSOR_KEY, [row["id"] for row in rows], _one,
-                                     DIAGNOSES_MAX_SECONDS, workers=DIAGNOSES_WORKERS,
-                                     job="food_cost_diagnoses")
-    if ran_out:
-        _ops.capture(RuntimeError(f"Food cost diagnoses stopped at the {DIAGNOSES_MAX_SECONDS}s bound; "
-                                  "the rest lead the next pass"), job="food_cost_diagnoses", context="time_bound")
-    log.info(f"Food cost diagnoses: {c['diagnosed']} produced, {c['skipped']} skipped, {c['failed']} failed")
-    return {"diagnosed": c["diagnosed"], "skipped": c["skipped"], "failed": c["failed"],
-            "attempted": c["diagnosed"] + c["failed"], "ok": c["diagnosed"], "hit_bound": bool(ran_out)}
+    return fci.fan_out_diagnoses([row["id"] for row in rows], today=_chi_now().date())
 
 
 # The two daily root-cause passes (#84): a Sonnet call per restaurant (per
@@ -5206,6 +5164,12 @@ def _morning_input_pending(ops, now, inputs=BRIEF_INPUTS):
     for job, hour in inputs:
         if now.hour >= hour and not ops.settled(job, day):
             return job
+        # Its pass queues the work (SCALE-07): settled once queued, done
+        # when the rows are.
+        if job == "food_cost_diagnoses" and now.hour >= hour:
+            import food_cost_intelligence as _fci_wait
+            if _fci_wait.diagnoses_pending(day):
+                return job
     return None
 
 

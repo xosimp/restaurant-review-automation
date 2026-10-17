@@ -873,7 +873,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         weeks, _total = load_waste_history(
             restaurant_id, None, db_path=db_path,
             since=start - timedelta(days=tol + 1),
-            until=end + timedelta(days=1), include_unmeasured=True)
+            until=end + timedelta(days=1), include_unmeasured=True, snapshots=True)
         # Each snapshot is dated by its count day (`counted_on`) when it is a
         # count, and none dated after the window's last complete day can
         # close it — a closing count today would carry deliveries and usage

@@ -396,30 +396,39 @@ def _waste_weeks(restaurant_id, db_path=DB_PATH) -> dict:
     """{item_lower: weeks} — in how many distinct ISO weeks of the last eight
     each item was among the recorded waste offenders, plus "_all": how many
     weeks of waste history exist at all. inventory_history is written per
-    render day, so weeks are counted, not rows."""
+    day, so weeks are counted, not rows — and each ISO week is read from
+    ONE row, its newest snapshot, as the trend does (AI-05): every daily row
+    holds the trailing seven days, so one Sunday's brisket sat in the top
+    items of seven rows across two ISO weeks and read "an offender in 2 of
+    the last 8 weeks"."""
     out = {"_all": 0}
+    since = (_local_today(restaurant_id) - timedelta(days=56)).isoformat()
     conn = get_conn(db_path)
     try:
         rows = _rows_raw(conn, "SELECT week_end, waste_json FROM inventory_history WHERE restaurant_id=? "
-                               "AND waste_json IS NOT NULL AND week_end >= date('now', '-56 days')",
-                         (restaurant_id,))
+                               "AND waste_json IS NOT NULL AND week_end >= ? ORDER BY week_end, id",
+                         (restaurant_id, since))
     finally:
         conn.close()
-    weeks_all, per = set(), {}
+    newest = {}
     for r in rows:
         try:
             d = datetime.strptime(str(r["week_end"])[:10], "%Y-%m-%d").date()
         except (TypeError, ValueError):
             continue
-        wk = d.isocalendar()[:2]
-        weeks_all.add(wk)
+        newest[d.isocalendar()[:2]] = r          # ascending: the last row of the week wins
+    per = {}
+    for wk, r in newest.items():
         try:
-            top = json.loads(r["waste_json"] or "{}").get("top_items") or []
+            data = json.loads(r["waste_json"] or "{}") or {}
         except Exception:
-            top = []
-        for it in top:
+            data = {}
+        # A week with no waste measured (FC-CALC-12) is no week of waste counts.
+        if not isinstance(data, dict) or ("total_waste_cost" in data and data["total_waste_cost"] is None):
+            continue
+        out["_all"] += 1
+        for it in data.get("top_items") or []:
             per.setdefault(str(it).strip().lower(), set()).add(wk)
-    out["_all"] = len(weeks_all)
     for k, v in per.items():
         out[k] = len(v)
     return out
@@ -489,10 +498,16 @@ def driver_evidence(d: dict) -> dict:
     # 80% on n=1 "count").
     if kind == "portion":
         n = int(d.get("recounts") or 0) or None
-        return {"n": n, "kind": "recounts", "flags": ("inferred",),
-                "basis": ((f"a gap between recipes and counts at {n} recount{'s' if n != 1 else ''} — "
-                           "portioning, prep loss or a miscount all fit") if n else
-                          "the recounts behind the gap were not read")}
+        drafts = int(d.get("recipe_unreviewed_lines") or 0)
+        lines = int(d.get("recipe_lines") or 0)
+        # A gap against a draft recipe is provisional (AI-04): the expected
+        # usage is itself unconfirmed, so the evidence is capped as partial.
+        return {"n": n, "kind": "recounts", "flags": ("inferred", "provisional") if drafts else ("inferred",),
+                "basis": (((f"a gap between recipes and counts at {n} recount{'s' if n != 1 else ''} — "
+                            "portioning, prep loss or a miscount all fit") if n else
+                           "the recounts behind the gap were not read")
+                          + (f"; {drafts} of {lines} recipe lines behind it are an unreviewed draft"
+                             if drafts else ""))}
     if kind == "price":
         weeks = int(d.get("price_weeks") or 1)
         return {"n": weeks, "kind": "price_weeks",
@@ -777,6 +792,8 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             if v["monthly_cost"] < MIN_DRIVER_DOLLARS:
                 continue
             dish = v["dishes"][0]["dish"] if v.get("dishes") else None
+            lines = int(v.get("recipe_lines") or 0)
+            drafts = int(v.get("recipe_unreviewed_lines") or 0)
             drivers.append({
                 "kind": "portion", "label": f"{v['ingredient']} usage over recipe",
                 "dollars_monthly": v["monthly_cost"],
@@ -790,10 +807,19 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                              f"against {v['theoretical_qty']} theoretical)"
                              + (f"; {dish} accounts for "
                                 f"{int((v['dishes'][0].get('share') or 0) * 100)}% of its use"
-                                if dish else "")),
+                                if dish else "")
+                             # The recipe behind "theoretical" may be a draft
+                             # nobody reviewed (AI-04): said, so the gap is
+                             # never read as a measured over-portioning.
+                             + (f"; {drafts} of the {lines} recipe lines using it are a Cavnar AI draft "
+                                "accepted unedited, so the expected usage itself is unconfirmed"
+                                if drafts else "")),
                 "if_ignored": "every plate keeps costing more than the recipe says it does",
                 "item": v["ingredient"], "dish": dish,
                 "recounts": int(v.get("recounts") or 0),
+                "recipe_lines": lines, "recipe_unreviewed_lines": drafts,
+                "draft_only": bool(v.get("draft_only")),
+                "provisional": bool(drafts),
             })
     except Exception as _e:
         degraded.append(_driver_block_failed(restaurant_id, "portion", _e))
@@ -974,8 +1000,9 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         "complete": not degraded,
         "basis": ("Each driver is priced from this restaurant's own recorded usage and "
                   "prices, expressed monthly so drivers measured over different periods "
-                  "are comparable. Ranked by dollars — weighted by how that kind of fix has measured "
-                  "here — then confidence, then ease."),
+                  "are comparable. Ranked by dollars — weighted by your answers to that kind of fix and "
+                  "the results measured after it here (with no record of yours, similar restaurants' "
+                  "results) — then confidence, then ease."),
         "reason": None if drivers else
                   f"nothing clears the ${MIN_DRIVER_DOLLARS:g}/month floor",
     }
@@ -1653,7 +1680,7 @@ Return ONLY valid JSON — no markdown, no commentary.
 
 HOW THE MESSAGE IS LAID OUT — every section is this one restaurant's own record:
 - RESTAURANT, TODAY and WINDOW: who this is, the date the read is written on, and the days its figures cover.
-- WHERE THE MONEY IS: the cost drivers, measured from this restaurant's own recorded usage and prices and already ranked by dollars weighted by how that kind of fix has measured here, then confidence, then ease — each with its monthly dollars, its confidence, how hard it is to fix, its evidence and what happens if it is ignored, and the combined figure with no ingredient counted twice.
+- WHERE THE MONEY IS: the cost drivers, measured from this restaurant's own recorded usage and prices and already ranked by dollars weighted by the owner's answers and the measured results of that kind of fix here, then confidence, then ease — each with its monthly dollars, its confidence, how hard it is to fix, its evidence and what happens if it is ignored, and the combined figure with no ingredient counted twice.
 - FOOD COST POSITION and PROFITABILITY: where food cost and prime cost stand against target and against last month.
 - HOW FAR THESE FIGURES CAN BE TRUSTED: recipe coverage and how much of the waste was inferred rather than logged.
 - WHERE AND WHEN THE WASTE LANDS: the weekday pattern and the seasonal baseline.
@@ -1697,7 +1724,7 @@ DIAGNOSE_USER = """RESTAURANT: {restaurant_name}
 TODAY: {today}
 WINDOW: the last {window_days} days
 
-WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars weighted by how that kind of fix has measured here, then confidence, then ease):
+WHERE THE MONEY IS (measured — each figure is computed from this restaurant's own recorded usage and prices, already ranked by dollars weighted by the owner's answers and the measured results of that kind of fix here, then confidence, then ease):
 {drivers_block}
 
 FOOD COST POSITION:
@@ -1737,7 +1764,15 @@ def _drivers_block(drv) -> str:
         out.append(f"{i}. {d['label']} — ${d['dollars_monthly']:,.0f}/month "
                    f"({d['confidence']} confidence, {d['difficulty']} to fix)\n"
                    f"   evidence: {d['evidence']}\n"
-                   f"   if ignored: {d['if_ignored']}")
+                   f"   if ignored: {d['if_ignored']}"
+                   # A gap measured against a draft recipe (AI-04) is not
+                   # evidence of over-portioning: the draft may be what's off.
+                   + ("\n   caveat: every recipe line behind this gap is an unreviewed Cavnar AI draft — the draft's "
+                      "quantity may be what is wrong. Do not name over-portioning as its cause; say the recipe "
+                      "needs confirming first." if d.get("kind") == "portion" and d.get("draft_only") else
+                      "\n   caveat: part of the recipe behind this gap is an unreviewed draft — over-portioning is "
+                      "one possibility, never the established cause." if d.get("kind") == "portion"
+                      and d.get("recipe_unreviewed_lines") else ""))
     # The total, stated. Without it the model adds the drivers up itself to
     # open with a combined figure — which is the natural thing for a CFO to
     # write and is exactly what verify_figures then rejects, costing the
@@ -2057,6 +2092,83 @@ def diagnose(restaurant_id: int, db_path: str = DB_PATH, force: bool = False) ->
     return finish_diagnosis(restaurant_id, plan["state"], msg, db_path=db_path)
 
 
+# ── the nightly pass as queue work (SCALE-07) ──────────────────────────────
+#
+# The 6am diagnosis pass ran inline on the scheduler thread in the web
+# process — build_evidence (seasonal baseline ~3.4 s at 52 counts), the cost
+# drivers and a model call per restaurant, three at a time under a 40-minute
+# bound: ~1,000 restaurants a night, the rest waiting days while it competed
+# with interactive requests. Now one `food_cost_diagnosis` job_queue row per
+# restaurant (strategy_jobs.fan_out_learner's pattern), drained by the queue
+# worker process fairly across tenants.
+
+DIAGNOSIS_QUEUE_KIND = "food_cost_diagnosis"
+
+
+def fan_out_diagnoses(restaurant_ids, db_path: str = DB_PATH, today=None) -> dict:
+    """Queue one diagnosis row per restaurant, keyed on the restaurant and
+    the day so a pass run twice queues nothing new. Standard counts:
+    attempted / ok are the rows queued now (each row's own result is the
+    diagnosis)."""
+    import job_queue
+    day = str(today or date.today())[:10]
+    items = [{"payload": {"restaurant_id": int(rid), "day": day}, "restaurant_id": int(rid),
+              "idempotency_key": f"{DIAGNOSIS_QUEUE_KIND}:{int(rid)}:{day}"} for rid in restaurant_ids or ()]
+    created = job_queue.enqueue_many(DIAGNOSIS_QUEUE_KIND, items, priority_class="bulk",
+                                     db_path=None if db_path == DB_PATH else db_path)
+    return {"attempted": created, "ok": created, "failed": 0, "skipped": len(items) - created,
+            "hit_bound": False, "queued": created}
+
+
+def diagnoses_pending(day, db_path: str = DB_PATH) -> int:
+    """How many of `day`'s queued diagnosis rows have not finished — what
+    the morning brief waits on (scheduler._morning_input_pending), as it
+    waited on the inline pass. 0 when it can't be read."""
+    try:
+        import job_queue
+        conn = job_queue.get_conn(None if db_path == DB_PATH else db_path)
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE kind=? AND state IN ('queued', 'running') "
+                               "AND idempotency_key LIKE ?",
+                               (DIAGNOSIS_QUEUE_KIND, f"{DIAGNOSIS_QUEUE_KIND}:%:{str(day)[:10]}")).fetchone()
+        finally:
+            conn.close()
+        return int((row["n"] if row else 0) or 0)
+    except Exception as e:
+        print(f"[food_cost_intelligence] queued diagnoses unreadable: {e}")
+        return 0
+
+
+def run_queued_diagnosis(job) -> dict:
+    """job_queue's handler for `food_cost_diagnosis`: one restaurant's
+    diagnosis, exactly as the inline pass ran it — skipped when its AI
+    budget is spent, its batched read that has not landed stopped waiting
+    for (diagnose() reuses one that did, by the evidence hash), and every
+    cached food narrative invalidated when a fresh cause is written. Raises
+    on failure: the queue captures it and tries again once."""
+    import ai_utils
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    if ai_utils.ai_budget_exceeded(rid):
+        return {"skipped": "AI budget spent"}
+    try:
+        import ai_batches
+        for cid in ai_batches.open_items(BATCH_WORKFLOW, rid):
+            ai_batches.cancel(BATCH_WORKFLOW, cid)
+    except Exception as e:
+        print(f"[food_cost_intelligence] open batch items not cancelled for {rid}: {e}")
+    out = diagnose(rid) or {}
+    if out.get("ok"):
+        try:
+            from client_api import invalidate_insight_cache
+            invalidate_insight_cache(rid)
+        except Exception as e:
+            print(f"[food_cost_intelligence] insight cache not invalidated for {rid}: {e}")
+        return {"diagnosed": True}
+    return {"diagnosed": False, "reason": out.get("reason")}
+
+
 def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = False, readiness=None) -> dict:
     """What diagnose() would do, before any call: {"kind": "done", "result"}
     (nothing to read, a refusal, or the stored read reused and marked
@@ -2123,9 +2235,12 @@ def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = Fal
     _purch = purchasing_context(restaurant_id, drv["drivers"], db_path=db_path)
     if _ready_fd.get("prompt_block"):
         _op_block = f"{_op_block}\n\n{_ready_fd['prompt_block']}"
+    from time_utils import mdy as _mdy_dx
     user = DIAGNOSE_USER.format(
         restaurant_name=restaurant.name,
-        today=restaurant_now_by_id(restaurant_id).strftime("%B %d, %Y"),
+        # M/D/YY, the one date an owner reads (AI-18): a long-form date was
+        # echoed into the headline and cause.
+        today=_mdy_dx(restaurant_now_by_id(restaurant_id).date()),
         window_days=DIAGNOSIS_WINDOW_DAYS,
         drivers_block=_drivers_block(drv),
         position_block=_position_block(ev["food_cost"]),
@@ -2150,6 +2265,10 @@ def diagnosis_plan(restaurant_id: int, db_path: str = DB_PATH, force: bool = Fal
         "ev_hash": ev_hash,
         "drv": json.loads(json.dumps(drv, default=str)),
         "labels": [d.get("item") or d["label"] for d in drv["drivers"]],
+        # Drivers whose gap rests only on a draft recipe anchor an
+        # association, never a "likely" cause (AI-04).
+        "weak_labels": [d.get("item") or d["label"] for d in drv["drivers"]
+                        if d.get("kind") == "portion" and d.get("draft_only")],
         "lines": {k: _ri_state._line_to_state(v) for k, v in _op_lines.items()},
         "facts": [dataclasses.asdict(f) if dataclasses.is_dataclass(f) else dict(f.__dict__) for f in facts],
         # One "at stake" figure, the same one the web card and iOS header
@@ -2193,10 +2312,16 @@ def finish_diagnosis(restaurant_id, state, msg, db_path: str = DB_PATH) -> dict:
     import review_intelligence as _ri_state
     drv = state["drv"]
     _op_lines = {k: _ri_state._line_from_state(v) for k, v in (state.get("lines") or {}).items()}
+    labels = list(state.get("labels") or [])
+    weak = [w for w in (state.get("weak_labels") or []) if w]
+    anchors = None
+    if weak:
+        anchors = _ri_state.diagnosis_anchors(strong=[lb for lb in labels if lb not in weak],
+                                              weak=list(weak) + list(_op_lines.values()))
     result = _validate_diagnosis(parse_json_reply(extract_text(msg), expect=dict, message=msg),
-                                 list(state.get("labels") or []), DIAGNOSE_SYSTEM + "\n\n" + state["user"],
+                                 labels, DIAGNOSE_SYSTEM + "\n\n" + state["user"],
                                  restaurant_id, op_lines=_op_lines,
-                                 facts=_facts_from_state(state.get("facts")))
+                                 facts=_facts_from_state(state.get("facts")), anchors=anchors)
 
     # One "at stake" figure, the same one the web card and iOS header show:
     # what the drivers carry, with no ingredient counted twice (M-10). It
@@ -2638,6 +2763,29 @@ def _mdy_safe(stamp):
         return None
 
 
+def ranked_drivers_on_file(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """The ranked cost drivers the latest live diagnosis was written from
+    (drivers_json — each with its own evidence_input and confidence_detail),
+    read without re-validating the diagnosis: what a food read line binds
+    its confidence to (AI-13). [] when none is on file. Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = _one_row(conn, "SELECT drivers_json FROM food_cost_diagnoses WHERE restaurant_id=? "
+                                 "AND retired_at IS NULL ORDER BY generated_at DESC LIMIT 1", (restaurant_id,))
+        finally:
+            conn.close()
+        got = json.loads(row["drivers_json"]) if row and row["drivers_json"] else []
+        return [d for d in got if isinstance(d, dict)]
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="food_line_drivers", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
+        return []
+
+
 def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
                   include_stale: bool = False, include_retired: bool = False):
     """The stored CFO read, with its own age. `stale` is computed rather than
@@ -2720,10 +2868,13 @@ def get_diagnosis(restaurant_id: int, db_path: str = DB_PATH,
     try:
         from review_intelligence import diagnosis_anchors, revalidate_stored_diagnosis
         _drv = [d for d in out["drivers"] if isinstance(d, dict)]
+        # A gap resting only on a draft recipe anchors an association (AI-04).
+        _draft = [d.get("item") or d.get("label") for d in _drv if d.get("kind") == "portion" and d.get("draft_only")]
         revalidate_stored_diagnosis(
             out, "food_diagnosis", restaurant_id, facts=typed_facts({"drivers": _drv}),
-            anchors=diagnosis_anchors(strong=[d.get("item") or d.get("label") for d in _drv],
-                                       weak=[e.get("value") for e in _op if isinstance(e, dict)]))
+            anchors=diagnosis_anchors(strong=[d.get("item") or d.get("label") for d in _drv
+                                              if (d.get("item") or d.get("label")) not in _draft],
+                                       weak=_draft + [e.get("value") for e in _op if isinstance(e, dict)]))
     except ValueError as e:
         print(f"[food_cost_intelligence] stored diagnosis no longer stands: {e}")
         return None
@@ -2760,6 +2911,9 @@ def _as_action(d: dict) -> dict:
             "kind": d.get("kind"), "item": d.get("item")}
 
 
+FIX_FIRST_EASY_BAND = 0.2      # an easy driver within 20% of the top one's dollars goes first
+
+
 def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Deterministic answers to the eight questions, computed in Python and
     true before any model runs.
@@ -2781,18 +2935,40 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     except Exception:
         wt = {}
 
+    # Improved and worsened are MOVES against a prior period (AI-17): a level
+    # under target is a position, and a zero change is no change — both
+    # used to be listed as "improved".
     changed, improved, worsened = [], [], []
     if pp.get("available") and pp.get("dollars_vs_last_month") is not None:
         entry = {"what": f"Prime cost {pp['prime_cost_pct']}% vs {pp['prev_month_prime_pct']}% "
                          f"last month",
                  "dollars": pp["dollars_vs_last_month"], "claim_kind": "forecast"}
         changed.append(entry)
-        (worsened if pp["dollars_vs_last_month"] > 0 else improved).append(entry)
+        if pp["dollars_vs_last_month"] > 0:
+            worsened.append(entry)
+        elif pp["dollars_vs_last_month"] < 0:
+            improved.append(entry)
     if fc.get("ok") and fc.get("variance_pts") is not None:
         entry = {"what": f"Food cost {fc['pct']}% against a {fc['target']}% target",
-                 "variance_pts": fc["variance_pts"], "claim_kind": "measured"}
+                 "variance_pts": fc["variance_pts"], "claim_kind": "measured", "position": True}
         changed.append(entry)
-        (worsened if fc["variance_pts"] > 0 else improved).append(entry)
+        # The same measurement over the window before this one, when it can
+        # be made: the move, not the position, is what improved or worsened.
+        try:
+            import cogs as _cogs_eb
+            prev_end = date.fromisoformat(str(fc["start"])[:10]) - timedelta(days=1)
+            prev = _cogs_eb.build_food_cost_pct(restaurant_id, days=int(fc.get("window_days") or 28),
+                                                db_path=db_path, today=prev_end)
+        except Exception as e:
+            print(f"[food_cost_intelligence] prior food cost unavailable for {restaurant_id}: {e}")
+            prev = None
+        if prev and prev.get("ok") and prev.get("pct") is not None:
+            move = round(float(fc["pct"]) - float(prev["pct"]), 1)
+            if move:
+                mv = {"what": f"Food cost {fc['pct']}% vs {prev['pct']}% the {fc.get('window_days')} days before",
+                      "change_pts": move, "claim_kind": "measured"}
+                changed.append(mv)
+                (worsened if move > 0 else improved).append(mv)
     if wt.get("direction") and wt.get("confidence"):
         entry = {"what": f"Waste {wt['direction']} {abs(_f(wt.get('change_pct'))):g}% over "
                          f"{wt.get('weeks')} weeks",
@@ -2820,13 +2996,19 @@ def executive_brief(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     # ["what"] — the Ask Cavnar tool and the morning brief both do — got None
     # on exactly the path where every driver was expensive-but-hard, which is
     # the case an owner most needs answered.
+    # Fix first is the top-ranked driver — the ranking already weighs money,
+    # confidence and ease — unless an easy one is worth nearly as much
+    # (within FIX_FIRST_EASY_BAND of its dollars). "Now" used to win
+    # outright, so a $16 easy waste driver went first over a $190 menu one
+    # (AI-17).
     fix_first = None
-    if now:
-        fix_first = now[0]
-    elif later:
-        fix_first = later[0]
-    elif drv.get("drivers"):
-        fix_first = _as_action(drv["drivers"][0])
+    ranked = drv.get("drivers") or []
+    if ranked:
+        top = ranked[0]
+        easy = next((d for d in ranked[1:] if d.get("difficulty") == "low"
+                     and _f(d.get("dollars_monthly")) >= (1 - FIX_FIRST_EASY_BAND) * _f(top.get("dollars_monthly"))),
+                    None)
+        fix_first = _as_action(easy if easy is not None and top.get("difficulty") != "low" else top)
 
     return {
         "what_changed": changed or None,

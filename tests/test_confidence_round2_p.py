@@ -334,7 +334,9 @@ def test_p4_b1_probe2a_the_food_diagnosis_reads_the_food_data_not_zero(monkeypat
     """B1 probe2a / H4: a food diagnosis with no verified cross-check read 0%
     while the CFO prose called it "medium"."""
     import waste_trend
-    monkeypatch.setattr(waste_trend, "load_waste_history", lambda rid, limit=None, **k: ([{}] * 6, 0))
+    # Weeks holding a real count (waste_trend.count_weeks, AI-06), never
+    # weeks of daily snapshots.
+    monkeypatch.setattr(waste_trend, "count_weeks", lambda rid, weeks=8, **k: 6)
     dg = {"confidence": "medium", "model_confidence": "high", "operational_evidence": []}
     ev = rec_trust.food_diagnosis_input(1, dg)
     e = ce.evidence(**ev)

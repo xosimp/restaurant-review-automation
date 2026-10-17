@@ -196,7 +196,8 @@ def _iso_key(day):
         return None
 
 
-def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None, include_unmeasured=False):
+def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, until=None, include_unmeasured=False,
+                       snapshots=False):
     """The restaurant's weekly waste series, oldest first, one entry per
     ISO week. When a week holds several snapshots (the insight ran more
     than once), the most recent one is that week's figure. `limit` keeps
@@ -212,7 +213,11 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
     taking its ISO week's slot: waste measured count to count. A count with
     no measured waste (the first one) carries only a stock value, returned
     with waste None when `include_unmeasured` — food cost % brackets a
-    window with it; the trend never charts it as a week of $0."""
+    window with it; the trend never charts it as a week of $0.
+
+    `snapshots=True` keeps every snapshot day instead of one per ISO week:
+    food cost % anchors only on a full count (FC-CALC-02), and the count
+    day's snapshot is rarely its week's newest."""
     from models import get_conn, DB_PATH
     conn = get_conn(db_path or DB_PATH)
     try:
@@ -294,8 +299,12 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
         week = _week_from_row(row["week_end"], row["waste_json"], row.get("items_json"), row.get("inv_value"))
         if not week:
             continue
-        iso = date.fromisoformat(week["week_end"]).isocalendar()
-        key = (iso[0], iso[1])
+        _we = date.fromisoformat(week["week_end"])
+        iso = _we.isocalendar()
+        # `snapshots`: every snapshot day stands alone (food cost's count
+        # anchors, FC-CALC-02 — a full count on Tuesday is not the ISO
+        # week's newest daily snapshot, which is Sunday's ledger figure).
+        key = (iso[0], iso[1], _we.toordinal()) if snapshots else (iso[0], iso[1])
         if key not in buckets:
             order.append(key)
         buckets[key] = week  # rows arrive oldest→newest, so the last one wins
@@ -323,7 +332,8 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
     # (include_unmeasured).
     if not include_unmeasured:
         weeks = [w for w in weeks if w.get("waste") is not None]
-    _mark_partial(weeks)
+    if not snapshots:
+        _mark_partial(weeks)
     # total is every week on file, not just the ones fetched — build_waste_trend
     # decides which range buttons to offer from it.
     total = total_weeks + extra
@@ -350,6 +360,27 @@ def _mark_partial(weeks):
     if gap < 7:
         weeks[-1]["partial"] = True
     return weeks
+
+
+def count_weeks(restaurant_id, weeks=8, db_path=None, today=None) -> int:
+    """How many of the last `weeks` ISO weeks hold a REAL inventory count
+    (AI-06): a full count on the ledger (cogs.is_counted, dated by its count
+    day) or a submitted Back Office count. Snapshots are written every day
+    whether anyone counted or not, so "8 weeks of inventory counts" used to
+    mean eight weeks of daily snapshots after one count."""
+    import cogs as _cogs
+    today = today or _cogs.local_today(restaurant_id)
+    since = today - timedelta(weeks=weeks)
+    got, _t = load_waste_history(restaurant_id, None, db_path=db_path, since=since, until=today,
+                                 include_unmeasured=True, snapshots=True)
+    keys = set()
+    for w in got or ():
+        if not _cogs.is_counted(w):
+            continue
+        k = _iso_key(w.get("counted_on") or w.get("week_end"))
+        if k:
+            keys.add(k)
+    return min(weeks, len(keys))
 
 
 def complete_weeks(weeks):

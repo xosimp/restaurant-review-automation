@@ -409,8 +409,17 @@ def test_food_cost_diagnoses_skip_a_restaurant_over_its_ai_budget(db_path, monke
     diagnosed = []
     monkeypatch.setattr(food_cost_intelligence, "diagnose",
                         lambda rid, *a, **k: diagnosed.append(rid) or {"ok": False})
+    # The pass is queue work now (SCALE-07): the budget is checked by the
+    # queued row's handler, as it was per restaurant in the inline sweep.
+    import job_queue
+    monkeypatch.setattr(job_queue, "kick", lambda *a, **k: None)
     out = scheduler.run_food_cost_diagnoses()
-    assert diagnosed == [] and out["skipped"] == 1
+    assert out["queued"] == 1
+    job_queue.drain(("bulk",), "test-worker")
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT state, result_json FROM jobs WHERE kind='food_cost_diagnosis'").fetchone()
+    conn.close()
+    assert diagnosed == [] and row["state"] == "done" and "AI budget spent" in row["result_json"]
 
 
 def test_review_diagnoses_run_for_a_restaurant_under_budget(db_path, monkeypatch):

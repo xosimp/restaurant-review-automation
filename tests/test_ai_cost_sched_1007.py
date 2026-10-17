@@ -325,16 +325,24 @@ def test_the_review_diagnoses_run_several_restaurants_at_once(db, monkeypatch):
     assert out["attempted"] == 5 and out["failed"] == 0
 
 
-def test_the_food_cost_diagnoses_run_several_restaurants_at_once(db, monkeypatch):
+def test_the_food_cost_diagnoses_are_one_queued_row_per_restaurant(db, monkeypatch):
+    """SCALE-07 (Food Cost audit 10/16/26): the pass queues one
+    food_cost_diagnosis row per restaurant and diagnoses nothing inline;
+    the queue's consumers run them, and a second pass the same day queues
+    nothing new."""
     import food_cost_intelligence as fci
+    import job_queue
+    import ai_utils
     ids = [_rid(db, f"Food {i}") for i in range(5)]
-    over = _Overlap()
-    monkeypatch.setattr(fci, "diagnose", lambda rid: over(rid, {"ok": True}))
-    monkeypatch.setattr(scheduler, "_ai_budget_spent", lambda rid: False)
-    monkeypatch.setattr(scheduler, "_cancel_open_batch_items", lambda wf, rid: None)
+    seen = []
+    monkeypatch.setattr(fci, "diagnose", lambda rid: seen.append(rid) or {"ok": True})
+    monkeypatch.setattr(ai_utils, "ai_budget_exceeded", lambda rid: False)
+    monkeypatch.setattr(job_queue, "kick", lambda *a, **k: None)
     out = scheduler.run_food_cost_diagnoses()
-    assert sorted(over.seen) == sorted(ids) and 1 < over.peak <= 3
-    assert out["diagnosed"] == 5
+    assert seen == [] and out["queued"] == 5 and out["attempted"] == 5
+    assert scheduler.run_food_cost_diagnoses()["queued"] == 0, "keyed on the restaurant and the day"
+    job_queue.drain(("bulk",), "test-worker")
+    assert sorted(seen) == sorted(ids)
 
 
 def test_the_fallback_pass_cancels_what_the_batch_has_not_landed(db, monkeypatch):
@@ -709,8 +717,12 @@ def test_the_food_fallback_collects_before_it_cancels(db, monkeypatch):
     monkeypatch.setattr(ai_batches, "open_items", lambda wf, r=None: order.append(("open", r)) or ["fd-1"])
     monkeypatch.setattr(ai_batches, "cancel", lambda wf, cid: order.append(("cancel", cid)) or True)
     monkeypatch.setattr(fci, "diagnose", lambda r: order.append(("diagnose", r)) or {})
-    monkeypatch.setattr(scheduler, "_ai_budget_spent", lambda r: False)
+    import ai_utils
+    import job_queue
+    monkeypatch.setattr(ai_utils, "ai_budget_exceeded", lambda r: False)
+    monkeypatch.setattr(job_queue, "kick", lambda *a, **k: None)
     scheduler.run_food_cost_diagnoses()
+    job_queue.drain(("bulk",), "test-worker")      # the queued row (SCALE-07) cancels, then diagnoses
     assert order[0] == "collect" and order.index("collect") < order.index(("cancel", "fd-1"))
     assert ("diagnose", rid) in order
 

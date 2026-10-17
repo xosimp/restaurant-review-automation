@@ -761,6 +761,35 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
         # Which dishes consume each flagged ingredient, and in what share.
         material_ids = [e["ingredient_id"] for e in out if e["material"]]
         dishes = []
+        # The recipe lines behind each flagged ingredient's theoretical
+        # usage, and how many are a Cavnar AI draft the owner accepted
+        # unedited (recipe_ingredients.source='draft_accepted', AI-04): a
+        # draft that understates a quantity makes the expected stock too
+        # high, so the recount gap reads as "usage over recipe" — the
+        # model's own recipe corroborating itself as over-portioning.
+        prov = {}
+        if material_ids:
+            marks = ",".join("?" for _ in material_ids)
+            try:
+                for p in conn.execute(
+                        f"SELECT ri.ingredient_id AS iid, COUNT(*) AS n, "
+                        f"SUM(CASE WHEN ri.source='draft_accepted' THEN 1 ELSE 0 END) AS drafts "
+                        f"FROM recipe_ingredients ri JOIN menu_items m ON m.id=ri.menu_item_id AND m.restaurant_id=? "
+                        f"WHERE ri.ingredient_id IN ({marks}) GROUP BY ri.ingredient_id",
+                        (restaurant_id, *material_ids)).fetchall():
+                    prov[p["iid"]] = (int(p["n"] or 0), int(p["drafts"] or 0))
+            except Exception as e:      # provenance unread: drivers carry none, and it is reported
+                try:
+                    import ops
+                    ops.capture(e, job="inferred_variance", context=f"restaurant_id={restaurant_id} provenance")
+                except Exception:
+                    pass
+        for e in out:
+            n, drafts = prov.get(e["ingredient_id"], (0, 0))
+            e["recipe_lines"], e["recipe_unreviewed_lines"] = n, drafts
+            # Every recipe line using it is an unreviewed draft: there is no
+            # reviewed recipe to have over-portioned against.
+            e["draft_only"] = bool(n and drafts >= n)
         if material_ids:
             marks = ",".join("?" for _ in material_ids)
             for d in conn.execute(

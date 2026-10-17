@@ -242,8 +242,11 @@ def test_bounded_each_reports_its_bound(db, monkeypatch):
 
 
 def test_the_diagnoses_and_token_refresh_are_bounded():
-    for fn in (scheduler.run_review_diagnoses, scheduler.run_food_cost_diagnoses, scheduler.refresh_expiring_tokens):
+    for fn in (scheduler.run_review_diagnoses, scheduler.refresh_expiring_tokens):
         assert "resumable_sweep(" in inspect.getsource(fn), fn.__name__
+    # The food cost diagnoses are queue work, one row per restaurant
+    # (Food Cost audit 10/16/26 SCALE-07), not a sweep on the scheduler thread.
+    assert "fan_out_diagnoses(" in inspect.getsource(scheduler.run_food_cost_diagnoses)
     for fn in (strategy_jobs.run_weekly_plan, strategy_jobs.run_recipe_drafts, strategy_jobs.run_issue_scan,
                strategy_jobs.run_trusted_orders, strategy_jobs.run_loss_sync):
         assert "_BoundedWalk(" in inspect.getsource(fn), fn.__name__
