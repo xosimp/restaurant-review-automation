@@ -13,17 +13,26 @@ Back Office's own plate costs are not used. They price an item from how it
 is set up, and where the setup disagrees with how the supplier bills it the
 error runs through every recipe that uses it (EJ's, 10/15/26: brisket
 billed $5.94 a pound, set up as a $5.94 case of 55 pounds — 11 cents a
-pound; Kids Burger $0.33). So each ingredient is priced from the latest
-invoice line for its item number (`backoffice_ap.bo_invoice_lines`) where
-there is one, read the way the supplier bills it (a catch-weight case is a
-price per pound), else from Back Office's last price; a price outside what
-the item could cost is refused rather than used, and named.
+pound; Kids Burger $0.33). So each ingredient is priced from an invoice line
+for its item number FROM ITS OWN SUPPLIER (`backoffice_ap.bo_invoice_lines`,
+keyed by vendor and item number — two houses share short numbers) where
+there is one, read the way the supplier bills it, else from Back Office's
+last price. A credit, a $0 line or a line with no quantity is never a price
+(a line with no unit amount is its extended amount over its quantity).
+Whether a weight-packed case is billed by the pound is decided per item: a
+weight reading on any of its lines, else the one reading of the line a
+real item could cost, else the one closer to Back Office's listed price. A
+price outside what the item could cost, or more than 3x from every reading
+of Back Office's listed price, is refused rather than used, and named.
 
-`plates` returns each menu recipe's cost at today's prices with every
-ingredient's source, what could not be priced and why, and — where the
-recipe is matched to the POS — what it sold for over four weeks. A plate
-with an unpriced ingredient is a floor ("at least"), never a percentage.
-Calls no model, sends nothing.
+`plates` returns each menu recipe's cost with every ingredient's source,
+what could not be priced and why, and — where the recipe is matched to the
+POS — what it sold for over four weeks. A plate with an unpriced ingredient
+is a floor ("at least"), never a percentage; a plate under 12% or over 70%
+of its price is a setup error, flagged and kept out of the summary.
+`period_summaries` prices several windows (a count period each, for
+backoffice_counts) from one read of the book, the invoice lines and the
+POS, each window at the prices of its own end. Calls no model, sends nothing.
 """
 import json
 import re
@@ -38,16 +47,26 @@ VOLUME = {"Dash": 1 / 48, "Tsp": 1 / 6, "Tbsp": 0.5, "Fluid Ounce": 1.0, "Cup": 
 
 # A price per pound outside these is a setup or a reading error, not a
 # price (EJ's Spanish onions: $39.26 for a sack, set up as a pound). Meat,
-# poultry and seafood never cost under $1.50 a pound.
+# poultry and seafood never cost under $1.50 a pound, cheese and dairy sold
+# by weight never under $1, and no food under 20 cents (EJ's cheapest real
+# pound, 10/16/26: flour at 41 cents, whole carrots at 44).
 MAX_PER_POUND = 30.0
 MIN_PER_POUND_PROTEIN = 1.5
+MIN_PER_POUND_DAIRY = 1.0
+MIN_PER_POUND = 0.20
 MAX_PER_GALLON = 60.0
 STALE_DAYS = 120
+# An invoice price more than this many times from every reading of Back
+# Office's listed price for the same row is a reading error, not a price.
+LISTED_RATIO = 3.0
 # A fully priced plate under this share of its price is a recipe missing its
 # main item, not a cheap dish (EJ's Tomahawk Pork Chop, 10/15/26: sprouts,
 # seasoning, oil and rosemary — no chop — 2% of $54.99; the Pretzel without
 # the pretzel, 10%). Flagged, and kept out of the headline figure.
 SUSPECT_PCT = 12.0
+# ...and over this share, a price or a pack set up wrong (a case of 96 buns
+# set up as "Each": $30 a bun, a 250% burger). Flagged and kept out too.
+SUSPECT_HIGH_PCT = 70.0
 WINDOW_DAYS = 28
 
 
@@ -70,10 +89,34 @@ def _sku(s):
     return re.sub(r"\s+T$", "", str(s or "").strip(), flags=re.I).lstrip("0")
 
 
+def _pos_key(name):
+    """A POS item name as one key: case and spacing never decide a match."""
+    return " ".join(str(name or "").split()).casefold()
+
+
 def _mdy_us(s):
     """Back Office's '10/12/2026' → ISO, or None."""
     m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(s or ""))
     return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else None
+
+
+def _local_today(restaurant_id):
+    """The restaurant's own calendar date (FC-CALC-24): on a UTC host the
+    server's date is tomorrow after 7pm Central, and "through yesterday"
+    took in the restaurant's current, partial day."""
+    try:
+        from models import _restaurant_today
+        return _restaurant_today(restaurant_id)
+    except Exception:
+        return date.today()
+
+
+def _capture(e, restaurant_id, job, db_path=None):
+    try:
+        import ops
+        ops.capture(e, job=job, restaurant_id=restaurant_id, db_path=db_path)
+    except Exception:
+        pass
 
 
 # ── the book ──────────────────────────────────────────────────────────────
@@ -82,7 +125,8 @@ def validate(book) -> dict:
     """The recipe book as read from Back Office: {recipes: [{name, group,
     ingredients: [{name, qty, unit, item | prep}], batch_yield}], items:
     [{name, gl, vendors: [...]}], pos_names?: {recipe: [POS item name]}}.
-    Raises ValueError naming what is wrong."""
+    Raises ValueError naming what is wrong — including one POS item mapped
+    to two recipes (each would take all its sales: ING-19)."""
     if not isinstance(book, dict) or not isinstance(book.get("recipes"), list) or not isinstance(book.get("items"), list):
         raise ValueError("not a Back Office recipe book (recipes and items)")
     names = {r.get("name") for r in book["recipes"]}
@@ -92,6 +136,14 @@ def validate(book) -> dict:
                 raise ValueError(f"{r.get('name')}: {g.get('name')} points at no item")
             if "prep" in g and g["prep"] not in names:
                 raise ValueError(f"{r.get('name')}: prep {g['prep']} is not in the book")
+    owner = {}
+    for recipe, pos in (book.get("pos_names") or {}).items():
+        for n in pos or []:
+            k = _pos_key(n)
+            if k in owner and owner[k] != recipe:
+                raise ValueError(f"POS item {n} is mapped to both {owner[k]} and {recipe} — each would take all "
+                                 "of its sales")
+            owner[k] = recipe
     return book
 
 
@@ -130,29 +182,126 @@ def _is_menu(r):
 
 # ── prices ────────────────────────────────────────────────────────────────
 
-def _invoice_prices(restaurant_id, db_path=None) -> dict:
-    """{item code: latest invoice line} from Back Office invoice pages."""
+def _vendor_key(name):
+    from fintech_invoices import distributor_key
+    return distributor_key(name) or str(name or "").strip().lower()
+
+
+def _same_vendor(a, b) -> bool:
+    """Whether a recipe book's vendor (key `a`) is the supplier on an invoice
+    (key `b`): one key, one the other's leading words ('sysco' and 'sysco
+    chicago'), or one word that is the other's initials ('gfs' and 'gordon
+    food service'). Never one shared first word alone (FC-CALC-05)."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    wa, wb = a.split(), b.split()
+    short, long_ = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    if long_[:len(short)] == short:
+        return True
+    return len(short) == 1 and len(long_) >= 2 and short[0] == "".join(w[0] for w in long_)
+
+
+def _usable(line):
+    """An invoice line as a price, or None: a credit, a return, a $0 line or
+    a line with no quantity is never a price; a line with no unit amount is
+    its extended amount over its quantity (FC-CALC-09 / ING-08)."""
+    qty = _num(line.get("qty"))
+    amt = line.get("unit_amount")
+    amt = _num(amt) if amt not in (None, "") else float("nan")
+    if not _ok(qty) or qty <= 0:
+        return None
+    if not _ok(amt):
+        ext = _num(line.get("ext_amount"))
+        amt = ext / qty if _ok(ext) else float("nan")
+    if not _ok(amt) or amt <= 0:
+        return None
+    return dict(line, qty=qty, unit_amount=amt)
+
+
+class _Invoices:
+    """Usable invoice lines by (vendor key, item number), newest first.
+    `_invoice_prices` builds it from bo_invoice_lines; a plain {item number:
+    line} map (a caller's own lines, tests) is read as one vendor-less line
+    per number."""
+
+    def __init__(self, lines):
+        self.by_key, self.vendors = {}, {}
+        for line in lines:
+            u = _usable(line)
+            if u is None:
+                continue
+            sku = _sku(u["_sku"] if "_sku" in u else u.get("item_code"))
+            vk = u.get("vendor_key")
+            self.by_key.setdefault((vk, sku), []).append(u)
+            self.vendors.setdefault(sku, set()).add(vk)
+        for v in self.by_key.values():
+            v.sort(key=lambda x: str(x.get("invoice_date") or ""), reverse=True)
+
+    @classmethod
+    def of(cls, invoices):
+        if isinstance(invoices, cls):
+            return invoices
+        return cls([dict(v, _sku=k, vendor_key=None) for k, v in (invoices or {}).items()])
+
+    def lines_for(self, vendor, sku) -> list:
+        """This vendor row's lines for its number, newest first: only its own
+        supplier's when the book names one; a row with no vendor only when
+        one supplier alone bills that number."""
+        sku = _sku(sku)
+        vks = self.vendors.get(sku) or set()
+        if None in vks:                       # a vendor-less map: the caller already chose
+            return self.by_key.get((None, sku), [])
+        if vendor:
+            want = _vendor_key(vendor)
+            hits = [vk for vk in vks if _same_vendor(want, vk)]
+        else:
+            hits = list(vks) if len(vks) == 1 else []
+        out = [l for vk in hits for l in self.by_key.get((vk, sku), [])]
+        return sorted(out, key=lambda x: str(x.get("invoice_date") or ""), reverse=True)
+
+
+def _invoice_prices(restaurant_id, db_path=None) -> _Invoices:
+    """Every usable Back Office invoice line, by (vendor, item number)."""
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT item_code, purchase_unit, qty, unit_amount, invoice_date, vendor_key, invoice_key "
-                            "FROM bo_invoice_lines WHERE restaurant_id=? AND item_code IS NOT NULL "
+        rows = conn.execute("SELECT item_code, purchase_unit, qty, unit_amount, ext_amount, invoice_date, vendor_key, "
+                            "invoice_key FROM bo_invoice_lines WHERE restaurant_id=? AND item_code IS NOT NULL "
                             "ORDER BY invoice_date", (int(restaurant_id),)).fetchall()
     finally:
         conn.close()
-    out = {}
-    for r in rows:
-        out[_sku(r["item_code"])] = dict(r)
-    return out
+    return _Invoices([dict(r) for r in rows])
+
+
+def _pick(lines, as_of):
+    """The line that prices as of `as_of` (an ISO date): the newest on or
+    before it, else the earliest after it (the nearest price there is);
+    the newest of all when `as_of` is None. (line, after?)"""
+    if not lines:
+        return None, False
+    if not as_of:
+        return lines[0], False
+    before = [l for l in lines if str(l.get("invoice_date") or "") <= as_of]
+    if before:
+        return before[0], False
+    return lines[-1], True
 
 
 def _sane(per_base, base, gl):
     """None, or why a price per `base` unit cannot be a real price."""
+    if not _ok(per_base) or per_base <= 0:
+        return "a price of $0 or less is not a price (a credit, a $0 line or a missing amount)"
     if _dim(base) == "w":
         per_lb = per_base * 16.0 / WEIGHT[base]
         if per_lb > MAX_PER_POUND:
             return f"${per_lb:,.2f} a pound looks like a case price — check the pack"
         if per_lb < MIN_PER_POUND_PROTEIN and re.search(r"MEAT|POULTRY|SEAFOOD", str(gl or ""), re.I):
             return f"${per_lb:,.2f} a pound is too cheap for meat — the case price may be a price per pound"
+        if per_lb < MIN_PER_POUND_DAIRY and re.search(r"DAIRY|CHEESE", str(gl or ""), re.I):
+            return f"${per_lb:,.2f} a pound is too cheap for dairy — the case price may be a price per pound"
+        if per_lb < MIN_PER_POUND:
+            return f"${per_lb:,.2f} a pound is less than any food costs — the case price may be a price per pound"
     if _dim(base) == "v":
         per_gal = per_base * 128.0 / VOLUME[base]
         if per_gal > MAX_PER_GALLON:
@@ -160,30 +309,50 @@ def _sane(per_base, base, gl):
     return None
 
 
-def item_price(item, invoices, today=None) -> dict:
+def _weight_reading(qty) -> bool:
+    """A quantity that reads as a scale's weight (20.4, 128.6), not a count
+    of cases or a split case (2, 0.5, 1.25)."""
+    return qty >= 1 and abs(qty - round(qty * 4) / 4) > 0.01
+
+
+def item_price(item, invoices, today=None, as_of=None) -> dict:
     """One inventory item's price per its base unit (the vendor's pack unit,
     else its purchase unit): {base, per_base, source: invoice | back_office,
-    date, vendor, sku, flag?} or {error}.
+    date, vendor, sku, flag?} or {error}. `as_of` (ISO date) prices it as of
+    that day: each row's newest invoice line on or before it.
 
     Every way the item is bought is a candidate — vendor rows with an invoice
-    line, newest invoice first, then Back Office's own prices, newest purchase
-    first — and the first one that passes `_sane` prices it. One row set up
-    wrong (EJ's Spanish onions, GFS 591122: a 50 lb sack entered as bought "by
-    the Pound" at $39.26) no longer leaves the item unpriced while the same
-    item's other rows carry a real price; the refusal rides along as a flag."""
+    line from that vendor, newest first, then Back Office's own prices,
+    newest purchase first — and the first one that passes the checks prices
+    it. One row set up wrong (EJ's Spanish onions, GFS 591122: a 50 lb sack
+    entered as bought "by the Pound" at $39.26) no longer leaves the item
+    unpriced while the same item's other rows carry a real price; the
+    refusal rides along as a flag."""
     today = today or date.today()
+    inv = _Invoices.of(invoices)
     vendors = item.get("vendors") or []
-    billed = sorted(((v, invoices.get(_sku(v.get("sku")))) for v in vendors
-                     if invoices.get(_sku(v.get("sku")))),
-                    key=lambda c: str(c[1]["invoice_date"] or ""), reverse=True)
-    listed = sorted(((v, None) for v in vendors if _ok(_num(v.get("price")))),
+    billed = []
+    for v in vendors:
+        hist = inv.lines_for(v.get("vendor"), v.get("sku"))
+        line, after = _pick(hist, as_of)
+        if line:
+            billed.append((v, line, hist, after))
+    # Newest first; as of a day, the rows priced on or before it come first
+    # (newest first), then the rows priced only after it (nearest first).
+    billed.sort(key=lambda c: str(c[1]["invoice_date"] or ""), reverse=True)
+    billed = [c for c in billed if not c[3]] + sorted((c for c in billed if c[3]),
+                                                      key=lambda c: str(c[1]["invoice_date"] or ""))
+    listed = sorted(((v, None, [], False) for v in vendors if _ok(_num(v.get("price")))),
                     key=lambda c: _mdy_us(c[0].get("last_purchased")) or "", reverse=True)
     if not billed and not listed:
         return {"error": "no price in Back Office and no invoice line"}
     first_err = None
-    for v, line in billed + listed:
-        got = _candidate_price(item, v, line, today)
+    for v, line, hist, after in billed + listed:
+        got = _candidate_price(item, v, line, hist, today)
         if "error" not in got:
+            if after:
+                note = "priced from a later invoice — none on file on or before this date"
+                got["flag"] = (got["flag"] + "; " + note) if got.get("flag") else note
             if first_err:
                 skipped = first_err
                 note = (f"{skipped.get('vendor') or 'one vendor'} {skipped.get('sku') or ''}".strip()
@@ -194,20 +363,46 @@ def item_price(item, invoices, today=None) -> dict:
     return first_err
 
 
-def _candidate_price(item, v, line, today) -> dict:
+def _closer(amt, a, b):
+    """Whether `amt` sits closer to `a` than to `b`, by ratio."""
+    import math
+    return abs(math.log(amt / a)) <= abs(math.log(amt / b))
+
+
+def _candidate_price(item, v, line, hist, today) -> dict:
     """One vendor row's price per base unit, from its invoice line when there
     is one, else Back Office's price for it; {error} when it is not sane."""
     pu = v.get("purchase_unit") or "Each"
     per_pack = _num(v.get("per_pack"))
     base = v.get("pack_unit") or pu
     pack = per_pack if _ok(per_pack) and per_pack > 0 and v.get("pack_unit") else 1.0
+    listed = _num(v.get("price"))
+    listed = listed if _ok(listed) and listed > 0 else None
+    gl = item.get("gl")
     flag = None
     if line:
-        lu, amt, qty = line["purchase_unit"] or pu, float(line["unit_amount"] or 0), float(line["qty"] or 0)
-        catch = abs(qty - round(qty)) > 0.01
-        if lu == pu and catch and _dim(base) == "w":
-            per_base = amt * WEIGHT[base] / 16.0            # billed by the pound
-            flag = "billed by weight"
+        lu, amt = line["purchase_unit"] or pu, float(line["unit_amount"])
+        if lu == pu and _dim(base) == "w" and pack != 1.0:
+            # A weight-packed case: billed by the case, or by the pound
+            # under a "Case" unit (catch weight)? Decided for the item, never
+            # by one line's quantity alone (FC-CALC-08 / ING-07).
+            case_pb, catch_pb = amt / pack, amt * WEIGHT[base] / 16.0
+            if any(_weight_reading(float(h["qty"])) for h in (hist or [line])):
+                catch = True
+            else:
+                e_case, e_catch = _sane(case_pb, base, gl), _sane(catch_pb, base, gl)
+                if e_case and e_catch:
+                    return {"error": e_case, "source": "invoice", "date": line["invoice_date"],
+                            "vendor": v.get("vendor"), "sku": v.get("sku")}
+                if e_case or e_catch:
+                    catch = bool(e_case)
+                elif listed:
+                    catch = not _closer(amt, listed, listed / pack)
+                else:
+                    catch = False
+            per_base = catch_pb if catch else case_pb
+            if catch:
+                flag = "billed by weight"
         elif lu == pu:
             per_base = amt / pack
         elif lu == base:
@@ -221,11 +416,19 @@ def _candidate_price(item, v, line, today) -> dict:
                     "vendor": v.get("vendor"), "sku": v.get("sku")}
         src, when = "invoice", line["invoice_date"]
     else:
-        per_base = _num(v.get("price")) / pack
+        per_base = (listed or 0.0) / pack
         src, when = "back_office", _mdy_us(v.get("last_purchased"))
         if when and (today - date.fromisoformat(when)).days > STALE_DAYS:
             flag = "Back Office's price is from over four months ago"
-    why = _sane(per_base, base, item.get("gl"))
+    why = _sane(per_base, base, gl)
+    if not why and src == "invoice" and listed:
+        # Back Office's own listed price for the row, read either way it may
+        # be set up (a case price, or a price per pack unit entered as the
+        # case's): an invoice price far from both is a reading error.
+        reads = [listed / pack] + ([listed * WEIGHT[base] / 16.0] if _dim(base) == "w" else [])
+        if min(max(per_base / r, r / per_base) for r in reads) > LISTED_RATIO:
+            why = (f"the invoice reads ${per_base:,.2f} a {base}; Back Office lists ${listed:,.2f} a {pu} — "
+                   f"more than {LISTED_RATIO:g}x apart")
     if why:
         return {"error": why, "source": src, "date": when, "vendor": v.get("vendor"), "sku": v.get("sku")}
     y = _num(str(v.get("yield") or "100").rstrip("%"))
@@ -262,16 +465,20 @@ def _base_per(qty, unit, base, v):
 # ── costing ───────────────────────────────────────────────────────────────
 
 class _Coster:
-    def __init__(self, book, invoices, today):
+    """Recipe costs at one set of prices: today's (`as_of` None, each item's
+    newest line) or as of a day (a count period's end)."""
+
+    def __init__(self, book, invoices, today, as_of=None):
         self.recipes = {r["name"]: r for r in book["recipes"]}
         self.items = book["items"]
-        self.invoices = invoices
+        self.invoices = _Invoices.of(invoices)
         self.today = today
+        self.as_of = as_of
         self.memo, self.prices = {}, {}
 
     def price(self, i):
         if i not in self.prices:
-            self.prices[i] = item_price(self.items[i], self.invoices, self.today)
+            self.prices[i] = item_price(self.items[i], self.invoices, self.today, as_of=self.as_of)
         return self.prices[i]
 
     def recipe(self, name, stack=()):
@@ -341,21 +548,35 @@ class _Coster:
         return per * qty, None, whole["missing"]
 
 
-def _pos_sales(restaurant_id, names, start, end, db_path=None) -> dict:
-    """{pos name: (units, sales)} over [start, end], sold lines only."""
-    if not names:
+def _pos_sales(restaurant_id, names, start, end, db_path=None, by_day=False) -> dict:
+    """{POS key: (units, sales)} over [start, end], sold lines only, matched
+    on the name's case- and space-free key (`_pos_key`) — a POS rename to
+    other capitals never zeroes a dish (ING-19). With `by_day`, {(date, POS
+    key): (units, sales)}: one query for several windows."""
+    keys = sorted({_pos_key(n) for n in names or [] if _pos_key(n)})
+    if not keys:
         return {}
     conn = get_conn(db_path)
     try:
-        q = ("SELECT item_name, SUM(COALESCE(qty, 1)) AS units, SUM(sales) AS sales FROM pos_ticket_lines "
-             "WHERE restaurant_id=? AND business_date BETWEEN ? AND ? AND kind='sale' AND item_name IN (%s) "
-             "GROUP BY item_name" % ",".join("?" * len(names)))
-        rows = conn.execute(q, [int(restaurant_id), start, end, *names]).fetchall()
-    except Exception:
+        q = ("SELECT %s LOWER(TRIM(REPLACE(item_name, '  ', ' '))) AS k, SUM(COALESCE(qty, 1)) AS units, "
+             "SUM(sales) AS sales FROM pos_ticket_lines WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
+             "AND kind='sale' AND LOWER(TRIM(REPLACE(item_name, '  ', ' '))) IN (%s) GROUP BY %s"
+             "LOWER(TRIM(REPLACE(item_name, '  ', ' ')))"
+             % ("business_date," if by_day else "", ",".join("?" * len(keys)), "business_date, " if by_day else ""))
+        rows = conn.execute(q, [int(restaurant_id), str(start), str(end), *keys]).fetchall()
+    except Exception as e:
+        # Degrade to "no sales" as before, but never silently (SCALE-11).
+        _capture(e, restaurant_id, "backoffice_recipes._pos_sales", db_path)
         return {}
     finally:
         conn.close()
-    return {r["item_name"]: (float(r["units"] or 0), float(r["sales"] or 0)) for r in rows}
+    out = {}
+    for r in rows:
+        k = _pos_key(r["k"])
+        key = (r["business_date"], k) if by_day else k
+        u, s = out.get(key, (0.0, 0.0))
+        out[key] = (u + float(r["units"] or 0), s + float(r["sales"] or 0))
+    return out
 
 
 def margin_target(restaurant) -> dict:
@@ -374,31 +595,22 @@ def margin_target(restaurant) -> dict:
     return {"pct": pct, "source": "food_cost_target", "label": f"{pct:g}% — 100 minus {ref['basis']}"}
 
 
-def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dict:
-    """{available, why_not?, loaded_at, window, plates: [{name, group,
-    cost, complete, missing, lines, pos_names, units, sales, price,
-    cost_pct, margin}], summary, prices, note}. Menu recipes with POS sales
-    first, by what they sold. `start`/`end` (dates) price the sales of
-    another window — a count period's (backoffice_counts) — at today's
-    prices; the default is the four weeks to yesterday."""
-    from time_utils import mdy
-    bk, loaded = book(restaurant_id, db_path)
-    if not bk:
-        return {"available": False, "why_not": "No Back Office recipes are loaded for this restaurant yet."}
-    today = today or date.today()
-    end = end or (today - timedelta(days=1))
-    start = start or (end - timedelta(days=WINDOW_DAYS - 1))
-    c = _Coster(bk, _invoice_prices(restaurant_id, db_path), today)
+def _menu(bk):
     pos_names = bk.get("pos_names") or {}
-    menu = [r for r in bk["recipes"] if _is_menu(r) and (not r["group"].endswith("MODS") or r["name"] in pos_names)]
-    sold = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}),
-                      start.isoformat(), end.isoformat(), db_path)
+    return [r for r in bk["recipes"] if _is_menu(r) and (not r["group"].endswith("MODS") or r["name"] in pos_names)]
+
+
+def _build(bk, coster, sold, menu):
+    """(plates, summary) for the menu at `coster`'s prices against `sold`
+    ({POS key: (units, sales)})."""
+    pos_names = bk.get("pos_names") or {}
     out = []
     for r in menu:
-        res = c.recipe(r["name"])
+        res = coster.recipe(r["name"])
         names = pos_names.get(r["name"], [])
-        units = sum(sold.get(n, (0, 0))[0] for n in names)
-        sales = sum(sold.get(n, (0, 0))[1] for n in names)
+        keys = {_pos_key(n) for n in names}
+        units = sum(sold.get(k, (0, 0))[0] for k in keys)
+        sales = sum(sold.get(k, (0, 0))[1] for k in keys)
         price = sales / units if units > 0 else None
         complete = not res["missing"]
         p = {"name": r["name"], "group": r["group"].split(">")[-1], "cost": round(res["cost"], 2),
@@ -413,15 +625,47 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dic
         if p["cost_pct"] is not None and p["cost_pct"] < SUSPECT_PCT:
             p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — Back Office's recipe may be missing "
                             "its main item")
+        elif p["cost_pct"] is not None and p["cost_pct"] > SUSPECT_HIGH_PCT:
+            p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — a price or a pack in Back Office "
+                            "may be set up wrong")
         out.append(p)
     out.sort(key=lambda p: (-p["sales"], p["name"]))
     priced = [p for p in out if p["complete"] and p["units"] > 0 and not p.get("suspect")]
     sold_total = sum(p["sales"] for p in out)
+    unsold = sorted(n for p in out for n in p["pos_names"] if _pos_key(n) not in sold)
     summary = {"dishes": len(out), "complete": sum(1 for p in out if p["complete"]),
                "suspect": sum(1 for p in out if p.get("suspect")), "mapped": sum(1 for p in out if p["pos_names"]),
                "covered_sales": round(sum(p["sales"] for p in priced), 2), "mapped_sales": round(sold_total, 2),
                "cost_pct": (round(100 * sum(p["cost"] * p["units"] for p in priced) / sum(p["sales"] for p in priced), 1)
-                            if priced and sum(p["sales"] for p in priced) > 0 else None)}
+                            if priced and sum(p["sales"] for p in priced) > 0 else None),
+               # POS names a recipe is mapped to that sold nothing in the
+               # window: a renamed POS button reads here, not as a quiet 0.
+               "unsold_names": unsold}
+    return out, summary
+
+
+def plates(restaurant_id, today=None, db_path=None, start=None, end=None, as_of=None) -> dict:
+    """{available, why_not?, loaded_at, window, plates: [{name, group,
+    cost, complete, missing, lines, pos_names, units, sales, price,
+    cost_pct, margin}], summary, prices, note}. Menu recipes with POS sales
+    first, by what they sold. `start`/`end` (dates) price the sales of
+    another window; `as_of` (a date) prices the recipes as of that day
+    instead of today. The default is the four weeks to the restaurant's
+    yesterday, at today's prices."""
+    from time_utils import mdy
+    bk, loaded = book(restaurant_id, db_path)
+    if not bk:
+        return {"available": False, "why_not": "No Back Office recipes are loaded for this restaurant yet."}
+    today = today or _local_today(restaurant_id)
+    end = end or (today - timedelta(days=1))
+    start = start or (end - timedelta(days=WINDOW_DAYS - 1))
+    c = _Coster(bk, _invoice_prices(restaurant_id, db_path), today,
+                as_of=as_of.isoformat() if hasattr(as_of, "isoformat") else as_of)
+    menu = _menu(bk)
+    pos_names = bk.get("pos_names") or {}
+    sold = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}),
+                      start.isoformat(), end.isoformat(), db_path)
+    out, summary = _build(bk, c, sold, menu)
     srcs = {"invoice": 0, "back_office": 0, "unpriced": 0}
     for p in c.prices.values():
         srcs["unpriced" if "error" in p else p["source"]] += 1
@@ -430,6 +674,39 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None) -> dic
                        "to_mdy": mdy(end.isoformat()), "days": (end - start).days + 1},
             "plates": out, "summary": summary, "prices": srcs,
             "note": ("What each dish's recipe costs at today's supplier prices: the latest invoice line for each "
-                     "item, read the way the supplier bills it, else Back Office's last price. A dish with an "
-                     "ingredient that can't be priced shows what is known, never a percentage. Recipes are "
-                     "Back Office's; the selling price is what the POS took over four weeks.")}
+                     "item from its own supplier, read the way the supplier bills it, else Back Office's last "
+                     "price. A dish with an ingredient that can't be priced shows what is known, never a "
+                     "percentage; a dish under 12% or over 70% of its price is flagged and left out of the "
+                     "overall figure. Recipes are Back Office's; the selling price is what the POS took over "
+                     "four weeks.")}
+
+
+def period_summaries(restaurant_id, windows, db_path=None):
+    """[summary] — `plates`' summary for each (start, end) date window, each
+    priced as of its own end (the newest invoice line on or before it, not
+    today's: FC-CALC-07) — from ONE read of the recipe book, the invoice
+    lines and the POS (SCALE-01: a year of weekly counts re-read and
+    re-costed the whole book 52 times per request). None without a book."""
+    bk, _loaded = book(restaurant_id, db_path)
+    if not bk or not windows:
+        return None
+    invoices = _invoice_prices(restaurant_id, db_path)
+    menu = _menu(bk)
+    pos_names = bk.get("pos_names") or {}
+    lo = min(s for s, _e in windows).isoformat()
+    hi = max(e for _s, e in windows).isoformat()
+    daily = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}), lo, hi,
+                       db_path, by_day=True)
+    today = _local_today(restaurant_id)
+    out, costers = [], {}
+    for s, e in windows:
+        a, b = s.isoformat(), e.isoformat()
+        sold = {}
+        for (d, k), (u, v) in daily.items():
+            if a <= d <= b:
+                pu, pv = sold.get(k, (0.0, 0.0))
+                sold[k] = (pu + u, pv + v)
+        if b not in costers:
+            costers[b] = _Coster(bk, invoices, today, as_of=b)
+        out.append(_build(bk, costers[b], sold, menu)[1])
+    return out
