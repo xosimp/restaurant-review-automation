@@ -153,7 +153,6 @@ def test_fc_calc_04_a_credit_memo_sharing_its_invoice_number_is_kept_beside_it(d
     assert len(rows) == 2 and round(sum(r["amount"] for r in rows), 2) == 700.0, [r["amount"] for r in rows]
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-06: a count with no food account is read as $0 food on hand")
 def test_fc_calc_06_a_bar_only_count_is_not_zero_food_on_hand(db):
     """9/29 count: produce $6,000 + beer. 10/13: beer only (the kitchen did
     not count). Closing food is unmeasured, never $0."""
@@ -177,7 +176,6 @@ def test_fc_calc_06_a_bar_only_count_is_not_zero_food_on_hand(db):
     assert out["ok"] is False and out["pct"] is None, (out["closing"], out["pct"], out["missing"])
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-08 / ING-07: a catch-weight case landing on a whole pound is priced ~20x low")
 def test_fc_calc_08_whole_pound_catch_weight_is_still_a_price_per_pound():
     """A 20 lb case billed per pound: 20.4 lb at $4.50 reads $4.50/lb; 20.00
     lb at $4.50 must too (or be refused), never $0.225/lb."""
@@ -197,7 +195,6 @@ def test_fc_calc_08_whole_pound_catch_weight_is_still_a_price_per_pound():
     assert "error" in got or got["per_base"] > 1.0, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-08: a half case billed at the case price is read as billed by weight (~10x high)")
 def test_fc_calc_08_a_split_case_is_not_read_as_billed_by_weight():
     """Half a 10 lb case of mushrooms (qty 0.5) at the $25 case price is
     $2.50/lb, or refused - never $25/lb."""
@@ -209,7 +206,6 @@ def test_fc_calc_08_a_split_case_is_not_read_as_billed_by_weight():
     assert "error" in got or abs(got["per_base"] - 2.50) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-09: an invoice line with no unit amount prices the ingredient at $0")
 def test_fc_calc_09_a_line_with_no_unit_amount_is_never_a_zero_price():
     item = {"name": "CHEESE CHEDDAR", "gl": "4050 DAIRY", "vendors": [
         {"vendor": "GFS", "sku": "555", "purchase_unit": "Case", "pack_unit": "Pound", "per_pack": "20",
@@ -219,7 +215,6 @@ def test_fc_calc_09_a_line_with_no_unit_amount_is_never_a_zero_price():
     assert "error" in got or got["per_base"] > 0, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-09 / ING-08: the newest line being a credit makes a negative ingredient price")
 def test_fc_calc_09_a_credit_line_never_becomes_the_ingredient_price(db):
     """Parmesan bought at $9.10/lb (a 19.6 lb case), then a -1 case credit
     for -$182: the price stays $9.10/lb."""
@@ -237,7 +232,6 @@ def test_fc_calc_09_a_credit_line_never_becomes_the_ingredient_price(db):
     assert "error" not in got and got["per_base"] > 0 and abs(got["per_base"] - 9.10) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="ING-06: an item number shared by two suppliers prices one from the other's line")
 def test_ing_06_a_sku_shared_across_vendors_prices_each_from_its_own(db):
     """GFS 591122 is a $39.26 onion sack; Sysco 591122 a $48 10 lb case of
     cheddar. The cheddar is $4.80/lb, never priced off the onions."""
@@ -566,7 +560,6 @@ def test_ai_02_a_why_line_needs_a_cause_anchor():
 
 # ── SCALE-01: waste periods cost the recipes once ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCALE-01: waste_periods re-reads the book and invoice prices once per count period")
 def test_scale_01_waste_periods_cost_the_recipes_once_for_every_period(db, monkeypatch):
     rid = _kitchen(db)
     bc.save_counts(rid, {"inventory_counts": [_count(TODAY - timedelta(days=d), f)
