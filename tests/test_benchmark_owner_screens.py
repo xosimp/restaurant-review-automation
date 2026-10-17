@@ -86,9 +86,9 @@ def _peers(st, pct=81, cohort="p:full", n=12, label="Full-service restaurants on
 
 def test_bottom_quarter_on_a_lower_is_better_metric_says_worst_and_higher():
     import benchmark_views as bv
-    assert bv.outcome_words("bottom quarter", "lower") == "in the group's worst quarter — higher than 3 in 4"
-    assert bv.outcome_words("top quarter", "lower") == "in the group's best quarter — lower than 3 in 4"
-    assert bv.outcome_words("bottom quarter", "higher") == "in the group's worst quarter — lower than 3 in 4"
+    assert bv.outcome_words("bottom quarter", "lower") == "in the worst quarter — higher than 3 in 4"
+    assert bv.outcome_words("top quarter", "lower") == "in the best quarter — lower than 3 in 4"
+    assert bv.outcome_words("bottom quarter", "higher") == "in the worst quarter — lower than 3 in 4"
     row = bv.metric_row(_cm("labor_pct_28d", "Labor %", module="labor", head="peers",
                             comps=[_peers("bottom quarter")]))
     assert row["standing_key"] == "bottom quarter" and "quarter" in row["standing"]
@@ -175,7 +175,7 @@ def test_the_missing_comparison_says_why(why, cls, start):
              comps=[_self_ok(), _no_peers(why, suggestion={"text": "We think you're a pizza place — is that right?"})])
     b = bv.build([cm], can_edit=True)["below_minimum"]
     assert b["reason"] == cls and b["text"].startswith(start)
-    assert b["text"].endswith("here's how you compare to your own last 13 weeks.")
+    assert b["text"].endswith("compared with your own last 13 weeks.")
     if cls == "unconfirmed":
         assert b["action"] == {"kind": "profile", "label": "Confirm your profile",
                                "suggestion": "We think you're a pizza place — is that right?", "can_edit": True}

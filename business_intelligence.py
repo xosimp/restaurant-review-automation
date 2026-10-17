@@ -671,7 +671,7 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
                     # the kind an owner never thinks to check.
                     "headline": (f"{c['mentions']} {_cat(c['category'])} complaints concentrate on "
                                  f"{day}, which runs {lean[day]} points leaner on labor "
-                                 f"than this restaurant's weekday average"
+                                 f"than your weekday average"
                                  + (" — from different periods" if _periods.get("different") else "")),
                     "evidence": [
                         # A weekday PAIR's share covers both days, so it must
@@ -912,8 +912,8 @@ def correlations(restaurant_id: int, data: dict = None, restaurant=None,
             "subject": _link_subject("fill", day),
             "modules": ["marketing", "labor"],
             "claim_kind": "inferred",
-            "headline": (f"{sent_line}, and {day} runs {heavy[day]} points heavier on labor than this "
-                         f"restaurant's weekday average"),
+            "headline": (f"{sent_line}, and {day} runs {heavy[day]} points heavier on labor than your "
+                         f"weekday average"),
             "evidence": [sent_line,
                          f"{day} averages {heavy[day]} points above this restaurant's own weekday average labor "
                          f"percentage"],
@@ -1448,7 +1448,7 @@ def one_thing_candidates(restaurant_id, data, links=None, db_path=DB_PATH) -> li
         head, ev = low_star_headline(_low_star_counts(restaurant_id, db_path=db_path))
         if head:
             add("urgent_reviews", head,
-                "a guest who complained is waiting, and every later reader sees the silence",
+                "a guest who complained is waiting, and later readers see the silence",
                 ["reviews"], urgency="critical",
                 evidence=[ev],
                 # A fact — replies owed — carries no confidence (B4 H5):

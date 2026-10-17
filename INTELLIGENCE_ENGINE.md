@@ -1150,14 +1150,14 @@ through `benchmark_views` (L2), which shapes and never compares:
   WHY, by the class of the engine's `why_not` (`benchmark_views.why_class`:
   unconfirmed profile, concept unset, the default wage, spread too wide, too
   few separate owners, the restaurant's own figure, too few restaurants),
-  then "— here's how you compare to your own last 13 weeks", carries the
+  then "— compared with your own last 13 weeks", carries the
   engine's `why_not`, and for a profile reason a "Confirm your profile" action
   with the engine's suggestion — the self benchmark is the headline until
   peers clear their floors (#18). Fix round (9/25/26): a published figure the
   engine marks `comparable: False` is a CONTEXT row on every metric (the
   engine's `definition_note`, no standing, tone, "behind" or action, and never
   on the Home strip — #2); a peer standing is read in outcome words ("in the
-  group's worst quarter — higher than 3 in 4"; `standing_key` keeps the
+  worst quarter — higher than 3 in 4", the group named once in the card's info tip; `standing_key` keeps the
   engine's word — #17); each row carries `own_as_of`, and when
   `data_freshness` reads the metric's source `stale` the standing is withheld
   ("Last measured M/D/YY" — #25); rows from different groups get a neutral

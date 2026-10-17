@@ -1760,7 +1760,11 @@ function cavReadNote(el,at,asOf){
   var d=null;if(at){d=new Date(/Z$|[+-]\d\d:?\d\d$/.test(String(at))?at:String(at).replace(' ','T')+'Z');if(isNaN(d))d=null;}
   if(!d)return;
   var now=new Date(),same=d.toDateString()===now.toDateString();
-  var txt='Read '+(same?'':(d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2)+' \u00b7 ')+cavClock(d)+(asOf?' \u00b7 data as of '+asOf:'');
+  var day=(d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(-2);
+  /* Text round (10/17/26): "data as of" is said only when it is not the
+     read's own day - "Read 2:14pm \u00b7 data as of 10/17/26" on 10/17 said the
+     date twice. */
+  var txt='Read '+(same?'':day+' \u00b7 ')+cavClock(d)+(asOf&&String(asOf)!==day?' \u00b7 data as of '+asOf:'');
   var n=document.createElement('div');n.className='ck-strip cav-read';n.textContent=txt;el.appendChild(n);
 }
 function addCustomFoodItem(){
@@ -4423,15 +4427,28 @@ svg:hover .hb-xh{opacity:1}
   function minLine(d,hasRows){
     var b=d.below_minimum;if(!b||!b.text)return '';
     var a=b.action,prof=a&&a.kind==='profile';
-    var t=prof&&a.can_edit!==false?'Confirm your restaurant profile to see how you compare with restaurants like yours.'
+    var t=prof&&a.can_edit!==false?'To compare with restaurants like yours:'
       :(hasRows?'Compared with your own history for now.':'Not enough to compare yet.');
     return '<div class="bm-min">'+esc(t)+(prof&&a.can_edit!==false?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-bm-profile="1">'+esc(a.label||'Confirm your profile')+' →</button>':'')+'</div>';
+  }
+  // Who the rows are read against, and why there is no like-for-like group
+  // yet, behind one info tip by the kicker (text round, 10/17/26) - the
+  // Home strip's tip, so a row never repeats its group.
+  function whoTip(d,id){
+    var w=d.who||{},bm=d.below_minimum||{},ba=bm.action,tip=[];
+    if(w.text)tip.push(num(w.text)+'.');
+    if(w.kind==='peers'&&w.as_of)tip.push('Group as of '+num(w.as_of)+'.');
+    if(w.inferred)tip.push('Your type was guessed from your name.');
+    if(bm.text)tip.push(esc(bm.text));
+    if(ba&&ba.kind==='profile'&&ba.suggestion)tip.push(esc(ba.suggestion));
+    if(!tip.length)return '';
+    return '<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="'+id+'" aria-expanded="false" aria-controls="'+id+'" aria-label="What this is compared against">i</button><span class="cav-itp" id="'+id+'" role="tooltip" hidden>'+tip.join(' ')+'</span></span>';
   }
   // The verdict: the one short line, then the rows.
   function cardHtml(d){
     var rs=d.rows||[];
     var ml=minLine(d,rs.length>0);
-    var h='<div class="hb-kicker">How you compare</div>'+ml;
+    var h='<div class="hb-kicker">How you compare'+whoTip(d,'bm-tip-'+esc(d.module||'card'))+'</div>'+ml;
     if(rs.length){h+='<div class="bm-rows">';for(var i=0;i<rs.length;i++)h+=rowHtml(rs[i],false);h+='</div>';}
     else if(!ml)h+='<div class="hb-empty">Nothing to compare yet.</div>';
     // No Why? drawer (owner, 9/29/26: "makes no sense, remove it
@@ -4488,7 +4505,8 @@ svg:hover .hb-xh{opacity:1}
   // locations - called only beyond noise, else "in line".
   function locations(lc){
     if(!lc||!lc.ok||!(lc.metrics||[]).length)return (lc&&lc.why_not)?'<div class="hb-empty">Locations compared side by side appear once two or more are measured — '+esc(lc.why_not)+'.</div>':'';
-    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare</div><div class="bm-sub">Each against its own normal first, then against your other locations — a gap is called only when it is wider than both locations’ own week-to-week swing.</div>';
+    // How a gap is called sits behind the kicker's info tip (text round, 10/17/26).
+    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="bm-loc-tip" aria-expanded="false" aria-controls="bm-loc-tip" aria-label="How locations are compared">i</button><span class="cav-itp" id="bm-loc-tip" role="tooltip" hidden>Each against its own normal first, then against your other locations — a gap is called only when it is wider than both locations’ own week-to-week swing.</span></span></div>';
     for(var i=0;i<lc.metrics.length;i++){var m=lc.metrics[i];
       h+='<div class="hb-sh" style="margin-top:12px"><div><div class="k dim">'+esc(m.label)+'</div></div></div><div class="bm-rows">';
       for(var j=0;j<(m.locations||[]).length;j++){var l=m.locations[j];
@@ -20050,7 +20068,9 @@ function renderInsightRecs(el,recs,surface){
     var row=r.kind==='do_today'?insightRowStartingWith(el,'Do today'):null;
     // The Do-today line carries its OWN measured confidence (K1 in
     // recs[].confidence_detail, E13) - drawn with the line's answers.
-    var rcf=(r.confidence_detail&&window.cavConfLine)?cavConfLine(r.confidence_detail,{key:r.key,surface:surface,module:surface}):'';
+    // Text round (10/17/26): the % and any caution stay on the line; the
+    // reason waits in its Why? panel, so the line leads with the read.
+    var rcf=(r.confidence_detail&&window.cavConfLine)?cavConfLine(r.confidence_detail,{key:r.key,surface:surface,module:surface,noReason:1}):'';
     if(row){var ex=row.querySelector('.rec-line.inrow');if(ex)ex.parentNode.removeChild(ex);var a=document.createElement('div');a.className='rec-line inrow';a.innerHTML=rcf+recControlsHtml(r.key,surface,surface);row.appendChild(a);continue;}
     h+='<div class="rec-line"><span class="k">Suggestion</span>'+recControlsHtml(r.key,surface,surface)+'</div>';}
   if(!h)return;

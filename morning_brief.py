@@ -561,11 +561,14 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         # "Typical" rests on this restaurant's own same-weekday median, and
         # how many nights it is said (NS4 L5: three samples, unshown).
         _n_typ = int(y.get("samples") or 0)
-        _basis = f"the median of its last {_n_typ} {y['weekday']}s here" if _n_typ else "its own history"
+        # Text round (10/17/26): the typical figure sits in the sentence and
+        # what it rests on is the closing bracket, which Home keeps behind
+        # its info tip (hbBriefBasis); email and push read the whole line.
+        _basis = f"median of the last {_n_typ} {y['weekday']}s" if _n_typ else "its own history"
         if y["off"]:
             tone = "good" if y["direction"] == "above" else "bad"
             text = (f"Yesterday: {_money(y['actual'])}, {abs(y['pct']):.0f}% {y['direction']} a typical "
-                    f"{y['weekday']} ({_money(y['typical'])}, {_basis}).")
+                    f"{y['weekday']}'s {_money(y['typical'])} ({_basis}).")
         else:
             tone = "neutral"
             text = f"Yesterday: {_money(y['actual'])}, a normal {y['weekday']} ({_basis})."
@@ -647,7 +650,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
     s = _safe(issues.summary, restaurant_id, db_path=db_path, sees_loss=sees_loss,
               hide_modules=issues.hidden_modules(viewer))
     if s and (s["open"] or s["acknowledged"]):
-        age = (f" — oldest waiting {s['oldest_open_hours']:.0f}h unacknowledged"
+        age = (f" — the oldest {s['oldest_open_hours']:.0f}h"
                if s.get("oldest_open_hours") else "")
         lines.append({"key": "issues", "tone": "bad" if s["open"] else "neutral",
                       "action": line_action("issues"),
@@ -715,7 +718,7 @@ def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=No
         rs = _safe(_reviews_waiting, restaurant_id, db_path) or {}
         if rs.get("waiting"):
             urgent = rs.get("urgent") or 0
-            extra = f", {urgent} of them 2 stars or worse" if urgent else ""
+            extra = f", {urgent} at 2 stars or worse" if urgent else ""
             older = rs.get("older") or 0
             # Said separately, never added in: history is not owed a reply.
             older_bit = (f" ({older} older one{'' if older == 1 else 's'} not counted)" if older else "")
@@ -1201,14 +1204,12 @@ _LINE_MODULE = {"reviews": "reviews", "stock": "food", "schedule": "labor", "slo
 
 
 _UNLOCK = {
-    "labor": ("With Labor connected I could tell you which day runs leanest against your "
-              "complaints, and what a schedule built to your target would save.",
+    "labor": ("Connect Labor to see which day runs leanest against your complaints, and what "
+              "a schedule built to your target would save.",
               "What would the Labor module let you see for my restaurant?"),
-    "food_cost": ("With Food Cost connected I could tell you which item is quietly the biggest "
-                  "line in last week's waste, and what your prime cost is doing month to month.",
+    "food_cost": ("Connect Food Cost to see your biggest waste item and your prime cost month to month.",
                   "What would the Food Cost module let you see for my restaurant?"),
-    "marketing": ("With Marketing connected I could draft this week's post in your voice from "
-                  "the reviews that came in.",
+    "marketing": ("Connect Marketing to draft this week's post in your voice from your reviews.",
                   "What would the Marketing module do for my restaurant?"),
 }
 
@@ -1245,8 +1246,8 @@ def _review_variety(restaurant_id, today, db_path):
             n_rev = sum(int(w.get("count") or 0) for w in solid)
             rests = (f" ({len(solid)} weeks, {n_rev} reviews)" if solid else "")
             return {"key": "rv:trend", "tone": "good" if d == "improving" else "bad",
-                    "text": f"Your weekly rating has been {'climbing' if d == 'improving' else 'slipping'} "
-                            f"over the last 8 weeks — {t['first']:.1f} to {t['latest']:.1f}{rests}.",
+                    "text": f"Weekly rating {'climbing' if d == 'improving' else 'slipping'} over 8 weeks: "
+                            f"{t['first']:.1f} to {t['latest']:.1f}{rests}.",
                     "ask": "What is driving my rating trend?"}
     if wd in (2, 5):                                    # Wed, Sat: dayparts
         d = ri.daypart_breakdown(restaurant_id, db_path=db_path) or {}
