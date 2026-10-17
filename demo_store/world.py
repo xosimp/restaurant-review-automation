@@ -492,7 +492,7 @@ JOB = {name: mid("job", i + 1) for i, name in enumerate(JOBS)}
 
 # (first, last, primary job, rate offset, also works, weekly target hours, start date)
 STAFF = [
-    ("Maya", "Castellanos", "Owner", 0, (), 30, "2021-05-14"),
+    ("Will", "Demo", "Owner", 0, (), 30, "2021-05-14"),
     ("Daniel", "Whitfield", "Owner", 0, (), 0, "2021-05-14"),
     ("Priya", "Raman", "General Manager", 0, ("Manager",), 50, "2022-03-01"),
     ("Marcus", "Bell", "Manager", 0, (), 42, "2023-06-12"),

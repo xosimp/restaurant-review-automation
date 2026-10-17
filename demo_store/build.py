@@ -50,7 +50,7 @@ def ensure_account() -> int:
     rid = find()
     if rid is None:
         rid = models.create_restaurant(models.Restaurant(
-            name=demo_store.NAME, owner_email=OWNER_EMAIL, owner_name="Maya Castellanos", is_demo=1,
+            name=demo_store.NAME, owner_email=OWNER_EMAIL, owner_name="Will Demo", is_demo=1,
             module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1, service_tier="full",
             timezone=w.TIMEZONE, hourly_rate=17.0, labor_target_pct=28.0))
         _say(f"created {demo_store.NAME} as id={rid}")
@@ -61,7 +61,7 @@ def ensure_account() -> int:
         "comp_void_target_pct": 1.5, "monthly_revenue_target": 360000.0, "labor_target_pct": 28.0,
         "vibe": "Neighborhood sports bar three blocks from Wrigley Field: scratch kitchen, 10 drafts, every game on.",
         "known_for": "Smash burgers, Italian beef, wings, Old Style on draft, Bears Sundays",
-        "sign_off_name": "Maya & the Halsted & Rye team", "owner_name": "Maya Castellanos",
+        "sign_off_name": "Will & the Halsted & Rye team", "owner_name": "Will Demo",
         "internal_notes": "SHOWCASE DEMO (demo_store). Fictional restaurant; nothing here is a client's data. "
                           "Never sends (demo_store.is_simulated).",
         "rpower_token": demo_store.TOKEN, "week_start_day": 0, "dsr_enabled": 1,
@@ -170,7 +170,7 @@ def fill_settings(rid):
         "hours_notes": "Kitchen until 11pm; late-night menu Fri-Sat until 1:30am. Brunch Sat-Sun 10am-3pm.",
         "role_rates_json": json.dumps(rates),
         "salaried_staff_json": json.dumps([{"name": "Priya Raman", "annual": 78000},
-                                           {"name": "Maya Castellanos", "annual": 85000}]),
+                                           {"name": "Will Demo", "annual": 85000}]),
         "role_minimums_json": json.dumps({"Server": 2, "Bartender": 2, "Line Cook": 2, "Dishwasher": 1,
                                           "Manager": 1, "Host": 1}),
         "dsr_deadline_hour": 7, "dsr_late_night_hour": 22, "jurisdiction": "chicago",
@@ -579,13 +579,13 @@ def fill_people(rid):
     n = 0
     for name, score in _RATED.items():
         try:
-            models.set_capability(rid, name, score=score, updated_by="Maya Castellanos")
+            models.set_capability(rid, name, score=score, updated_by="Will Demo")
             n += 1
         except Exception as e:
             _say(f"  rating {name} FAILED: {e}")
     for name in _CLOSERS:
         try:
-            models.set_capability(rid, name, attribute="can_close", flag=True, updated_by="Maya Castellanos")
+            models.set_capability(rid, name, attribute="can_close", flag=True, updated_by="Will Demo")
         except Exception as e:
             _say(f"  closer {name} FAILED: {e}")
     _say(f"people: {n} rated, {len(_CLOSERS)} closers")
@@ -846,7 +846,7 @@ def _refresh_reviews(rid, start, end) -> int:
     conn = models.get_conn()
     try:
         for x in rows:
-            # Maya answers in a few days: a reply the generator now calls posted is posted — unless
+            # Will answers in a few days: a reply the generator now calls posted is posted — unless
             # someone acted on that review here already.
             conn.execute("UPDATE reviews SET sentiment=?, categories=?, summary=?, urgency=?, processed=1, "
                          "draft_response=COALESCE(draft_response, ?), response_status=?, posted_at=?, approved_at=? "
@@ -1024,6 +1024,7 @@ def refresh(rid, today=None) -> dict:
     step("bo_counts", lambda: __import__("backoffice_counts").save_counts(rid, _bo_count_book(end, 2)).get("periods"))
     step("schedules", lambda: fill_schedules(rid, weeks=1))
     step("closeout", lambda: _refresh_closeout(rid, end))
+    step("web", lambda: __import__("web_analytics").sync(rid).get("ok"))
 
     def _marketing():
         import models
@@ -1087,7 +1088,7 @@ def run_refresh() -> dict:
 
 # The nightly report reads the kitchen, the reviews and the close-out: it is built after them.
 ALL_STEPS = ("settings", "pos", "schedules", "purchasing", "bar", "kitchen", "bo_counts", "reviews", "neighborhood",
-             "marketing", "people", "closeouts", "intel", "dsr", "finish")
+             "marketing", "people", "closeouts", "intel", "web", "dsr", "finish")
 
 
 def run_all(steps=ALL_STEPS) -> int:
@@ -1119,6 +1120,20 @@ _INV_ACCOUNTS = {"FOOD - MEAT": ("1411", "MEAT INVENTORY"), "FOOD - POULTRY": ("
                  "FOOD - DAIRY": ("1415", "DAIRY INVENTORY"), "FOOD - BAKERY": ("1416", "BAKERY INVENTORY"),
                  "FOOD - DRY GOODS": ("1417", "DRY GOODS INVENTORY"), "FOOD - FROZEN": ("1418", "FROZEN INVENTORY")}
 _BAR_ACCOUNTS = (("1421", "BEER INVENTORY", 4600), ("1422", "LIQUOR INVENTORY", 11800), ("1423", "WINE INVENTORY", 3300))
+
+
+def fill_web(rid):
+    """The website, simulated (demo_store.web; owner, 10/17/26): a GA4 property and a Search Console
+    site that no Google property answers to, then web_analytics.sync reads a year of demo_store.web's
+    days through the real path - Marketing's Website card reads as a client's. Never calls Google."""
+    import models
+    import web_analytics
+    from demo_store import web as W
+    models.update_restaurant(rid, {"ga4_property_id": W.PROPERTY_ID, "gsc_site_url": W.SITE_URL})
+    res = web_analytics.sync(rid)
+    if not res.get("ok"):
+        raise RuntimeError(f"website sync failed: {res.get('error')}")
+    return {k: (v.get("rows"), v.get("queries")) for k, v in res.items() if isinstance(v, dict)}
 
 
 def _bo_count_book(through: date, weeks: int) -> dict:

@@ -112,3 +112,24 @@ def test_people_and_reviews_are_fictional():
     rows = R.generate(date(2026, 9, 1), date(2026, 9, 30))
     assert rows and 4.2 <= sum(r["rating"] for r in rows) / len(rows) <= 4.8
     assert all(r["external_id"].startswith("hr-g-") for r in rows)
+
+
+def test_the_showcase_website_is_simulated_and_never_calls_google(showcase, monkeypatch):
+    # Owner, 10/17/26: the demo shows Google Analytics figures with no account
+    # behind them - web_analytics.sync reads demo_store.web, never Google.
+    import web_analytics
+    from demo_store import web as W
+    update_restaurant(showcase, {"ga4_property_id": W.PROPERTY_ID, "gsc_site_url": W.SITE_URL})
+
+    def no_google(*a, **k):
+        raise AssertionError("the showcase called Google")
+    monkeypatch.setattr(web_analytics, "ga4_report", no_google)
+    monkeypatch.setattr(web_analytics, "gsc_query", no_google)
+    monkeypatch.setattr(web_analytics, "configured", lambda: False)   # no service account on this server
+    res = web_analytics.sync(showcase)
+    assert res["ok"], res
+    assert res["ga4"]["rows"] > 0 and res["gsc"]["queries"] == len(W.QUERIES)
+    s = web_analytics.summary(showcase)
+    assert s["available"] and s["configured"] and any(t["metric"] == "sessions" and t["value"] > 0 for t in s["totals"])
+    # The same day reads the same every time.
+    assert W.read_ga4(None, date(2026, 9, 1), date(2026, 9, 1)) == W.read_ga4(None, date(2026, 9, 1), date(2026, 9, 1))

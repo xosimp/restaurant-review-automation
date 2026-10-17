@@ -76,15 +76,15 @@ MIXED = [
     "Good wings, but they were out of the Daisy Cutter.", "Fun place, just too loud to hang out and talk.",
 ]
 REPLY_GOOD = [
-    "Thanks so much, {name}! We'll tell {who} you said hi. See you for the next game. — Maya & the Halsted & Rye team",
-    "{name}, this made our day. {Dish} is a kitchen favorite too. Come back soon! — Maya & the Halsted & Rye team",
-    "Appreciate you, {name}! Glad you had a great time — we'll save you a seat for Sunday. — Maya & the Halsted & Rye team",
+    "Thanks so much, {name}! We'll tell {who} you said hi. See you for the next game. — Will & the Halsted & Rye team",
+    "{name}, this made our day. {Dish} is a kitchen favorite too. Come back soon! — Will & the Halsted & Rye team",
+    "Appreciate you, {name}! Glad you had a great time — we'll save you a seat for Sunday. — Will & the Halsted & Rye team",
 ]
 REPLY_BAD = [
     "{name}, I'm sorry — that isn't the experience we want for anyone. On big game days we're adding a second expo "
-    "and another cook; I'd love to make it right. Please email us at hello@halstedandrye.example. — Maya",
+    "and another cook; I'd love to make it right. Please email us at hello@halstedandrye.example. — Will",
     "Thank you for telling us, {name}. I've shared this with our kitchen and floor managers, and we've already "
-    "changed how we stage game-day orders. I hope you'll give us another shot. — Maya",
+    "changed how we stage game-day orders. I hope you'll give us another shot. — Will",
 ]
 
 

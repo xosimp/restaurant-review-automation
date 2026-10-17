@@ -5173,7 +5173,7 @@ svg:hover .hb-xh{opacity:1}
     // The date in words, alone (owner's call, 9/25/26): "September 25th, 2026".
     if(k)k.textContent=longDate(d.local_now);
     var h=document.getElementById('hb-h1');
-    if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?', '+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
+    if(h)h.innerHTML=esc(greeting(d.local_now))+(d.greeting_name?',<br>'+esc(d.greeting_name):'')+'. <span class="hb-head '+esc(d.brief.tone)+'">'+esc(d.brief.headline)+'</span>';
     // Nothing under the status line (owner's call, 9/26/26): the since-
     // yesterday changes, the quiet-hours note and the refresh icon were
     // a second paragraph under the verdict. Home reloads itself (hbSoft).
@@ -7047,7 +7047,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function renderGroup(g){
     var k=document.getElementById('hb-kicker');if(k)k.textContent=dateKicker()+' · '+g.group_name+' · all locations';
-    var h1=document.getElementById('hb-h1');if(h1)h1.innerHTML=esc(greeting())+(g.greeting_name?', '+esc(g.greeting_name):'')+'. <span class="hb-head '+esc(g.tone)+'">'+esc(g.headline)+'</span>';
+    var h1=document.getElementById('hb-h1');if(h1)h1.innerHTML=esc(greeting())+(g.greeting_name?',<br>'+esc(g.greeting_name):'')+'. <span class="hb-head '+esc(g.tone)+'">'+esc(g.headline)+'</span>';
     hbStatus(null);
     var p=g.portfolio||{};
     var sub=document.getElementById('hb-sub');if(sub)sub.hidden=false;if(sub)sub.innerHTML='<span>'+num(p.healthy+' of '+p.total+' locations healthy')+'</span>'+(p.urgent_reviews?'<span class="sep">·</span><span>'+num(p.urgent_reviews+' urgent reviews')+'</span>':'')+(p.awaiting?'<span class="sep">·</span><span>'+num(p.awaiting+' replies waiting')+'</span>':'');
@@ -49838,6 +49838,9 @@ function sfw2RuleCheck(chk) {
   background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
 /* (.fg.fg: above the silver list, whose :is() carries its strongest selector.) */
 [data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b,[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b .hb-num{background-image:var(--vx-molten)}
+/* An info tip inside a metal figure (Home's $/month) keeps its ink: -webkit-text-fill-color inherits, and
+   the "i" went invisible (owner, 10/17/26). */
+[data-theme="dark"] :is(.kx-hero .kx-val,.kx-card .kx-val,.dr-score .net,.hb-focus .money,.dr-kpi .v,.lb2-op .v,.hb-stat .v,#bar .br-big,#bar .br-cfigs .fg>b,.hb-rec .no,.dr-fc,.fc2-drv .n) :is(.cav-it,.cav-it *){-webkit-text-fill-color:currentColor;background-clip:border-box;-webkit-background-clip:border-box}
 /* A small unit after a figure stays ink, not metal. */
 [data-theme="dark"] :is(.kx-hero .kx-val,.kx-card .kx-val,.dr-score .net,.hb-focus .money,.dr-kpi .v,.lb2-op .v,.hb-stat .v,#bar .br-big) small{-webkit-text-fill-color:currentColor;background:none}
 

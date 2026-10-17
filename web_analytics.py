@@ -396,9 +396,19 @@ def _has_rows(restaurant_id, source, db_path=None) -> bool:
         conn.close()
 
 
-def _store_queries(restaurant_id, site_url, end, db_path=None):
+def _simulated(restaurant) -> bool:
+    """The showcase demo (demo_store): its website is simulated too, read from
+    demo_store.web and never from Google (owner, 10/17/26)."""
+    try:
+        import demo_store
+        return demo_store.is_simulated(restaurant)
+    except Exception:
+        return False
+
+
+def _store_queries(restaurant_id, site_url, end, db_path=None, query=None):
     start = end - timedelta(days=QUERY_WINDOW_DAYS - 1)
-    rows = gsc_query(site_url, start, end, ["query"], limit=STORED_QUERIES)
+    rows = (query or gsc_query)(site_url, start, end, ["query"], limit=STORED_QUERIES)
     conn = get_conn(db_path)
     try:
         conn.execute("DELETE FROM web_search_queries WHERE restaurant_id=?", (restaurant_id,))
@@ -431,12 +441,18 @@ def sync(restaurant_id, db_path=None, restaurant=None) -> dict:
     pid, site = clean_property_id(getattr(r, "ga4_property_id", None)), clean_site_url(getattr(r, "gsc_site_url", None))
     if not (pid or site):
         return {"ok": False, "error": "No website analytics connected.", "code": "not_connected"}
-    if not configured():
+    sim = _simulated(r)
+    if not sim and not configured():
         return {"ok": False, "error": "Website analytics isn't set up on this server yet.", "code": "not_configured"}
     today = _today(r)
     end = today - timedelta(days=1)
     out, errors = {"ok": True}, []
-    for source, key, reader in (("ga4", pid, read_ga4), ("gsc", site, read_gsc)):
+    if sim:
+        from demo_store import web as _demo_web
+        readers, query = (("ga4", pid, _demo_web.read_ga4), ("gsc", site, _demo_web.read_gsc)), _demo_web.query_rows
+    else:
+        readers, query = (("ga4", pid, read_ga4), ("gsc", site, read_gsc)), None
+    for source, key, reader in readers:
         if not key:
             continue
         start = end - timedelta(days=(RECENT_DAYS if _has_rows(restaurant_id, source, db_path) else BACKFILL_DAYS) - 1)
@@ -445,7 +461,7 @@ def sync(restaurant_id, db_path=None, restaurant=None) -> dict:
             out[source] = {"ok": True, "rows": _store(restaurant_id, source, values, db_path),
                            "from": start.isoformat(), "to": end.isoformat()}
             if source == "gsc":
-                out[source]["queries"] = _store_queries(restaurant_id, key, end, db_path)
+                out[source]["queries"] = _store_queries(restaurant_id, key, end, db_path, query=query)
         except WebAnalyticsError as e:
             out[source] = {"ok": False, "error": e.message, "code": e.code}
             errors.append(e.message)
@@ -684,7 +700,7 @@ def summary(restaurant_id, db_path=None, days=28) -> dict:
     connected = bool(clean_property_id(getattr(r, "ga4_property_id", None))
                      or clean_site_url(getattr(r, "gsc_site_url", None)))
     ga_last, gsc_last = _last_day(restaurant_id, "ga4", db_path), _last_day(restaurant_id, "gsc", db_path)
-    base = {"connected": connected, "configured": configured(), "synced_at": getattr(r, "web_analytics_synced_at", None),
+    base = {"connected": connected, "configured": configured() or _simulated(r), "synced_at": getattr(r, "web_analytics_synced_at", None),
             "error": getattr(r, "web_analytics_error", None)}
     if not (ga_last or gsc_last):
         return dict(base, available=False)
