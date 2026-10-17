@@ -185,42 +185,35 @@ struct AIVisibilitySection: View {
                 // guests search: neither is sourced, and the page's own
                 // footer says what an assistant answers from is not
                 // something we can see (NS1 #9).
-                Text("This runs real guest-style queries through one AI search system \u{2014} Perplexity's live web search \u{2014} and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.")
+                // One line (text round, 10/17/26): which system runs, and
+                // that it is the one. The rows below name what comes back.
+                Text("Real guest questions, asked through Perplexity\u{2019}s live search.")
                     .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 16) {
-                previewRow(
-                    icon: "text.bubble.fill", tone: Color.cavnarEmber,
-                    title: "What AI said, by question",
-                    detail: "The exact questions real guests ask AI tools, and whether your restaurant came up."
-                )
-                previewRow(
-                    icon: "checklist", tone: Color.cavnarGreen,
-                    title: "Listing strength",
-                    detail: "What's missing from your Google Business Profile that AI tools pull answers from."
-                )
-                previewRow(
-                    icon: "map.fill", tone: Color.cavnarBlue,
-                    title: "A personalized roadmap",
-                    detail: "Ranked, concrete next steps for your restaurant — not generic SEO advice."
-                )
+                // The three things the check returns, by name — what each
+                // holds is on its own section once it has run.
+                previewRow(icon: "text.bubble.fill", tone: Color.cavnarEmber,
+                           title: "What AI said, by question")
+                previewRow(icon: "checklist", tone: Color.cavnarGreen,
+                           title: "Listing strength")
+                previewRow(icon: "map.fill", tone: Color.cavnarBlue,
+                           title: "Your next steps, ranked")
             }
         }
     }
 
-    private func previewRow(icon: String, tone: Color, title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: CavnarSpace.s) {
+    private func previewRow(icon: String, tone: Color, title: String) -> some View {
+        HStack(alignment: .center, spacing: CavnarSpace.s) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8).fill(tone.opacity(0.16)).frame(width: 32, height: 32)
                 Image(systemName: icon).font(.cavnar(.secondary)).foregroundStyle(tone)
             }
             .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).cavnarText(.label)
-                Text(detail).cavnarText(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+            Text(title).cavnarText(.label)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -328,7 +321,7 @@ struct AIVisibilitySection: View {
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarAmber)
                     .accessibilityHidden(true)
-                Text("An estimate, not a measurement \u{2014} why is in the evidence")
+                Text("An estimate, not a measurement")
                     .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -625,7 +618,7 @@ struct AIVisibilitySection: View {
             }
             // "intel/visibility" lands on the web's AI visibility section
             // (re-audit I2) — "intel" opened the competitors above it.
-            CavnarWebLinkRow(title: "Every question and answer", subtitle: "What AI said each time, and the sites it read",
+            CavnarWebLinkRow(title: "Every question and answer",
                              path: "intel/visibility", actionLabel: "Open on the web")
         }
     }

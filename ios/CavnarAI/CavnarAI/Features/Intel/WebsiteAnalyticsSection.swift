@@ -38,10 +38,10 @@ struct WebsiteAnalyticsSection: View {
     private func content(_ s: WebsiteSummary) -> some View {
         if !s.connected {
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
-                Text("Connect your website\u{2019}s Google Analytics to see visits, Google searches and clicks to book or order here, lined up with your sales, games and posts.")
+                Text("See your website\u{2019}s visits and Google searches beside your sales.")
                     .cavnarText(.body)
                     .fixedSize(horizontal: false, vertical: true)
-                CavnarWebLinkRow(title: "Connect your website", subtitle: "Google Analytics and Search Console",
+                CavnarWebLinkRow(title: "Connect your website",
                                  path: "account/integrations", actionLabel: "Edit on the web")
             }
         } else if !s.available {
@@ -57,9 +57,8 @@ struct WebsiteAnalyticsSection: View {
             readNowRow(s)
             VStack(alignment: .leading, spacing: 0) {
                 CavnarWebLinkRow(title: "Visits, sources and searches",
-                                 subtitle: "The daily chart, where visits came from, clicks and Google searches",
                                  path: "marketing/website", actionLabel: "Open on the web")
-                CavnarWebLinkRow(title: "Website connection", subtitle: "Google Analytics and Search Console",
+                CavnarWebLinkRow(title: "Website connection",
                                  path: "account/integrations")
             }
         }
@@ -111,15 +110,23 @@ struct WebsiteAnalyticsSection: View {
                     }
                 }
             }
-            if !s.signals.isEmpty {
-                Text("These happened on the same day. That doesn\u{2019}t mean one caused the other.")
-                    .cavnarText(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let basis = s.basisSentence {
-                Text(basis)
-                    .cavnarText(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Same day is never cause; what each day is read against —
+            // one tap away (text round, 10/17/26).
+            if !s.signals.isEmpty || s.basisSentence != nil {
+                CavnarEvidenceSection(label: "See the basis") {
+                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                        if !s.signals.isEmpty {
+                            Text("These happened on the same day. That doesn\u{2019}t mean one caused the other.")
+                                .cavnarText(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let basis = s.basisSentence {
+                            Text(basis)
+                                .cavnarText(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
         }
     }

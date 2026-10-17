@@ -1083,7 +1083,7 @@ struct MarketingView: View {
                     .transition(.opacity)
             } else if viewModel.calendar.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
+                    Text("Seven post ideas for the week.")
                         .cavnarText(.body)
                         .fixedSize(horizontal: false, vertical: true)
                     Button {
@@ -1101,7 +1101,7 @@ struct MarketingView: View {
                     focusCard(idea)
                 }
                 // The week as a spreadsheet is the web's (W5).
-                CavnarWebLinkRow(title: "Content calendar", subtitle: "Download the week as a spreadsheet",
+                CavnarWebLinkRow(title: "Content calendar",
                                  path: "marketing", actionLabel: "Open on the web")
             }
 

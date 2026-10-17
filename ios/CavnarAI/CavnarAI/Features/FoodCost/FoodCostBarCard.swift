@@ -85,8 +85,14 @@ struct FoodCostBarCard: View {
                 AccountRowDivider()
                 VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                     CavnarKicker("Prices that went up", isHeader: false)
-                    ForEach(rises) { row in
+                    // The biggest rise on the card; the others one tap away.
+                    ForEach(rises.prefix(1)) { row in
                         priceRow(row)
+                    }
+                    CavnarMoreDisclosure(hiddenCount: rises.count - 1) {
+                        ForEach(rises.dropFirst()) { row in
+                            priceRow(row)
+                        }
                     }
                 }
             }
@@ -100,8 +106,7 @@ struct FoodCostBarCard: View {
 
             // "See all · Open on the web" — the house's reading verb
             // (DESIGN_SYSTEM: the two web-row verbs).
-            CavnarWebLinkRow(title: "See all", subtitle: "The Bar page: every category, every price change and the trend",
-                             path: "bar", actionLabel: "Open on the web")
+            CavnarWebLinkRow(title: "See all", path: "bar", actionLabel: "Open on the web")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cavnarCard()
@@ -130,9 +135,6 @@ struct FoodCostBarCard: View {
                     }
                     Spacer(minLength: 0)
                 }
-                if let line = Self.windowLine(pc) {
-                    CavnarMixedText(line, role: .caption)
-                }
                 if let notJudged = p.notJudgedText {
                     CavnarMixedText(notJudged, role: .secondary)
                 } else if let target = pc.total?.targetLabel {
@@ -145,6 +147,14 @@ struct FoodCostBarCard: View {
             }
         }
         .accessibilityElement(children: .combine)
+        // What the figure is and its dates — the basis, one tap away
+        // (text round, 10/17/26). Outside the combined element so the
+        // disclosure stays its own button.
+        if let pc, pc.available != false, let line = Self.windowLine(pc) {
+            CavnarEvidenceSection(label: "See the basis") {
+                CavnarMixedText(line, role: .caption)
+            }
+        }
     }
 
     /// The top insight — measured, so a plain surface inside this card,
@@ -152,7 +162,9 @@ struct FoodCostBarCard: View {
     private func insightCard(_ insight: BarInsight) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             CavnarKicker(insight.kicker, tint: Self.toneColor(insight.tone, neutral: .cavnarEmber2), isHeader: false)
-            CavnarAnswerCard(headline: insight.headline, summary: insight.metric, surface: nil) {
+            // The finding and the action; the figures behind it open with
+            // the evidence. Measured confidence stays on the card.
+            CavnarAnswerCard(headline: insight.headline, surface: nil) {
                 if let action = insight.action {
                     HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                         Image(systemName: "arrow.right")
@@ -166,6 +178,11 @@ struct FoodCostBarCard: View {
             }
             if let confidence = insight.confidenceLine {
                 CavnarMixedText(confidence, role: .caption)
+            }
+            if let metric = insight.metric, !metric.isEmpty {
+                CavnarEvidenceSection(label: "See the evidence") {
+                    CavnarMixedText(metric, role: .secondary)
+                }
             }
         }
     }

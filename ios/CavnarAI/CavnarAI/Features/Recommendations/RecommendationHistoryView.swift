@@ -51,12 +51,11 @@ struct RecommendationHistoryView: View {
                     kindHoldSection
                     quieterSection
                     if viewModel.checkInsDue.isEmpty && kindHolds.isEmpty && quieter.isEmpty && !viewModel.isLoading {
-                        Text("Nothing waiting on you here \u{2014} no results to check in on and no kinds on hold.")
+                        Text("Nothing waiting on you.")
                             .cavnarText(.body)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     CavnarWebLinkRow(title: "Your full record",
-                                     subtitle: "What you followed by module, what worked best and every recommendation",
                                      path: "recs", actionLabel: "Open on the web")
 
                     if let error = viewModel.errorMessage {
@@ -88,8 +87,8 @@ struct RecommendationHistoryView: View {
                 Text("Quieter")
                     .cavnarText(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text("The last four of these went by unanswered, so Cavnar AI suggests them less.")
-                    .cavnarText(.body)
+                Text("Four in a row went unanswered, so these show less.")
+                    .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(shown) { q in
                     VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
