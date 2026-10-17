@@ -153,20 +153,22 @@ def outcome_words(standing, better="higher") -> str | None:
     #17, R3-23): "bottom quarter" on a lower-is-better metric is the
     HIGHEST labor % in the group, and an owner (or a model) reads "bottom"
     as "lowest". So the screen says which way is better and what the
-    quarter means: "in the group's worst quarter — higher than 3 in 4"."""
+    quarter means: "in the worst quarter — higher than 3 in 4". The group is
+    named once, in the card's info tip, never again on every row (text
+    round, 10/17/26)."""
     if not standing or standing == "unmeasured":
         return None
     lower = better == "lower"
     if standing == "top quarter":
-        return "in the group's best quarter — " + ("lower" if lower else "higher") + " than 3 in 4"
+        return "in the best quarter — " + ("lower" if lower else "higher") + " than 3 in 4"
     if standing == "bottom quarter":
-        return "in the group's worst quarter — " + ("higher" if lower else "lower") + " than 3 in 4"
+        return "in the worst quarter — " + ("higher" if lower else "lower") + " than 3 in 4"
     if standing == "above the middle":
-        return "better than the group's middle"
+        return "better than the middle"
     if standing == "below the middle":
-        return "worse than the group's middle"
+        return "worse than the middle"
     if standing == "about the middle":
-        return "about the group's middle"
+        return "about the middle"
     return standing
 
 
@@ -193,8 +195,7 @@ def _context_row(row, c, unit) -> dict:
               else (fmt(c.get("median"), unit) if c.get("median") is not None else None))
     row.update(kind="industry", context=True, standing=None, tone="neutral", behind=False,
                against=c.get("label") or c.get("source"), middle_text=middle, source=c.get("source"),
-               note=(c.get("definition_note") or "The published figure is measured differently from yours, so it "
-                     "is context, not a like-for-like comparison."))
+               note=(c.get("definition_note") or "Measured differently from yours — context, not like-for-like."))
     return row
 
 
@@ -297,8 +298,8 @@ def withhold_stale(row, state) -> dict:
     when = row.get("own_as_of") or state.get("as_of")
     row.update(standing=None, standing_key=None, tone="neutral", behind=False, action=None, stale=True,
                note=((f"Last measured {when}. " if when else "")
-                     + f"{state.get('label') or 'The data behind it'} is out of date, so no standing is shown "
-                       "until it is current."))
+                     + f"{state.get('label') or 'The data behind it'} is out of date — no standing until it's "
+                       "current."))
     return row
 
 
@@ -420,11 +421,11 @@ def _below_minimum(cms, who, rows=(), can_edit=None) -> dict | None:
     reason = _why_text(cls or "few")
     kinds = {r.get("kind") for r in rows}
     if who.get("kind") == "self" or ("self" in kinds and "industry" not in kinds):
-        text = f"{reason} — here's how you compare to your own last 13 weeks."
+        text = f"{reason} — compared with your own last 13 weeks."
     elif who.get("kind") == "industry" or ("industry" in kinds and "self" not in kinds):
-        text = f"{reason} — here's the published figure for your type, as context."
+        text = f"{reason} — the published figure for your type, as context."
     elif kinds & {"self", "industry"}:
-        text = f"{reason} — here's how you compare to your own last 13 weeks, and published figures as context."
+        text = f"{reason} — compared with your own last 13 weeks, published figures as context."
     else:
         self_why = next((c.get("why_not") for cm in cms for c in (cm.get("comparisons") or ())
                          if c.get("kind") == "self" and not c.get("available") and c.get("why_not")), None)
@@ -599,7 +600,7 @@ def location_compare(user, db_path=DB_PATH) -> dict:
             o_noise = [o["noise"] for o in others if o["noise"] is not None]
             e["group_median_text"] = fmt(med, cm.get("unit"))
             if e["noise"] is None or not o_noise:
-                e.update(vs_group="not called — needs 7 weeks of history to tell a gap from noise",
+                e.update(vs_group="not called yet — needs 7 weeks of history",
                          tone="neutral", called=False)
                 continue
             band = (e["noise"] ** 2 + percentile(o_noise, 50) ** 2) ** 0.5

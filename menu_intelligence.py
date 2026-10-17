@@ -90,22 +90,25 @@ def _verdict(it):
     q = it.get("quadrant")
     neg, pos = it["negative_mentions"], it["positive_mentions"]
     complaints_matter = neg >= MIN_MENTIONS and neg > pos
+    # Text round (10/17/26): the why is the finding; the move (Protect, Fix,
+    # Reprice, Promote, Cut, Review) is the row's own label beside it, so the
+    # sentence does not say it again unless it adds to it.
     if q == "stars" and complaints_matter:
-        return ("urgent", "Protect it: this is a top earner and guests are complaining about it.")
+        return ("urgent", "A top earner guests complain about.")
     if q == "plowhorses":
         if complaints_matter:
-            return ("fix", "Sells well, earns little, and draws complaints — fix the plate before repricing it.")
-        return ("reprice", "Sells well, earns little: reprice or re-cost the plate.")
+            return ("fix", "Sells well, earns little, draws complaints — fix the plate before the price.")
+        return ("reprice", "Sells well, earns little — reprice or re-cost it.")
     if q == "puzzles":
         if pos >= MIN_MENTIONS:
-            return ("promote", "Earns well and guests who order it like it — it needs visibility, not changes.")
-        return ("promote", "Earns well but sells little: promote or reposition it.")
+            return ("promote", "Earns well and guests like it — it needs visibility, not changes.")
+        return ("promote", "Earns well, sells little.")
     if q == "dogs":
         if complaints_matter:
-            return ("cut", "Low sales, low margin, and guests complain about it — a candidate to cut.")
-        return ("review", "Low sales and low margin: review whether it earns its place.")
+            return ("cut", "Low sales, low margin, guest complaints — a candidate to cut.")
+        return ("review", "Low sales, low margin — does it earn its place?")
     if complaints_matter:
-        return ("fix", "Guests are naming this dish in complaints.")
+        return ("fix", "Guests name it in complaints.")
     return None
 
 

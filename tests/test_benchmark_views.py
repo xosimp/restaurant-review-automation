@@ -75,7 +75,7 @@ def test_card_below_the_minimum_leads_with_the_restaurants_own_normal(db_path):
     assert d["ok"] and d["who"]["kind"] == "self"
     assert d["who"]["text"] == "vs your own previous 13 weeks"
     b = d["below_minimum"]
-    assert b["text"].startswith("Not enough restaurants like yours yet — here's how you compare to your own last 13")
+    assert b["text"].startswith("Not enough restaurants like yours yet — compared with your own last 13")
     assert b["why_not"]                                  # the engine's own reason, verbatim
     row = next(r for r in d["rows"] if r["metric"] == "labor_pct_28d")
     assert row["kind"] == "self" and row["standing"] == "worse than your normal" and row["behind"]
@@ -108,8 +108,8 @@ def test_card_with_peers_names_who_how_many_and_the_strength_as_a_percentage(db_
     # The engine's quartile word is kept as standing_key; the screen reads
     # outcome words (#17) — "bottom quarter" never reaches an owner.
     assert row["standing_key"] in ("top quarter", "above the middle", "about the middle")
-    assert row["standing"] in ("in the group's best quarter — lower than 3 in 4", "better than the group's middle",
-                               "about the group's middle")
+    assert row["standing"] in ("in the best quarter — lower than 3 in 4", "better than the middle",
+                               "about the middle")
 
 
 def test_home_strip_puts_what_the_restaurant_is_behind_on_first(db_path):

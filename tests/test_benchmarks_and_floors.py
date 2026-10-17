@@ -732,7 +732,7 @@ def test_ask_names_its_cohort_and_labels_general_knowledge(db_path):
 
 def test_the_brief_says_how_many_nights_typical_rests_on(monkeypatch):
     src = inspect.getsource(__import__("morning_brief"))
-    assert "the median of its last {_n_typ} {y['weekday']}s here" in src
+    assert "median of the last {_n_typ} {y['weekday']}s" in src
 
 
 def test_the_illustration_curve_is_never_called_a_typical_restaurant():
