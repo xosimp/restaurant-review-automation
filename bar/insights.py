@@ -30,7 +30,7 @@ CONCENTRATION_OVER_UNIFORM = 1.5
 LADDER_CARD_90D_USD = 30.0
 
 _TIMING = "A delivery or a stock-up moves this; count the shelf to know."
-_LOW_ACTION = "Often bottles bought earlier are pouring now — count the shelf before reading it as a win."
+_LOW_ACTION = "Earlier bottles may be pouring now; count the shelf before calling it a win."
 
 
 def _span(days) -> str:
@@ -106,9 +106,10 @@ def _price_cards(pw, pc) -> list:
         fwd = abs(float(r.get("forward_monthly_usd") or 0))
         metric = (f"{_usd(r.get('to'))} a {unit} since {since}" + (f", from a usual {_usd(ref)}" if ref else "")
                   + f" · about {'+' if up else '−'}{_money(fwd)} a month at your usual buying")
-        action = (f"It has held at the new price — worth raising with {r.get('distributor')} at the next order."
+        # The headline already says it held (text round, 10/17/26).
+        action = (f"Raise it with {r.get('distributor')} at the next order."
                   if up else
-                  f"It has held at the new price — worth confirming with {r.get('distributor')} that it stays.")
+                  f"Confirm with {r.get('distributor')} that it stays.")
         out.append(_card("price:" + str(r.get("product_key")), "warn" if up else "info",
                          f"{r.get('name') or r.get('product')} is {'up' if up else 'down'} {pct:g}% and has held",
                          metric, action, "prices",
@@ -166,26 +167,24 @@ def _insights(pc, pw, to_check) -> list:
         cats = pc.get("categories") or []
         tot = pc.get("total") or {}
         if fr.get("stale"):
-            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')} — check the "
-                                                   "Fintech forward",
-                             (f"Sales are on file through {fr.get('sales_through_mdy')}; " if fr.get("sales_through_mdy")
-                              else "") + "nothing on this page is judged until the invoices catch up",
+            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')}",
+                             (f"Sales through {fr.get('sales_through_mdy')}; " if fr.get("sales_through_mdy")
+                              else "") + "nothing is judged until invoices catch up",
                              "Check that Fintech's daily file still reaches Cavnar AI", basis, _pour_conf(pc)))
         for g in (pc.get("gaps") or [])[:1]:
             what = ", ".join(c for c in g.get("categories") or []) or "what they supply"
             out.append(_card("gap", "warn", f"Invoices from {g['distributor']} aren't on file",
                              f"Nothing between {g['from_mdy']} and {g['to_mdy']} — {what} reads low until they arrive",
-                             "Forward Fintech's invoice detail for those dates. If the bar stopped buying from "
-                             f"{g['distributor']}, say so and it won't be flagged again", basis, _pour_conf(pc)))
+                             "Forward Fintech's invoice detail for those dates, or mark that the bar stopped "
+                             f"buying from {g['distributor']}", basis, _pour_conf(pc)))
         for c in cats:
             s = c.get("stock_up")
             if s and "stock_up" in (c.get("reasons") or []):
                 times = (f" — {s['amount'] / s['median_week']:.0f}× its usual week" if s.get("median_week") else "")
                 out.append(_card("stock_up:" + c["key"], "info",
                                  f"A large {c['label'].lower()} delivery on {s['date_mdy']}",
-                                 f"{s['amount_text']} from {s['distributor']}{times}; {c['label'].lower()} isn't judged "
-                                 "while it's in the window",
-                                 "It evens out as it pours. Count the shelf to know where the bar stands.",
+                                 f"{s['amount_text']} from {s['distributor']}{times}",
+                                 f"{c['label']} isn't judged while it's in the window; count the shelf to know.",
                                  basis, _pour_conf(pc, c)))
                 break
         judged = {c["key"]: c for c in cats if c.get("judged")}
@@ -193,8 +192,7 @@ def _insights(pc, pw, to_check) -> list:
         if tot.get("judged") and tot.get("over_target_usd"):
             top = tot.get("top_over")
             more = "more used" if basis == "counted" else "more bought"
-            lead = (f"{top['label']} carries the most: {_money(top['usd'])} {more} than "
-                    f"{tot['target']:g}% of its sales. " if top else "")
+            lead = (f"{top['label']} carries the most, {_money(top['usd'])}. " if top else "")
             out.append(_card("over_target:total", bad,
                              f"The bar's {name} is over {_overall_phrase(tot)}" + (" on purchases" if basis == "purchases" else ""),
                              f"{tot['pct']}% {_span(days)} · {_money(tot['over_target_usd'])} {more} than "
@@ -220,7 +218,7 @@ def _insights(pc, pw, to_check) -> list:
             cb, cn, cbad, on, more, lead = _voice(c, basis)
             # Against a purchase ratio the range is context, not a verdict.
             out.append(_card("over:" + c["key"], cbad if cb == "counted" else "info",
-                             f"{c['label']} {cn} is above the range for counted pour cost",
+                             f"{c['label']} {cn} is above the counted-pour-cost range",
                              f"{c['pct']}% against {lo:g}–{hi:g}% · {_money(c['over_range_usd'])} {more} than the "
                              f"range's top {_span(_days_of(c, days))}",
                              lead + f"check {c['label'].lower()} pours, comps and waste.", cb, _pour_conf(pc, c)))
@@ -241,10 +239,10 @@ def _insights(pc, pw, to_check) -> list:
                 # The weekly series is always bought vs sold (counts are monthly).
                 out.append(_card("trend:" + k, "warn" if d1 > 0 else "info",
                                  f"{c['label']} bought vs sold moved from {prev}% to {now}%",
-                                 f"Against the four weeks to {trend[-5]['end_mdy']}, and held a week — beyond its usual "
-                                 f"±{band:g}-point weekly swing",
-                                 "Purchase-based readings move with delivery timing; count the shelf to know. "
-                                 "If deliveries didn't change, look at prices, pours and comps.",
+                                 f"Vs the four weeks to {trend[-5]['end_mdy']}, held a week — beyond its normal "
+                                 f"±{band:g}-point swing",
+                                 "Delivery timing moves it; count the shelf to know. "
+                                 "If deliveries didn't change, check prices, pours and comps.",
                                  "purchases", _pour_conf(pc, c)))
                 said.add(k)
         for c in judged.values():
@@ -254,7 +252,7 @@ def _insights(pc, pw, to_check) -> list:
             jt = c.get("judge_target")
             cb, cn = _voice(c, basis)[:2]
             out.append(_card("low:" + c["key"], "info",
-                             f"{c['label']} {cn} reads below the range for counted pour cost",
+                             f"{c['label']} {cn} is below the counted-pour-cost range",
                              f"{c['pct']}% against {lo:g}–{hi:g}%" + (f", under {jt['phrase']}" if jt else ""),
                              _LOW_ACTION if cb == "purchases" else "Check the counts and the pour sizes behind it.",
                              cb, _pour_conf(pc, c)))
@@ -267,8 +265,8 @@ def _insights(pc, pw, to_check) -> list:
         out.extend(_price_cards(pw, pc or {}))
     if to_check:
         out.append(_card("to_check", "info", f"{to_check} product{'' if to_check == 1 else 's'} sorted by a guess",
-                         "The bar's figures count them where Cavnar AI guessed",
-                         "Check their category under How every product is sorted", "products",
+                         "Counted where Cavnar AI guessed",
+                         "Check them under How every product is sorted", "products",
                          confidence()))
     return out[:MAX_INSIGHTS]
 

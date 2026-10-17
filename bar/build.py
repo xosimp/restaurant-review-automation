@@ -230,11 +230,9 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
             "other_spend": other_spend,
             "categories": [{"key": c, "label": LABELS[c]} for c in ("beer", "liquor", "wine", "na", "supplies", "other")],
             "sales_basis": sales_basis,
-            "basis": (("Purchases are Fintech's distributor invoices; sales are the POS's drink sales after comps "
-                       "and check discounts, under your bar mapping. Pour cost (counted) is what the bar used between two counts — opening count plus "
-                       "purchases minus closing count — as a % of what it sold; the month table is bought vs sold.")
+            # Said in the hero's "What this measures" panel (text round,
+            # 10/17/26): only what the panel's other lines don't already say.
+            "basis": (("Purchases are Fintech's distributor invoices; sales follow your bar mapping. "
+                       "The month table is bought vs sold.")
                       if pour.get("basis") == "counted" else
-                      ("Purchases are Fintech's distributor invoices; sales are the POS's drink sales after comps "
-                       "and check discounts, under your bar mapping. Bought vs sold is what the bar bought as a % of what it sold, over four weeks and "
-                       "by month — it becomes pour cost (counted) once two bar counts bracket a window. The ranges "
-                       "describe counted pour cost, so they are context for it."))}
+                      "Purchases are Fintech's distributor invoices; sales follow your bar mapping.")}
