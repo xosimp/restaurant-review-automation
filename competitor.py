@@ -1060,10 +1060,10 @@ Write a competitive intelligence report for the restaurant in this EXACT format 
 <the GREETING line>
 
 WHAT COMPETITORS ARE DOING WELL:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R3]. A bullet with no review of that restaurant behind it must not be written.
+Write 1-2 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R3]. A bullet with no review of that restaurant behind it must not be written.
 
 WHAT COMPETITORS ARE DOING POORLY:
-Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R4].
+Write 1-2 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters. End each bullet with the ids of THAT restaurant's reviews it rests on, in square brackets, e.g. [R4].
 
 (Do not write a price positioning section — it is computed from the price levels and added for you.)
 

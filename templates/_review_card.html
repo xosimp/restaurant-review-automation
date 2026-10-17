@@ -43,7 +43,7 @@
         {% if r.entities.service_mode %}{% set _ = _ents.append(('when', r.entities.service_mode.replace('_',' '))) %}{% endif %}
       {% endif %}
       {# A star rating with no words says so plainly, never a model's summary of nothing (owner, 10/9/26). #}
-      {% if (r.text or '')|trim|length < 3 %}<div class="rv2-read"><div class="rv2-read-s">Rating only — the guest didn’t write a review.</div></div>{% elif r.summary %}<div class="rv2-read"><div class="rv2-read-s">{{ r.summary|e }}</div></div>{% endif %}
+      {% if (r.text or '')|trim|length < 3 %}<div class="rv2-read"><div class="rv2-read-s">Rating only — the guest didn’t write a review.</div></div>{% elif r.summary and (r.text or '')|length > 280 %}{# Only over a long review (text round, 10/17/26): beside a short one the summary only said it again. #}<div class="rv2-read"><div class="rv2-read-s">{{ r.summary|e }}</div></div>{% endif %}
       <div class="rv2-read-m rv2-pills">
         {% if r.specific_complaint %}<span class="rv2-what">{{ r.specific_complaint|e }}</span>{% endif %}
         {% for k, v in _ents[:2] %}<span class="rv2-ent {{ k }}">{{ v|e }}</span>{% endfor %}
@@ -164,11 +164,11 @@
       </div>
       {% elif r.response_status != 'posted' %}
       <div class="draft-box" id="draft-box-{{ r.id }}">
-        <div class="draft-lbl">No reply drafted yet</div>
+        <div class="draft-lbl">No reply yet</div>
+        {# Templates open from Write my own's editor (text round, 10/17/26). #}
         <div class="draft-actions" id="draft-actions-{{ r.id }}" style="margin-top:6px">
           <button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft({{ r.id }})">Draft a reply</button>
           <button class="cbtn cbtn-secondary cbtn-sm" onclick="openEditor({{ r.id }})">Write my own</button>
-          <button class="cbtn cbtn-secondary cbtn-sm" data-tmpl-btn="1" onclick="toggleTmplPicker({{ r.id }},this)">Templates ▾</button>
           <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="repliedElsewhereR({{ r.id }},this)">Mark as replied on {{ r.platform|title }}</button>
         </div>
         <div class="response-editor" id="editor-{{ r.id }}" style="display:none;margin-top:10px">

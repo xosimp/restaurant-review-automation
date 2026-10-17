@@ -228,12 +228,12 @@ def holidays(restaurant_id, now, db_path=DB_PATH, restaurant=None):
         elif (approximate or h.get("claim_kind") != "measured") and away <= HOLIDAY_UNMEASURED_DAYS:
             if approximate:
                 title = f"Plan for {name}, expected around {_mdy(d)}"
-                why = (f"{name} usually lands around {_mdy(d)}, {away} day{'' if away == 1 else 's'} away — its "
-                       f"date isn't fixed, so check it before you plan.")
+                # The title names the date and the card's chip the days away
+                # (text round, 10/17/26): the why says only what they don't.
+                why = "Its date isn't fixed — check it before you plan."
             else:
                 title = f"Plan for {name}, {wd} {_mdy(d)}"
-                why = (f"{name} is {away} day{'' if away == 1 else 's'} away. There's no {name} of your own on "
-                       f"file yet to say how it goes here.")
+                why = f"No {name} of your own on file yet to say how it goes here."
             out.append(_card(
                 _key("holiday_promo", iso), "holiday", title, why, subject=name,
                 when=d, days_away=away, prompt=f"Invite guests in for {name}",
@@ -337,9 +337,9 @@ def category_dips(restaurant_id, today, db_path=DB_PATH):
         n = len(pairs)
         out.append(_card(
             _key("category_dip", name), "category_dip", f"Win back {name.lower()} sales",
-            f"{name} is down {abs(round(pct))}% a night: {_money(mean_last)} a night over the last "
-            f"{CATEGORY_WINDOW_DAYS} nights vs {_money(mean_prior)} the {CATEGORY_WINDOW_DAYS} before, "
-            f"the same weekdays compared.",
+            # Short (text round, 10/17/26); the coverage and swing are its facts.
+            f"Down {abs(round(pct))}% a night: {_money(mean_last)} over the last "
+            f"{CATEGORY_WINDOW_DAYS} nights vs {_money(mean_prior)}, same weekdays.",
             subject=name,
             facts=[f"{n_last} of {CATEGORY_WINDOW_DAYS} nights measured lately, {n_prior} of "
                    f"{CATEGORY_WINDOW_DAYS} before",

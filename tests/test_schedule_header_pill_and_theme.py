@@ -289,7 +289,7 @@ def test_the_cavnar_read_card_is_on_the_reviews_tab():
     It uses the .lb2-ai treatment Labor and Intel already share rather than
     reinstating the old rv2-ai rules."""
     panel = _reviews_panel()
-    assert "Cavnar AI's read on your reviews" in panel
+    assert "Cavnar AI's read</div>" in panel
     assert 'id="review-insight"' in panel
     assert 'class="lb2-ai"' in panel
     fn = _fn("loadReviewInsight")

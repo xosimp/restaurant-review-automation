@@ -2706,9 +2706,9 @@ def _do_review_insight(rid, viewer=None):
         _rating_raw = _rating_fc["raw"] if _rating_fc else None         # what the record is kept on
         forecast_line = ""
         why_line = (
-            "\n\U0001f50d Why: [1-2 sentences naming the most likely OPERATIONAL cause from the "
+            "\n\U0001f50d Why: [1 sentence naming the most likely OPERATIONAL cause from the "
             "DIAGNOSIS block, what else it could be, and the one thing that would tell them "
-            "apart. Use that diagnosis - do not substitute a different cause.]"
+            "apart. Use that diagnosis - do not substitute a different cause. Max 30 words.]"
         ) if has_diag else ""
         from ai_guard import UNTRUSTED_NOTE as _UN_RI
         # What the owner already answered on this module, so a reworded
@@ -2770,12 +2770,12 @@ def _do_review_insight(rid, viewer=None):
             "over a merely frequent one."
             + _answered_ri + "\n\n"
             "Return EXACTLY these lines, in this order, no markdown, no preamble, no extra lines:\n"
-            "\U0001f4ca This week: [1 sentence on the most important MEASURED fact. Max 22 words.]"
+            "\U0001f4ca This week: [1 sentence on the most important MEASURED fact. Max 15 words.]"
             f"{why_line}\n"
             "\u26a0\ufe0f Watch: [1 sentence on the biggest risk and what it rests on. "
-            "Omit this line entirely if nothing clears the evidence floor. Max 22 words.]\n"
+            "Omit this line entirely if nothing clears the evidence floor. Max 18 words.]\n"
             "\u2705 Do today: [1 concrete action a manager can start this shift with the staff and "
-            "menu they already have. If a guest is named above, name them. Never generic. Max 22 words.]"
+            "menu they already have. If a guest is named above, name them. Never generic. Max 15 words.]"
             f"{forecast_line}"
         )
 
