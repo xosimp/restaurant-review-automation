@@ -130,3 +130,28 @@ def test_thinning_keeps_a_snapshot_taken_on_a_real_count(db_path):
                                     (rid,)).fetchall()]
     c.close()
     assert left == [mon.isoformat(), (mon + timedelta(days=1)).isoformat(), (mon + timedelta(days=6)).isoformat()]
+
+
+# ── EJ's 10/16/26: a house billing through a sister house's Fintech account ─
+
+def test_a_number_and_amount_at_a_sister_house_is_that_fintech_invoice(monkeypatch):
+    import backoffice_ap as bo
+    from fintech_invoices import distributor_key as dk
+    fins = [{"id": 1, "distributor": "Euclid Beverage, LLC. - North Aurora", "invoice_number": "W-4638131",
+             "invoice_date": "2026-05-06", "total": 2249.45},
+            {"id": 2, "distributor": "Relax LLC - North Aurora, IL (H)", "invoice_number": "W-4638130",
+             "invoice_date": "2026-05-06", "total": 208.0}]
+    for f in fins:
+        f["distributor_key"] = dk(f["distributor"])
+    monkeypatch.setattr(bo, "_fintech_invoices", lambda rid, db_path=None: fins)
+    monkeypatch.setattr(bo, "_decisions", lambda rid, db_path=None: {})
+
+    def entry(number, amount):
+        return {"id": number, "vendor": "EUCLID BEVERAGE", "vendor_key": dk("EUCLID BEVERAGE"), "entry_key": f"inv|{number}",
+                "entry_kind": "invoice", "invoice_number": number, "date": "2026-05-06", "amount": amount,
+                "category": "beer", "gl": "4320"}
+    out = bo.outside_fintech(1, es=[entry("W-4638130", 208.0)])
+    assert out["matched"] == 1 and not out["to_confirm"] and not out["entries"]
+    # The number alone at another house is not enough: a different amount is held.
+    out = bo.outside_fintech(1, es=[entry("W-4638130", 210.0)])
+    assert out["matched"] == 0 and len(out["to_confirm"]) == 1

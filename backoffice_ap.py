@@ -1241,6 +1241,9 @@ def outside_fintech(restaurant_id, db_path=None, es=None) -> dict:
     distributor the vendor is (_fintech_link, ING-02/03):
 
       1. by invoice number;
+      1b. else, for a vendor on Fintech, its exact invoice number AND
+         amount (to the cent, in the window below) at ANY Fintech
+         distributor — a house that bills through a sister house's account;
       2. else one unused invoice of the document's amount, dated from
          MATCH_DAYS_BEFORE before to MATCH_DAYS_AFTER after it was paid
          (the nearest);
@@ -1301,6 +1304,30 @@ def outside_fintech(restaurant_id, db_path=None, es=None) -> dict:
                 f = min(same, key=lambda f: ((float(f["total"] or 0) < 0) != (d["amount"] < 0), abs(days(f, d))))
                 used.add(f["id"])
                 hits[d["key"]] = [f]
+    def exact(n):
+        return re.sub(r"\s+", "", str(n or "")).upper()
+    any_num = defaultdict(list)
+    for f in fins:
+        if f.get("invoice_number"):
+            any_num[exact(f["invoice_number"])].append(f)
+    for d in order:                                   # 1b. its number AND amount at another house
+        # A distributor that bills through a sister house's Fintech account
+        # (EJ's, 10/16/26: Euclid's W-4638130 $208 is on Fintech under "Relax
+        # LLC - North Aurora"): the same number to the cent, in the window,
+        # is that invoice — never held to confirm or counted a second time.
+        # Only for a vendor that supplies through Fintech itself, and the
+        # number exactly as printed: a store run's '10452' is not Southern
+        # Glazer's '0010452' of the same amount (ING-02).
+        if d["key"] in hits or d["entry_kind"] != "invoice" or not d["invoice_number"] \
+                or not fk_of(d["vendor_key"]):
+            continue
+        same = [f for f in any_num.get(exact(d["invoice_number"])) or [] if f["id"] not in used
+                and abs(_cents(f["total"]) - _cents(d["amount"])) <= 1
+                and -MATCH_DAYS_AFTER <= days(f, d) <= MATCH_DAYS_BEFORE]
+        if same:
+            f = min(same, key=lambda f: abs(days(f, d)))
+            used.add(f["id"])
+            hits[d["key"]] = [f]
     for d in order:                                   # 2. one invoice of its amount
         fk = fk_of(d["vendor_key"])
         if d["key"] in hits or not fk:
