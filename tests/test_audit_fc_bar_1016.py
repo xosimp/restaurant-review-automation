@@ -523,7 +523,6 @@ def _food_ctx(**kw):
     return rv.ValidationContext(restaurant_id=1, surface="food_insight", facts=facts, **kw)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-01: a % is 'backed' by any two unrelated facts whose ratio or change happens to match")
 def test_ai_01_an_invented_percentage_is_not_backed_by_unrelated_facts():
     """'Waste rose 85% this week.' - 85% is only ($80 brisket waste vs the
     $520 monthly projection), an unrelated pair: F1, as 37% already is."""
@@ -533,7 +532,6 @@ def test_ai_01_an_invented_percentage_is_not_backed_by_unrelated_facts():
     assert "F1" in rv.validate("Waste rose 85% this week.", ctx).codes
 
 
-@pytest.mark.xfail(strict=True, reason="AI-02: a 'Why:' cause sentence passes with no cause anchors")
 def test_ai_02_a_why_line_needs_a_cause_anchor():
     """With no cause anchors, 'Why: line cooks are over-portioning the
     brisket.' is checked as a cause (K1, or dropped), as 'because' is."""

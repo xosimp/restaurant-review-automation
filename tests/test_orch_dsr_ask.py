@@ -114,14 +114,25 @@ def test_a_shape_the_salvage_cannot_repair_escalates_once_to_t3_with_its_reasons
     assert [s["tier"] for s in steps] == ["T2", "T3"] and steps[0]["trigger"] == "schema_fail"
 
 
-@pytest.mark.parametrize("how", ["lead", "refusal", "truncated"])
+def test_a_refused_lead_is_rewritten_once_then_fails(monkeypatch, rest, db_path):
+    """A refused executive summary is rewritten once at T3, told which figure
+    failed (EJ's 10/15/26: six nights held back for one figure each); a
+    second refusal fails the night - never a third call."""
+    r = strong_reply()
+    r["executive_summary"]["text"] = ("Saturday did $99,999 net, a record. Labor ran 24.2% against a 26% "
+                                      "target.")
+    client = _Seq([r])
+    out = _write(monkeypatch, rest, strong_night(), client)
+    assert out["ok"] is False and len(client.calls) == 2
+    (run,) = _runs(db_path)
+    assert run["escalations"] == 1 and run["status"] == "failed"
+    steps = json.loads(run["steps_json"])
+    assert steps[0]["trigger"] == "validation_refuse"
+
+
+@pytest.mark.parametrize("how", ["refusal", "truncated"])
 def test_only_the_shape_escalates(monkeypatch, rest, db_path, how):
-    if how == "lead":
-        r = strong_reply()
-        r["executive_summary"]["text"] = ("Saturday did $99,999 net, a record. Labor ran 24.2% against a 26% "
-                                          "target.")
-        client = _Seq([r])
-    elif how == "refusal":
+    if how == "refusal":
         client = _Seq([""], stop="refusal")
     else:
         client = _Seq([strong_reply()], stop="max_tokens")
