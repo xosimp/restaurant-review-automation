@@ -503,10 +503,12 @@ struct LocationComparisonSection: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Each against its own normal first, then against your other locations \u{2014} a gap is called only when it is wider than both locations\u{2019} own week-to-week swing.")
-                            .font(.cavnar(.caption))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CavnarEvidenceSection(label: "See how it works") {
+                            Text("Each against its own normal first, then against your other locations \u{2014} a gap is called only when it is wider than both locations\u{2019} own week-to-week swing.")
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         ForEach(lc.metrics) { m in
                             AccountSection(kicker: m.label) {
                                 ForEach(Array(m.locations.enumerated()), id: \.element.id) { i, l in

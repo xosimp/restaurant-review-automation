@@ -365,7 +365,7 @@ struct CommandSheet: View {
         } label: {
             row(icon: entry.kind == "action" ? "bolt.fill" : (entry.kind == "ask" ? "sparkles" : "arrow.up.right"),
                 title: entry.label,
-                subtitle: entry.kind == "action" ? (entry.tier >= 2 ? "Shows what goes out before anything is sent" : "You confirm first") : nil,
+                subtitle: entry.kind == "action" ? (entry.tier >= 2 ? "Previewed before anything is sent" : "You confirm first") : nil,
                 busy: viewModel.proposing == entry.id)
         }
         .buttonStyle(.plain)

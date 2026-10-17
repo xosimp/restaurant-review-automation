@@ -172,7 +172,7 @@ struct ScheduleIntelSection: View {
         return VStack(alignment: .leading, spacing: 8) {
             kicker("How much of the draft you keep")
             if acceptance?.available != true || weeks.isEmpty {
-                Text("Appears after the first published week — how much of the draft went out untouched, week by week.")
+                Text("Appears after the first published week.")
                     .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -440,7 +440,7 @@ struct ScheduleIntelSection: View {
     private func outcomesBlock(_ outcomes: [String: [String: IntelOutcome]]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             kicker("How each daypart has gone")
-            Text("Average sales and hours over the weeks recorded. A troubled daypart has gone wrong before — the draft will not thin it.")
+            Text("Average sales and hours. A troubled daypart is never thinned.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -672,7 +672,7 @@ struct ScheduleIntelSection: View {
     private func trainedUpBlock(_ could: [String: [String]]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             kicker("Trained up")
-            Text("Roles somebody has covered enough shifts in, beside a rated colleague, to hold on their own.")
+            Text("Roles somebody can now hold on their own.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)

@@ -35,10 +35,16 @@ struct DemandSignalsSection: View {
             }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("The next 60 days. A party of forty on a Tuesday is the difference between a quiet night and a slammed one, and the history alone cannot see it coming.")
+                Text("The next 60 days.")
                     .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
+                    .foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
+                CavnarEvidenceSection(label: "See why it matters") {
+                    Text("A party of forty on a Tuesday is the difference between a quiet night and a slammed one, and the history alone cannot see it coming.")
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 // The reservation system's own sentence — connected, keyed
                 // but not live, or nothing at all. Set under Schedule rules.
@@ -83,7 +89,7 @@ struct DemandSignalsSection: View {
                 if viewModel.isLoadingSignals && viewModel.signals.isEmpty {
                     CavnarSkeletonLines(widths: [1.0, 0.8, 0.6])
                 } else if viewModel.signals.isEmpty {
-                    Text("Nothing on the books for the next 60 days. Add a party here, or import a list on the web, and the next draft will staff for them.")
+                    Text("Nothing on the books for the next 60 days.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -264,10 +270,12 @@ struct DemandSignalsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("Measured on your own nights against a typical same weekday. The forecast uses one only once it has enough nights.")
-                .font(.cavnar(.caption))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarEvidenceSection(label: "See how it works") {
+                Text("Measured on your own nights against a typical same weekday. The forecast uses one only once it has enough nights.")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -332,7 +340,7 @@ private struct DemandSignalEditor: View {
                     CavnarFloatingField(icon: "arrow.up.right", placeholder: "Lift % (optional, e.g. 25)",
                                         text: $lift, keyboardType: .numbersAndPunctuation,
                                         focus: $focused, field: .lift)
-                    Text("Give covers when you know them; a lift is for a day you expect to be busier without a number to hang on it.")
+                    Text("Covers if you know them, or a lift % for a busier day.")
                         .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

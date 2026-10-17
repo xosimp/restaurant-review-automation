@@ -291,7 +291,7 @@ struct StandingShiftsSection: View {
         AccountSection(kicker: "Always works") {
             VStack(alignment: .leading, spacing: 0) {
                 if shifts.isEmpty {
-                    Text("No standing shifts. Add the days and hours they always work \u{2014} every draft keeps them.")
+                    Text("No standing shifts \u{2014} every draft keeps the ones you add.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -603,7 +603,7 @@ struct PersonAttendanceSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 9)
             } else {
-                Text("Not watched yet \u{2014} attendance is read from shifts Cavnar AI watched, at least six of them.")
+                Text("Not watched yet \u{2014} it needs six watched shifts.")
                     .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

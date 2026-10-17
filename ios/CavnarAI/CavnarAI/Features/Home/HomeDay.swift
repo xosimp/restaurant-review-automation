@@ -20,6 +20,9 @@ struct HomeDayCard: View {
     var onOpenNav: (String) -> Void = { _ in }
 
     @State private var openLine: HomeDayViewModel.BriefLine?
+    @State private var showingAll = false
+    /// Brief reads on the face before "+N more".
+    static let linesShown = 3
 
     /// The scroll id HomeView's ScrollViewReader scrolls to (an issue's row
     /// in Needs you).
@@ -42,8 +45,11 @@ struct HomeDayCard: View {
                     .padding(.vertical, CavnarSpace.xs)
             }
         } else if !lines.isEmpty {
+            // Three reads on the face, two lines each — every line opens in
+            // full — and the rest behind "+N more" (text cut 10/17/26).
+            let shown = showingAll ? lines : Array(lines.prefix(Self.linesShown))
             card {
-                ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { index, line in
                     Button {
                         Haptic.light()
                         openLine = line
@@ -52,7 +58,7 @@ struct HomeDayCard: View {
                             Circle().fill(line.toneColor).frame(width: 10, height: 10).padding(.top, 7)
                                 .accessibilityHidden(true)
                             CavnarMixedText(line.text, role: .body, color: .cavnarInk)
-                                .lineLimit(3)
+                                .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                             Spacer(minLength: CavnarSpace.xs)
                             Image(systemName: "chevron.right")
@@ -67,7 +73,10 @@ struct HomeDayCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Opens the line: what to do, Ask, Done or Pass")
-                    if index < lines.count - 1 { AccountRowDivider() }
+                    if index < shown.count - 1 { AccountRowDivider() }
+                }
+                if lines.count > Self.linesShown {
+                    CavnarMoreToggle(hiddenCount: lines.count - Self.linesShown, isExpanded: $showingAll)
                 }
             }
             .sheet(item: $openLine) { line in

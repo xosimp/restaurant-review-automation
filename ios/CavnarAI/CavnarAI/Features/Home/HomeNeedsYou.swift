@@ -389,8 +389,7 @@ struct HomeNeedsYou: View {
         let canAnswer = followThrough.canConfirmGoals
         return HomeNeedsYouRow(
             tone: .cavnarAmber, title: goal.summary,
-            why: canAnswer ? goal.byLine + " \u{00B7} once confirmed, every module judges against it"
-                           : "Waiting for the owner to confirm",
+            why: canAnswer ? goal.byLine : "Waiting for the owner to confirm",
             primary: canAnswer ? HomeNeedsYouPrimary(label: "Confirm", busy: followThrough.answeringGoal == goal.id) {
                 answerGoal(goal, confirm: true)
             } : nil

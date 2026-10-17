@@ -1168,9 +1168,12 @@ struct DSRTomorrowLaborCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 if let l = tomorrow.labor { laborPart(l) }
                 if let o = tomorrow.overtime { overtimePart(o) }
+                // How it was worked out, one tap away (text cut 10/17/26).
                 if let basis = tomorrow.labor?.basis ?? tomorrow.overtime?.basis {
-                    Text(DSRNightDetail.cap(basis)).cavnarText(.caption, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarEvidenceSection(label: "See the basis") {
+                        Text(DSRNightDetail.cap(basis)).cavnarText(.caption, color: .cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -168,7 +168,7 @@ struct ScheduleHistoryDetailView: View {
                         if !viewModel.versions.isEmpty || detail.storedWhatIf?.ran == true
                             || viewModel.draftVsPublished?.available == true {
                             CavnarWebLinkRow(title: "Versions and what-ifs",
-                                             subtitle: "Every change to this week, and what else was tried",
+                                             subtitle: "Every change, and what else was tried",
                                              path: "labor/schedule", actionLabel: "Open on the web")
                         }
                         if let rows = detail.previewRows, !rows.isEmpty {
@@ -309,8 +309,8 @@ struct ScheduleHistoryDetailView: View {
             Image(systemName: "archivebox")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Color.cavnarInk3)
-            HomeMixedText.make("Details trimmed " + CavnarDate.mdy(thinned) + ", 30 days on \u{2014} the score, band, "
-                               + "schedule and economics are kept.", size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
+            HomeMixedText.make("Details trimmed " + CavnarDate.mdy(thinned) + " \u{2014} score and schedule kept.",
+                               size: CavnarType.secondary, weight: 500, color: .cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
@@ -345,7 +345,7 @@ struct ScheduleHistoryDetailView: View {
             // Why it can't be sent, in the server's words when it sent them
             // (UI-3); never the row's internal id.
             HomeMixedText.make((viewModel.detail?.replacedReason).flatMap { $0.isEmpty ? nil : $0 }
-                               ?? "Replaced by a newer draft of this week \u{2014} kept for the record, and it can't be sent.",
+                               ?? "Replaced by a newer draft \u{2014} kept for the record; it can't be sent.",
                                size: CavnarType.secondary, weight: 600, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }

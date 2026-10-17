@@ -27,7 +27,7 @@ struct HomeFirstLook: View {
                 // Says where it came from. A number with no source is the
                 // one thing this product never ships, and it matters most
                 // on the very first figure an owner ever sees from it.
-                Text("From your Google listing — your own numbers replace this as they arrive.")
+                Text("From your Google listing until your own numbers arrive.")
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

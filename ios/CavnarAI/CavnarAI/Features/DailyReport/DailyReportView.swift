@@ -525,7 +525,7 @@ struct DailyReportView: View {
         var parts: [String] = []
         if !carded.isEmpty {
             let n = carded.count
-            parts.append("\(n) part\(n == 1 ? "" : "s") of the night \(n == 1 ? "isn\u{2019}t" : "aren\u{2019}t") in yet \u{2014} each says why under The night in full.")
+            parts.append("\(n) part\(n == 1 ? "" : "s") of the night \(n == 1 ? "isn\u{2019}t" : "aren\u{2019}t") in yet \u{2014} see The night in full.")
         }
         parts += loose
         return parts.joined(separator: " ")
@@ -689,7 +689,7 @@ struct DailyReportView: View {
             // The report's settings live on the web (re-audit D13).
             if viewModel.isOwner {
                 CavnarWebLinkRow(title: "Report settings",
-                                 subtitle: "When it\u{2019}s sent, the deadline, gross, your calendar and POS departments",
+                                 subtitle: "Send time, deadline, calendar, departments",
                                  path: "account/report")
             }
         }
@@ -700,9 +700,9 @@ struct DailyReportView: View {
 // MARK: - The night's lead
 
 /// The executive summary (10/8/26, readability item 14): its first sentence
-/// is the headline; the rest shows three lines with "Read more". Only the
-/// opened text follows the phone's text size past the app's cap — the
-/// collapsed card stays in proportion with the cards around it.
+/// is the headline; the rest waits behind "Read more" (text cut 10/17/26 —
+/// it showed three lines collapsed). Only the opened text follows the
+/// phone's text size past the app's cap.
 struct DSRLeadCard: View {
     let kicker: String
     let text: String
@@ -710,9 +710,9 @@ struct DSRLeadCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Three body lines on a phone hold about this many characters.
     static let clampAfter = 140
-    @State private var clampedHeight: CGFloat = 0
-    @State private var fullHeight: CGFloat = 0
 
+    /// The old three-line clamp's rule, kept for its tests (re-audit D4);
+    /// the card now folds everything after the first sentence.
     /// "Read more" when the three-line clamp cut the text — measured, so a
     /// large Dynamic Type size that truncates a short summary still opens
     /// (re-audit D4) — or, before it is measured, past `clampAfter`.
@@ -728,32 +728,17 @@ struct DSRLeadCard: View {
             CavnarMixedText(parts.first, role: .lead)
                 .accessibilityAddTraits(.isHeader)
             if let rest = parts.rest {
+                // The first sentence is the answer; the rest of the night in
+                // sentences waits behind "Read more" (text cut 10/17/26 — it
+                // showed three lines of it by default).
                 if expanded {
                     CavnarMixedText(rest, role: .body)
                         // The night in sentences, opened: read, not scanned,
                         // so it follows the phone's text size past the cap.
                         .cavnarReadingSize()
                         .transition(reduceMotion ? .identity : .opacity)
-                } else {
-                    HomeMixedText.make(rest, role: .body)
-                        .cavnarText(.body)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { clampedHeight = $0 }
-                        // The whole text, unclamped and unseen, at the same
-                        // width: taller than the three lines means a large
-                        // text size cut it, so "Read more" shows (re-audit
-                        // D4) — not only past a character count.
-                        .background(alignment: .top) {
-                            HomeMixedText.make(rest, role: .body)
-                                .cavnarText(.body)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
-                                .hidden()
-                                .accessibilityHidden(true)
-                        }
                 }
-                if expanded || Self.clamps(characters: rest.count, full: fullHeight, clamped: clampedHeight) {
+                Group {
                     Button {
                         Haptic.light()
                         if reduceMotion { expanded.toggle() } else {

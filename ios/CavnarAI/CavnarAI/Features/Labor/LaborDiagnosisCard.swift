@@ -3,10 +3,10 @@ import SwiftUI
 /// "Why labor ran over" — labor.diagnose on the phone, on the iPhone answer
 /// card (CavnarAnswerCard, iOS readability round 10/8/26): the most likely
 /// cause as the headline, the check it names as "Do this" with Done / Not
-/// for us / Track under it (`diag_labor:<driver>`, surface `labor`), ONE
-/// visible "Could also be" line, the measured confidence — and the summary,
-/// what it was cross-checked against and what would tell the two readings
-/// apart behind "See the evidence". The web's `renderDiagnosis` carries
+/// for us / Track under it (`diag_labor:<driver>`, surface `labor`), the
+/// measured confidence — and "Could also be", the summary, what it was
+/// cross-checked against and what would tell the two readings apart behind
+/// "See the evidence" (text cut 10/17/26). The web's `renderDiagnosis` carries
 /// the same parts. An answered one keeps its evidence and drops the
 /// controls. Renders nothing when there is no cause (labor at or under
 /// target has nothing to diagnose).
@@ -24,7 +24,6 @@ struct LaborDiagnosisCard: View {
             CavnarAnswerCard(
                 kicker: title,
                 headline: cause,
-                alternativeCause: diagnosis.alternativeCause,
                 // How sure, as a percentage with what it rests on (K1/K6).
                 confidence: diagnosis.confidence.map {
                     ConfidenceLine(confidence: $0, recKey: diagnosis.recKey, surface: surface, module: surface)
@@ -41,6 +40,11 @@ struct LaborDiagnosisCard: View {
                 }
             } detail: {
                 VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                    // The other reading is proof, not the answer (text cut
+                    // 10/17/26): one tap away, beside what tells them apart.
+                    if let alt = diagnosis.alternativeCause, !alt.isEmpty {
+                        reasoningRow("Could also be", alt)
+                    }
                     if let summary = diagnosis.summary {
                         CavnarMixedText(summary, role: .secondary)
                     }

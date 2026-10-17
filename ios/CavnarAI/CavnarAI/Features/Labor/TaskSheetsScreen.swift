@@ -655,7 +655,7 @@ private struct TSSheetEditor: View {
         List {
             if let s = sheet {
                 if s.carriedOver == true && s.shiftKind == "any" {
-                    Text("Carried over from your old checklist as an All day sheet, so it goes to everyone on \(s.jobCode). Set it to Opening or Closing and it goes to just the opener or the closer.")
+                    Text("Carried over as an All day sheet, so it goes to everyone on \(s.jobCode). Set Opening or Closing for just one person.")
                         .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 }
                 if let note { Text(note).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarAmber) }

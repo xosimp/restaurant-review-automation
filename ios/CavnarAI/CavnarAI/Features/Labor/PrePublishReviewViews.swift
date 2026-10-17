@@ -142,9 +142,13 @@ struct PublishMustFixCard: View {
             CavnarKicker(anyHard ? "Must fix before sending \u{00B7} \(items.count)" : "Before this goes out",
                          icon: anyHard ? "xmark.octagon.fill" : "hand.raised.fill",
                          tint: anyHard ? .cavnarRedText : .cavnarAmber)
-            Text("The law is fixed or the week doesn\u{2019}t go. A manager gap is covered by a manager or owner on your roster. Anything else is fixed, or sent past on its own with a reason.")
-                .cavnarText(.caption)
-                .fixedSize(horizontal: false, vertical: true)
+            // What holds the send, one tap away (text cut 10/17/26): the
+            // kicker and each item's own fix say what to do.
+            CavnarEvidenceSection(label: "See how it works") {
+                Text("The law is fixed or the week doesn\u{2019}t go. A manager gap is covered by a manager or owner on your roster. Anything else is fixed, or sent past on its own with a reason.")
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             ForEach(folded.groups) { f in
                 groupBlock(f.group, f.members)
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
@@ -384,12 +388,12 @@ struct PublishDecideCard: View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             if holds {
                 CavnarKicker("Decide before sending \u{00B7} \(count)", icon: "arrow.triangle.branch", tint: .cavnarAmber)
-                Text("These hold the send. One tap each; the button says whether it is for this week or every week.")
+                Text("These hold the send.")
                     .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 CavnarKicker("Suggestions \u{00B7} \(count)", icon: "lightbulb")
-                Text("None of these hold the send. An answer is kept, so it isn\u{2019}t asked again while it holds.")
+                Text("None of these hold the send.")
                     .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -469,7 +473,7 @@ struct PublishAlwaysOverriddenCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             CavnarKicker("Rules you always send past")
-            Text("A rule you overrule every week is a rule worth changing \u{2014} or keeping on purpose.")
+            Text("Worth changing \u{2014} or keeping on purpose.")
                 .cavnarText(.caption)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(items) { item in

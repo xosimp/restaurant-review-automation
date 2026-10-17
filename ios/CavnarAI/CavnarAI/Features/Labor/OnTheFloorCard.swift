@@ -524,7 +524,7 @@ struct FloorSettingsSheet: View {
         let busy = store.busy != nil
         AccountSection(kicker: "During service") {
             AccountSwitchRow(label: "Suggest moves during service",
-                             detail: "Let someone go on a slow night, ask someone to stay or call someone in on a busy one, each priced and legal.",
+                             detail: "Cut, extend or call in during service, each priced and legal.",
                              isOn: Binding(get: { s.liveMoves }, set: { on in Task { await store.set(.init(liveMoves: on)) } }),
                              busy: store.busy == "settings", disabled: !s.canEdit || busy)
             AccountSwitchRow(label: "Autopilot",

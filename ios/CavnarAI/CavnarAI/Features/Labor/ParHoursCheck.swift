@@ -49,9 +49,13 @@ struct ParHoursCheck: View {
                 HomeMixedText.make(verdict.text, size: CavnarType.secondary, weight: 700,
                                    color: verdict.over ? .cavnarAmber : .cavnarGreen)
             }
+            // How the budget was worked out, one tap away (text cut
+            // 10/17/26); a caveat on it stays on the face.
             if let text = basis?.text {
-                HomeMixedText.make(text, size: CavnarType.caption, color: .cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarEvidenceSection(label: "See the basis") {
+                    HomeMixedText.make(text, size: CavnarType.caption, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let caveat = basis?.caveat {
                 HomeMixedText.make(caveat, size: CavnarType.caption, weight: 600, color: .cavnarAmber)

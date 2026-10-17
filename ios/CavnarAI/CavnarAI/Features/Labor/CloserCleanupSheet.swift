@@ -44,10 +44,18 @@ struct CloserCleanupSheet: View {
                     } subtitle: {
                         Text(subtitle)
                     }
-                    Text("A closer is the one person chosen to close for their role \u{2014} on until close and the last of their role to leave. Not a key holder. Cavnar AI checks every night has one per role that closes.")
+                    // The definition stays on the face (a closer is not a key
+                    // holder); how it is checked is one tap away (10/17/26).
+                    Text("The one person chosen to close for their role \u{2014} not a key holder.")
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
+                    CavnarEvidenceSection(label: "See how it works") {
+                        Text("On until close and the last of their role to leave. Cavnar AI checks every night has one per role that closes.")
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if store.isLoadingClosers && review == nil {
                         CavnarSkeletonBar(height: 3)
