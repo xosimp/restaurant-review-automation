@@ -3904,11 +3904,33 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
 # confirmation at all — a genuine security gap, since someone changing
 # either from inside an already-compromised account would do so silently.
 
+def send_password_changed_to_user(user_id, restaurant=None) -> "SendResult":
+    """The password-changed notice for one login, sent to THAT login's own
+    address — never the restaurant's owner. Every caller used to pass
+    restaurant.owner_email, so when a manager changed their own password
+    the owner was told "your password was changed" (Simple EJ's, 10/16/26:
+    Erik got Danny's and thought someone was in his account). A login with
+    no email is told nothing."""
+    from models import get_conn as _gc, get_restaurant as _gr
+    conn = _gc()
+    try:
+        row = conn.execute("SELECT username, email, restaurant_id FROM users WHERE id=?", (int(user_id),)).fetchone()
+    finally:
+        conn.close()
+    if not row or not (row["email"] or "").strip():
+        return not_sent("no_recipient", "this login has no email address")
+    r = restaurant if restaurant is not None else _gr(row["restaurant_id"])
+    return send_password_changed_email(row["email"].strip(), (getattr(r, "name", None) or "your restaurant"),
+                                       tz=getattr(r, "timezone", None), restaurant_id=row["restaurant_id"],
+                                       login=row["username"])
+
+
 def send_password_changed_email(to_email: str, restaurant_name: str, owner_name: str = None,
-                                tz: str = None, restaurant_id: int = None) -> "SendResult":
+                                tz: str = None, restaurant_id: int = None, login: str = None) -> "SendResult":
     """Confirms a password change back to the account — same security-
     notification family as send_login_notification, deliberately (this is
-    exactly as sensitive an event)."""
+    exactly as sensitive an event). `login`: the username whose password
+    changed, named in the message (send_password_changed_to_user)."""
     if not _resend_key():
         log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
         return not_sent("not_configured", "RESEND_API_KEY not set")
@@ -3920,7 +3942,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
         <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
-        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">Your password for <strong>{esc(restaurant_name)}</strong> was changed on {now_str}.</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{("The password for your login <strong>" + esc(login) + "</strong> at <strong>" + esc(restaurant_name) + "</strong>") if login else ("Your password for <strong>" + esc(restaurant_name) + "</strong>")} was changed on {now_str}.</p>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you didn't make this change, someone else may have access to your account — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
