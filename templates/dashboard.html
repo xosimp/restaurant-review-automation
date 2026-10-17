@@ -49824,7 +49824,8 @@ function sfw2RuleCheck(chk) {
 /* Ledger: a money summary - the Bar's bought vs sold figures, the
    report's forecast for the day after. */
 [data-theme="dark"] #panel-dsr .dr-tmr>.hb-card:nth-child(2){
-  border-color:transparent;
+  /* The ruler gets its own strip under the last line, never over it (owner, 10/17/26: "getting cut off"). */
+  border-color:transparent;padding-bottom:36px;
   background:
     var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
     var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
@@ -49901,7 +49902,7 @@ function sfw2RuleCheck(chk) {
    drivers) - the driver's dollars molten. Register: plate costs' heading
    row in the kicker's orange, a row lighting under the pointer. */
 [data-theme="dark"] #panel-inventory .fc2-cfo{
-  border-color:transparent;padding-bottom:16px;
+  border-color:transparent;padding-bottom:22px;
   background:
     var(--vx-ruler-major) 18px calc(100% - 1px)/calc(100% - 36px) 10px no-repeat padding-box,
     var(--vx-ruler) 18px calc(100% - 1px)/calc(100% - 36px) 5px no-repeat padding-box,
