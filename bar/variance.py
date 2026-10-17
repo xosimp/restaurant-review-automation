@@ -604,6 +604,93 @@ def _bucket_tickets(pos_rows) -> set:
     return out
 
 
+# Words a successor's name may add or drop without being another product: a
+# pack's own words and fillers ("Da Gummy" is "Gummypalooza", 10/16/26).
+_SUCC_SKIP = {"barrel", "keg", "can", "cans", "bottle", "bottles", "case", "pack", "the", "and", "of"}
+
+
+def _succ_words(name) -> set:
+    return {w for w in re.findall(r"[a-z0-9']+", str(name or "").lower().replace("’", "'"))
+            if len(w) > 2 and not w[0].isdigit() and w not in _SUCC_SKIP}
+
+
+def _same_words(a, b) -> bool:
+    """Two names for one product: they share a word, and every word one has
+    that the other lacks is the start of a word the other has ('gummy' →
+    'gummypalooza'), or one name's words are all in the other's."""
+    if not a or not b or not (a & b):
+        return False
+    da, db = a - b, b - a
+    if not da or not db:
+        return True
+
+    def covered(xs, ys):
+        return all(any(len(min(x, y, key=len)) >= 4 and (x.startswith(y) or y.startswith(x)) for y in ys) for x in xs)
+    return covered(da, db) and covered(db, da)
+
+
+def successor_keys(lines, mapped, start, end, canon=None) -> dict:
+    """{old canonical key: new canonical key} — the same product under a
+    code no drink pours from: an identical name and container any time, or
+    a distributor's new item code for a product a drink still pours from (EJ's, 10/16/26: Gummypalooza's
+    drinks pointed at Euclid's 61542152, last bought 6/24; every week's keg
+    since 8/26 was 5879152 "N WHSTL DA GUMMY 1/2 BBL", so the page read
+    'bought 0 oz, sold 13,066'). Only when: the old product was not bought in
+    [start, end]; ONE product of the same distributor, category and
+    container was, first bought after the old one's last purchase, and no
+    drink pours from it; and their names are one product's (_same_words).
+    A seasonal rotation (Summer Ale → Oktoberfest) shares only the brand and
+    never joins."""
+    canon = canon or {}
+    info = {}
+    for l in lines:
+        if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES or l.get("rebate"):
+            continue
+        ck = canon.get(l["product_key"], l["product_key"])
+        d = str(l["invoice_date"])[:10]
+        i = info.setdefault(ck, {"first": d, "last": d, "in_span": 0.0, "line": l, "dist": str(ck).split("|")[0]})
+        i["first"], i["last"] = min(i["first"], d), max(i["last"], d)
+        if d >= i["last"]:
+            i["line"] = l
+        if start <= d <= end:
+            i["in_span"] += _f(l.get("qty"))
+    out = {}
+    for old in mapped:
+        o = info.get(old)
+        if o is None:
+            continue
+        # The same product under two codes at once (EJ's Miller Lite: Euclid
+        # bills the same 24 x 12 oz as 57215 "LSE" weekly and 57200 "HG" twice;
+        # the drinks pointed at the rare one) joins whenever it was bought —
+        # the names read the same word for word. A new code only takes over
+        # an old one that stopped (below).
+        same_only = o["in_span"] > 0 or o["last"] >= start
+        ol = o["line"]
+        opk = parse_pack(ol["description"], ol.get("uom"), ol["category"])
+        ow = _succ_words(display_name(ol["description"]))
+        cands = []
+        for new, n in info.items():
+            if new == old or new in mapped or n["dist"] != o["dist"] or n["in_span"] <= 0:
+                continue
+            nl = n["line"]
+            if nl.get("category") != ol.get("category"):
+                continue
+            npk = parse_pack(nl["description"], nl.get("uom"), nl["category"])
+            if (opk or {}).get("each") != (npk or {}).get("each"):
+                continue
+            oc, nc = (opk or {}).get("container_oz"), (npk or {}).get("container_oz")
+            if not oc or not nc or abs(oc - nc) > 0.02 * max(oc, nc):
+                continue
+            nw = _succ_words(display_name(nl["description"]))
+            if ow and nw == ow:
+                cands.append(new)
+            elif not same_only and n["first"] > o["last"] and _same_words(ow, nw):
+                cands.append(new)
+        if len(cands) == 1:
+            out[old] = cands[0]
+    return out
+
+
 def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, cfg=None, mapping=None,
             sales=None, canon=None) -> dict:
     """{variance, keg_yield, span, products} — the payload's `variance` and
@@ -641,6 +728,18 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                 "keg_yield": [], "span": span_out, "products": {}}
     if canon is None:
         canon = canonical_keys(lines, product_links(restaurant_id, db_path))
+    # A product a drink pours from that its distributor now bills under a new
+    # code: the new code's purchases are its purchases (successor_keys).
+    from bar.margins import drink_map as _dm_succ
+    _mapped = {canon.get(m["product_key"], m["product_key"]) for m in _dm_succ(restaurant_id, db_path)}
+    _mapped |= {canon.get(s_["product_key"], s_["product_key"]) for s_ in drink_specs(restaurant_id, db_path)
+                if s_.get("status") == "confirmed" and s_.get("product_key")}
+    succ = successor_keys(lines, _mapped, start, end, canon)
+    if succ:
+        to_old = {n: o for o, n in succ.items()}
+        canon = {k: to_old.get(v, v) for k, v in canon.items()}
+        for l in lines:
+            canon.setdefault(l["product_key"], to_old.get(l["product_key"], l["product_key"]))
     packs = pack_overrides(restaurant_id, db_path)
     # Purchases per canonical product: what was bought in the span, and every
     # bought line's unit cost for pricing what was sold from stock bought
@@ -733,6 +832,19 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             if ov.get("container_ml"):
                 p.pack.update(container_ml=float(ov["container_ml"]),
                               container_oz=round(float(ov["container_ml"]) / _ML_PER_OZ, 2), size_source="owner")
+    for old_k, new_k in succ.items():
+        if old_k in prods:
+            nd = [str(l["invoice_date"])[:10] for l in lines if l["product_key"] == new_k and l.get("kind") == "item"]
+            od = [str(l["invoice_date"])[:10] for l in lines if l["product_key"] == old_k and l.get("kind") == "item"]
+            new_l = newest.get(old_k) or {}
+            desc = new_l.get("description") or new_k
+            if nd and od and min(nd) > max(od):
+                note = (f"billed as item {new_k.split('|')[-1]} (\"{desc}\") since {_mdy(min(nd))} — the "
+                        f"distributor's new code for it; item {old_k.split('|')[-1]} was last bought {_mdy(max(od))}")
+            else:
+                note = (f"also billed as item {new_k.split('|')[-1]} (\"{desc}\") — the same product under a "
+                        "second code, counted together")
+            prods[old_k].assumes.add(note)
     # The owner's map and confirmed specs: (provider, item_id) → [(ck, mode, oz, basis, assumption)].
     targets = defaultdict(list)
     dmap = drink_map(restaurant_id, db_path)
@@ -923,6 +1035,13 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             bought = p.bought_each if complete_units else None
             rung, comped, voided = p.rung_each["sale"], p.rung_each["comp"], p.rung_each["void"]
         per = per_of(p)
+        # Nothing bought in the span, only before it: poured from stock bought
+        # earlier, which no count measures — no gap to read (EJ's, 10/16/26:
+        # Tanqueray last bought 6/30 read "$232 sold beyond what was bought").
+        last_bought = max((h[0] for h in p.history if h[0] < start), default=None)
+        not_bought = bool(bought == 0 and not p.units_unknown and last_bought)
+        if not_bought:
+            bought = None
         gap = (bought - rung) if bought is not None else None
         # Theoretical dollars stay on invoice cost; RPOWER's own line cost is
         # a cross-check beside them, never the figure (BAR-CALC-17).
@@ -955,6 +1074,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                "gap_pct": round(gap / bought * 100, 1) if gap is not None and bought else None,
                "theoretical_basis": sorted(p.basis), "drinks": sorted(p.drinks)[:8],
                "incomplete": incomplete, "confidence": conf, "assumes": assumes,
+               "not_bought_in_span": not_bought,
+               "last_bought_mdy": _mdy(last_bought) if not_bought else None,
                "waste_units": None, "waste_entries": 0}
         items.append(row)
         if (p.pack or {}).get("each") == "keg":
@@ -1152,7 +1273,10 @@ def _totals(items, cat_sales, mapped_sales) -> dict:
         by[c] = {"items": len(rows),
                  "bought_usd": round(sum(i["bought_usd"] for i in rows), 2),
                  "theoretical_usd": round(sum(i["theoretical_usd"] for i in rows if i["theoretical_usd"] is not None), 2),
-                 "gap_usd": round(sum(i["gap_usd"] for i in rows if i["gap_usd"] is not None), 2),
+                 # A product poured from earlier stock has no row gap, but the
+                 # stock it drew down is still in the category's total.
+                 "gap_usd": round(sum(i["gap_usd"] for i in rows if i["gap_usd"] is not None)
+                                  - sum(i["theoretical_usd"] or 0 for i in rows if i.get("not_bought_in_span")), 2),
                  "comped_usd": round(sum(i["comped_usd"] for i in rows if i["comped_usd"] is not None), 2),
                  "pos_sales_usd": round(sales, 2),
                  "matched_sales_usd": round(mapped_sales.get(c, 0.0), 2),

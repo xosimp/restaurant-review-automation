@@ -41,9 +41,14 @@ SPECS = {
     # masks: the Bar hero's bloom and the equalizer's (15% / 14% to 74%), the lead tile's halo (22%)
     "mask-bloom": (WHITE, 38, 512, 512, (0.5, 0.5), (0.5, 0.5), 0.74, "radial"),
     "mask-halo": (WHITE, 56, 384, 384, (0.5, 0.5), (0.5, 0.5), 1.0, "radial"),
+    # a KPI tile's light in its own hue, from the top-left corner (the vivid layer, 10/17/26):
+    # solid var(--s) through it, so one sprite serves every series colour
+    "mask-corner-tl": (WHITE, 255, 512, 384, (0, 0), (1.0, 1.0), 1.0, "radial"),
     # ember from the top-left (matching header 13%, the AI's glass) and top-right (count form 9%)
     "corner-tl-ember": (EMBER, 33, 768, 384, (0, 0), (1.0, 1.35), 0.67, "radial"),
     "corner-tr-ember": (EMBER, 23, 768, 384, (1, 0), (0.8, 1.0), 0.60, "radial"),
+    # the same corner in green, for a good-news card on the glass (the Bar's Good to know lead, 10/17/26)
+    "corner-tl-green": (GREEN, 33, 768, 384, (0, 0), (1.0, 1.35), 0.67, "radial"),
     # the pedestal's overhead key light (7%) and the waste shell's (5%)
     "keylight": (WARM, 17, 768, 384, (0.42, -0.18), (1.2, 0.75), 0.80, "radial"),
     "keylight-soft": (WARM, 13, 768, 384, (0.42, -0.18), (1.2, 0.75), 0.80, "radial"),

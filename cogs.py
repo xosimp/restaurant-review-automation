@@ -719,8 +719,9 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
     base = {"start": w_start, "end": w_end, "days": days, "opening": None,
             "opening_day": None, "closing": None, "closing_day": None, "purchases": None, "n_receipts": 0,
             "food_sales": None, "sales_note": None, "missing": [], "unmeasured_line": None, "covers_asked": False,
-            "basis": ("COGS = food on hand at one Back Office count + food bought on Back Office invoices − food on "
-                      "hand at the next count, divided by the POS's food sales for the same days.")}
+            # Short sentences, read as points in the "i" (owner, 10/17/26).
+            "basis": ("Food on hand at one Back Office count, plus food bought, minus the next count. "
+                      "Divided by the POS's food sales for the same days.")}
     if len(cs) < 2:
         base["missing"].append({"component": "two inventory counts",
                                 "why": (f"one count submitted in Back Office ({mdy(cs[0]['end'])}); food cost "
@@ -771,9 +772,8 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
                 purchases=round(sum(float(e["amount"]) for e in food), 2), n_receipts=len(food),
                 food_sales=sales_total, sales_note=_sales_note(have, expected),
                 covers_asked=(abs((start - w_start).days) <= tol and abs((end - w_end).days) <= tol),
-                basis=(f"COGS = food on hand at the {mdy(open_['end'])} Back Office count + food bought on Back "
-                       f"Office invoices − food on hand at the {mdy(close['end'])} count, divided by the POS's "
-                       f"food sales for {mdy(start.isoformat())} to {mdy(end.isoformat())}."))
+                basis=(f"Back Office counts {mdy(open_['end'])} → {mdy(close['end'])}, plus food invoices between. "
+                       f"Divided by POS food sales, {mdy(start.isoformat())} – {mdy(end.isoformat())}."))
     if not food:
         base["missing"].append({"component": "purchases", "why": "no Back Office food invoices between the counts"})
         base["purchases"] = None
@@ -1013,11 +1013,10 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         what = ("food sales (POS net sales less the nightly report's drink sales)"
                 if sales_basis == "net_less_beverage" else
                 "POS net sales — drink sales aren't separated on file, so a restaurant that sells drinks reads low")
-        basis = ((f"COGS = counted opening inventory ({_mdy(opening_day)}) + purchases − counted closing "
-                  f"inventory ({_mdy(closing_day)}), over {_mdy(start)} to {_mdy(end)}, divided by {what} "
-                  "for the same days.") if counted and opening_day and closing_day else
-                 (f"COGS = opening inventory + purchases − closing inventory, over {_mdy(start)} to {_mdy(end)}, "
-                  f"divided by {what} for the same days."))
+        basis = ((f"Counted inventory {_mdy(opening_day)} → {_mdy(closing_day)}, plus purchases between. "
+                  f"Divided by {what}. {_mdy(start)} – {_mdy(end)}.") if counted and opening_day and closing_day else
+                 (f"Opening inventory, plus purchases, minus closing inventory. Divided by {what}. "
+                  f"{_mdy(start)} – {_mdy(end)}."))
 
     if sales_note:
         basis += f" Sales: {sales_note}."

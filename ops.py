@@ -4392,7 +4392,7 @@ def send_failure_digest():
                     f'{"s" if int(m["n"]) != 1 else ""} closed with nothing sent' for m in missed]
     inner = (
         f'<p style="font-size:16px;font-weight:700;color:{b["strong"]};margin:0 0 4px">Background jobs</p>'
-        f'<p style="font-size:12px;color:{b["muted"]};margin:0">Since {_html.escape(since)} UTC</p>'
+        f'<p style="font-size:12px;color:{b["muted"]};margin:0">Since {_html.escape(_since_ct(since))}</p>'
         + _section("Overdue", overdue_items, "No successful run inside the job's SLA.")
         + _section("Backup", backup_items)
         + _section("Failures", fail_items)
@@ -4505,11 +4505,60 @@ def send_operator_weekly_digest():
 
 # ── missed windows (#131) ────────────────────────────────────────────────────
 
-def record_missed_window(job, restaurant_id, local_date, detail=None) -> bool:
+def _existed_for_window(restaurant_id, local_date, window_open_hour=None) -> bool:
+    """Whether the restaurant existed when `local_date`'s window opened. A
+    window that opened before the restaurant was created was never owed
+    (10/16/26: the showcase, created at 5:55pm Chicago, was first seen at
+    6pm, after every window of its first day had closed - five "missed"
+    windows in the ops digest). `restaurants.created_at` is Chicago time;
+    it is read in the restaurant's own zone. With no opening hour, the
+    restaurant's first day is never a miss. True when unreadable."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT created_at, timezone FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        if not row or not row["created_at"]:
+            return True
+        made = datetime.fromisoformat(str(row["created_at"]).replace("Z", "")[:19])
+        if made.tzinfo is None:
+            made = made.replace(tzinfo=ZoneInfo("America/Chicago"))
+        made = made.astimezone(ZoneInfo(row["timezone"] or "America/Chicago")).replace(tzinfo=None)
+        day = str(local_date)[:10]
+        if window_open_hour is None:
+            return made.date().isoformat() < day
+        return made <= datetime.fromisoformat(day).replace(hour=int(window_open_hour))
+    except Exception:
+        return True
+
+
+def _since_ct(since) -> str:
+    """The digest's window start in Chicago time, M/D/YY (10/17/26: it read
+    "2026-10-16 13:00:43 UTC")."""
+    try:
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        from time_utils import mdy
+        t = datetime.fromisoformat(str(since).replace("Z", "")[:19]).replace(tzinfo=timezone.utc)
+        t = t.astimezone(ZoneInfo("America/Chicago"))
+        return f"{mdy(t.date().isoformat())} {t.strftime('%I:%M%p').lstrip('0').lower()} CT"
+    except Exception:
+        return f"{since} UTC"
+
+
+def record_missed_window(job, restaurant_id, local_date, detail=None, window_open_hour=None) -> bool:
     """Record that `job` was due for this restaurant on its `local_date`
     and its local window closed with nothing sent — once per (job,
     restaurant, date). Nothing recorded "window closed, not sent", so a
-    brief a long pass pushed past 2pm local looked like a quiet morning."""
+    brief a long pass pushed past 2pm local looked like a quiet morning.
+    A window that opened before the restaurant existed is not recorded
+    (_existed_for_window)."""
+    if restaurant_id is not None and not _existed_for_window(restaurant_id, local_date, window_open_hour):
+        return False
     try:
         from models import get_conn
         conn = get_conn()

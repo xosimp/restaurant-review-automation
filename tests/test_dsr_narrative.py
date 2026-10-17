@@ -338,19 +338,19 @@ def test_a_strong_night_is_one_sonnet_call_with_a_small_budget_and_a_schema(monk
     assert out["ok"] and out["reason"] is None and set(out) == {"ok", "narrative", "reason"}
     assert len(client.calls) == 1
     kw = client.calls[0]
-    assert kw["model"] == ai_utils.SONNET == ai_utils.model_for("dsr_narrative")
+    assert kw["model"] == ai_utils.SONNET_55 == ai_utils.model_for("dsr_narrative")
     # Real replies measured 1,868–1,965 tokens (9/23/26); 1,600 truncated every one.
     assert 2500 <= kw["max_tokens"] <= 3000 and "temperature" not in kw
-    assert kw["thinking"] == {"type": "disabled"}
+    assert kw["thinking"] == {"type": "between_tools"}            # Sonnet 5.5's lowest: it refuses "disabled"
     assert kw["output_config"]["format"]["schema"] is narrative.OUTPUT_SCHEMA
     # Usage lands in the ledger under this call's own action.
     (args, _k), = logged
-    assert args[1] == "dsr_narrative" and args[2] == ai_utils.SONNET and args[3:5] == (3400, 900)
+    assert args[1] == "dsr_narrative" and args[2] == ai_utils.SONNET_55 and args[3:5] == (3400, 900)
     n = out["narrative"]
     assert n["executive_summary"]["text"].startswith("Saturday did $19,850 net")
     assert len(n["went_well"]) == 3 and len(n["needs_attention"]) == 2
     assert n["verification"]["dropped"] == [] and n["verification"]["checked"] == n["verification"]["kept"]
-    assert n["business_date"] == "2026-09-19" and n["model"] == ai_utils.SONNET
+    assert n["business_date"] == "2026-09-19" and n["model"] == ai_utils.SONNET_55
 
 
 def test_the_output_schema_uses_only_what_structured_outputs_accepts():
@@ -411,7 +411,7 @@ def test_invalid_or_partial_output_is_refused(monkeypatch, rest, db_path, reply,
     assert out["ok"] is False and out["narrative"] is None and needle in out["reason"]
     assert len(client.calls) == 2
     first, second = client.calls
-    assert first["model"] == ai_utils.SONNET and second["model"] == ai_utils.SONNET_55
+    assert first["model"] == ai_utils.SONNET_55 and second["model"] == ai_utils.SONNET_55
     assert second["thinking"] == {"type": "adaptive"} and second["output_config"]["effort"] == "medium"
     assert second["max_tokens"] >= narrative.MAX_TOKENS_THINKING
     assert "AN EARLIER DRAFT OF THIS WAS SET ASIDE" in second["messages"][0]["content"]
@@ -613,7 +613,7 @@ def test_a_lead_that_fails_verification_refuses_the_whole_narrative(monkeypatch,
                    "reason": "The summary was held back — its opening stated a figure the night's numbers don't back up."}
     assert len(client.calls) == 2
     first, second = client.calls
-    assert first["model"] == ai_utils.SONNET and second["model"] == ai_utils.SONNET_55
+    assert first["model"] == ai_utils.SONNET_55 and second["model"] == ai_utils.SONNET_55
     note = second["messages"][0]["content"]
     assert "AN EARLIER DRAFT OF THIS WAS SET ASIDE" in note and "the executive_summary was refused" in note
     # Nothing from a refused narrative reached the ledger.

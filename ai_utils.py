@@ -1452,6 +1452,15 @@ HAIKU = "claude-haiku-4-5-20251001"
 # (schedule_narrative). It thinks by default; thinking is turned off where a
 # caller names none (default_thinking), as it is on Haiku 4.5.
 HAIKU_55 = "claude-haiku-5-5"
+# Since 10/17/26 (owner: "move the haiku ones to haiku 5.5") every small call
+# that ran on Haiku 4.5 runs on Haiku 5.5: review analysis, competitor
+# extraction, the marketing read, email personalisation, Ask's conversation
+# notes, the staff brief and staff translations. HAIKU stays for tier T1's
+# fallback (ai_workflows AI_TIER_T1_PREVIOUS_MODEL).
+# Claude Sonnet 5 is kept for an explicit pin; every Sonnet call site and tier
+# T2 run on Claude Sonnet 5.5 since 10/17/26 (owner: "do sonnet 5.5"). Same
+# prices; thinking can't be turned off, so a call that names none gets its
+# lowest setting, between_tools (default_thinking / _THINKING_LOWEST).
 SONNET = "claude-sonnet-5"
 OPUS = "claude-opus-5"
 # The week's schedule is the hardest constraint problem the product asks a
@@ -1469,38 +1478,38 @@ SONNET_55 = "claude-sonnet-5-5"
 # those two sites had none (inheriting CLAUDE_MODEL would have changed them
 # wherever that variable is set).
 MODELS = {
-    "review_analysis":     ("REVIEW_ANALYSIS_MODEL",  HAIKU),
-    "review_diagnosis":    ("CLAUDE_REPORTER_MODEL",  SONNET),
-    "review_insight":      ("REVIEW_INSIGHT_MODEL",   SONNET),
-    "drafter":             ("DRAFTER_MODEL",          SONNET),
-    "inventory_insight":   ("INVENTORY_INSIGHT_MODEL", SONNET),
-    "food_cost_diagnosis": ("CLAUDE_REPORTER_MODEL",  SONNET),
-    "labor_insight":       ("LABOR_INSIGHT_MODEL",    SONNET),
+    "review_analysis":     ("REVIEW_ANALYSIS_MODEL",  HAIKU_55),
+    "review_diagnosis":    ("CLAUDE_REPORTER_MODEL",  SONNET_55),
+    "review_insight":      ("REVIEW_INSIGHT_MODEL",   SONNET_55),
+    "drafter":             ("DRAFTER_MODEL",          SONNET_55),
+    "inventory_insight":   ("INVENTORY_INSIGHT_MODEL", SONNET_55),
+    "food_cost_diagnosis": ("CLAUDE_REPORTER_MODEL",  SONNET_55),
+    "labor_insight":       ("LABOR_INSIGHT_MODEL",    SONNET_55),
     "schedule":            ("SCHEDULE_MODEL",         OPUS_55),
-    "competitor_extract":  ("CLAUDE_MODEL",           HAIKU),
-    "competitor_insight":  ("CLAUDE_REPORTER_MODEL",  SONNET),
-    "marketing":           ("MARKETING_MODEL",        SONNET),
-    "marketing_insight":   ("CLAUDE_MODEL",           HAIKU),
-    "guest_marketing":     ("GUEST_MARKETING_MODEL",  SONNET),
-    "recipes":             ("RECIPE_MODEL",           SONNET),
+    "competitor_extract":  ("CLAUDE_MODEL",           HAIKU_55),
+    "competitor_insight":  ("CLAUDE_REPORTER_MODEL",  SONNET_55),
+    "marketing":           ("MARKETING_MODEL",        SONNET_55),
+    "marketing_insight":   ("CLAUDE_MODEL",           HAIKU_55),
+    "guest_marketing":     ("GUEST_MARKETING_MODEL",  SONNET_55),
+    "recipes":             ("RECIPE_MODEL",           SONNET_55),
     "invoices":            ("INVOICE_MODEL",          OPUS),
-    "reporter":            ("CLAUDE_REPORTER_MODEL",  SONNET),
-    "email_personalise":   ("CLAUDE_MODEL",           HAIKU),
-    "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET),
-    "ask_cavnar":          ("ASK_CAVNAR_MODEL",       SONNET),
+    "reporter":            ("CLAUDE_REPORTER_MODEL",  SONNET_55),
+    "email_personalise":   ("CLAUDE_MODEL",           HAIKU_55),
+    "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET_55),
+    "ask_cavnar":          ("ASK_CAVNAR_MODEL",       SONNET_55),
     # The rolling summary of an Ask chat's older turns (ask_conversations,
     # memory audit 9/29/26): short structured notes, validated per line.
-    "ask_summary":         ("ASK_SUMMARY_MODEL",      HAIKU),
-    "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET),
+    "ask_summary":         ("ASK_SUMMARY_MODEL",      HAIKU_55),
+    "dsr_narrative":       ("DSR_NARRATIVE_MODEL",    SONNET_55),
     # A starter task sheet the owner accepts line by line (task_sheets.starter_lines).
-    "task_sheets":         ("TASK_SHEET_MODEL",       SONNET),
+    "task_sheets":         ("TASK_SHEET_MODEL",       SONNET_55),
     # Read by staff (employee audit B7, 10/1/26): the day's one rewrite of
     # the lineup notes a manager approves (staff_brief.draft), a translation
     # of manager-approved text (staff_knowledge.translate_for), and an
     # answer from the house rules that cites its lines (staff_knowledge.answer).
-    "staff_brief":         ("STAFF_BRIEF_MODEL",      HAIKU),
-    "staff_translation":   ("STAFF_TRANSLATION_MODEL", HAIKU),
-    "staff_answer":        ("STAFF_ANSWER_MODEL",     SONNET),
+    "staff_brief":         ("STAFF_BRIEF_MODEL",      HAIKU_55),
+    "staff_translation":   ("STAFF_TRANSLATION_MODEL", HAIKU_55),
+    "staff_answer":        ("STAFF_ANSWER_MODEL",     SONNET_55),
     # The schedule's small calls (scheduler audit 10/10/26): each sentence of
     # the owner's notes, the draft's instruction and staff notes read into a
     # typed rule (owner_rules — RM-9, AI-9, AI-19), and the three bullets

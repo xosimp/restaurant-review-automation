@@ -195,6 +195,9 @@ def test_h2_labor_insight_flags_a_cause_the_diagnosis_does_not_hold(monkeypatch)
 
 def test_h2_marketing_insight_withholds_controls_on_an_unsupported_cause(db_path, monkeypatch):
     import ai_utils
+    import marketing_opportunities
+    # No holiday card leads the brief, whatever today is (10/17/26: Halloween's did).
+    monkeypatch.setattr(marketing_opportunities, "holidays", lambda *a, **k: [])
     rid = _rid(db_path, module_marketing=1)
     monkeypatch.setattr(ai_utils, "create_with_retry",
                         lambda *a, **k: _msg("Hi, reach fell because your followers are bored.\n\n"

@@ -615,6 +615,86 @@ def suspect_high(restaurant_id, db_path=None) -> float:
     return SUSPECT_HIGH_PCT
 
 
+def _is_addon(r) -> bool:
+    """An add-on, not a dish: Back Office files it under MODS ("MOD- ADD
+    GRILLED CHICKEN", "MOD- WING SAUCE CLASSIC BUFFALO") — what RPOWER rings
+    under (Food Add-Ons) on a dish's ticket (owner, 10/17/26: never listed
+    with the dishes)."""
+    return str(r.get("group") or "").upper().endswith("MODS") or str(r.get("name") or "").upper().startswith("MOD-")
+
+
+def addon_name(name) -> str:
+    """'MOD- ADD GRILLED CHICKEN' → 'ADD GRILLED CHICKEN'."""
+    return re.sub(r"^\s*MOD-\s*", "", str(name or ""), flags=re.I)
+
+
+# Words an add-on's POS button and its Back Office recipe spell differently.
+_ADDON_SKIP = {"mod", "add", "xtra", "extra", "sub", "side", "of", "the", "for", "a", "wing", "sauce", "w"}
+_ADDON_SAME = {"chix": "chicken", "grill": "grilled", "bleu": "blue", "chs": "cheese", "pkle": "pickled",
+               "tomat": "tomato", "tomatoes": "tomato", "onions": "onion", "strawberries": "strawberry",
+               "blueberries": "blueberry", "croutons": "crouton", "cola": "cola", "bech": "bechamel"}
+
+
+_ADDON_SAUCE = {"ranch", "aioli", "dressing", "mayo", "vinaigrette", "glaze", "dip", "gravy", "syrup"}
+
+
+def _addon_words(name) -> set:
+    base = str(name or "").split("`")[0]
+    words = re.findall(r"[a-z0-9]+", base.lower().replace("&", " "))
+    return {_ADDON_SAME.get(w, w) for w in words if w not in _ADDON_SKIP and not w.isdigit()}
+
+
+def addon_links(restaurant_id, bk, start, end, db_path=None) -> dict:
+    """{add-on recipe: [POS add-on names]} for the add-ons Back Office's book
+    names no POS item for — matched to what RPOWER rang under its add-ons
+    and modifiers in [start, end] when every word of the button is in ONE
+    recipe's name ("Add Grill Chix" → MOD- ADD GRILLED CHICKEN, "Classic
+    Buffalo`$1.99" → MOD- WING SAUCE CLASSIC BUFFALO). A button two recipes
+    could be ("BBQ`$1.99": the Dr. Pepper BBQ wing sauce or the BBQ chip rub)
+    is left unlinked."""
+    pos_names = bk.get("pos_names") or {}
+    owned = {_pos_key(n) for ns in pos_names.values() for n in ns or []}
+    addons = [r for r in bk.get("recipes") or [] if _is_menu(r) and _is_addon(r) and not pos_names.get(r["name"])]
+    if not addons:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT item_name FROM pos_ticket_lines WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
+            "AND kind='sale' AND (item_kind='modifier' OR LOWER(COALESCE(sales_category, '')) LIKE '%add-on%' "
+            "OR LOWER(COALESCE(sales_category, '')) LIKE '%add on%')",
+            (int(restaurant_id), str(start), str(end))).fetchall()
+    except Exception as e:
+        _capture(e, restaurant_id, "backoffice_recipes.addon_links", db_path)
+        return {}
+    finally:
+        conn.close()
+    words = {r["name"]: _addon_words(addon_name(r["name"])) for r in addons}
+    out = {}
+    for row in rows:
+        n = row["item_name"]
+        if not n or _pos_key(n) in owned:
+            continue
+        pw = _addon_words(n)
+        if not pw:
+            continue
+        # A recipe that is a sauce OF the button's item is another thing: "Add
+        # Jalapeno" (the peppers) is never MOD- JALAPENO RANCH. A button that is
+        # itself a sauce ("Xtra Ranch") takes the plain one: a sauce word the
+        # recipe adds ("RANCH DRESSING") costs nothing, another word does.
+        is_sauce = bool(pw & _ADDON_SAUCE)
+        fits = [(len((w - pw) - _ADDON_SAUCE) if is_sauce else len(w - pw), name) for name, w in words.items()
+                if pw <= w and (is_sauce or not ((w - pw) & _ADDON_SAUCE))]
+        if not fits:
+            continue
+        fits.sort()
+        if len(fits) > 1 and fits[0][0] == fits[1][0]:
+            continue
+        out.setdefault(fits[0][1], []).append(n)
+        owned.add(_pos_key(n))
+    return out
+
+
 def _menu(bk):
     pos_names = bk.get("pos_names") or {}
     return [r for r in bk["recipes"] if _is_menu(r) and (not r["group"].endswith("MODS") or r["name"] in pos_names)]
@@ -681,25 +761,41 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None, as_of=
     start = start or (end - timedelta(days=WINDOW_DAYS - 1))
     c = _Coster(bk, _invoice_prices(restaurant_id, db_path), today,
                 as_of=as_of.isoformat() if hasattr(as_of, "isoformat") else as_of)
+    bk = _with_addon_links(restaurant_id, bk, start, end, db_path)
     menu = _menu(bk)
     pos_names = bk.get("pos_names") or {}
     sold = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}),
                       start.isoformat(), end.isoformat(), db_path)
     high = suspect_high(restaurant_id, db_path)
     out, summary = _build(bk, c, sold, menu, high=high)
+    # Dishes and add-ons apart (owner, 10/17/26); the summary stays over
+    # everything sold — an add-on's cost and price are food too.
+    addons = {r["name"] for r in menu if _is_addon(r)}
+    dishes = [p for p in out if p["name"] not in addons]
+    add_ons = [dict(p, name=addon_name(p["name"])) for p in out if p["name"] in addons]
     srcs = {"invoice": 0, "back_office": 0, "unpriced": 0}
     for p in c.prices.values():
         srcs["unpriced" if "error" in p else p["source"]] += 1
     return {"available": True, "loaded_at": loaded, "basis": "recipes",
             "window": {"from": start.isoformat(), "to": end.isoformat(), "from_mdy": mdy(start.isoformat()),
                        "to_mdy": mdy(end.isoformat()), "days": (end - start).days + 1},
-            "plates": out, "summary": summary, "prices": srcs,
-            "note": ("What each dish's recipe costs at today's supplier prices: the latest invoice line for each "
-                     "item from its own supplier, read the way the supplier bills it, else Back Office's last "
-                     "price. A dish with an ingredient that can't be priced shows what is known, never a "
-                     f"percentage; a dish under 12% or over {high:g}% of its price is flagged and left out of the "
-                     "overall figure. Recipes are Back Office's; the selling price is what the POS took over "
-                     "four weeks.")}
+            "plates": dishes, "add_ons": add_ons, "summary": summary, "prices": srcs,
+            # Short and in points (owner, 10/17/26: the tips were a paragraph).
+            "note": ("Recipe cost at today's prices: each item's latest invoice, else Back Office's.",
+                     "Selling price: what the POS took over four weeks.",
+                     f"Under 12% or over {high:g}% of the price: flagged, left out of the total.")}
+
+
+def _with_addon_links(restaurant_id, bk, start, end, db_path=None):
+    """The book with its add-on recipes linked to the POS's add-on buttons
+    (addon_links) — read time only, the stored book unchanged."""
+    links = addon_links(restaurant_id, bk, start, end, db_path)
+    if not links:
+        return bk
+    pn = dict(bk.get("pos_names") or {})
+    for name, ns in links.items():
+        pn[name] = list(pn.get(name) or []) + ns
+    return dict(bk, pos_names=pn)
 
 
 def period_summaries(restaurant_id, windows, db_path=None):
@@ -712,10 +808,11 @@ def period_summaries(restaurant_id, windows, db_path=None):
     if not bk or not windows:
         return None
     invoices = _invoice_prices(restaurant_id, db_path)
-    menu = _menu(bk)
-    pos_names = bk.get("pos_names") or {}
     lo = min(s for s, _e in windows).isoformat()
     hi = max(e for _s, e in windows).isoformat()
+    bk = _with_addon_links(restaurant_id, bk, lo, hi, db_path)
+    menu = _menu(bk)
+    pos_names = bk.get("pos_names") or {}
     daily = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}), lo, hi,
                        db_path, by_day=True)
     today = _local_today(restaurant_id)

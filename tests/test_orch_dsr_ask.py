@@ -93,7 +93,7 @@ def test_a_night_is_one_dsr_narrative_run_on_t2(monkeypatch, rest, db_path):
     assert run["subject"] == "dsr:2026-09-19" and run["restaurant_id"] == rest.id
     assert run["final_tier"] == "T2" and run["attempts"] == 1 and run["escalations"] == 0
     assert run["status"] == "ok" and run["unattended"] == 1
-    assert client.calls[0]["model"] == ai_utils.SONNET
+    assert client.calls[0]["model"] == ai_utils.SONNET_55
 
 
 def test_a_shape_the_salvage_cannot_repair_escalates_once_to_t3_with_its_reasons(monkeypatch, rest, db_path):
@@ -102,7 +102,7 @@ def test_a_shape_the_salvage_cannot_repair_escalates_once_to_t3_with_its_reasons
     client = _Seq([bad, strong_reply()])
     out = _write(monkeypatch, rest, strong_night(), client)
     assert out["ok"], out
-    assert [c["model"] for c in client.calls] == [ai_utils.SONNET, ai_utils.SONNET_55]
+    assert [c["model"] for c in client.calls] == [ai_utils.SONNET_55, ai_utils.SONNET_55]
     t3 = client.calls[1]
     assert t3["thinking"] == {"type": "adaptive"} and t3["output_config"]["effort"] == "medium"
     assert t3["output_config"]["format"]["schema"] is narrative.OUTPUT_SCHEMA

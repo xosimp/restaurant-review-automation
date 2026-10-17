@@ -28,6 +28,14 @@ from flask import Flask
 import ai_utils
 import auth
 import client_api
+
+
+@pytest.fixture(autouse=True)
+def _no_holiday_lead(monkeypatch):
+    """The marketing brief leads with the feed's top card; a holiday inside
+    14 days (10/17/26: Halloween) replaced the model's lead these tests read."""
+    import marketing_opportunities
+    monkeypatch.setattr(marketing_opportunities, "holidays", lambda *a, **k: [])
 import competitor
 import insight_store
 import models

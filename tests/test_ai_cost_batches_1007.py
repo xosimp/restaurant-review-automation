@@ -472,13 +472,15 @@ def test_the_push_says_a_queued_post_is_being_drafted():
 # ── #79 the social post's cache marker, deliberately not added ─────────────
 
 def test_the_social_post_request_carries_no_cache_marker():
-    """The refusal retry runs one tier up (another model), and a prompt
-    cache is per model: a marker would only add the cache-write premium."""
+    """One post per call, and the refusal retry runs one tier up - since
+    10/17/26 the same model (Sonnet 5.5) with thinking on, which changes the
+    request a cached message would have to match: a marker would only add
+    the cache-write premium."""
     req = marketing.social_post_request("Write a post")
     assert "cache_control" not in json.dumps(req)
     import ai_workflows as wf
     p = wf.POLICIES["marketing_content"]
-    assert wf.route_for(p, 0).model != wf.route_for(p, 1).model
+    assert wf.route_for(p, 0).effort is None and wf.route_for(p, 1).effort, "the retry rung thinks"
 
 
 # ── #80 the marketing read's first line ────────────────────────────────────

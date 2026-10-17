@@ -266,7 +266,9 @@ def test_briefs_come_from_a_due_queue_with_a_bound_and_a_cursor(db, monkeypatch)
 
 def test_a_brief_window_that_closed_unsent_is_recorded(db, monkeypatch):
     import morning_brief, time_utils
-    rid = _rid(db, "Late Cafe", timezone="America/Chicago")
+    # Made before the day it misses (a window that opened before a restaurant
+    # existed is never a miss - ops._existed_for_window, 10/17/26).
+    rid = _rid(db, "Late Cafe", timezone="America/Chicago", created_at="2026-09-01T09:00:00")
     monkeypatch.setattr(time_utils, "restaurant_now", lambda tz=None, naive=False: datetime(2026, 9, 29, 15, 0))
     monkeypatch.setattr(morning_brief, "deliver", lambda *a, **k: pytest.fail("a brief at 3pm"))
     out = morning_brief.run_due(db_path=db)

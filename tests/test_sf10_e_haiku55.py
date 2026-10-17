@@ -21,9 +21,18 @@ def test_haiku55_thinking_is_off_by_default_and_never_disabled_at_xhigh():
     assert ai_utils.default_thinking("claude-haiku-5-5", {"output_config": {"effort": "max"}}) is None
 
 
-def test_t1_is_haiku55_on_the_canary_and_haiku45_elsewhere(monkeypatch):
+def test_t1_is_haiku55_everywhere_by_default(monkeypatch):
+    # The canary hold ended 10/17/26 (owner: "move the haiku ones to haiku 5.5").
     monkeypatch.delenv("AI_TIER_T1_MODEL", raising=False)
     monkeypatch.delenv("AI_TIER_CANARY", raising=False)
+    pol = wf.POLICIES["review_analysis"]
+    assert wf.route_for(pol, 0, restaurant_id=5).model == ai_utils.HAIKU_55
+    assert wf.route_for(pol, 0).model == ai_utils.HAIKU_55
+
+
+def test_t1_is_haiku55_on_the_canary_and_haiku45_elsewhere(monkeypatch):
+    monkeypatch.delenv("AI_TIER_T1_MODEL", raising=False)
+    monkeypatch.setenv("AI_TIER_CANARY", "T1")                     # the hold, put back by the operator
     monkeypatch.setenv("AI_CANARY_RESTAURANTS", "4")
     pol = wf.POLICIES["review_analysis"]
     assert wf.route_for(pol, 0, restaurant_id=4).model == ai_utils.HAIKU_55

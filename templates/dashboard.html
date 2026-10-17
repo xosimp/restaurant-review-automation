@@ -1003,14 +1003,16 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    space"): one card per row across the full width - what was found on the
    left, the confidence, the answer and Draft it in a column on the right. */
 .hb-recs.mkt-opps-list{grid-template-columns:minmax(0,1fr);gap:12px}
-.hb-rec.mkt-opp{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:32px;row-gap:0;align-items:start;min-height:0;padding:20px 24px}
-.hb-rec.mkt-opp>*{grid-column:1}
+/* The actions sit quietly along the card's foot (owner, 10/17/26): the confidence on the left, Done | Pass and
+   Draft it on the right - not a column centred on the card's right side. */
+.hb-rec.mkt-opp{display:flex;flex-direction:column;align-items:stretch;min-height:0;padding:20px 24px}
 .hb-rec.mkt-opp>*+*{margin-top:8px}
-.hb-rec.mkt-opp>.ft{grid-column:2;grid-row:1 / span 6;align-self:center;flex-direction:column;align-items:flex-end;justify-content:center;gap:10px;margin:0;padding:0;max-width:300px}
-.mkt-opp>.ft .mkt-opp-go{margin-left:0}
-.mkt-opp>.ft .rec-ans{display:flex;gap:4px}
+.hb-rec.mkt-opp>.ft{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 16px;margin:14px 0 0;padding:0}
+.mkt-opp>.ft .rec-ans{display:flex;align-items:center;gap:4px;margin-left:auto}
+.mkt-opp>.ft .rec-ans~.mkt-opp-go,.mkt-opp>.ft .mkt-opp-go{margin-left:0}
+.mkt-opp>.ft>.mkt-opp-go:only-child,.mkt-opp>.ft>.mkt-opp-go:first-child{margin-left:auto}
 .mkt-opp .why{max-width:820px}
-@media (max-width:760px){.hb-rec.mkt-opp{grid-template-columns:minmax(0,1fr);padding:18px}.hb-rec.mkt-opp>.ft{grid-column:1;grid-row:auto;flex-direction:row;flex-wrap:wrap;align-items:center;max-width:none;padding-top:6px}.mkt-opp>.ft .mkt-opp-go{margin-left:auto}}
+@media (max-width:760px){.hb-rec.mkt-opp{padding:18px}}
 .mkt-opps .mkt-opps-load{margin:18px 0 6px}
 .mkt-opps-foot .mkt-opps-note{font-size:12.5px;color:var(--ink3)}
 .mkt-opps-foot .cv-warn{width:16px;height:16px}
@@ -3463,9 +3465,9 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .rec-cf-q{font-size:12.5px;font-weight:600;color:var(--ink2);margin-top:10px}
 .rec-cf-opts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;margin-top:8px}
 .rec-cf-opts .cbtn{white-space:normal;text-align:left;line-height:1.3;height:auto;min-height:30px}
-.rec-cf-opts .vs{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);text-shadow:0 0 8px var(--ember2)}
+.rec-cf-opts .vs{position:relative;display:inline-flex;align-items:center;justify-content:center;width:64px;margin:0 6px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);text-shadow:0 0 8px var(--ember2)}
 .rec-cf-opts .vs:before,.rec-cf-opts .vs:after{content:'';position:absolute;top:50%;width:11px;height:1px;background:var(--ember2);opacity:.75}
-.rec-cf-opts .vs:before{left:3px}.rec-cf-opts .vs:after{right:3px}
+.rec-cf-opts .vs:before{left:6px}.rec-cf-opts .vs:after{right:6px}
 .rec-cf.done{border-left-color:var(--hb-good)}
 .rec-cf.done .rec-cf-k{color:var(--hb-good)}
 .rec-cf.done .rec-ans-done{display:block;margin-top:6px}
@@ -4506,7 +4508,7 @@ svg:hover .hb-xh{opacity:1}
   function locations(lc){
     if(!lc||!lc.ok||!(lc.metrics||[]).length)return (lc&&lc.why_not)?'<div class="hb-empty">Locations compared side by side appear once two or more are measured — '+esc(lc.why_not)+'.</div>':'';
     // How a gap is called sits behind the kicker's info tip (text round, 10/17/26).
-    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="bm-loc-tip" aria-expanded="false" aria-controls="bm-loc-tip" aria-label="How locations are compared">i</button><span class="cav-itp" id="bm-loc-tip" role="tooltip" hidden>Each against its own normal first, then against your other locations — a gap is called only when it is wider than both locations’ own week-to-week swing.</span></span></div>';
+    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="bm-loc-tip" aria-expanded="false" aria-controls="bm-loc-tip" aria-label="How locations are compared">i</button><span class="cav-itp" id="bm-loc-tip" role="tooltip" hidden>Each against its own normal, then your other locations. A gap shows only when it’s wider than both locations’ weekly swing.</span></span></div>';
     for(var i=0;i<lc.metrics.length;i++){var m=lc.metrics[i];
       h+='<div class="hb-sh" style="margin-top:12px"><div><div class="k dim">'+esc(m.label)+'</div></div></div><div class="bm-rows">';
       for(var j=0;j<(m.locations||[]).length;j++){var l=m.locations[j];
@@ -7386,6 +7388,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-detail{display:flex;flex-direction:column;gap:22px;margin-top:20px}
 .dr-detail .hb-card{padding:26px 28px}
 .dr-two-lg{gap:22px;margin-top:0}
+/* Given away and Punch edits: each card its own height - an opened fold never stretches its neighbour (owner, 10/17/26). */
+.dr-two-top{align-items:start}
+.dr-loss-more{margin-top:4px}
+.dr-loss .co-more .dr-loss-r{padding:7px 0}
+.dr-loss .co-more .dr-loss-g h3{margin:16px 0 6px}
 @media (max-width:1020px){.dr-two-lg{grid-template-columns:1fr}}
 .dr-dep{container-type:inline-size}
 .dr-ch{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
@@ -8643,7 +8650,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
     var acts=n.actions_tomorrow||[];
     if(acts.length){
-      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+itip('How the priorities are ranked','Ranked by urgency, dollars and effort. Each one is checked against the night\u2019s figures before it shows.')+'</h2></div></div><div class="hb-recs">';
+      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+itip('How the priorities are ranked','By urgency, dollars and effort, each checked against the night\u2019s figures.')+'</h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
         // The first three show; the rest wait hidden in the same grid, and
         // "N more" under it reveals them above itself (ID1-15, 9/28/26).
@@ -9142,8 +9149,15 @@ svg:hover .hb-xh{opacity:1}
         h+='</div>';}
       var rs=g.by_reason||[],ap=g.by_approver||[];
       if(rs.length||ap.length)h+='<details class="co-more"><summary>By reason and approver</summary>';
-      if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
-      if(ap.length){h+='<div class="dr-loss-g"><h3>Approved by</h3>';for(i=0;i<ap.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(ap[i].approver)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(ap[i].lines))+'</span><span class="a hb-num">'+esc(money(ap[i].amount))+'</span></div>';h+='</div>';}
+      // Three of each show; the rest fold under their own "N more" (owner, 10/17/26: opened, the list
+      // ran the card - and the Punch edits card beside it - far too tall).
+      var lossRows=function(list,title,label){var o='<div class="dr-loss-g"><h3>'+title+'</h3>',k,more='',SHOW=3;
+        for(k=0;k<list.length;k++){var r='<div class="dr-loss-r"><span class="n">'+label(list[k])+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(list[k].lines))+'</span><span class="a hb-num">'+esc(money(list[k].amount))+'</span></div>';
+          if(k<SHOW)o+=r;else more+=r;}
+        if(more)o+='<details class="co-more dr-loss-more"><summary>'+hn(list.length-SHOW)+' more</summary>'+more+'</details>';
+        return o+'</div>';};
+      if(rs.length)h+=lossRows(rs,'By reason',function(x){return esc(cap(x.kind))+' \u00b7 '+esc(x.reason);});
+      if(ap.length)h+=lossRows(ap,'Approved by',function(x){return esc(x.approver);});
       if(rs.length||ap.length)h+='</details>';
       h+='</section>';}
     if(E instanceof Array){
@@ -9165,7 +9179,7 @@ svg:hover .hb-xh{opacity:1}
     if(!svc||svc.status!=='ready')return '';
     var R=(svc.detail||{}).register;if(!R)return '';
     var t=R.totals||{},T=R.tenders||[],P=R.payouts||[],h='',i;
-    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards'+itip('Where these figures come from','Every payment, tip and payout as the POS recorded them. Paid out and in is petty cash and check requests entered on the POS.')+'</div>'
+    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards'+itip('Where these figures come from','As the POS recorded them. Paid out / in: petty cash and check requests on the POS.')+'</div>'
       +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(t.all))+'</div><div class="s">taken · cards '+hn(money(t.card))+' · cash '+hn(money(t.cash))+(P.length?' · paid out '+hn(money(t.payouts)):'')+'</div></div>';
     // The night's totals stay; each tender, the tips and every payout open
     // under one "More" (text round 10/17/26).
@@ -9189,7 +9203,7 @@ svg:hover .hb-xh{opacity:1}
     h+=hr;
     if(mo&&lb)h+='<div class="dr-two dr-two-lg">'+mo+lb+'</div>';else h+=mo+lb;
     h+=sv;
-    if(ls)h+='<div class="dr-two dr-two-lg">'+ls+'</div>';
+    if(ls)h+='<div class="dr-two dr-two-lg dr-two-top">'+ls+'</div>';
     h+=rg;
     return h+'</div>';
   }
@@ -9631,7 +9645,7 @@ svg:hover .hb-xh{opacity:1}
       b.innerHTML=kind==='week'?weekHtml(d.week,d.view):periodHtml(d.period,d.view);
     }).catch(function(){if(tk===st.token)loadFailed(b,null);});
   }
-  var GRID_HOW='Totals add only the nights that were measured; a comparison (vs budget, vs last year, labor %) uses only the nights that have both sides.';
+  var GRID_HOW='Totals add measured nights only. A comparison uses only nights with both sides.';
   function isOwnerGrid(g,view){return view==='owner'&&(g.withheld||[]).indexOf('budget')<0;}
   function gridCols(g,owner){
     var c=[],cs=g.categories||[];
@@ -9708,7 +9722,7 @@ svg:hover .hb-xh{opacity:1}
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
     // How the grid adds and compares, behind the heading's "i" (text round
     // 10/17/26); the nights measured is the first tile's line.
-    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+itip('How the week adds up',GRID_HOW+' Last year is the same weekday 52 weeks back: that night\u2019s report, then your imported workbook, then the POS sync.')+'</h1>'
+    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+itip('How the week adds up',GRID_HOW+' Last year: the same weekday 52 weeks back.')+'</h1>'
       +'<div class="hb-sub">'+esc(weekday(g.start).slice(0,3))+' '+hn(esc(md(g.start)))+' – '+esc(weekday(g.end).slice(0,3))+' '+hn(esc(md(g.end)))+'</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,-7)+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
@@ -10009,7 +10023,7 @@ svg:hover .hb-xh{opacity:1}
   </div>
   <div class="rh-head">
     <div class="hb-kicker">Your record</div>
-    <h1 class="hb-h1">Recommendations<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rh-tip" aria-expanded="false" aria-controls="rh-tip" aria-label="How this record is kept">i</button><span class="cav-itp" id="rh-tip" role="tooltip" hidden>What Cavnar AI suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</span></span></h1>
+    <h1 class="hb-h1">Recommendations<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rh-tip" aria-expanded="false" aria-controls="rh-tip" aria-label="How this record is kept">i</button><span class="cav-itp" id="rh-tip" role="tooltip" hidden>What Cavnar AI suggested, what you did, what was measured. Unanswered counts as not acted on.</span></span></h1>
   </div>
   <div id="rh-body" aria-live="polite"></div>
 </div>
@@ -10747,7 +10761,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   {# Search phrases worked into replies (reply_keywords; Danny, 10/9/26):
      anyone with Reviews edits the list; an add or a remove saves on its own. #}
   <section class="rv2-kw-box" id="rv-keywords" aria-labelledby="rv-kw-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-kw-tip" aria-expanded="false" aria-controls="rv-kw-tip" aria-label="How search phrases are used">i</button><span class="cav-itp" id="rv-kw-tip" role="tooltip" hidden>Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-kw-tip" aria-expanded="false" aria-controls="rv-kw-tip" aria-label="How search phrases are used">i</button><span class="cav-itp" id="rv-kw-tip" role="tooltip" hidden>One per reply, only where it reads naturally. Never to an unhappy guest.</span></span></div>
     <div class="rv2-kw-list" id="rv-kw-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-kw-add" id="rv-kw-form" onsubmit="rvKwAdd(event)"><input class="ac-input" id="rv-kw-in" maxlength="60" placeholder="e.g. brunch in St. Charles" aria-label="Add a search phrase" autocomplete="off"><button type="submit" class="cbtn cbtn-secondary cbtn-sm">Add</button></form>
   </section>
@@ -10756,7 +10770,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      10/9/26): anyone with Reviews edits them; each add, edit or remove
      saves on its own. #}
   <section class="rv2-prg-box" id="rv-programs" aria-labelledby="rv-prg-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-prg-tip" aria-expanded="false" aria-controls="rv-prg-tip" aria-label="How membership programs are used">i</button><span class="cav-itp" id="rv-prg-tip" role="tooltip" hidden>When a happy guest mentions what a program is for, Cavnar AI invites them to it in one sentence: one program per reply, no prices, never on a 1-3 star review or on Yelp.</span></span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-prg-tip" aria-expanded="false" aria-controls="rv-prg-tip" aria-label="How membership programs are used">i</button><span class="cav-itp" id="rv-prg-tip" role="tooltip" hidden><b>Offered to a happy guest who mentions what it’s for.</b> One sentence, one program per reply. No prices. Never on a 1–3 star review or on Yelp.</span></span></div>
     <div class="rv2-prg-list" id="rv-prg-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-prg-form" id="rv-prg-form" onsubmit="rvPrgSave(event)" hidden>
       <input type="hidden" id="rv-prg-orig" value="">
@@ -11375,8 +11389,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-stage[data-stage="setup"] .ss-setup{margin:auto;width:100%;box-sizing:border-box;padding:12px 24px 14px}
 .ss-stage[data-stage="setup"] h1{font-size:clamp(26px,2.3vw,32px);margin:4px 0 4px}
 .ss-stage[data-stage="setup"] .ss-hero p{font-size:15.5px;margin:0 0 12px}
-#ss-settings-setup #ss-settings{position:static;max-height:none;padding:6px 26px 0;border-radius:20px;box-shadow:var(--elev-hero)}
-#ss-settings-setup .ss-tabs{padding:8px 0 2px}
+#ss-settings-setup #ss-settings{position:static;max-height:none;padding:18px 26px 4px;border-radius:20px;box-shadow:var(--elev-hero)}
+/* Setup (owner, 10/17/26): the heading and the card share one centre line with room between them; the tabs are
+   one rounded recessed strip with each label centred in its segment; nothing on the card is a sticky flat-filled
+   bar (on the lit card a sticky --surface fill read as a squared box behind the tabs and a faint orange box behind
+   "This week's draft was built"). */
+.ss-stage[data-stage="setup"] .ss-hero{text-align:center;margin:0 0 22px}
+.ss-stage[data-stage="setup"] .ss-hero h1{margin:6px 0 0}
+#ss-settings-setup{max-width:700px;margin:0 auto}
+#ss-settings-setup #ss-settings .ss-tabs{position:static;display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:4px;margin:0 0 6px;padding:5px;border-radius:14px;background:var(--sf-recess);box-shadow:inset 0 0 0 1px var(--hb-line2)}
+#ss-settings-setup #ss-settings .ss-tabs button{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 10px;border-radius:10px;line-height:1;white-space:nowrap}
+#ss-settings-setup .sw-gen{position:static;background:none}
 #ss-settings-setup .sw-sec{padding:10px 0 4px;min-height:120px}
 /* Basic: the week and the labor target on one row (owner, 10/15/26: Setup
    needed a scroll to reach Generate); they wrap on a narrow window. */
@@ -13755,6 +13778,18 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
+/* Every tip in the app's text face and size, whatever it sits inside (10/17/26: Home's "what this figure covers"
+   tip sits inside the $ figure, and `.hb-num, .hb-num *` sets Space Grotesk !important on everything in a figure).
+   Figures inside the tip stay Space Grotesk through their own .hb-num. */
+.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num),.cav-itp.cav-itp-fixed,.cav-itp.cav-itp-fixed *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}
+/* An open tip: a fixed, fully opaque layer above every page layer and overlay (cavTipLift). */
+.cav-itp.cav-itp-fixed{position:fixed;z-index:10050;margin:0;font-size:14px;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal;background:var(--hp-act-bg);opacity:1}
+.cav-it .cav-itp{font-size:14px!important;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal}
+.cav-itp .hb-num{font-family:'Space Grotesk',sans-serif;background:none;border:0;padding:0;font-size:inherit;color:var(--ink)}
+.cav-tl-lead{display:block;margin-bottom:6px;color:var(--ink);font-weight:600}
+.cav-tl{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.cav-tl li{position:relative;padding-left:14px}
+.cav-tl li:before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ember2)}
 /* On a phone the tip opens from its "i" and is kept on screen by cavItipSet's clamp (UI-12): pinned right, an "i"
    mid-line pushed it off the left edge. */
 @media (max-width:640px){.cav-itp{left:0;right:auto}}
@@ -14175,17 +14210,27 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-fig span{font-size:15px;color:var(--ink2)}
 .fc2-pl-list{display:flex;flex-direction:column}
 .fc2-pl-row{border-top:1px solid var(--hb-line2)}
-.fc2-pl-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;align-items:baseline;padding:9px 0;font-size:14px;color:var(--ink2)}
+/* One set of column widths for the heading row and every dish row, each figure centred under its heading
+   (owner, 10/17/26: two auto-sized grids drifted apart). */
+.fc2-pl{--pl-cols:minmax(0,1fr) 82px 96px 112px 88px}
+.fc2-pl-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:var(--pl-cols);gap:12px;align-items:baseline;padding:9px 0;font-size:14px;color:var(--ink2)}
 .fc2-pl-row>summary::-webkit-details-marker{display:none}
 .fc2-pl-row>summary .d{color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .fc2-pl-row>summary .d small{display:block;font-size:12.5px;color:var(--ink3)}
-.fc2-pl-row>summary .n{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.fc2-pl-row>summary .n{text-align:center;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
 .fc2-pl-row>summary .n.p{color:var(--ink2)}
-.fc2-pl-head{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-top:6px;padding-bottom:3px}
-.fc2-pl-head span+span{text-align:right}
+.fc2-pl-head{display:grid;grid-template-columns:var(--pl-cols);gap:12px;font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-top:6px;padding-bottom:3px}
+.fc2-pl-head span+span{text-align:center;display:flex;justify-content:center}
+/* The sort arrow hangs to the label's right, so the label itself sits on the column's centre. */
+.fc2-pl-head span+span .csort-btn{position:relative;flex-direction:row}
+.fc2-pl-head span+span .csort-ic{position:absolute;left:100%;top:50%;margin:-4px 0 0 4px}
+.fc2-pl-sub{margin-top:26px}
+.fc2-pl-sub .k{font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.fc2-pl-sub .s{font-size:13px;color:var(--ink3);margin-top:3px}
+@media (min-width:561px) and (max-width:640px){.fc2-pl{--pl-cols:minmax(0,1fr) 62px 70px 70px 66px}.fc2-pl-head{font-size:11px;letter-spacing:.04em}}
 /* The headings sort (owner, 10/16/26): the sortable-table button and chevron, right-aligned over figures. */
 .fc2-pl-head .csort-btn{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:none;border:0;box-shadow:none;height:auto;min-height:0;padding:0;margin:0;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
-.fc2-pl-head span+span .csort-btn{flex-direction:row-reverse}
+
 .fc2-pl-head .csort-btn:hover{color:var(--ink)}
 .fc2-pl-head .csort-btn:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 .fc2-pl-head .csort-ic{display:inline-block;width:8px;height:8px;opacity:.35;color:var(--ink3);transition:transform .15s ease,opacity .15s ease}
@@ -14199,7 +14244,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-lines .l .n{font-family:'Space Grotesk',sans-serif;color:var(--ink2);white-space:nowrap}
 .fc2-pl-lines .miss,.fc2-pl-row>summary .miss{color:var(--ember2)}
 .fc2-pl-more>summary{cursor:pointer;font-size:13.5px;color:var(--ember2);padding:10px 0;list-style:none}
-@media (max-width:560px){.fc2-pl-row>summary,.fc2-pl-head{grid-template-columns:minmax(0,1fr) repeat(2,minmax(56px,auto))}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
+@media (max-width:560px){.fc2-pl{--pl-cols:minmax(0,1fr) 64px 72px}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
 .fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
 .fc2-cfo-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--hb-line2)}
 .fc2-cfo-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
@@ -14405,7 +14450,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# Plate costs from the restaurant's Back Office recipes (backoffice_recipes,
      10/15/26): each dish's recipe at today's supplier prices beside what the
      POS took for it. Filled by /api/food-cost/plates; hidden without recipes. #}
-  <div id="fc2-pl" class="fc2-cfo" data-nav="inventory/plates" hidden></div>
+  <div id="fc2-pl" class="fc2-cfo fc2-pl" data-nav="inventory/plates" hidden></div>
   <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
@@ -15018,7 +15063,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="tag">Cavnar AI&rsquo;s marketing brief</div>
     <div class="insight-text insight-loading" id="mkt-insight"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
   </section>
-  <section class="hb-card bm-card" data-bm-module="marketing" hidden aria-label="How you compare" style="margin-top:18px"></section>
+  {# How you compare left Marketing (owner, 10/17/26), as it left Food Cost and Labor. #}
 
   <div class="hb-sh"><div><div class="k">Write</div><h2>A post in {{ restaurant.name }}'s voice</h2></div>
     <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openBrandVoice()">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -15378,7 +15423,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          here - cavNavSection switches to this tab and waits for the card
          loadMktAttribution un-hides. -->
     <div class="hb-card" id="mkt-attr-card" data-nav="marketing/attribution" style="display:none;margin-bottom:16px;padding:20px 22px">
-      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-attr-tip" aria-expanded="false" aria-controls="mkt-attr-tip" aria-label="How this is measured">i</button><span class="cav-itp" id="mkt-attr-tip" role="tooltip" hidden>Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish&rsquo;s own units the same way, and reviews in the next two weeks that mentioned it. <b>Correlations, not proof</b> &mdash; a busy Friday is still a busy Friday.</span></span></div>
+      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-attr-tip" aria-expanded="false" aria-controls="mkt-attr-tip" aria-label="How this is measured">i</button><span class="cav-itp" id="mkt-attr-tip" role="tooltip" hidden><b>Correlation, not proof.</b> Sales the 2 days after each post vs the same weekday before. A named dish: its own units, and reviews mentioning it within 2 weeks.</span></span></div>
       <div id="mkt-attr-body" style="font-size:15px;color:var(--ink2);line-height:1.6"></div>
     </div>
 
@@ -15758,7 +15803,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div id="aiv-card"><div id="aiv-body">
     <div class="in2-pre" id="aiv-idle">
       {# What the check is and what it can't see sits behind the info tip (text round, 10/17/26). #}
-      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="aiv-what-tip" aria-expanded="false" aria-controls="aiv-what-tip" aria-label="How the AI visibility check works">i</button><span class="cav-itp" id="aiv-what-tip" role="tooltip" hidden>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</span></span></h2>
+      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="aiv-what-tip" aria-expanded="false" aria-controls="aiv-what-tip" aria-label="How the AI visibility check works">i</button><span class="cav-itp" id="aiv-what-tip" role="tooltip" hidden>Real guest-style searches on Perplexity’s live search: did you come up? Other assistants’ sources aren’t visible to us.</span></span></h2>
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div>
         <div class="meta" id="aiv-stored-state" hidden></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
@@ -29644,7 +29689,7 @@ document.addEventListener('change',function(ev){
 // the way the supplier bills it, else Back Office's last price) beside what
 // the POS took for it. A dish with an ingredient that can't be priced shows
 // "at least" and no percentage.
-var FC2_PL_SHOW=12;
+var FC2_PL_SHOW=8,FC2_AO_SHOW=5;
 function fc2PlMoney(v){return '$'+(Number(v)||0).toFixed(2);}
 function fc2PlRow(p){
   var e=fc2BoEsc,i,h='',cost=(p.complete?'':'≥ ')+fc2PlMoney(p.cost),sub=[];
@@ -29688,7 +29733,10 @@ function fc2PlRender(){
   var pr=d.prices||{},mt=d.margin_target;
   /* How the plates are priced, and what green means, behind the "i" by the
      heading - it was a paragraph under the list (text round 10/17/26). */
-  var tip=(mt?'Margins in green are at or above <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span> of the price ('+fc2BoEsc(mt.source==='set'?'your plate margin target':'100 minus the food cost target')+'; set it in Account → Targets). ':'')+'Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from '+fc2BoEsc(fc2FeedLabel(d))+': <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'');
+  var notes=[],ni,nl=(d.note&&typeof d.note==='object')?d.note:(d.note?[d.note]:[]);
+  for(ni=0;ni<nl.length;ni++)notes.push(fc2BoEsc(nl[ni]));
+  var tip=cavTipList(notes.concat(mt?['Green margin: <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span>+ of the price (Account → Targets).']:[])
+    .concat((pr.unpriced||0)?['<span class="hb-num">'+pr.unpriced+'</span> ingredient'+(pr.unpriced===1?'':'s')+' can’t be priced yet.']:[]));
   h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from '+fc2BoEsc(fc2FeedLabel(d))+' recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span>'+fc2Tip('fc2-pl-tip','How plate costs are priced',tip)+'</div><div class="fc2-cfo-bd">';
   if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>recipe cost of what sold, at today’s prices · <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> in sales fully priced</span></div>';
   h+=fc2SentenceLines(fc2Sentences(d.coverage));
@@ -29700,6 +29748,16 @@ function fc2PlRender(){
   for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
   h+=rows+'</div>';
   if(rest)h+='<details class="fc2-pl-more"'+(_fc2Pl.more?' open':'')+'><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
+  /* Add-ons and sauces apart from the dishes (owner, 10/17/26): what RPOWER rings under Food Add-Ons and
+     Back Office files under MODS. In the figure above, never in the dish list. */
+  var ao=d.add_ons||[],ah='',ar='';
+  if(ao.length){
+    for(i=0;i<ao.length;i++){if(i<FC2_AO_SHOW)ah+=fc2PlRow(ao[i]);else ar+=fc2PlRow(ao[i]);}
+    h+='<div class="fc2-pl-sub"><div class="k">Add-ons &amp; sauces</div><div class="s">Rung on a dish’s ticket · in the figure above, not in the dishes</div></div>'
+      +'<div class="fc2-pl-head" role="row" aria-hidden="true"><span>Add-on</span><span>Price</span><span>Plate cost</span><span class="x">Plate cost %</span><span class="x">Margin</span></div>'
+      +'<div class="fc2-pl-list">'+ah+'</div>';
+    if(ar)h+='<details class="fc2-pl-more fc2-ao-more"'+(_fc2Pl.aoMore?' open':'')+'><summary>All '+ao.length+' add-ons</summary><div class="fc2-pl-list">'+ar+'</div></details>';
+  }
   h+='</div>';
   host.innerHTML=h;host.hidden=false;
 }
@@ -29711,7 +29769,8 @@ function fc2LoadPlates(){
       var b=ev.target&&ev.target.closest?ev.target.closest('[data-pl-sort]'):null;if(!b)return;
       var k=b.getAttribute('data-pl-sort');
       if(_fc2Pl.k===k)_fc2Pl.desc=!_fc2Pl.desc;else{_fc2Pl.k=k;_fc2Pl.desc=true;}
-      var more=host.querySelector('.fc2-pl-more');_fc2Pl.more=!!(more&&more.open);
+      var more=host.querySelector('.fc2-pl-more:not(.fc2-ao-more)');_fc2Pl.more=!!(more&&more.open);
+      var aom=host.querySelector('.fc2-ao-more');_fc2Pl.aoMore=!!(aom&&aom.open);
       fc2PlRender();
       var nb=host.querySelector('[data-pl-sort="'+k+'"]');if(nb)nb.focus();
     });
@@ -30262,7 +30321,7 @@ function fc2LoadWasteSources(){
       if(!d||!d.ok){fc2TileError(host,'Unexplained',d);return;}
       if(!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
       /* The warning stays in view; how the gap is read sits behind the "i" (text round 10/17/26). */
-      host.innerHTML='<span class="k">Unexplained'+fc2Tip('fc2-wsrc-tip','About unexplained waste','Counts that land under what should be on hand, with no waste logged for the difference. It may be waste, a portion or a miscount \u2014 a closer count tells them apart.')+'</span>'
+      host.innerHTML='<span class="k">Unexplained'+fc2Tip('fc2-wsrc-tip','About unexplained waste','Counted below what should be on hand, with no waste logged. Waste, portions or a miscount \u2014 a closer count tells them apart.')+'</span>'
         +'<span class="v warn"><span class="hb-num">'+d.inferred_pct+'%</span></span>'
         +'<span class="d">of the last '+(+d.window_days||7)+' days\u2019 waste (<span class="hb-num">$'+Math.round(d.inferred).toLocaleString()
         +'</span>) is a count gap, not logged waste \u2014 recount before acting on it.</span>';
@@ -30278,10 +30337,71 @@ function fc2TileError(host,k,d){
   host.hidden=false;
 }
 /* Info tips (.cav-it): one open at a time; a click outside or Esc closes them. */
-function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
-  /* Kept on screen (UI-12): shifted left by what runs past the right edge, never past the left one. */
-  if(p&&on&&p.getBoundingClientRect){var r=p.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,dx=0;
-    if(r.right>vw-12)dx=(vw-12)-r.right;if(r.left+dx<12)dx=12-r.left;if(dx)p.style.marginLeft=Math.round(dx)+'px';}}
+/* A tip in points (owner, 10/17/26: "only the necessary info - a long one formatted so it reads at a glance").
+   lines: HTML strings, already escaped; lead: an optional bold first line. */
+function cavTipList(lines,lead){
+  var h=lead?'<b class="cav-tl-lead">'+lead+'</b>':'',i,li='';
+  for(i=0;i<(lines||[]).length;i++)if(lines[i])li+='<li>'+lines[i]+'</li>';
+  return h+(li?'<ul class="cav-tl">'+li+'</ul>':'');
+}
+/* A long tip reads at a glance (owner, 10/17/26): more than one sentence and over ~100 characters becomes points -
+   a bold lead kept as the lead, then one line per sentence. Split only between sentences at the top level of the
+   tip's HTML (never inside an element or a tag), never after a short abbreviation or inside a figure. ES5. */
+var CAV_TIP_ABBR={'st':1,'mr':1,'mrs':1,'dr':1,'vs':1,'e.g':1,'i.e':1,'no':1,'approx':1,'inc':1,'co':1,'jr':1};
+function cavTipSplit(html){
+  var out=[],cur='',depth=0,i,c,inTag=false,tag='';
+  for(i=0;i<html.length;i++){
+    c=html.charAt(i);cur+=c;
+    if(c==='<'){inTag=true;tag='';continue;}
+    if(inTag){if(c==='>'){inTag=false;var t=tag.toLowerCase();if(t.charAt(0)==='/')depth--;else if(t.charAt(t.length-1)!=='/'&&!/^(br|img|i |i$|hr|wbr)/.test(t)&&t.charAt(0)!=='!')depth++;}else tag+=c;continue;}
+    if(depth<=0&&(c==='.'||c==='!'||c==='?')&&html.charAt(i+1)===' '){
+      var nx=html.charAt(i+2),w=(cur.match(/([A-Za-z.]+)\.$/)||[])[1]||'';
+      if((/[A-Z“"<$\d]/.test(nx))&&!CAV_TIP_ABBR[w.toLowerCase()]){out.push(cur);cur='';i++;}
+    }
+  }
+  if(cur.replace(/\s+/g,''))out.push(cur);
+  return out;
+}
+function cavTipFormat(p){
+  if(!p||p.getAttribute('data-tipfmt'))return;
+  p.setAttribute('data-tipfmt','1');
+  if(p.querySelector('ul,ol,.cav-tl'))return;
+  var txt=(p.textContent||'').replace(/\s+/g,' ');
+  if(txt.length<100)return;
+  var html=p.innerHTML.replace(/^\s+|\s+$/g,''),lead='',i=0,m=/^<b>([\s\S]*?)<\/b>\s*/.exec(html);
+  if(m&&m[0].length<html.length){lead=m[1];html=html.slice(m[0].length);}
+  var parts=cavTipSplit(html);
+  if(parts.length<2&&!lead)return;
+  var lines=[];for(;i<parts.length;i++)lines.push(parts[i].replace(/^\s+|\s+$/g,''));
+  p.innerHTML=cavTipList(lines,lead);
+}
+/* An open tip is lifted to the top of the page (owner, 10/17/26: "this tool tip is bleeding through"): inside a
+   row the rows after it - each its own layer while it rises in - painted over it, whatever its own z-index.
+   Opened, it moves to <body> as a fixed layer under its "i" (over it when there is no room below), kept on
+   screen; closed, it goes back where it was. A scroll closes it. */
+function cavTipLift(p,b){
+  /* A tip lifted earlier whose row was redrawn since has no home left: gone, never a second copy of an id. */
+  var st=document.querySelectorAll('.cav-itp-fixed'),k;for(k=0;k<st.length;k++)if(st[k]!==p&&!(st[k]._home&&st[k]._home.parentNode&&document.body.contains(st[k]._home)))st[k].parentNode.removeChild(st[k]);
+  if(!p._home){p._home=document.createComment('cav-itp');p.parentNode.insertBefore(p._home,p);}
+  document.body.appendChild(p);p.classList.add('cav-itp-fixed');p.style.marginLeft='';p.style.top='0';p.style.left='0';
+  if(!b||!b.getBoundingClientRect)return;
+  var br=b.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,vh=window.innerHeight||document.documentElement.clientHeight;
+  var w=p.offsetWidth,h=p.offsetHeight,left=Math.max(12,Math.min(br.left,vw-12-w)),top=br.bottom+10;
+  if(top+h>vh-12&&br.top-10-h>12)top=br.top-10-h;
+  p.style.left=Math.round(left)+'px';p.style.top=Math.round(top)+'px';
+}
+function cavTipHome(p){
+  p.classList.remove('cav-itp-fixed');p.style.top='';p.style.left='';
+  if(p._home&&p._home.parentNode&&document.body.contains(p._home)){p._home.parentNode.insertBefore(p,p._home);}
+  else if(p.parentNode===document.body){p.parentNode.removeChild(p);}
+}
+function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');
+  if(p){if(on){cavTipFormat(p);p.hidden=false;cavTipLift(p,b);}else{p.hidden=true;cavTipHome(p);}}
+  if(b)b.setAttribute('aria-expanded',on?'true':'false');}
+/* Only a scroll that moves the tip's own "i" closes it: the page, or a box that holds it - never an unrelated
+   scroller (a ticker that scrolls by itself closed every tip the moment it opened). */
+window.addEventListener('scroll',function(e){var t=e.target,open=document.querySelectorAll('.cav-itp-fixed:not([hidden])'),i,h;
+  for(i=0;i<open.length;i++){h=open[i]._home;if(t===document||t===window||t===document.documentElement||t===document.body||(h&&t&&t.contains&&t.contains(h)))cavItipSet(open[i].id,false);}},true);
 document.addEventListener('click',function(e){
   var t=e.target;if(!t||!t.closest)return;
   if(t.closest('.cav-itp'))return;
@@ -30498,8 +30618,8 @@ function wtDrawChart(){
   // solid, lit object instead of a flat color fill.
   svg+='<defs>'
     +'<filter id="fc2wtLift" x="-60%" y="-40%" width="220%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#000" flood-opacity=".3"/></filter>'
-    +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2814f"/><stop offset="42%" stop-color="#c84b2f"/><stop offset="100%" stop-color="#9c3620"/></linearGradient>'
-    +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72d4a3"/><stop offset="42%" stop-color="#4ead7a"/><stop offset="100%" stop-color="#337d59"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffb48a"/><stop offset="38%" stop-color="#ff7a45"/><stop offset="100%" stop-color="#b13a20"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9af3cb"/><stop offset="38%" stop-color="#34d399"/><stop offset="100%" stop-color="#0f7a52"/></linearGradient>'
     +'<linearGradient id="fc2wtBarNeutral" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8d8378"/><stop offset="42%" stop-color="#6d645b"/><stop offset="100%" stop-color="#4a4038"/></linearGradient>'
     +'</defs>';
   // The dollar scale: each label on the gridline it names, both from y().
@@ -34650,9 +34770,9 @@ function mktOppCard(o, i) {
   if (o.stake && o.stake.amount) meta.push('<span class="usd"><span class="hb-num">$' + Math.round(o.stake.amount).toLocaleString('en-US') + '</span> ' + esc(o.stake.label || '') + '</span>');
   for (f = 0; f < (o.facts || []).length; f++) meta.push('<span>' + num(o.facts[f]) + '</span>');
   var conf = (o.confidence && window.cavConfLine) ? cavConfLine(o.confidence, {key: o.key, surface: 'marketing', module: 'marketing', cls: 'hb-conf', pill: 1}) : '';
-  var when = mktOppWhen(o);
   return '<div class="hb-card hb-rec hb-rise mkt-opp" style="--i:' + i + '" data-opp-key="' + esc(o.key) + '">'
-    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>' + (when ? '<span class="when">' + esc(when) + '</span>' : '')
+    /* No "In 14 days" over the card (owner, 10/17/26): the title names its day. */
+    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>'
     // Moved up or down by what this restaurant's own results measured
     // (M6 mkt_results: learned_weight).
     + (o.learned_weight != null && +o.learned_weight !== 1 ? ' <span class="ck-tag" title="' + esc((+o.learned_weight > 1 ? 'Ranked higher' : 'Ranked lower') + ' because of how this kind of move measured here') + '">Ranked by your results</span>' : '') + '</div>'
@@ -42834,6 +42954,9 @@ window.cavPalette = cavPalette;
 .mem-inline .ac-input.w{max-width:260px}
 .mem-inline .ac-select{max-width:260px}
 .mem-quote{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}
+/* One line per guest quote in Waiting on you: a long review never widens or stretches the card. */
+#lb2-wait-people .mem-quote{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+#lb2-wait-people .ac-row>.l{min-width:0}
 .mem-quote q{quotes:'\201C' '\201D'}
 .mem-confirm{margin-top:10px;padding:12px 14px;border-radius:12px;background:var(--amber-bg);color:var(--ink);font-size:14px;line-height:1.5}
 .mem-confirm .cbtn-row{margin-top:10px}
@@ -43246,16 +43369,25 @@ function memRetagBody(was, now) {
         + '<span>' + memNum('on ' + (mg.merged_on || '') + (mg.undo_until ? ' · two people after all? You can undo it until ' + mg.undo_until : '')) + '</span></div>'
         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-unmerge="' + (+mg.merge_id) + '">Undo merge</button></div></div>';
     }
-    for (i = 0; i < (_pq.mentions || []).length; i++) {
-      m = _pq.mentions[i];
-      h += '<div class="ac-row" data-wait-key="mention-' + (+m.id) + '"><div class="l"><b>' + memNum(memMentionLine(m)) + ' — is this them?</b>'
+    /* Guests naming staff (owner, 10/17/26: eight of them stretched the card): the first MENTION_SHOW, the rest
+       behind one fold that stays as the owner left it while rows are answered. */
+    var MENTION_SHOW = 2, ms = _pq.mentions || [], mh = '', mr = '';
+    for (i = 0; i < ms.length; i++) {
+      m = ms[i];
+      var row = '<div class="ac-row" data-wait-key="mention-' + (+m.id) + '"><div class="l"><b>' + memNum(memMentionLine(m)) + ' — is this them?</b>'
         + (m.snippet ? '<span class="mem-quote"><q>' + memEsc(m.snippet) + '</q></span>' : '') + '</div>'
         + '<div class="c">' + (_pq.canConfirm
           ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-mention="' + (+m.id) + '" data-confirm="0">Not them</button>'
             + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-mention="' + (+m.id) + '" data-confirm="1">Yes, ' + memEsc(String(m.name || '').split(' ')[0] || 'them') + '</button>'
           : '') + '</div></div>';
+      if (i < MENTION_SHOW || ms.length <= MENTION_SHOW + 1) mh += row; else mr += row;
     }
+    h += mh;
+    if (mr) h += '<details class="co-more mem-ment-more"' + (_pq.moreOpen ? ' open' : '') + '><summary>' + (ms.length - MENTION_SHOW)
+      + ' more guests named staff <small>is this them?</small></summary><div class="ac-rows">' + mr + '</div></details>';
     host.innerHTML = h;
+    var mm = host.querySelector('.mem-ment-more');
+    if (mm) mm.addEventListener('toggle', function () { _pq.moreOpen = mm.open; });
     var others = $id('lb2-wait-body');
     if (h) box.hidden = false;
     else if (!others || !others.children.length) box.hidden = true;
@@ -46143,7 +46275,7 @@ function sfw2RuleCheck(chk) {
       h += '<div class="dn-ax' + (l ? ' learn' : '') + '" data-ax="' + i + '"><div class="n">' + esc(a.label) + '<small>' + (l ? 'still learning' : (a.measured + ' of ' + a.of + ' measured')) + '</small></div>'
         + '<div class="bar">' + (l ? '' : '<i data-w="' + a.score + '"></i>') + '<u></u></div><div class="s">' + (l ? '—' : countHtml(String(a.score))) + '</div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up' + itip('dn-tip-shape', 'How the shape is read', 'Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI’s stated benchmark. Dashed spokes are still learning.') + '</h2>'
+    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up' + itip('dn-tip-shape', 'How the shape is read', 'Each axis 0–100; the dashed ring at 50 is the benchmark. Dashed spokes are still learning.') + '</h2>'
       + '<div class="dn-shape dn-rv">' + radar(ax, 360, false) + '<div class="dn-axes">' + h + '</div></div></section>';
   }
   function traits(s, dm) {
@@ -46186,7 +46318,7 @@ function sfw2RuleCheck(chk) {
         + '<div><div class="nm">' + esc(l.name) + (near ? '<span>Almost there</span>' : '') + '</div><div class="t">'
         + (pr ? figs(pr.have + ' of ' + pr.need + ' ' + pr.unit) : (l.dormant ? 'Not measurable on Cavnar AI yet — needs ' : 'Needs ') + esc(l.needs)) + '</div></div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits still taking shape' + itip('dn-tip-learn', 'How these fill in', 'Nothing here is guessed. Each fills in once its data clears the floor, closest first.') + '</h2>'
+    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits still taking shape' + itip('dn-tip-learn', 'How these fill in', 'Nothing guessed — each fills in once its data clears the floor.') + '</h2>'
       + '<div class="dn-learn">' + h + '</div>' + (ls.length > SHOWN ? '</details>' : '') + '</section>';
   }
   function evidenceAll(p) {
@@ -46354,6 +46486,12 @@ function sfw2RuleCheck(chk) {
    the same line height as the text beside them (owner, 10/15/26). */
 .br-hr>.br-chart.br-hc{flex:1 1 auto;height:auto;min-height:220px;margin:0 10px 0 4px}
 .br-hr>.br-chart.br-hc .xl{display:none}
+/* The app's glow line on the Bar (glowChart): the hero 260px tall, a category 96px. */
+#bar .br-glow .hb-cl svg{width:100%;display:block}
+#bar .br-glow-hero{margin-top:10px}
+#bar .br-glow-hero .hb-cl,#bar .br-glow-hero .hb-cl svg{height:260px}
+#bar .br-glow-spk{margin:14px 0 6px}
+#bar .br-glow-spk .hb-cl,#bar .br-glow-spk .hb-cl svg{height:96px}
 .br-hx{position:relative;top:2px;height:22px;margin:10px 10px 0 4px;font-size:12.5px;line-height:22px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
 .br-hx span{position:absolute;bottom:0;transform:translateX(-50%);white-space:nowrap}
 .br-hx span.first{transform:none}.br-hx span.last{transform:translateX(-100%)}
@@ -46370,7 +46508,13 @@ function sfw2RuleCheck(chk) {
 .br-bchip svg{color:var(--ember2);flex:none}
 .br-bchip.counted{background:linear-gradient(90deg,color-mix(in srgb,var(--br-range) 18%,transparent),color-mix(in srgb,var(--br-range) 5%,transparent));border-color:color-mix(in srgb,var(--br-range) 45%,transparent)}
 .br-bchip.counted svg{color:var(--br-range)}
-.br-why{margin-top:12px;padding:16px 18px;border-radius:16px;background:var(--sf-recess);border:1px solid var(--hb-line2);font-size:14.5px;line-height:1.6;color:var(--ink2);max-width:62ch}
+.br-why{font-size:14.5px;line-height:1.6;color:var(--ink2)}
+.br-why-card{width:560px;max-height:calc(100vh - 64px);overflow:auto;padding:26px 28px 22px}
+.br-why-hd{display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin-bottom:14px}
+.br-why-hd h3{margin:0;font:500 22px/1.2 'Clash Display',sans-serif;color:var(--ink)}
+.br-why-ft{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.br-why .br-mleg{margin-top:14px}
+.br-why>*+*{margin-top:12px}
 .br-why b{color:var(--ink)}
 .br-why[hidden]{display:none}
 .br-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;font-size:14.5px;color:var(--ink);background:color-mix(in srgb,var(--c,var(--ink3)) 13%,transparent);border:1px solid color-mix(in srgb,var(--c,var(--ink3)) 34%,transparent)}
@@ -46721,7 +46865,10 @@ function sfw2RuleCheck(chk) {
 #bar .cbtn.br-sig:hover{transform:translateY(-3px);box-shadow:var(--elev-2);border-color:color-mix(in srgb,var(--c) 34%,var(--br-hair))}
 #bar .cbtn.br-sig:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
 #bar .cbtn.br-sig.lead{grid-column:span 2;grid-row:span 2;padding:30px 30px 24px;min-height:350px;justify-content:flex-end}
-.br-sig.t-bad{--c:var(--red)}.br-sig.t-warn{--c:var(--amber)}.br-sig.t-good{--c:var(--green)}.br-sig.t-act{--c:var(--ember)}.br-sig.t-info{--c:var(--blue)}
+/* Tone rules at the id's specificity: `#bar .cbtn.br-sig` set --c to ember2 on every tile, so a good-news tile
+   (Credits back) wore the act colour (owner, 10/17/26). */
+#bar .cbtn.br-sig.t-bad{--c:var(--red)}#bar .cbtn.br-sig.t-warn{--c:var(--amber)}#bar .cbtn.br-sig.t-good{--c:var(--green)}#bar .cbtn.br-sig.t-act{--c:var(--ember)}#bar .cbtn.br-sig.t-info{--c:var(--blue)}
+#bar .br-sig.t-good .go{color:var(--hb-good)}
 /* Each tone's corner wash is an error-diffused image (scripts/render_glows.py), never a gradient: they banded (owner, 10/16/26). */
 .br-sig.t-bad{--br-lit:url(/static/img/glow/lit-red-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-warn{--br-lit:url(/static/img/glow/lit-amber-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-good{--br-lit:url(/static/img/glow/lit-green-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-act{--br-lit:url(/static/img/glow/lit-ember-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-info{--br-lit:url(/static/img/glow/lit-blue-v1.png) 0 0/100% 100% no-repeat}
 .br-sig .f{font:600 34px/1.05 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -47226,6 +47373,28 @@ function sfw2RuleCheck(chk) {
     }
     return '<div class="br-chart ' + (cls || '') + '"' + (opts.attrs || '') + '>' + svg + html + (opts.extra || '') + '</div>';
   }
+  /* The app's own chart (owner, 10/17/26: "make them look way better ... similar to labor"): CavnarCharts.glowLine -
+     a glowing line over a gradient, the target dashed with red where the line runs over it, a hot endpoint and the
+     crosshair tooltip Labor, Home and Reviews use. Only on the page that has it and only for a line with no gap;
+     otherwise null and the Bar's own chart draws (the standalone page and its tests). The svg needs a literal
+     colour: each series' --br-* in the dark theme. */
+  /* The series at full strength (the vivid layer, 10/17/26): the same hues as --vx-gold / --vx-info / --vx-plum. */
+  var GLOW_HEX = {total: '#ff8f5e', beer: '#f2b84b', liquor: '#5aa8ff', wine: '#c77dff'};
+  function glowChart(vals, key, labels, opts) {
+    var C = window.CavnarCharts, i;
+    opts = opts || {};
+    if (!C || !C.glowLine || !vals || vals.length < 2) return null;
+    for (i = 0; i < vals.length; i++) if (vals[i] == null || !isFinite(+vals[i])) return null;
+    var lo = opts.floor, hi = opts.ceil;
+    if (lo == null || hi == null) {
+      lo = Math.min.apply(null, vals); hi = Math.max.apply(null, vals);
+      if (opts.target != null) { lo = Math.min(lo, opts.target); hi = Math.max(hi, opts.target); }
+      var room = Math.max(1, (hi - lo) * 0.3); lo -= room; hi += room;
+    }
+    return '<div class="br-glow ' + (opts.cls || '') + '">' + C.glowLine(vals.map(function (v) { return +v; }), 1000, opts.h || 280, GLOW_HEX[key] || '#e8956a',
+      {pad: opts.pad || 12, floor: lo, ceil: hi, unit: '%', labels: labels || [], target: opts.target != null ? opts.target : undefined,
+       targetLabel: opts.target != null ? 'target ' + opts.target + '%' : undefined}) + '</div>';
+  }
   /* The y range for a set of series: a little room above and below. */
   function domain(lists, band) {
     var mn = null, mx = null, i, j;
@@ -47268,16 +47437,22 @@ function sfw2RuleCheck(chk) {
     for (i = ps.length - 1; i >= 0; i--) if (ps[i].ok) return ps[i];
     return null;
   }
+  /* Lead and points in the shared tip-list shape (.cav-tl); the Bar's own copy, so the page runs on its own. */
+  function pts(lines, lead) {
+    var h = lead ? '<b class="cav-tl-lead">' + lead + '</b>' : '', li = '', i;
+    for (i = 0; i < lines.length; i++) if (lines[i]) li += '<li>' + lines[i] + '</li>';
+    return h + (li ? '<ul class="cav-tl">' + li + '</ul>' : '');
+  }
   function whyText(d, pc, counted) {
     if (counted) {
       var p = countedPeriod(d), t = (p && p.total) || {};
-      return '<b>Pour cost, counted.</b> What the bar used between two counts — the opening count, plus what it bought, minus the closing count — as a % of what it sold'
-        + (t.used != null ? ': ' + hn(money(t.begin)) + ' + ' + hn(money(t.purchases)) + ' − ' + hn(money(t.end)) + ' = ' + hn(money(t.used)) + ' used, against ' + hn(money(t.sales)) + ' sold.' : '.')
-        + ' The ranges it is read against are published for counted pour cost.';
+      /* Points, not a paragraph (owner, 10/17/26). */
+      return pts(['Used = the opening count, plus what was bought, minus the closing count.',
+        t.used != null ? hn(money(t.begin)) + ' + ' + hn(money(t.purchases)) + ' − ' + hn(money(t.end)) + ' = ' + hn(money(t.used)) + ' used, against ' + hn(money(t.sales)) + ' sold.' : '',
+        'Read against the ranges published for counted pour cost.'], 'Pour cost, counted');
     }
-    return '<b>Pour cost needs two counts.</b> What the bar used is the opening shelf count, plus what it bought, minus the closing count. Until two counts bracket four weeks, this figure is what you bought from distributors as a % of what the POS sold — a stock-up week reads high and a week drawing the shelf down reads low. '
-      + 'Count the bar at month-end — beer, liquor and wine at what you paid — and the figure becomes pour cost, counted.'
-      + '<div><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-counts" style="margin-top:12px">Count the bar</button></div>';
+    return pts(['A stock-up week reads high; a week drawing the shelf down reads low.',
+        'Count the bar at month-end — at what you paid — and this becomes pour cost.'], 'Pour cost needs two counts');
   }
   /* The hero chart's dates as a row in the flow, placed as the chart places
      its own (first left, last right, the rest centred on their point). */
@@ -47300,7 +47475,8 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="dn-k">Four weeks, read every week</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3}) + xRow(labels)
+      ? '<div class="dn-k">Four weeks, read every week</div>' + (glowChart(spark, 'total', labels, {cls: 'br-glow-hero', h: 300, target: t.target != null ? +t.target : null})
+          || chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})) + xRow(labels)
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
@@ -47341,11 +47517,17 @@ function sfw2RuleCheck(chk) {
       + '<div class="br-figs"><div class="br-fig"><div class="v">' + (t.purchases == null ? '—' : cnt(t.purchases, 0, '$')) + '</div><div class="l">' + (counted ? 'used · opening + bought − closing' : 'bought from distributors') + '</div></div>'
       + '<div class="br-fig"><div class="v">' + (t.sales == null ? '—' : cnt(t.sales, 0, '$')) + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
-      + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-expanded="' + (ST.why ? 'true' : 'false') + '" aria-controls="br-why">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
-      + '<div class="br-why" id="br-why" data-br-explain="1"' + (ST.why ? '' : ' hidden') + '>'
-      + '<div>' + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
+      + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-haspopup="dialog" aria-controls="br-why-modal">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
+      /* A centred dialog over the dimmed page (owner, 10/17/26: it opened inside the card and pushed it down).
+         Its content waits in a <template> (never displayed) and the dialog is built at the Bar's root when it
+         opens (whyOpen): inside the hero card, the card's transform and overflow captured and clipped it. */
+      + '</div><template id="br-why-tpl"><div class="so-card br-why-card"><div class="br-why-hd"><h3 id="br-why-t">' + (counted ? 'How it’s worked out' : 'What this measures') + '</h3>'
+      + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
+      + '<div class="br-why" id="br-why" data-br-explain="1">'
       + (pc.sub ? '<div class="br-ctx">' + esc2(cap0(pc.sub)) + '.</div>' : '') + whyText(d, pc, counted) + (rng ? meterLegend(v.c, counted ? null : t.prev_pct, t.target, ctxRange) : '') + bandNote + sales
-      + (d.basis ? '<div class="br-sb">' + numify(d.basis) + '</div>' : '') + '</div></div>'
+      + (d.basis ? '<div class="br-sb">' + numify(d.basis) + '</div>' : '') + '</div>'
+      + '<div class="br-why-ft">' + (counted ? '' : '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-counts">Count the bar</button>')
+      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-br-whyclose="1">Close</button></div></div></template>'
       + '<div class="br-hr">' + right + '</div></section>';
   }
   /* Why a trend can't draw yet (V45): measured readings, not points. */
@@ -47430,6 +47612,8 @@ function sfw2RuleCheck(chk) {
     var w = (hi - lo) || 1, pad = w * 0.08;
     return {min: lo - pad, max: hi + pad, band: [mn, mx]};
   }
+  /* The weeks a category's line reads, for its crosshair (the hero's trend end dates). */
+  function sparkLabels(pc) { var t = pc.trend || [], out = [], i; for (i = 0; i < t.length; i++) out.push(t[i].end_mdy); return out; }
   function cats(pc) {
     var h = '', i, allSp = [];
     for (i = 0; i < pc.categories.length; i++) allSp.push(pc.categories[i].spark || []);
@@ -47452,7 +47636,8 @@ function sfw2RuleCheck(chk) {
         // Neutral behind the line (owner, 10/15/26: a coloured band and fill
         // read green): a grey range band and a faint fill; the line keeps
         // its category colour.
-        + (nn(sp) >= 2 && fit ? chart(sp, 'br-spk', {min: fit.min, max: fit.max, css: s.css, area: true, areaOpacity: '.10', band: fit.band, bandCss: 'var(--ink3)', hot: false}) : '<div class="br-spk"></div>')
+        + (nn(sp) >= 2 && fit ? (glowChart(sp, c.key, sparkLabels(pc), {cls: 'br-glow-spk', h: 120, pad: 8, floor: fit.min, ceil: fit.max})
+            || chart(sp, 'br-spk', {min: fit.min, max: fit.max, css: s.css, area: true, areaOpacity: '.10', band: fit.band, bandCss: 'var(--ink3)', hot: false})) : '<div class="br-spk"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (!c.judged && c.not_judged_text ? '<div class="na">' + (c.not_judged_text === (pc.total || {}).not_judged_text ? 'Not judged, for the reason above.' : numify(c.not_judged_text)) + '</div>' : '')
@@ -47615,11 +47800,12 @@ function sfw2RuleCheck(chk) {
     var gap = x.gap_units || 0;
     return '<div class="br-card br-li"><div class="n"><b>' + esc2(x.product) + '</b><span>' + esc2(LABELS[x.category] || x.category || '') + ' · sold as ' + esc2((x.drinks || []).join(', ')) + (basis.length ? ' · at ' + esc2(basis.join(', ')) : '') + '</span>'
       + (x.incomplete ? '<span class="br-tagx q">Invoices missing in the span</span>' : '') + (x.confidence && x.confidence !== 'high' ? '<span class="br-tagx q">' + esc2(x.confidence) + ' confidence</span>' : '') + '</div>'
-      + '<div class="m">Bought ' + units(x.bought_units, w) + ' · sold ' + units(x.rung_units, w)
+      + '<div class="m">' + (x.not_bought_in_span ? 'Last bought ' + hn(x.last_bought_mdy) : 'Bought ' + units(x.bought_units, w)) + ' · sold ' + units(x.rung_units, w)
       + (x.comped_units ? ' · ' + units(x.comped_units, w) + ' poured, not paid' : '')
       + (x.waste_units ? ' · ' + units(x.waste_units, w) + ' logged as waste' : '')
       + '</div>'
-      + '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>';
+      + (x.not_bought_in_span ? '<div class="r">—<span>poured from stock bought before this span</span></div></div>'
+        : '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>');
   }
   function varUnmapped(u) {
     var sg = u.suggest || null;
@@ -48174,14 +48360,18 @@ function sfw2RuleCheck(chk) {
   function insights2(list) {
     if (!list || !list.length) return '';
     var label = {good: 'Going well', warn: 'Worth a look', bad: 'Needs attention', info: 'Good to know'},
-        col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--ember2)'}, lead = list[0], rest = '', i;
+        /* Good to know reads green like Going well (owner, 10/17/26: "make them all green accents, not
+           orange"); each card's lit corner follows its tone. */
+        col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--hb-good)'},
+        lit = {good: 'green', info: 'green', warn: 'amber', bad: 'red'}, lead = list[0], rest = '', i;
+    var litOf = function (t) { return ';--br-lit:url(/static/img/glow/lit-' + (lit[t] || 'green') + '-v1.png) 0 0/100% 100% no-repeat'; };
     var conf = function (x) { var cf = x.confidence || {}; return (cf.evidence_pct != null || cf.freshness_pct != null) ? '<div class="br-cfl">Evidence ' + (cf.evidence_pct != null ? hn(cf.evidence_pct + '%') : '—') + (cf.freshness_pct != null ? ' · Freshness ' + hn(cf.freshness_pct + '%') : '') + '</div>' : ''; };
-    var lh = '<article class="br-feat br-rise" style="--c:' + (col[lead.tone] || 'var(--ember2)') + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
+    var lh = '<article class="br-feat br-rise' + (lead.tone === 'good' || lead.tone === 'info' ? ' br-good' : '') + '" style="--c:' + (col[lead.tone] || 'var(--hb-good)') + litOf(lead.tone) + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
       + '<div class="fl"><div class="t"><i></i>' + esc2(label[lead.tone] || 'Good to know') + '</div><div class="h">' + numify(lead.headline) + '</div></div>'
       + '<div class="fr"><div class="m">' + numify(lead.metric) + '</div>' + conf(lead) + '<div class="a">' + numify(lead.action) + '</div></div></article>';
     for (i = 1; i < list.length; i++) {
       var x = list[i];
-      rest += '<article class="br-insr br-rise" style="--c:' + (col[x.tone] || 'var(--ember2)') + (x.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + ';animation-delay:' + (0.05 * i) + 's">'
+      rest += '<article class="br-insr br-rise" style="--c:' + (col[x.tone] || 'var(--hb-good)') + litOf(x.tone) + (x.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + ';animation-delay:' + (0.05 * i) + 's">'
         + '<div class="t"><i></i>' + esc2(label[x.tone] || 'Good to know') + '</div><div class="h">' + numify(x.headline) + '</div><div class="m">' + numify(x.metric) + '</div>' + conf(x)
         + '<div class="a">' + numify(x.action) + '</div></article>';
     }
@@ -48210,14 +48400,16 @@ function sfw2RuleCheck(chk) {
     var w = x.unit_word || (x.unit === 'oz' ? 'oz' : 'unit'), gap = x.gap_units || 0, basis = [], j;
     var id = 'br-vr-' + String(x.product_key || i).replace(/[^a-z0-9]+/gi, '-');
     for (j = 0; j < (x.theoretical_basis || []).length; j++) basis.push(THEO[x.theoretical_basis[j]] || x.theoretical_basis[j]);
-    var facts = fact('Bought', units(x.bought_units, w)) + fact('Sold', units(x.rung_units, w))
+    var facts = (x.not_bought_in_span ? fact('Last bought', hn(x.last_bought_mdy)) : fact('Bought', units(x.bought_units, w))) + fact('Sold', units(x.rung_units, w))
       + (x.comped_units ? fact('Poured, not paid', units(x.comped_units, w)) : '') + (x.waste_units ? fact('Logged as waste', units(x.waste_units, w)) : '')
       + (basis.length ? fact('Counted at', esc2(basis.join(', '))) : '');
     return '<details class="br-vr" id="' + id + '"' + (ST.det[id] ? ' open' : '') + '><summary>'
       + '<span class="n"><b>' + esc2(x.product) + '</b><span><i class="br-swt" style="--s:' + seriesOf(x.category).css + '"></i>' + esc2(LABELS[x.category] || x.category || '')
       + (x.incomplete ? ' · <em>invoices missing</em>' : '') + '</span></span>'
-      + '<span class="br-vcmp">' + varBar(x) + '<span class="lg"><span>Bought ' + units(x.bought_units, w) + '</span><span>Sold ' + units(x.rung_units, w) + '</span></span></span>'
-      + '<span class="g' + (gap < 0 ? ' neg' : '') + '"><b>' + hn(money(Math.abs(x.gap_usd || 0))) + '</b><span>' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + ' ' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + '</span></span>'
+      + '<span class="br-vcmp">' + varBar(x) + '<span class="lg"><span>' + (x.not_bought_in_span ? 'Last bought ' + hn(x.last_bought_mdy) : 'Bought ' + units(x.bought_units, w)) + '</span><span>Sold ' + units(x.rung_units, w) + '</span></span></span>'
+      + (x.not_bought_in_span
+        ? '<span class="g"><b>—</b><span>poured from stock bought before this span</span></span>'
+        : '<span class="g' + (gap < 0 ? ' neg' : '') + '"><b>' + hn(money(Math.abs(x.gap_usd || 0))) + '</b><span>' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + ' ' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + '</span></span>')
       + CHEVRON + '</summary><div class="br-vrb"><div class="br-facts">' + facts + '</div>' + soldAs(x.drinks, id)
       + ((x.assumes || []).length ? '<p class="br-note">' + numify(x.assumes.join(' · ')) + '</p>' : '') + '</div></details>';
   }
@@ -48538,6 +48730,22 @@ function sfw2RuleCheck(chk) {
       + panel('cost', costPanel(d)) + panel('buying', buyPanel(d)) + panel('match', matchPanel(d)) + panel('stock', stockPanel(d));
     return h;
   }
+  /* The What-this-measures dialog: the hero keeps its content in #br-why-tpl; whyOpen builds the dialog as a direct
+     child of #bar - outside every card, so nothing transformed or clipped holds its fixed layer - and cModal
+     opens it (Close, the scrim and Escape close it through barWhyClose). */
+  function whyOpen() {
+    var root = $id('bar'), m = $id('br-why-modal'), tpl = $id('br-why-tpl');
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+    if (!root || !tpl) return;
+    m = document.createElement('div');
+    m.id = 'br-why-modal'; m.className = 'cmodal so-modal br-why-modal';
+    m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true'); m.setAttribute('aria-labelledby', 'br-why-t');
+    m.style.display = 'none'; m.innerHTML = tpl.innerHTML;
+    root.appendChild(m);
+    ST.why = true;
+    if (window.cModal) cModal.open('br-why-modal', {close: 'barWhyClose'}); else m.style.display = 'flex';
+  }
+  window.barWhyClose = function () { ST.why = false; var m = $id('br-why-modal'); if (m && m.parentNode) m.parentNode.removeChild(m); };
   function skeleton() {
     return '<div class="dn-k">Bar</div><div class="br-sk" role="status" aria-label="Loading" style="height:300px;margin-top:14px"></div>'
       + '<div class="br-cats"><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div></div>'
@@ -48777,6 +48985,7 @@ function sfw2RuleCheck(chk) {
   function valOf(sel) { var e = document.querySelector(sel); return e ? String(e.value || '').replace(/^\s+|\s+$/g, '') : ''; }
   function attrSel(a, v) { return '[' + a + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]'; }
   function goTo(id) {
+    if (window.cModal && cModal.isOpen('br-why-modal')) cModal.close('br-why-modal');
     var t = $id(id); if (!t) return;
     var pn = t.closest ? t.closest('[data-br-panel]') : null;
     if (pn) setTab(pn.getAttribute('data-br-panel'), false, true);
@@ -48832,7 +49041,12 @@ function sfw2RuleCheck(chk) {
         setTab(TABS[ti].k, true);
         return;
       }
-      if (e.key === 'Escape') { e.preventDefault(); window.barClose(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        /* The dialog closes first; the Bar on the next Escape. */
+        if (window.cModal && cModal.isOpen('br-why-modal')) { cModal.close('br-why-modal'); return; }
+        window.barClose();
+      }
     });
     el.addEventListener('focusout', function (e) { if (e.target && e.target.getAttribute && e.target.getAttribute('data-br-trend')) trendHide(el); });
     el.addEventListener('toggle', function (e) {
@@ -48870,7 +49084,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -48900,7 +49114,9 @@ function sfw2RuleCheck(chk) {
         if (wantRemote()) fetchPrices(mv === 'next' && !!ST.pq, before);
         redrawList(before);
       } else if (a('data-br-why') != null) {
-        ST.why = !ST.why; var w = $id('br-why'); if (w) w.hidden = !ST.why; t.setAttribute('aria-expanded', ST.why ? 'true' : 'false');
+        whyOpen();
+      } else if (a('data-br-whyclose') != null) {
+        if (window.cModal) cModal.close('br-why-modal'); else window.barWhyClose();
       } else if (a('data-br-go') != null) goTo(a('data-br-go'));
       else if (a('data-br-targets') != null) {
         window.barClose();
@@ -49383,6 +49599,16 @@ function sfw2RuleCheck(chk) {
   box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent);
   transition:box-shadow .35s var(--cv-ease);
 }
+/* The Bar's lead insight when its news is good (Going well, Good to know): the same glass, green where it was
+   ember (owner, 10/17/26: "needs green accents, not orange"). */
+[data-theme="dark"] #bar .br-feat.br-good{
+  background:
+    linear-gradient(90deg,rgba(214,255,232,.34),rgba(214,255,232,.1) 18%,rgba(214,255,232,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-green-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--hb-good) 62%,transparent),color-mix(in srgb,var(--hb-good) 20%,transparent) 9%,rgba(240,255,246,.08) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--hb-good) 60%,transparent);
+}
 /* Inside a pedestal the glass sits on the plate, not on the canvas. */
 [data-theme="dark"] .lb2-hero .lb2-ai{box-shadow:inset 0 1px 0 rgba(255,222,204,.08),0 1px 0 rgba(0,0,0,.4),0 10px 22px -18px rgba(0,0,0,.7)}
 
@@ -49443,13 +49669,307 @@ function sfw2RuleCheck(chk) {
 #cv-glint.gl i{background-image:url(/static/img/cv-glint-ember-v1.png)}
 @media (prefers-reduced-motion:reduce),(pointer:coarse){ #cv-glint{display:none}}
 </style>
+<style id="cv-vivid">
+/* ══ The vivid layer (10/17/26) ═════════════════════════════════════════
+   Colour, depth and motion over the card materials (#cv-cards) - never
+   layout. Owner, 10/17/26: "richer, vibrant semantic colours around the
+   signature orange; dimensional surfaces, not the same container a
+   hundred times; striking charts". DESIGN_SYSTEM.md section 4a.
+   - The spectrum (--vx-*) is for marks, fills and chart strokes; text
+     keeps --ink, --green, --red (identical on iOS).
+   - Six containers, each with its own silhouette: Ledger (a money
+     summary: obsidian face, a jigger's ruler engraved along its foot, the
+     lead figure molten), Slate (a list), Instrument (gauges and charts,
+     recessed), Ember glass (the AI), Register (a table: a recessed head
+     band in the kicker's orange, rows that light a rail), Signal (an
+     alert). Pedestal stays the page's one hero.
+   - A gauge's colour is where its tip lands on a scale (--vx-heat for a
+     cost, --vx-yield for what came back), drawn at the track's width
+     (100cqw), so a short fill is cool and a long one runs hot - the scale,
+     not a threshold in code.
+   Every faint glow is still an image (render_glows.py); these gradients
+   are hard-stopped (ruler, hatch) or run between strong colours. */
+[data-theme="dark"]{
+  --vx-ember:#c84b2f;--vx-ember-hot:#ff7a45;--vx-ember-light:#ffb48a;
+  --vx-gain:#34d399;--vx-gain-light:#8af0c4;
+  --vx-loss:#ff4d5a;--vx-loss-light:#ff9aa0;
+  --vx-warn:#ffb340;--vx-info:#5aa8ff;--vx-gold:#f2b84b;--vx-plum:#c77dff;
+  --vx-obsidian:#0d0b0a;--vx-graphite:#181513;
+  --vx-heat:linear-gradient(90deg,#2fbf85 0%,#9fd356 16%,#ffc845 28%,#ff8a3d 44%,#ff4d5a 68%,#ff2e63 100%);
+  --vx-yield:linear-gradient(90deg,#ff4d5a 0%,#ff8a3d 32%,#ffc845 56%,#f5d76e 70%,#7fe0a8 82%,#34d399 100%);
+  --vx-molten:linear-gradient(180deg,#fff0e6 0%,#ffc2a0 34%,#ff8a55 72%,#f0602f 100%);
+  --vx-silver:linear-gradient(180deg,#ffffff 0%,#f0e9e1 45%,#c9bfb4 100%);
+  --vx-whitehot:linear-gradient(180deg,#ffffff 0%,#fff6ef 46%,#ffcfb4 100%);
+  --vx-ruler:repeating-linear-gradient(90deg,rgba(255,232,206,.22) 0 1px,transparent 1px 8px);
+  --vx-ruler-major:repeating-linear-gradient(90deg,rgba(255,232,206,.42) 0 1px,transparent 1px 40px);
+  --vx-hatch:repeating-linear-gradient(-45deg,rgba(255,138,90,.62) 0 1.5px,transparent 1.5px 5px);
+  --vx-face-ledger:linear-gradient(180deg,#151210,var(--vx-obsidian));
+  --vx-rim-ledger:linear-gradient(180deg,rgba(255,214,170,.34),rgba(255,214,170,.07) 26%,rgba(255,255,255,.025) 70%,rgba(0,0,0,.55));
+  --vx-face-register:linear-gradient(180deg,var(--vx-graphite),#110f0e);
+  --vx-rim-register:linear-gradient(180deg,rgba(255,236,214,.16),rgba(255,236,214,.05) 22%,rgba(0,0,0,.45));
+  --vx-ease:cubic-bezier(.2,.9,.3,1);
+}
+@keyframes vxOpen{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+
+/* ── Ledger: a money summary ─────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-cfigs{
+  border-color:transparent;
+  background:
+    var(--vx-ruler-major) 24px calc(100% - 1px)/calc(100% - 48px) 10px no-repeat padding-box,
+    var(--vx-ruler) 24px calc(100% - 1px)/calc(100% - 48px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,
+    var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9);
+}
+[data-theme="dark"] #bar .br-cfigs .fg{padding-bottom:30px}
+[data-theme="dark"] #bar .br-cfigs .fg+.fg::before{width:1px;background:rgba(0,0,0,.7);box-shadow:1px 0 0 rgba(255,236,214,.07)}
+[data-theme="dark"] #bar .br-cfigs .fg:first-child>b{filter:drop-shadow(0 0 22px rgba(255,110,60,.32))}
+[data-theme="dark"] #bar .br-swt{box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 9px color-mix(in srgb,var(--s,var(--ember)) 75%,transparent)}
+
+/* ── Slate: a list (bought vs sold) ──────────────────────────────────── */
+[data-theme="dark"] #bar .br-vlist{
+  border-color:transparent;
+  background:url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,var(--cv-rim) border-box;
+  box-shadow:var(--cv-lip),var(--cv-drop)}
+[data-theme="dark"] #bar .br-vr>summary{box-shadow:inset 0 0 0 transparent;transition:background .25s var(--vx-ease),box-shadow .3s var(--vx-ease)}
+[data-theme="dark"] #bar .br-vr>summary:hover,[data-theme="dark"] #bar .br-vr[open]>summary{background:rgba(255,240,226,.035);box-shadow:inset 3px 0 0 var(--vx-ember)}
+[data-theme="dark"] #bar .br-vr>summary:hover .br-vbars{filter:brightness(1.18) saturate(1.15)}
+[data-theme="dark"] #bar .br-vr>summary:hover .br-cv{transform:translateY(2px);color:var(--ember2)}
+[data-theme="dark"] #bar .br-vr[open]>summary:hover .br-cv{transform:rotate(180deg) translateY(2px)}
+[data-theme="dark"] #bar .br-vr[open] .br-vrb{animation:vxOpen .34s var(--vx-ease) both}
+[data-theme="dark"] #bar .br-vr .g b{color:var(--vx-ember-light)}
+[data-theme="dark"] #bar .br-vr .g.neg b{color:var(--vx-info)}
+[data-theme="dark"] #bar .br-vrb .br-facts{background:rgba(0,0,0,.34);box-shadow:inset 0 2px 6px -2px rgba(0,0,0,.6),inset 0 -1px 0 rgba(255,236,214,.04)}
+/* Bought vs sold, one track: what was bought is hatched, what sold pours
+   over it in the category's colour to a bright pour line - the hatch left
+   showing is the stock not accounted for. */
+[data-theme="dark"] #bar .br-vbars{position:relative;display:block;height:12px;border-radius:7px;background:rgba(0,0,0,.5);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.75),0 1px 0 rgba(255,240,226,.06);transition:filter .3s var(--vx-ease)}
+[data-theme="dark"] #bar .br-vbars i{position:absolute;left:0;top:0;bottom:0;height:auto;border-radius:7px}
+[data-theme="dark"] #bar .br-vbars i.b{background:var(--vx-hatch),rgba(255,110,72,.12);box-shadow:inset 0 0 0 1px rgba(255,130,92,.42)}
+[data-theme="dark"] #bar .br-vbars i.r{background:linear-gradient(180deg,color-mix(in srgb,var(--s) 62%,#fff),var(--s) 46%,color-mix(in srgb,var(--s) 72%,#000));
+  box-shadow:0 0 16px color-mix(in srgb,var(--s) 55%,transparent),inset 0 1px 0 rgba(255,255,255,.4)}
+[data-theme="dark"] #bar .br-vbars i.r::after{content:"";position:absolute;right:0;top:-3px;bottom:-3px;width:3px;border-radius:2px;background:#fffaf2;box-shadow:0 0 10px color-mix(in srgb,var(--s) 90%,#fff)}
+/* The legend follows the track: sold under the fill (left), bought at the hatch's end (right). */
+[data-theme="dark"] #bar .br-vcmp .lg{flex-direction:row-reverse}
+[data-theme="dark"] #bar .br-vcmp .lg span:last-child{color:var(--ink2)}
+[data-theme="dark"] #bar .br-vcmp .lg span:first-child{color:color-mix(in srgb,var(--vx-ember-light) 80%,var(--ink3))}
+
+/* ── Instrument: gauges (keg yield) ──────────────────────────────────── */
+[data-theme="dark"] #bar .br-kegs{
+  border-color:transparent;
+  background:radial-gradient(rgba(255,240,226,.035) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 58%,#000),color-mix(in srgb,var(--surface) 72%,#000)) padding-box,
+    linear-gradient(180deg,rgba(0,0,0,.65),rgba(0,0,0,.25) 40%,rgba(255,246,236,.09)) border-box;
+  box-shadow:inset 0 3px 8px -2px rgba(0,0,0,.65),inset 0 18px 30px -24px rgba(0,0,0,.75),0 1px 0 rgba(255,246,236,.05)}
+[data-theme="dark"] #bar .br-keg .gg{container-type:inline-size;height:12px;border-radius:7px;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 3px rgba(0,0,0,.8),0 1px 0 rgba(255,240,226,.06)}
+[data-theme="dark"] #bar .br-keg .gg i{border-radius:7px;background:var(--vx-yield) 0 0/100cqw 100% no-repeat;box-shadow:0 0 14px rgba(255,190,90,.22),inset 0 1px 0 rgba(255,255,255,.38)}
+/* The foam head: a keg's fill ends in a cream cap. */
+[data-theme="dark"] #bar .br-keg .gg i::after{content:"";position:absolute;right:0;top:-2px;bottom:-2px;width:6px;border-radius:4px;background:#fff6e4;box-shadow:0 0 10px rgba(255,236,200,.85),0 0 2px #fff}
+[data-theme="dark"] #bar .br-keg .gg i[style*="width:0.0%"]::after{display:none}
+[data-theme="dark"] #bar .br-keg .gg b{width:2px;top:-6px;bottom:-6px;background:#fff;box-shadow:0 0 8px rgba(255,255,255,.75),0 0 1px #fff}
+[data-theme="dark"] #bar .br-keg{transition:background .25s var(--vx-ease)}
+[data-theme="dark"] #bar .br-keg:hover{background:rgba(255,240,226,.03)}
+
+/* ── Register: a table ───────────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-tw{border-color:transparent;overflow:hidden;
+  background:var(--vx-face-register) padding-box,var(--vx-rim-register) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,236,214,.06),0 1px 0 rgba(0,0,0,.6),0 20px 40px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #bar .br-t2 thead th{background:rgba(0,0,0,.38);color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 26%,transparent);padding-top:15px;padding-bottom:12px}
+[data-theme="dark"] #bar .br-t2 tbody tr:nth-child(even) td{background:rgba(255,240,226,.018)}
+[data-theme="dark"] #bar .br-t2 tbody tr td{transition:background .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover{background:transparent}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover td{background:rgba(255,240,226,.05)}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--vx-ember)}
+[data-theme="dark"] #bar .br-pbar{container-type:inline-size;height:8px;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 2px rgba(0,0,0,.8),0 1px 0 rgba(255,240,226,.05)}
+[data-theme="dark"] #bar .br-pbar i,[data-theme="dark"] #bar .br-pbar.up i{background:var(--vx-heat) 0 0/100cqw 100% no-repeat;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
+[data-theme="dark"] #bar .br-pbar.up{box-shadow:inset 0 1px 2px rgba(0,0,0,.8),0 0 0 1px color-mix(in srgb,var(--vx-loss) 55%,transparent),0 0 12px color-mix(in srgb,var(--vx-loss) 40%,transparent)}
+
+/* ── Folds and chips ─────────────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-more>summary::before{transition:transform .3s var(--vx-ease),border-color .25s ease,box-shadow .25s ease}
+[data-theme="dark"] #bar .br-more>summary:hover::before{border-color:color-mix(in srgb,var(--ember) 70%,transparent);box-shadow:0 0 12px -2px color-mix(in srgb,var(--ember) 70%,transparent)}
+[data-theme="dark"] #bar .br-dchip{background:linear-gradient(180deg,rgba(255,240,226,.07),rgba(255,240,226,.03));border-color:rgba(255,236,214,.1);box-shadow:0 1px 0 rgba(0,0,0,.4)}
+
+/* ── KPI tile: a category's figure card, lit in its own hue ─────────────
+   The series colour (--s) enters at the top-left corner through a mask
+   sprite and runs in along the top edge as a 1px filament; the figure is
+   metal tinted toward the same hue. Gold, blue, plum - never three ember
+   outlines. */
+[data-theme="dark"] #bar .br-cat{position:relative;isolation:isolate}
+[data-theme="dark"] #bar .br-cat::before{content:"";position:absolute;left:0;top:0;width:78%;height:72%;z-index:-1;pointer-events:none;opacity:.2;
+  background:var(--s);-webkit-mask:url(/static/img/glow/mask-corner-tl-v1.png) 0 0/100% 100% no-repeat;mask:url(/static/img/glow/mask-corner-tl-v1.png) 0 0/100% 100% no-repeat}
+[data-theme="dark"] #bar .br-cat::after{content:"";position:absolute;left:18px;right:40%;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--s) 0%,transparent),var(--s) 18%,color-mix(in srgb,var(--s) 0%,transparent));box-shadow:0 0 10px color-mix(in srgb,var(--s) 80%,transparent)}
+[data-theme="dark"] #bar .br-cat .v{background:linear-gradient(180deg,#fff 0%,#fbf5ee 40%,color-mix(in srgb,var(--s) 62%,#fff) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] #bar .br-cat .v *{color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] #bar .br-cat .v small{background:inherit;-webkit-background-clip:text;background-clip:text}
+/* Bar categories at full strength (marks only; the series are the glow charts' too). */
+[data-theme="dark"] #bar{--br-beer:var(--vx-gold);--br-liquor:var(--vx-info);--br-wine:var(--vx-plum)}
+
+/* ══ Everywhere (the same six containers and metals on every module) ══ */
+
+/* Figures as metal, by role - one look per role, never per module:
+   white-hot  the page's hero figure (a soft warm foot, a glow under it)
+   molten     money at stake (the ledger's lead)
+   silver     a supporting figure
+   A figure that already wears a status colour (.good/.warn/.bad/.up/
+   .down) keeps it: the metal is for figures that say no verdict. */
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money),
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money) .hb-num{
+  background:var(--vx-whitehot);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net){filter:drop-shadow(0 12px 30px rgba(255,120,70,.2))}
+[data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)),
+[data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)) .hb-num{
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+/* (.fg.fg: above the silver list, whose :is() carries its strongest selector.) */
+[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b,[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b .hb-num{background-image:var(--vx-molten)}
+/* A small unit after a figure stays ink, not metal. */
+[data-theme="dark"] :is(.kx-hero .kx-val,.kx-card .kx-val,.dr-score .net,.hb-focus .money,.dr-kpi .v,.lb2-op .v,.hb-stat .v,#bar .br-big) small{-webkit-text-fill-color:currentColor;background:none}
+
+/* The report's score card is the page's pedestal: the ember enters at its
+   top-left corner and dies within a quarter of the rim - never a full
+   glowing outline (owner, 10/17/26: "no glowing orange borders"). */
+[data-theme="dark"] #panel-dsr .dr-score::before{opacity:1;
+  background:linear-gradient(138deg,var(--ember2) 0%,color-mix(in srgb,var(--ember) 72%,transparent) 9%,rgba(255,236,214,.16) 24%,rgba(255,255,255,.06) 52%,rgba(255,255,255,.035) 76%,rgba(0,0,0,.3) 100%)}
+
+/* The containers, by what they hold (the same six on every module). */
+/* Ledger: a money summary - the Bar's bought vs sold figures, the
+   report's forecast for the day after. */
+[data-theme="dark"] #panel-dsr .dr-tmr>.hb-card:nth-child(2){
+  /* The ruler gets its own strip under the last line, never over it (owner, 10/17/26: "getting cut off"). */
+  border-color:transparent;padding-bottom:36px;
+  background:
+    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
+    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc,[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc .hb-num{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+/* Ember glass: what Cavnar AI wrote - the report's executive summary. */
+[data-theme="dark"] #panel-dsr .hb-card.dr-read{
+  border-color:transparent;
+  background:
+    linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent)}
+/* Signal: the night's wins (green) and risks (amber) - an LED edge in
+   the tone, its light spilling into the face. */
+[data-theme="dark"] #panel-dsr .hb-card.dr-wins,[data-theme="dark"] #panel-dsr .hb-card.dr-risks{
+  --cv-tone:var(--vx-gain);--cv-spill:url(/static/img/glow/signal-green-v1.png) 0 0/100% 100% no-repeat;
+  border-color:transparent;
+  background:var(--cv-spill) padding-box,url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
+    linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
+  box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
+    -10px 0 26px -18px color-mix(in srgb,var(--cv-tone) 75%,transparent),var(--cv-lip),var(--cv-drop)}
+[data-theme="dark"] #panel-dsr .hb-card.dr-risks{--cv-tone:var(--vx-warn);--cv-spill:url(/static/img/glow/signal-amber-v1.png) 0 0/100% 100% no-repeat}
+/* Instrument: a chart's well - the night by hour, by meal period, by
+   department. Recessed, a faint reticle, never warmed or lifted. */
+[data-theme="dark"] #panel-dsr :is(.hb-card.dr-hourly,.hb-card.dr-split,.hb-card.dr-dep){
+  border-color:transparent;transform:none!important;
+  background:radial-gradient(rgba(255,240,226,.035) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 60%,#000),color-mix(in srgb,var(--surface) 72%,#000)) padding-box,
+    linear-gradient(180deg,rgba(0,0,0,.65),rgba(0,0,0,.25) 40%,rgba(255,246,236,.09)) border-box;
+  box-shadow:inset 0 3px 8px -2px rgba(0,0,0,.65),inset 0 18px 30px -24px rgba(0,0,0,.75),0 1px 0 rgba(255,246,236,.05)}
+/* Register: the night's tables - servers, voids, tenders, edits. */
+[data-theme="dark"] #panel-dsr :is(.hb-card.dr-srv,.hb-card.dr-loss,.hb-card.dr-edits){
+  border-color:transparent;transform:none!important;
+  background:var(--vx-face-register) padding-box,var(--vx-rim-register) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,236,214,.06),0 1px 0 rgba(0,0,0,.6),0 20px 40px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-dsr .dr-split-r .tr{background:rgba(0,0,0,.5);box-shadow:inset 0 1px 2px rgba(0,0,0,.75),0 1px 0 rgba(255,240,226,.05)}
+[data-theme="dark"] #panel-dsr .dr-split-r .tr i{background:linear-gradient(180deg,#ffb48a,var(--vx-ember-hot) 45%,var(--vx-ember));box-shadow:0 0 14px color-mix(in srgb,var(--vx-ember-hot) 45%,transparent),inset 0 1px 0 rgba(255,255,255,.35)}
+
+/* Ember glass on Home too: last night's summary is the report speaking. */
+[data-theme="dark"] #panel-home .hb-card.dr-home{
+  border-color:transparent;
+  background:
+    linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent)}
+/* Ledger on Home: what was measured - the worth tiles' card. */
+[data-theme="dark"] #panel-home .hb-card:has(>.hb-vsplit){
+  border-color:transparent;padding-bottom:30px;
+  background:
+    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
+    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+/* Docket: a recommendation is a ticket - a row of punched holes under
+   its top edge, like a kitchen docket's tear-off, and its number molten.
+   Every .hb-rec on every page (Home, the report's priorities, Marketing's
+   openings). */
+[data-theme="dark"] .hb-card.hb-rec{position:relative}
+[data-theme="dark"] .hb-card.hb-rec::before{content:"";position:absolute;left:16px;right:16px;top:6px;height:5px;pointer-events:none;
+  background:radial-gradient(circle,var(--bg-base) 1.6px,rgba(255,236,214,.13) 2.1px,transparent 2.6px) 0 50%/11px 5px repeat-x}
+[data-theme="dark"] .hb-rec .no,[data-theme="dark"] .hb-rec .no *{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] .hb-rec .no{filter:drop-shadow(0 0 14px rgba(255,110,60,.3))}
+[data-theme="dark"] .hb-rec .meta .usd{color:var(--vx-ember-light);border-color:color-mix(in srgb,var(--vx-ember-hot) 40%,transparent);background:color-mix(in srgb,var(--vx-ember-hot) 10%,transparent)}
+
+/* Food Cost. Ledger: where the money is going (money at stake, its
+   drivers) - the driver's dollars molten. Register: plate costs' heading
+   row in the kicker's orange, a row lighting under the pointer. */
+[data-theme="dark"] #panel-inventory .fc2-cfo{
+  border-color:transparent;padding-bottom:22px;
+  background:
+    var(--vx-ruler-major) 18px calc(100% - 1px)/calc(100% - 36px) 10px no-repeat padding-box,
+    var(--vx-ruler) 18px calc(100% - 1px)/calc(100% - 36px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-inventory .fc2-cfo-hd{border-bottom-color:rgba(0,0,0,.55);box-shadow:0 1px 0 rgba(255,236,214,.05)}
+[data-theme="dark"] #panel-inventory .fc2-drv .n,[data-theme="dark"] #panel-inventory .fc2-drv .n .hb-num{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b),[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b) .hb-num{
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] .fc2-pl-head{color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent);padding-bottom:8px}
+[data-theme="dark"] .fc2-pl-row>summary{margin:0 -10px;padding-left:10px;padding-right:10px;border-radius:8px;transition:background .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] .fc2-pl-row:nth-child(even)>summary{background:rgba(255,240,226,.018)}
+[data-theme="dark"] .fc2-pl-row>summary:hover,[data-theme="dark"] .fc2-pl-row[open]>summary{background:rgba(255,240,226,.05);box-shadow:inset 3px 0 0 var(--vx-ember)}
+
+/* Labor's header figures and Campaigns' KPIs: supporting figures, silver. */
+[data-theme="dark"] :is(#panel-labor .row>.stat-n,.cp-kpi .v){
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+
+/* Touch: a card that can be acted on presses in under the click; a fold
+   eases its contents in rather than snapping them open. */
+[data-theme="dark"] :is(.hb-card.lift,.hb-card.hb-rec,.lb2-op,.sb-card,.ss-tile,.cal-card,.cp-card,#bar .br-cat):active{transform:translateY(0) scale(.992);transition-duration:.08s}
+[data-theme="dark"] :is(.hb-card details,details.hb-results,details.fc2-work,#bar .br-more)[open]>:not(summary){animation:vxOpen .34s var(--vx-ease) both}
+
+/* Status LEDs: a lit bead with its own specular, not a flat dot. */
+[data-theme="dark"] .hb-row .d{width:10px;height:10px}
+[data-theme="dark"] .hb-row.critical .d,[data-theme="dark"] .hb-tl .it.critical .d{background:radial-gradient(circle at 34% 30%,#ffd9db 0,var(--vx-loss) 46%,#a3101e 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-loss) 16%,transparent),0 0 12px color-mix(in srgb,var(--vx-loss) 80%,transparent)}
+[data-theme="dark"] .hb-row.important .d,[data-theme="dark"] .hb-tl .it.important .d{background:radial-gradient(circle at 34% 30%,#fff1cf 0,var(--vx-warn) 46%,#a86400 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-warn) 15%,transparent),0 0 12px color-mix(in srgb,var(--vx-warn) 70%,transparent)}
+[data-theme="dark"] .hb-row.good .d,[data-theme="dark"] .hb-tl .it.good .d{background:radial-gradient(circle at 34% 30%,#d8ffef 0,var(--vx-gain) 46%,#0d7a4e 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-gain) 15%,transparent),0 0 12px color-mix(in srgb,var(--vx-gain) 70%,transparent)}
+[data-theme="dark"] .hb-row.watch .d,[data-theme="dark"] .hb-tl .it:not(.critical):not(.important):not(.good) .d{background:radial-gradient(circle at 34% 30%,#fffaf2 0,#a99d8e 50%,#4e463d 100%);box-shadow:0 0 0 3px rgba(255,240,226,.05)}
+
+/* Register: every table - its head in the kicker's orange over one ruled line (no filled band: inside a
+   padded card it read as a sharp black box, owner 10/17/26),
+   a warm zebra, and a row that lights an ember rail under the pointer. */
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) thead th{
+  background:none;color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:nth-child(even) td{background-color:rgba(255,240,226,.018)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody td{transition:background-color .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td{background-color:rgba(255,240,226,.048)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--vx-ember)}
+
+@media (prefers-reduced-motion:reduce){
+  [data-theme="dark"] #bar .br-vr[open] .br-vrb,
+  [data-theme="dark"] :is(.hb-card details,details.hb-results,details.fc2-work,#bar .br-more)[open]>:not(summary){animation:none}
+  [data-theme="dark"] :is(.hb-card.lift,.hb-card.hb-rec,.lb2-op,.sb-card,.ss-tile,.cal-card,.cp-card,#bar .br-cat):active{transform:none}
+}
+</style>
 <script>
 /* cvLight - lays #cv-glint over the material card under the pointer (see
    #cv-cards). One delegated listener, one frame per move; it follows the
    card through a scroll or a lift, and hides when the pointer leaves it. */
 (function(){
   var SEL='#bar .br-feat,#bar .br-insl,.hb-card,.hb-sig.cards .hb-sg,.lb2-op,.sb-card,.sb-tile,.fc2-cfo,.fc2-block,.dr-sec,.ss-tile,.ss-pub-card,.ss-crew-role,.ss-bn,.pr-sec,.ac-card,.cal-card,.cp-card,.kx-card,#bar .br-card,.lb2-hero,.rv2-hero,.kx-hero,.lb2-ai,.cp-ai,.rv-diag,.sw-side';
-  var GLASS='.lb2-ai,.cp-ai,.rv-diag,#bar .br-feat', PED='.lb2-hero,.rv2-hero,.hb-card.hero.hb-focus,#bar .br-hero,.ss-tile.hero,.kx-hero,#ss-settings-setup #ss-settings';
+  var STILL='#panel-dsr .hb-card.dr-hourly,#panel-dsr .hb-card.dr-split,#panel-dsr .hb-card.dr-dep,#panel-dsr .hb-card.dr-srv,#panel-dsr .hb-card.dr-loss,#panel-dsr .hb-card.dr-edits';
+  var GLASS='.lb2-ai,.cp-ai,.rv-diag,#bar .br-feat,#panel-dsr .hb-card.dr-read,#panel-home .hb-card.dr-home', PED='.lb2-hero,.rv2-hero,.hb-card.hero.hb-focus,#bar .br-hero,.ss-tile.hero,.kx-hero,#ss-settings-setup #ss-settings';
   if(!window.matchMedia||window.matchMedia('(pointer: coarse)').matches)return;
   var mq=window.matchMedia('(prefers-reduced-motion: reduce)');
   var g=null,lt=null,cur=null,px=0,py=0,pend=null;
@@ -49471,6 +49991,8 @@ function sfw2RuleCheck(chk) {
     pend=null;
     if(mq.matches||!dark()){hide();return;}
     var t=document.elementFromPoint(px,py),el=t&&t.closest?t.closest(SEL):null;
+    /* An instrument or a register (the vivid layer, #cv-vivid) is read, never warmed. */
+    if(el&&el.matches(STILL))el=null;
     if(!el){hide();return;}
     ensure();
     if(el!==cur){

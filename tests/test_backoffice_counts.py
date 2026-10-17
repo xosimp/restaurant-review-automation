@@ -175,7 +175,9 @@ def test_food_cost_runs_count_to_count_on_back_office_invoices_and_food_sales(db
     out = cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)
     assert out["ok"] is False and out["source"] == "back_office"
     assert out["unmeasured_line"] == "Comes with your second Back Office count"
-    a, b = TODAY - timedelta(days=15), TODAY - timedelta(days=1)
+    # The closing count two days back: before RPOWER's 5am boundary the last
+    # complete business day is the day before yesterday (cogs.last_complete_day).
+    a, b = TODAY - timedelta(days=16), TODAY - timedelta(days=2)
     bc.save_counts(rid, {"inventory_counts": [_count(a, 1000.0)]}, db_path=db)
     assert cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)["unmeasured_line"] == \
         "Comes with your next Back Office count"
