@@ -275,14 +275,12 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
     have = 4 - len(missing)
     if have >= 4:
         pts += 1
-        put("profile", "ok", "Complete — contact, timezone and brand voice all set")
+        put("profile", "ok", "Complete")
     elif have >= 2:
         pts += .5
-        put("profile", "warn", "Missing " + " and ".join(missing) + " — the AI writes better with "
-            + ("it" if len(missing) == 1 else "them"), "profile: " + ", ".join(missing) + " missing")
+        put("profile", "warn", "Missing " + " and ".join(missing), "profile: " + ", ".join(missing) + " missing")
     else:
-        put("profile", "bad", "Missing " + ", ".join(missing) + " — add your contact details and how you sound",
-            "your profile is mostly empty")
+        put("profile", "bad", "Missing " + ", ".join(missing), "your profile is mostly empty")
 
     # People: other logins, and staff signed up to the staff app.
     team, staff = _people_counts(rid)
@@ -299,7 +297,7 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
                 "Teammates in — no staff have signed up yet" if tm else f"{staff} staff signed up · only you use the dashboard",
                 "no staff have signed up" if tm else "only you use the dashboard")
         else:
-            put("people", "bad", "Just you — invite a teammate or post the staff join code",
+            put("people", "bad", "Just you so far",
                 "only you are on the account")
 
     # Integrations: the data under the connections when Data health has a
@@ -322,12 +320,12 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
                 f"data is only {dp}% current")
     elif n_conn >= 2:
         pts += 1
-        put("integrations", "ok", f"{n_conn} connected — replies post, data flows")
+        put("integrations", "ok", f"{n_conn} connected")
     elif n_conn == 1:
         pts += .5
-        put("integrations", "warn", "1 connected — add your POS for live labor and sales", "connect your POS")
+        put("integrations", "warn", "1 connected — add your POS", "connect your POS")
     else:
-        put("integrations", "bad", "Nothing connected — start with Google Business", "nothing is connected")
+        put("integrations", "bad", "Nothing connected", "nothing is connected")
 
     # Notifications: an alert switched on, and someone to send it to.
     alerts_on = any(getattr(r, a, 0) for a in _ALERT_SWITCHES)
@@ -346,7 +344,7 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
             "Alerts on, but no contact to send them to" if alerts_on else "Digest on · no real-time alerts",
             "nobody receives alerts" if alerts_on else "no real-time alerts")
     else:
-        put("notifications", "bad", "No alerts — you'd only find problems by logging in", "no alerts are on")
+        put("notifications", "bad", "No alerts on", "no alerts are on")
 
     # Security: the checkup's score.
     checkup = security_checkup(user, restaurant=r)
@@ -402,9 +400,9 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
         say = {"lead": "Nearly set up.", "text": "Worth doing: " + _list(warn) + "."}
     else:
         say = {"lead": "Everything that matters is set up.", "text": ""}
-    sub = ("Everything that matters is set up." if score >= 90 else
-           "Nearly there — the items below would make Cavnar AI work harder for you." if score >= 60 else
-           "A few things to set up before Cavnar AI can do its best work.")
+    sub = ("All set." if score >= 90 else
+           "Nearly there." if score >= 60 else
+           "A few things to set up.")
     out = {
         "ok": True,
         "score": score,

@@ -621,7 +621,7 @@
       return;
     }
     if (d.published === false) {
-      html += emptyBox('No schedule posted yet', 'It shows up here the moment your manager publishes one.');
+      html += emptyBox('No schedule posted yet', 'It shows here once your manager publishes one.');
     } else {
       var week = d.week || [], h = hero(week);
       html += heroCard(h, d);
@@ -820,7 +820,7 @@
     var el = $('tab-schedule'), d = S.shifts, html = '<h2 class="title">Schedule</h2>';
     if (!d || !d.ok) { el.innerHTML = html + failedBox('Couldn’t load your shifts. ' + errText(d, ''), 'reload-schedule'); return; }
     if (d.published === false) {
-      el.innerHTML = html + emptyBox('No schedule posted yet', 'It shows up here the moment your manager publishes one.');
+      el.innerHTML = html + emptyBox('No schedule posted yet', 'It shows here once your manager publishes one.');
       return;
     }
     var week = d.week || [];
@@ -886,8 +886,8 @@
       '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="change-send">' +
       (c.mode === 'swap' ? 'Ask to swap' : 'Ask to give it up') + '</button></div>' +
       '<div class="errline" id="change-err" role="status" aria-live="polite"></div>' +
-      '<p class="note">' + (c.mode === 'swap' ? 'Both shifts move once your manager approves and your colleague says yes.'
-        : 'Your manager decides. If they approve, you’re still on it until someone on the team picks it up.') + '</p>';
+      '<p class="note">' + (c.mode === 'swap' ? 'Both shifts move once your manager and your colleague say yes.'
+        : 'If your manager approves, you’re on it until someone picks it up.') + '</p>';
     if (keep) { $('sheet-body').innerHTML = html; }
     else openSheet(c.mode === 'swap' ? 'Swap this shift' : 'Give up this shift', html);
   }
@@ -947,7 +947,7 @@
     switch (r.status) {
       case 'pending': return swap ? (r.target_accepted ? who + ' said yes — waiting on your manager.' : 'Waiting on your manager and ' + who + '.') : 'Waiting on your manager.';
       case 'approved': return swap ? 'Your manager said yes — waiting on ' + who + '.' : 'Your manager said yes.';
-      case 'open': return 'Your manager approved it. You’re still on this shift until someone picks it up — we’ll tell you when they do.';
+      case 'open': return 'Approved. You’re on this shift until someone picks it up — we’ll tell you.';
       case 'covered': return swap ? 'The swap went through.' : ((r.replacement_name ? r.replacement_name + ' took it.' : 'Someone took it.') + ' It’s off your schedule.');
       case 'expired': return 'The shift passed before anyone answered.';
       default: return '';
@@ -978,7 +978,7 @@
       });
       for (var k = 0; k < items.length; k++) html += items[k].kind === 'to' ? timeOffRow(items[k].r) : myShiftRow(items[k].r);
       if (!t.ok) html += failedBox('Your time off didn’t load. ' + errText(t, ''), 'reload-requests');
-      if (!items.length && t.ok && b.ok) html += emptyBox('No requests yet', 'Can’t make a shift? Open it on Schedule and choose Give up this shift or Swap this shift. Days away go in a time-off request.');
+      if (!items.length && t.ok && b.ok) html += emptyBox('No requests yet', 'Can’t make a shift? Open it on Schedule. Days away go in a time-off request.');
     }
     html += '<div class="acts"><button type="button" class="cbtn cbtn-primary cbtn-lg cbtn-block" data-act="timeoff-open">Ask for time off</button></div>';
     el.innerHTML = html;
@@ -1002,7 +1002,7 @@
           '<div class="acts two"><button type="button" class="cbtn cbtn-secondary" data-act="sb-no" data-id="' + x.id + '">Not this time</button>' +
           '<button type="button" class="cbtn cbtn-primary" data-act="sb-yes" data-id="' + x.id + '">I’ll be on call</button></div>';
       } else {
-        html += '<p class="note">If someone can’t make it, you’re called first — the offer comes here and as a notice.' +
+        html += '<p class="note">If someone can’t make it, you’re called first.' +
           (x.consent_at ? ' You agreed ' + esc(mdy(String(x.consent_at).slice(0, 10))) + '.' : '') + '</p>' +
           '<div class="acts"><button type="button" class="cbtn cbtn-text tall" data-act="sb-no" data-id="' + x.id + '">I can’t be on call after all</button></div>';
       }
@@ -1111,7 +1111,7 @@
   var PARTS = [['whole', 'All day'], ['until', 'Until…'], ['from', 'From…'], ['lunch', 'Lunch'], ['dinner', 'Dinner']];
   function openTimeOff(){
     S.toPart = 'whole';
-    var t = todayIso(), html = '<p class="note" style="margin-top:0">Your manager answers it in Cavnar AI. An approved range stays off the next schedule. Your usual week goes in My availability, on Me.</p>' +
+    var t = todayIso(), html = '<p class="note" style="margin-top:0">An approved range stays off the next schedule. Your usual week goes in My availability, on Me.</p>' +
       '<div class="grid2"><div><label class="lbl" for="to-start">First day off</label><input class="fld num" type="date" id="to-start" min="' + t + '"></div>' +
       '<div><label class="lbl" for="to-end">Last day off</label><input class="fld num" type="date" id="to-end" min="' + t + '"></div></div>' +
       '<div class="lbl">Part of the day</div><div class="chips" role="group" aria-label="Part of the day">';
@@ -1145,7 +1145,7 @@
       html += '<div class="card rail"><div class="kicker">Last night’s note</div><p style="margin:6px 0 0;white-space:pre-wrap">' + esc(n.note) + '</p>' +
         '<p class="note">' + esc(n.signed_by || '') + (n.date_label ? ' · <span class="num">' + esc(n.date_label) + '</span>' : '') + '</p></div>';
     }
-    if (!sheets.length) html += emptyBox('No sheets for you today', 'Your manager’s sheets for your role show up here on the days you’re on the schedule.');
+    if (!sheets.length) html += emptyBox('No sheets for you today', 'Your role’s sheets show here on days you’re scheduled.');
     for (i = 0; i < sheets.length; i++) html += sheetCard(sheets[i], true);
     if (d.manager) html += managerBlock(d);
     el.innerHTML = html;
@@ -1323,7 +1323,7 @@
     html += '<div class="sechead">Announcements</div>';
     if (d === undefined) html += pulse('Loading your inbox');
     else if (!d.ok) html += failedBox(errText(d, 'Your inbox didn’t load.'), 'reload-inbox');
-    else if (!(d.announcements || []).length) html += emptyBox('Nothing from your manager yet', 'Announcements for the team land here. Tap Got it so your manager knows you read one.');
+    else if (!(d.announcements || []).length) html += emptyBox('Nothing from your manager yet', 'Tap Got it on one so your manager knows you read it.');
     else for (var i = 0; i < d.announcements.length; i++) html += annRow(d.announcements[i]);
 
     html += '<div class="sechead">Your manager</div><div class="card">';
@@ -1331,7 +1331,7 @@
     else if (!th.ok) html += failedBox(errText(th, 'Your messages didn’t load.'), 'reload-inbox');
     else {
       var msgs = th.messages || [];
-      if (!msgs.length) html += '<p class="note" style="margin:0 0 10px">Ask a question or follow up on a request. Your managers answer here.</p>';
+      if (!msgs.length) html += '<p class="note" style="margin:0 0 10px">Your managers answer here.</p>';
       else {
         html += '<div class="thread" id="thread" aria-live="polite">';
         for (var j = 0; j < msgs.length; j++) {
@@ -1460,7 +1460,7 @@
       html += '<label class="switch"><input type="checkbox" id="texts-on"' + (p.schedule_texts ? ' checked' : '') + ' data-version="' + esc(p.schedule_texts_consent_version || 2) + '">' +
         '<span><b>Schedule texts</b><br><span class="note" style="display:block;margin:2px 0 0">' + esc(p.schedule_texts_consent || '') + '</span></span></label>' +
         '<div class="errline" id="texts-err" role="status" aria-live="polite"></div>';
-    } else html += '<p class="note" style="margin:0">Shift and task reminders come as notices in the Cavnar AI iPhone app. Here, your inbox and requests show what’s new each time you open it.</p>';
+    } else html += '<p class="note" style="margin:0">Reminders come as notices in the Cavnar AI iPhone app.</p>';
     html += pushCard();
     html += '</div>';
     var tr = S.travel;
@@ -1512,7 +1512,7 @@
     if (Notification.permission === 'denied') return '<p class="note">Notices are blocked for this site in your browser settings.</p>';
     return '<div class="acts"><button type="button" class="cbtn cbtn-secondary cbtn-block" data-act="push-on">' +
       (S.pushOn ? 'Notices are on in this browser' : 'Get notices in this browser') + '</button></div>' +
-      (INSTALLED ? '' : '<p class="note">On a phone, add Cavnar AI to your home screen (your browser’s menu → Add to Home screen) for notices like an app.</p>') +
+      (INSTALLED ? '' : '<p class="note">On a phone, add Cavnar AI to your home screen for notices like an app.</p>') +
       '<div class="errline" id="push-err" role="status" aria-live="polite"></div>';
   }
 
@@ -1622,7 +1622,7 @@
     if (!p.ok) return failedBox(errText(p, 'What you’d like didn’t load.'), 'reload-me');
     if (!S.prefDraft) S.prefDraft = {parts: (p.preferred_dayparts || []).slice(), hours: p.desired_hours === null || p.desired_hours === undefined ? '' : String(Math.round(p.desired_hours))};
     var dp = S.prefDraft.parts;
-    return '<p class="note" style="margin-top:0">The shifts you’d rather have, and how many hours a week you want.</p>' +
+    return '' +
       '<div class="lbl">Shifts you’d rather have</div><div class="chips"><button type="button" class="chip" data-act="pref-part" data-part="morning" aria-pressed="' + (dp.indexOf('morning') >= 0) + '">Days</button>' +
       '<button type="button" class="chip" data-act="pref-part" data-part="night" aria-pressed="' + (dp.indexOf('night') >= 0) + '">Nights</button></div>' +
       '<label class="lbl" for="pref-hours">Hours a week</label><input class="fld num" id="pref-hours" inputmode="numeric" maxlength="2" placeholder="—" value="' + esc(S.prefDraft.hours) + '" style="max-width:120px">' +
@@ -1663,7 +1663,7 @@
       }
     }
     var empty = !d.house_rules && !(d.docs || []).length && !(d.certifications || []).length;
-    if (empty) html += emptyBox('No house rules yet', 'When your manager adds the house rules or a how-to, it shows up here.');
+    if (empty) html += emptyBox('No house rules yet', 'They show here once your manager adds them.');
     if (d.house_rules) html += '<div class="sechead">' + esc(d.house_rules.title || 'House rules') + '</div><p style="white-space:pre-wrap;color:var(--ink2);margin:0">' + esc(d.house_rules.body) + '</p>' +
       (d.house_rules.updated_at ? '<p class="note">Updated <span class="num">' + mdyTime(d.house_rules.updated_at).split(' ')[0] + '</span></p>' : '');
     if ((d.docs || []).length) {
