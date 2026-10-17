@@ -72,7 +72,7 @@ struct AccountAutomationView: View {
             if let draft = viewModel.autoDraft, draft.externalTool.isEmpty {
                 AccountSwitchRow(
                     label: "Draft next week's schedule",
-                    detail: "Every \(draft.day), a draft only. On by default with a paid Labor plan.",
+                    detail: "Every \(draft.day), a draft only.",
                     isOn: Binding(get: { draft.enabled }, set: { on in Task { await viewModel.setAutoDraft(on) } }),
                     busy: viewModel.saving == "auto_draft",
                     showsDivider: true
@@ -95,7 +95,7 @@ struct AccountAutomationView: View {
                 AccountSwitchRow(
                     label: "Send trusted supplier orders",
                     detail: order.suppliersTrusted == 0
-                        ? "No supplier trusted yet \u{2014} three sent orders earns one."
+                        ? "None trusted yet \u{2014} three sent orders earns one."
                         : "\(order.suppliersTrusted) supplier\(order.suppliersTrusted == 1 ? "" : "s") trusted; \(order.dayName) with an hour to undo.",
                     isOn: Binding(get: { order.enabled }, set: { on in Task { await viewModel.setAutoOrder(on) } }),
                     busy: viewModel.saving == "auto_order",
@@ -186,8 +186,8 @@ struct AccountAutomationView: View {
                         .padding(.vertical, 6)
                 }
                 CavnarWebLinkRow(title: "Your record",
-                                 subtitle: viewModel.earnedCount == 0 ? "Nothing earned yet \u{2014} each line is your own approvals, schedules and orders."
-                                    : "\(viewModel.earnedCount) earned \u{2014} each line is your own approvals, schedules and orders.",
+                                 // The hero says how many are earned; the row says what the record is.
+                                 subtitle: "Your approvals, schedules and orders.",
                                  path: "account/automation", actionLabel: "Open on the web")
             } else {
                 Text("The record hasn't loaded.").cavnarText(.body).padding(.vertical, 9)

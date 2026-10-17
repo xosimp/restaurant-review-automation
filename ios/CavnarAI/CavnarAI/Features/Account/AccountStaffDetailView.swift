@@ -57,7 +57,7 @@ struct AccountStaffDetailView: View {
                     }
                     .buttonStyle(CavnarSecondaryButtonStyle())
 
-                    Text("Only needed if someone can't sign themselves up — you'll have to read them the PIN.")
+                    Text("For someone who can't sign up themselves.")
                         .cavnarText(.caption, color: .cavnarInk2)
 
                     // The web's sign-in notice and its Recent failed PINs
@@ -68,7 +68,7 @@ struct AccountStaffDetailView: View {
                         AccountSection(kicker: "Sign-ins") {
                             AccountSwitchRow(
                                 label: "Tell me when someone opens the staff app",
-                                detail: "A push and a bell entry per staff sign-in. Off by default so it never becomes noise.",
+                                detail: "A push per staff sign-in.",
                                 isOn: Binding(get: { viewModel.summary?.account.staffSignInNotify ?? false },
                                               set: { on in Task { await viewModel.toggleStaffSignInNotify(on) } }),
                                 busy: viewModel.isTogglingStaffSignIn,
@@ -90,7 +90,7 @@ struct AccountStaffDetailView: View {
                 StaffTextEditSheet(
                     viewModel: viewModel,
                     title: "Name", field: "Name",
-                    help: "Spell it the way it appears on the schedule — that's what links them to their shifts.",
+                    help: "Spell it as on the schedule — that links their shifts.",
                     initial: staff.name) { value in
                         await viewModel.renameStaff(staff.membershipID, to: value)
                     }
@@ -507,7 +507,7 @@ private struct AddStaffSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Creates the account and the PIN yourself. Most employees can do this themselves with the join code.")
+                    Text("Most staff can sign up with the join code instead.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                     field($name, "Name, as it appears on the schedule")

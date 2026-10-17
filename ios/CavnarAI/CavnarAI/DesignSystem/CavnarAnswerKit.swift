@@ -332,6 +332,33 @@ struct CavnarEvidenceSection<Content: View>: View {
     }
 }
 
+/// The one sentence behind a disclosure — how a figure is computed, where a
+/// range comes from, why a rule exists — in Secondary, wrapping in full,
+/// figures in Space Grotesk. What `CavnarEvidenceSection(label:text:)` draws.
+struct CavnarDisclosedText: View {
+    let text: String
+
+    var body: some View {
+        CavnarMixedText(text, role: .secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension CavnarEvidenceSection where Content == CavnarDisclosedText {
+    /// A secondary sentence a tap away (text-reduction round 10/17/26):
+    /// "Web explains. iPhone decides." — the basis, method or caveat that
+    /// is not a warning moves here instead of sitting under the figure.
+    ///
+    ///     CavnarEvidenceSection(label: "How it's measured", text: basis)
+    ///
+    /// Collapsed, 44pt, Ember2, the hide label derived from the show label,
+    /// exactly as `CavnarEvidenceDisclosure`.
+    init(label: String = "How it's measured", text: String) {
+        self.init(label: label) { CavnarDisclosedText(text: text) }
+    }
+}
+
 extension CavnarAnswerCard where Detail == EmptyView {
     init(kicker: String? = nil, headline: String, headlineRole: CavnarText = .lead, summary: String? = nil,
          cause: String? = nil, isHypothesis: Bool = false, alternativeCause: String? = nil,

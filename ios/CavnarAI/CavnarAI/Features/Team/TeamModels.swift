@@ -448,16 +448,18 @@ struct LineupBrief: Decodable, Equatable {
     /// no draft, and there are lines enough to join (staff_brief.REWRITE_MIN_ITEMS).
     var canAskForDraft: Bool { !modelUsedToday && !hasDraft && items.count > 1 }
 
-    /// What the AI draft's state means — the web's DRAFT_SAID, word for word.
+    /// What the AI draft's state means — the web's DRAFT_SAID, cut to one
+    /// short line for the phone (text-reduction round 10/17/26); every
+    /// state still says whether a draft is offered and why not.
     var draftSaid: String {
         if isApproved { return edited ? "Your words are what the team sees." : "The team sees this brief." }
         switch draftStatus {
-        case "drafted": return "The AI drafted this from the lines above. Edit it if you like, then approve it."
-        case "refused": return "The AI draft didn\u{2019}t pass the staff check, so it isn\u{2019}t offered. The lines above stand."
-        case "held": return "No AI draft today: the data it rests on isn\u{2019}t current. The lines above stand."
-        case "failed": return "The AI draft didn\u{2019}t come back today. The lines above stand."
+        case "drafted": return "AI draft from the lines above."
+        case "refused": return "No AI draft: it didn\u{2019}t pass the staff check."
+        case "held": return "No AI draft: the data isn\u{2019}t current."
+        case "failed": return "The AI draft didn\u{2019}t come back today."
         case "no_items": return "Nothing for the AI to draft from today."
-        default: return "No AI draft today. Approve the lines as a brief, or write your own."
+        default: return "No AI draft today."
         }
     }
 }

@@ -338,7 +338,7 @@ struct LineupBriefCard: View {
                                             muted: !b.isApproved && !b.isWaiting,
                                             tint: b.isApproved ? .cavnarGreen : nil)
                             }
-                            Text("What your team reads before service. Nothing Cavnar AI writes reaches them until you approve it.")
+                            Text("Nothing Cavnar AI writes reaches the team until you approve it.")
                                 .cavnarText(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -414,7 +414,7 @@ struct LineupBriefCard: View {
     private func editor(_ b: LineupBrief) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             CavnarKicker("Brief for the team")
-            TextField("Write a short brief, or leave it and the team reads the lines above.", text: $text, axis: .vertical)
+            TextField("A short brief, or leave it for the lines", text: $text, axis: .vertical)
                 .lineLimit(3...8)
                 .cavnarTextFieldStyle()
                 .onChange(of: text) { _, v in if v.count > 600 { text = String(v.prefix(600)) } }

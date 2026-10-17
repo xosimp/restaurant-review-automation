@@ -132,8 +132,8 @@ struct AccountAlertsDetailView: View {
                         CavnarWebLinkRow(
                             title: "Restaurant alert rules",
                             subtitle: isOwner
-                                ? "Which alerts fire, text and email, quiet hours, the weekly digest, issue texts and alert contacts."
-                                : "What your restaurant is set to. Only the account owner can change these.",
+                                ? "Triggers, texts, email and the weekly digest."
+                                : "Only the account owner can change these.",
                             path: "account/notifications",
                             actionLabel: isOwner ? "Edit on the web" : "Open on the web"
                         )
@@ -159,8 +159,8 @@ struct AccountAlertsDetailView: View {
         AccountHero(title: pushDenied ? "Notifications are off" : "Your notifications") {
             GlowBadge(systemImage: pushDenied ? "bell.slash" : "bell.badge", size: 64)
         } subtitle: {
-            Text(pushDenied ? "Turn them on in Settings to hear from Cavnar AI."
-                            : "What reaches your phone. Each change saves at once.")
+            Text(pushDenied ? "Turn them on in Settings."
+                            : "What reaches your phone.")
         }
     }
 
@@ -171,7 +171,7 @@ struct AccountAlertsDetailView: View {
             if pushDenied {
                 CavnarCaveat(
                     title: "Notifications are turned off for Cavnar AI",
-                    detail: "iOS won't ask again, so nothing below can reach your phone until you turn them back on in Settings."
+                    detail: "iOS won't ask again."
                 )
                 .padding(.vertical, 9)
                 AccountActionRow(label: "Open Settings",
@@ -188,11 +188,10 @@ struct AccountAlertsDetailView: View {
                 // install: no prompt, no token, and nothing offering either.
                 CavnarCaveat(
                     title: "Nothing can reach your phone yet",
-                    detail: "Cavnar AI hasn't asked for permission to send notifications. None of the switches below do anything until it has."
+                    detail: "The switches below do nothing until you allow them."
                 )
                 .padding(.vertical, 9)
                 AccountActionRow(label: "Allow notifications",
-                                 detail: "Asks iOS now.",
                                  symbol: "bell.badge", showsDivider: false) {
                     Task {
                         await PushManager.shared.promptNow()

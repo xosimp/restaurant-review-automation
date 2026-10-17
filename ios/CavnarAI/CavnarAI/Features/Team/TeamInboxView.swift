@@ -211,14 +211,8 @@ struct TeamInboxView: View {
                     HomeMixedText.make("\(viewModel.unread) unread", role: .secondary, color: .cavnarEmber2)
                 }
             }
-            // How the inbox works — only while there's nothing in it yet
-            // (iOS readability round: it sat above every conversation).
-            if viewModel.threads.isEmpty && viewModel.announcements.isEmpty {
-                Text("Staff reach the manager on duty from the app; you answer here and it goes to their phone. "
-                     + "An announcement goes to each person\u{2019}s phone, and they tap Got it.")
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            // No how-it-works paragraph (text-reduction round 10/17/26):
+            // Messages' and Announcements' own empty lines say it once each.
         }
     }
 
@@ -342,7 +336,7 @@ struct TeamInboxView: View {
                 if let error = viewModel.announcementsError {
                     Text(error).font(.cavnarBody(CavnarType.body)).foregroundStyle(Color.cavnarInk2)
                 } else {
-                    Text("Nothing sent yet. An announcement reaches each person\u{2019}s phone, and you see who has read it.")
+                    Text("Nothing sent yet \u{2014} you\u{2019}ll see who read each one.")
                         .font(.cavnarBody(CavnarType.body))
                         .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -774,7 +768,7 @@ struct TeamAnnouncementComposer: View {
 
                     AccountSection(kicker: "How") {
                         AccountSwitchRow(label: "Urgent",
-                                         detail: "Breaks through Focus on their phones. For a change to tonight, not news.",
+                                         detail: "Breaks through Focus. For tonight\u{2019}s changes, not news.",
                                          isOn: $urgent)
                         AccountKVRow(label: "Last day", showsDivider: false) {
                             HStack(spacing: 8) {

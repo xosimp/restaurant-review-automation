@@ -126,7 +126,7 @@ struct ModulesGridView: View {
                     // being empty; with them gone, say what fills it.
                     CavnarEmptyHearth(
                         title: "No modules on yet",
-                        message: "Reviews, Labor, Food Cost, Marketing and Intel appear here once they're switched on for this location."
+                        message: "Modules appear here once they're on for this location."
                     )
                 } else {
                     ScrollView {

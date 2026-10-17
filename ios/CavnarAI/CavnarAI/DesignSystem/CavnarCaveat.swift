@@ -8,7 +8,10 @@ import SwiftUI
 /// model produced.
 struct CavnarCaveat: View {
     let title: String
-    let detail: String
+    /// Empty draws the title alone — a caveat whose title already says it
+    /// all needs no second sentence (text-reduction round 10/17/26).
+    /// Every existing `CavnarCaveat(title:detail:)` call is unchanged.
+    var detail: String = ""
 
     var body: some View {
         // Secondary (14) throughout, the icon sized by the same font so it
@@ -22,9 +25,11 @@ struct CavnarCaveat: View {
                 Text(title)
                     .font(.cavnarBody(CavnarType.secondary, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
-                Text(detail)
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .cavnarText(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -36,14 +41,14 @@ struct CavnarCaveat: View {
                 .stroke(Color.cavnarAmber.opacity(0.28), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title). \(detail)")
+        .accessibilityLabel(detail.isEmpty ? title : "\(title). \(detail)")
     }
 
     /// The two the app actually raises today.
     static var exampleData: CavnarCaveat {
         CavnarCaveat(
             title: "Example data",
-            detail: "This is a sample pantry, not your numbers. Connect Toast or upload a count to see your own."
+            detail: "A sample pantry, not your numbers. Connect Toast or upload a count."
         )
     }
 
@@ -61,11 +66,13 @@ struct CavnarCaveat: View {
     static func unverifiedFigures(_ figures: [String]) -> CavnarCaveat {
         let detail: String
         if figures.isEmpty {
-            detail = "Cavnar AI couldn't trace every figure here back to your data. Check before acting on them."
+            // One short warning each (text-reduction round 10/17/26): what
+            // didn't trace, and check first — never softened.
+            detail = "Not every figure here traces to your data. Check before acting."
         } else if figures.count == 1 {
-            detail = "Cavnar AI couldn't trace \(figures[0]) back to your data. Check before acting on it."
+            detail = "\(figures[0]) doesn't trace to your data. Check before acting."
         } else {
-            detail = "Cavnar AI couldn't trace \(figures.count) figures here (\(figures.prefix(3).joined(separator: ", "))) back to your data. Check before acting on them."
+            detail = "\(figures.count) figures (\(figures.prefix(3).joined(separator: ", "))) don't trace to your data. Check before acting."
         }
         return CavnarCaveat(title: "Unverified numbers", detail: detail)
     }
@@ -79,11 +86,11 @@ struct CavnarCaveat: View {
         // Said as what it is (9/26/26): Cavnar AI's hypothesis, not a
         // finding the app disputes with itself.
         if named.isEmpty {
-            detail = "Cavnar AI suggests a reason here that nothing measured confirms yet. Check it before acting on it."
+            detail = "A reason nothing measured confirms yet. Check before acting."
         } else if named.count == 1 {
-            detail = "\u{201C}\(named[0])\u{201D} is Cavnar AI\u{2019}s guess at the reason: nothing measured links these yet. Check it before acting on it."
+            detail = "\u{201C}\(named[0])\u{201D} is Cavnar AI\u{2019}s guess: nothing measured links these yet. Check before acting."
         } else {
-            detail = "\(named.count) reasons here (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) are Cavnar AI\u{2019}s guesses: nothing measured links them yet. Check them before acting on them."
+            detail = "\(named.count) reasons (\(named.prefix(2).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", "))) are Cavnar AI\u{2019}s guesses: nothing measured links them yet. Check before acting."
         }
         return CavnarCaveat(title: "Hypothesis", detail: detail)
     }
@@ -99,7 +106,7 @@ struct CavnarCaveat: View {
             : "\(names.prefix(2).joined(separator: ", "))"
         return CavnarCaveat(
             title: "Unverified name",
-            detail: "Cavnar AI couldn't match \(who) to a reviewer in your data. Open the review before acting on this."
+            detail: "No reviewer in your data matches \(who). Open the review before acting."
         )
     }
 
@@ -112,8 +119,8 @@ struct CavnarCaveat: View {
             // The stale path runs because writing a new read failed and
             // nothing is queued: promise only the retry that does happen
             // (M-33). `asOf` arrives M/D/YY from the server (M-26).
-            detail: asOf.map { "This is the last read Cavnar AI finished, from \($0). A new one couldn\u{2019}t be written just now \u{2014} Cavnar AI tries again the next time this opens." }
-                ?? "This is the last read Cavnar AI finished. A new one couldn\u{2019}t be written just now \u{2014} Cavnar AI tries again the next time this opens."
+            detail: asOf.map { "From \($0). A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again next time this opens." }
+                ?? "A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again next time this opens."
         )
     }
 }

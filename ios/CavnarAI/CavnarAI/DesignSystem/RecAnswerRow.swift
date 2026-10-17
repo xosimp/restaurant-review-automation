@@ -191,7 +191,9 @@ struct RecReasonDialog: ViewModifier {
 extension View {
     func recReasonDialog(isPresented: Binding<Bool>,
                          title: String = "Why isn\u{2019}t it for you?",
-                         message: String? = "One tap tells Cavnar AI what to stop suggesting.",
+                         // No default sentence (text-reduction round 10/17/26):
+                         // the title and the reasons say it; a caller may pass one.
+                         message: String? = nil,
                          skipLabel: String? = nil,
                          onSkip: (() -> Void)? = nil,
                          onPick: @escaping (RecReason) -> Void) -> some View {

@@ -122,9 +122,8 @@ struct AccountHoursSheet: View {
                         }
                         .padding(.vertical, 9)
                         }
-                        Text("Each date saves as soon as you add or remove it.")
-                            .cavnarText(.caption)
-                            .padding(.bottom, 6)
+                        // No "saves as you go" line (text-reduction round
+                        // 10/17/26): the "Closed 9/21/26 saved" overlay says it.
                     }
                     if let error = viewModel.closureError {
                         Text(error).cavnarText(.secondary, color: .cavnarRedText)
@@ -145,7 +144,7 @@ struct AccountHoursSheet: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The schedule plans this day as open again. It saves right away.")
+                Text("The schedule plans this day as open again.")
             }
             .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
         }

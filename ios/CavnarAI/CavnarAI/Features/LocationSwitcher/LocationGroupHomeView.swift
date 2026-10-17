@@ -46,7 +46,7 @@ struct LocationGroupHomeView: View {
                     // "Web explains. iPhone decides." — the location-to-
                     // location comparison is analysis (M15).
                     CavnarWebLinkRow(title: "How your locations compare",
-                                     subtitle: "Labor, food cost, reviews and sales, location against location",
+                                     subtitle: "Labor, food cost, reviews and sales",
                                      path: "locations", actionLabel: "Open on the web")
                 } else if viewModel.isLoading {
                     CavnarSkeletonLines(widths: [0.5, 0.9, 0.75, 0.6], lineHeight: 14, spacing: 12)

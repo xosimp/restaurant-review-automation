@@ -464,7 +464,7 @@ private struct AIConsultantSheet: View {
             // Amber: the kicker's colour is its meaning here (a projection).
             CavnarKicker("Looking ahead", icon: "calendar.badge.clock", tint: .cavnarAmber)
             CavnarMixedText(forecast, role: .body)
-            Text("A projection, not a measurement. It assumes the current trend holds.")
+            Text("A projection, assuming the current trend holds.")
                 .cavnarText(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -481,7 +481,7 @@ private struct AIConsultantSheet: View {
     private var footer: some View {
         HStack(spacing: 8) {
             CavnarSealMark(size: 20)
-            Text("Cavnar AI · analysis of your latest synced data")
+            Text("Cavnar AI · your latest synced data")
                 .cavnarText(.caption)
         }
         .frame(maxWidth: .infinity)

@@ -448,7 +448,7 @@ struct NotificationsListView: View {
                 } else if viewModel.notifications.isEmpty {
                     CavnarEmptyHearth(
                         title: "No alerts yet",
-                        message: "Low ratings, labor overages, and anything else worth knowing about will show up here."
+                        message: "Low ratings, labor overages and more land here."
                     )
                     .padding(.top, 40)
                 } else {
