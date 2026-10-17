@@ -407,21 +407,48 @@ def run_pos_archive(db_path=DB_PATH, today=None):
     the shared token bucket per token (rpower._sleep_for_spacing), not this
     pass. Standard counts: `attempted` / `ok` are the rows queued now;
     `skipped` the restaurants with no POS that can archive (and rows already
-    queued today)."""
+    queued for that night).
+
+    Each row is keyed on the night it archives — the restaurant's last
+    complete business date (pos.complete_through) — and, when the fan-out
+    runs before that restaurant's 5am local boundary (4am Chicago is 2am in
+    Los Angeles, and still last night's business date in Chicago too), it
+    waits for the boundary (`not_before`) and archives the night that has
+    then ended: at 4am the run used to archive the night before last, and
+    last night waited a day (food & bar audit 10/16/26 POS-08). `today`
+    (a script or a test) keys the rows on today - 1 and waits for nothing."""
     import job_queue
     import pos_archive
-    from datetime import date as _date
-    day = str(today or _date.today())[:10]
     items, unsupported = [], 0
     for r in _restaurants(db_path):
         if pos_archive.provider_for(r.id)[1] is None:
             unsupported += 1
             continue
-        items.append({"payload": {"restaurant_id": r.id, "day": day}, "restaurant_id": r.id,
-                      "idempotency_key": f"pos_archive:{r.id}:{day}"})
+        night, not_before = _archive_night(r, today)
+        items.append({"payload": {"restaurant_id": r.id, "day": night}, "restaurant_id": r.id,
+                      "not_before": not_before, "idempotency_key": f"pos_archive:{r.id}:{night}"})
     created = job_queue.enqueue_many("pos_archive", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
     return _counts(created, created, 0, unsupported + (len(items) - created), False, queued=created)
+
+
+def _archive_night(restaurant, today=None):
+    """(ISO night, not_before epoch or 0) for the restaurant's archive row."""
+    from datetime import date as _date, timedelta as _td
+    if today is not None:
+        return (_date.fromisoformat(str(today)[:10]) - _td(days=1)).isoformat(), 0
+    import pos
+    from time_utils import restaurant_now, business_date, BUSINESS_DAY_START_HOUR
+    aware = restaurant_now(restaurant)
+    local = aware.replace(tzinfo=None)
+    night = pos.complete_through(restaurant, local)
+    trading = business_date(restaurant, local)
+    if local.hour < BUSINESS_DAY_START_HOUR and night < trading:
+        # The night still trading ends at the boundary: wait for it, then
+        # archive it (run_for computes the same night at run time).
+        boundary = aware.replace(hour=BUSINESS_DAY_START_HOUR, minute=0, second=30, microsecond=0)
+        return trading.isoformat(), boundary.timestamp()
+    return night.isoformat(), 0
 
 
 def run_queued_pos_archive(job):
@@ -1869,7 +1896,16 @@ LEARNERS = {
     "staffing_learning": "staffing_elasticity:estimate_one",
     "schedule_scorecard": "schedule_scorecard:score_one",
     "quality_calibration": "strategy_jobs:quality_calibration_one",
+    # The heavy food-cost and bar sweeps (food & bar audit 10/16/26
+    # SCALE-07): inline on the scheduler thread in the web process they
+    # reached ~1,000 restaurants a pass. One row per restaurant now, run by
+    # the queue worker (fan_out below).
+    "food_cost_diagnosis": "scheduler:food_cost_diagnosis_one",
+    "bar_price_push": "strategy_jobs:bar_price_push_one",
 }
+# Learners whose body takes the row's `today` (the restaurant's own date the
+# fan-out chose), as people_nightly does.
+LEARNERS_TAKE_TODAY = ("people_nightly", "bar_price_push")
 
 
 def fan_out_learner(name, db_path=DB_PATH, today=None):
@@ -1900,6 +1936,98 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     return _counts(created, created, 0, len(items) - created, False, queued=created)
 
 
+def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
+    """`name`'s per-restaurant work for `ids` as `learner` queue rows (bulk
+    class), keyed on the name, the restaurant and `day` so a pass run twice
+    queues nothing new — the fan_out_learner pattern for any LEARNERS entry
+    (food & bar audit 10/16/26 SCALE-07). `today_by_id` {rid: date} hands a
+    body that takes it (LEARNERS_TAKE_TODAY) the restaurant's own date.
+    Standard counts: `attempted` / `ok` are the rows queued now; `skipped`
+    the rows already queued for `day`."""
+    import job_queue
+    if name not in LEARNERS:
+        raise KeyError(f"no learner {name!r}")
+    day = str(day)[:10]
+    items = []
+    for rid in ids:
+        payload = {"learner": name, "restaurant_id": int(rid), "day": day}
+        if today_by_id and rid in today_by_id:
+            payload["today"] = str(today_by_id[rid])[:10]
+        items.append({"payload": payload, "restaurant_id": int(rid), "not_before": not_before,
+                      "idempotency_key": f"learner:{name}:{int(rid)}:{day}"})
+    created = job_queue.enqueue_many("learner", items, priority_class="bulk",
+                                     db_path=None if db_path == DB_PATH else db_path) if items else 0
+    return _counts(created, created, 0, len(items) - created, False, queued=created)
+
+
+def open_rows(name, day, db_path=DB_PATH) -> int:
+    """How many of `name`'s queue rows for `day` are still queued or running:
+    a pass that fanned out has not settled until they are done (the morning
+    briefs wait for the food cost diagnoses — scheduler._morning_input_pending)."""
+    import models as _models_or
+    conn = _models_or.get_conn() if db_path in (None, DB_PATH) else _models_or.get_conn(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM jobs WHERE kind='learner' AND state IN ('queued', 'running') "
+                           "AND idempotency_key LIKE ?", (f"learner:{name}:%:{str(day)[:10]}",)).fetchone()
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def bar_price_push_one(restaurant_id, today=None, db_path=None):
+    """One restaurant's Monday bar price push, as a queue row
+    (bar_price_push_pass fanned it out after claiming its local window):
+    bar_signals.push_increase for the restaurant's own date. {pushed}."""
+    import bar_signals
+    from datetime import date as _date
+    day = _date.fromisoformat(str(today)[:10]) if today else None
+    reached = bar_signals.push_increase(restaurant_id, today=day, db_path=db_path)
+    return {"pushed": 1 if reached else 0}
+
+
+def bar_price_push_pass(db_path=None, now=None):
+    """What scheduler_loop runs hourly on Mondays for the bar price push
+    (SCALE-07): the cheap part on the scheduler thread — which restaurants
+    with distributor invoices are in their own 9am-2pm Monday window, each
+    claimed once a day as bar_signals.run_price_push claims it — and the
+    push itself as one `learner` row per restaurant for the queue worker.
+    Refused off the production scheduler, as the inline sweep is.
+    bar_signals.run_price_push stays the direct-call body (Run now, a
+    script); the scheduler never runs it inline."""
+    import bar_signals
+    import models as _m
+    import scheduler as _sched
+    from time_utils import restaurant_now
+    ids = bar_signals._restaurants_with_invoices(db_path)
+    if not _sched.scheduling_allowed():
+        return _counts(0, 0, 0, len(ids), False, reason="not the production scheduler")
+    due, skipped = {}, 0
+    for rid in ids:
+        r = _m.get_restaurant(rid, db_path=db_path) if db_path else _m.get_restaurant(rid)
+        if r is None or (getattr(r, "billing_status", None) or "trial").lower() in _m.BLOCKED_BILLING_STATES \
+                or not getattr(r, "module_inventory", 0):
+            skipped += 1
+            continue
+        local = now or restaurant_now(r, naive=True)
+        if local.weekday() != 0 or not _sched.local_due(r, bar_signals.PUSH_HOUR, until=bar_signals.PUSH_UNTIL,
+                                                         claim_key="bar_price_push", now_local=local):
+            skipped += 1
+            continue
+        due[rid] = local.date()
+    if not due:
+        return _counts(0, 0, 0, skipped, False, queued=0)
+    days = sorted({str(d) for d in due.values()})
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": skipped, "hit_bound": False, "queued": 0}
+    for day in days:
+        group = [rid for rid, d in due.items() if str(d) == day]
+        c = fan_out("bar_price_push", group, day, db_path=db_path or DB_PATH, today_by_id=due)
+        for k in ("attempted", "ok", "skipped", "queued"):
+            out[k] += c.get(k, 0)
+    return out
+
+
 def learner_pass(name, fn=None):
     """What scheduler_loop runs for a nightly learner: its fan-out onto the
     job queue — the one path (blind re-audit 10/11/26 ARCH-10; JOB_QUEUE=0
@@ -1925,7 +2053,7 @@ def run_queued_learner(job):
         return {"skipped": f"no learner {name!r}"}
     mod, _sep, fn = target.partition(":")
     body = getattr(importlib.import_module(mod), fn)
-    kwargs = {"today": p["today"]} if (name == "people_nightly" and p.get("today")) else {}
+    kwargs = {"today": p["today"]} if (name in LEARNERS_TAKE_TODAY and p.get("today")) else {}
     with _models_lq.read_scope():
         out = body(rid, **kwargs)
     return out if isinstance(out, dict) else {"result": out}

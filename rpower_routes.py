@@ -12,7 +12,8 @@ Admin endpoints (admin_required, restaurant_id in URL):
 
 Client endpoints (login_required, scoped to the session's restaurant):
   GET  /api/rpower/status
-  POST /api/rpower/sync          the account card's Sync button
+  POST /api/rpower/sync          the account card's Sync button (429 within
+                                 SYNC_NOW_COOLDOWN_MINUTES of the last press)
   POST /api/rpower/disconnect    principal only
 
 Connecting RPOWER is deliberately admin-only and has no client-facing save.
@@ -25,6 +26,9 @@ from auth import admin_required, login_required, recent_auth_required
 from models import update_restaurant
 
 rpower_bp = Blueprint("rpower", __name__)
+# "Sync now" from the account card or the app, at most once in this many
+# minutes per restaurant (POS-21; do_sync).
+SYNC_NOW_COOLDOWN_MINUTES = 10
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(rpower_bp)
@@ -164,6 +168,16 @@ def do_sync(current_user):
     rid = current_user["restaurant_id"]
     if not rpower.is_connected(rid):
         return {"ok": False, "error": "RPower isn't connected yet."}, 400
+    # Once per SYNC_NOW_COOLDOWN_MINUTES per restaurant, whoever presses it
+    # (food & bar audit 10/16/26 POS-21): each press is a 60-day timeclock
+    # read — nine week-sized requests and the people lists, none of it from
+    # the archive — against a live store, the traffic RPOWER asked us not to
+    # send. The console's own button (admin) is not held to it.
+    import ops
+    if not ops.claim_cooldown(f"rpower_sync_now:{rid}", SYNC_NOW_COOLDOWN_MINUTES):
+        return {"ok": False, "cooldown": True,
+                "error": f"RPower synced in the last {SYNC_NOW_COOLDOWN_MINUTES} minutes. "
+                         f"Try again in a few minutes."}, 429
     # The same path as the console's button and the nightly sync (#65).
     import scheduler
     scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")

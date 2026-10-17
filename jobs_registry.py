@@ -145,8 +145,9 @@ JOBS = {
     "pos_archive": dict(
         cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="POS archive", description="Queue one archive row per restaurant whose POS can archive (job_queue "
-                                         "kind pos_archive): yesterday's tickets, sale lines and punches, days "
-                                         "the POS restated, a week of backfill",
+                                         "kind pos_archive), waiting for its 5am local boundary: the last "
+                                         "complete night's tickets, sale lines and punches once the POS has "
+                                         "closed it, days the POS restated, a week of backfill",
         target=("strategy_jobs", "run_pos_archive"), max_minutes=30, retry=True),
     # The Daily Sales Report's figures for the nights before it started, its
     # own job (bar audit 10/14/26 RPW-13 / R11): it ran inside the POS sync
@@ -286,7 +287,8 @@ JOBS = {
         cadence="6am CT daily, after the snapshots and its batch (sweep lane)", sla_minutes=_D, sends=False,
         runnable=True, label="Food cost diagnoses",
         description="Root-cause reads over each restaurant's ranked cost drivers: the batch's answers reused, "
-                    "the rest written now (bounded, resumable)",
+                    "the rest written by the queue worker, one row per restaurant (the loop queues them, "
+                    "food_cost_diagnoses_pass; Run now runs the bounded, resumable sweep)",
         target=("scheduler", "run_food_cost_diagnoses"), max_minutes=60, retry=True, lane="sweep"),
     # The diagnoses' Message Batches (AI cost audit 10/7/26 #58): the calls
     # the 6am passes would make, sent at half the price ahead of them.
@@ -430,7 +432,8 @@ JOBS = {
         cadence="hourly on Mondays (9am local)", sla_minutes=_W, sends=True, runnable=True,
         label="Bar price push",
         description="Push each restaurant's biggest bar price increase that held, worth $25 a month or more, once "
-                    "per increase (push only; bounded, resumable)",
+                    "per increase (push only): the loop claims each restaurant's window and queues its push "
+                    "(strategy_jobs.bar_price_push_pass); Run now runs the bounded, resumable sweep",
         target=("bar_signals", "run_price_push"), max_minutes=10),
     "open_shift_watch": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
