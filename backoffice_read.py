@@ -70,16 +70,29 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
     food = [x for x in bo.entries(restaurant_id, start=first, end=e, db_path=db_path) if x["category"] == "food"]
     if not food:
         return None
-    sales = bo._food_sales(restaurant_id, first, e, db_path)
+    # Twelve weeks of nights so the days the restaurant trades are its own.
+    fsd = bo.food_sales_detail(restaurant_id, (start - timedelta(days=84)).isoformat(), e, db_path)
+    sales, partial = fsd["by_date"], set(fsd["partial"])
 
     def window(a, b):
+        """(bought, food sales, covered) — `covered` False unless sales
+        cover WINDOW_MIN_COVERAGE of the days the restaurant trades in it,
+        a partly Unmapped night not counting (FC-CALC-03, food_bought_vs_
+        sold's gate): a week's invoices over three nights of sales is no
+        bought-vs-sold figure."""
         p = sum(float(x["amount"]) for x in food if a <= x["date"] <= b)
         f = sum(v for d, v in sales.items() if a <= d <= b)
-        return p, f
+        nights = sum(1 for d, v in sales.items() if a <= d <= b and v > 0 and d not in partial)
+        trading = bo._trading_days(sales, a, b)
+        return p, f, (nights > 0 and nights >= bo.WINDOW_MIN_COVERAGE * trading), nights, trading
 
-    bought, fsales = window(s, e)
-    pb, pf = window((start - timedelta(days=7)).isoformat(), (start - timedelta(days=1)).isoformat())
-    fb, ff = window((end - timedelta(days=27)).isoformat(), e)
+    bought, fsales, w_ok, w_nights, w_trading = window(s, e)
+    pb, pf, p_ok, _n, _t = window((start - timedelta(days=7)).isoformat(), (start - timedelta(days=1)).isoformat())
+    fb, ff, f_ok, _n, _t = window((end - timedelta(days=27)).isoformat(), e)
+    if not p_ok:
+        pb = pf = 0.0
+    if not f_ok:
+        fb = ff = 0.0
     feed = bo.feed_state(restaurant_id, db_path)
     facts = {"bought": round(bought, 2), "food_sales": round(fsales, 2), "prev_bought": round(pb, 2),
              "prev_food_sales": round(pf, 2), "four_week_bought": round(fb, 2), "four_week_sales": round(ff, 2),
@@ -89,6 +102,11 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
     if fsales <= 0:
         out["text"] = (f"No food sales are on file for {week} yet, so there is nothing to set the "
                        f"{_money(bought)} of food bought that week against.")
+        return out
+    if not w_ok:
+        facts.update(nights=w_nights, trading_days=w_trading)
+        out["text"] = (f"Food sales cover {w_nights} of the {w_trading} days you trade in {week} — too few to "
+                       f"set the {_money(bought)} of food bought that week against.")
         return out
     pct = 100.0 * bought / fsales
     facts["pct"] = round(pct, 1)

@@ -852,8 +852,13 @@ def _empty_for(restaurant_id, weeks_have, is_live, db_path=None):
         cs = _bc.counts(restaurant_id, db_path)
         if cs or _bo.feed_state(restaurant_id, db_path).get("on_file"):
             return _count_empty_state(len(cs), weeks_have)
-    except Exception:
-        pass
+    except Exception as e:
+        # Degrades to the generic empty state, never silently (SCALE-11).
+        try:
+            import ops as _ops
+            _ops.capture(e, job="waste_trend._empty_for", restaurant_id=restaurant_id, db_path=db_path)
+        except Exception:
+            pass
     return _empty_state(weeks_have, is_live)
 
 

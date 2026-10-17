@@ -729,6 +729,14 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
                                    else "Comes with your second Back Office count")
         return base
     close = cs[-1]
+    if close.get("gl_gap"):
+        # A count missing a food account the counts around it carry was not
+        # read whole: never a closing figure (ING-17, the waste periods' rule).
+        base["missing"].append({"component": "a whole count at the window's end",
+                                "why": (f"the {mdy(close['end'])} count has no {', '.join(close['gl_gap'])} — the "
+                                        "counts around it do, so a count was not read whole")})
+        base["unmeasured_line"] = "Comes with your next Back Office count"
+        return base
     close_gap = (w_end - date.fromisoformat(close["end"])).days
     if close_gap > tol:
         base["missing"].append({"component": "a count at the window's end",
@@ -738,6 +746,14 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
         return base
     open_target = w_start - timedelta(days=1)
     earlier = [c for c in cs[:-1] if (open_target - date.fromisoformat(c["end"])).days <= tol]
+    whole = [c for c in earlier if not c.get("gl_gap")]
+    if earlier and not whole:
+        c = earlier[-1]
+        base["missing"].append({"component": "a whole count at the window's start",
+                                "why": (f"the {mdy(c['end'])} count has no {', '.join(c['gl_gap'])} — the counts "
+                                        "around it do, so a count was not read whole")})
+        return base
+    earlier = whole
     if not earlier:
         base["missing"].append({"component": "a count at the window's start",
                                 "why": (f"the counts don't bracket {mdy(w_start)} to {mdy(w_end)}: no Back Office "

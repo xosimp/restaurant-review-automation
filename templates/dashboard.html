@@ -47111,6 +47111,17 @@ function sfw2RuleCheck(chk) {
           : '<b>Confirm which POS categories are bar sales.</b> Cavnar AI is reading its own suggestions until you do.')
         + (ul ? '<ul>' + ul + '</ul>' : '') + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Sort your POS categories</button></div>');
     }
+    // Back Office entries paid to a distributor on the invoice feed that
+    // match none of its invoices: held, never in bought vs sold, until the
+    // owner says which they are (LEAD-01, 10/16/26).
+    var tc = (d.outside_fintech || {}).to_confirm || [];
+    if (tc.length) {
+      var tl = '';
+      for (i = 0; i < tc.length && i < 12; i++) tl += '<li><b>' + esc2(tc[i].vendor) + '</b>' + (tc[i].invoice_number ? ' #' + esc2(tc[i].invoice_number) : '') + ' · ' + hn(tc[i].date_mdy) + ' · ' + hn(money(tc[i].amount))
+        + (OWNER ? ' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-entry="' + esc2(tc[i].entry_key) + '" data-vendor="' + esc2(tc[i].vendor_key) + '" data-act="count">Count it</button>'
+          + '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-entry="' + esc2(tc[i].entry_key) + '" data-vendor="' + esc2(tc[i].vendor_key) + '" data-act="not_purchase">Not a purchase</button>' : '') + '</li>';
+      out.push('<div class="br-warn info"><b>' + hn(money((d.outside_fintech || {}).to_confirm_total)) + ' paid in Back Office to ' + plural(tc.length, 'a distributor', 'distributors') + ' on ' + esc2(fl) + ' matches none of its invoices.</b> It isn’t counted until you say what it is — alcohol bought outside ' + esc2(fl) + ', or a payment, deposit or invoice it already has.<ul>' + tl + '</ul></div>');
+    }
     // Distributors no longer expected are listed with the distributors, not
     // above the cards (owner, 10/15/26).
     return out.length ? '<div class="br-alerts">' + out.join('') + '</div>' : '';
@@ -48280,7 +48291,7 @@ function sfw2RuleCheck(chk) {
   /* Focus survives a re-render (V30): the focused control's own key, found again. */
   var FKEYS = ['data-br-cat', 'data-br-map', 'data-br-cnt', 'data-br-row', 'data-br-dir', 'data-br-series', 'data-br-more', 'data-br-mixers',
                'data-br-cdel', 'data-br-pack', 'data-br-link', 'data-br-exp', 'data-br-dm', 'data-br-pmore', 'data-br-why', 'data-br-mapconfirm',
-               'data-br-wlog', 'data-br-vmap', 'data-br-unaside', 'data-br-specall', 'data-br-ladall', 'data-br-credall'];
+               'data-br-wlog', 'data-br-vmap', 'data-br-unaside', 'data-br-specall', 'data-br-ladall', 'data-br-credall', 'data-br-entry'];
   function focusKey(el) {
     if (!el || !el.getAttribute) return null;
     if (el.id) return '#' + el.id;
@@ -48570,7 +48581,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -48648,6 +48659,9 @@ function sfw2RuleCheck(chk) {
         ownerWrite('/api/food-cost/bar/drink-map', vb, skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now', t);
       } else if (a('data-br-unaside') != null) {
         ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-unaside'), product_key: null}, 'Back in Drinks to match', t);
+      } else if (a('data-br-entry') != null) {
+        var ea = a('data-act');
+        ownerWrite('/api/food-cost/purchases/entry', {vendor_key: a('data-vendor'), entry_key: a('data-br-entry'), decision: ea}, ea === 'count' ? 'Counted — it is in bought vs sold now' : 'Set aside — not counted as a purchase', t);
       } else if (a('data-br-spec') != null) {
         var act = a('data-act'), sb = {id: +a('data-br-spec')};
         if (act === 'confirm') {

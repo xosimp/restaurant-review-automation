@@ -207,7 +207,7 @@ from itertools import combinations
 import ai_guard as _g
 from confidence_engine import HIGH_AT, MEDIUM_AT
 
-VERSION = "rv4"   # rv4 (10/16/26, food + bar audit): a derived % or ratio only inside one fact family, entity, period and kind (AI-01); "Why:", "comes down to", "points to", "is down to" are causes (K1, AI-02); stock quantities and "doubled/halved" are checked (F1, AI-08); "$X/month saved" rewrites to one noun phrase (F4, AI-20). rv3 (10/16/26): a paired run binds in order beside another figure; a count of reviews is never a day's figure (F2). rv2 (9/29/26): a paired list binds its figures in order (F2)
+VERSION = "rv4"   # rv4 (10/16/26, food + bar audit): a derived % or ratio only inside one fact family, entity, period and kind (AI-01); "Why:", "comes down to", "points to", "is down to" are causes (K1, AI-02); stock quantities and "doubled/halved" are checked (F1, AI-08), and a present-tense move ("is climbing") against the fact's direction is X1 (AI-08); "$X/month saved" rewrites to one noun phrase (F4, AI-20). rv3 (10/16/26): a paired run binds in order beside another figure; a count of reviews is never a day's figure (F2). rv2 (9/29/26): a paired list binds its figures in order (F2)
 
 # ── closed vocabularies ─────────────────────────────────────────────────────
 
@@ -736,6 +736,20 @@ _MOVE_PAST = (r"(?:rose|fell|dropped|climbed|slipped|declined|jumped|increased|d
               r"have\s+gotten\s+(?:worse|better)|has\s+gotten\s+(?:worse|better)|ran|hit|landed|averaged|"
               r"totall?ed|stayed|slid|lagged|trailed)")
 _MOVE_PAST_RE = re.compile(r"\b" + _MOVE_PAST + r"\b", re.I)
+# The same moves in the present: "waste is climbing week over week" when
+# the prompt said waste was down (food + bar audit 10/16/26, AI-08). Motion
+# verbs only — "is higher than the recipes call for" compares, and "is down
+# to" names a cause (K1).
+_MOVE_NOW_UP = ("climbing", "rising", "growing", "increasing", "spiking", "jumping", "creeping", "trending up",
+                "going up", "climbs", "rises", "grows", "increases", "keeps climbing", "keeps rising")
+_MOVE_NOW_DOWN = ("falling", "dropping", "declining", "decreasing", "shrinking", "slipping", "sliding", "easing",
+                  "trending down", "going down", "falls", "drops", "declines", "decreases", "shrinks",
+                  "keeps falling", "keeps dropping")
+_MOVE_NOW = (r"(?:(?:is|are|has\s+been|have\s+been|keeps?|kept)\s+)?(?:"
+             + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in sorted(_MOVE_NOW_UP + _MOVE_NOW_DOWN, key=len,
+                                                                          reverse=True)) + r")")
+_NOW_UP_WORDS = frozenset(w for p in _MOVE_NOW_UP for w in p.split() if w not in ("keeps", "trending", "going"))
+_NOW_DOWN_WORDS = frozenset(w for p in _MOVE_NOW_DOWN for w in p.split() if w not in ("keeps", "trending", "going"))
 
 # Realised money verbs (NS3 R2), losses, and promises about money.
 # "$520.00/month saved": the figure's own period between it and the verb.
@@ -2242,7 +2256,7 @@ class _Run:
             subject = (f.entity or f.key.split(".")[0]).lower()
             if f.direction and len(subject) >= 4:
                 self.moves.append((f, subject, re.compile(r"\b" + re.escape(subject) + r"\w*\s+(?:\w+\s+){0,2}?("
-                                                          + _MOVE_PAST + r")\b", re.I)))
+                                                          + _MOVE_PAST + "|" + _MOVE_NOW + r")\b", re.I)))
 
     # ── findings ──
     def emit(self, rule, sev_i, sev_u=None, span="", detail="", caveat=None):
@@ -3744,8 +3758,9 @@ class _Run:
             if not m:
                 continue
             words = set(m.group(1).lower().split())
-            said = (-1 if words & (_g.DIRECTION_BEFORE_DOWN | {"down", "slowed"}) else
-                    1 if words & (_g.DIRECTION_BEFORE_UP | {"up", "climbed", "jumped", "spiked", "grew"}) else 0)
+            said = (-1 if words & (_g.DIRECTION_BEFORE_DOWN | {"down", "slowed"} | _NOW_DOWN_WORDS) else
+                    1 if words & (_g.DIRECTION_BEFORE_UP | {"up", "climbed", "jumped", "spiked", "grew"}
+                                  | _NOW_UP_WORDS) else 0)
             if said and said != f.direction:
                 self.emit("X1", "caveat", "drop", m.group(0), f"the data says {subject} went "
                           f"{'up' if f.direction > 0 else 'down'}",

@@ -67,6 +67,9 @@ SUSPECT_PCT = 12.0
 # ...and over this share, a price or a pack set up wrong (a case of 96 buns
 # set up as "Each": $30 a bun, a 250% burger). Flagged and kept out too.
 SUSPECT_HIGH_PCT = 70.0
+# ...or over twice the food cost target, when that is higher: a kitchen
+# targeting 40% runs honest 75% plates (FC-CALC-10).
+SUSPECT_HIGH_TARGET_X = 2.0
 WINDOW_DAYS = 28
 
 
@@ -595,14 +598,31 @@ def margin_target(restaurant) -> dict:
     return {"pct": pct, "source": "food_cost_target", "label": f"{pct:g}% — 100 minus {ref['basis']}"}
 
 
+def suspect_high(restaurant_id, db_path=None) -> float:
+    """The plate cost % over which a fully priced dish is flagged as a
+    price or pack set up wrong: SUSPECT_HIGH_PCT, or twice the food cost
+    target the dishes are judged against when that is higher (FC-CALC-10)."""
+    try:
+        import cogs
+        from models import get_restaurant
+        ref = cogs.dish_reference(get_restaurant(restaurant_id, db_path) if db_path else get_restaurant(restaurant_id))
+        if ref and ref.get("pct"):
+            return max(SUSPECT_HIGH_PCT, SUSPECT_HIGH_TARGET_X * float(ref["pct"]))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="backoffice_recipes", context=f"restaurant_id={restaurant_id} suspect target",
+                    restaurant_id=restaurant_id)
+    return SUSPECT_HIGH_PCT
+
+
 def _menu(bk):
     pos_names = bk.get("pos_names") or {}
     return [r for r in bk["recipes"] if _is_menu(r) and (not r["group"].endswith("MODS") or r["name"] in pos_names)]
 
 
-def _build(bk, coster, sold, menu):
+def _build(bk, coster, sold, menu, high=SUSPECT_HIGH_PCT):
     """(plates, summary) for the menu at `coster`'s prices against `sold`
-    ({POS key: (units, sales)})."""
+    ({POS key: (units, sales)}); a plate over `high`% is suspect."""
     pos_names = bk.get("pos_names") or {}
     out = []
     for r in menu:
@@ -625,7 +645,7 @@ def _build(bk, coster, sold, menu):
         if p["cost_pct"] is not None and p["cost_pct"] < SUSPECT_PCT:
             p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — Back Office's recipe may be missing "
                             "its main item")
-        elif p["cost_pct"] is not None and p["cost_pct"] > SUSPECT_HIGH_PCT:
+        elif p["cost_pct"] is not None and p["cost_pct"] > high:
             p["suspect"] = (f"the recipe costs {p['cost_pct']}% of the price — a price or a pack in Back Office "
                             "may be set up wrong")
         out.append(p)
@@ -665,7 +685,8 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None, as_of=
     pos_names = bk.get("pos_names") or {}
     sold = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}),
                       start.isoformat(), end.isoformat(), db_path)
-    out, summary = _build(bk, c, sold, menu)
+    high = suspect_high(restaurant_id, db_path)
+    out, summary = _build(bk, c, sold, menu, high=high)
     srcs = {"invoice": 0, "back_office": 0, "unpriced": 0}
     for p in c.prices.values():
         srcs["unpriced" if "error" in p else p["source"]] += 1
@@ -676,7 +697,7 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None, as_of=
             "note": ("What each dish's recipe costs at today's supplier prices: the latest invoice line for each "
                      "item from its own supplier, read the way the supplier bills it, else Back Office's last "
                      "price. A dish with an ingredient that can't be priced shows what is known, never a "
-                     "percentage; a dish under 12% or over 70% of its price is flagged and left out of the "
+                     f"percentage; a dish under 12% or over {high:g}% of its price is flagged and left out of the "
                      "overall figure. Recipes are Back Office's; the selling price is what the POS took over "
                      "four weeks.")}
 
@@ -698,6 +719,7 @@ def period_summaries(restaurant_id, windows, db_path=None):
     daily = _pos_sales(restaurant_id, sorted({n for r in menu for n in pos_names.get(r["name"], [])}), lo, hi,
                        db_path, by_day=True)
     today = _local_today(restaurant_id)
+    high = suspect_high(restaurant_id, db_path)
     out, costers = [], {}
     for s, e in windows:
         a, b = s.isoformat(), e.isoformat()
@@ -708,5 +730,5 @@ def period_summaries(restaurant_id, windows, db_path=None):
                 sold[k] = (pu + u, pv + v)
         if b not in costers:
             costers[b] = _Coster(bk, invoices, today, as_of=b)
-        out.append(_build(bk, costers[b], sold, menu)[1])
+        out.append(_build(bk, costers[b], sold, menu, high=high)[1])
     return out

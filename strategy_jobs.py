@@ -1896,16 +1896,15 @@ LEARNERS = {
     "staffing_learning": "staffing_elasticity:estimate_one",
     "schedule_scorecard": "schedule_scorecard:score_one",
     "quality_calibration": "strategy_jobs:quality_calibration_one",
-    # The heavy food-cost and bar sweeps (food & bar audit 10/16/26
+    # The heavy food-cost sweep (food & bar audit 10/16/26
     # SCALE-07): inline on the scheduler thread in the web process they
     # reached ~1,000 restaurants a pass. One row per restaurant now, run by
     # the queue worker (fan_out below).
     "food_cost_diagnosis": "scheduler:food_cost_diagnosis_one",
-    "bar_price_push": "strategy_jobs:bar_price_push_one",
 }
 # Learners whose body takes the row's `today` (the restaurant's own date the
 # fan-out chose), as people_nightly does.
-LEARNERS_TAKE_TODAY = ("people_nightly", "bar_price_push")
+LEARNERS_TAKE_TODAY = ("people_nightly",)
 
 
 def fan_out_learner(name, db_path=DB_PATH, today=None):
@@ -1974,17 +1973,6 @@ def open_rows(name, day, db_path=DB_PATH) -> int:
         return 0
     finally:
         conn.close()
-
-
-def bar_price_push_one(restaurant_id, today=None, db_path=None):
-    """One restaurant's Monday bar price push, as a queue row
-    (bar_price_push_pass fanned it out after claiming its local window):
-    bar_signals.push_increase for the restaurant's own date. {pushed}."""
-    import bar_signals
-    from datetime import date as _date
-    day = _date.fromisoformat(str(today)[:10]) if today else None
-    reached = bar_signals.push_increase(restaurant_id, today=day, db_path=db_path)
-    return {"pushed": 1 if reached else 0}
 
 
 def bar_price_push_pass(db_path=None, now=None):
