@@ -23,17 +23,25 @@ Three files are read:
   reader: PPC, Pack UPC, GL Code) are kept with the file — an allow-list,
   so a renamed bank column is never stored.
 
-A keg's $30 deposit sits inside its cost on both files (the export's Item
+A keg's deposit sits inside its cost on both files (the export's Item
 Adjustments, the printout's cost − qty × price). It is split out as
-`deposit` only on a keg line and only in whole $30-per-keg steps; any other
-difference is an `adjustment` and stays in the cost. Every EMPTY / EMPTIES
-line is a deposit credit (`keg_credit`) whatever its unit.
+`deposit` only on a keg line and only in whole steps of the distributor's
+own per-keg deposit — learned from its DS / EMPTY lines, else $30 (Illinois)
+— or, on an export, one uniform whole-dollar step per keg (BAR-CALC-11,
+10/16/26); any other difference is an `adjustment` and stays in the cost.
+Every EMPTY / EMPTIES line is a deposit credit (`keg_credit`) whatever its
+unit.
 
 An invoice is one invoice whatever the file calls it: matched within the
 restaurant on the invoice number without its leading zeros and the
 distributor's canonical key (Fintech's vendor id when the file has one,
 else the name casefolded without punctuation, LLC / Inc, "dba …"), with a
-same-date same-total guard for a spelling the key misses. When a second
+same-date same-total guard for a spelling the key misses. Separators in the
+number are significant ('1-2' is not '12', ING-18). A number that differs
+from another of the same distributor, date and total only by a zero or
+letter prefix is a near-duplicate: both are kept and reported, never one
+replaced (ING-14). A credit memo carrying its invoice's number (the other
+sign) is its own document, never a version (ING-11). When a second
 file carries an invoice already on file, one version is current: a
 balanced copy over an unbalanced one, then the export over the printout,
 then the newer file — and a balanced invoice is never silently replaced by
@@ -71,8 +79,17 @@ UOM_WORDS = {"CA": "case", "CS": "case", "BO": "bottle", "BL": "bottle", "BT": "
              "KE": "keg", "KG": "keg", "DS": "deposit"}
 
 # The deposit on a keg in Illinois, charged inside the keg's cost and
-# credited back on the empty.
+# credited back on the empty — the default only. Each distributor's own
+# deposit is learned from its DS / EMPTY lines (_learned_deposit; FC/Bar
+# audit 10/16/26, BAR-CALC-11: a $50 half-barrel or $25 sixtel deposit stayed
+# inside beer cost).
 KEG_DEPOSIT = 30.0
+# A learned per-keg deposit is believed between these.
+DEPOSIT_MIN, DEPOSIT_MAX = 5.0, 200.0
+# An export keg line whose Item Adjustments is exactly one whole-dollar step
+# per keg in this range is a deposit even with no DS / EMPTY line to learn
+# it from (a uniform per-keg step).
+UNIFORM_STEP_MIN, UNIFORM_STEP_MAX = 10.0, 100.0
 # A price under this beside the same code's real price is a per-unit charge
 # on that item (Southern Glazer's $2.29 on a bottle), not more of it.
 CHARGE_MAX = 5.0
@@ -94,8 +111,10 @@ COMMIT_EVERY = 500
 _ADJ_RE = re.compile(r"\b(summary\s+level\s+adjust\w*|adjustments?|rounding)\b", re.I)
 _KEG_CREDIT_RE = re.compile(r"\bempt(y|ies)\b", re.I)
 # A keg by its description (bar.classify._KEG_RE says the same for the
-# category; kept here so the reader needs nothing above it).
-_KEG_RE = re.compile(r"\b(1/2\s*BB\w*|1/4\s*BB\w*|1/6\s*BB\w*|BBL|BARREL|KEG|50L|30L|20L|K\s+1/2|K\s+50L|SIXTEL)\b",
+# category; kept here so the reader needs nothing above it). '1/6BL' and
+# '1/2 BL' are kegs too (bar.products._KEGS reads them; FC/Bar audit
+# 10/16/26, ING-16) — until bar.classify exports one shared pattern.
+_KEG_RE = re.compile(r"\b(1/[246]\s*BB\w*|1/[246]\s*BL\b|BBL|BARREL|KEG|50L|30L|20L|K\s+1/2|K\s+50L|SIXTEL)\b",
                      re.I)
 _NULLS = {"<null>", "null"}
 
@@ -235,6 +254,17 @@ def init_fintech_invoices(db_path=None):
                               "WHERE distributor_key IS NULL OR number_key IS NULL").fetchall():
             conn.execute("UPDATE fintech_invoices SET distributor_key=?, number_key=? WHERE id=?",
                          (distributor_key(r["distributor"]), invoice_key(r["invoice_number"]), r["id"]))
+        # The number keys written before separators were significant (ING-18,
+        # 10/16/26): only a number holding a separator changes ('1-2' was
+        # '12'). A credit document's key ('4471|CR|2026-10-03') is its own.
+        # The new key only ever splits an old one, so no two rows merge.
+        for r in conn.execute("SELECT id, invoice_number, number_key FROM fintech_invoices "
+                              "WHERE number_key IS NOT NULL").fetchall():
+            if "|" in str(r["number_key"]):
+                continue
+            k = invoice_key(r["invoice_number"])
+            if k != r["number_key"]:
+                conn.execute("UPDATE fintech_invoices SET number_key=? WHERE id=?", (k, r["id"]))
         conn.commit()
     finally:
         conn.close()
@@ -342,8 +372,23 @@ def distributor_key(name) -> str:
 
 
 def invoice_key(number) -> str:
-    """An invoice number as one key: upper case, letters and digits only,
-    leading zeros out ('0128850598' and '128850598' are one invoice)."""
+    """An invoice number as one key: upper case, spaces and a leading '#'
+    out, leading zeros out ('0128850598' and '128850598' are one invoice).
+    Separators stay significant (FC/Bar audit 10/16/26, ING-18): '1-2' and
+    '12' are two invoices, so '12', '0012' and '1-2' no longer collapse into
+    one. The old looser key is `loose_invoice_key` — a spelling the strict
+    key misses is caught on it only with the same distributor, date and
+    total (_find_existing)."""
+    s = re.sub(r"\s+", "", str(number or "").upper()).lstrip("#")
+    return s.lstrip("0") or s
+
+
+def loose_invoice_key(number) -> str:
+    """The pre-10/16/26 key: letters and digits only, leading zeros out
+    ('1-2' and '12' are one key). Used where two systems spell one number
+    differently (Back Office ↔ Fintech; backoffice_ap's stored keys were
+    written with it) and as the same-date same-total spelling guard here —
+    never as Fintech identity on its own."""
     s = re.sub(r"[^A-Z0-9]", "", str(number or "").upper())
     return s.lstrip("0") or s
 
@@ -370,21 +415,55 @@ def _is_keg(ln) -> bool:
     return str(ln.get("uom") or "").upper() in ("KE", "KG") or bool(_KEG_RE.search(ln.get("description") or ""))
 
 
-def _deposit_steps(amount, qty) -> bool:
-    """amount is a whole number of $30 deposits, one per keg at most, in the
-    quantity's direction."""
-    if amount is None or qty in (None, 0) or abs(amount) < 0.005:
+def _deposit_steps(amount, qty, rate=None) -> bool:
+    """amount is a whole number of `rate` deposits (the distributor's learned
+    deposit, else KEG_DEPOSIT), one per keg at most, in the quantity's
+    direction."""
+    rate = float(rate or KEG_DEPOSIT)
+    if amount is None or qty in (None, 0) or abs(amount) < 0.005 or rate <= 0:
         return False
-    k = amount / KEG_DEPOSIT
+    k = amount / rate
     if abs(k - round(k)) > 0.0002:
         return False
     k = round(k)
     return 1 <= abs(k) <= abs(qty) + 1e-9 and (k > 0) == (qty > 0)
 
 
-def _settle(ln):
+def _uniform_step(amount, qty) -> bool:
+    """The export's Item Adjustments on a keg line is one whole-dollar
+    deposit per keg (every keg, the same step) inside the believable range:
+    a deposit at a rate no DS / EMPTY line has taught yet."""
+    if amount is None or not qty or abs(qty - round(qty)) > 1e-9:
+        return False
+    step = amount / qty
+    return (UNIFORM_STEP_MIN <= abs(step) <= UNIFORM_STEP_MAX and abs(step - round(step)) < 0.0001
+            and (amount > 0) == (qty > 0))
+
+
+def _learned_deposit(lines):
+    """A distributor's per-keg deposit from its own DS (deposit) and EMPTY
+    lines — the most common per-unit amount among them — or None when it
+    has none (the caller falls back to KEG_DEPOSIT)."""
+    seen = {}
+    for ln in lines:
+        desc = ln.get("description") or ""
+        if str(ln.get("uom") or "").upper() != "DS" and not _KEG_CREDIT_RE.search(desc):
+            continue
+        q, p, c = ln.get("qty"), ln.get("unit_price"), ln.get("cost")
+        each = abs(float(p)) if p else (abs(float(c) / float(q)) if c and q else None)
+        if each is None or not (DEPOSIT_MIN <= each <= DEPOSIT_MAX):
+            continue
+        each = round(each, 2)
+        seen[each] = seen.get(each, 0) + 1
+    if not seen:
+        return None
+    return max(seen.items(), key=lambda kv: (kv[1], kv[0]))[0]
+
+
+def _settle(ln, rate=None):
     """Split what the line cost beyond qty × price into the keg deposit and
-    any other adjustment (both inside `cost`, which stays the truth)."""
+    any other adjustment (both inside `cost`, which stays the truth). `rate`
+    is the distributor's learned deposit (KEG_DEPOSIT when none)."""
     q, p, c = ln.get("qty"), ln.get("unit_price"), ln.get("cost")
     raw = ln.get("raw_adjustment")
     if _KEG_CREDIT_RE.search(ln.get("description") or ""):
@@ -395,9 +474,11 @@ def _settle(ln):
     deposit = None
     if _is_keg(ln):
         for cand in (raw, diff):
-            if _deposit_steps(cand, q):
+            if _deposit_steps(cand, q, rate):
                 deposit = round(cand, 2)
                 break
+        if deposit is None and _uniform_step(raw, q):
+            deposit = round(raw, 2)
     rest = None if diff is None else round(diff - (deposit or 0.0), 2)
     ln["deposit"] = deposit
     ln["adjustment"] = rest if rest is not None and abs(rest) >= 0.005 else None
@@ -714,29 +795,62 @@ _INV_COLS = ("id, restaurant_id, distributor, invoice_number, invoice_date, tota
              "lines_total, distributor_key, number_key, vendor_id")
 
 
+# A number that differs from another only by a leading prefix of zeros or
+# letters ('INV12345' / '12345', '0012345' before the zeros were cut) — the
+# one suffix pattern a spelling difference makes. '112' vs '12' is not one.
+_PREFIX_RE = re.compile(r"^(0+|[A-Z]+[-/]?)$")
+
+
+def _prefix_variant(a, b) -> bool:
+    if not a or not b or a == b:
+        return False
+    long_, short = (a, b) if len(a) > len(b) else (b, a)
+    return long_.endswith(short) and bool(_PREFIX_RE.match(long_[:-len(short)]))
+
+
+def _similar_distributor(row, dkey, vendor_id) -> bool:
+    """The same distributor, or one spelled two ways: every word of one
+    canonical key is in the other, two words at least ("Southern Glazers of
+    IL" / "Southern Glazer's Wine & Spirits of IL", EDG-5 S10c). Never two
+    houses that only share a word (Lakeshore / Winebow, ING-14)."""
+    if _same_distributor(row, dkey, vendor_id):
+        return True
+    rv = row["vendor_id"]
+    if rv and vendor_id:
+        return False
+    a = set((row["distributor_key"] or distributor_key(row["distributor"])).split())
+    b = set(dkey.split())
+    small, big = (a, b) if len(a) <= len(b) else (b, a)
+    return len(small) >= 2 and small <= big
+
+
 def _find_existing(conn, rid, inv, dkey, nkey):
-    """(row, near_duplicate) for the invoice already on file, else (None,
-    False): the same number and distributor by key, else the same date and
-    total with the same number under another spelling (or a number that
-    differs only by a prefix from the same distributor)."""
+    """(row, near_row, spelled) — `row` the invoice already on file: the same
+    number and distributor by key, or (`spelled`) the same date and total
+    with the number and distributor spelled another way (`loose_invoice_key`,
+    `_similar_distributor`). `near_row` an invoice that only LOOKS like this
+    one: the same distributor, date and total with a number that differs by
+    a zero or letter prefix. A near row is never replaced — both are kept
+    and the file reports it (FC/Bar audit 10/16/26, ING-14: Lakeshore 112
+    was overwritten by Lakeshore 12, and Lakeshore 5001 by Winebow 5001)."""
     for r in conn.execute(f"SELECT {_INV_COLS} FROM fintech_invoices WHERE restaurant_id=? AND number_key=? ORDER BY id",
                           (rid, nkey)).fetchall():
         if _same_distributor(r, dkey, inv.get("vendor_id")):
-            return r, False
+            return r, None, False
     total, day = inv.get("total"), inv.get("invoice_date")
+    near = None
     if day and total is not None and abs(total) >= 0.01:
+        loose = loose_invoice_key(inv.get("invoice_number"))
         for r in conn.execute(f"SELECT {_INV_COLS} FROM fintech_invoices WHERE restaurant_id=? AND invoice_date=? "
                               "ORDER BY id", (rid, day)).fetchall():
-            if r["total"] is None or abs(float(r["total"]) - total) >= 0.005:
+            if r["total"] is None or abs(float(r["total"]) - total) >= 0.005 or "|" in str(r["number_key"] or ""):
                 continue
-            rk = r["number_key"] or invoice_key(r["invoice_number"])
-            if rk == nkey:
-                if r["vendor_id"] and inv.get("vendor_id") and str(r["vendor_id"]) != str(inv["vendor_id"]):
-                    continue
-                return r, True
-            if _same_distributor(r, dkey, inv.get("vendor_id")) and (rk.endswith(nkey) or nkey.endswith(rk)):
-                return r, True
-    return None, False
+            rk = loose_invoice_key(r["invoice_number"])
+            if rk == loose and _similar_distributor(r, dkey, inv.get("vendor_id")):
+                return r, None, True   # one invoice, its number or distributor spelled two ways
+            if near is None and _same_distributor(r, dkey, inv.get("vendor_id")) and _prefix_variant(rk, loose):
+                near = r
+    return None, near, False
 
 
 def _balance_rank(b):
@@ -861,18 +975,72 @@ def _stored_signature(conn, invoice_id) -> list:
     return _signature([dict(r, uom=None if r["uom_inferred"] else r["uom"]) for r in rows])
 
 
+def _sign(total, lines_total):
+    v = total if total is not None else lines_total
+    if v is None or abs(float(v)) < 0.005:
+        return 0
+    return 1 if float(v) > 0 else -1
+
+
+def _opposite_sign(existing, total, lines_total) -> bool:
+    """The file's copy and the invoice on file under the same number run in
+    opposite directions - a credit memo against its invoice."""
+    a = _sign(existing["total"], existing["lines_total"])
+    b = _sign(total, lines_total)
+    return a != 0 and b != 0 and a != b
+
+
+def _document_key(nkey, inv, signed_total) -> tuple:
+    """(number_key, invoice_number shown) for a same-number document running
+    the other way: '4471|CR|2026-10-03' and '4471 credit 10/3/26' for a
+    credit memo, '|DB|' / 'debit' for an invoice that arrived after its
+    credit. The date keeps two credits on one number apart."""
+    from time_utils import mdy
+    day = inv.get("invoice_date") or ""
+    tag, word = ("CR", "credit") if float(signed_total or 0) < 0 else ("DB", "debit")
+    shown = f"{inv['invoice_number']} {word}" + (f" {mdy(day)}" if day else "")
+    return f"{nkey}|{tag}|{day}", shown
+
+
+def _same_document(p, inv_row) -> bool:
+    """A parsed invoice `p` is the stored row's document: the same number key
+    (a credit document's key carries its tag and date)."""
+    nkey = inv_row["number_key"] or invoice_key(inv_row["invoice_number"])
+    pk = invoice_key(p.get("invoice_number"))
+    if "|" not in nkey:
+        return pk == nkey
+    base, tag, day = (nkey.split("|") + ["", ""])[:3]
+    want = -1 if tag == "CR" else 1
+    lt = round(sum((ln.get("cost") or 0) for ln in p.get("lines") or []), 2)
+    return pk == base and (p.get("invoice_date") or "") == day and _sign(p.get("total"), lt) == want
+
+
 def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
     """Write one parsed invoice. Returns {result: written | kept | conflict,
     invoice_id, near_duplicate, balanced, total, kept_total}."""
     rid = int(restaurant_id)
     dkey, nkey = distributor_key(inv["distributor"]), invoice_key(inv["invoice_number"])
-    existing, near = _find_existing(conn, rid, inv, dkey, nkey)
+    existing, near, spelled = _find_existing(conn, rid, inv, dkey, nkey)
     total = inv.get("total")
     real = [ln for ln in inv["lines"] if ln.get("kind") != "unparsed" and not (ln.get("unparsed") and ln.get("cost") is None)]
     lines_total = round(sum((ln["cost"] or 0) for ln in inv["lines"]), 2)
+    number = inv["invoice_number"]
+    if existing is not None and _opposite_sign(existing, total, lines_total):
+        # A credit memo carrying its invoice's number (or the invoice after
+        # its credit): its own document, never a version of the other
+        # (FC/Bar audit 10/16/26, ING-11 - Southern 4471 $600 then credit
+        # 4471 -$300 was a 'conflict' and the credit was never counted).
+        nkey, number = _document_key(nkey, inv, total if total is not None else lines_total)
+        existing, near, spelled = None, None, False
+        for r in conn.execute(f"SELECT {_INV_COLS} FROM fintech_invoices WHERE restaurant_id=? AND number_key=? "
+                              "ORDER BY id", (rid, nkey)).fetchall():
+            if _same_distributor(r, dkey, inv.get("vendor_id")):
+                existing = r
+                break
     unread = any(ln.get("cost") is None and ln.get("unparsed") for ln in inv["lines"])
     balanced = None if total is None else int(abs(lines_total - total) < 0.02 and not unread)
-    out = {"invoice_id": existing["id"] if existing else None, "near_duplicate": near, "balanced": balanced,
+    out = {"invoice_id": existing["id"] if existing else None, "near_duplicate": near is not None or spelled,
+           "near_of": dict(near) if near is not None else None, "balanced": balanced,
            "total": total, "kept_total": existing["total"] if existing else None}
     if existing:
         _current_version(conn, existing)
@@ -887,9 +1055,10 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
             return out
     history = _history(conn, rid, dkey, inv.get("vendor_id"), exclude_invoice=existing["id"] if existing else None)
     book = _unit_book(history)
+    rate = _learned_deposit(list(history) + list(inv["lines"]))
     for ln in inv["lines"]:
-        if _infer_unit(ln, book):
-            _settle(ln)                # an inferred keg carries its deposit
+        _infer_unit(ln, book)
+        _settle(ln, rate)              # an inferred keg carries its deposit, at this distributor's rate
     known = _known_prices(history, real)
     lines = []
     for n, ln in enumerate(inv["lines"], 1):
@@ -915,12 +1084,12 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
         # shown (unless another row already holds it: a duplicate the repair
         # merges).
         if fmt == "export" and (existing["distributor"], existing["invoice_number"]) != (inv["distributor"],
-                                                                                        inv["invoice_number"]):
+                                                                                        number):
             if not conn.execute("SELECT id FROM fintech_invoices WHERE restaurant_id=? AND distributor=? AND "
-                                "invoice_number=? AND id<>?", (rid, inv["distributor"], inv["invoice_number"],
+                                "invoice_number=? AND id<>?", (rid, inv["distributor"], number,
                                                                inv_id)).fetchone():
                 conn.execute("UPDATE fintech_invoices SET distributor=?, invoice_number=? WHERE id=?",
-                             (inv["distributor"], inv["invoice_number"], inv_id))
+                             (inv["distributor"], number, inv_id))
         conn.execute("DELETE FROM fintech_invoice_lines WHERE invoice_id=?", (inv_id,))
         conn.execute("UPDATE fintech_invoice_versions SET state='superseded', updated_at=? "
                      "WHERE invoice_id=? AND state='current' AND file_id<>?", (now, inv_id, file_id))
@@ -929,7 +1098,7 @@ def _store_invoice(conn, restaurant_id, inv, fmt, file_id, force=False) -> dict:
                            "due_date, total, location_id, source_format, file_id, lines_total, balanced, updated_at, "
                            "distributor_key, number_key, vendor_id, ref_invoice_number, po_number, po_date) "
                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                           (rid, inv["distributor"], inv["invoice_number"], inv.get("invoice_date"),
+                           (rid, inv["distributor"], number, inv.get("invoice_date"),
                             inv.get("due_date"), total, inv.get("location_id"), fmt, file_id, lines_total,
                             balanced, now, dkey, nkey, inv.get("vendor_id"), ref, inv.get("po_number"),
                             inv.get("po_date")))
@@ -961,13 +1130,14 @@ def _backfill_units(conn, rid, dkeys) -> int:
     for dkey in dkeys:
         history = _history(conn, rid, dkey, None)
         book = _unit_book(history)
+        rate = _learned_deposit(history)
         for h in history:
             if h["source_format"] != "printout" or h["uom"] or h["kind"] != "item":
                 continue
             ln = {"item_code": h["item_code"], "description": h["description"], "uom": None, "upc": h["upc"],
                   "qty": h["qty"], "unit_price": h["unit_price"], "cost": h["cost"], "raw_adjustment": None}
             if _infer_unit(ln, book):
-                _settle(ln)
+                _settle(ln, rate)
                 conn.execute("UPDATE fintech_invoice_lines SET uom=?, upc=?, uom_inferred=1, deposit=?, adjustment=? "
                              "WHERE id=?", (ln["uom"], ln["upc"], ln["deposit"], ln["adjustment"], h["id"]))
                 n += 1
@@ -1053,7 +1223,11 @@ def _write(conn, rid, fmt, invoices, file_id, commit_every=None) -> dict:
             conn.commit()
         o = _store_invoice(conn, target, inv, fmt, file_id)
         if o.get("near_duplicate"):
-            res["near_duplicates"].append(inv["invoice_number"])
+            # Kept as its own invoice beside the one it resembles (ING-14):
+            # reported, for a person to purge if it was the same one.
+            near = o.get("near_of") or {}
+            res["near_duplicates"].append(f"{inv['invoice_number']} (kept beside #{near.get('invoice_number')})"
+                                          if near.get("invoice_number") else inv["invoice_number"])
         if o["result"] == "written":
             res["invoices"] += 1
             res["lines"] += len(inv["lines"])
@@ -1083,42 +1257,179 @@ def _status(res, parsed) -> str:
     return "unchanged"
 
 
+# A vouched file (unsigned mail, its own contents its only credential) is
+# held when an invoice's total passes this many times the distributor's
+# largest on file, or a line's price sits this far outside the same item's
+# prices on file (FC/Bar audit 10/16/26, SEC-02: a forged file naming a known
+# store and distributor at inflated prices was read).
+VOUCH_TOTAL_RATIO = 3.0
+VOUCH_PRICE_RATIO = 3.0
+# How many of the restaurant's latest files a new file's shape is checked
+# against.
+VOUCH_SHAPE_FILES = 10
+
+
+def _shape(fmt, text):
+    """A file's format and column set: an export's header columns (the ones
+    kept, _KEEP_COLUMNS, so a kept copy and a fresh file compare alike), a
+    printout's header labels. None when there is no text."""
+    if not text:
+        return None
+    if fmt == "export":
+        first = next(csv.reader(io.StringIO(text.split("\n", 1)[0])), [])
+        return ("export", frozenset(_norm(h) for h in first if _norm(h) in _KEEP_COLUMNS))
+    if fmt == "printout":
+        labels = set()
+        for line in text.splitlines():
+            m = _HDR_RE.match(line)
+            if m:
+                labels.add(m.group(1))
+        return ("printout", frozenset(labels))
+    return None
+
+
+def _shape_matches(new, earlier) -> bool:
+    """An export's columns must be exactly an earlier export's (a forged CSV
+    without the Location ID column is not Fintech's file); a printout's
+    header labels must all be ones an earlier printout printed."""
+    if new is None:
+        return False
+    if new[0] == "export":
+        return any(e == new for e in earlier)
+    seen = set()
+    for e in earlier:
+        if e and e[0] == "printout":
+            seen |= e[1]
+    return bool(seen) and new[1] <= seen
+
+
+def _earlier_shapes(conn, rid) -> list:
+    shapes = []
+    for f in conn.execute("SELECT format, content FROM fintech_files WHERE restaurant_id=? AND format IS NOT NULL "
+                          "AND content IS NOT NULL AND status NOT IN ('purged', 'reading') AND invoices > 0 "
+                          "ORDER BY id DESC LIMIT ?", (rid, VOUCH_SHAPE_FILES)).fetchall():
+        try:
+            shapes.append(_shape(f["format"], _content(f["content"])))
+        except Exception as e:          # an object-store read: the file cannot vouch, and someone hears
+            import ops
+            ops.capture(e, job="fintech_vouch", context=f"restaurant_id={rid}", restaurant_id=rid)
+    return shapes
+
+
+def _price_band(conn, rid):
+    """({distributor key: largest |invoice total|}, {(distributor key, item
+    key, uom): (lowest, highest) unit price}, {distributor key: highest unit
+    price}) from the invoices on file."""
+    totals, items, top = {}, {}, {}
+    for r in conn.execute("SELECT distributor_key, MAX(ABS(total)) AS m FROM fintech_invoices WHERE restaurant_id=? "
+                          "AND total IS NOT NULL GROUP BY distributor_key", (rid,)).fetchall():
+        if r["distributor_key"]:
+            totals[r["distributor_key"]] = float(r["m"] or 0)
+    for r in conn.execute("SELECT i.distributor_key, l.item_code, l.uom, MIN(l.unit_price) AS lo, "
+                          "MAX(l.unit_price) AS hi FROM fintech_invoice_lines l JOIN fintech_invoices i "
+                          "ON i.id = l.invoice_id WHERE i.restaurant_id=? AND l.kind='item' AND l.unit_price > 0 "
+                          "GROUP BY i.distributor_key, l.item_code, l.uom", (rid,)).fetchall():
+        dk = r["distributor_key"]
+        if not dk:
+            continue
+        for key in ((dk, item_key(r["item_code"]), str(r["uom"] or "")), (dk, item_key(r["item_code"]), "*")):
+            lo, hi = items.get(key, (float(r["lo"]), float(r["hi"])))
+            items[key] = (min(lo, float(r["lo"])), max(hi, float(r["hi"])))
+        top[dk] = max(top.get(dk, 0.0), float(r["hi"]))
+    return totals, items, top
+
+
+def _out_of_band(inv, totals, items, top):
+    """Why one invoice of a vouched file sits outside its distributor's
+    history, or None."""
+    dk = distributor_key(inv.get("distributor"))
+    total = inv.get("total")
+    if total is None:
+        total = sum((ln.get("cost") or 0) for ln in inv.get("lines") or [])
+    big = totals.get(dk)
+    if big and abs(float(total)) > VOUCH_TOTAL_RATIO * big:
+        return (f"invoice {inv.get('invoice_number')} is ${abs(float(total)):,.2f}, more than "
+                f"{VOUCH_TOTAL_RATIO:g}x the largest on file from {inv.get('distributor')} (${big:,.2f})")
+    for ln in inv.get("lines") or []:
+        p = ln.get("unit_price")
+        if not p or p <= 0 or _KEG_CREDIT_RE.search(ln.get("description") or ""):
+            continue
+        ik = item_key(ln.get("item_code"))
+        band = items.get((dk, ik, str(ln.get("uom") or ""))) if ln.get("uom") else items.get((dk, ik, "*"))
+        if band and not (band[0] / VOUCH_PRICE_RATIO <= p <= band[1] * VOUCH_PRICE_RATIO):
+            return (f"{ln.get('description') or ik} at ${p:,.2f} is far outside its prices on file "
+                    f"(${band[0]:,.2f}-${band[1]:,.2f})")
+        if band is None and top.get(dk) and p > VOUCH_PRICE_RATIO * top[dk]:
+            return (f"{ln.get('description') or ik} at ${p:,.2f} is more than {VOUCH_PRICE_RATIO:g}x anything "
+                    f"bought from {inv.get('distributor')}")
+    return None
+
+
 def vouch(restaurant_id, filename, content, db_path=None) -> tuple:
     """(ok, why) — whether a file's own contents vouch for it when its email
     could not be authenticated (email_intake.process, owner 10/16/26: Fintech's
     mail went out unsigned on 10/15 and 10/16 and both files sat held). Read
-    without writing: it must parse as a Fintech file with dated invoices,
-    every store in it must be one this restaurant's invoices already carry or
-    its store map names, and every distributor one it already buys from. A
-    new store or a new distributor is exactly what a forged file would bring,
-    so either keeps the email held."""
+    without writing. It must:
+      - parse as a Fintech file with dated invoices;
+      - name a store on EVERY invoice (a store-less invoice would be routed
+        to the route's own restaurant — FC/Bar audit 10/16/26, ING-05), and
+        only stores this restaurant's invoices or store map already carry;
+      - name only distributors it already buys from;
+      - have the format and column set of an earlier file (an export with
+        exactly an earlier export's columns, a printout with an earlier
+        printout's header labels);
+      - sit inside each distributor's history: no invoice total over
+        VOUCH_TOTAL_RATIO x its largest, no price VOUCH_PRICE_RATIO outside
+        the item's prices on file (SEC-02);
+      - change no invoice already on file (a resend of the same one is fine).
+    A new store, a new distributor, a new shape or a price out of band is
+    exactly what a forged file would bring, so any keeps the email held for
+    an admin's one-tap release."""
     import email_intake
     try:
-        fmt, _kept, invoices = read(filename, content)
+        fmt, kept, invoices = read(filename, content)
     except email_intake.FileRefused as e:
         return False, e.detail
     dated = [i for i in invoices if i.get("invoice_date")]
     if not fmt or not dated:
         return False, "it doesn't read as a Fintech invoice file"
+    storeless = [i.get("invoice_number") for i in dated if location_key(i.get("location_id")) is None]
+    if storeless:
+        return False, (f"{len(storeless)} invoice{'s' if len(storeless) != 1 else ''} name"
+                       f"{'' if len(storeless) != 1 else 's'} no store")
     rid = int(restaurant_id)
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT DISTINCT location_id, distributor_key FROM fintech_invoices WHERE restaurant_id=?",
                             (rid,)).fetchall()
+        known_dists = {r["distributor_key"] for r in rows if r["distributor_key"]}
+        if not known_dists:
+            return False, "no invoices on file yet to check it against"
+        known_locs = {location_key(r["location_id"]) for r in rows} | set(location_map(rid, db_path))
+        known_locs.discard(None)
+        new_locs = sorted({location_key(i.get("location_id")) for i in dated} - known_locs)
+        if new_locs:
+            return False, f"store {', '.join(new_locs)} is new to this restaurant"
+        new_dists = sorted({i.get("distributor") or "" for i in dated
+                            if distributor_key(i.get("distributor")) not in known_dists})
+        if new_dists:
+            return False, f"{', '.join(new_dists[:3])} {'is' if len(new_dists) == 1 else 'are'} new to this restaurant"
+        if not _shape_matches(_shape(fmt, kept), _earlier_shapes(conn, rid)):
+            return False, f"its {fmt} layout matches none of the files this restaurant has received"
+        totals, items, top = _price_band(conn, rid)
+        for inv in dated:
+            why = _out_of_band(inv, totals, items, top)
+            if why:
+                return False, why
+            existing, _near, _spelled = _find_existing(conn, rid, inv, distributor_key(inv["distributor"]),
+                                                       invoice_key(inv["invoice_number"]))
+            if existing is not None and (existing["total"] is None or inv.get("total") is None
+                                         or abs(float(existing["total"]) - float(inv["total"])) >= 0.02):
+                return False, f"it would change invoice {inv['invoice_number']} already on file"
     finally:
         conn.close()
-    known_locs = {location_key(r["location_id"]) for r in rows} | set(location_map(rid, db_path))
-    known_locs.discard(None)
-    known_dists = {r["distributor_key"] for r in rows if r["distributor_key"]}
-    if not known_dists:
-        return False, "no invoices on file yet to check it against"
-    new_locs = sorted({location_key(i.get("location_id")) for i in dated} - known_locs - {None})
-    if new_locs:
-        return False, f"store {', '.join(new_locs)} is new to this restaurant"
-    new_dists = sorted({i.get("distributor") or "" for i in dated if distributor_key(i.get("distributor")) not in known_dists})
-    if new_dists:
-        return False, f"{', '.join(new_dists[:3])} {'is' if len(new_dists) == 1 else 'are'} new to this restaurant"
-    return True, f"{len(dated)} invoices from distributors and a store already on file"
+    return True, (f"{len(dated)} invoices from distributors and a store already on file, in an earlier file's "
+                  f"layout, inside each distributor's prices")
 
 
 def ingest_file(restaurant_id, filename, content, intake_id=None, db_path=None):
@@ -1253,10 +1564,9 @@ def purge_file(restaurant_id, file_id, db_path=None) -> dict:
             conn.execute("DELETE FROM fintech_invoice_versions WHERE invoice_id=? AND file_id=?", (inv["id"], fid))
             back = None
             dkey = inv["distributor_key"] or distributor_key(inv["distributor"])
-            nkey = inv["number_key"] or invoice_key(inv["invoice_number"])
             for o in others:
                 back = next((p for p in _parse_kept(o["source_format"], o["content"])
-                             if invoice_key(p["invoice_number"]) == nkey
+                             if _same_document(p, inv)
                              and (distributor_key(p["distributor"]) == dkey or
                                   (p.get("total") is not None and inv["total"] is not None
                                    and abs(p["total"] - float(inv["total"])) < 0.005))), None)

@@ -603,7 +603,12 @@ def test_a_late_feed_with_a_held_file_says_it_is_held_and_where_to_release_it(db
     assert sh["error_class"] == "held"
 
 
-UNSIGNED = {"spf": "gray", "dkim": "gray", "dmarc": "fail"}      # Fintech's own mail, 10/15 and 10/16/26
+# Unsigned mail with no DMARC verdict against it: the only mail a file may
+# vouch for. Fintech's own 10/15 and 10/16/26 mail read DMARC FAIL - the
+# same verdict a spoofed From produces - and is held (FC/Bar audit
+# 10/16/26, ING-05 / SEC-02; tests/test_fix_fcbar_c2.py).
+UNSIGNED = {"spf": "gray", "dkim": "gray", "dmarc": "gray"}
+FINTECH_1015 = {"spf": "gray", "dkim": "gray", "dmarc": "fail"}
 
 
 def _unsigned_email(db, monkeypatch, rid, eid, body, auth=UNSIGNED):
@@ -640,3 +645,5 @@ def test_unsigned_mail_with_a_new_distributor_or_a_forged_signature_stays_held(d
     forged = {"spf": "fail", "dkim": "gray", "dmarc": "fail"}
     good = _printout("10/14/2026").replace(b"101153056", b"101153098")
     assert _unsigned_email(db, monkeypatch, rid, "u3", good, auth=forged)["status"] == "held_auth"
+    # DMARC fail with nothing signed is a forgery verdict too (ING-05).
+    assert _unsigned_email(db, monkeypatch, rid, "u4", good, auth=FINTECH_1015)["status"] == "held_auth"
