@@ -1582,17 +1582,16 @@ def _build(current_user, present=True, reads=None):
         # attention
         if urgent:
             add_attn("urgent_reviews", "critical", f"{_plural(urgent, 'urgent review')} unanswered",
-                     "Low-star reviews mentioning something serious are still waiting on a reply.", "reviews", "Reply now",
+                     "Serious low-star reviews still waiting on a reply.", "reviews", "Reply now",
                      evidence=f"{urgent} of {total} reviews flagged urgent")
         if (stale_unanswered.get("n") or 0) > 0 and not urgent:
             n = stale_unanswered["n"]
             add_attn("stale_low_reviews", "important", f"{_plural(n, 'low-star review')} unanswered for 2+ days",
-                     "Guests read how you respond. A 48-hour reply keeps the thread on your side.", "reviews", "Answer them",
+                     "Guests read how you respond; reply within 48 hours.", "reviews", "Answer them",
                      since="48h+", evidence=f"{n} reviews at 3 stars or below, unanswered 48h+")
         if awaiting:
             add_attn("awaiting_approval", "watch" if awaiting < 5 else "important", f"{_plural(awaiting, 'reply', 'replies')} drafted, waiting for you",
-                     "Replies to reviews from the last 30 days, written in your voice. Approve them in one click and "
-                     "Google-connected replies post right away.", "reviews",
+                     "Written in your voice; Google-connected replies post on approval.", "reviews",
                      # Names what the tap publishes, not just a count —
                      # "Publish 1" alone doesn't say what gets published.
                      f"Publish {min(awaiting, 25)} {_plural(min(awaiting, 25), 'reply', 'replies').split(' ', 1)[1]}",
@@ -1611,7 +1610,7 @@ def _build(current_user, present=True, reads=None):
                      evidence=f"{int(rstats.get('responded') or 0)} of {total} answered")
         if not google_connected and total == 0:
             add_attn("google_not_connected", "important", "Google Business isn't connected",
-                     "Nothing flows in until it is — reviews, drafts, alerts all start here.", "account", "Connect Google",
+                     "Reviews, drafts and alerts all start here.", "account", "Connect Google",
                      evidence="No review source")
         # Stale by the registry's reviews rule — the same reading that caps
         # every review card's Data Freshness — not a 3-day cut of Home's own
@@ -1619,7 +1618,7 @@ def _build(current_user, present=True, reads=None):
         _rv_fetch = data_freshness.review_fetch_state(r, now=now)
         if google_connected and _rv_fetch["state"] == "stale" and last_fetch_age is not None:
             add_attn("reviews_stale", "important", f"Reviews haven't refreshed since {_rv_fetch['as_of']}",
-                     "The Google connection may need re-authorizing. Numbers below are as of the last pull.", "account", "Check connection",
+                     "The Google connection may need re-authorizing; figures are from the last pull.", "account", "Check connection",
                      since=f"{int(last_fetch_age)}d")
         # trend: negative share last 2 weeks vs prior 2
         if len(sentiment) >= 4:
@@ -1699,7 +1698,7 @@ def _build(current_user, present=True, reads=None):
             # rating (it was, and a rating move a fortnight later would have
             # been credited to the replies, #46). "Rank higher" had no source.
             add_rec("publish_drafts", f"Publish the {awaiting} drafted replies",
-                    f"{awaiting} guests from the last 30 days have a reply written and not yet posted.",
+                    f"{awaiting} replies from the last 30 days are written but not posted.",
                     f"{awaiting} replies drafted in your voice · {rate:.0f}% of reviews currently answered"
                     + (f" · {awaiting_older} older drafts not counted" if awaiting_older else ""),
                     "Reputation · response rate", "reviews", "Today", "Publish now",
@@ -1829,8 +1828,7 @@ def _build(current_user, present=True, reads=None):
             if _list_reports(rid, limit=1) and not _budgets_for(rid, _next, _next + timedelta(days=6)):
                 from time_utils import mdy as _mdy_b
                 add_attn("budget_next_week", "watch", f"Set next week's budget — week of {_mdy_b(_next)}",
-                         "No budget is on file for next week, so each night's report can't say how it did against one. "
-                         "Cavnar AI suggests a figure for every night.",
+                         "Without one, each night's report can't judge against a budget. Cavnar AI suggests one per night.",
                          "dsr", "Set the budget", action="open_module")
                 attention[-1]["action"]["nav"] = f"dsr/budget/{_next.isoformat()}"
     except Exception as _e_bud:
@@ -1908,7 +1906,7 @@ def _build(current_user, present=True, reads=None):
                 add_attn("labor_over", ("watch" if not _labor_tgt_for["alerts_allowed"]
                                         else ("important" if over < 6 else "critical")),
                          f"Labor at {pct:.1f}% — {over:.1f} pts over {_labor_tgt}",
-                         f"Across the last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
+                         f"Last {days} days of shifts" + (f" ({_cover_note})" if _cover_note else "")
                          # The figure is the WHOLE schedule's weekly gap, so the
                          # sentence says so: it read "recoverable by trimming the
                          # overstaffed days" over $975/week when those days carried
@@ -2309,7 +2307,7 @@ def _build(current_user, present=True, reads=None):
             add_attn("post_failed", "important", f"{_plural(len(mkt['failed']), 'scheduled post')} failed to publish",
                      f"{(f.get('platform') or '').title()}: {str(f.get('error') or 'unknown error')[:100]}", "marketing", "Fix and retry")
         if not mkt.get("ig_connected") and not mkt.get("fb_connected"):
-            add_attn("social_not_connected", "watch", "No social account connected", "Posts can be drafted and copied, but one-click publishing and post metrics need Instagram or Facebook connected.", "account", "Connect Instagram")
+            add_attn("social_not_connected", "watch", "No social account connected", "Publishing and post metrics need Instagram or Facebook.", "account", "Connect Instagram")
         # One posting rule with the Opportunity Feed (re-audit OPP-17): more
         # than POST_IDLE_DAYS since a post went live, somewhere to post to.
         from marketing_opportunities import POST_IDLE_DAYS as _POST_IDLE
@@ -2389,7 +2387,7 @@ def _build(current_user, present=True, reads=None):
             # Say only what the data shows (#46): the read is a model-written
             # comparison, not a finding that neighbours do things "you aren't".
             add_rec("intel_recs", f"Read the {_plural(intel['recs'], 'suggestion')} from this week's competitor comparison",
-                    f"The weekly Intel pass compared you with {_plural(intel['competitors'], 'nearby competitor')} {int(age)}d ago.",
+                    f"Compared with {_plural(intel['competitors'], 'nearby competitor')} {int(age)}d ago.",
                     f"{intel['competitors']} competitors compared {int(age)}d ago", "Intel · positioning", "intel", "This week", "Open Intel",
                     # A model-written comparison is an inference: flagged as
                     # one (never high) — not a "model_band" the model never
