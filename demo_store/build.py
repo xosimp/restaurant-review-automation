@@ -743,54 +743,16 @@ def fill_marketing(rid, weeks=16):
 
 # ── the neighborhood: fictional competitors and the store's own rating ──────
 
-COMPETITORS = [("hr-comp-seventh", "Seventh Inning Social", 4.2, 1840, 2), ("hr-comp-northbound", "Northbound Alehouse", 4.4, 960, 2),
-               ("hr-comp-bleacher", "Bleacher & Brine", 4.0, 2310, 2), ("hr-comp-cornerkick", "Corner Kick Tavern", 4.3, 610, 1),
-               ("hr-comp-ashland", "Ashland Ember Grill", 4.5, 1120, 2)]
-
-
-def fill_neighborhood(rid, months=13):
-    import random
-    import models
-    today = api.business_today()
-    conn = models.get_conn()
-    try:
-        conn.execute("DELETE FROM competitor_snapshots WHERE restaurant_id=?", (rid,))
-        conn.execute("DELETE FROM competitor_rating_monthly WHERE restaurant_id=?", (rid,))
-        conn.execute("DELETE FROM own_rating_history WHERE restaurant_id=?", (rid,))
-        conn.execute("DELETE FROM market_events WHERE restaurant_id=?", (rid,))
-        for pid, name, rating, count, price in COMPETITORS:
-            rng = random.Random(f"hr-comp|{pid}")
-            r, c = rating - 0.1, int(count * 0.82)
-            for k in range(months, -1, -1):
-                d = (today.replace(day=1) - timedelta(days=30 * k)).replace(day=1)
-                c += int(rng.uniform(8, 30))
-                r = round(min(4.8, max(3.6, r + rng.gauss(0.008, 0.02))), 2)
-                conn.execute("INSERT INTO competitor_rating_monthly (restaurant_id, place_id, month, name, rating, "
-                             "review_count, captured_at) VALUES (?,?,?,?,?,?,?)",
-                             (rid, pid, d.strftime("%Y-%m"), name, round(r, 1), c, d.isoformat() + " 06:00:00"))
-            conn.execute("INSERT INTO competitor_snapshots (restaurant_id, place_id, name, rating, review_count, "
-                         "price_level, match_basis, captured_at) VALUES (?,?,?,?,?,?,?,?)",
-                         (rid, pid, name, round(r, 1), c, price, "nearby sports bar", today.isoformat() + " 06:00:00"))
-            conn.execute("INSERT INTO market_events (restaurant_id, place_id, name, kind, from_rating, to_rating, "
-                         "review_count, observed_on, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                         (rid, pid, name, "tracked", None, round(r, 1), c, today.isoformat(), today.isoformat() + " 06:00:00"))
-        rows = conn.execute("SELECT review_date, rating FROM reviews WHERE restaurant_id=? ORDER BY review_date",
-                            (rid,)).fetchall()
-        base_n, base_sum = 812, 812 * 4.5
-        by_week = {}
-        for x in rows:
-            d = date.fromisoformat(str(x["review_date"])[:10])
-            by_week.setdefault(d - timedelta(days=d.weekday()), []).append(x["rating"])
-        n, s = base_n, base_sum
-        for wk in sorted(by_week):
-            n += len(by_week[wk])
-            s += sum(by_week[wk])
-            conn.execute("INSERT INTO own_rating_history (restaurant_id, week, rating, review_count, source, recorded_at) "
-                         "VALUES (?,?,?,?,?,?)", (rid, wk.isoformat(), round(s / n, 1), n, "google", wk.isoformat() + " 06:00:00"))
-        conn.commit()
-    finally:
-        conn.close()
-    _say(f"neighborhood: {len(COMPETITORS)} competitors, {len(by_week)} weeks of own rating")
+def fill_neighborhood(rid, weeks=12):
+    """Intel, simulated (demo_store.intel; owner, 10/17/26: "an intel tab with all populated fake data"):
+    the listing (a Place ID no Google listing answers to, its city), twelve weekly competitor checks
+    (movement, the market's history, the own-rating line), today's competitor read through competitor's
+    own storage, and eight weeks of AI-visibility runs through the real pipeline with simulated answers.
+    Google, Perplexity and the model are never asked about the demo."""
+    from demo_store import intel
+    out = intel.fill(rid, weeks=weeks)
+    _say(f"intel: {out['competitors']} competitors, {out['weeks']} weekly checks, AI visibility {out['ai_scores']}")
+    return out
 
 
 # ── every night: the store moves on a day ──────────────────────────────────
@@ -1025,6 +987,7 @@ def refresh(rid, today=None) -> dict:
     step("schedules", lambda: fill_schedules(rid, weeks=1))
     step("closeout", lambda: _refresh_closeout(rid, end))
     step("web", lambda: __import__("web_analytics").sync(rid).get("ok"))
+    step("intel", lambda: __import__("demo_store.intel", fromlist=["refresh"]).refresh(rid, today))
 
     def _marketing():
         import models

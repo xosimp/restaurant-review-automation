@@ -8165,6 +8165,10 @@ def _aivis_city(r) -> str:
     place_id = getattr(r, "google_place_id", None)
     if not place_id:
         return ""
+    import demo_store
+    if demo_store.is_simulated(r):
+        from demo_store import intel as _demo_intel
+        return _demo_intel.CITY        # never a Places lookup for the showcase
     try:
         stored = json.loads(getattr(r, "aivis_city_json", None) or "{}")
     except (TypeError, ValueError):
@@ -8497,7 +8501,8 @@ def _aivis_with_live_listing(payload, r, rid):
     the listing read are the measurement's; nothing here calls out."""
     try:
         snap = _stored_listing_read(payload)
-        connected = bool(r.gmb_refresh_token and r.gmb_location_id)
+        import demo_store
+        connected = bool(r.gmb_refresh_token and r.gmb_location_id) or demo_store.is_simulated(r)
         live = _aivis_listing(r, rid, snap, bool(snap.get("read")), connected,
                               stale_read=connected and not snap.get("read"))
     except Exception as e:
@@ -8641,18 +8646,23 @@ def _do_ai_visibility_inner(rid, force=False):
         return {"ok": False, "error": "Restaurant not found"}, 404
 
     import demo_store
-    if not force or demo_store.is_simulated(r):
-        # Halsted & Rye (the showcase demo) is fictional: its stored runs
-        # are shown, nothing is ever asked of Perplexity about it.
+    if not force:
         return _aivis_serve_stored(rid, r)
+    # Halsted & Rye (the showcase demo) is fictional: a run asks nothing of
+    # Perplexity - its answers come from demo_store.intel and go through the
+    # same scoring, so the demo's Check and weekly run behave as a client's
+    # (owner, 10/17/26). No paid call, so no budget, rate or key gate.
+    sim = demo_store.is_simulated(r)
+    if sim:
+        from demo_store import intel as _demo_intel
 
     # The burst limit guards live runs only: a read costs nothing (#98).
-    if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
+    if not sim and ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
         return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
 
     # Perplexity is a paid dependency like any other, so it answers to the
     # same ceiling. It used to be exempt purely because it wasn't Claude.
-    _over = ai_budget_exceeded(rid)
+    _over = None if sim else ai_budget_exceeded(rid)
     import ai_utils as _ai_ops
     if _over:
         _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "budget", detail=_over, vendor="perplexity")
@@ -8660,12 +8670,13 @@ def _do_ai_visibility_inner(rid, force=False):
     # Fail fast (#151): with no key every query was still sent — each one
     # paced 1.3s and retried once, on the owner's request thread — to come
     # back 401. And while the Perplexity breaker is open nothing is sent.
-    if not (os.getenv("PERPLEXITY_API_KEY") or "").strip():
+    if not sim and not (os.getenv("PERPLEXITY_API_KEY") or "").strip():
         _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "no_key", detail="PERPLEXITY_API_KEY is not set",
                             vendor="perplexity")
         return {"ok": False, "error": "AI visibility checks aren't available right now."}, 200
     try:
-        _ai_ops._breaker_check("perplexity")
+        if not sim:
+            _ai_ops._breaker_check("perplexity")
     except _ai_ops.AIProviderDown:
         _ai_ops.log_blocked(rid, "ai_visibility", AIVIS_MODEL, "breaker", detail="the Perplexity breaker is open",
                             vendor="perplexity")
@@ -8970,11 +8981,13 @@ def _do_ai_visibility_inner(rid, force=False):
         answer, sources, err, reason = "", [], None, None
         sends, tin, tout = 0, 0, 0
         _started = _pplx_time.time()
+        if sim:
+            answer, sources = _demo_intel.ai_answer(q, kind)
         # One logical query = one ledger row (AIOPS-15): its sends recorded
         # as its attempts with the whole wait as its latency — each retry
         # used to be its own row. A 429 gets up to AIVIS_429_MAX_SENDS sends
         # (#7); any other failure one retry; a rejected key none.
-        while True:
+        while not sim:
             if _ai_ops.breaker_state("perplexity")[0] == "open":
                 # A key Perplexity rejected, or a run of failures: the rest of
                 # the run fails fast rather than pacing and retrying (#151).
@@ -9051,7 +9064,9 @@ def _do_ai_visibility_inner(rid, force=False):
         # the model asked (AI_VISIBILITY_MODEL) is what the tokens are priced
         # by (#68), the search fee by the SKU.
         try:
-            if sends:
+            if sim:
+                pass            # nothing was sent: nothing to meter
+            elif sends:
                 _ai_ops.log_api_call(rid, "ai_visibility", "perplexity-search", model=AIVIS_MODEL, calls=1,
                                      input_tokens=tin, output_tokens=tout,
                                      status="ok" if answer else "error",
@@ -9064,7 +9079,9 @@ def _do_ai_visibility_inner(rid, force=False):
                                     detail=err or "the Perplexity breaker is open", vendor="perplexity")
         except Exception:
             pass
-        if answer:
+        if sim:
+            pass
+        elif answer:
             _ai_ops._breaker_record("perplexity", True)
         elif reason in ("auth", "permission"):
             _ai_ops._note_provider_error("perplexity", "auth", RuntimeError(err or "rejected"))
@@ -9169,12 +9186,14 @@ def _do_ai_visibility_inner(rid, force=False):
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
     # Items 7-10: require GMB OAuth connection
     gbp_data = {}
-    gbp_connected = bool(r.gmb_refresh_token and r.gmb_location_id)
+    gbp_connected = bool(r.gmb_refresh_token and r.gmb_location_id) or sim
     # Whether the listing itself was read. Description, phone, website and
     # hours can only be known from it; without it they are unmeasured, not
     # missing (M-14).
     gbp_read = False
-    if gbp_connected:
+    if sim:
+        gbp_data, gbp_read = dict(_demo_intel.LISTING), True
+    elif gbp_connected:
         try:
             from gmb import get_gbp_listing
             gbp_result = get_gbp_listing(rid)

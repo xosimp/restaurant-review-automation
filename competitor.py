@@ -593,7 +593,7 @@ def refresh_own_rating(restaurant_id: int, background: bool = True) -> None:
     (a Places-only restaurant before its next competitor refresh). One
     metered details call; at most once per process per restaurant; in a
     daemon thread by default so no page waits on Google. Never raises."""
-    if restaurant_id in _own_rating_asked or not PLACES_API_KEY:
+    if restaurant_id in _own_rating_asked or not PLACES_API_KEY or _simulated(restaurant_id):
         return
     _own_rating_asked.add(restaurant_id)
 
@@ -2097,6 +2097,16 @@ def rediscovery_requested():
         _REDISCOVER.reset(token)
 
 
+def _simulated(restaurant_id) -> bool:
+    """The showcase demo (demo_store): its block is simulated - Google and the model are never asked about
+    it (owner, 10/17/26). Never raises."""
+    try:
+        import demo_store
+        return demo_store.is_simulated(restaurant_id)
+    except Exception:
+        return False
+
+
 @_intel_run
 def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
     """Full pipeline: fetch competitors, get reviews, generate insight.
@@ -2109,6 +2119,9 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
     REVIEWS_REUSE_HOURS is not looked up again (#15); an owner-added one is
     one Details call with its reviews (#40); and every Details call is
     served from the day's cache when the place was already read today (#13)."""
+    if _simulated(restaurant_id):
+        from demo_store import api as _demo_api, intel as _demo_intel
+        return _demo_intel._store_read(restaurant_id, _demo_api.business_today())
     try:
         from models import get_restaurant, get_conn, update_restaurant
         restaurant = get_restaurant(restaurant_id)
@@ -2679,6 +2692,9 @@ def check_ratings(restaurant_id: int) -> dict:
     all new, a review burst — #14, re-audit P2), and a review trigger only
     once REANALYSE_MIN_DAYS have passed since the last read (`held` says it
     waited). Never raises."""
+    if _simulated(restaurant_id):
+        # The showcase's ratings move in its own weekly checks (demo_store.intel); nothing to re-read.
+        return {"ok": True, "checked": 0, "moved": [], "reanalyse": False, "triggers": [], "held": False}
     try:
         from models import get_restaurant, get_conn
         import models as _m

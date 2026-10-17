@@ -133,3 +133,48 @@ def test_the_showcase_website_is_simulated_and_never_calls_google(showcase, monk
     assert s["available"] and s["configured"] and any(t["metric"] == "sessions" and t["value"] > 0 for t in s["totals"])
     # The same day reads the same every time.
     assert W.read_ga4(None, date(2026, 9, 1), date(2026, 9, 1)) == W.read_ga4(None, date(2026, 9, 1), date(2026, 9, 1))
+
+
+def test_the_showcase_intel_tab_is_fully_populated_and_never_calls_out(showcase, monkeypatch):
+    # Owner, 10/17/26: the demo needs an Intel tab with populated data and no
+    # account behind it. Google Places, Perplexity and the model are never asked.
+    import json
+    import ai_utils
+    import client_api
+    import competitor
+    import models
+    from demo_store import intel
+
+    def boom(*a, **k):
+        raise AssertionError("the showcase called out")
+    monkeypatch.setattr(ai_utils, "create_with_retry", boom)
+    import requests
+    monkeypatch.setattr(requests, "post", boom)
+    monkeypatch.setattr(requests, "get", boom)
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "")
+
+    out = intel.fill(showcase, weeks=4, ai_weeks=3)
+    r = models.get_restaurant(showcase)
+    assert r.google_place_id == intel.PLACE_ID and models.is_full_tier(r)     # the Intel tab shows
+    blob = json.loads(r.competitor_intel)
+    assert len(blob["competitors"]) == len(intel.COMPETITORS) and blob["insight"].strip()
+    assert "UNVERIFIED" not in blob["insight"], blob["insight"][-300:]       # the read holds up to its own check
+    assert r.gbp_rating and r.gbp_review_count
+    # Three AI-visibility runs, scored by the real pipeline, the newest served.
+    assert len([s for s in out["ai_scores"] if s is not None]) == 3, out
+    served = client_api._aivis_serve_stored(showcase, r)
+    payload = served[0] if isinstance(served, tuple) else served
+    assert payload["ok"] and payload["ai_score"] is not None and payload["gbp_connected"]
+    assert len(models.get_ai_visibility_history(showcase)) >= 3
+    # Weekly checks to compare (movement), and a POST Check / Refresh stays simulated.
+    conn = models.get_conn()
+    try:
+        dates = conn.execute("SELECT COUNT(DISTINCT substr(captured_at,1,10)) FROM competitor_snapshots "
+                             "WHERE restaurant_id=?", (showcase,)).fetchone()[0]
+        weeks = conn.execute("SELECT week FROM own_rating_history WHERE restaurant_id=? ORDER BY week",
+                             (showcase,)).fetchall()
+    finally:
+        conn.close()
+    assert dates >= 2 and weeks and all("-W" in w[0] for w in weeks)
+    assert competitor.run_competitor_analysis(showcase)["ok"]
+    assert competitor.check_ratings(showcase)["ok"]
