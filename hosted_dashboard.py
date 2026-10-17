@@ -98,6 +98,18 @@ class _FoodCostWithheld(Exception):
     rendered. Not an error — a deliberate, silent withholding."""
 
 
+def _ops_capture_dash(exc, what, restaurant_id):
+    """A Food Cost card that degraded on the dashboard reaches the console
+    (food & bar audit 10/16/26 SCALE-11): the page still renders without it,
+    but a failure is never read as "no data" with nobody told."""
+    try:
+        import ops
+        ops.capture(exc, job="dashboard_food_cost", context=f"restaurant_id={restaurant_id} {what}",
+                    restaurant_id=restaurant_id)
+    except Exception:
+        pass
+
+
 # How red the waste banner runs, by where the waste RATE sits against the
 # owner's own waste target (inventory's benchmark_tone: "Under / Near / Over
 # / Well over target", or Cavnar's 4-5% starting target when none is set).
@@ -885,19 +897,30 @@ def index(current_user):
     # Back Office as Food Cost's source (backoffice_ap.feed_state): it has no
     # API, so it is never "connected", but its imported reports are real data —
     # the page names it and shows no sample figure beside it (10/16/26).
-    try:
-        from backoffice_ap import feed_state as _bo_feed
-        _food_source = _bo_feed(restaurant.id)
-    except Exception:
-        _food_source = None
+    # Only for a login that can see Food Cost (food & bar audit 10/16/26
+    # SCALE-06): the template reads all three inside {% if mod_inventory %},
+    # and the remakes card costed every plate on every dashboard render -
+    # Reviews, Labor, /bar - for managers and restaurants without the module.
+    _food_source = None
+    if _can_see_food_cost:
+        try:
+            from backoffice_ap import feed_state as _bo_feed
+            _food_source = _bo_feed(restaurant.id)
+        except Exception as _bo_e:
+            _ops_capture_dash(_bo_e, "backoffice feed_state", restaurant.id)
+            _food_source = None
     # Food made and not sold, from the POS (pos_food_waste), for a kitchen
     # with no waste log or count yet: its real waste, never the sample's.
+    # Through the restaurant's last complete business date, never the
+    # server's (POS-18); the plate costs are kept on their inputs.
     _food_waste = None
     if _food_source and _food_source.get("on_file") and not (inv or {}).get("is_live"):
         try:
             from pos_food_waste import remakes as _remakes
-            _food_waste = _remakes(restaurant.id)
-        except Exception:
+            from pos import local_complete_through as _lct
+            _food_waste = _remakes(restaurant.id, end=_lct(restaurant.id))
+        except Exception as _fw_e:
+            _ops_capture_dash(_fw_e, "pos_food_waste remakes", restaurant.id)
             _food_waste = None
     # The week a Back Office kitchen's read covers: its last complete fiscal
     # week (backoffice_read.fiscal_week), not the sample pantry's seven days
@@ -910,7 +933,8 @@ def index(current_user):
             from models import _restaurant_today as _rt_fw
             _ws, _we = _fwk(restaurant, _rt_fw(restaurant.id))
             _food_week = {"start_mdy": _mdy_fw(_ws.isoformat()), "end_mdy": _mdy_fw(_we.isoformat())}
-        except Exception:
+        except Exception as _fwk_e:
+            _ops_capture_dash(_fwk_e, "fiscal week", restaurant.id)
             _food_week = None
     return render_template('dashboard.html',
         food_source=_food_source, food_waste=_food_waste, food_week=_food_week,
