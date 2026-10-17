@@ -2452,7 +2452,8 @@ def _read_forecast_record(restaurant_id, _viewer=None):
     for the modules this login may see."""
     denied = _denied(_viewer)
     out = {"forecasts": {}}
-    kind_module = {"waste_week": "inventory", "profitability_month": "inventory", "revenue_week": "labor",
+    kind_module = {"waste_week": "inventory", "profitability_month": "inventory", "event_order_week": "inventory",
+                   "revenue_week": "labor",
                    "labor_week": "labor", "marketing_reach_week": "marketing", "review_rating_week": "reviews"}
     try:
         import forecast_log

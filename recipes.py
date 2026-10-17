@@ -178,6 +178,20 @@ def dish_type(name):
     return "other"
 
 
+def _degraded(exc, where, restaurant_id=None):
+    """A read or write this module degrades past (no examples, no edit
+    history, an outcome not filed) is still a failure to see (SCALE-11,
+    10/16/26): it was a print, so it read as "nothing on file". Never
+    raises."""
+    print(f"[recipes {where}] {exc}")
+    try:
+        import ops
+        ops.capture(exc, job=f"recipes.{where}", restaurant_id=restaurant_id,
+                    context=f"restaurant_id={restaurant_id}" if restaurant_id else "")
+    except Exception:
+        pass
+
+
 def draft_edit_history(restaurant_id, kind, db_path=DB_PATH) -> dict:
     """{"drafts", "lines", "edited", "rate"} over this restaurant's accepted
     ESTIMATED drafts of dishes of this kind (photographed cards excluded —
@@ -188,7 +202,8 @@ def draft_edit_history(restaurant_id, kind, db_path=DB_PATH) -> dict:
             "SELECT menu_item_name, lines_json, edited_lines, note FROM recipe_drafts WHERE restaurant_id=? "
             "AND status='accepted' AND accepted_lines_json IS NOT NULL ORDER BY id DESC LIMIT 60",
             (restaurant_id,)).fetchall()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "edit history", restaurant_id)
         rows = []
     finally:
         conn.close()
@@ -263,7 +278,7 @@ def confirmed_examples(restaurant_id, kind, exclude_item_id=None, items=None) ->
         finally:
             conn.close()
     except Exception as e:
-        print(f"[recipes] confirmed examples unavailable for {restaurant_id}: {e}")
+        _degraded(e, "confirmed examples", restaurant_id)
         return []
     rank = {"owner": 0, "draft_edited": 1, "draft_accepted": 2}
 
@@ -288,11 +303,15 @@ def confirmed_examples(restaurant_id, kind, exclude_item_id=None, items=None) ->
     return out
 
 
-def _examples_block(examples) -> str:
+def _examples_block(examples, noted=False) -> str:
+    """The examples, fenced — with UNTRUSTED_NOTE unless the prefix already
+    carries it (`noted`, AI-15)."""
     if not examples:
         return ""
-    from ai_guard import wrap_untrusted
-    body = "\n".join(f"{e['dish']}: " + "; ".join(f"{n} {q:g} {u}".strip() for n, q, u in e["lines"])
+    from ai_guard import wrap_untrusted, UNTRUSTED_NOTE
+    from inventory import prompt_name
+    body = "\n".join(f"{prompt_name(e['dish'])}: " + "; ".join(f"{prompt_name(n)} {q:g} {prompt_name(u, 20)}".strip()
+                                                               for n, q, u in e["lines"])
                      for e in examples)
     if all(e.get("accepted_draft") for e in examples):
         head = ("Accepted drafts for similar dishes here, per plate — earlier drafts the owner kept as drafted "
@@ -302,7 +321,7 @@ def _examples_block(examples) -> str:
         head = ("The owner's confirmed recipes for similar dishes here, per plate — their portions, fenced; use "
                 "them as the guide to how much this kitchen puts on a plate, never as ingredients to add that this "
                 "dish would not have:\n")
-    return head + wrap_untrusted(body) + "\n\n"
+    return ("" if noted else UNTRUSTED_NOTE + "\n") + head + wrap_untrusted(body) + "\n\n"
 
 
 # The prompt is built for the prompt cache (AI cost audit 10/7/26 #60): the
@@ -314,25 +333,37 @@ def _examples_block(examples) -> str:
 # the model's minimum cacheable length (1,024 tokens on Sonnet; a short
 # ingredient list) the marker costs nothing and nothing is cached.
 def _prompt_prefix(ingredients, context) -> str:
-    names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients)
+    # Ingredient and dish names come from POS sync and CSV upload, and the
+    # menu notes are the owner's free text (AI-15, 10/16/26): every name is
+    # one line, capped (inventory.prompt_name), and the notes are fenced with
+    # UNTRUSTED_NOTE — they went in raw, so a name or a note could carry an
+    # instruction into the recipe quantities.
+    from inventory import prompt_name
+    names = "\n".join(f"- {prompt_name(i['name'])} (unit: {prompt_name(i.get('unit') or 'each', 20)})"
+                      for i in ingredients)
+    fenced = ""
+    if context:
+        from ai_guard import wrap_untrusted, UNTRUSTED_NOTE
+        fenced = f"\n{UNTRUSTED_NOTE}\nRestaurant context (the owner's menu notes):\n{wrap_untrusted(context)}\n"
     return (
         "You are costing a restaurant menu. You will be asked to draft the recipe for ONE plate of one dish.\n\n"
         "Use ONLY ingredients from this list, spelled exactly as given, with the quantity per plate "
         "in the ingredient's own unit. Leave out anything you would have to invent. "
         f"Mark each line's confidence honestly.\n\nIngredients on hand:\n{names}\n"
-        + (f"\nRestaurant context: {context}\n" if context else "")
+        + fenced
     )
 
 
-def _prompt_dish(item_name, examples=None) -> str:
-    return (_examples_block(examples)
-            + f"Draft the recipe for ONE plate of: {item_name}\n\nReturn the JSON only.")
+def _prompt_dish(item_name, examples=None, noted=False) -> str:
+    from inventory import prompt_name
+    return (_examples_block(examples, noted=noted)
+            + f"Draft the recipe for ONE plate of: {prompt_name(item_name)}\n\nReturn the JSON only.")
 
 
 def _prompt(item_name, ingredients, context, examples=None):
     """The whole prompt as one text (the request carries it as two blocks —
     _draft_request)."""
-    return _prompt_prefix(ingredients, context) + "\n" + _prompt_dish(item_name, examples)
+    return _prompt_prefix(ingredients, context) + "\n" + _prompt_dish(item_name, examples, noted=bool(context))
 
 
 def _draft_request(item_name, ingredients, context, examples=None, route=None) -> dict:
@@ -343,8 +374,20 @@ def _draft_request(item_name, ingredients, context, examples=None, route=None) -
               messages=[{"role": "user", "content": [
                   {"type": "text", "text": _prompt_prefix(ingredients, context),
                    "cache_control": {"type": "ephemeral"}},
-                  {"type": "text", "text": _prompt_dish(item_name, examples)}]}])
+                  {"type": "text", "text": _prompt_dish(item_name, examples, noted=bool(context))}]}])
     return route.apply(kw) if route is not None else kw
+
+
+def _names_index(ingredients) -> dict:
+    """{lower-case name: ingredient}, under the name as stored and as the
+    prompt wrote it (inventory.prompt_name: one line, capped), so a line
+    the model spelled "exactly as given" binds either way."""
+    from inventory import prompt_name
+    out = {}
+    for i in ingredients:
+        out.setdefault(prompt_name(i["name"]).lower(), i)
+        out[i["name"].strip().lower()] = i
+    return out
 
 
 def _draft_inputs(restaurant_id, db_path=DB_PATH):
@@ -531,7 +574,7 @@ def on_draft_batch(item, message=None, error=None):
     r, ingredients, context = _draft_inputs(rid)
     if r is None:
         return
-    by_name = {i["name"].strip().lower(): i for i in ingredients}
+    by_name = _names_index(ingredients)
     from ai_utils import get_client
     examples = confirmed_examples(rid, dish_type(dish.get("name")), exclude_item_id=dish.get("id"))
     try:
@@ -553,13 +596,14 @@ def draft_missing(restaurant_id, limit=RECIPE_DRAFT_LIMIT, client=None, db_path=
     r, ingredients, context = _draft_inputs(restaurant_id, db_path)
     if r is None:
         return {"drafted": 0, "skipped": 0, "reason": context}
-    by_name = {i["name"].strip().lower(): i for i in ingredients}
+    by_name = _names_index(ingredients)
     todo = (list(items) if items is not None else missing_recipes(restaurant_id, db_path=db_path))[:limit]
     if not todo:
         return {"drafted": 0, "skipped": 0}
     try:
         menu_now = inventory_ledger.list_menu_items_with_recipes(restaurant_id) or []
-    except Exception:
+    except Exception as e:
+        _degraded(e, "menu for examples", restaurant_id)
         menu_now = []
     batched = 0
     if batch:
@@ -766,8 +810,11 @@ def extract_from_image(restaurant_id, data, media_type, user_id=None, client=Non
         if prior["status"] == "accepted":
             raise RecipePhotoError(f"That card was already added — it's the recipe for {prior['menu_item_name']}.")
     ingredients =[i for i in (inventory_ledger.list_ingredients(restaurant_id) or []) if i.get("name")]
-    by_name = {i["name"].strip().lower(): i for i in ingredients}
-    names = "\n".join(f"- {i['name']} (unit: {i.get('unit') or 'each'})" for i in ingredients) or "- (none on file yet)"
+    by_name = _names_index(ingredients)
+    from inventory import prompt_name
+    # One line each, capped (AI-15): names come from POS sync and uploads.
+    names = "\n".join(f"- {prompt_name(i['name'])} (unit: {prompt_name(i.get('unit') or 'each', 20)})"
+                      for i in ingredients) or "- (none on file yet)"
     from ai_utils import create_with_retry, get_client
     client = client or get_client()
     import data_health
@@ -1032,7 +1079,7 @@ def accept(restaurant_id, draft_id, lines=None, user_id=None, db_path=DB_PATH, y
                      (json.dumps(accepted_lines), edited, draft_id, restaurant_id))
         conn.commit()
     except Exception as e:
-        print(f"[recipes] accepted lines not recorded: {e}")
+        _degraded(e, "accepted lines", restaurant_id)
     finally:
         conn.close()
     if not written:
@@ -1085,7 +1132,7 @@ def _file_draft_outcome(restaurant_id, row, outcome, quality=None, detail=None, 
                                               quality=quality, detail=detail,
                                               db_path=None if db_path == DB_PATH else db_path)
     except Exception as e:
-        print(f"[recipes] draft outcome not filed rid={restaurant_id}: {e}")
+        _degraded(e, "draft outcome", restaurant_id)
         return False
 
 
@@ -1169,4 +1216,4 @@ def _log_menu(restaurant_id, changes, db_path=None):
             change_log.record(restaurant_id, entity, field, before, after, subject=subject,
                               db_path=None if db_path == DB_PATH else db_path)
     except Exception as e:
-        print(f"[recipes] change not logged rid={restaurant_id}: {e}")
+        _degraded(e, "change log", restaurant_id)
