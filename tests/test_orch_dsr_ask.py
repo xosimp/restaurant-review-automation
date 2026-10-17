@@ -126,8 +126,16 @@ def test_only_the_shape_escalates(monkeypatch, rest, db_path, how):
     else:
         client = _Seq([strong_reply()], stop="max_tokens")
     out = _write(monkeypatch, rest, strong_night(), client)
-    assert out["ok"] is False and len(client.calls) == 1
     (run,) = _runs(db_path)
+    if how == "lead":
+        # A lead refused for a figure is rewritten once, told which figure
+        # failed, and judged by the same check (owner, 10/16/26, 8837fae0):
+        # the same unbacked figure again is still refused.
+        assert out["ok"] is False and len(client.calls) == 2
+        assert "the executive_summary was refused" in client.calls[1]["messages"][0]["content"]
+        assert run["escalations"] == 1 and run["status"] == "failed"
+        return
+    assert out["ok"] is False and len(client.calls) == 1
     assert run["escalations"] == 0 and run["status"] == "failed"
 
 
