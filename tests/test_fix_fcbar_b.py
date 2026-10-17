@@ -183,7 +183,10 @@ def test_fc_calc_02_the_ledgers_own_stock_is_theoretical_never_cogs(db_path):
     out = cogs.build_food_cost_pct(rid, days=7, today=T, db_path=db_path)
     assert out["ok"] is False and out["pct"] is None and out["counted"] is False
     comps = {m["component"] for m in out["missing"]}
-    assert comps == {"a counted opening inventory", "a counted closing inventory"}
+    # One name per edge whether nothing or only the recipes' figure is there
+    # (a read's fingerprint is its prompt); the why says which.
+    assert comps == {"opening inventory", "closing inventory"}
+    assert all("theoretical" in m["why"] for m in out["missing"])
     th = out["theoretical"]
     assert th and th["label"] == "by recipe (theoretical)" and th["cogs"] == 500.0 + 50.0 - 450.0
 

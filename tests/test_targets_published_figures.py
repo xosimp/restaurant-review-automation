@@ -206,6 +206,8 @@ def test_no_new_bare_target_reads():
     labor or food-cost target reads thresholds.target_for, never the bare
     column or notify.labor_target_for. These counts may only fall."""
     ceiling = {"admin_ops.py": 2, "admin_routes.py": 4, "client_api.py": 2, "cogs.py": 2, "demo_seed.py": 3,
+               # the showcase store's seed sets its targets, as demo_seed does; it judges nothing
+               "demo_store/build.py": 3,
                "dsr/block_labor.py": 1, "dsr/memory.py": 1, "food_cost_intelligence.py": 6, "good_news.py": 2,
                "hosted_dashboard.py": 1,
                # the cache's input key names the target columns; it judges nothing (re-audit #28)

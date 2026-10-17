@@ -29385,7 +29385,7 @@ document.addEventListener('change',function(ev){
   var t=ev.target;if(!t||!t.getAttribute||!t.getAttribute('data-fc2-bo-sort')||!t.value)return;
   fetch('/api/food-cost/purchases/vendor',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},
     body:JSON.stringify({vendor:t.getAttribute('data-fc2-bo-sort'),category:t.value})})
-    .then(function(r){return r.json();})
+    .then(apiJson)
     .then(function(r){
       if(r&&r.ok){toast('Saved — the supplier is sorted','success');fc2LoadBo();}
       else toast((r&&r.error)||'That couldn’t be saved just now.','error');

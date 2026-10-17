@@ -1837,7 +1837,11 @@ def _drivers_block(drv) -> str:
 
 def _position_block(fc) -> str:
     if not fc.get("ok"):
-        why = "; ".join(f"{m['component']} ({m['why']})" for m in (fc.get("missing") or []))
+        # The components only: each one's `why` names the window's dates,
+        # which move every day and made every morning a new read for the
+        # same missing inputs (the read's fingerprint is the prompt).
+        # Sorted: which edge was found missing first is no new fact.
+        why = "; ".join(sorted({str(m["component"]) for m in (fc.get("missing") or [])}))
         return (f"(Food cost % cannot be computed: {why or 'inputs missing'}. "
                 f"Do not state or estimate a food cost percentage.)")
     # One denominator, named for what it is (FC-CALC-11): food sales, or

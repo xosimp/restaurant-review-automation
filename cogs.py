@@ -954,7 +954,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         for edge in uncounted_edges:
             day = opening_day if edge == "opening" else closing_day
             missing.append({
-                "component": f"a counted {edge} inventory",
+                "component": f"{edge} inventory", "theoretical": True,
                 "why": (f"no full count within {tol} days of {_mdy(start if edge == 'opening' else end)} — the "
                         f"stock on {_mdy(day)} is the last count plus deliveries minus what the recipes say was "
                         "used, the recipes' theoretical figure, not a count")})
@@ -1055,7 +1055,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "theoretical": None,
         "source": "back_office" if bo is not None else "inventory",
     }
-    only_uncounted = bool(missing) and all(m["component"].startswith("a counted ") for m in missing)
+    only_uncounted = bool(missing) and all(m.get("theoretical") for m in missing)
     if missing and not only_uncounted:
         return payload
 

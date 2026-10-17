@@ -203,7 +203,7 @@ def test_the_margin_line_is_the_owners_target_else_100_minus_the_food_cost_targe
     rid = _rid(db)
     r = models.get_restaurant(rid, db_path=db)
     t = br.margin_target(r)
-    assert t["source"] == "food_cost_target" and t["pct"] == round(100 - float(__import__("cogs").dish_reference(r)["pct"]), 1)
+    assert t["source"] == "from_food_target" and t["pct"] == round(100 - float(__import__("cogs").dish_reference(r)["pct"]), 1)
     models.update_restaurant(rid, {"plate_margin_target_pct": 72.5}, db_path=db)
     r = models.get_restaurant(rid, db_path=db)
     assert r.plate_margin_target_pct == 72.5, "whitelisted, hydrated"

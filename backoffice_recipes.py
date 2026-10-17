@@ -588,14 +588,14 @@ def margin_target(restaurant) -> dict:
     the food cost target the page's dishes are already judged against
     (cogs.dish_reference - the owner's, or Cavnar AI's starting 30%). The
     common 28-35% food cost range is a 65-72% margin; nothing here calls it
-    an industry figure. {pct, source: set | food_cost_target, label}."""
+    an industry figure. {pct, source: set | from_food_target, label}."""
     own = getattr(restaurant, "plate_margin_target_pct", None) if restaurant is not None else None
     if own is not None:
         return {"pct": float(own), "source": "set", "label": f"your plate margin target, {float(own):g}%"}
     import cogs
     ref = cogs.dish_reference(restaurant) or {"pct": 30.0, "basis": "Cavnar AI's starting food cost target, 30%"}
     pct = round(100.0 - float(ref["pct"]), 1)
-    return {"pct": pct, "source": "food_cost_target", "label": f"{pct:g}% — 100 minus {ref['basis']}"}
+    return {"pct": pct, "source": "from_food_target", "label": f"{pct:g}% — 100 minus {ref['basis']}"}
 
 
 def suspect_high(restaurant_id, db_path=None) -> float:
