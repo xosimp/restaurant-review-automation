@@ -55,6 +55,8 @@ def oldest_believable(restaurant):
     return (joined - timedelta(days=OLDEST_BEFORE_JOINING_DAYS)).isoformat()
 
 
+# The held invoices the payload lists (each list's length beside it).
+HELD_CAP = 50
 # An invoice dated more than this long after its file arrived is held (V35).
 LATEST_AFTER_RECEIPT_DAYS = 7
 
@@ -214,8 +216,10 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
             "as_of": inv_dates[-1], "as_of_mdy": _mdy(inv_dates[-1]),
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
                          "count": len({(l["distributor"], l["invoice_number"]) for l in lines if l.get("kind") != "backoffice"})},
-            "held_future": held_rows,
-            "held_old": held_old,
+            # Capped (SCALE-08): a mis-dated export can hold hundreds; the
+            # count rides beside the list.
+            "held_future": held_rows[:HELD_CAP], "held_future_total": len(held_rows),
+            "held_old": held_old[:HELD_CAP], "held_old_total": len(held_old),
             "feed": dict(feed or {"invoices_through": fresh.get("invoices_through"),
                                   "invoices_through_mdy": fresh.get("invoices_through_mdy"),
                                   "sales_through_mdy": fresh.get("sales_through_mdy"),

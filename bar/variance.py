@@ -972,7 +972,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         a["rung_units"] = _r(a["rung_units"])
         a["sales_usd"] = round(a["sales_usd"], 2)
     totals = _totals(items, cat_sales, mapped_sales)
-    out = {"set_aside": aside_rows, "set_aside_total": len(aside_rows),
+    out = {"set_aside": aside_rows[:MAX_UNMAPPED], "set_aside_total": len(aside_rows),
            "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),
            "available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
            "span": span_out, "items": items[:MAX_ITEMS], "items_total": len(items),

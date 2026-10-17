@@ -46,18 +46,17 @@ EVENT_AHEAD_DAYS = 7
 # The weekly price push: Mondays from this local hour.
 PUSH_HOUR = 9
 PUSH_UNTIL = 14
-PUSH_CURSOR_KEY = "bar_price_push_cursor"
-PUSH_MAX_SECONDS = 240
 _CATS = ("beer", "liquor", "wine")
 
 
-def payload(restaurant_id, today=None, db_path=None):
+def payload(restaurant_id, today=None, db_path=None, keep=True):
     """The Bar page's payload (bar_cost.build, served from bar.cache: kept
     until the data under it changes — read it, never change it), or None
-    when it cannot be read. Never raises."""
+    when it cannot be read. Never raises. `keep=False` (a scheduled sweep)
+    never fills the interactive cache with what it builds (SCALE-07)."""
     try:
         import bar.cache as _bcache
-        return _bcache.full(int(restaurant_id), db_path=db_path, today=today)
+        return _bcache.full(int(restaurant_id), db_path=db_path, today=today, keep=keep)
     except Exception as e:
         # Ask, the DSR line, the digest, Home and the push all read through
         # here: a failure is captured once for ops, never silent (R17).
@@ -464,7 +463,7 @@ def push_increase(restaurant_id, today=None, db_path=None, p=None) -> int:
     pushed again) — through strategy_jobs._reach: push only (its card is on
     Home and the digest already), the briefing budget, quiet hours and the
     Food Cost audience. Returns the people reached."""
-    p = p if p is not None else payload(restaurant_id, today=today, db_path=db_path)
+    p = p if p is not None else payload(restaurant_id, today=today, db_path=db_path, keep=False)
     top = headline_increases(p, floor=PUSH_MONTHLY_USD)
     if not top:
         return 0
@@ -479,47 +478,73 @@ def push_increase(restaurant_id, today=None, db_path=None, p=None) -> int:
                   rec={"key": key, "title": price_title(r), "module": "food"}, email=False)
 
 
+QUEUE_KIND = "bar_price_push"
+
+
+def _push_due(r, now=None):
+    """(due, local) for one restaurant: paying or trialling, with the
+    Inventory module, on a local Monday inside the push window — the cheap
+    checks, no claim."""
+    import models as _m
+    if r is None or (getattr(r, "billing_status", None) or "trial").lower() in _m.BLOCKED_BILLING_STATES:
+        return False, None
+    if not getattr(r, "module_inventory", 0):
+        return False, None
+    from time_utils import restaurant_now
+    local = now or restaurant_now(r, naive=True)
+    return (local.weekday() == 0 and PUSH_HOUR <= local.hour < PUSH_UNTIL), local
+
+
 def run_price_push(db_path=None, now=None) -> dict:
-    """Hourly on Mondays: from PUSH_HOUR local, once a day per restaurant
-    with distributor invoices (scheduler.local_due), push its biggest held
-    bar price increase worth $25 a month or more (push_increase). Refused
-    off the production scheduler (scheduling_allowed); paused and lapsed
-    accounts skipped; bounded and resumable (job_cursors). Returns the
-    standard counts."""
+    """Hourly on Mondays: the weekly push of each restaurant's biggest held
+    bar price increase worth $25 a month or more, as queue work (FC/Bar
+    audit 10/16/26 SCALE-07; strategy_jobs.fan_out_learner's pattern): one
+    `bar_price_push` row per restaurant with distributor invoices that is
+    due at its own hour (PUSH_HOUR local, a Monday), keyed on the restaurant
+    and its local day so an hourly pass queues nothing twice. The queue
+    worker runs each (run_queued_price_push) — the cold Bar build is never
+    on the scheduler thread, and never kept in the interactive cache.
+    Refused off the production scheduler (scheduling_allowed). Standard
+    counts: `attempted` / `ok` are the rows queued now."""
     import models as _m
     import scheduler as _sched
     ids = _restaurants_with_invoices(db_path)
     if not _sched.scheduling_allowed():
         return _counts(skipped=len(ids), reason="not the production scheduler")
-    tally = {"attempted": 0, "failed": 0, "pushed": 0, "skipped": 0}
-
-    def _one(rid):
-        r = _m.get_restaurant(rid, db_path=db_path) if db_path else _m.get_restaurant(rid)
-        if r is None or (getattr(r, "billing_status", None) or "trial").lower() in _m.BLOCKED_BILLING_STATES:
-            return
-        if not getattr(r, "module_inventory", 0):
-            return
-        from time_utils import restaurant_now
-        local = now or restaurant_now(r, naive=True)
-        if local.weekday() != 0:
-            return
-        if not _sched.local_due(r, PUSH_HOUR, until=PUSH_UNTIL, claim_key="bar_price_push", now_local=local):
-            return
-        tally["attempted"] += 1
-        reached = push_increase(rid, today=local.date(), db_path=db_path)
-        if reached:
-            tally["pushed"] += 1
-        else:
-            tally["skipped"] += 1
-
-    def _run(rid):
+    items, skipped, failed = [], 0, 0
+    for rid in ids:
         try:
-            _one(rid)
+            r = _m.get_restaurant(rid, db_path=db_path) if db_path else _m.get_restaurant(rid)
+            due, local = _push_due(r, now)
         except Exception:
-            tally["failed"] += 1
-            raise
+            failed += 1
+            continue
+        if not due:
+            skipped += 1
+            continue
+        day = local.date().isoformat()
+        items.append({"payload": {"restaurant_id": rid, "day": day}, "restaurant_id": rid,
+                      "idempotency_key": f"{QUEUE_KIND}:{rid}:{day}"})
+    import job_queue
+    created = job_queue.enqueue_many(QUEUE_KIND, items, priority_class="bulk", db_path=db_path) if items else 0
+    return _counts(created, created, failed, skipped + len(items) - created, False, queued=created)
 
-    _done, ran_out = _sched.resumable_sweep(PUSH_CURSOR_KEY, ids, _run, PUSH_MAX_SECONDS, workers=1,
-                                            job="bar_price_push")
-    return _counts(tally["attempted"], tally["attempted"] - tally["failed"] - tally["skipped"], tally["failed"],
-                   tally["skipped"], hit_bound=ran_out, pushed=tally["pushed"])
+
+def run_queued_price_push(job) -> dict:
+    """job_queue's handler for `bar_price_push`: one restaurant's weekly
+    push — claimed once per local day (scheduler.local_due), then
+    push_increase, its Bar payload read with keep=False. Raises on failure
+    (the queue captures it and tries again once)."""
+    import models as _m
+    import scheduler as _sched
+    p = job.payload or {}
+    rid = p.get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    r = _m.get_restaurant(int(rid))
+    due, local = _push_due(r)
+    if not due:
+        return {"skipped": "not due"}
+    if not _sched.local_due(r, PUSH_HOUR, until=PUSH_UNTIL, claim_key="bar_price_push", now_local=local):
+        return {"skipped": "already claimed"}
+    return {"pushed": push_increase(int(rid), today=local.date())}

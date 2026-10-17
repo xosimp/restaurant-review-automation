@@ -120,6 +120,9 @@ KINDS = {
     # The learning ablation, off the owner's wait (blind re-audit 10/11/26
     # ARCH-14): research data, one try.
     "schedule_ablation": ("bulk", "bulk", 1),
+    # The Monday bar price push, one row per restaurant due at its own hour
+    # (bar_signals.run_price_push; FC/Bar audit 10/16/26 SCALE-07).
+    "bar_price_push": ("bulk", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -131,6 +134,7 @@ HANDLERS = {
     "pos_archive": "strategy_jobs:run_queued_pos_archive",
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
+    "bar_price_push": "bar_signals:run_queued_price_push",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
