@@ -212,7 +212,8 @@ def test_invoices_older_than_a_week_say_the_feed_has_stopped():
         assert cat(pc, c)["tone"] is None
     ins = bi._insights(pc, {}, 0)
     assert ins[0]["key"] == "feed_stale"
-    assert ins[0]["headline"] == "No invoices since 7/20/26 — check the Fintech forward"
+    assert ins[0]["headline"] == "No invoices since 7/20/26"
+    assert "Fintech" in ins[0]["action"] and "nothing is judged" in ins[0]["metric"]
     # The feed (W2's bar.feed) says how far invoices reach; staleness is judged
     # against today and the houses' own rhythm, not the feed's fixed-week flag.
     fresh = pc_of(*steady(), feed={"invoices_through": "2026-10-05", "stale_days": None})
@@ -747,7 +748,7 @@ def test_the_price_insight_only_names_a_persistent_same_tier_change():
     assert "from a usual $150" in up["metric"] and "9/1/26" in up["metric"]
     assert "Ask " not in up["action"] and "Breakthru" in up["action"]
     down = bi._insights(pc, {"decreases": [_row_up(2, -40, kind="decrease", pct=-6.7, to=140.0)]}, 0)[0]
-    assert "has held" in down["headline"] and down["action"].startswith("It has held at the new price")
+    assert "has held" in down["headline"] and down["action"] == "Confirm with Breakthru that it stays."
 
 
 def _ladder(**kw):

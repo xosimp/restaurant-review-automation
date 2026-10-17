@@ -65,20 +65,17 @@ REASONS = ("feed_stale", "credits_exceed", "no_reading", "short_window", "closed
 # The sentence each reason is said with (owner copy; never "pour cost" for a
 # purchase ratio). Filled by `reason_text`.
 _REASON_TEXT = {
-    "feed_stale": "No invoices since {last_mdy} — check the Fintech forward. Nothing is judged until they arrive.",
-    "credits_exceed": "Credits exceed purchases in this window, so there is no reading to judge.",
+    "feed_stale": "No invoices since {last_mdy} — check the Fintech forward.",
+    "credits_exceed": "Credits exceed purchases in this window — nothing to judge.",
     "no_reading": "Not measured: purchases and sales aren't both on file for this window.",
-    "short_window": "Judged once four weeks of invoices and sales are on file — {days} of 28 days so far.",
-    "closed_days": "The bar was open {open_days} of {days} days — what was bought before a closure reads high, "
-                   "so this window isn't judged.",
-    "sales_coverage": "Sales for this category are on file for {have} of {open_days} open days — judged once the "
-                      "nightly reports fill in.",
-    "sales_gap": "The nightly report for {gap_mdy} didn't sort its drink sales into categories, so this window "
-                 "isn't judged until that night is repaired.",
-    "incomplete": "Some invoices for this category aren't on file, so it reads low until they are.",
-    "unbalanced": "An invoice for this category didn't add up to its total, so it isn't judged until it's re-read.",
-    "stock_up": "A large delivery on {date_mdy} — {amount_text} from {distributor} — makes this window read high; it "
-                "evens out as it pours. Count the shelf to know.",
+    "short_window": "Judged at four weeks on file — {days} of 28 days so far.",
+    "closed_days": "Open {open_days} of {days} days — buying before a closure reads high, so it isn't judged.",
+    "sales_coverage": "Sales on file for {have} of {open_days} open days — judged once the nightly reports fill in.",
+    "sales_gap": "The nightly report for {gap_mdy} didn't sort its drink sales — not judged until it's repaired.",
+    "incomplete": "Some invoices aren't on file — it reads low until they are.",
+    "unbalanced": "An invoice didn't add up to its total — not judged until it's re-read.",
+    "stock_up": "A large delivery on {date_mdy} — {amount_text} from {distributor} — reads high until it pours. "
+                "Count the shelf to know.",
 }
 
 
