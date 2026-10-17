@@ -34,7 +34,9 @@ def test_the_most_likely_cause_opens_from_its_ai_read():
 
 def test_the_hero_figures_share_a_line_and_headings_sit_under_them():
     fcp = _between("function fc2LoadFoodCostPct(", "\n}\n") if "function fc2LoadFoodCostPct(" in SRC else SRC
-    assert "host.innerHTML='<div class=\"v '+tone+'\"><span class=\"hb-num\">'+d.pct+'%</span></div>'\n          +'<div class=\"k\">Food cost</div>'" in SRC
+    # The COGS basis sits behind the "i" by the label (text round 10/17/26), not under the figure.
+    assert "host.innerHTML='<div class=\"v '+tone+'\"><span class=\"hb-num\">'+d.pct+'%</span></div>'\n          +'<div class=\"k\">Food cost'+fc2Tip('fc2-fcp-tip','How food cost is worked out',wtEsc(d.basis||''))+'</div>'" in SRC
+    assert "+'<div class=\"b\">'+wtEsc(d.basis||'')+'</div>'" not in SRC
     assert "host.innerHTML='<div class=\"v neutral\"><span class=\"hb-num\">—</span></div>'\n        +'<div class=\"k\">Food cost</div>'" in SRC
     assert ".fc2-hero-fcp .v,.fc2-hero-nums .fc2-waste-n .big{font-size:clamp(34px,4vw,50px);line-height:1;margin:0}" in SRC
     assert ".fc2-waste-n .big{grid-row:1;" in SRC and ".fc2-waste-n .fc2-num-lbl{grid-row:2;margin-top:10px" in SRC

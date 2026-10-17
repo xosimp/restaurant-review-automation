@@ -1597,19 +1597,19 @@ First, write one paragraph of 2 sentences max (never 3-4):
 - Name the single largest driver by item name with its dollar amount
 {("- Then one sentence beginning \"Why:\" giving the cause from the ROOT-CAUSE READ." if has_why else "")}
 
-Then, on new lines after the paragraph, write 1-3 recommendations:
+Then, on new lines after the paragraph, write 1-2 recommendations:
 - Take them IN THE ORDER the drivers are ranked above. Do not reorder.
-- Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
-- Maximum of three. Zero is allowed when the data supports none.
-- Number each one: start with "1. ", "2. ", "3. "
-- Hard cap: 30 words per recommendation. Lead with the action.
+- Only include recommendations where there is a genuine, specific opportunity — do not pad to two if the data does not support it
+- Maximum of two. Zero is allowed when the data supports none.
+- Number each one: start with "1. ", "2. "
+- Hard cap: 22 words per recommendation. Lead with the action.
 - End each one with " — " then its dollar figure WITH THE PERIOD IT IS GIVEN IN above, labelled for what it is, and how hard it is (e.g. " — $240/month opportunity, low effort", " — about $180/month estimated, medium effort", or " — about $38 per order, low effort"). Never turn a per-order or weekly figure into a monthly one, and never call any of them saved. State no confidence — no "high confidence", no "I'm sure": the app shows a measured one beside each line.
 - Each must quote a dollar figure from the driver list or the "Dollar figures the data supports" block — never a figure you worked out yourself
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
 - Do not use the owner name anywhere in the recommendations
-- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks, nothing more. Do NOT write a separate closing line after the numbered list.{forecast_instruction}{answered_block}"""
+- No warm closing and no sign-off: end on the last recommendation's dollar figure and effort.{forecast_instruction}{answered_block}"""
 
 
     # The Response Validation Layer (surface food_insight) replaces the
