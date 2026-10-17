@@ -37,7 +37,8 @@ This module is the one place those rules live, for every kind:
   calibration() / calibrated()
                   the bias correction, from the same rows.
 
-Kinds (KINDS): waste_week and profitability_month (Food Cost), revenue_week
+Kinds (KINDS): waste_week, profitability_month and event_order_week (Food
+Cost; the last the guessed holiday order bump, inventory.record_event_bump), revenue_week
 (the week's sales projection, frozen when its schedule is published),
 labor_week, marketing_reach_week and review_rating_week (written by the
 labor, marketing and review insights). Each kind states its unit and what
@@ -84,6 +85,9 @@ KINDS = {
     "review_rating_week": {"period": "week", "unit": "★",
                            "actual": "average star rating of reviews posted in the ISO week "
                                      "(metrics.measure avg_rating — unscored under its 5-review floor)"},
+    "event_order_week": {"period": "week", "unit": "$",
+                         "actual": "the bumped items' depletion over the holiday's ISO week at the frozen unit "
+                                   "costs (inventory.event_usage_actual) — the guessed holiday order bump, scored"},
 }
 
 # How many closed periods the record reads, and how many it needs before it
@@ -330,7 +334,14 @@ def _revenue_actual(restaurant_id, start, end, row, db_path):
     return round(sum(got[d] for d in days), 2)
 
 
+def _event_order_actual(restaurant_id, start, end, row, db_path):
+    import inventory
+    return inventory.event_usage_actual(restaurant_id, start, end, row,
+                                        db_path=None if db_path in (None, DB_PATH) else db_path)
+
+
 _RESOLVERS = {
+    "event_order_week": _event_order_actual,
     "waste_week": _waste_actual,
     "profitability_month": _prime_actual,
     "revenue_week": _revenue_actual,
