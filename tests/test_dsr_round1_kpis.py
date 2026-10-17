@@ -345,7 +345,7 @@ def test_the_pace_tile_says_what_the_week_needs_and_never_a_negative():
                   "budget_per_night_needed": 31580, "typical_per_night": 9800, "last_year_pct": 4.2}}
     t = kpis._pace_tile(p, access.OWNER)
     assert t["tone"] == "bad" and t["trend"] == {"dir": "down", "text": "$1,580", "vs": "vs budget", "tone": "bad"}
-    assert "from the night left" in t["sub"][0] and t["sub"][1] == "↑ 4.2% vs last year" and t["bar"]["max"] == 70000
+    assert t["sub"][0] == "Needs $31,580 from the last night · typical $9,800" and t["sub"][1] == "↑ 4.2% vs last year" and t["bar"]["max"] == 70000
     made = dict(p["week"], budget_left=-200, budget_vs=300)
     t2 = kpis._pace_tile({"week": made}, access.OWNER)
     assert any("already made" in s for s in t2["sub"]) and not any("Needs" in s for s in t2["sub"])

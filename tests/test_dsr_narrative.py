@@ -646,7 +646,8 @@ def test_a_refused_lead_rewritten_with_traceable_figures_reaches_the_owner(monke
 
 
 def test_the_lead_is_asked_for_few_figures_each_traced():
-    assert "at most four of them" in narrative.SYSTEM_PROMPT
+    # One finding first (text round 10/17/26): three figures at most.
+    assert "at most three of them" in narrative.SYSTEM_PROMPT
     assert "A star rating is a figure too" in narrative.SYSTEM_PROMPT
 
 

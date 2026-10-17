@@ -510,8 +510,9 @@ def confidence(forecast, track, wx=None, scheduled=None, keeps_events=False) -> 
     has_range = forecast.get("low") is not None and forecast.get("high") is not None
     pct = None
     if not has_range:
-        track_line = (f"Only {samples} {wd}{'s' if samples != 1 else ''} on file — the forecast states a range, "
-                      f"and a confidence in it, from {FULL_HISTORY_FOR_RANGE} {wd}s"
+        # Said where the dash is (text round 10/17/26): short, both figures.
+        track_line = (f"Only {samples} {wd}{'s' if samples != 1 else ''} on file — a range and a confidence % "
+                      f"come at {FULL_HISTORY_FOR_RANGE}"
                       + (f" ({FULL_HISTORY_FOR_RANGE - samples} more to go)" if FULL_HISTORY_FOR_RANGE > samples else ""))
     elif ranged >= TRACK_MIN and isinstance(inside, (int, float)):
         pct = int(round(inside))
@@ -519,7 +520,7 @@ def confidence(forecast, track, wx=None, scheduled=None, keeps_events=False) -> 
         track_line = (f"Cavnar AI's range held on {held} of the last {ranged} nights "
                       f"({t.get('window_days')}-day record)")
     else:
-        track_line = (f"{ranged} night{'s' if ranged != 1 else ''} scored against Cavnar AI's range so far — "
+        track_line = (f"{ranged} night{'s' if ranged != 1 else ''} scored so far — "
                       f"a confidence % shows at {TRACK_MIN}")
     return {"pct": pct, "based_on": [history] + (["its measured record"] if pct is not None else []),
             "missing": [], "watch": watch, "track": track_line,

@@ -162,7 +162,8 @@ def test_the_salvage_never_repairs_what_an_injection_would_write():
 # ── #37: shorter ────────────────────────────────────────────────────────────
 
 def test_three_lines_a_list_and_short_single_slots():
-    assert narrative.MAX_LIST_ITEMS == 3 and narrative.SINGLE_WORDS == 25
+    # Shorter again in the text round (10/17/26): 20 words a single slot.
+    assert narrative.MAX_LIST_ITEMS == 3 and narrative.SINGLE_WORDS == 20
     assert f"up to {narrative.MAX_LIST_ITEMS} each" in narrative.SYSTEM_PROMPT
     assert f"at most {narrative.SINGLE_WORDS} words" in narrative.SYSTEM_PROMPT
     r = strong_reply()
