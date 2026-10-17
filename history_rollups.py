@@ -561,7 +561,13 @@ def _week_food_cost(restaurant_id, week_end):
         if out.get("ok") and cogs.covers_window(out, d - timedelta(days=6), d):
             return out.get("cogs"), out.get("pct")
     except Exception as e:
-        log.debug("weekly food cost unavailable for %s %s: %s", restaurant_id, week_end, e)
+        # A failure, not a missing figure: reported (SCALE-11) before the
+        # summary is written without it.
+        try:
+            import ops
+            ops.capture(e, job="history_rollups.week_food_cost", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            log.debug("weekly food cost unavailable for %s %s: %s", restaurant_id, week_end, e)
     return None, None
 
 

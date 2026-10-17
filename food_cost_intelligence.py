@@ -395,21 +395,42 @@ def _driver_block_failed(restaurant_id, which, exc):
 def _waste_weeks(restaurant_id, db_path=DB_PATH) -> dict:
     """{item_lower: weeks} — in how many distinct ISO weeks of the last eight
     each item was among the recorded waste offenders, plus "_all": how many
-    weeks of waste history exist at all. inventory_history is written per
-    day, so weeks are counted, not rows — and each ISO week is read from
-    ONE row, its newest snapshot, as the trend does (AI-05): every daily row
-    holds the trailing seven days, so one Sunday's brisket sat in the top
-    items of seven rows across two ISO weeks and read "an offender in 2 of
-    the last 8 weeks"."""
+    weeks of waste history exist at all. Counted from the dated waste events
+    in the ledger — each in the ISO week it was logged (AI-05): every daily
+    snapshot holds the trailing seven days, so one Sunday's brisket sat in
+    the top items of seven rows across two ISO weeks and read "an offender
+    in 2 of the last 8 weeks". A kitchen with no dated events falls back to
+    the snapshots, one row per ISO week (its newest)."""
     out = {"_all": 0}
     since = (_local_today(restaurant_id) - timedelta(days=56)).isoformat()
     conn = get_conn(db_path)
     try:
-        rows = _rows_raw(conn, "SELECT week_end, waste_json FROM inventory_history WHERE restaurant_id=? "
-                               "AND waste_json IS NOT NULL AND week_end >= ? ORDER BY week_end, id",
-                         (restaurant_id, since))
+        # The waste events themselves, where the ledger has them: each
+        # event counts in the ISO week it was logged, once — a daily
+        # snapshot's trailing seven days put one Sunday event in two weeks.
+        events = _rows_raw(conn, "SELECT DISTINCT e.event_date AS d, i.name AS name FROM ingredient_stock_events e "
+                                 "JOIN ingredients i ON i.id=e.ingredient_id AND i.restaurant_id=e.restaurant_id "
+                                 "WHERE e.restaurant_id=? AND e.event_type='waste' AND e.qty > 0 AND e.event_date >= ?",
+                           (restaurant_id, since))
+        rows = [] if events else _rows_raw(
+            conn, "SELECT week_end, waste_json FROM inventory_history WHERE restaurant_id=? "
+                  "AND waste_json IS NOT NULL AND week_end >= ? ORDER BY week_end, id", (restaurant_id, since))
     finally:
         conn.close()
+    if events:
+        weeks_all, per = set(), {}
+        for r in events:
+            try:
+                wk = datetime.strptime(str(r["d"])[:10], "%Y-%m-%d").date().isocalendar()[:2]
+            except (TypeError, ValueError):
+                continue
+            weeks_all.add(wk)
+            per.setdefault(str(r["name"] or "").strip().lower(), set()).add(wk)
+        out["_all"] = len(weeks_all)
+        out.update({k: len(v) for k, v in per.items() if k})
+        return out
+    # No dated events (a CSV kitchen's typed figures): the snapshots, one
+    # row per ISO week — its newest.
     newest = {}
     for r in rows:
         try:
@@ -759,7 +780,9 @@ def cost_drivers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     #    offender, and one week says it is one week.
     try:
         _ww = _waste_weeks(restaurant_id, db_path=db_path)
-    except Exception:
+    except Exception as _e:
+        # Degraded to "one week" on every waste driver — reported (SCALE-11).
+        _driver_block_failed(restaurant_id, "waste_weeks", _e)
         _ww = {"_all": 0}
     for x in (analysis.get("waste_items") or [])[:6]:
         rec = _f(x.get("recoverable_cost"))

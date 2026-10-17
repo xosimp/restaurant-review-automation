@@ -52,6 +52,17 @@ def local_today(restaurant_id):
         return date.today()
 
 
+def _degraded(exc, where, restaurant_id=None):
+    """A read that failed and was degraded to "unknown" — reported to the
+    failure digest, never silent (SCALE-11): a Postgres translation miss or
+    a lock read as "no sales" or "no counts", and nobody was paged."""
+    try:
+        import ops
+        ops.capture(exc, job=f"cogs.{where}", context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        pass
+
+
 def last_delivery_date(restaurant_id, db_path=None):
     """ISO date of the newest logged delivery (receiving event), or None."""
     from models import get_conn, DB_PATH
@@ -145,7 +156,8 @@ def beverage_sales_in_window(restaurant_id, start, end, db_path=None):
                 (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
         finally:
             conn.close()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "beverage_sales_in_window", restaurant_id)
         return None
     bev = [_f(r["v"]) for r in rows if " ".join(str(r["metric"])[10:].lower().split()) in BEVERAGE_CATEGORIES]
     return round(sum(bev), 2) if bev and sum(bev) > 0 else None
@@ -352,7 +364,8 @@ def _archive_detail(restaurant_id, start, end, today=None):
                 (restaurant_id,)).fetchone()
         finally:
             conn.close()
-    except Exception:
+    except Exception as exc:
+        _degraded(exc, "archived_net_sales", restaurant_id)
         return None
     if not edges or not edges["first"]:
         return None
@@ -620,7 +633,7 @@ def _engine_industry_food_cost(restaurant):
         cm = _engine.compare(getattr(restaurant, "id", None), "food_cost_pct_28d", kinds=("industry",),
                              restaurant=restaurant, rows=[])
     except Exception as e:
-        print(f"[cogs] food cost industry comparison unavailable: {e}")
+        _degraded(e, "industry_comparison", getattr(restaurant, "id", None))
         return None
     ind = next((c for c in cm.get("comparisons") or () if c.get("kind") == "industry"), None)
     if not ind or not ind.get("available") or ind.get("low") is None or ind.get("high") is None:
@@ -692,7 +705,8 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
     try:
         logged = conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='receiving' "
                               "LIMIT 1", (restaurant_id,)).fetchone()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "backoffice_components", restaurant_id)
         logged = None
     finally:
         conn.close()
@@ -773,7 +787,8 @@ def _beverage_window(restaurant_id, start, end, db_path=None):
                 (restaurant_id, (start - timedelta(days=56)).isoformat(), end.isoformat())).fetchall()
         finally:
             conn.close()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "beverage_window", restaurant_id)
         return None, None
     nights, bev, any_bev = {}, {}, False
     for r in rows:
@@ -969,7 +984,8 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
             # read 32%.
             try:
                 bev, bev_why = _beverage_window(restaurant_id, start, end, db_path=db_path)
-            except Exception:
+            except Exception as e:
+                _degraded(e, "beverage_window", restaurant_id)
                 bev, bev_why = None, None
             if bev is not None and bev < net_sales:
                 food_sales, sales_basis = round(net_sales - bev, 2), "net_less_beverage"
