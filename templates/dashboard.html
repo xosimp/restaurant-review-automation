@@ -996,6 +996,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    check beside the sentence at body size, not alone on a line above it. */
 .mkt-opps-foot.empty{flex-wrap:nowrap;align-items:flex-start;gap:14px;margin-top:16px;font-size:16px;line-height:1.6;color:var(--ink2)}
 .mkt-opps-foot.empty .cv-ok,.mkt-opps-foot.empty .cv-warn{flex:none;width:24px;height:24px;margin-top:1px}
+.mkt-opps-foot .cav-it{margin-left:0;flex:none}
 .mkt-opps-foot.empty .cv-ok::before{width:6px;height:11px;margin-top:-3px;border-width:0 2.5px 2.5px 0}
 .mkt-opps-list.collapsed>.mkt-opp:nth-child(n+4){display:none}
 /* Horizontal cards (owner, 10/2/26: three tall columns left "a ton of blank
@@ -10463,6 +10464,9 @@ svg:hover .hb-xh{opacity:1}
 .rv2-why .sep{color:var(--ink3);opacity:.5}
 .rv2-basis{font-size:13.5px;color:var(--ink3);display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
 .rv2-basis .sep{opacity:.5}
+.rv2-basis .cav-it{margin-left:4px;align-self:center}
+#review-insight .rv-ai-more{margin-top:2px}
+#review-insight .rv-ai-more-b{margin-top:12px}
 /* Answered reviews fall below one divider (density round #33). */
 .rv2-answered-div{margin:22px 0 4px;padding-top:12px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3)}
 /* Scheduling sits under the post it schedules (friction #41). */
@@ -10475,6 +10479,8 @@ svg:hover .hb-xh{opacity:1}
 .rv2-kw-box{margin-top:30px}
 .rv2-kw-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 .rv2-kw-sub{font-size:13px;color:var(--ink3)}
+/* The how-it-works sentence sits behind an info tip by the heading (text round, 10/17/26). */
+.rv2-kw-head .cav-it{margin-left:0;align-self:center}
 .rv2-kw-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .rv2-kw-list .ac-chip{height:30px;padding:0 4px 0 12px}
 .rv2-kw-list .ac-chip .n{color:var(--ink3);font-weight:500}
@@ -10590,9 +10596,9 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div class="rv2-why" id="rv-why" hidden></div>
   <div id="rv-inbox-header"></div>
   <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
-    <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" onclick="rvKwJump()">Search phrases</button></div><h2>Every review, with a reply ready<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
+    <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" onclick="rvKwJump()">Search phrases</button></div><h2>All reviews<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
     <div class="toolbar">
-      <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search name, keyword, rating, platform…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
+      <div class="search-wrap"><svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input class="search-input" id="rsearch" aria-label="Search reviews" placeholder="Search reviews…" value="{{ rsearch }}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}"></div>
       <div class="filter-pills">
         <button class="fpill {{ 'active' if rfilter=='all' }}" onclick="setRF('all',this)">All</button>
         <button class="fpill {{ 'active-red' if rfilter=='urgent' }}" id="fpill-urgent" onclick="setRF('urgent',this)">Urgent</button>
@@ -10622,7 +10628,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <button class="cbtn cbtn-secondary" id="rv-more-btn" onclick="loadMoreReviews(this)">Load more reviews</button>
       <span style="font-size:12px;color:var(--ink3)">Showing <span class="hb-num" id="rv-shown-n">{{ reviews|length }}</span> of <span class="hb-num" id="rv-total-n">{{ reviews_total or reviews|length }}</span></span>
     </div>
-    <div class="rv2-empty" id="rv-empty"{% if reviews %} hidden{% endif %}><b>No reviews match this filter</b>Try clearing the filters or the search term.<div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
+    <div class="rv2-empty" id="rv-empty"{% if reviews %} hidden{% endif %}><b>No reviews match this filter</b><div style="margin-top:12px"><button class="cbtn cbtn-secondary" onclick="clearFilters()">Clear filters</button></div></div>
   </div>
 
   {# The inbox leads (friction #20): opening Reviews is almost always to
@@ -10633,7 +10639,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   {# Search phrases worked into replies (reply_keywords; Danny, 10/9/26):
      anyone with Reviews edits the list; an add or a remove saves on its own. #}
   <section class="rv2-kw-box" id="rv-keywords" aria-labelledby="rv-kw-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="rv2-kw-sub">Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-kw-tip" aria-expanded="false" aria-controls="rv-kw-tip" aria-label="How search phrases are used">i</button><span class="cav-itp" id="rv-kw-tip" role="tooltip" hidden>Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></span></div>
     <div class="rv2-kw-list" id="rv-kw-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-kw-add" id="rv-kw-form" onsubmit="rvKwAdd(event)"><input class="ac-input" id="rv-kw-in" maxlength="60" placeholder="e.g. brunch in St. Charles" aria-label="Add a search phrase" autocomplete="off"><button type="submit" class="cbtn cbtn-secondary cbtn-sm">Add</button></form>
   </section>
@@ -10642,7 +10648,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      10/9/26): anyone with Reviews edits them; each add, edit or remove
      saves on its own. #}
   <section class="rv2-prg-box" id="rv-programs" aria-labelledby="rv-prg-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="rv2-kw-sub">When a happy guest mentions what a program is for, Cavnar AI invites them to it in one sentence: one program per reply, no prices, never on a 1-3 star review or on Yelp.</span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-prg-tip" aria-expanded="false" aria-controls="rv-prg-tip" aria-label="How membership programs are used">i</button><span class="cav-itp" id="rv-prg-tip" role="tooltip" hidden>When a happy guest mentions what a program is for, Cavnar AI invites them to it in one sentence: one program per reply, no prices, never on a 1-3 star review or on Yelp.</span></span></div>
     <div class="rv2-prg-list" id="rv-prg-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-prg-form" id="rv-prg-form" onsubmit="rvPrgSave(event)" hidden>
       <input type="hidden" id="rv-prg-orig" value="">
@@ -10658,7 +10664,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   </section>
 
   <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>
-    <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating trend, Cavnar AI's read, how replies were approved, topics</span></summary>
+    <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating, AI read, approvals, topics</span></summary>
 
     <section class="rv2-hero" aria-label="Rating trend">
       <div class="hd"><div><div class="hb-kicker">{{ 'Google rating (all time)' if restaurant.gbp_rating else 'Average rating · all reviews' }}</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
@@ -10666,7 +10672,10 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
       <div id="trend-avg-rating" hidden></div>
     </section>
     {# What the figures below cover (moved from the header, density round #33). #}
-    <div class="rv2-basis"><span><span class="hb-num">{{ rstats.positive_pct }}%</span> positive</span>{% if _gl and _gl.tone != 'bad' %}<span class="sep">·</span><span>{{ _gl.line }}</span>{% elif not _gl %}<span class="sep">·</span><span>{{ 'Google connected' if restaurant.gmb_refresh_token else ('Google reviews (sampled)' if restaurant.reviews_live else 'Imported reviews') }}</span>{% endif %}{% if rstats.official_review_count and not rstats.is_full_history %}<span class="sep">·</span><span title="Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar AI holds.">avg over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews</span>{% endif %}{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}</div>
+    {# The source and how many reviews the average covers sit behind an info
+       tip (text round, 10/17/26); the unanalysed count stays in view - it
+       qualifies the charts below. #}
+    <div class="rv2-basis"><span><span class="hb-num">{{ rstats.positive_pct }}%</span> positive</span>{% if rstats.unanalysed %}<span class="sep">·</span><span style="color:var(--hb-warn)" title="Sentiment and topic charts only cover analysed reviews."><span class="hb-num">{{ rstats.unanalysed }}</span> not yet analysed</span>{% endif %}<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-basis-tip" aria-expanded="false" aria-controls="rv-basis-tip" aria-label="Where these reviews come from">i</button><span class="cav-itp" id="rv-basis-tip" role="tooltip" hidden><b>{% if _gl %}{{ _gl.line }}{% else %}{{ 'Google connected' if restaurant.gmb_refresh_token else ('Google reviews (sampled)' if restaurant.reviews_live else 'Imported reviews') }}{% endif %}.</b>{% if rstats.official_review_count and not rstats.is_full_history %} The average is over <span class="hb-num">{{ rstats.total }}</span> of <span class="hb-num">{{ rstats.official_review_count }}</span> reviews: Google's own all-time rating is over every review ever left; ours is over the reviews Cavnar AI holds.{% endif %}</span></span></div>
     {# The AI read on the reviews. This card was removed from the markup at
        some point and loadReviewInsight() has been dead-ending on the
        missing #review-insight ever since — so /api/review-insight, the one
@@ -10674,7 +10683,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
        about it, reached nobody. Same .lb2-ai treatment Labor and Intel
        use, and applyFigureCaveat() still prepends the unverified-numbers
        warning when the server couldn't trace a figure back to the data. #}
-    <div class="lb2-ai"><div class="tag">Cavnar AI's read on your reviews</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div><div id="review-severity" class="rv-sev" hidden></div></div>
+    <div class="lb2-ai"><div class="tag">Cavnar AI's read</div><div class="insight-text insight-loading" id="review-insight"><div class="hb-load"><canvas class="hb-orb" data-orb-state="composing" width="28" height="28"></canvas><span>Reading your reviews…</span></div></div><div id="review-severity" class="rv-sev" hidden></div></div>
     {# The root-cause card. Everything above this line is a snapshot: what
        happened, how much of it, and what to do next. This is the step after
        that — the most likely OPERATIONAL cause of the biggest complaint
@@ -10688,8 +10697,8 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
     <section class="hb-card bm-card" data-bm-module="reviews" hidden aria-label="How you compare"></section>
     <div class="rv2-sig">
       <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
-      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approvals</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap">as-is · edited · regenerated</span></div></div>
-      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span>click a topic to filter the inbox</span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approvals</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap"></span></div></div>
+      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span></span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
     </div>
   </details>
 </div>
@@ -10735,7 +10744,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 40px rgba(0,0,0,.45)">
     <button class="cbtn cbtn-close" aria-label="Close" onclick="document.getElementById('rr-modal').style.display='none'">&#x2715;</button>
     <div style="font-family:'Clash Display',sans-serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Send a customer a direct link to leave a Google review — takes 60 seconds for them.</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">A direct link to your Google reviews.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
@@ -14912,11 +14921,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   </div>
   <div class="topic-row">
     <label for="mktopic" class="sr-only">Topic or occasion</label>
-    <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
+    <input class="topic-input" id="mktopic" placeholder="Topic or occasion, e.g. Sunday brunch">
     <button class="cbtn cbtn-primary" onclick="genContent()">Generate <span style="font-size:15px;margin-left:6px">↺</span></button>
   </div>
   <div style="position:relative">
-    <div class="output-box" id="mkoutput" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Post text — edit it before it goes out" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="this.removeAttribute('data-gen-error');updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
+    <div class="output-box" id="mkoutput" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Post text — edit it before it goes out" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="this.removeAttribute('data-gen-error');updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Your post appears here.</span></div>
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
@@ -14953,7 +14962,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <button class="cbtn cbtn-primary cbtn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
     <button class="cbtn cbtn-google" id="gg-post-btn" onclick="postToGoogle()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="cbtn cbtn-primary cbtn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
-    <span id="output-hint" style="display:none;font-size:14px;color:var(--ink2);margin-left:6px">Edit the post above before it goes out</span>
+    <span id="output-hint" style="display:none;font-size:14px;color:var(--ink2);margin-left:6px">Edit it before it goes out</span>
     <span id="output-tags" class="hb-chip" style="display:none;margin-left:6px" title="What this post is about — its result will be read against the dish and occasion"></span>
   </div>
   <!-- Schedule: an owner does admin at 11pm for a post that belongs on
@@ -14966,7 +14975,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Schedule this post</div>
         <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeMktSchedule()">&times;</button>
       </div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Cavnar AI publishes it for you. Times are your restaurant's own clock.</p>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">In your restaurant's time zone.</p>
       <div class="slabel" style="margin-bottom:4px">Where</div>
       <select id="mkt-schedule-platform" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:14px"></select>
       <div class="slabel" style="margin-bottom:4px">When</div>
@@ -15178,7 +15187,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          /api/marketing/diagnosis): its button opens the cause card here,
          beside what went out - the host itself is never shown in place. #}
       <div class="cp-perf-cause"><div class="diag" id="guest-diag" hidden></div></div>
-      <div class="cp-camps" id="guest-history-list"><div class="cp-empty"><span class="art" aria-hidden="true"><i></i><i></i><i></i></span>Your first campaign lands here, with what it did.</div></div>
+      <div class="cp-camps" id="guest-history-list"><div class="cp-empty"><span class="art" aria-hidden="true"><i></i><i></i><i></i></span>No campaigns sent yet.</div></div>
     </section>
 
     <section class="cp-sec" aria-labelledby="cp-set-h">
@@ -15250,7 +15259,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          here - cavNavSection switches to this tab and waits for the card
          loadMktAttribution un-hides. -->
     <div class="hb-card" id="mkt-attr-card" data-nav="marketing/attribution" style="display:none;margin-bottom:16px;padding:20px 22px">
-      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales</div>
+      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-attr-tip" aria-expanded="false" aria-controls="mkt-attr-tip" aria-label="How this is measured">i</button><span class="cav-itp" id="mkt-attr-tip" role="tooltip" hidden>Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish&rsquo;s own units the same way, and reviews in the next two weeks that mentioned it. <b>Correlations, not proof</b> &mdash; a busy Friday is still a busy Friday.</span></span></div>
       <div id="mkt-attr-body" style="font-size:15px;color:var(--ink2);line-height:1.6"></div>
     </div>
 
@@ -15302,7 +15311,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div style="font-size:14px;font-weight:700;color:var(--ink)">Brand voice</div>
         <button class="cbtn cbtn-icon cbtn-text cbtn-muted cbtn-sm" onclick="closeBrandVoice()">&times;</button>
       </div>
-      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email, text and review reply is written from these fields. Changes apply to the next thing you generate.</p>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email, text and review reply is written from these.</p>
 
       <div class="slabel" style="margin-bottom:4px">How you sound</div>
       <textarea id="bv-voice" rows="2" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="e.g. genuine and warm, a little witty, never corporate — speaks like a person, not a brand"></textarea>
@@ -15571,7 +15580,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div class="hb-top">
     <div style="min-width:0;flex:1">
       <h1 class="hb-h1">Intel. <span class="hb-head {{ _tone }}">{{ _head }}</span></h1>
-      {% if not _cd %}<div class="hb-sub"><span>Ratings, review volume and reputation for the restaurants around you, plus whether AI search knows you exist.</span></div>{% endif %}
+      {# No sub line before the first fetch (text round, 10/17/26): the empty card below says it. #}
       {# No Today row on Intel (owner, 9/26/26): the count of ways to
          improve is said by the list under the analysis. #}
       <div class="dh-badge" data-dh-module="intel" hidden></div>
@@ -15589,20 +15598,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% if _cd %}
   <section class="lb2-hero in2-rating-hero" aria-label="Rating comparison">
     <div class="hd">
-      <div><div class="hb-kicker">Rating comparison · you vs. nearby</div>
-        {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }} · market avg {{ avg_comp_rating if avg_comp_rating else '—' }}{% if avg_comp_rating %}★{% endif %}</small></div>
+      <div><div class="hb-kicker">You vs. nearby</div>
+        {% if own is not none %}<div class="big"><span class="hb-num">{{ own }}</span><small>★ {{ _own_word }}</small>{# The market average is its chip's, above (text round, 10/17/26). #}</div>
         {% if own_vs_avg is not none %}<div class="delta {{ 'good' if _st == 'ahead' else ('bad' if _st == 'behind' else '') }}">{% if _st == 'level' %}About level with the block ({{ '+' if own_vs_avg > 0 }}{{ own_vs_avg }}★){% elif own_vs_avg > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg }} above the block{% else %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ own_vs_avg|abs }} below the block{% endif %}</div>{% endif %}
         {# Only the standing under the figure (owner, 9/27/26): how many
            places, how the average is weighted and the matching basis are
            gone from the hero; the market average stays in its chip. #}
-        {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average · your Google rating appears with the next check</small></div>{% endif %}
+        {% else %}<div class="big"><span class="hb-num">{{ avg_comp_rating }}</span><small>★ market average</small><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="in2-own-tip" aria-expanded="false" aria-controls="in2-own-tip" aria-label="Where your rating is">i</button><span class="cav-itp" id="in2-own-tip" role="tooltip" hidden>Your Google rating appears with the next check.</span></span></div>{% endif %}
       </div>
     </div>
     {% if _parts and _parts.intro %}<div class="in2-lede">{{ _parts.intro }}</div>{% endif %}
     {# The bar per competitor moved into the neighbours list (density round
        #35): each place is drawn once, its rating bar on its own row. #}
   </section>
-  <div class="lb2-ai"><div class="tag">Cavnar AI's competitive analysis</div>
+  <div class="lb2-ai"><div class="tag">Cavnar AI's read</div>
     <div class="in2-read" id="intel-insight-card">
       {% if _parts %}{% for name, bullets in _parts.sections %}{% if bullets %}
       {% set _tone = 'good' if 'WELL' in name|upper else ('bad' if 'POORLY' in name|upper else 'neutral') %}
@@ -15620,7 +15629,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div class="in2-empty">
     <div class="ec-anchor" data-core="empty" data-core-energy=".3" data-core-wake=".cbtn-primary" aria-hidden="true" style="width:72px;height:72px;margin:0 auto 6px"></div>
     <h2>No competitor data yet</h2>
-    <p>See how your ratings, review volume and reputation stack up against the restaurants around you.</p>
+    <p>See how you stack up against the restaurants around you.</p>
     <button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-primary cbtn-lg">Fetch competitor data</button>
   </div>
   {% endif %}
@@ -15629,8 +15638,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <div id="in2-aiv" data-nav="intel/visibility">
     <div id="aiv-card"><div id="aiv-body">
     <div class="in2-pre" id="aiv-idle">
-      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?</h2>
-        <p>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</p>
+      {# What the check is and what it can't see sits behind the info tip (text round, 10/17/26). #}
+      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="aiv-what-tip" aria-expanded="false" aria-controls="aiv-what-tip" aria-label="How the AI visibility check works">i</button><span class="cav-itp" id="aiv-what-tip" role="tooltip" hidden>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</span></span></h2>
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div>
         <div class="meta" id="aiv-stored-state" hidden></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
@@ -15651,13 +15660,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <section class="in2-aiv-card" aria-label="How often AI names you">
           <div class="in2-aiv-h"><span class="k">How often AI names you</span><i id="aiv-score-label"></i></div>
           <div class="in2-aiv-v"><span id="aiv-score-num" class="hb-num">—</span></div>
-          <div class="in2-aiv-cap" id="in2-orbit-cap">of AI searches mention you</div>
+          <div class="in2-aiv-cap" id="in2-orbit-cap">of AI searches name you</div>
           <div class="in2-orbit" id="in2-orbit"></div>
         </section>
         <section class="in2-aiv-card" aria-label="Listing strength">
           <div class="in2-aiv-h"><span class="k">Listing strength</span><i id="aiv-gbp-label"></i></div>
           <div class="in2-aiv-v"><span id="aiv-gbp-num" class="hb-num">—</span></div>
-          <div class="in2-aiv-cap" id="in2-gbp-cap">of your Google Business Profile fields filled in</div>
+          <div class="in2-aiv-cap" id="in2-gbp-cap">of your Google profile filled in</div>
           <div class="in2-gbp" id="aiv-gbp-items"></div>
           <button type="button" id="aiv-gbp-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-gbp-items',this)"></button>
         </section>
@@ -15668,11 +15677,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="in2-gva" id="in2-gva" hidden></div>
         <div class="in2-q" id="aiv-queries"></div>
         <button type="button" id="aiv-q-viewall" class="in2-viewall" style="display:none" onclick="in2RevealMore('aiv-queries',this)"></button>
-        <div class="in2-qfoot" id="in2-qfoot" hidden>Each answer is from your latest check. The dots are every check of that question, oldest first, lit when you were named.</div>
+        <div class="in2-qfoot" id="in2-qfoot" hidden>Dots: every check of that question, oldest first, lit when you were named.</div>
       </section>
       <div id="aiv-disclaimer" class="in2-note" style="display:none"></div>
       <div class="in2-sec" id="aiv-action-plan">
-        <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>Gaps in your public record</h2><div class="sub">Your reviews, replies and Google listing — the gaps you still have come first.</div></div></div>
+        <div class="hd"><div><div class="hb-kicker" id="aiv-roadmap-pts"></div><h2>Gaps in your public record</h2></div></div>
         <div class="in2-road" id="aiv-roadmap-cards"></div>
         <div class="in2-note" id="aiv-roadmap-footer" style="display:none"><details class="how-this"><summary>What happens when you improve this?</summary><div>We check one AI search system — Perplexity — by asking it the kinds of questions a guest would, and seeing whether you come up. What it answers from is Perplexity's business, not something we can see. What we can tell you is that these items are the public record of your restaurant: your reviews, your replies, and the fields on your Google listing. Most independent restaurants have gaps here. Closing them is the part that's in your hands.</div></details></div>
       </div>
@@ -15684,9 +15693,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
   <!-- ── Nearby competitors ── -->
   <div class="in2-sec" id="in2-neighbors">
-    <div class="hd"><div><div class="hb-kicker">Nearby competitors</div><h2>Who you're up against</h2><div class="sub">Google ratings, a bar each{% if _upd %} · updated <span class="hb-num">{{ _upd|format_date }}</span>{% endif %}</div></div>
+    <div class="hd"><div><div class="hb-kicker">Nearby competitors</div><h2>Who you're up against</h2>{# The date is the "Last updated" line under the list (text round, 10/17/26). #}</div>
       <div class="r">{% if _cd %}<button onclick="refreshCompetitorIntel(this)" class="cbtn cbtn-secondary">Refresh</button>{% endif %}<button type="button" onclick="aivRerunFromTop()" class="cbtn cbtn-secondary">Re-run AI visibility</button></div></div>
-    <div class="in2-search"><input id="intel-search" placeholder="Track a competitor — search by name, e.g. the wine bar on Main" oninput="intelSearchInput()" autocomplete="off"><div id="intel-search-results" class="res"></div></div>
+    <div class="in2-search"><input id="intel-search" placeholder="Track a competitor by name" oninput="intelSearchInput()" autocomplete="off"><div id="intel-search-results" class="res"></div></div>
     {% if _cd %}
     <div class="in2-comp" id="comp-cards-static">
       {% if own is not none %}<div class="row you"><div class="t"><div class="tt"><b>{{ restaurant.name }}</b><span class="cu">You</span></div><span class="in2-bar you in2-rowbar"><span class="tr"><i style="width:{{ ((own / 5) * 100)|int }}%;transition-delay:0ms"></i></span></span></div><div class="rt"><div class="r hb-num">{{ own }}<small>★</small></div></div></div>{% endif %}
@@ -15696,9 +15705,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="t"><div class="tt"><b>{{ c.name }}</b>{% if c.custom %}<span class="cu">Added by you</span><button class="rm" onclick="intelRemove('{{ c.place_id }}',this)">Remove</button>{% endif %}</div>
           <div class="m">{{ c.vicinity }}</div>
           <span class="in2-bar in2-rowbar"><span class="tr"><i style="width:{{ (((c.rating or 0) / 5) * 100)|int }}%;transition-delay:{{ (loop.index * 90) }}ms"></i></span></span>
-          {% for r in c.reviews[:1] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}
-          {% if c.reviews|length > 1 %}<div id="extra-reviews-{{ loop.index }}" style="display:none">{% for r in c.reviews[1:] %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}</div>
-          <button class="more" onclick="toggleExtraReviews({{ loop.index }}, this)">Show {{ c.reviews|length - 1 }} more review{{ 's' if c.reviews|length - 1 > 1 else '' }}</button>{% endif %}</div>
+          {# Their reviews are evidence, folded under one Show (text round, 10/17/26): the row leads with the rating. #}
+          {% if c.reviews %}<div id="extra-reviews-{{ loop.index }}" style="display:none">{% for r in c.reviews %}<div class="rv"><i class="{{ 'g' if r.rating >= 4 else 'b' }}">★</i>{{ r.text[:160] }}{{ '…' if r.text|length > 160 else '' }}</div>{% endfor %}</div>
+          <button class="more" onclick="toggleExtraReviews({{ loop.index }}, this)">Show {{ c.reviews|length }} review{{ 's' if c.reviews|length > 1 else '' }}</button>{% endif %}</div>
         <div class="rt"><div class="r hb-num">{% if c.rating %}{{ c.rating }}<small>★</small>{% else %}<small>unrated</small>{% endif %}</div><div class="c"><span class="hb-num">{{ c.review_count }}</span> reviews{% if c.rating_is_provisional %} <span class="ck-tag" title="Fewer than 15 reviews: a handful of opinions, not a settled rating">few reviews</span>{% endif %}</div>{% if diff is not none and not c.rating_is_provisional %}<span class="df">{% if diff > 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 7.5 6 4.5 9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ diff }} ahead{% elif diff < 0 %}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ diff|abs }} behind{% else %}tied{% endif %}</span>{% endif %}</div>
       </div>
       {% endfor %}
@@ -15741,8 +15750,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           +'<div class="rt"><div class="r hb-num">'+recEsc(m.rating_then)+' \u2192 '+recEsc(m.rating_now)+'<small>\u2605</small></div>'
           +(m.reviews_added?'<div class="c"><span class="hb-num">+'+recEsc(m.reviews_added)+'</span> reviews</div>':'')+'</div></div>';}
       var when=d.compared_from?mdy(d.compared_from):'';
-      var sub=!d.compared_from?'Openings and closings show once there are two weekly checks to compare.'
-        :(rows?'Since your check on <span class="hb-num">'+when+'</span>: new places that opened near you, places Google marks closed, and ratings that really moved':'No new places, no closures, and no rating moved past normal ups and downs since <span class="hb-num">'+when+'</span>');
+      var sub=!d.compared_from?'Shows once there are two weekly checks to compare.'
+        :(rows?'Since your check on <span class="hb-num">'+when+'</span>':'No openings, closings or real rating moves since <span class="hb-num">'+when+'</span>');
       // One flex item: the line's 8px gap put space around the date as if
       // it were a chip (owner, 9/26/26).
       // A heading, not a kicker: in the same small orange caps as the text
@@ -18527,7 +18536,7 @@ function regenDraft(id) {
       } else if (boxEl) {
         boxEl.style.background='';
         boxEl.innerHTML =
-          '<div class="draft-lbl">Suggested response</div>' +
+          '<div class="draft-lbl">Cavnar AI\'s reply</div>' +
           '<div class="draft-txt draft-editable" id="draft-txt-'+id+'" role="button" tabindex="0" title="Click to edit" data-edit-review="'+id+'"></div>' +
           '<div class="draft-actions" id="draft-actions-'+id+'">' +
             '<button class="cbtn cbtn-primary cbtn-sm" onclick="approveR('+id+')">✓ Approve</button>' +
@@ -18538,7 +18547,7 @@ function regenDraft(id) {
             '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none"></textarea>' +
             '<div style="display:flex;gap:6px;margin-top:6px">' +
               '<button class="cbtn cbtn-primary cbtn-sm" onclick="saveDraft('+id+')">Save & approve</button>' +
-              '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
+              '<button class="cbtn cbtn-secondary cbtn-sm" onclick="regenDraft('+id+')">↻ Regenerate</button>' +
               '<button class="cbtn cbtn-secondary cbtn-sm" onclick="closeEditor('+id+')">Cancel</button>' +
             '</div>' +
           '</div>';
@@ -18553,12 +18562,12 @@ function regenDraft(id) {
       toast('New draft generated','success');
     } else {
       if (txtEl) txtEl.textContent = 'Error generating — try again';
-      else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error generating — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Generate AI response</button></div>';
+      else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error generating — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Draft a reply</button></div>';
       toast('Error: ' + (data.error||'unknown'),'error');
     }
   }).catch(function(err){
     if (txtEl) txtEl.textContent = 'Error generating — try again';
-    else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Generate AI response</button></div>';
+    else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error — try again</div><div class="draft-actions" style="margin-top:8px"><button class="cbtn cbtn-success cbtn-sm" onclick="regenDraft('+id+')">Draft a reply</button></div>';
     toast(err.message||'Network error — try again','error');
   });
 }
@@ -19039,7 +19048,7 @@ function loadMktWebsite(){
 function mktWebsiteHtml(d){
   var e = _escHtml, h = '', i;
   if(!d.connected){
-    return '<div class="wa-empty">Connect your website’s Google Analytics to see visits, Google searches and clicks to book or order here, lined up with your sales, games and posts.</div>'
+    return '<div class="wa-empty">Connect Google Analytics to see website visits, searches and booking clicks here.</div>'
       + '<div style="margin-top:12px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="cavNav(\'account/connections\')">Connect in Account</button></div>';
   }
   if(!d.available){
@@ -19051,7 +19060,7 @@ function mktWebsiteHtml(d){
     for(i = 0; i < Math.min(t.length, 4); i++){
       var x = t[i], cls = !x.pct ? '' : (x.pct > 0 ? ' up' : ' down');
       h += '<div class="hb-stat"><div class="k">' + e(x.label) + '</div><div class="v hb-num">' + e(Number(x.value).toLocaleString('en-US')) + '</div>'
-        + '<div class="s hb-num' + cls + '">' + (x.pct == null ? 'last 28 days' : (x.pct >= 0 ? '+' : '') + x.pct + '% vs the 28 days before') + '</div></div>';
+        + '<div class="s hb-num' + cls + '">' + (x.pct == null ? 'last 28 days' : (x.pct >= 0 ? '+' : '') + x.pct + '% vs prior 28 days') + '</div></div>';
     }
     h += '</div>';
     if(t.length > 4){
@@ -19089,7 +19098,7 @@ function mktWebsiteHtml(d){
   }
   var sg = d.signals || [];
   h += '<div class="wa-moves"><h4 style="margin:0 0 10px;font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ember)">What moved</h4>';
-  if(!sg.length) h += '<div class="wa-empty" style="margin-top:0">Nothing unusual — each day looks like a typical one of its weekday.</div>';
+  if(!sg.length) h += '<div class="wa-empty" style="margin-top:0">Nothing unusual.</div>';
   for(i = 0; i < Math.min(sg.length, 6); i++){
     var m = sg[i], up = m.kind === 'spike' || m.kind === 'trend_up';
     h += '<div class="wa-move ' + (up ? 'up' : 'down') + '"><div class="t">' + (typeof num === 'function' ? num(m.text) : e(m.text)) + '</div>';
@@ -19270,7 +19279,7 @@ function loadTopicHeatmap(days){
     var h='';
     for(var j=0;j<items.length;j++){var it=items[j];var pos=it.pct_positive||0,neg=it.pct_negative||0,mid=Math.max(0,100-pos-neg);
       var tr=it.trend==='up'?'<span class="t up">↑</span>':(it.trend==='down'?'<span class="t down">↓</span>':'');
-      h+='<button type="button" class="rv2-topic" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i class="mid" style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
+      h+='<button type="button" class="rv2-topic" title="Show these reviews in the inbox" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i class="mid" style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
     grid.innerHTML=h;
   }).catch(function(){grid.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
@@ -19286,7 +19295,8 @@ function loadResponsePerf(days){
     if(!d.ok){body.innerHTML='<div class="hb-empty">Unavailable.</div>';return;}
     var data=d.data||{},total=data.total||0;
     var n=document.getElementById('rv-perf-n');if(n)n.textContent=total;
-    var cap=document.getElementById('rv-perf-cap');if(cap)cap.textContent=total?('of '+total+' approved in the last '+days+' days'):('last '+days+' days');
+    // The window is the picker's and the count is the figure above: no caption repeating them (text round, 10/17/26).
+    var cap=document.getElementById('rv-perf-cap');if(cap)cap.textContent='';
     if(!total){body.innerHTML='<div class="hb-empty" style="height:86px;display:flex;align-items:center">No approved replies in the last '+days+' days.</div>';return;}
     var items=[{key:'approved_as_is',label:'Approved as-is',cls:'g'},{key:'edited',label:'Edited first',cls:''},{key:'regenerated',label:'Regenerated',cls:'a'}];
     var h='<div class="rv2-perf">';
@@ -19397,8 +19407,8 @@ function loadSentimentTrend(){
     var d=document.getElementById('rv-hero-delta');
     var f0=weeks[0],l0=weeks[weeks.length-1],enough=weeks.length>1&&(f0.total||0)>=RV_MIN_A_SIDE&&(l0.total||0)>=RV_MIN_A_SIDE;
     if(d&&weeks.length>1){
-      if(enough){var dl=avgs[avgs.length-1]-avgs[0];d.className='delta '+(dl>0.05?'good':dl<-0.05?'bad':'');d.innerHTML='<span class="hb-num">'+(dl>=0?'+':'−')+Math.abs(dl).toFixed(1)+'★</span> <span>week of <span class="hb-num">'+lab(l0)+'</span> (<span class="hb-num">'+l0.total+'</span> reviews) vs week of <span class="hb-num">'+lab(f0)+'</span> (<span class="hb-num">'+f0.total+'</span>)</span>';}
-      else{d.className='delta';d.innerHTML='<span>Too few reviews a week to compare — needs <span class="hb-num">'+RV_MIN_A_SIDE+'</span> on each side</span>';}}
+      if(enough){var dl=avgs[avgs.length-1]-avgs[0];d.className='delta '+(dl>0.05?'good':dl<-0.05?'bad':'');d.innerHTML='<span class="hb-num">'+(dl>=0?'+':'−')+Math.abs(dl).toFixed(1)+'★</span> <span title="Week of '+lab(l0)+' ('+l0.total+' reviews) against week of '+lab(f0)+' ('+f0.total+')">vs week of <span class="hb-num">'+lab(f0)+'</span></span>';}
+      else{d.className='delta';d.innerHTML='<span title="Needs '+RV_MIN_A_SIDE+' reviews in each week">Too few reviews a week to compare</span>';}}
     var ts=document.getElementById('trend-summary');
     if(ts){var fp=f0.total?f0.positive/f0.total:0,lp=l0.total?l0.positive/l0.total:0;
       ts.innerHTML=!enough?'Weekly average · '+weeks.length+' week'+(weeks.length===1?'':'s')+' with reviews'
@@ -19456,6 +19466,19 @@ function processInsightHtml(html){
   }
   return out;
 }
+/* The Reviews read leads with what happened and what to do today; the why,
+   the risk to watch and next week's forecast fold under one closed More
+   (text round, 10/17/26). Every line still goes through processInsightHtml,
+   escaped. A read with nothing to fold renders as before. */
+function rvInsightHtml(text){
+  var lines=String(text||'').replace(/<br\s*\/?>/gi,'\n').split('\n'),lead=[],more=[],i,ln;
+  for(i=0;i<lines.length;i++){
+    ln=lines[i].trim();if(!ln)continue;
+    if(ln.indexOf('🔍')===0||ln.indexOf('⚠')===0||ln.indexOf('🔮')===0)more.push(ln);else lead.push(ln);
+  }
+  if(!lead.length||!more.length)return processInsightHtml(text);
+  return processInsightHtml(lead.join('\n'))+'<details class="co-more rv-ai-more"><summary>Why, and what to watch</summary><div class="rv-ai-more-b">'+processInsightHtml(more.join('\n'))+'</div></details>';
+}
 function loadReviewInsight(){
   // reviewInsightLoaded is also the shared "has this tab's lazy content
   // loaded yet" gate for the sentiment trend and topic heatmap calls next
@@ -19476,7 +19499,7 @@ function loadReviewInsight(){
       if(!cd||typeof cd!=='object'){cd={insight:cached};}
       el.classList.remove('insight-loading');
       _twTokens[el.id]=(_twTokens[el.id]||0)+1;
-      el.innerHTML=processInsightHtml(cd.insight||'');
+      el.innerHTML=rvInsightHtml(cd.insight||'');
       applyInsightCaveats(el,cd);
       renderReviewClaims(el,cd);
       renderSeverityStrip(cd);
@@ -19511,7 +19534,7 @@ function loadReviewInsight(){
     // An older read shown while the new one is written is not cached.
     if(!interim){cavSet('review_insight',JSON.stringify(d));cavSet('review_insight_at',String(Date.now()));}
     el.classList.remove('insight-loading');
-    typewriterEffect(el,processInsightHtml(html));
+    typewriterEffect(el,rvInsightHtml(html));
     applyInsightCaveats(el,d);
     renderReviewClaims(el,d);
     renderSeverityStrip(d);
@@ -20800,7 +20823,7 @@ function rvAnsweredDivider(){
 function rvKwRender(d){
   var el=document.getElementById('rv-kw-list');if(!el)return;
   var ks=(d&&d.keywords)||[],h='',i;
-  if(!ks.length){el.innerHTML='<span class="rv2-kw-empty">No phrases yet. Add the searches you want to show up for, like a dish, a neighbourhood or an occasion.</span>';return;}
+  if(!ks.length){el.innerHTML='<span class="rv2-kw-empty">No phrases yet.</span>';return;}
   for(i=0;i<ks.length;i++){h+='<span class="ac-chip">'+esc(ks[i].phrase)+' <span class="n hb-num" title="Posted replies in the last 90 days that carry it">'+(+ks[i].used||0)+'</span><button type="button" class="cbtn cbtn-icon cbtn-text cbtn-sm" data-kw-rm="'+esc(ks[i].phrase)+'" aria-label="Remove '+esc(ks[i].phrase)+'">✕</button></span>';}
   el.innerHTML=h;
 }
@@ -20818,7 +20841,7 @@ function rvPrgRender(d){
   var el=document.getElementById('rv-prg-list');if(!el)return;
   _rvPrgs=(d&&d.programs)||[];
   var add=document.getElementById('rv-prg-add');if(add)add.hidden=_rvPrgs.length>=((d&&d.max)||4);
-  if(!_rvPrgs.length){el.innerHTML='<span class="rv2-kw-empty">No programs yet. Add a membership or loyalty program and the words that make it relevant, and happy guests who mention them get a one-line invite.</span>';return;}
+  if(!_rvPrgs.length){el.innerHTML='<span class="rv2-kw-empty">No programs yet.</span>';return;}
   var h='',i,p,t;
   for(i=0;i<_rvPrgs.length;i++){
     p=_rvPrgs[i];t=p.triggers||[];
@@ -20884,12 +20907,12 @@ function rvLoadWhy(){
     // never set beside the all-time rating (owner, 10/9/26: "Rating 4.6★
     // ▼0.2" read as Google's 4.6 having dropped; the 4.6 is in the pill above).
     if(dl!=null&&d.recent_avg!=null){
-      bits.push('<span>New reviews averaged <b class="hb-num">'+(+d.recent_avg).toFixed(1)+'★</b> over the last <span class="hb-num">'+wk+'</span> weeks '
-        +(Math.abs(dl)<0.05?'<span>— level with</span>':('<span class="'+(dl>0?'up':'down')+'">'+(dl>0?'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg>':'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>')+'<span class="hb-num">'+Math.abs(dl).toFixed(1)+'</span></span> '+(dl>0?'above':'below')))
-        +' the <span class="hb-num">'+(+d.prior_avg).toFixed(1)+'★</span> of the <span class="hb-num">'+wk+'</span> before</span>');
+      bits.push('<span>New reviews averaged <b class="hb-num">'+(+d.recent_avg).toFixed(1)+'★</b> over <span class="hb-num">'+wk+'</span> weeks, '
+        +(Math.abs(dl)<0.05?'<span>level with</span>':('<span class="'+(dl>0?'up':'down')+'">'+(dl>0?'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg>':'<svg class="rv-chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>')+'<span class="hb-num">'+Math.abs(dl).toFixed(1)+'</span></span> vs'))
+        +' <span class="hb-num">'+(+d.prior_avg).toFixed(1)+'★</span> before</span>');
     }
     if(c&&c.label){
-      bits.push('<span>top complaint: <b>'+esc(c.label)+'</b>'+(c.mentions?' (<span class="hb-num">'+esc(c.mentions)+'</span> negative review'+(+c.mentions===1?'':'s')+(c.window_days?' in <span class="hb-num">'+esc(c.window_days)+'</span> days':'')+')':'')+(c.stale&&c.as_of?' · read '+esc(c.as_of):'')+'</span>');
+      bits.push('<span>top complaint: <b>'+esc(c.label)+'</b>'+(c.mentions?' (<span class="hb-num">'+esc(c.mentions)+'</span> negative'+(c.window_days?' in <span class="hb-num">'+esc(c.window_days)+'</span> days':'')+')':'')+(c.stale&&c.as_of?' · read '+esc(c.as_of):'')+'</span>');
       var tw=document.getElementById('rv-today-why');if(tw)tw.innerHTML=' · top complaint: <b>'+esc(c.label)+'</b>';
     }
     if(!bits.length){box.hidden=true;return;}
@@ -21856,7 +21879,7 @@ function _mktBody(){
   // A failed generation's message is not copy to save, preview or post.
   if(el.getAttribute('data-gen-error') || el.getAttribute('data-mkt-posted')) return '';
   var text = (el.innerText || el.textContent || '').trim();
-  return (text === 'Select a type and click Generate.') ? '' : text;
+  return (text === 'Your post appears here.') ? '' : text;
 }
 // Where each content type goes (marketing.CONTENT_CHANNELS): 'social', 'text'
 // or 'email'. The Content tab publishes social posts only; a text or an email
@@ -21992,7 +22015,7 @@ function loadMktDrafts(){
   fetch('/api/marketing/drafts').then(apiJson).then(function(d){
     if(!d || !d.ok){ loadFailed(list, d); return; }
     if(!(d.drafts || []).length){
-      list.innerHTML = '<div class="hb-empty">Nothing saved yet. Save draft keeps a post here until it goes out.</div>';
+      list.innerHTML = '<div class="hb-empty">Nothing saved yet.</div>';
       return;
     }
     var html = '';
@@ -22186,7 +22209,7 @@ function mktLoadHeader(){
     if(!vn){el.hidden=true;return;}
     // The server's own verdicts against each weekday's noise band: a
     // correlation, and said so.
-    el.innerHTML='<span>What posts did to sales: <b class="hb-num">'+(+vc.lifted||0)+'</b> of <b class="hb-num">'+vn+'</b> measured lifted sales past normal variation</span><span class="sep">·</span><span>correlation, not proof</span>';
+    el.innerHTML='<span>Posts and sales: <b class="hb-num">'+(+vc.lifted||0)+'</b> of <b class="hb-num">'+vn+'</b> lifted sales past normal</span><span class="sep">·</span><span>correlation, not proof</span>';
     el.hidden=false;
   }).catch(function(){
     // The sales line is an extra under the h1, never a placeholder: with
@@ -22207,7 +22230,7 @@ function loadMktQueue(){
   fetch('/api/marketing/schedule').then(apiJson).then(function(d){
     if(!d || !d.ok){ loadFailed(list, d); return; }
     if(!(d.posts || []).length){
-      list.innerHTML = '<div class="hb-empty">Nothing queued. Write a post on the Content tab, then choose Schedule.</div>';
+      list.innerHTML = '<div class="hb-empty">Nothing scheduled. Schedule a post from Content.</div>';
       return;
     }
     var colors = {posted:'var(--green)', failed:'var(--red)', cancelled:'var(--ink3)', scheduled:'var(--ember)'};
@@ -22297,16 +22320,19 @@ function loadMktAttribution(){
     card.style.display = 'block';
     if(!d.ok || !(d.posts||[]).length){
       body.innerHTML = d.reason === 'no_pos_data'
-        ? 'Connect your POS under Settings → Connections and this will start showing what each post did to sales.'
-        : 'Not enough sales history yet to compare a post against the same weekday before it.';
+        ? 'Connect your POS in Account → Connections to see what each post did to sales.'
+        : 'Not enough sales history to compare yet.';
       return;
     }
-    var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish\u2019s own units the same way, and reviews in the next two weeks that mentioned it. Correlations, not proof \u2014 a busy Friday is still a busy Friday.</div>';
+    // How it is measured sits behind the kicker's info tip (text round,
+    // 10/17/26); the estimate label stays in view.
+    var html = '';
     // What the posts' own verdicts say (marketing_signals verdicts,
     // CA1 M3): how many cleared their band each way, never a median alone.
     var vc=d.verdicts||null;
     if(vc){var vn=(+vc.lifted||0)+(+vc.dropped||0)+(+vc.no_clear_change||0);
-      if(vn)html+='<div style="margin-bottom:10px;font-size:15px;color:var(--ink2)">Of <b class="hb-num">'+vn+'</b> measured post'+(vn===1?'':'s')+': <b class="hb-num" style="color:var(--hb-good)">'+(+vc.lifted||0)+'</b> lifted sales past normal variation, <b class="hb-num">'+(+vc.no_clear_change||0)+'</b> showed no clear change, <b class="hb-num" style="color:var(--red)">'+(+vc.dropped||0)+'</b> dropped.</div>';}
+      if(vn)html+='<div style="margin-bottom:10px;font-size:15px;color:var(--ink2)"><b class="hb-num">'+vn+'</b> measured post'+(vn===1?'':'s')+': <b class="hb-num" style="color:var(--hb-good)">'+(+vc.lifted||0)+'</b> lifted sales, <b class="hb-num">'+(+vc.no_clear_change||0)+'</b> no clear change, <b class="hb-num" style="color:var(--red)">'+(+vc.dropped||0)+'</b> dropped · correlation, not proof</div>';}
+    else html+='<div style="margin-bottom:10px;font-size:15px;color:var(--ink3)">Correlation, not proof.</div>';
     // The verdict is the server's: a lift inside the weekday's own noise
     // band is "no clear change", never green (marketing_signals.lift_verdict).
     function _liftBadge(p){
@@ -22420,7 +22446,7 @@ function _cmMktPosted(label){
 }
 function clearMktOutput(){
   var el=document.getElementById('mkoutput');
-  if(el){el.removeAttribute('data-mkt-posted');el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
+  if(el){el.removeAttribute('data-mkt-posted');el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Your post appears here.</span>';}
   window._lastPostedTopic='';
   window._mktContentLogId=null;window._mktDraftRef=null;
   var charCountEl=document.getElementById('char-count');
@@ -22441,7 +22467,7 @@ function updateCharCount(){
   var isGoogle=selType==='google_promo';
   var _rawText=(el.innerText||el.textContent||'').trim();
   var isSms=selType==='loyalty_nudge';
-  var len=(_rawText==='Select a type and click Generate.'||_rawText==='')?0:_rawText.length;
+  var len=(_rawText==='Your post appears here.'||_rawText==='')?0:_rawText.length;
   if(isIg){
     var cc=document.getElementById('char-count');
     var co=document.getElementById('char-over');
@@ -22470,7 +22496,7 @@ function loadRecentTopics(){
     row.style.display='';
     if(!d||d.ok===false){loadFailed(list,d);return;}
     if(!(d.topics||[]).length){
-      list.innerHTML='<div class="hb-empty">Nothing generated yet. Write a post on the Content tab and it shows here with what it did.</div>';
+      list.innerHTML='<div class="hb-empty">Nothing generated yet.</div>';
       return;
     }
     // Tokens, not per-theme hex (AUX-14); figures in words, not emoji, and
@@ -22566,7 +22592,7 @@ function loadMktPerformance(){
     if(!d.has_data){
       bodyEl.style.display='none';
       emptyEl.style.display='';
-      emptyEl.innerHTML='<div class="hb-empty">'+(d.published?'No measured figures yet — reach and engagement show here once Meta reports them for your posts.':'Post to Instagram or Facebook above — reach and engagement show here once Meta reports them.')+'</div>';
+      emptyEl.innerHTML='<div class="hb-empty">'+(d.published?'Reach and engagement show here once Meta reports them.':'Post to Instagram or Facebook to see reach and engagement here.')+'</div>';
       return;
     }
     emptyEl.style.display='none';
@@ -32680,7 +32706,7 @@ function toggleExtraReviews(idx, btn){
     el.setAttribute('data-open','0');
     setTimeout(function(){ el.style.maxHeight = '0px'; el.style.opacity = '0'; }, 10);
     var count = el.querySelectorAll('div').length;
-    btn.textContent = 'Show ' + count + ' more review' + (count > 1 ? 's' : '');
+    btn.textContent = 'Show ' + count + ' review' + (count > 1 ? 's' : '');
   }
 }
 /* A competitor refresh loads the way the AI-visibility check does: the big
@@ -33121,7 +33147,7 @@ function renderAIVisibility(d) {
     var gc = document.getElementById('in2-gbp-cap');
     if (gc) gc.textContent = pDone + ' of ' + pRead.length + ' listing items done'
       + (pUnread ? ' \u00b7 ' + pUnread + ' more need your Google listing connected' : '')
-      + (sItems.length ? ' \u00b7 setup ' + sDone + ' of ' + sItems.length + ' (not scored)' : '');
+      + (sItems.length ? ' \u00b7 setup ' + sDone + ' of ' + sItems.length + ', not scored' : '');
     var gbpVB = document.getElementById('aiv-gbp-viewall');
     if (gbpVB) {
       if (d.checklist.length > GBP_VISIBLE) {
@@ -33219,7 +33245,8 @@ function renderAIVisibility(d) {
       // what it is when the score is one (a small/partial sample gives a
       // spread, not a point estimate).
       var ocIsRange = (d.ai_score_low != null && d.ai_score_high != null && d.ai_score_high > d.ai_score_low);
-      oc.textContent = (ocIsRange ? 'estimated range of AI searches mentioning you · ' : 'of AI searches mention you · ') + hits + ' of ' + asked + ' open questions';
+      // The questions' count is the By question card's, below (text round, 10/17/26).
+      oc.textContent = ocIsRange ? 'estimated range of AI searches naming you' : 'of AI searches name you';
     }
   }
   var cEl = document.getElementById('aiv-checklist'); if (cEl) cEl.innerHTML = '';
@@ -34389,8 +34416,11 @@ function mktOppsEmpty() {
   var w = mktOppsSourceWords(), t = '';
   if (w.ok.length) t += ' Cavnar AI checked ' + w.ok.join(', ') + '.';
   if (w.none.length) t += ' Nothing to read yet for ' + w.none.join('; ') + '.';
-  if (w.bad.length) t += ' Couldn’t check ' + w.bad.join(', ') + ' just now — it tries again next time.';
-  return '<i class="' + (w.bad.length ? 'cv-warn' : 'cv-ok') + '" aria-hidden="true"></i><span>' + num('Nothing stands out right now.' + t) + '</span>';
+  // What was checked sits behind an info tip (text round, 10/17/26); a
+  // source that couldn't be read stays in view.
+  var bad = w.bad.length ? ' Couldn’t check ' + w.bad.join(', ') + ' just now — it tries again next time.' : '';
+  return '<i class="' + (w.bad.length ? 'cv-warn' : 'cv-ok') + '" aria-hidden="true"></i><span>' + num('Nothing stands out right now.' + bad) + '</span>'
+    + (t ? '<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-opps-tip" aria-expanded="false" aria-controls="mkt-opps-tip" aria-label="What Cavnar AI checked">i</button><span class="cav-itp" id="mkt-opps-tip" role="tooltip" hidden>' + num(t.replace(/^ /, '')) + '</span></span>' : '');
 }
 function mktPaintOpps() {
   var list = document.getElementById('mkt-opps-list'), foot = document.getElementById('mkt-opps-foot');

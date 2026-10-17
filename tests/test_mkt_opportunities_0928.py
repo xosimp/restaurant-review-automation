@@ -227,7 +227,7 @@ def test_holiday_cards_say_only_the_holidays_own_name(db):
                 assert "themed specials" not in text and "brunch days" not in text
     halloween = mo.holidays(rid, datetime(2026, 10, 20, 12), db, restaurant=r)[0]
     assert halloween["title"] == "Plan for Halloween, Saturday 10/31/26" and halloween["evidence"] is None
-    assert "no Halloween of your own on file" in halloween["why"]
+    assert "No Halloween of your own on file" in halloween["why"]
     assert halloween["action"]["prompt"] == "Invite guests in for Halloween"
     update_restaurant(rid, {"skip_holidays": "halloween"}, db_path=db)
     assert mo.holidays(rid, datetime(2026, 10, 20, 12), db, restaurant=get_restaurant(rid, db_path=db)) == []
@@ -275,8 +275,7 @@ def test_a_category_down_past_its_swing_is_a_card_and_a_steady_one_is_not(db):
     assert [c["key"] for c in cards] == ["category_dip:Wine"]
     c = cards[0]
     assert c["title"] == "Win back wine sales"
-    assert c["why"] == ("Wine is down 22% a night: $70 a night over the last 28 nights vs $90 the 28 before, "
-                        "the same weekdays compared.")
+    assert c["why"] == "Down 22% a night: $70 over the last 28 nights vs $90, same weekdays."
     assert c["facts"] == ["28 of 28 nights measured lately, 28 of 28 before", "its weeks usually swing 0%"]
     assert c["stake"] == {"amount": 560.0, "label": "less over 28 nights than the same nights before"}
     assert c["action"]["prompt"] == "Promote our wine"
@@ -318,7 +317,7 @@ def test_the_real_swing_is_stated_and_is_the_bar(db):
     rid2 = _rid(db, name="Two")
     _cat(db, rid2, "Wine", lambda d: 90.0 if d >= start else weekly(d))
     c = mo.category_dips(rid2, TODAY, db)[0]
-    assert "its weeks usually swing 13%" in c["facts"] and "down 22% a night" in c["why"]
+    assert "its weeks usually swing 13%" in c["facts"] and "Down 22% a night" in c["why"]
 
 
 def test_unmapped_and_a_remapped_category_say_nothing(db):
