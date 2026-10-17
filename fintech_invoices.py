@@ -110,12 +110,6 @@ MAX_FILE_INVOICES = 2000
 COMMIT_EVERY = 500
 _ADJ_RE = re.compile(r"\b(summary\s+level\s+adjust\w*|adjustments?|rounding)\b", re.I)
 _KEG_CREDIT_RE = re.compile(r"\bempt(y|ies)\b", re.I)
-# A keg by its description (bar.classify._KEG_RE says the same for the
-# category; kept here so the reader needs nothing above it). '1/6BL' and
-# '1/2 BL' are kegs too (bar.products._KEGS reads them; FC/Bar audit
-# 10/16/26, ING-16) — until bar.classify exports one shared pattern.
-_KEG_RE = re.compile(r"\b(1/[246]\s*BB\w*|1/[246]\s*BL\b|BBL|BARREL|KEG|50L|30L|20L|K\s+1/2|K\s+50L|SIXTEL)\b",
-                     re.I)
 _NULLS = {"<null>", "null"}
 
 
@@ -412,7 +406,12 @@ def location_key(loc):
 
 
 def _is_keg(ln) -> bool:
-    return str(ln.get("uom") or "").upper() in ("KE", "KG") or bool(_KEG_RE.search(ln.get("description") or ""))
+    """bar.classify.is_keg - the one keg test the category and the deposit
+    split share (FC/Bar fix round 10/16/26: a bare BARREL is a whiskey, never
+    a keg deposit). Imported here, not at the top: bar.classify imports this
+    module."""
+    from bar.classify import is_keg
+    return is_keg(ln.get("description"), ln.get("uom"))
 
 
 def _deposit_steps(amount, qty, rate=None) -> bool:

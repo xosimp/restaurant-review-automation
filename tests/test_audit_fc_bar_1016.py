@@ -259,7 +259,6 @@ def test_fc_calc_12_a_week_with_no_waste_measured_is_not_zero_waste():
 
 # ── BAR-CALC: bar calculations ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-01: stock bought before the counted span makes all usage read as variance")
 def test_bar_calc_01_counted_variance_prices_stock_bought_before_the_span(db):
     """Beer counted 9/10 -> 10/10 with $80 used: exactly 40 Miller cans at $2,
     all sold and matched; the cases came 9/1, before the span. Variance is
@@ -278,7 +277,6 @@ def test_bar_calc_01_counted_variance_prices_stock_bought_before_the_span(db):
     assert beer.get("variance_usd") is None or abs(beer["variance_usd"]) < 1.0, beer
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-04: a case line with no unit of measure is read as one can")
 def test_bar_calc_04_a_uom_less_case_line_is_never_one_can(db):
     """'MILLER LITE 24/12 CAN', uom NULL, 2 at $48: 48 cans, or no dollars at
     all - never $48 a can and '$1,824 more sold than bought'."""
@@ -299,7 +297,6 @@ def test_bar_calc_04_a_uom_less_case_line_is_never_one_can(db):
     assert (v["totals"].get("gap_usd") or 0) > -1000, v["totals"].get("gap_usd")
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-06: the stock-up guard runs only above the range top, so a delivery reads over target")
 def test_bar_calc_06_a_stock_up_below_the_range_top_is_not_judged():
     """Beer steady at 20% (target 20%), one extra $3,000 delivery in the
     window: a stock-up, held back - never '$3,000 over your target'."""
@@ -321,7 +318,6 @@ def test_bar_calc_06_a_stock_up_below_the_range_top_is_not_judged():
     assert beer["judged"] is False, (beer["pct"], beer.get("stock_up"), beer.get("over_target_usd"), beer["range"])
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-07: drink margins cost a bottle of wine sold as it comes as a 5-oz glass")
 def test_bar_calc_07_a_bottle_of_wine_mapped_with_no_pour_costs_the_bottle(db):
     """'Btl Chateau Souverain' mapped with no pour (a bottle sold as it comes)
     to a $12 bottle, $40 on the menu: cost $12, 30% - not a 5 oz glass."""
@@ -347,7 +343,6 @@ def test_bar_calc_07_a_bottle_of_wine_mapped_with_no_pour_costs_the_bottle(db):
     assert rows[0]["cost"] == 12.0 and rows[0]["cost_pct"] == 30.0, (rows[0]["cost"], rows[0]["pour_label"])
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-09 / ING-15: the pack parser misses N/SIZE shapes like 6/1.75L and 12/750ML")
 @pytest.mark.parametrize("desc,uom,cat,units,ml", [
     ("TITOS VDK 6/1.75L", "CA", "liquor", 6, 1750.0),
     ("TITOS VDK 12/750ML", "CA", "liquor", 12, 750.0),
