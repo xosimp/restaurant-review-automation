@@ -464,6 +464,62 @@ instruments neither warm nor move. No pointer light on a coarse pointer or
 under Reduce Motion, which also drops the lift. A new card
 picks one of the five; a sixth material needs a reason none of these fits.
 
+**Web — the vivid layer (10/17/26, `<style id="cv-vivid">` after
+`#cv-cards`, dark only).** Colour, depth and motion over the materials —
+never layout, type, copy or data (owner, 10/17/26: "richer, vibrant
+semantic colours around the signature orange; not the same container a
+hundred times; striking charts"). It maps existing classes, as `#cv-cards`
+does; a new screen adds its classes to the role they hold.
+
+*The spectrum* (`--vx-*`) is for marks, fills and chart strokes; text keeps
+`--ink` / `--green` / `--red` / `--amber`, which iOS shares.
+
+| Token | Value | Use |
+|---|---|---|
+| `--vx-ember` / `-hot` / `-light` | `#c84b2f` / `#ff7a45` / `#ffb48a` | The brand core, its lit edge, its tint (a gap figure, a "$/mo at stake" pill) |
+| `--vx-gain` / `--vx-loss` / `--vx-warn` / `--vx-info` | `#34d399` / `#ff4d5a` / `#ffb340` / `#5aa8ff` | Status LEDs, Signal edges, vivid bars |
+| `--vx-gold` / `--vx-info` / `--vx-plum` | `#f2b84b` / `#5aa8ff` / `#c77dff` | The Bar's beer, liquor and wine (`--br-beer` etc., and `GLOW_HEX` for the glow charts — the same hues) |
+| `--vx-heat` | green → yellow → orange → red | A **cost** gauge (drink cost %): the fill is drawn at the track's width (`background-size:100cqw`, the track `container-type:inline-size`), so a short fill shows only the cool end and a long one runs hot — the scale, never a threshold in code |
+| `--vx-yield` | red → amber → gold → green | A **return** gauge (keg yield): the same, the other way round |
+
+*Six containers, each its own silhouette* — a card takes the one that
+matches what it holds:
+
+| Container | Looks like | Wears it |
+|---|---|---|
+| **Ledger** (money summary) | An obsidian face, a brass catch along the top, a jigger's **ruler engraved along its foot** (minor ticks every 8px, majors every 40px), etched dividers between figures | The Bar's bought-vs-sold figures (`.br-cfigs`), the report's forecast for the day after (`.dr-tmr>.hb-card:nth-child(2)`), Home's worth card (`.hb-card:has(>.hb-vsplit)`), Food Cost's Where the money is going (`.fc2-cfo`) |
+| **Slate** (a list) | The matte plate (§4 materials); a row under the pointer or open lights a 3px ember rail | `.br-vlist`, every `.hb-card` not named here |
+| **Instrument** (a chart or gauges) | Recessed, faint reticle; never warmed by the pointer, never lifted | `.br-kegs`, the report's hour-by-hour, meal-period and department cards (`.dr-hourly`, `.dr-split`, `.dr-dep`) |
+| **Ember glass** (Cavnar AI speaking) | §4 materials | `.lb2-ai` and the rest, plus the report's executive summary (`.dr-read`) and Home's last-night card (`.dr-home`) |
+| **Register** (a table) | A graphite face; a **recessed head band in the kicker's orange** (`--ember2`); a warm zebra; a row lighting an ember rail on its first cell | `.br-tw`, `.fc2-mt`, `.hb-tbl`, `.dr-tbl`, `.dr-stbl`, `.ts-tbl`, `.rst-tbl`, `.int-tbl`, `.fc2-bo-tbl`, `.fc2-table`, `.ss-crew-t`, the report's servers / voids / tenders / edits cards, Plate costs' rows |
+| **Signal** (an alert) | §4 materials, in the vivid tones | Plus the report's wins (green) and risks (amber) |
+| **Docket** (a recommendation) | A row of **punched holes under its top edge** — a kitchen ticket's tear-off — and its number molten | Every `.hb-card.hb-rec` (Home, the report's priorities, Marketing's openings) |
+| **KPI tile** (a series' figure) | Its own hue (`--s`) entering at the top-left corner through `mask-corner-tl-v1.png` and running in along the top as a 1px filament; the figure metal tinted toward the hue | The Bar's category cards (`.br-cat`) — gold, blue, plum, never three ember outlines |
+
+Pedestal stays the page's one hero. The report's score card loses its full
+conic ember ring: the ember enters at its top-left corner and dies within a
+quarter of the rim, like every other pedestal.
+
+*Figures as metal, by role* (`background-clip:text`, a status colour always
+wins): **white-hot** the page's hero figure (`.br-big`, `.kx-hero .kx-val`,
+`.dr-score .net`, `.hb-focus .money`) with a warm glow under it;
+**molten** money at stake (a Ledger's lead, a driver's dollars, the day
+after's forecast, a Docket's number); **silver** a supporting figure (KPI
+tiles, the hero's sub-figures, neutral `.hb-stat` / `.lb2-op` / `.dr-kpi`
+values, Labor's header). A small unit after a figure stays ink.
+
+*Marks*: a status dot is an **LED** — a bead with its own specular and halo
+(`.hb-row .d`, `.hb-tl .it .d`). Bought vs sold is **one track**: what was
+bought hatched, what sold pours over it in the category colour to a bright
+**pour line**; the hatch left showing is the stock not accounted for, and
+the legend follows the track (Sold under the fill, Bought at the hatch's
+end). A keg's fill ends in a cream **foam head**; the expected tick is a
+lit needle.
+
+*Touch*: an actionable card presses in under the click (`scale(.992)`);
+a fold eases its contents in (`vxOpen`, 0.34s); a list row lights its rail
+and brightens its bars. Reduce Motion drops both.
+
 **Web — Home language (`hb-*`)**, reused by Reviews (`rv2-`), Food Cost
 (`fc2-`), Intel (`in2-`) and Ask (`ask-`): `.hb-kicker` label, `.hb-sig`
 three-column signal grid, `.hb-act` two-column action grid, `.hb-row` list
@@ -598,6 +654,11 @@ meaningful colour — never flat and generic.
 
 Every label must name a value the chart actually reaches; a missing
 measurement is drawn as a gap, never as zero.
+
+A gauge's colour is where its tip lands on a scale (`--vx-heat` for a cost,
+`--vx-yield` for a return — §4, the vivid layer), and a bar series takes the
+spectrum's hue at full strength; the Food Cost waste bars' gradients are
+`--vx-gain` / `--vx-ember-hot`.
 
 A `glowLine` svg stretches to its box (`preserveAspectRatio="none"`), so
 nothing round is drawn inside it. Its strokes carry

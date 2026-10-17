@@ -30606,8 +30606,8 @@ function wtDrawChart(){
   // solid, lit object instead of a flat color fill.
   svg+='<defs>'
     +'<filter id="fc2wtLift" x="-60%" y="-40%" width="220%" height="180%"><feDropShadow dx="0" dy="2" stdDeviation="3.5" flood-color="#000" flood-opacity=".3"/></filter>'
-    +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e2814f"/><stop offset="42%" stop-color="#c84b2f"/><stop offset="100%" stop-color="#9c3620"/></linearGradient>'
-    +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72d4a3"/><stop offset="42%" stop-color="#4ead7a"/><stop offset="100%" stop-color="#337d59"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarBad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffb48a"/><stop offset="38%" stop-color="#ff7a45"/><stop offset="100%" stop-color="#b13a20"/></linearGradient>'
+    +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9af3cb"/><stop offset="38%" stop-color="#34d399"/><stop offset="100%" stop-color="#0f7a52"/></linearGradient>'
     +'<linearGradient id="fc2wtBarNeutral" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8d8378"/><stop offset="42%" stop-color="#6d645b"/><stop offset="100%" stop-color="#4a4038"/></linearGradient>'
     +'</defs>';
   // The dollar scale: each label on the gridline it names, both from y().
@@ -47366,7 +47366,8 @@ function sfw2RuleCheck(chk) {
      crosshair tooltip Labor, Home and Reviews use. Only on the page that has it and only for a line with no gap;
      otherwise null and the Bar's own chart draws (the standalone page and its tests). The svg needs a literal
      colour: each series' --br-* in the dark theme. */
-  var GLOW_HEX = {total: '#e8956a', beer: '#dcb561', liquor: '#87b9f8', wine: '#a471a3'};
+  /* The series at full strength (the vivid layer, 10/17/26): the same hues as --vx-gold / --vx-info / --vx-plum. */
+  var GLOW_HEX = {total: '#ff8f5e', beer: '#f2b84b', liquor: '#5aa8ff', wine: '#c77dff'};
   function glowChart(vals, key, labels, opts) {
     var C = window.CavnarCharts, i;
     opts = opts || {};
@@ -49656,13 +49657,305 @@ function sfw2RuleCheck(chk) {
 #cv-glint.gl i{background-image:url(/static/img/cv-glint-ember-v1.png)}
 @media (prefers-reduced-motion:reduce),(pointer:coarse){ #cv-glint{display:none}}
 </style>
+<style id="cv-vivid">
+/* ══ The vivid layer (10/17/26) ═════════════════════════════════════════
+   Colour, depth and motion over the card materials (#cv-cards) - never
+   layout. Owner, 10/17/26: "richer, vibrant semantic colours around the
+   signature orange; dimensional surfaces, not the same container a
+   hundred times; striking charts". DESIGN_SYSTEM.md section 4a.
+   - The spectrum (--vx-*) is for marks, fills and chart strokes; text
+     keeps --ink, --green, --red (identical on iOS).
+   - Six containers, each with its own silhouette: Ledger (a money
+     summary: obsidian face, a jigger's ruler engraved along its foot, the
+     lead figure molten), Slate (a list), Instrument (gauges and charts,
+     recessed), Ember glass (the AI), Register (a table: a recessed head
+     band in the kicker's orange, rows that light a rail), Signal (an
+     alert). Pedestal stays the page's one hero.
+   - A gauge's colour is where its tip lands on a scale (--vx-heat for a
+     cost, --vx-yield for what came back), drawn at the track's width
+     (100cqw), so a short fill is cool and a long one runs hot - the scale,
+     not a threshold in code.
+   Every faint glow is still an image (render_glows.py); these gradients
+   are hard-stopped (ruler, hatch) or run between strong colours. */
+[data-theme="dark"]{
+  --vx-ember:#c84b2f;--vx-ember-hot:#ff7a45;--vx-ember-light:#ffb48a;
+  --vx-gain:#34d399;--vx-gain-light:#8af0c4;
+  --vx-loss:#ff4d5a;--vx-loss-light:#ff9aa0;
+  --vx-warn:#ffb340;--vx-info:#5aa8ff;--vx-gold:#f2b84b;--vx-plum:#c77dff;
+  --vx-obsidian:#0d0b0a;--vx-graphite:#181513;
+  --vx-heat:linear-gradient(90deg,#2fbf85 0%,#9fd356 16%,#ffc845 28%,#ff8a3d 44%,#ff4d5a 68%,#ff2e63 100%);
+  --vx-yield:linear-gradient(90deg,#ff4d5a 0%,#ff8a3d 32%,#ffc845 56%,#f5d76e 70%,#7fe0a8 82%,#34d399 100%);
+  --vx-molten:linear-gradient(180deg,#fff0e6 0%,#ffc2a0 34%,#ff8a55 72%,#f0602f 100%);
+  --vx-silver:linear-gradient(180deg,#ffffff 0%,#f0e9e1 45%,#c9bfb4 100%);
+  --vx-whitehot:linear-gradient(180deg,#ffffff 0%,#fff6ef 46%,#ffcfb4 100%);
+  --vx-ruler:repeating-linear-gradient(90deg,rgba(255,232,206,.22) 0 1px,transparent 1px 8px);
+  --vx-ruler-major:repeating-linear-gradient(90deg,rgba(255,232,206,.42) 0 1px,transparent 1px 40px);
+  --vx-hatch:repeating-linear-gradient(-45deg,rgba(255,138,90,.62) 0 1.5px,transparent 1.5px 5px);
+  --vx-face-ledger:linear-gradient(180deg,#151210,var(--vx-obsidian));
+  --vx-rim-ledger:linear-gradient(180deg,rgba(255,214,170,.34),rgba(255,214,170,.07) 26%,rgba(255,255,255,.025) 70%,rgba(0,0,0,.55));
+  --vx-face-register:linear-gradient(180deg,var(--vx-graphite),#110f0e);
+  --vx-rim-register:linear-gradient(180deg,rgba(255,236,214,.16),rgba(255,236,214,.05) 22%,rgba(0,0,0,.45));
+  --vx-ease:cubic-bezier(.2,.9,.3,1);
+}
+@keyframes vxOpen{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+
+/* ── Ledger: a money summary ─────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-cfigs{
+  border-color:transparent;
+  background:
+    var(--vx-ruler-major) 24px calc(100% - 1px)/calc(100% - 48px) 10px no-repeat padding-box,
+    var(--vx-ruler) 24px calc(100% - 1px)/calc(100% - 48px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,
+    var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9);
+}
+[data-theme="dark"] #bar .br-cfigs .fg{padding-bottom:30px}
+[data-theme="dark"] #bar .br-cfigs .fg+.fg::before{width:1px;background:rgba(0,0,0,.7);box-shadow:1px 0 0 rgba(255,236,214,.07)}
+[data-theme="dark"] #bar .br-cfigs .fg:first-child>b{filter:drop-shadow(0 0 22px rgba(255,110,60,.32))}
+[data-theme="dark"] #bar .br-swt{box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 9px color-mix(in srgb,var(--s,var(--ember)) 75%,transparent)}
+
+/* ── Slate: a list (bought vs sold) ──────────────────────────────────── */
+[data-theme="dark"] #bar .br-vlist{
+  border-color:transparent;
+  background:url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,var(--cv-rim) border-box;
+  box-shadow:var(--cv-lip),var(--cv-drop)}
+[data-theme="dark"] #bar .br-vr>summary{box-shadow:inset 0 0 0 transparent;transition:background .25s var(--vx-ease),box-shadow .3s var(--vx-ease)}
+[data-theme="dark"] #bar .br-vr>summary:hover,[data-theme="dark"] #bar .br-vr[open]>summary{background:rgba(255,240,226,.035);box-shadow:inset 3px 0 0 var(--vx-ember)}
+[data-theme="dark"] #bar .br-vr>summary:hover .br-vbars{filter:brightness(1.18) saturate(1.15)}
+[data-theme="dark"] #bar .br-vr>summary:hover .br-cv{transform:translateY(2px);color:var(--ember2)}
+[data-theme="dark"] #bar .br-vr[open]>summary:hover .br-cv{transform:rotate(180deg) translateY(2px)}
+[data-theme="dark"] #bar .br-vr[open] .br-vrb{animation:vxOpen .34s var(--vx-ease) both}
+[data-theme="dark"] #bar .br-vr .g b{color:var(--vx-ember-light)}
+[data-theme="dark"] #bar .br-vr .g.neg b{color:var(--vx-info)}
+[data-theme="dark"] #bar .br-vrb .br-facts{background:rgba(0,0,0,.34);box-shadow:inset 0 2px 6px -2px rgba(0,0,0,.6),inset 0 -1px 0 rgba(255,236,214,.04)}
+/* Bought vs sold, one track: what was bought is hatched, what sold pours
+   over it in the category's colour to a bright pour line - the hatch left
+   showing is the stock not accounted for. */
+[data-theme="dark"] #bar .br-vbars{position:relative;display:block;height:12px;border-radius:7px;background:rgba(0,0,0,.5);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.75),0 1px 0 rgba(255,240,226,.06);transition:filter .3s var(--vx-ease)}
+[data-theme="dark"] #bar .br-vbars i{position:absolute;left:0;top:0;bottom:0;height:auto;border-radius:7px}
+[data-theme="dark"] #bar .br-vbars i.b{background:var(--vx-hatch),rgba(255,110,72,.12);box-shadow:inset 0 0 0 1px rgba(255,130,92,.42)}
+[data-theme="dark"] #bar .br-vbars i.r{background:linear-gradient(180deg,color-mix(in srgb,var(--s) 62%,#fff),var(--s) 46%,color-mix(in srgb,var(--s) 72%,#000));
+  box-shadow:0 0 16px color-mix(in srgb,var(--s) 55%,transparent),inset 0 1px 0 rgba(255,255,255,.4)}
+[data-theme="dark"] #bar .br-vbars i.r::after{content:"";position:absolute;right:0;top:-3px;bottom:-3px;width:3px;border-radius:2px;background:#fffaf2;box-shadow:0 0 10px color-mix(in srgb,var(--s) 90%,#fff)}
+/* The legend follows the track: sold under the fill (left), bought at the hatch's end (right). */
+[data-theme="dark"] #bar .br-vcmp .lg{flex-direction:row-reverse}
+[data-theme="dark"] #bar .br-vcmp .lg span:last-child{color:var(--ink2)}
+[data-theme="dark"] #bar .br-vcmp .lg span:first-child{color:color-mix(in srgb,var(--vx-ember-light) 80%,var(--ink3))}
+
+/* ── Instrument: gauges (keg yield) ──────────────────────────────────── */
+[data-theme="dark"] #bar .br-kegs{
+  border-color:transparent;
+  background:radial-gradient(rgba(255,240,226,.035) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 58%,#000),color-mix(in srgb,var(--surface) 72%,#000)) padding-box,
+    linear-gradient(180deg,rgba(0,0,0,.65),rgba(0,0,0,.25) 40%,rgba(255,246,236,.09)) border-box;
+  box-shadow:inset 0 3px 8px -2px rgba(0,0,0,.65),inset 0 18px 30px -24px rgba(0,0,0,.75),0 1px 0 rgba(255,246,236,.05)}
+[data-theme="dark"] #bar .br-keg .gg{container-type:inline-size;height:12px;border-radius:7px;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 3px rgba(0,0,0,.8),0 1px 0 rgba(255,240,226,.06)}
+[data-theme="dark"] #bar .br-keg .gg i{border-radius:7px;background:var(--vx-yield) 0 0/100cqw 100% no-repeat;box-shadow:0 0 14px rgba(255,190,90,.22),inset 0 1px 0 rgba(255,255,255,.38)}
+/* The foam head: a keg's fill ends in a cream cap. */
+[data-theme="dark"] #bar .br-keg .gg i::after{content:"";position:absolute;right:0;top:-2px;bottom:-2px;width:6px;border-radius:4px;background:#fff6e4;box-shadow:0 0 10px rgba(255,236,200,.85),0 0 2px #fff}
+[data-theme="dark"] #bar .br-keg .gg i[style*="width:0.0%"]::after{display:none}
+[data-theme="dark"] #bar .br-keg .gg b{width:2px;top:-6px;bottom:-6px;background:#fff;box-shadow:0 0 8px rgba(255,255,255,.75),0 0 1px #fff}
+[data-theme="dark"] #bar .br-keg{transition:background .25s var(--vx-ease)}
+[data-theme="dark"] #bar .br-keg:hover{background:rgba(255,240,226,.03)}
+
+/* ── Register: a table ───────────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-tw{border-color:transparent;overflow:hidden;
+  background:var(--vx-face-register) padding-box,var(--vx-rim-register) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,236,214,.06),0 1px 0 rgba(0,0,0,.6),0 20px 40px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #bar .br-t2 thead th{background:rgba(0,0,0,.38);color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 26%,transparent);padding-top:15px;padding-bottom:12px}
+[data-theme="dark"] #bar .br-t2 tbody tr:nth-child(even) td{background:rgba(255,240,226,.018)}
+[data-theme="dark"] #bar .br-t2 tbody tr td{transition:background .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover{background:transparent}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover td{background:rgba(255,240,226,.05)}
+[data-theme="dark"] #bar .br-t2 tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--vx-ember)}
+[data-theme="dark"] #bar .br-pbar{container-type:inline-size;height:8px;background:rgba(0,0,0,.55);box-shadow:inset 0 1px 2px rgba(0,0,0,.8),0 1px 0 rgba(255,240,226,.05)}
+[data-theme="dark"] #bar .br-pbar i,[data-theme="dark"] #bar .br-pbar.up i{background:var(--vx-heat) 0 0/100cqw 100% no-repeat;box-shadow:inset 0 1px 0 rgba(255,255,255,.35)}
+[data-theme="dark"] #bar .br-pbar.up{box-shadow:inset 0 1px 2px rgba(0,0,0,.8),0 0 0 1px color-mix(in srgb,var(--vx-loss) 55%,transparent),0 0 12px color-mix(in srgb,var(--vx-loss) 40%,transparent)}
+
+/* ── Folds and chips ─────────────────────────────────────────────────── */
+[data-theme="dark"] #bar .br-more>summary::before{transition:transform .3s var(--vx-ease),border-color .25s ease,box-shadow .25s ease}
+[data-theme="dark"] #bar .br-more>summary:hover::before{border-color:color-mix(in srgb,var(--ember) 70%,transparent);box-shadow:0 0 12px -2px color-mix(in srgb,var(--ember) 70%,transparent)}
+[data-theme="dark"] #bar .br-dchip{background:linear-gradient(180deg,rgba(255,240,226,.07),rgba(255,240,226,.03));border-color:rgba(255,236,214,.1);box-shadow:0 1px 0 rgba(0,0,0,.4)}
+
+/* ── KPI tile: a category's figure card, lit in its own hue ─────────────
+   The series colour (--s) enters at the top-left corner through a mask
+   sprite and runs in along the top edge as a 1px filament; the figure is
+   metal tinted toward the same hue. Gold, blue, plum - never three ember
+   outlines. */
+[data-theme="dark"] #bar .br-cat{position:relative;isolation:isolate}
+[data-theme="dark"] #bar .br-cat::before{content:"";position:absolute;left:0;top:0;width:78%;height:72%;z-index:-1;pointer-events:none;opacity:.2;
+  background:var(--s);-webkit-mask:url(/static/img/glow/mask-corner-tl-v1.png) 0 0/100% 100% no-repeat;mask:url(/static/img/glow/mask-corner-tl-v1.png) 0 0/100% 100% no-repeat}
+[data-theme="dark"] #bar .br-cat::after{content:"";position:absolute;left:18px;right:40%;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--s) 0%,transparent),var(--s) 18%,color-mix(in srgb,var(--s) 0%,transparent));box-shadow:0 0 10px color-mix(in srgb,var(--s) 80%,transparent)}
+[data-theme="dark"] #bar .br-cat .v{background:linear-gradient(180deg,#fff 0%,#fbf5ee 40%,color-mix(in srgb,var(--s) 62%,#fff) 100%);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] #bar .br-cat .v *{color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] #bar .br-cat .v small{background:inherit;-webkit-background-clip:text;background-clip:text}
+/* Bar categories at full strength (marks only; the series are the glow charts' too). */
+[data-theme="dark"] #bar{--br-beer:var(--vx-gold);--br-liquor:var(--vx-info);--br-wine:var(--vx-plum)}
+
+/* ══ Everywhere (the same six containers and metals on every module) ══ */
+
+/* Figures as metal, by role - one look per role, never per module:
+   white-hot  the page's hero figure (a soft warm foot, a glow under it)
+   molten     money at stake (the ledger's lead)
+   silver     a supporting figure
+   A figure that already wears a status colour (.good/.warn/.bad/.up/
+   .down) keeps it: the metal is for figures that say no verdict. */
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money),
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money) .hb-num{
+  background:var(--vx-whitehot);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net){filter:drop-shadow(0 12px 30px rgba(255,120,70,.2))}
+[data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)),
+[data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)) .hb-num{
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+/* (.fg.fg: above the silver list, whose :is() carries its strongest selector.) */
+[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b,[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b .hb-num{background-image:var(--vx-molten)}
+/* A small unit after a figure stays ink, not metal. */
+[data-theme="dark"] :is(.kx-hero .kx-val,.kx-card .kx-val,.dr-score .net,.hb-focus .money,.dr-kpi .v,.lb2-op .v,.hb-stat .v,#bar .br-big) small{-webkit-text-fill-color:currentColor;background:none}
+
+/* The report's score card is the page's pedestal: the ember enters at its
+   top-left corner and dies within a quarter of the rim - never a full
+   glowing outline (owner, 10/17/26: "no glowing orange borders"). */
+[data-theme="dark"] #panel-dsr .dr-score::before{opacity:1;
+  background:linear-gradient(138deg,var(--ember2) 0%,color-mix(in srgb,var(--ember) 72%,transparent) 9%,rgba(255,236,214,.16) 24%,rgba(255,255,255,.06) 52%,rgba(255,255,255,.035) 76%,rgba(0,0,0,.3) 100%)}
+
+/* The containers, by what they hold (the same six on every module). */
+/* Ledger: a money summary - the Bar's bought vs sold figures, the
+   report's forecast for the day after. */
+[data-theme="dark"] #panel-dsr .dr-tmr>.hb-card:nth-child(2){
+  border-color:transparent;
+  background:
+    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
+    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc,[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc .hb-num{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+/* Ember glass: what Cavnar AI wrote - the report's executive summary. */
+[data-theme="dark"] #panel-dsr .hb-card.dr-read{
+  border-color:transparent;
+  background:
+    linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent)}
+/* Signal: the night's wins (green) and risks (amber) - an LED edge in
+   the tone, its light spilling into the face. */
+[data-theme="dark"] #panel-dsr .hb-card.dr-wins,[data-theme="dark"] #panel-dsr .hb-card.dr-risks{
+  --cv-tone:var(--vx-gain);--cv-spill:url(/static/img/glow/signal-green-v1.png) 0 0/100% 100% no-repeat;
+  border-color:transparent;
+  background:var(--cv-spill) padding-box,url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
+    linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
+  box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
+    -10px 0 26px -18px color-mix(in srgb,var(--cv-tone) 75%,transparent),var(--cv-lip),var(--cv-drop)}
+[data-theme="dark"] #panel-dsr .hb-card.dr-risks{--cv-tone:var(--vx-warn);--cv-spill:url(/static/img/glow/signal-amber-v1.png) 0 0/100% 100% no-repeat}
+/* Instrument: a chart's well - the night by hour, by meal period, by
+   department. Recessed, a faint reticle, never warmed or lifted. */
+[data-theme="dark"] #panel-dsr :is(.hb-card.dr-hourly,.hb-card.dr-split,.hb-card.dr-dep){
+  border-color:transparent;transform:none!important;
+  background:radial-gradient(rgba(255,240,226,.035) .8px,transparent 1.2px) 0 0/20px 20px padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 60%,#000),color-mix(in srgb,var(--surface) 72%,#000)) padding-box,
+    linear-gradient(180deg,rgba(0,0,0,.65),rgba(0,0,0,.25) 40%,rgba(255,246,236,.09)) border-box;
+  box-shadow:inset 0 3px 8px -2px rgba(0,0,0,.65),inset 0 18px 30px -24px rgba(0,0,0,.75),0 1px 0 rgba(255,246,236,.05)}
+/* Register: the night's tables - servers, voids, tenders, edits. */
+[data-theme="dark"] #panel-dsr :is(.hb-card.dr-srv,.hb-card.dr-loss,.hb-card.dr-edits){
+  border-color:transparent;transform:none!important;
+  background:var(--vx-face-register) padding-box,var(--vx-rim-register) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,236,214,.06),0 1px 0 rgba(0,0,0,.6),0 20px 40px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-dsr .dr-split-r .tr{background:rgba(0,0,0,.5);box-shadow:inset 0 1px 2px rgba(0,0,0,.75),0 1px 0 rgba(255,240,226,.05)}
+[data-theme="dark"] #panel-dsr .dr-split-r .tr i{background:linear-gradient(180deg,#ffb48a,var(--vx-ember-hot) 45%,var(--vx-ember));box-shadow:0 0 14px color-mix(in srgb,var(--vx-ember-hot) 45%,transparent),inset 0 1px 0 rgba(255,255,255,.35)}
+
+/* Ember glass on Home too: last night's summary is the report speaking. */
+[data-theme="dark"] #panel-home .hb-card.dr-home{
+  border-color:transparent;
+  background:
+    linear-gradient(90deg,rgba(255,226,206,.42),rgba(255,226,206,.12) 18%,rgba(255,226,206,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent)}
+/* Ledger on Home: what was measured - the worth tiles' card. */
+[data-theme="dark"] #panel-home .hb-card:has(>.hb-vsplit){
+  border-color:transparent;padding-bottom:30px;
+  background:
+    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
+    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+/* Docket: a recommendation is a ticket - a row of punched holes under
+   its top edge, like a kitchen docket's tear-off, and its number molten.
+   Every .hb-rec on every page (Home, the report's priorities, Marketing's
+   openings). */
+[data-theme="dark"] .hb-card.hb-rec{position:relative}
+[data-theme="dark"] .hb-card.hb-rec::before{content:"";position:absolute;left:16px;right:16px;top:6px;height:5px;pointer-events:none;
+  background:radial-gradient(circle,var(--bg-base) 1.6px,rgba(255,236,214,.13) 2.1px,transparent 2.6px) 0 50%/11px 5px repeat-x}
+[data-theme="dark"] .hb-rec .no,[data-theme="dark"] .hb-rec .no *{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] .hb-rec .no{filter:drop-shadow(0 0 14px rgba(255,110,60,.3))}
+[data-theme="dark"] .hb-rec .meta .usd{color:var(--vx-ember-light);border-color:color-mix(in srgb,var(--vx-ember-hot) 40%,transparent);background:color-mix(in srgb,var(--vx-ember-hot) 10%,transparent)}
+
+/* Food Cost. Ledger: where the money is going (money at stake, its
+   drivers) - the driver's dollars molten. Register: plate costs' heading
+   row in the kicker's orange, a row lighting under the pointer. */
+[data-theme="dark"] #panel-inventory .fc2-cfo{
+  border-color:transparent;padding-bottom:16px;
+  background:
+    var(--vx-ruler-major) 18px calc(100% - 1px)/calc(100% - 36px) 10px no-repeat padding-box,
+    var(--vx-ruler) 18px calc(100% - 1px)/calc(100% - 36px) 5px no-repeat padding-box,
+    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
+  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
+[data-theme="dark"] #panel-inventory .fc2-cfo-hd{border-bottom-color:rgba(0,0,0,.55);box-shadow:0 1px 0 rgba(255,236,214,.05)}
+[data-theme="dark"] #panel-inventory .fc2-drv .n,[data-theme="dark"] #panel-inventory .fc2-drv .n .hb-num{
+  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b),[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b) .hb-num{
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+[data-theme="dark"] .fc2-pl-head{color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent);padding-bottom:8px}
+[data-theme="dark"] .fc2-pl-row>summary{margin:0 -10px;padding-left:10px;padding-right:10px;border-radius:8px;transition:background .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] .fc2-pl-row:nth-child(even)>summary{background:rgba(255,240,226,.018)}
+[data-theme="dark"] .fc2-pl-row>summary:hover,[data-theme="dark"] .fc2-pl-row[open]>summary{background:rgba(255,240,226,.05);box-shadow:inset 3px 0 0 var(--vx-ember)}
+
+/* Labor's header figures and Campaigns' KPIs: supporting figures, silver. */
+[data-theme="dark"] :is(#panel-labor .row>.stat-n,.cp-kpi .v){
+  background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+
+/* Touch: a card that can be acted on presses in under the click; a fold
+   eases its contents in rather than snapping them open. */
+[data-theme="dark"] :is(.hb-card.lift,.hb-card.hb-rec,.lb2-op,.sb-card,.ss-tile,.cal-card,.cp-card,#bar .br-cat):active{transform:translateY(0) scale(.992);transition-duration:.08s}
+[data-theme="dark"] :is(.hb-card details,details.hb-results,details.fc2-work,#bar .br-more)[open]>:not(summary){animation:vxOpen .34s var(--vx-ease) both}
+
+/* Status LEDs: a lit bead with its own specular, not a flat dot. */
+[data-theme="dark"] .hb-row .d{width:10px;height:10px}
+[data-theme="dark"] .hb-row.critical .d,[data-theme="dark"] .hb-tl .it.critical .d{background:radial-gradient(circle at 34% 30%,#ffd9db 0,var(--vx-loss) 46%,#a3101e 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-loss) 16%,transparent),0 0 12px color-mix(in srgb,var(--vx-loss) 80%,transparent)}
+[data-theme="dark"] .hb-row.important .d,[data-theme="dark"] .hb-tl .it.important .d{background:radial-gradient(circle at 34% 30%,#fff1cf 0,var(--vx-warn) 46%,#a86400 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-warn) 15%,transparent),0 0 12px color-mix(in srgb,var(--vx-warn) 70%,transparent)}
+[data-theme="dark"] .hb-row.good .d,[data-theme="dark"] .hb-tl .it.good .d{background:radial-gradient(circle at 34% 30%,#d8ffef 0,var(--vx-gain) 46%,#0d7a4e 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-gain) 15%,transparent),0 0 12px color-mix(in srgb,var(--vx-gain) 70%,transparent)}
+[data-theme="dark"] .hb-row.watch .d,[data-theme="dark"] .hb-tl .it:not(.critical):not(.important):not(.good) .d{background:radial-gradient(circle at 34% 30%,#fffaf2 0,#a99d8e 50%,#4e463d 100%);box-shadow:0 0 0 3px rgba(255,240,226,.05)}
+
+/* Register: every table - a recessed head band in the kicker's orange,
+   a warm zebra, and a row that lights an ember rail under the pointer. */
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) thead th{
+  background:rgba(0,0,0,.3);color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:nth-child(even) td{background-color:rgba(255,240,226,.018)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody td{transition:background-color .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td{background-color:rgba(255,240,226,.048)}
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--vx-ember)}
+
+@media (prefers-reduced-motion:reduce){
+  [data-theme="dark"] #bar .br-vr[open] .br-vrb,
+  [data-theme="dark"] :is(.hb-card details,details.hb-results,details.fc2-work,#bar .br-more)[open]>:not(summary){animation:none}
+  [data-theme="dark"] :is(.hb-card.lift,.hb-card.hb-rec,.lb2-op,.sb-card,.ss-tile,.cal-card,.cp-card,#bar .br-cat):active{transform:none}
+}
+</style>
 <script>
 /* cvLight - lays #cv-glint over the material card under the pointer (see
    #cv-cards). One delegated listener, one frame per move; it follows the
    card through a scroll or a lift, and hides when the pointer leaves it. */
 (function(){
   var SEL='#bar .br-feat,#bar .br-insl,.hb-card,.hb-sig.cards .hb-sg,.lb2-op,.sb-card,.sb-tile,.fc2-cfo,.fc2-block,.dr-sec,.ss-tile,.ss-pub-card,.ss-crew-role,.ss-bn,.pr-sec,.ac-card,.cal-card,.cp-card,.kx-card,#bar .br-card,.lb2-hero,.rv2-hero,.kx-hero,.lb2-ai,.cp-ai,.rv-diag,.sw-side';
-  var GLASS='.lb2-ai,.cp-ai,.rv-diag,#bar .br-feat', PED='.lb2-hero,.rv2-hero,.hb-card.hero.hb-focus,#bar .br-hero,.ss-tile.hero,.kx-hero,#ss-settings-setup #ss-settings';
+  var STILL='#panel-dsr .hb-card.dr-hourly,#panel-dsr .hb-card.dr-split,#panel-dsr .hb-card.dr-dep,#panel-dsr .hb-card.dr-srv,#panel-dsr .hb-card.dr-loss,#panel-dsr .hb-card.dr-edits';
+  var GLASS='.lb2-ai,.cp-ai,.rv-diag,#bar .br-feat,#panel-dsr .hb-card.dr-read,#panel-home .hb-card.dr-home', PED='.lb2-hero,.rv2-hero,.hb-card.hero.hb-focus,#bar .br-hero,.ss-tile.hero,.kx-hero,#ss-settings-setup #ss-settings';
   if(!window.matchMedia||window.matchMedia('(pointer: coarse)').matches)return;
   var mq=window.matchMedia('(prefers-reduced-motion: reduce)');
   var g=null,lt=null,cur=null,px=0,py=0,pend=null;
@@ -49684,6 +49977,8 @@ function sfw2RuleCheck(chk) {
     pend=null;
     if(mq.matches||!dark()){hide();return;}
     var t=document.elementFromPoint(px,py),el=t&&t.closest?t.closest(SEL):null;
+    /* An instrument or a register (the vivid layer, #cv-vivid) is read, never warmed. */
+    if(el&&el.matches(STILL))el=null;
     if(!el){hide();return;}
     ensure();
     if(el!==cur){
