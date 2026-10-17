@@ -118,7 +118,6 @@ def test_fc_calc_01_back_office_food_cost_stays_inside_the_window_it_is_asked_fo
         f"asked for {asked_from}..{today}, got COGS {out['cogs']} for {out['start']}..{out['end']}"
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-03 / POS-01: bought-vs-sold headline divides 28 days of invoices by 7 nights of sales")
 def test_fc_calc_03_bought_vs_sold_headline_needs_sales_for_its_window(db):
     """The nightly report started a week ago (7 nights x $1,000); $2,800 of
     invoices weekly for four weeks. 160% is not a reading; the window must
@@ -136,7 +135,6 @@ def test_fc_calc_03_bought_vs_sold_headline_needs_sales_for_its_window(db):
     assert w["pct"] is None or (w["from"] >= (t - timedelta(days=7)).isoformat() and w["pct"] < 100), w
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-04: a credit memo under its invoice's number overwrites the invoice")
 def test_fc_calc_04_a_credit_memo_sharing_its_invoice_number_is_kept_beside_it(db):
     """GFS 9041200735 +$900 on 10/1 and the same number -$200 on 10/3; the
     vendor total prints $700 and both rows must be stored."""
@@ -364,7 +362,6 @@ def test_bar_calc_09_the_pack_parser_reads_count_slash_size(desc, uom, cat, unit
 
 # ── ING: Back Office <-> Fintech matching and intake ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="ING-01: an itemized BO invoice split across GLs is counted again against Fintech")
 def test_ing_01_an_itemized_invoice_on_two_accounts_matches_fintech_whole(db):
     """Breakthru 555 ($1,010) is on Fintech; its Back Office page has liquor
     $400, wine $600 and $10 tax. None of it is alcohol outside Fintech."""
@@ -383,7 +380,6 @@ def test_ing_01_an_itemized_invoice_on_two_accounts_matches_fintech_whole(db):
     assert out["lines"] == [], [(l["category"], l["cost"]) for l in out["lines"]]
 
 
-@pytest.mark.xfail(strict=True, reason="ING-02: the invoice-number match ignores the distributor")
 def test_ing_02_an_invoice_number_match_needs_the_same_distributor(db):
     """Oak Wine Cellars' invoice 1001 ($480) is not Breakthru's Fintech 1001
     ($250); Breakthru's $250 payment is that Fintech invoice."""
@@ -401,7 +397,6 @@ def test_ing_02_an_invoice_number_match_needs_the_same_distributor(db):
     assert counted == [("OAK WINE CELLARS", 480.0)] and out["matched"] == 1, counted
 
 
-@pytest.mark.xfail(strict=True, reason="ING-03 / FC-CALC-05: a food vendor sharing a first word with a Fintech beer house is filed as beer")
 def test_ing_03_a_food_vendor_is_not_matched_to_a_fintech_house_on_one_word(db):
     """Back Office 'CHICAGO PRODUCE CO' with Fintech 'Chicago Beverage
     Systems' on file: not beer, not from Fintech, and not in the Bar."""
@@ -417,7 +412,6 @@ def test_ing_03_a_food_vendor_is_not_matched_to_a_fintech_house_on_one_word(db):
     assert bo.outside_fintech(rid, db_path=db)["lines"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-05 / ING-03: _match_fintech_vendor matches on a single shared first word")
 @pytest.mark.parametrize("vk,fin", [
     ("chicago meat authority", "chicago beverage systems"),
     ("southern food group", "southern glazers wine and spirits of il"),
@@ -426,7 +420,6 @@ def test_fc_calc_05_one_shared_first_word_is_not_the_same_vendor(vk, fin):
     assert bo._match_fintech_vendor(vk, [fin]) is None
 
 
-@pytest.mark.xfail(strict=True, reason="ING-04: one payment covering three Fintech invoices is counted again")
 def test_ing_04_a_batch_payment_for_three_fintech_invoices_is_matched(db):
     """Breakthru Fintech invoices $300 + $450 + $250; one $1,000 check-mode
     entry pays them. Nothing is counted outside Fintech."""
@@ -477,7 +470,6 @@ def test_ing_09_sour_cream_is_not_verified_as_cream(db):
         {k: line.get(k) for k in ("ingredient_name", "selected", "verified", "matched_by")}
 
 
-@pytest.mark.xfail(strict=True, reason="ING-10 / SCALE-03: read_file marks the file stored before its rows are written")
 def test_ing_10_a_failed_write_is_read_again_on_retry(db, monkeypatch):
     rid = _rid(db)
     txt = _printout([f"{B}SYSCO{NB} $100.00", f"{NB} 5555 {C} 09/05/2026 {NB}$100.00 {NB} 0{NB}"]).encode()
