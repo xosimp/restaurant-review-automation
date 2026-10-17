@@ -434,13 +434,11 @@ def test_ing_04_a_batch_payment_for_three_fintech_invoices_is_matched(db):
     assert out["lines"] == [], [(l["category"], l["cost"]) for l in out["lines"]]
 
 
-@pytest.mark.xfail(strict=True, reason="ING-05: email_intake._unsigned_not_forged accepts a DMARC fail as merely unsigned")
 def test_ing_05_a_dmarc_fail_is_not_unsigned_mail():
     import email_intake as ei
     assert ei._unsigned_not_forged({"spf": "none", "dkim": "none", "dmarc": "fail"}) is False
 
 
-@pytest.mark.xfail(strict=True, reason="ING-05: fintech_invoices.vouch passes a forged file with no store column")
 def test_ing_05_vouch_refuses_a_file_that_names_no_store(db):
     rid = _rid(db)
     real = FT_HEAD + ("Breakthru Beverage Illinois LLC,128850598,10/01/2026,420.00,000001 St. Charles,9031,"
@@ -453,7 +451,6 @@ def test_ing_05_vouch_refuses_a_file_that_names_no_store(db):
     assert ok is False, why
 
 
-@pytest.mark.xfail(strict=True, reason="ING-09: invoices.match_ingredient prices 'Cream' from SOUR CREAM and pre-selects it verified")
 def test_ing_09_sour_cream_is_not_verified_as_cream(db):
     import invoices
     rid = _rid(db)
@@ -490,7 +487,6 @@ def test_ing_10_a_failed_write_is_read_again_on_retry(db, monkeypatch):
     assert again["status"] == "stored" and n == 1, (again, n)
 
 
-@pytest.mark.xfail(strict=True, reason="ING-11: a Fintech credit memo carrying its invoice's number is never counted")
 def test_ing_11_a_same_number_credit_memo_is_its_own_document(db):
     """Southern 4471 for $600, then a credit memo 4471 for -$300: both on
     file, net $300 - not a 'conflict' version that is never written."""

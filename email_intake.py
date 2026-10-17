@@ -252,6 +252,25 @@ def _unsigned_not_forged(auth) -> bool:
     return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
 
 
+def _unsigned_dmarc_fail(auth) -> bool:
+    """Nothing signed (SPF and DKIM gray / none) and DMARC fail - Fintech's
+    own mail on 10/15 and 10/16/26 read exactly this, and so does a spoofed
+    From from a host with no SPF record, so the email alone can't say which.
+    Owner, 10/16/26: "I shouldn't have to keep doing this" - such mail is
+    NOT trusted on its own word (_unsigned_not_forged stays False for it)
+    but may take the hardened vouch path: every invoice names a known store,
+    the file has an earlier file's layout, totals and unit prices sit inside
+    the distributor's history and nothing on file changes
+    (fintech_invoices.vouch). A file that fails any of that stays held.
+    An SPF or DKIM FAIL never comes here. The lasting fix is Fintech signing
+    its mail (DKIM / DMARC alignment)."""
+    if not isinstance(auth, dict):
+        return False
+    if str(auth.get("dmarc") or "unknown").lower() != "fail":
+        return False
+    return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
+
+
 def auth_verdict(auth) -> tuple:
     """(passed, why) from Resend's `authentication` on a received email —
     {spf, dkim, dmarc}, each pass | fail | gray | processing_failed |
@@ -619,7 +638,8 @@ def process(email_id, db_path=None, released=False):
                         "held, never read", processed_at=_now())
             return {"status": "held_sender"}
         passed, why = auth_verdict(auth)
-        unsigned = not passed and _unsigned_not_forged(auth) and row["kind"] in VOUCHERS
+        unsigned = (not passed and (_unsigned_not_forged(auth) or _unsigned_dmarc_fail(auth))
+                    and row["kind"] in VOUCHERS)
         if not passed and not unsigned:
             _set(email_id, db_path, status="held_auth", sender=sender[:300], subject=subject[:500], auth=auth_json,
                  detail=f"Resend could not vouch for the sender ({why}) — held, never read", processed_at=_now())
