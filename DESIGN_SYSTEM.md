@@ -2347,6 +2347,30 @@ breath two incommensurate sines.
   shader: `brand/ember-core/`. No onboarding exists yet; when one is built the
   core opens it.
 
+## 12e. Copy — less reading, faster decisions (10/17/26)
+
+Cavnar AI speaks through numbers, status and one clear action, not paragraphs. Every word earns its place.
+Before writing or keeping a line, decide what it is:
+
+| Kind | Where it lives | Examples |
+|---|---|---|
+| **Essential** | visible | the figure, its 2–4 word label, the status, the action, a money warning, an at-risk state, confidence as a real %, "Sample" / "Estimate" labels, consent and legal text, a blocking error |
+| **Secondary** | behind disclosure — `.cav-it` info tip (one or two sentences on where a figure comes from), a `details` "More" (a longer block), iOS `CavnarMoreDisclosure` | a formula, a basis sentence, a date window, rates used, assumptions, sources, evidence behind an AI read, caveats that are not warnings |
+| **Unnecessary** | deleted | a line that restates the heading, a number already on the card, "Here's how…", instructions a control already makes plain, developer words |
+
+| Element | Rule |
+|---|---|
+| Heading | The finding, not the topic, when there is one: "Labor 2.9 pts over target", not "Labor analysis" |
+| Supporting text | 1–2 lines by default, one on iPhone |
+| KPI label | 2–4 words, no unit the number already carries |
+| AI insight / recommendation | One finding · why it matters · the action — about 25 words visible; evidence, reasoning and confidence detail under More |
+| Alert | What happened and what to do, one sentence; the cause under More |
+| Empty state | One short phrase and the one action that fills it |
+| Button | The verb and the object ("Publish 5 replies"), never "Click here" or "Learn more" alone |
+
+One primary message per card. Never shrink type to fit more text — cut the text. The iPhone is shorter than
+the web: "Web explains. iPhone decides."
+
 ## 13. Checklist before shipping a screen
 
 1. Tokens only — no literal colours (`scripts/check_colors.py`).
