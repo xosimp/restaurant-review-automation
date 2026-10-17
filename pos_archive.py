@@ -16,7 +16,10 @@ A provider takes part by defining `archive_rows(restaurant_id, day)`
 (rpower.archive_rows) and `changed_business_dates(restaurant_id, since_utc,
 until_utc)`. Nightly (run_nightly, the `pos_archive` job):
 
-  1. yesterday's business date;
+  1. the last complete business date (pos.complete_through — at 4am local
+     that is still the night before last, so the queue row waits for the
+     night to end: strategy_jobs.run_pos_archive), once the POS has closed
+     it when it is that recent;
   2. any archived date the POS rewrote since the last look (a re-post after
      close) — archived again and counted as a restatement;
   3. a bounded backfill toward BACKFILL_DAYS, BACKFILL_DAYS_PER_NIGHT at a
@@ -49,6 +52,20 @@ log = logging.getLogger("pos_archive")
 # department and sales category, RPOWER's cost / discounted / aqu_count /
 # fraction, and the modifier links from ticketitem — the Bar, 10/15/26 F5).
 ARCHIVE_VERSION = 4
+# The oldest layout the READERS can use (rpower._raw_from_archive needs the
+# layout-3 raw fields; a layout-4 field is read where present and the live
+# catalog used where not). Separate from ARCHIVE_VERSION on purpose (food &
+# bar audit 10/16/26 POS-09): one number gated both "store this day again"
+# and "a reader may use this day", so the bump to 4 made every stored day
+# unreadable at once and each reader downloaded it again — the 10/16
+# incident. A bump now only re-stores days through the bounded backfill;
+# readers keep reading. Raise this only when a reader needs a new field
+# that an older day does not have.
+READ_MIN_VERSION = 3
+# A night's own line total against RPOWER's per-ticket type totals (POS-11):
+# more apart than this, or any dollars on a sales type we could not read,
+# is raised to the console.
+RECONCILE_TOLERANCE = 1.00
 
 BACKFILL_DAYS = 90
 BACKFILL_DAYS_PER_NIGHT = 7
@@ -183,15 +200,53 @@ def provider_for(restaurant_id):
     return name, mod
 
 
+class ArchiveCountMismatch(RuntimeError):
+    """Fewer rows landed in a table than the POS returned for the day: two
+    records shared a key (POS-10). The day's write is rolled back, never
+    stored short."""
+
+
+def _reconcile(restaurant_id, iso, checks):
+    """(gap, unknown_sales) from the provider's `checks` (rpower.archive_rows):
+    our revenue lines minus the POS's own per-ticket totals of the same sales
+    types, and the dollars on lines whose sales type the POS's list did not
+    name. Either past RECONCILE_TOLERANCE is an ops event the console shows
+    (food & bar audit 10/16/26 POS-11) — a sales type added at the store, or
+    a line our rules drop, would otherwise vanish from net, food and drink
+    sales with nobody told. (None, None) when the provider has no checks."""
+    if not isinstance(checks, dict) or "gap" not in checks:
+        return None, None
+    gap = round(float(checks.get("gap") or 0), 2)
+    unknown = round(float(checks.get("unknown_type_sales") or 0), 2)
+    if abs(gap) > RECONCILE_TOLERANCE or abs(unknown) > 0.005 or int(checks.get("unknown_type_lines") or 0):
+        try:
+            import ops
+            ops.capture(RuntimeError(
+                f"POS reconcile {iso}: our revenue lines ${sum((checks.get('lines_by_type') or {}).values()):,.2f} "
+                f"vs the POS's ticket totals ${sum((checks.get('tickets_by_type') or {}).values()):,.2f} "
+                f"(gap ${gap:,.2f}); {int(checks.get('unknown_type_lines') or 0)} line(s) of an unknown sales type, "
+                f"${unknown:,.2f}"), job="pos_reconcile", context=f"restaurant_id={restaurant_id} date={iso}",
+                restaurant_id=restaurant_id)
+        except Exception:
+            pass
+    return gap, unknown
+
+
 def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     """Read one business date from the POS and store it whole.
-    {"date", "tickets", "lines", "punches", "net_sales", "restated"}."""
+    {"date", "tickets", "lines", "punches", "net_sales", "restated",
+    "links_ok", "recon_gap", "unknown_sales"}."""
     name, mod = provider or provider_for(restaurant_id)
     if mod is None:
         raise LookupError("no connected POS can archive tickets")
     rows = mod.archive_rows(restaurant_id, day)
     iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
     net = round(sum(float(t.get("net_sales") or 0) for t in rows["tickets"]), 2)
+    # A provider with no modifier links to read has none to lose; one that
+    # reports links_ok False read none tonight (POS-12).
+    links_ok = rows.get("links_ok")
+    links_ok = None if links_ok is None else (1 if links_ok else 0)
+    gap, unknown = _reconcile(restaurant_id, iso, rows.get("checks"))
     conn = get_conn(db_path)
     try:
         prev = conn.execute("SELECT max_stamp, restated FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
@@ -199,21 +254,31 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
         for table, cols, key in _TABLES:
             conn.execute(f"DELETE FROM {table} WHERE restaurant_id=? AND provider=? AND business_date=?",
                          (restaurant_id, name, iso))
+            want = rows.get(key) or []
             marks = ",".join("?" for _ in range(len(cols) + 2))
             conn.executemany(
                 f"INSERT OR REPLACE INTO {table} (restaurant_id, provider, {','.join(cols)}) VALUES ({marks})",
-                [(restaurant_id, name, *[r.get(c) for c in cols]) for r in rows.get(key) or []])
+                [(restaurant_id, name, *[r.get(c) for c in cols]) for r in want])
+            # Every record the POS returned is a row (POS-10): a key two
+            # records shared replaced one with the other, silently.
+            got = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE restaurant_id=? AND provider=? "
+                               f"AND business_date=?", (restaurant_id, name, iso)).fetchone()[0]
+            if int(got) != len(want):
+                raise ArchiveCountMismatch(f"{table} {iso}: {len(want)} records from the POS, {got} stored")
         restated = bool(prev and prev["max_stamp"] and rows.get("max_stamp")
                         and rows["max_stamp"] != prev["max_stamp"])
         conn.execute(
             "INSERT INTO pos_archive_days (restaurant_id, provider, business_date, tickets, lines, punches, "
-            "net_sales, max_stamp, restated, version, archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now')) "
+            "net_sales, max_stamp, restated, version, links_ok, recon_gap, unknown_sales, archived_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now')) "
             "ON CONFLICT(restaurant_id, provider, business_date) DO UPDATE SET tickets=excluded.tickets, "
             "lines=excluded.lines, punches=excluded.punches, net_sales=excluded.net_sales, "
             "max_stamp=excluded.max_stamp, restated=pos_archive_days.restated + ?, version=excluded.version, "
+            "links_ok=excluded.links_ok, recon_gap=excluded.recon_gap, unknown_sales=excluded.unknown_sales, "
             "archived_at=datetime('now')",
             (restaurant_id, name, iso, len(rows["tickets"]), len(rows["lines"]), len(rows["punches"]), net,
-             rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, 1 if restated else 0))
+             rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, links_ok, gap, unknown,
+             1 if restated else 0))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -230,16 +295,19 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     except Exception as e:                           # the archive stands; the Bar estimates the night
         log.warning("pos_archive: bar night %s not derived for %s: %s", iso, restaurant_id, e)
     return {"date": iso, "tickets": len(rows["tickets"]), "lines": len(rows["lines"]),
-            "punches": len(rows["punches"]), "net_sales": net, "restated": restated}
+            "punches": len(rows["punches"]), "net_sales": net, "restated": restated,
+            "links_ok": links_ok, "recon_gap": gap, "unknown_sales": unknown}
 
 
 def archived_dates(restaurant_id, provider, db_path=DB_PATH) -> set:
-    """Dates stored under the current layout (ARCHIVE_VERSION); an older
-    day reads as missing, so the backfill stores it again."""
+    """Dates stored whole under the current layout (ARCHIVE_VERSION): an
+    older day, or one whose modifier links failed to read (links_ok 0,
+    POS-12), reads as missing, so the backfill stores it again."""
     conn = get_conn(db_path)
     try:
         return {r[0] for r in conn.execute("SELECT business_date FROM pos_archive_days WHERE restaurant_id=? "
-                                           "AND provider=? AND COALESCE(version, 1) >= ?",
+                                           "AND provider=? AND COALESCE(version, 1) >= ? "
+                                           "AND COALESCE(links_ok, 1) = 1",
                                            (restaurant_id, provider, ARCHIVE_VERSION)).fetchall()}
     finally:
         conn.close()
@@ -269,21 +337,50 @@ def _set_changes_checked_to(restaurant_id, provider, when, db_path):
         conn.close()
 
 
+def _closed(mod, restaurant_id, day) -> bool:
+    """Whether the POS has run its close for `day` (a provider without the
+    read is taken as closed: it has no such record to wait for)."""
+    fn = getattr(mod, "day_closed_cached", None)
+    if not callable(fn):
+        return True
+    try:
+        return bool(fn(restaurant_id, day))
+    except Exception as e:
+        log.warning("pos_archive: closed-day read failed for %s %s: %s", restaurant_id, day, e)
+        return False
+
+
 def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
-    """One restaurant's night: yesterday, restated days, then backfill.
-    `today` is the restaurant's current business date."""
+    """One restaurant's night: the last complete night, restated days, then
+    backfill. `today` is the restaurant's current business date; without it
+    the newest night is pos.complete_through — the last business date that
+    has ENDED (food & bar audit 10/16/26 POS-08: at 4:30am Chicago the
+    business date is still last night, so "today - 1" archived the night
+    before last and last night waited a whole day). A night that recent is
+    archived only once the POS has closed it (POS-16), so a partial night is
+    never stored as whole; a store that never runs a close has it stored the
+    next night, as backfill."""
     name, mod = provider_for(restaurant_id)
     if mod is None:
         return {"ok": False, "reason": "no connected POS can archive tickets"}
     if today is None:
         from models import get_restaurant
         from time_utils import restaurant_now, business_date
+        import pos
         r = get_restaurant(restaurant_id)
-        today = business_date(r, restaurant_now(r, naive=True))
+        local = restaurant_now(r, naive=True)
+        today = business_date(r, local)
+        yesterday = pos.complete_through(r, local)
+    else:
+        yesterday = today - timedelta(days=1)
     now_utc = now_utc or datetime.now(timezone.utc)
-    yesterday = today - timedelta(days=1)
     have = archived_dates(restaurant_id, name, db_path)
-    todo = [yesterday]
+    waiting = []
+    todo = []
+    if yesterday >= today - timedelta(days=1) and not _closed(mod, restaurant_id, yesterday):
+        waiting.append(yesterday.isoformat())
+    else:
+        todo.append(yesterday)
     # Restated days: rewritten in the POS since the last look.
     since = _changes_checked_to(restaurant_id, name, db_path) or (now_utc - timedelta(hours=FIRST_CHANGE_LOOKBACK_HOURS))
     restated_dates = []
@@ -338,6 +435,7 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
     except Exception as e:
         log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
+            "not_closed": waiting,
             "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles,
             "prices": prices, "catalog": catalog, "backfill_restated": backfill_restated}
 
@@ -418,7 +516,10 @@ MAX_PRICE_CHANGES_LOGGED = 50
 
 
 def _levels_in_use(restaurant_id, provider, db_path, today=None):
-    since = ((today or date.today()) - timedelta(days=PRICE_LEVEL_LOOKBACK_DAYS)).isoformat()
+    if today is None:                    # the restaurant's own date (POS-18)
+        import pos
+        today = pos.local_complete_through(restaurant_id) + timedelta(days=1)
+    since = (today - timedelta(days=PRICE_LEVEL_LOOKBACK_DAYS)).isoformat()
     conn = get_conn(db_path)
     try:
         return {r[0] for r in conn.execute(
@@ -495,11 +596,20 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
 #
 # rpower._day_rows asks here which days it may read from the archive instead
 # of downloading them again. A day qualifies when the store's archive has
-# started, the day is closed, and it is stored under the current layout —
+# started, the day is closed (checked for yesterday as well as today: a
+# reader at 5:30am asking for a night the store has not closed yet, POS-16),
+# and it is stored under a layout the readers can use (READ_MIN_VERSION) —
 # archived on the spot if not (ON_DEMAND_MAX a call). The last FRESH_DAYS are
 # re-checked against the POS's change feed once RECHECK_MINUTES after they
 # were stored, so a re-post after close (a tab closed at 2am) is picked up
-# before the next reader, not the next night.
+# before the next reader, not the next night; when that change read fails,
+# those days are not served from the archive as if they were fresh.
+#
+# `live=False` is a web request (POS-13): the archive as it stands, no
+# closed-day read, no change read, nothing archived on the spot — a page
+# load makes no POS request. Every path that stores a recent night checks
+# its close first (run_for, the on-demand archive here), so a stored night
+# is a closed one.
 
 ON_DEMAND_MAX = 7
 FRESH_DAYS = 3
@@ -543,10 +653,11 @@ def _changed_since(restaurant_id, mod, since_utc, now_utc):
     return out
 
 
-def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None) -> set:
+def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None, live=True) -> set:
     """ISO dates among `dates` the archive can answer for, archiving closed
     days it lacks (ON_DEMAND_MAX per call) and re-storing a recent day the POS
-    changed. An empty set means "read the POS", never an error."""
+    changed. An empty set means "read the POS", never an error. `live=False`
+    (a web request): the stored days only, and no POS request of any kind."""
     import os
     if os.getenv("POS_ARCHIVE_READS", "1").strip() in ("0", "false", "off", "no"):
         return set()                 # the switch: every reader goes to the POS, as before 9/29/26
@@ -559,18 +670,20 @@ def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None) -
     try:
         stored = {r[0]: r[1] for r in conn.execute(
             "SELECT business_date, archived_at FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
-            "AND COALESCE(version, 1) >= ?", (restaurant_id, provider, ARCHIVE_VERSION)).fetchall()}
+            "AND COALESCE(version, 1) >= ?", (restaurant_id, provider, READ_MIN_VERSION)).fetchall()}
     finally:
         conn.close()
-    closed_fn = getattr(mod, "day_closed_cached", None)
+    if not live:
+        return {d.isoformat() for d in dates if d.isoformat() in stored}
     ready, todo = set(), []
     for d in dates:
         iso = d.isoformat()
-        if d >= today:
-            try:
-                if not (callable(closed_fn) and closed_fn(restaurant_id, d)):
-                    continue
-            except Exception:
+        if d >= today or (d == today - timedelta(days=1) and iso not in stored):
+            # Yesterday too, before it is archived on the spot (POS-16): a
+            # closed day is remembered forever, an open one for a few
+            # minutes (rpower.day_closed_cached). A stored yesterday was
+            # closed when it was stored — every path that stores one checks.
+            if not _closed(mod, restaurant_id, d):
                 continue
         if iso in stored:
             ready.add(iso)
@@ -591,7 +704,11 @@ def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None) -
         try:
             changed = _changed_since(restaurant_id, mod, min(stale.values()), now_utc)
         except Exception as e:
+            # Unchecked is not unchanged (POS-16): the recent days the check
+            # was for go to the POS this time, never served as fresh.
             log.warning("pos_archive: change read failed for %s: %s", restaurant_id, e)
+            for iso in stale:
+                ready.discard(iso)
             changed = set()
         for iso, at in stale.items():
             if iso in changed:

@@ -487,7 +487,8 @@ def test_archive_keeps_ticketsales_cost_and_aqu_count(db, monkeypatch):
     monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", rpower))
     pos_archive.archive_day(rid, date(2026, 10, 10), db_path=db)
     c = _conn(db)
-    rows = {r["line_id"]: dict(r) for r in c.execute(
+    # A line is keyed on its rid with its atom (food & bar audit POS-10).
+    rows = {r["line_id"].split(":")[0]: dict(r) for r in c.execute(
         "SELECT line_id, department, sales_category, cost, discounted, aqu_count, atom FROM pos_ticket_lines "
         "WHERE restaurant_id=?", (rid,))}
     c.close()
@@ -517,8 +518,8 @@ def test_a_double_modifier_links_to_its_drink(db, monkeypatch):
     routes = _routes()
     monkeypatch.setattr(rpower, "_request", lambda token, path, params=None: routes[path])
     out = rpower.archive_rows(rid, date(2026, 10, 10))
-    lines = {l["line_id"]: l for l in out["lines"]}
-    assert (lines["L2"]["parent_line_id"], lines["L2"]["mod_level"]) == ("L1", 1)
+    lines = {l["line_id"].split(":")[0]: l for l in out["lines"]}
+    assert (lines["L2"]["parent_line_id"], lines["L2"]["mod_level"]) == ("L1:1539672696", 1)
     assert lines["L1"].get("parent_line_id") is None and lines["L1"]["mod_level"] == 0
     # ticketitem is never summed: the $99 on the receipt line is nowhere in the sales.
     assert sum(l["sales"] for l in out["lines"]) == 13.0
@@ -651,7 +652,8 @@ def test_changed_business_dates_requests_at_most_a_week(db, monkeypatch):
     asked = []
 
     def req(token, path, params=None):
-        asked.append((params["startdate"], params["enddate"]))
+        if path == "ticketsales/getbytimestamp":     # ticket/getbytimestamp is asked over the same weeks
+            asked.append((params["startdate"], params["enddate"]))
         return [{"date": params["startdate"] + "T00:00:00", "time_stamp": params["startdate"] + "T12:00:00"}]
     monkeypatch.setattr(rpower, "_request", req)
     since = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)

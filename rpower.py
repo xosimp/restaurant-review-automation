@@ -76,6 +76,21 @@ REQUEST_SPACING_SECONDS = 0.15
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2.0
 TIMEOUT_SECONDS = 45
+# A 429's Retry-After is honoured up to this many seconds, never more (food &
+# bar audit 10/16/26 POS-13): an uncapped header could hold a thread for as
+# long as the server liked. On a web request thread a 429 or 5xx is not
+# waited out at all — the request fails at once and the page says unknown.
+RETRY_AFTER_MAX_SECONDS = 10.0
+
+
+def on_request_thread() -> bool:
+    """True inside a Flask request: the code is running on one of the web
+    process's four request threads, where nothing may wait on RPOWER."""
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
 
 # A backfill asks for one business date at a time for item-level data (a busy
 # day can exceed a single page) but takes date ranges where the API allows.
@@ -163,6 +178,15 @@ class RPowerNoSalesYet(RPowerError):
     not_yet = True
 
 
+class RPowerArchiveMiss(RPowerError):
+    """A read made on a web request for days the local archive does not
+    hold (food & bar audit 10/16/26 POS-13). A page load never reads
+    RPOWER's sales live — one Food Cost open could make dozens of 45-second
+    requests on one of the four request threads — so the caller states the
+    figure as unknown instead; the nightly archive fills the days."""
+    archive_miss = True
+
+
 class RPowerAuthError(RPowerError):
     """The token is missing, expired or not authorized for this store.
 
@@ -227,6 +251,7 @@ def has_token(restaurant_id: int) -> bool:
 # same lock, is the fallback — never no spacing.
 RATE_BURST = 1                    # requests a quiet token may make back to back
 RATE_MAX_WAIT_SECONDS = 60.0      # one request never waits longer than this for its slot
+RATE_REQUEST_THREAD_WAIT_SECONDS = 5.0   # ...nor, on a web request thread, longer than this
 _rate_lock = threading.Lock()     # guards the two dicts below
 _token_locks = {}                 # bucket -> the lock its own requests queue on
 _last_request_at = {}             # bucket -> monotonic time of its last request (the fallback)
@@ -304,6 +329,9 @@ def _sleep_for_spacing(token: str = ""):
             if len(_token_locks) > 4096:             # bounded: idle tokens' locks go
                 _token_locks.clear()
             lock = _token_locks[key] = threading.Lock()
+    # A page load waits a few seconds for its slot at most (POS-13); a job
+    # waits up to RATE_MAX_WAIT_SECONDS.
+    limit = RATE_REQUEST_THREAD_WAIT_SECONDS if on_request_thread() else RATE_MAX_WAIT_SECONDS
     with lock:                                       # this token's requests, one at a time
         waited = 0.0
         while True:
@@ -313,7 +341,7 @@ def _sleep_for_spacing(token: str = ""):
                 if gap < spacing:
                     time.sleep(spacing - gap)
                 break
-            if wait <= 0 or waited >= RATE_MAX_WAIT_SECONDS:
+            if wait <= 0 or waited >= limit:
                 break
             step = min(wait, 1.0)
             time.sleep(step)
@@ -353,6 +381,8 @@ def _request(token: str, path: str, params: dict = None) -> object:
                                 timeout=TIMEOUT_SECONDS)
         except Exception as e:
             last_error = f"request failed: {e}"
+            if on_request_thread():
+                break                                # one try on a page load, never three
             time.sleep(RETRY_BACKOFF ** attempt)
             continue
 
@@ -362,14 +392,17 @@ def _request(token: str, path: str, params: dict = None) -> object:
                 f"current and that it is authorized for this store.")
         if resp.status_code == 429 or resp.status_code >= 500:
             # Undocumented but assumed to exist. Honour Retry-After when the
-            # server sends one rather than guessing over the top of it.
+            # server sends one rather than guessing over the top of it — up
+            # to RETRY_AFTER_MAX_SECONDS, and never on a request thread.
+            last_error = f"HTTP {resp.status_code}"
+            if on_request_thread():
+                raise RPowerError(f"{path} answered HTTP {resp.status_code}; not retried on a page load")
             wait = RETRY_BACKOFF ** attempt
             try:
                 wait = max(wait, float(resp.headers.get("Retry-After", 0)))
             except (TypeError, ValueError):
                 pass
-            last_error = f"HTTP {resp.status_code}"
-            time.sleep(wait)
+            time.sleep(min(wait, RETRY_AFTER_MAX_SECONDS))
             continue
         if not resp.ok:
             raise RPowerError(f"HTTP {resp.status_code} from {path}: {resp.text[:200]}")
@@ -815,6 +848,7 @@ def fetch_order_selections(restaurant_id: int, business_date) -> list:
     types = sales_types(restaurant_id)
     day = _d(business_date)
     rows = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", day, day)
+    reasons = None
 
     by_item = {}
     for row in rows:
@@ -827,6 +861,23 @@ def fetch_order_selections(restaurant_id: int, business_date) -> list:
         # became food: voids, returns and refunds.
         if st and (st.get("type_return") or st.get("type_refund")):
             continue
+        # RPOWER's voids are Error Correct lines with `voided` 0 (see
+        # _loss_kind): "Rang In Wrong" was counted as a dish sold and
+        # depleted (food & bar audit 10/16/26 POS-07). One is kept only when
+        # its reason says the food was made (pos_food_waste.is_waste_reason:
+        # "Error Made", "Sent Back") — that plate left the kitchen.
+        if st and st.get("type_error"):
+            if reasons is None:
+                try:
+                    reasons = void_reasons(restaurant_id)
+                except RPowerAuthError:
+                    raise
+                except Exception as e:           # no reason words: a void is not counted as made
+                    log.warning("[rpower] void reasons unavailable for %s: %s", restaurant_id, e)
+                    reasons = {}
+            from pos_food_waste import is_waste_reason
+            if not is_waste_reason(reasons.get(str(row.get("voidrsn_mid") or "").strip())):
+                continue
         guid = row.get("menuitem_mid")
         if not guid:
             continue
@@ -976,7 +1027,10 @@ def department_sold(restaurant_id: int, days: int = SOLD_LOOKBACK_DAYS, today=No
     news. {} when nothing is archived."""
     from models import get_conn
     from datetime import date as _date, timedelta as _td
-    since = ((today or _date.today()) - _td(days=days)).isoformat()
+    if today is None:                     # the restaurant's own date, never the server's (POS-18)
+        from time_utils import restaurant_now_by_id
+        today = restaurant_now_by_id(restaurant_id, naive=True).date()
+    since = (today - _td(days=days)).isoformat()
     conn = get_conn()
     try:
         ids = [r["item_id"] for r in conn.execute(
@@ -1020,12 +1074,22 @@ CLOSEDAY_LOOKBACK_DAYS = 3
 DAY_SALES_UNVERIFIED = True
 
 
-def _line_kind(row: dict, types: dict) -> str:
-    """What one ticketsales line is to the day's sales:
-    sale | discount | comp | refund | void | excluded | unknown.
+# The sales types that ring money off a check: a discount, a promotion and a
+# "hash" (house) discount are all discounts. The archive (line_kind) and the
+# nightly report (_line_kind) each had their own list — the archive missed
+# type_promo and the report type_hashdisc, so a $5 promo was a negative SALE
+# in the archive and a discount in the report (food & bar audit 10/16/26
+# POS-06). Both now classify through _classify.
+DISCOUNT_FLAGS = ("type_discnt", "type_promo", "type_hashdisc")
 
-    sale + discount are exactly the lines `_counts_as_revenue` keeps, so net
-    here and fetch_business_days' net are the same number by construction."""
+
+def _classify(row: dict, types: dict) -> str:
+    """The ONE classification of a ticketsales line:
+    void | comp | refund | unknown | nonsale | excluded | discount | sale.
+
+    sale + discount are exactly the lines `_counts_as_revenue` keeps, so the
+    report's net, fetch_business_days' net and the archive's ticket net are
+    one number by construction."""
     if row.get("voided"):
         return "void"
     st = types.get(str(row.get("slstype_mid")))
@@ -1044,10 +1108,18 @@ def _line_kind(row: dict, types: dict) -> str:
     if st.get("type_refund") or st.get("type_return"):
         return "refund"
     if not _counts_as_revenue(row, types):
-        return "excluded"
-    if st.get("type_discnt") or st.get("type_promo"):
+        return "nonsale" if st.get("type_nonsale") else "excluded"
+    if any(st.get(f) for f in DISCOUNT_FLAGS):
         return "discount"
     return "sale"
+
+
+def _line_kind(row: dict, types: dict) -> str:
+    """What one ticketsales line is to the day's sales (the nightly report):
+    sale | discount | comp | refund | void | excluded | unknown — _classify,
+    with a non-sale line excluded like any other line outside revenue."""
+    kind = _classify(row, types)
+    return "excluded" if kind == "nonsale" else kind
 
 
 def _line_value(row: dict) -> float:
@@ -1156,7 +1228,8 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             refunds += _line_value(row)
             continue
         item = menu.get(str(row.get("menuitem_mid"))) or {}
-        dep = department(item)
+        filed = row.get(ARCHIVED_FILING)
+        dep = (filed or {}).get("department") or department(item)
         ticket = live.get(str(row.get("ticket_rid")))
         hour = _hour_of((ticket or {}).get("open_dttm")) or _hour_of(row.get("item_dttm"))
         delta = _parts()
@@ -1173,7 +1246,7 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             delta["comps"] = value
             checks["lines_comp_sales"] = round(checks["lines_comp_sales"] + sales, 2)
         buckets = [total, by_dep.setdefault(dep, _parts())]
-        sub = sales_category(item)
+        sub = filed.get("sales_category") if filed else sales_category(item)
         if sub:
             buckets.append(by_dep_cat.setdefault(dep, {}).setdefault(sub, _parts()))
         if hour:
@@ -1183,7 +1256,8 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             # of the plate it modifies — both stay in the money, neither is
             # an "item" in the top and bottom lists.
             key = str(row.get("menuitem_mid") or "")
-            it = items.setdefault(key, {"name": clean_item_name(item.get("name")) or "Unknown item",
+            it = items.setdefault(key, {"name": (clean_item_name(item.get("name"))
+                                                 or (filed or {}).get("item_name") or "Unknown item"),
                                         "department": dep, "qty": 0.0, "parts": _parts(),
                                         "guid": key or None})
             buckets.append(it["parts"])
@@ -1710,7 +1784,10 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     import csv
     import io as _io
 
-    end = date.today()
+    # The restaurant's own date (POS-18): on a UTC host the server's date is
+    # tomorrow after 7pm Central.
+    from time_utils import restaurant_now_by_id
+    end = restaurant_now_by_id(restaurant_id, naive=True).date()
     start = end - timedelta(days=days)
     entries = fetch_time_entries(restaurant_id, start, end)
     people = fetch_people(restaurant_id) if entries else {}
@@ -2062,19 +2139,12 @@ def _local_stamp(raw):
 
 
 def line_kind(row: dict, types: dict) -> str:
-    """What one ticketsales line is: sale | comp | void | refund | discount |
-    nonsale | other — from its sales type (salestype/getbycg)."""
-    loss = _loss_kind(row, types)
-    if loss:
-        return loss
-    st = types.get(str(row.get("slstype_mid"))) or {}
-    if st.get("type_discnt") or st.get("type_hashdisc"):
-        return "discount"
-    if st.get("type_nonsale"):
-        return "nonsale"
-    if _counts_as_revenue(row, types):
-        return "sale"
-    return "other"
+    """What one ticketsales line is, as the archive stores it: sale | comp |
+    void | refund | discount | nonsale | other — _classify, the same rule the
+    nightly report uses (POS-06), with a line of an unknown or excluded
+    sales type (tax, gratuity, fee) filed as "other"."""
+    kind = _classify(row, types)
+    return "other" if kind in ("unknown", "excluded") else kind
 
 
 def archive_rows(restaurant_id: int, business_date) -> dict:
@@ -2127,6 +2197,10 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
                          {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
     stamps = []
     lines, net_by_ticket = [], {}
+    # Our line totals beside RPOWER's own per-ticket type totals (POS-11):
+    # pos_archive.archive_day reconciles them and raises a discrepancy.
+    checks = {"lines_sale": 0.0, "lines_discount": 0.0, "unknown_type_lines": 0, "unknown_type_sales": 0.0}
+    by_flag = {}
     for r in raw_lines:
         if _biz_date(r.get("date")) != iso or not r.get("rid"):
             continue
@@ -2136,6 +2210,15 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         sales = round(_num(r.get("sales")), 2)
         if kind in ("sale", "discount") and tid:
             net_by_ticket[tid] = round(net_by_ticket.get(tid, 0.0) + sales, 2)
+        if kind in ("sale", "discount"):
+            key = "lines_sale" if kind == "sale" else "lines_discount"
+            checks[key] = round(checks[key] + sales, 2)
+            flag = _type_flag(types.get(str(r.get("slstype_mid"))))
+            if flag:
+                by_flag[flag] = round(by_flag.get(flag, 0.0) + sales, 2)
+        elif _classify(r, types) == "unknown":
+            checks["unknown_type_lines"] += 1
+            checks["unknown_type_sales"] = round(checks["unknown_type_sales"] + sales, 2)
         approver = _id(r.get("voidmgr_mid") if kind == "void" else r.get("mgr_mid"))
         reason = _id(r.get("voidrsn_mid"))
         stamps.append(str(r.get("time_stamp") or ""))
@@ -2152,7 +2235,10 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "aqu_count": _num(r.get("aqu_count"), None), "fraction": _num(r.get("fraction"), None),
             "atom": _id(r.get("atom")), "category_id": cat_id, "sales_category": cat_name,
             "department": dep_name,
-            "line_id": str(r["rid"]), "ticket_id": tid, "business_date": iso,
+            # The rid with the atom, the identity _paged keys a line on
+            # (_row_key): a line keyed on its rid alone was lost whenever it
+            # shared a rid with another in the INSERT OR REPLACE (POS-10).
+            "line_id": line_key(r), "ticket_id": tid, "business_date": iso,
             "item_id": item, "item_name": (menu.get(item) or {}).get("name") if item else None,
             "item_kind": (menu.get(item) or {}).get("kind") if item else None,
             "kind": kind, "qty": _num(r.get("qty"), 0.0), "sales": sales,
@@ -2169,7 +2255,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "sales_type_id": _raw(r.get("slstype_mid")), "voided": _num(r.get("voided")),
             "mgr_id": _raw(r.get("mgr_mid")), "void_mgr_id": _raw(r.get("voidmgr_mid")),
             "reason_id": _raw(r.get("voidrsn_mid")), "shift": _raw(r.get("shift"))})
-    _link_modifiers(token, base, iso, lines)
+    links_ok = _link_modifiers(token, base, iso, lines) is not None
     tickets = []
     for t in raw_tickets:
         if _biz_date(t.get("date")) != iso or not t.get("rid"):
@@ -2261,8 +2347,33 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "is_payin": 1 if p.get("is_payin") else 0, "amount": round(_num(p.get("net")), 2),
             "manager_id": mgr, "manager_name": emps.get(mgr) if mgr else None,
             "paid_at": _local_stamp(p.get("dttm")), "reference": (str(p.get("reference") or "").strip() or None)})
+    # RPOWER's own total of each sales type our revenue lines carry, from
+    # the tickets it summarises them on (cancelled tickets left out, as the
+    # report leaves them out): the two sides of the nightly reconcile.
+    live = [t for t in raw_tickets if _biz_date(t.get("date")) == iso and t.get("rid") and not t.get("is_cancelled")]
+    flags = set(by_flag) | {"type_sale", *DISCOUNT_FLAGS}
+    theirs = {f: round(sum(_num(t.get(f)) for t in live), 2) for f in sorted(flags)}
+    checks.update(lines_by_type=dict(sorted(by_flag.items())), tickets_by_type=theirs,
+                  gap=round(sum(by_flag.values()) - sum(theirs.values()), 2), tickets=len(live))
     return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
-            "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None)}
+            "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None),
+            "links_ok": links_ok, "checks": checks}
+
+
+def _type_flag(st):
+    """The type_* flag a sales type is (RPOWER sets one per type), or None."""
+    for k, v in (st or {}).items():
+        if k.startswith("type_") and v:
+            return k
+    return None
+
+
+def line_key(row: dict) -> str:
+    """An archived line's id: RPOWER's rid, with the line's atom (its id
+    inside the ticket) when it has one - _row_key's identity, so two lines
+    _paged kept apart are never one row in pos_ticket_lines (POS-10)."""
+    atom = _id(row.get("atom"))
+    return f"{row['rid']}:{atom}" if atom else str(row["rid"])
 
 
 def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
@@ -2273,7 +2384,9 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
     ticket items are NEVER summed for sales or quantities here — only their
     parent links are copied onto the ticketsales lines, matched on (ticket,
     atom). A failed read leaves the links empty and the night archived (the
-    links are an addition, not the record); returns the lines linked."""
+    links are an addition, not the record); returns the lines linked, or
+    None when the read failed: pos_archive records the day's links_ok from
+    it, and a day without its links is archived again (POS-12)."""
     try:
         items = _paged(token, "ticketitem/getbybusinessdate",
                        {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
@@ -2281,7 +2394,7 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
         raise
     except Exception as e:
         log.warning("[rpower] ticketitem links unread for %s: %s", iso, e)
-        return 0
+        return None
     links = {}
     for it in items:
         if _biz_date(it.get("date")) != iso:
@@ -2302,12 +2415,21 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
     return linked
 
 
+# The change feeds a restatement is watched through (food & bar audit
+# 10/16/26 POS-19): a sale line rewritten, and a ticket rewritten with no
+# sale line touched — a cancellation, a guest-count or room change, a tip
+# adjusted on the check. Both are RPOWER's documented getbytimestamp reads
+# (docs/integrations/rpower_core_api.postman.json: GetTicketSalesByTimeStamp,
+# GetTicketByTimeStamp), asked in the same week-sized chunks.
+CHANGE_FEEDS = ("ticketsales/getbytimestamp", "ticket/getbytimestamp")
+
+
 def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
-    """Business dates with a sale line written or rewritten in RPOWER's
-    database between two UTC moments — ticketsales/getbytimestamp, which
-    RPOWER documents as "when a record was last inserted or updated" (UTC).
-    A store re-posting a closed day moves its time_stamp, so a date already
-    archived shows up here and is archived again.
+    """Business dates with a sale line or a ticket written or rewritten in
+    RPOWER's database between two UTC moments — CHANGE_FEEDS, which RPOWER
+    documents as "when a record was last inserted or updated" (UTC). A store
+    re-posting a closed day moves its time_stamp, so a date already archived
+    shows up here and is archived again.
 
     Asked a week at a time (RPOWER's ask, MAX_RANGE_DAYS; bar audit 10/14/26
     RPW-17 / R26): after an outage `changes_checked_to` can fall weeks
@@ -2323,13 +2445,14 @@ def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: d
     cursor = first
     while True:
         end = min(cursor + timedelta(days=MAX_RANGE_DAYS), last)
-        rows = _paged(token, "ticketsales/getbytimestamp", {
-            **base, "startdate": _d(cursor), "enddate": _d(end), "sortorder": "time_stamp"})
-        for r in rows:
-            stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
-            day = _biz_date(r.get("date"))
-            if day and stamp and stamp > lo:
-                out.add(day)
+        for feed in CHANGE_FEEDS:
+            rows = _paged(token, feed, {
+                **base, "startdate": _d(cursor), "enddate": _d(end), "sortorder": "time_stamp"})
+            for r in rows:
+                stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
+                day = _biz_date(r.get("date"))
+                if day and stamp and stamp > lo:
+                    out.add(day)
         if end >= last:
             break
         cursor = end
@@ -2431,6 +2554,11 @@ def day_closed_cached(restaurant_id: int, business_date) -> bool:
     return closed
 
 
+# The key a row rebuilt from the archive carries its archived filing under
+# (never one of RPOWER's own field names).
+ARCHIVED_FILING = "_archived_filing"
+
+
 def _stamp_raw(value):
     """An archived local time back in RPOWER's form, or None."""
     return value if value else None
@@ -2448,14 +2576,21 @@ def _raw_from_archive(restaurant_id: int, path: str, dates: list) -> list:
         if path == "ticketsales/getbybusinessdate":
             rows = conn.execute(
                 f"SELECT line_id, ticket_id, business_date, item_id, qty, sales, price, regular_price, item_at, "
-                f"sales_type_id, voided, mgr_id, void_mgr_id, reason_id, shift FROM pos_ticket_lines "
+                f"sales_type_id, voided, mgr_id, void_mgr_id, reason_id, shift, department, sales_category, "
+                f"item_name FROM pos_ticket_lines "
                 f"WHERE restaurant_id=? AND provider='rpower' AND business_date IN ({marks})",
                 (restaurant_id, *dates)).fetchall()
+            # ARCHIVED_FILING: where RPOWER filed the line the night it was
+            # archived (layout 4). fetch_day_sales prefers it to today's
+            # catalog, so a night re-read after an item moved department, or
+            # was deleted, stays in the department it sold under (POS-20).
             return [{"rid": r["line_id"], "ticket_rid": r["ticket_id"], "date": f"{r['business_date']}T00:00:00",
                      "menuitem_mid": r["item_id"], "qty": r["qty"], "sales": r["sales"], "price": r["price"],
                      "regular_price": r["regular_price"], "item_dttm": _stamp_raw(r["item_at"]),
                      "slstype_mid": r["sales_type_id"], "voided": r["voided"], "mgr_mid": r["mgr_id"],
-                     "voidmgr_mid": r["void_mgr_id"], "voidrsn_mid": r["reason_id"], "shift": r["shift"]}
+                     "voidmgr_mid": r["void_mgr_id"], "voidrsn_mid": r["reason_id"], "shift": r["shift"],
+                     ARCHIVED_FILING: ({"department": r["department"], "sales_category": r["sales_category"],
+                                        "item_name": r["item_name"]} if r["department"] else None)}
                     for r in rows]
         if path == "ticket/getbybusinessdate":
             rows = conn.execute(
@@ -2482,12 +2617,22 @@ def _day_rows(restaurant_id: int, token: str, base: dict, path: str, start_date,
     while d <= end:
         days.append(d)
         d += timedelta(days=1)
+    page_load = on_request_thread()
     try:
         import pos_archive
-        ready = pos_archive.ready_dates(restaurant_id, "rpower", days)
+        ready = pos_archive.ready_dates(restaurant_id, "rpower", days, live=not page_load)
     except Exception as e:                       # the archive is an optimisation, never a dependency
         log.warning("[rpower] archive not consulted for %s: %s", restaurant_id, e)
         ready = set()
+    if page_load:
+        # A web request reads the archive and nothing else (POS-13): the days
+        # it does not hold are unknown to the page, never a live read on one
+        # of the four request threads.
+        missing = [d.isoformat() for d in days if d.isoformat() not in ready]
+        if missing:
+            raise RPowerArchiveMiss(
+                f"{len(missing)} of {len(days)} day(s) not in the POS archive yet "
+                f"({missing[0]}{'...' if len(missing) > 1 else ''}); not read live during a page load")
     rows = _raw_from_archive(restaurant_id, path, sorted(ready)) if ready else []
     run = []
     for d in days + [None]:
