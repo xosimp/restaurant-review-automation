@@ -70,12 +70,19 @@ def _ago(days):
 
 def test_lifetime_alerts_and_months_survive_the_alert_log_prune():
     rid = _rid()
-    # One alert in each of the last 14 months, 3 in the oldest.
-    for m in range(14):
+    # One alert in each of the 14 months before this one, 3 in the oldest -
+    # each on its month's 15th: 30-day steps put two in one calendar month on
+    # some dates (10/1/25 and 10/31/25 from 10/16/26) and months_active read 12.
+    now = datetime.utcnow()
+    months = []
+    for m in range(1, 15):
+        y, mo = divmod(now.year * 12 + now.month - 1 - m, 12)
+        months.append(f"{y:04d}-{mo + 1:02d}-15 12:00:00")
+    for at in months:
         _x("INSERT INTO alert_log (restaurant_id, alert_type, fired_at, value) VALUES (?,?,?,?)",
-           (rid, "one_star", _ago(30 * m + 20), 50.0))
+           (rid, "one_star", at, 50.0))
     for _ in range(2):
-        _x("INSERT INTO alert_log (restaurant_id, alert_type, fired_at) VALUES (?,?,?)", (rid, "labor_over", _ago(410)))
+        _x("INSERT INTO alert_log (restaurant_id, alert_type, fired_at) VALUES (?,?,?)", (rid, "labor_over", months[-1]))
     before = value_delivered.ledger(rid)
     assert before["alerts_sent"] == 16
     # Summaries are written for whole months as the nights pass; here all at
