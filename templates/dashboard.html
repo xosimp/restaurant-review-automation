@@ -46892,7 +46892,7 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="dn-k">Bought vs sold · four weeks at a time</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3}) + xRow(labels)
+      ? '<div class="dn-k">Four weeks, read every week</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3}) + xRow(labels)
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
