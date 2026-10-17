@@ -89,7 +89,7 @@ _REASON_TEXT = {
     "closed_days": "Open {open_days} of {days} days — buying before a closure reads high, so it isn't judged.",
     "sales_coverage": "Sales on file for {have} of {open_days} open days — judged once the nightly reports fill in.",
     "sales_gap": "The nightly report for {gap_mdy} didn't sort its drink sales — not judged until it's repaired.",
-    "sales_missing": "No nightly report for {missing_mdy}, a night the bar trades — not judged until it arrives, "
+    "sales_missing": "No nightly report is on file for {missing_mdy}, a night the bar trades — not judged until it arrives, "
                      "or mark the night closed in your hours.",
     "unmapped": "{unmapped_text} of drink sales aren't sorted into beer, liquor or wine — no category is judged "
                 "until they are.",

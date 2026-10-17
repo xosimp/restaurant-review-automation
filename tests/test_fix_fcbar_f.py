@@ -307,7 +307,7 @@ def test_ui09_a_stale_count_is_a_neutral_wait_never_green():
     assert "fc2-ok fc2-wait" in order
     assert "('neutral' if _inv_stale else ('good' if inv.critical_low|length == 0 else 'bad'))" in PANEL
     # The green all-clear is for a live, fresh count only.
-    assert "{% elif inv.is_live %}\n    <div class=\"fc2-ok\"><i></i>Your ordering looks well-calibrated" in PANEL
+    assert "{% elif inv.is_live %}\n    <div class=\"fc2-ok\"><i></i>Nothing to adjust this week." in PANEL
 
 
 # ── UI-10: one dish table ─────────────────────────────────────────────────────

@@ -119,8 +119,8 @@ struct CavnarCaveat: View {
             // The stale path runs because writing a new read failed and
             // nothing is queued: promise only the retry that does happen
             // (M-33). `asOf` arrives M/D/YY from the server (M-26).
-            detail: asOf.map { "From \($0). A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again next time this opens." }
-                ?? "A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again next time this opens."
+            detail: asOf.map { "From \($0). A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again the next time this opens." }
+                ?? "A new one couldn\u{2019}t be written \u{2014} Cavnar AI tries again the next time this opens."
         )
     }
 }

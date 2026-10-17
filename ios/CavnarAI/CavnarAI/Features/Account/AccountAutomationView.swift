@@ -72,7 +72,7 @@ struct AccountAutomationView: View {
             if let draft = viewModel.autoDraft, draft.externalTool.isEmpty {
                 AccountSwitchRow(
                     label: "Draft next week's schedule",
-                    detail: "Every \(draft.day), a draft only.",
+                    detail: "Every \(draft.day), a draft only. On by default with a paid Labor plan.",
                     isOn: Binding(get: { draft.enabled }, set: { on in Task { await viewModel.setAutoDraft(on) } }),
                     busy: viewModel.saving == "auto_draft",
                     showsDivider: true
