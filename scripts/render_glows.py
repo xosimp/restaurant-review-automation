@@ -44,6 +44,8 @@ SPECS = {
     # ember from the top-left (matching header 13%, the AI's glass) and top-right (count form 9%)
     "corner-tl-ember": (EMBER, 33, 768, 384, (0, 0), (1.0, 1.35), 0.67, "radial"),
     "corner-tr-ember": (EMBER, 23, 768, 384, (1, 0), (0.8, 1.0), 0.60, "radial"),
+    # the same corner in green, for a good-news card on the glass (the Bar's Good to know lead, 10/17/26)
+    "corner-tl-green": (GREEN, 33, 768, 384, (0, 0), (1.0, 1.35), 0.67, "radial"),
     # the pedestal's overhead key light (7%) and the waste shell's (5%)
     "keylight": (WARM, 17, 768, 384, (0.42, -0.18), (1.2, 0.75), 0.80, "radial"),
     "keylight-soft": (WARM, 13, 768, 384, (0.42, -0.18), (1.2, 0.75), 0.80, "radial"),

@@ -13769,7 +13769,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Every tip in the app's text face and size, whatever it sits inside (10/17/26: Home's "what this figure covers"
    tip sits inside the $ figure, and `.hb-num, .hb-num *` sets Space Grotesk !important on everything in a figure).
    Figures inside the tip stay Space Grotesk through their own .hb-num. */
-.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}
+.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num),.cav-itp.cav-itp-fixed,.cav-itp.cav-itp-fixed *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}
+/* An open tip: a fixed, fully opaque layer above every page layer and overlay (cavTipLift). */
+.cav-itp.cav-itp-fixed{position:fixed;z-index:10050;margin:0;font-size:14px;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal;background:var(--hp-act-bg);opacity:1}
 .cav-it .cav-itp{font-size:14px!important;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal}
 .cav-itp .hb-num{font-family:'Space Grotesk',sans-serif;background:none;border:0;padding:0;font-size:inherit;color:var(--ink)}
 .cav-tl-lead{display:block;margin-bottom:6px;color:var(--ink);font-weight:600}
@@ -29675,7 +29677,7 @@ document.addEventListener('change',function(ev){
 // the way the supplier bills it, else Back Office's last price) beside what
 // the POS took for it. A dish with an ingredient that can't be priced shows
 // "at least" and no percentage.
-var FC2_PL_SHOW=12;
+var FC2_PL_SHOW=8,FC2_AO_SHOW=5;
 function fc2PlMoney(v){return '$'+(Number(v)||0).toFixed(2);}
 function fc2PlRow(p){
   var e=fc2BoEsc,i,h='',cost=(p.complete?'':'≥ ')+fc2PlMoney(p.cost),sub=[];
@@ -29736,12 +29738,13 @@ function fc2PlRender(){
   if(rest)h+='<details class="fc2-pl-more"'+(_fc2Pl.more?' open':'')+'><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
   /* Add-ons and sauces apart from the dishes (owner, 10/17/26): what RPOWER rings under Food Add-Ons and
      Back Office files under MODS. In the figure above, never in the dish list. */
-  var ao=d.add_ons||[],ah='';
+  var ao=d.add_ons||[],ah='',ar='';
   if(ao.length){
-    for(i=0;i<ao.length;i++)ah+=fc2PlRow(ao[i]);
+    for(i=0;i<ao.length;i++){if(i<FC2_AO_SHOW)ah+=fc2PlRow(ao[i]);else ar+=fc2PlRow(ao[i]);}
     h+='<div class="fc2-pl-sub"><div class="k">Add-ons &amp; sauces</div><div class="s">Rung on a dish’s ticket · in the figure above, not in the dishes</div></div>'
       +'<div class="fc2-pl-head" role="row" aria-hidden="true"><span>Add-on</span><span>Price</span><span>Plate cost</span><span class="x">Plate cost %</span><span class="x">Margin</span></div>'
       +'<div class="fc2-pl-list">'+ah+'</div>';
+    if(ar)h+='<details class="fc2-pl-more fc2-ao-more"'+(_fc2Pl.aoMore?' open':'')+'><summary>All '+ao.length+' add-ons</summary><div class="fc2-pl-list">'+ar+'</div></details>';
   }
   h+='</div>';
   host.innerHTML=h;host.hidden=false;
@@ -29754,7 +29757,8 @@ function fc2LoadPlates(){
       var b=ev.target&&ev.target.closest?ev.target.closest('[data-pl-sort]'):null;if(!b)return;
       var k=b.getAttribute('data-pl-sort');
       if(_fc2Pl.k===k)_fc2Pl.desc=!_fc2Pl.desc;else{_fc2Pl.k=k;_fc2Pl.desc=true;}
-      var more=host.querySelector('.fc2-pl-more');_fc2Pl.more=!!(more&&more.open);
+      var more=host.querySelector('.fc2-pl-more:not(.fc2-ao-more)');_fc2Pl.more=!!(more&&more.open);
+      var aom=host.querySelector('.fc2-ao-more');_fc2Pl.aoMore=!!(aom&&aom.open);
       fc2PlRender();
       var nb=host.querySelector('[data-pl-sort="'+k+'"]');if(nb)nb.focus();
     });
@@ -30359,10 +30363,33 @@ function cavTipFormat(p){
   var lines=[];for(;i<parts.length;i++)lines.push(parts[i].replace(/^\s+|\s+$/g,''));
   p.innerHTML=cavTipList(lines,lead);
 }
-function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){if(on)cavTipFormat(p);p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
-  /* Kept on screen (UI-12): shifted left by what runs past the right edge, never past the left one. */
-  if(p&&on&&p.getBoundingClientRect){var r=p.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,dx=0;
-    if(r.right>vw-12)dx=(vw-12)-r.right;if(r.left+dx<12)dx=12-r.left;if(dx)p.style.marginLeft=Math.round(dx)+'px';}}
+/* An open tip is lifted to the top of the page (owner, 10/17/26: "this tool tip is bleeding through"): inside a
+   row the rows after it - each its own layer while it rises in - painted over it, whatever its own z-index.
+   Opened, it moves to <body> as a fixed layer under its "i" (over it when there is no room below), kept on
+   screen; closed, it goes back where it was. A scroll closes it. */
+function cavTipLift(p,b){
+  /* A tip lifted earlier whose row was redrawn since has no home left: gone, never a second copy of an id. */
+  var st=document.querySelectorAll('.cav-itp-fixed'),k;for(k=0;k<st.length;k++)if(st[k]!==p&&!(st[k]._home&&st[k]._home.parentNode&&document.body.contains(st[k]._home)))st[k].parentNode.removeChild(st[k]);
+  if(!p._home){p._home=document.createComment('cav-itp');p.parentNode.insertBefore(p._home,p);}
+  document.body.appendChild(p);p.classList.add('cav-itp-fixed');p.style.marginLeft='';p.style.top='0';p.style.left='0';
+  if(!b||!b.getBoundingClientRect)return;
+  var br=b.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,vh=window.innerHeight||document.documentElement.clientHeight;
+  var w=p.offsetWidth,h=p.offsetHeight,left=Math.max(12,Math.min(br.left,vw-12-w)),top=br.bottom+10;
+  if(top+h>vh-12&&br.top-10-h>12)top=br.top-10-h;
+  p.style.left=Math.round(left)+'px';p.style.top=Math.round(top)+'px';
+}
+function cavTipHome(p){
+  p.classList.remove('cav-itp-fixed');p.style.top='';p.style.left='';
+  if(p._home&&p._home.parentNode&&document.body.contains(p._home)){p._home.parentNode.insertBefore(p,p._home);}
+  else if(p.parentNode===document.body){p.parentNode.removeChild(p);}
+}
+function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');
+  if(p){if(on){cavTipFormat(p);p.hidden=false;cavTipLift(p,b);}else{p.hidden=true;cavTipHome(p);}}
+  if(b)b.setAttribute('aria-expanded',on?'true':'false');}
+/* Only a scroll that moves the tip's own "i" closes it: the page, or a box that holds it - never an unrelated
+   scroller (a ticker that scrolls by itself closed every tip the moment it opened). */
+window.addEventListener('scroll',function(e){var t=e.target,open=document.querySelectorAll('.cav-itp-fixed:not([hidden])'),i,h;
+  for(i=0;i<open.length;i++){h=open[i]._home;if(t===document||t===window||t===document.documentElement||t===document.body||(h&&t&&t.contains&&t.contains(h)))cavItipSet(open[i].id,false);}},true);
 document.addEventListener('click',function(e){
   var t=e.target;if(!t||!t.closest)return;
   if(t.closest('.cav-itp'))return;
@@ -42915,6 +42942,9 @@ window.cavPalette = cavPalette;
 .mem-inline .ac-input.w{max-width:260px}
 .mem-inline .ac-select{max-width:260px}
 .mem-quote{font-size:14px;line-height:1.55;color:var(--ink2);margin-top:6px}
+/* One line per guest quote in Waiting on you: a long review never widens or stretches the card. */
+#lb2-wait-people .mem-quote{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+#lb2-wait-people .ac-row>.l{min-width:0}
 .mem-quote q{quotes:'\201C' '\201D'}
 .mem-confirm{margin-top:10px;padding:12px 14px;border-radius:12px;background:var(--amber-bg);color:var(--ink);font-size:14px;line-height:1.5}
 .mem-confirm .cbtn-row{margin-top:10px}
@@ -43327,16 +43357,25 @@ function memRetagBody(was, now) {
         + '<span>' + memNum('on ' + (mg.merged_on || '') + (mg.undo_until ? ' · two people after all? You can undo it until ' + mg.undo_until : '')) + '</span></div>'
         + '<div class="c"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-unmerge="' + (+mg.merge_id) + '">Undo merge</button></div></div>';
     }
-    for (i = 0; i < (_pq.mentions || []).length; i++) {
-      m = _pq.mentions[i];
-      h += '<div class="ac-row" data-wait-key="mention-' + (+m.id) + '"><div class="l"><b>' + memNum(memMentionLine(m)) + ' — is this them?</b>'
+    /* Guests naming staff (owner, 10/17/26: eight of them stretched the card): the first MENTION_SHOW, the rest
+       behind one fold that stays as the owner left it while rows are answered. */
+    var MENTION_SHOW = 2, ms = _pq.mentions || [], mh = '', mr = '';
+    for (i = 0; i < ms.length; i++) {
+      m = ms[i];
+      var row = '<div class="ac-row" data-wait-key="mention-' + (+m.id) + '"><div class="l"><b>' + memNum(memMentionLine(m)) + ' — is this them?</b>'
         + (m.snippet ? '<span class="mem-quote"><q>' + memEsc(m.snippet) + '</q></span>' : '') + '</div>'
         + '<div class="c">' + (_pq.canConfirm
           ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-mem-mention="' + (+m.id) + '" data-confirm="0">Not them</button>'
             + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-mem-mention="' + (+m.id) + '" data-confirm="1">Yes, ' + memEsc(String(m.name || '').split(' ')[0] || 'them') + '</button>'
           : '') + '</div></div>';
+      if (i < MENTION_SHOW || ms.length <= MENTION_SHOW + 1) mh += row; else mr += row;
     }
+    h += mh;
+    if (mr) h += '<details class="co-more mem-ment-more"' + (_pq.moreOpen ? ' open' : '') + '><summary>' + (ms.length - MENTION_SHOW)
+      + ' more guests named staff <small>is this them?</small></summary><div class="ac-rows">' + mr + '</div></details>';
     host.innerHTML = h;
+    var mm = host.querySelector('.mem-ment-more');
+    if (mm) mm.addEventListener('toggle', function () { _pq.moreOpen = mm.open; });
     var others = $id('lb2-wait-body');
     if (h) box.hidden = false;
     else if (!others || !others.children.length) box.hidden = true;
@@ -46435,6 +46474,12 @@ function sfw2RuleCheck(chk) {
    the same line height as the text beside them (owner, 10/15/26). */
 .br-hr>.br-chart.br-hc{flex:1 1 auto;height:auto;min-height:220px;margin:0 10px 0 4px}
 .br-hr>.br-chart.br-hc .xl{display:none}
+/* The app's glow line on the Bar (glowChart): the hero 260px tall, a category 96px. */
+#bar .br-glow .hb-cl svg{width:100%;display:block}
+#bar .br-glow-hero{margin-top:10px}
+#bar .br-glow-hero .hb-cl,#bar .br-glow-hero .hb-cl svg{height:260px}
+#bar .br-glow-spk{margin:14px 0 6px}
+#bar .br-glow-spk .hb-cl,#bar .br-glow-spk .hb-cl svg{height:96px}
 .br-hx{position:relative;top:2px;height:22px;margin:10px 10px 0 4px;font-size:12.5px;line-height:22px;color:var(--ink3);font-family:'Space Grotesk',sans-serif}
 .br-hx span{position:absolute;bottom:0;transform:translateX(-50%);white-space:nowrap}
 .br-hx span.first{transform:none}.br-hx span.last{transform:translateX(-100%)}
@@ -46808,7 +46853,10 @@ function sfw2RuleCheck(chk) {
 #bar .cbtn.br-sig:hover{transform:translateY(-3px);box-shadow:var(--elev-2);border-color:color-mix(in srgb,var(--c) 34%,var(--br-hair))}
 #bar .cbtn.br-sig:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
 #bar .cbtn.br-sig.lead{grid-column:span 2;grid-row:span 2;padding:30px 30px 24px;min-height:350px;justify-content:flex-end}
-.br-sig.t-bad{--c:var(--red)}.br-sig.t-warn{--c:var(--amber)}.br-sig.t-good{--c:var(--green)}.br-sig.t-act{--c:var(--ember)}.br-sig.t-info{--c:var(--blue)}
+/* Tone rules at the id's specificity: `#bar .cbtn.br-sig` set --c to ember2 on every tile, so a good-news tile
+   (Credits back) wore the act colour (owner, 10/17/26). */
+#bar .cbtn.br-sig.t-bad{--c:var(--red)}#bar .cbtn.br-sig.t-warn{--c:var(--amber)}#bar .cbtn.br-sig.t-good{--c:var(--green)}#bar .cbtn.br-sig.t-act{--c:var(--ember)}#bar .cbtn.br-sig.t-info{--c:var(--blue)}
+#bar .br-sig.t-good .go{color:var(--hb-good)}
 /* Each tone's corner wash is an error-diffused image (scripts/render_glows.py), never a gradient: they banded (owner, 10/16/26). */
 .br-sig.t-bad{--br-lit:url(/static/img/glow/lit-red-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-warn{--br-lit:url(/static/img/glow/lit-amber-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-good{--br-lit:url(/static/img/glow/lit-green-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-act{--br-lit:url(/static/img/glow/lit-ember-v1.png) 0 0/100% 100% no-repeat}.br-sig.t-info{--br-lit:url(/static/img/glow/lit-blue-v1.png) 0 0/100% 100% no-repeat}
 .br-sig .f{font:600 34px/1.05 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -47313,6 +47361,27 @@ function sfw2RuleCheck(chk) {
     }
     return '<div class="br-chart ' + (cls || '') + '"' + (opts.attrs || '') + '>' + svg + html + (opts.extra || '') + '</div>';
   }
+  /* The app's own chart (owner, 10/17/26: "make them look way better ... similar to labor"): CavnarCharts.glowLine -
+     a glowing line over a gradient, the target dashed with red where the line runs over it, a hot endpoint and the
+     crosshair tooltip Labor, Home and Reviews use. Only on the page that has it and only for a line with no gap;
+     otherwise null and the Bar's own chart draws (the standalone page and its tests). The svg needs a literal
+     colour: each series' --br-* in the dark theme. */
+  var GLOW_HEX = {total: '#e8956a', beer: '#dcb561', liquor: '#87b9f8', wine: '#a471a3'};
+  function glowChart(vals, key, labels, opts) {
+    var C = window.CavnarCharts, i;
+    opts = opts || {};
+    if (!C || !C.glowLine || !vals || vals.length < 2) return null;
+    for (i = 0; i < vals.length; i++) if (vals[i] == null || !isFinite(+vals[i])) return null;
+    var lo = opts.floor, hi = opts.ceil;
+    if (lo == null || hi == null) {
+      lo = Math.min.apply(null, vals); hi = Math.max.apply(null, vals);
+      if (opts.target != null) { lo = Math.min(lo, opts.target); hi = Math.max(hi, opts.target); }
+      var room = Math.max(1, (hi - lo) * 0.3); lo -= room; hi += room;
+    }
+    return '<div class="br-glow ' + (opts.cls || '') + '">' + C.glowLine(vals.map(function (v) { return +v; }), 1000, opts.h || 280, GLOW_HEX[key] || '#e8956a',
+      {pad: opts.pad || 12, floor: lo, ceil: hi, unit: '%', labels: labels || [], target: opts.target != null ? opts.target : undefined,
+       targetLabel: opts.target != null ? 'target ' + opts.target + '%' : undefined}) + '</div>';
+  }
   /* The y range for a set of series: a little room above and below. */
   function domain(lists, band) {
     var mn = null, mx = null, i, j;
@@ -47393,7 +47462,8 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < trend.length; i++) labels.push(trend[i].end_mdy);
     var dom = domain([spark], rng);
     var right = nn(spark) >= 2
-      ? '<div class="dn-k">Four weeks, read every week</div>' + chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3}) + xRow(labels)
+      ? '<div class="dn-k">Four weeks, read every week</div>' + (glowChart(spark, 'total', labels, {cls: 'br-glow-hero', h: 300, target: t.target != null ? +t.target : null})
+          || chart(spark, 'br-hc', {min: dom.min, max: dom.max, css: 'var(--br-total)', area: true, band: rng, bandCss: 'var(--br-range)', labels: labels, width: 3})) + xRow(labels)
       : '<div class="br-empty" style="margin:0">' + thinTrend(pc, nn(spark)) + '</div>';
     var delta = (!counted && t.prev_pct != null && t.pct != null) ? (t.pct - t.prev_pct) : null;
     var noise = (pc.trend_noise || {}).total;
@@ -47529,6 +47599,8 @@ function sfw2RuleCheck(chk) {
     var w = (hi - lo) || 1, pad = w * 0.08;
     return {min: lo - pad, max: hi + pad, band: [mn, mx]};
   }
+  /* The weeks a category's line reads, for its crosshair (the hero's trend end dates). */
+  function sparkLabels(pc) { var t = pc.trend || [], out = [], i; for (i = 0; i < t.length; i++) out.push(t[i].end_mdy); return out; }
   function cats(pc) {
     var h = '', i, allSp = [];
     for (i = 0; i < pc.categories.length; i++) allSp.push(pc.categories[i].spark || []);
@@ -47551,7 +47623,8 @@ function sfw2RuleCheck(chk) {
         // Neutral behind the line (owner, 10/15/26: a coloured band and fill
         // read green): a grey range band and a faint fill; the line keeps
         // its category colour.
-        + (nn(sp) >= 2 && fit ? chart(sp, 'br-spk', {min: fit.min, max: fit.max, css: s.css, area: true, areaOpacity: '.10', band: fit.band, bandCss: 'var(--ink3)', hot: false}) : '<div class="br-spk"></div>')
+        + (nn(sp) >= 2 && fit ? (glowChart(sp, c.key, sparkLabels(pc), {cls: 'br-glow-spk', h: 120, pad: 8, floor: fit.min, ceil: fit.max})
+            || chart(sp, 'br-spk', {min: fit.min, max: fit.max, css: s.css, area: true, areaOpacity: '.10', band: fit.band, bandCss: 'var(--ink3)', hot: false})) : '<div class="br-spk"></div>')
         + meter(c.pct, c.range, (c.incomplete || counted) ? null : c.prev_pct, v.c, jt ? jt.pct : null, !counted, c.target_label)
         + (counted && c.counted ? '<div class="bs">Counted ' + hn(c.counted.from_mdy) + '–' + hn(c.counted.to_mdy) + (c.purchase_pct != null ? ' · bought vs sold ' + hn(c.purchase_pct + '%') : '') + '</div>' : '')
         + (!c.judged && c.not_judged_text ? '<div class="na">' + (c.not_judged_text === (pc.total || {}).not_judged_text ? 'Not judged, for the reason above.' : numify(c.not_judged_text)) + '</div>' : '')
@@ -48280,7 +48353,7 @@ function sfw2RuleCheck(chk) {
         lit = {good: 'green', info: 'green', warn: 'amber', bad: 'red'}, lead = list[0], rest = '', i;
     var litOf = function (t) { return ';--br-lit:url(/static/img/glow/lit-' + (lit[t] || 'green') + '-v1.png) 0 0/100% 100% no-repeat'; };
     var conf = function (x) { var cf = x.confidence || {}; return (cf.evidence_pct != null || cf.freshness_pct != null) ? '<div class="br-cfl">Evidence ' + (cf.evidence_pct != null ? hn(cf.evidence_pct + '%') : '—') + (cf.freshness_pct != null ? ' · Freshness ' + hn(cf.freshness_pct + '%') : '') + '</div>' : ''; };
-    var lh = '<article class="br-feat br-rise" style="--c:' + (col[lead.tone] || 'var(--hb-good)') + litOf(lead.tone) + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
+    var lh = '<article class="br-feat br-rise' + (lead.tone === 'good' || lead.tone === 'info' ? ' br-good' : '') + '" style="--c:' + (col[lead.tone] || 'var(--hb-good)') + litOf(lead.tone) + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
       + '<div class="fl"><div class="t"><i></i>' + esc2(label[lead.tone] || 'Good to know') + '</div><div class="h">' + numify(lead.headline) + '</div></div>'
       + '<div class="fr"><div class="m">' + numify(lead.metric) + '</div>' + conf(lead) + '<div class="a">' + numify(lead.action) + '</div></div></article>';
     for (i = 1; i < list.length; i++) {
@@ -49512,6 +49585,16 @@ function sfw2RuleCheck(chk) {
   -webkit-backdrop-filter:blur(16px) saturate(135%);backdrop-filter:blur(16px) saturate(135%);
   box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent);
   transition:box-shadow .35s var(--cv-ease);
+}
+/* The Bar's lead insight when its news is good (Going well, Good to know): the same glass, green where it was
+   ember (owner, 10/17/26: "needs green accents, not orange"). */
+[data-theme="dark"] #bar .br-feat.br-good{
+  background:
+    linear-gradient(90deg,rgba(214,255,232,.34),rgba(214,255,232,.1) 18%,rgba(214,255,232,0) 46%) top left/100% 1px no-repeat padding-box,
+    url(/static/img/glow/corner-tl-green-v1.png) 0 0/100% 100% no-repeat padding-box,
+    linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
+    linear-gradient(132deg,color-mix(in srgb,var(--hb-good) 62%,transparent),color-mix(in srgb,var(--hb-good) 20%,transparent) 9%,rgba(240,255,246,.08) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
+  box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--hb-good) 60%,transparent);
 }
 /* Inside a pedestal the glass sits on the plate, not on the canvas. */
 [data-theme="dark"] .lb2-hero .lb2-ai{box-shadow:inset 0 1px 0 rgba(255,222,204,.08),0 1px 0 rgba(0,0,0,.4),0 10px 22px -18px rgba(0,0,0,.7)}

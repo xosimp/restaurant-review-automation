@@ -126,8 +126,8 @@ def test_add_on_buttons_link_to_one_recipe_and_never_to_a_sauce_of_them(db_path)
 def test_long_tips_open_as_points_in_the_text_face():
     page = _src()
     assert "function cavTipList(lines,lead)" in page and "function cavTipFormat(p)" in page
-    assert "if(on)cavTipFormat(p);" in page, "every tip is formatted as it opens"
-    assert ".cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}" in page
+    assert "if(on){cavTipFormat(p);" in page, "every tip is formatted as it opens"
+    assert ".cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num),.cav-itp.cav-itp-fixed,.cav-itp.cav-itp-fixed *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}" in page
 
 
 def test_the_tip_splitter_keeps_abbreviations_and_elements_whole():
@@ -160,3 +160,45 @@ def test_the_studio_setup_tabs_are_one_rounded_strip_with_no_sticky_bars():
     assert "border-radius:14px;background:var(--sf-recess)" in page
     assert "#ss-settings-setup .sw-gen{position:static;background:none}" in page
     assert ".ss-stage[data-stage=\"setup\"] .ss-hero{text-align:center;margin:0 0 22px}" in page
+
+
+# ── 10/17/26 afternoon: tips above everything; long lists fold ────────────
+
+def test_an_open_tip_is_lifted_to_a_fixed_opaque_layer():
+    page = _src()
+    assert "function cavTipLift(p,b)" in page and "document.body.appendChild(p);p.classList.add('cav-itp-fixed')" in page
+    assert ".cav-itp.cav-itp-fixed{position:fixed;z-index:10050;" in page and "background:var(--hp-act-bg);opacity:1}" in page
+    assert "if(on){cavTipFormat(p);p.hidden=false;cavTipLift(p,b);}else{p.hidden=true;cavTipHome(p);}" in page
+
+
+def test_guest_mentions_fold_after_two_and_each_quote_is_one_line():
+    page = _src()
+    assert "var MENTION_SHOW = 2" in page and "mem-ment-more" in page and "_pq.moreOpen" in page
+    assert "#lb2-wait-people .mem-quote{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" in page
+
+
+def test_dishes_and_add_ons_each_show_their_first_few():
+    page = _src()
+    assert "var FC2_PL_SHOW=8,FC2_AO_SHOW=5;" in page
+    assert "fc2-pl-more fc2-ao-more" in page and "All '+ao.length+' add-ons" in page
+
+
+# ── the Bar: green good news, the app's glow charts ──────────────────────
+
+def test_good_news_on_the_bar_is_green_and_tiles_keep_their_tone():
+    page = _src()
+    assert "#bar .cbtn.br-sig.t-good{--c:var(--green)}" in page, "the tone beats #bar .cbtn.br-sig's ember"
+    assert "[data-theme=\"dark\"] #bar .br-feat.br-good{" in page and "corner-tl-green-v1.png" in page
+    assert os.path.exists(os.path.join(ROOT, "static", "img", "glow", "corner-tl-green-v1.png"))
+
+
+def test_the_bars_hero_and_category_lines_use_the_app_glow_chart():
+    page = _src()
+    assert "function glowChart(vals, key, labels, opts)" in page and "C.glowLine(" in page
+    assert "glowChart(spark, 'total', labels, {cls: 'br-glow-hero'" in page
+    assert "glowChart(sp, c.key, sparkLabels(pc), {cls: 'br-glow-spk'" in page and "floor: fit.min, ceil: fit.max" in page
+
+
+def test_a_tip_closes_only_when_its_own_i_scrolls():
+    page = _src()
+    assert "(h&&t&&t.contains&&t.contains(h))" in page

@@ -375,8 +375,8 @@ def test_ui12_phone_width():
     assert "@media(max-width:640px){.fc2-top-right{align-items:flex-start;max-width:none;width:100%}" in SRC
     assert "@media (max-width:560px){.fc2-so-t col.q{width:110px}.fc2-so-t col.l{width:72px}" in SRC
     assert "@media (max-width:640px){.cav-itp{left:0;right:auto}}" in SRC
-    tip = _between("function cavItipSet(id,on){", "\ndocument.addEventListener")
-    assert "if(r.right>vw-12)dx=(vw-12)-r.right;if(r.left+dx<12)dx=12-r.left;" in tip
+    tip = _between("function cavTipLift(p,b){", "\ndocument.addEventListener")   # kept on screen as it lifts (10/17/26)
+    assert "left=Math.max(12,Math.min(br.left,vw-12-w))" in tip
 
 
 def test_ui14_the_per_dish_figure_is_plate_cost_pct_and_bought_vs_sold_says_what_it_is():
