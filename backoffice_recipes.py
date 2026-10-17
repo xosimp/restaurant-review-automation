@@ -679,8 +679,12 @@ def addon_links(restaurant_id, bk, start, end, db_path=None) -> dict:
         if not pw:
             continue
         # A recipe that is a sauce OF the button's item is another thing: "Add
-        # Jalapeno" (the peppers) is never MOD- JALAPENO RANCH.
-        fits = [(len(w - pw), name) for name, w in words.items() if pw <= w and not ((w - pw) & _ADDON_SAUCE)]
+        # Jalapeno" (the peppers) is never MOD- JALAPENO RANCH. A button that is
+        # itself a sauce ("Xtra Ranch") takes the plain one: a sauce word the
+        # recipe adds ("RANCH DRESSING") costs nothing, another word does.
+        is_sauce = bool(pw & _ADDON_SAUCE)
+        fits = [(len((w - pw) - _ADDON_SAUCE) if is_sauce else len(w - pw), name) for name, w in words.items()
+                if pw <= w and (is_sauce or not ((w - pw) & _ADDON_SAUCE))]
         if not fits:
             continue
         fits.sort()

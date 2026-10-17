@@ -98,7 +98,8 @@ def test_add_on_buttons_link_to_one_recipe_and_never_to_a_sauce_of_them(db_path)
     from models import Restaurant, create_restaurant, get_conn
     rid = create_restaurant(Restaurant(name="Addon Co", owner_email="a@x.test"), db_path=db_path)
     c = get_conn(db_path)
-    for i, n in enumerate(["Add Grill Chix", "Classic Buffalo`$1.99", "Add Jalapeno", "BBQ`$1.99", "Well Done"]):
+    for i, n in enumerate(["Add Grill Chix", "Classic Buffalo`$1.99", "Add Jalapeno", "BBQ`$1.99", "Well Done",
+                           "Xtra Ranch"]):
         c.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, business_date, item_name, item_kind, "
                   "kind, qty, sales, sales_category) VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (rid, "rpower", f"l{i}", "2026-10-10", n, "modifier", "sale", 1, 2.0,
@@ -106,11 +107,13 @@ def test_add_on_buttons_link_to_one_recipe_and_never_to_a_sauce_of_them(db_path)
     c.commit(); c.close()
     bk = {"recipes": [{"name": f"MOD- {n}", "group": "MENU ITEM>MODS", "ingredients": []} for n in
                       ("ADD GRILLED CHICKEN", "WING SAUCE CLASSIC BUFFALO", "JALAPENO RANCH",
-                       "WING SAUCE DR. PEPPER BBQ", "WING SAUCE BBQ CHIP SPICE RUB")], "items": [], "pos_names": {}}
+                       "WING SAUCE DR. PEPPER BBQ", "WING SAUCE BBQ CHIP SPICE RUB", "RANCH DRESSING")],
+          "items": [], "pos_names": {}}
     links = br.addon_links(rid, bk, "2026-10-01", "2026-10-15", db_path)
     assert links["MOD- ADD GRILLED CHICKEN"] == ["Add Grill Chix"]
     assert links["MOD- WING SAUCE CLASSIC BUFFALO"] == ["Classic Buffalo`$1.99"]
-    assert "MOD- JALAPENO RANCH" not in links, "the peppers are not the ranch"
+    assert "MOD- JALAPENO RANCH" not in links, "the peppers are not the ranch, nor the plain ranch"
+    assert links["MOD- RANCH DRESSING"] == ["Xtra Ranch"]
     assert links["MOD- WING SAUCE DR. PEPPER BBQ"] == ["BBQ`$1.99"], "the closest fit wins"
     assert not any("Well Done" in v for v in links.values())
     assert br._is_addon({"group": "MENU ITEM>MODS", "name": "MOD- ADD EGG"}) and not br._is_addon(
