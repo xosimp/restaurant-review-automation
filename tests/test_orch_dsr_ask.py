@@ -126,8 +126,16 @@ def test_only_the_shape_escalates(monkeypatch, rest, db_path, how):
     else:
         client = _Seq([strong_reply()], stop="max_tokens")
     out = _write(monkeypatch, rest, strong_night(), client)
-    assert out["ok"] is False and len(client.calls) == 1
     (run,) = _runs(db_path)
+    if how == "lead":
+        # A lead refused for a figure is rewritten once, told which figure
+        # failed, and judged by the same check (owner, 10/16/26, 8837fae0):
+        # the same unbacked figure again is still refused.
+        assert out["ok"] is False and len(client.calls) == 2
+        assert "the executive_summary was refused" in client.calls[1]["messages"][0]["content"]
+        assert run["escalations"] == 1 and run["status"] == "failed"
+        return
+    assert out["ok"] is False and len(client.calls) == 1
     assert run["escalations"] == 0 and run["status"] == "failed"
 
 
@@ -162,7 +170,8 @@ def test_the_salvage_never_repairs_what_an_injection_would_write():
 # ── #37: shorter ────────────────────────────────────────────────────────────
 
 def test_three_lines_a_list_and_short_single_slots():
-    assert narrative.MAX_LIST_ITEMS == 3 and narrative.SINGLE_WORDS == 25
+    # Shorter again in the text round (10/17/26): 20 words a single slot.
+    assert narrative.MAX_LIST_ITEMS == 3 and narrative.SINGLE_WORDS == 20
     assert f"up to {narrative.MAX_LIST_ITEMS} each" in narrative.SYSTEM_PROMPT
     assert f"at most {narrative.SINGLE_WORDS} words" in narrative.SYSTEM_PROMPT
     r = strong_reply()

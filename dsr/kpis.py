@@ -734,13 +734,15 @@ def _pace_tile(p, view):
             bar = {"value": w["net"], "max": w["budget_total"], "marker": w.get("budget_to_date"),
                    "label": f"{_money(w['net'])} of {_money(w['budget_total'])}"}
         if _num(w.get("budget_left")) and w["budget_left"] <= 0:
-            sub.append(f"The week's {w.get('budget_label', 'budget').lower()} is already made")
+            sub.append(f"{w.get('budget_label', 'budget').capitalize()} already made")
         elif _num(w.get("budget_per_night_needed")):
+            # Short (text round 10/17/26): what it needs, then what a
+            # typical night does - the same two figures.
             n = w["nights_left"]
             need = (f"Needs {_money(w['budget_per_night_needed'])} "
-                    + ("from the night left" if n == 1 else f"a night from the {n} left"))
+                    + ("from the last night" if n == 1 else f"a night, {n} left"))
             if _num(w.get("typical_per_night")):
-                need += f" · a typical one does {_money(w['typical_per_night'])}"
+                need += f" · typical {_money(w['typical_per_night'])}"
             sub.append(need)
         if _num(ly):
             sub.append(f"{'↑' if ly > 0 else '↓' if ly < 0 else '→'} {abs(ly):.1f}% vs last year")

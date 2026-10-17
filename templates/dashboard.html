@@ -7707,7 +7707,18 @@ svg:hover .hb-xh{opacity:1}
 .dr-why{font-size:15px;color:var(--ink2);padding:4px 0 2px}
 .dr-note{font-size:13px;color:var(--ink3);line-height:1.5;margin-top:12px}
 .dr-note b{color:var(--ink2);font-weight:600}
-#panel-dsr .hb-stat.bad .v{color:var(--hb-bad)}
+/* Info tips on the report (.cav-it, text round 10/17/26): where a figure
+   comes from sits behind an "i" by the heading it explains. A kicker's "i"
+   is the compact 22px one; an open tip lifts its card and the card's row
+   above the cards after it, which would otherwise paint over it. */
+#panel-dsr .hb-kicker .cav-it,#panel-dsr .dr-conf .k .cav-it,#panel-dsr .hx-call-k .cav-it{margin-left:8px;vertical-align:-1px}
+#panel-dsr .hb-kicker .cbtn.cav-ib,#panel-dsr .dr-conf .k .cbtn.cav-ib,#panel-dsr .hb-row .cbtn.cav-ib,#panel-dsr .dr-acc .cbtn.cav-ib,#panel-dsr .drb-grid .cbtn.cav-ib{width:22px;height:22px;min-height:22px;min-width:22px;font-size:12px}
+#panel-dsr .hb-row .cav-it,#panel-dsr .dr-acc .cav-it,#panel-dsr .drb-grid .cav-it{margin-left:8px}
+#panel-dsr .hb-card:has(.cav-itp:not([hidden])),#panel-dsr .hb-card>*:has(.cav-itp:not([hidden])),#panel-dsr .dr-two:has(.cav-itp:not([hidden])){z-index:30}
+/* A phone: the tip opens under the heading it explains, from that line's
+   left edge, so an "i" near the right never pushes it off the screen. */
+@media (max-width:640px){ #panel-dsr .cav-it{position:static}#panel-dsr :has(>.cav-it){position:relative}
+  #panel-dsr .cav-itp{left:0;right:auto;width:min(340px,calc(100vw - 64px))}}#panel-dsr .hb-stat.bad .v{color:var(--hb-bad)}
 #panel-dsr .hb-stat.good .v{color:var(--hb-good)}
 #panel-dsr .hb-stat.warn .v{color:var(--hb-warn)}
 #panel-dsr .hb-stats{margin-top:0}
@@ -8003,6 +8014,17 @@ svg:hover .hb-xh{opacity:1}
   function people(list){var out=[];for(var i=0;i<(list||[]).length;i++){var x=list[i],nm=(x&&typeof x==='object')?(x.employee||x.name||''):x;
     if(nm)out.push(esc(nm)+(x&&x.role?' <span class="dr-dim">('+esc(x.role)+')</span>':''));}return out;}
   function row(t,cls,m){return '<div class="hb-row '+(cls||'watch')+'"><span class="d"></span><span class="t wrap">'+t+'</span>'+(m?'<span class="m">'+m+'</span>':'')+'</div>';}
+  // An info tip (DESIGN_SYSTEM.md 12, Info tip; text round 10/17/26): the
+  // sentence about where a figure comes from - a basis, a method, a window -
+  // behind an "i" beside the heading it explains, never a footnote the
+  // owner reads first. The html is already escaped; nothing to say, no "i".
+  var ITN=0;
+  function itip(label,html){
+    if(!html)return '';var id='dr-it-'+(++ITN);
+    return '<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="'+id+'" aria-expanded="false" aria-controls="'+id+'" aria-label="'+esc(label)+'">i</button><span class="cav-itp" id="'+id+'" role="tooltip" hidden>'+html+'</span></span>';
+  }
+  // A basis sentence as a tip's text: capitalised, one full stop.
+  function said(s){s=String(s||'').replace(/\s+$/,'');return s?prose(cap(s)+(/[.!?]$/.test(s)?'':'.')):'';}
 
   // ── showing the page ─────────────────────────────────────────────────────
   function show(){
@@ -8088,8 +8110,9 @@ svg:hover .hb-xh{opacity:1}
       if(!before&&!rows.length){b.innerHTML=noneYet(d);return;}
       for(i=0;i<rows.length;i++)h+=listRow(rows[i]);
       var more=rows.length===30?'<div class="dr-bud-ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr-older="'+esc(rows[rows.length-1].business_date)+'">Load older reports</button></div>':'';
-      if(!before){b.innerHTML='<div class="dr-head"><div><div class="hb-kicker">Reports</div><h1 class="hb-h1">Every night\u2019s report</h1>'
-        +'<div class="dr-meta">Newest first. Open one for the whole night, or switch to Week or Period above.</div></div></div>'
+      // No "how to use this" line under the heading: the rows and the view
+      // buttons say it (text round 10/17/26).
+      if(!before){b.innerHTML='<div class="dr-head"><div><div class="hb-kicker">Reports</div><h1 class="hb-h1">Every night\u2019s report</h1></div></div>'
         +'<section class="hb-card dr-list" id="dr-list">'+h+'</section>'+more;}
       else{var box=el('dr-list');if(box)box.insertAdjacentHTML('beforeend',h);var ob=b.querySelector('[data-dr-older]');if(ob)ob.parentNode.outerHTML=more||'';}
     }).catch(function(){if(tk===st.token)loadFailed(b,null);});
@@ -8163,7 +8186,7 @@ svg:hover .hb-xh{opacity:1}
   function budgetHtml(d){
     var days=d.days||[],sg=d.suggest||{},bd=d.budget||{},wk=d.mode==='week',i,x,h;
     h='<div class="dr-head"><div><div class="hb-kicker">Budget</div><h1 class="hb-h1">Week of '+hn(esc(md(d.start)))+' – '+hn(esc(md(d.end)))+'</h1>'
-      +'<div class="dr-meta">Your figures beside Cavnar AI’s suggestion for each night. Nothing is saved until you press Save.</div></div>'
+      +'<div class="dr-meta">Nothing is saved until you press Save.</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,-7))+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="budget" data-date="'+esc(addDays(d.start,7))+'">Week after &rarr;</button></div></div>';
     h+='<section class="hb-card drb-top"><div class="drb-mode" role="group" aria-label="Budget by">'
@@ -8176,7 +8199,7 @@ svg:hover .hb-xh{opacity:1}
         +'<div class="drb-wrow"><label>Net<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" id="drb-wnet" value="'+esc(budFmt(tn))+'"></label>'
         +'<label>Gross<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" id="drb-wgross" value="'+esc(budFmt(tg))+'"></label>'
         +(isNum(sg.net)?'<button type="button" class="cbtn cbtn-soft cbtn-sm" data-drb="use-week">Use Cavnar AI’s '+hn(esc(money(sg.net)))+'</button>':'')+'</div>'
-        +'<div class="hb-empty">'+(d.mix&&Object.keys(d.mix).length?'Split across the nights by '+esc(d.mix_basis||'your weekday mix')+'. A night your mix has no share of gets nothing.':'There isn’t enough sales history yet to split a week across its nights — budget by day until there is.')+'</div>'
+        +'<div class="hb-empty">'+(d.mix&&Object.keys(d.mix).length?'Split by '+esc(d.mix_basis||'your weekday mix')+'.'+itip('How the week is split','A night your mix has no share of gets nothing.'):'Not enough sales history to split a week yet — budget by day for now.')+'</div>'
         +'<div class="drb-split" id="drb-split">'+budSplitHtml(d,tn===''?null:+tn)+'</div></section>';
     }else{
       h+='<section class="hb-card drb-days"><div class="drb-grid"><span class="h">Night</span><span class="h">Your net</span><span class="h">Your gross</span><span class="h">Cavnar AI suggests</span><span class="h"></span>';
@@ -8184,7 +8207,9 @@ svg:hover .hb-xh{opacity:1}
         h+='<span class="d"><b>'+esc(x.weekday.slice(0,3))+'</b> '+hn(esc(md(x.date)))+'</span>'
           +'<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" aria-label="Net budget '+esc(md(x.date))+'" data-drb-net="'+esc(x.date)+'" value="'+esc(budFmt(x.budget_net))+'">'
           +'<input class="ac-input" type="text" inputmode="decimal" autocomplete="off" aria-label="Gross budget '+esc(md(x.date))+'" data-drb-gross="'+esc(x.date)+'" value="'+esc(budFmt(x.budget_gross))+'">'
-          +'<span class="sg">'+(s?hn(esc(money(s.net)))+' net'+(isNum(s.gross)?' · '+hn(esc(money(s.gross)))+' gross':'')+'<small>'+esc(s.basis||'')+'</small>':'<small>'+esc(x.why_none||'No suggestion for this night')+'</small>')+'</span>'
+          // The suggestion's basis behind its "i" (text round 10/17/26); why
+          // a night has none stays said.
+          +'<span class="sg">'+(s?hn(esc(money(s.net)))+' net'+(isNum(s.gross)?' · '+hn(esc(money(s.gross)))+' gross':'')+itip('What the suggestion for '+md(x.date)+' rests on',said(s.basis)):'<small>'+esc(x.why_none||'No suggestion for this night')+'</small>')+'</span>'
           +'<span>'+(s?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-drb="use" data-date="'+esc(x.date)+'">Use</button>':'')+'</span>';}
       h+='</div></section>';
     }
@@ -8385,19 +8410,21 @@ svg:hover .hb-xh{opacity:1}
     if(vs.length>1){h+='<select class="ac-select" data-dr="version" aria-label="Version">';
       for(var v=vs.length-1;v>=0;v--){var x=vs[v];h+='<option value="'+x.version+'"'+(x.version===p.version?' selected':'')+'>Version '+x.version+' · '+esc(STATUS[x.status]||'Running')+(x.finalized_at_local?' · '+esc(stamp(x.finalized_at_local)):'')+'</option>';}
       h+='</select>';}
-    if(ck.closed_by&&CLOSED[ck.closed_by])h+='<span>'+esc(CLOSED[ck.closed_by])+'</span>';
-    if(mine&&mine.finalized_at_local)h+='<span>Went out '+hn(esc(stamp(mine.finalized_at_local)))+'</span>';
-    if(p.trigger==='late_data')h+='<span>Updated when late data landed</span>';
+    // How the night closed is "How the night was built"'s to say, and with
+    // versions the picker already names when each went out (text round
+    // 10/17/26).
+    if(mine&&mine.finalized_at_local&&vs.length<2)h+='<span>Went out '+hn(esc(stamp(mine.finalized_at_local)))+'</span>';
+    if(p.trigger==='late_data')h+='<span>Updated with late data</span>';
     h+='<span class="sp" style="flex:1"></span>';
     if(!isOld){
       if(p.status!=='final')h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="close" data-date="'+esc(date)+'">Try again now</button>';
-      else if(p.view==='owner')h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="rerun-ask" data-date="'+esc(date)+'" data-version="'+(p.version||1)+'">Re-run this night</button>';
+      else if(p.view==='owner')h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="rerun-ask" data-date="'+esc(date)+'" data-version="'+(p.version||1)+'">Re-run</button>';
     }
     h+='</div><div class="dr-err" hidden></div><div id="dr-rerun"></div>';
     if(isOld)h+='<section class="hb-card rail dr-old"><span>You’re reading version '+hn(p.version)+' of '+hn(latest.version)+', as it went out'+(mine&&mine.finalized_at_local?' at '+hn(esc(stamp(mine.finalized_at_local))):'')+'.</span><span class="sp"></span><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="night" data-date="'+esc(date)+'">Read the latest</button></section>';
     if((f.missing||[]).length){h+='<div class="dr-miss"><span>Still missing:</span>';for(var m=0;m<f.missing.length;m++)h+='<span class="m">'+esc(f.missing[m])+'</span>';h+='</div>';}
     h+=narrativeHtml(p.narrative,ck,p);
-    h+='<div class="hb-sh"><div><div class="k dim">The night, measured</div><h2>Block by block <small>open one for its detail</small></h2></div></div>';
+    h+='<div class="hb-sh"><div><h2>Block by block</h2></div></div>';
     var withheld=f.withheld||[];
     // Closed by default (ID1-17): each summary line carries the block's
     // number. Sales opens on its own only when there is no score to read.
@@ -8408,7 +8435,7 @@ svg:hover .hb-xh{opacity:1}
     h+=yesterdayHtml(p.yesterday);
     h+=builtHtml(ck,p.narrative);
     if(withheld.length){var names=[];for(var w=0;w<withheld.length;w++)names.push(BLOCK[withheld[w]]||withheld[w]);
-      h+='<div class="dr-withheld">Not part of your view: '+esc(names.join(', '))+'. The owner decides what a manager login can read.</div>';}
+      h+='<div class="dr-withheld">Not in your view: '+esc(names.join(', '))+' — the owner decides.</div>';}
     b.innerHTML=h;
     bigMount(b);
     // The celebration is decoration: it may never cost the owner the report.
@@ -8514,20 +8541,22 @@ svg:hover .hb-xh{opacity:1}
     // the night's key and drCheer plays its one celebration once.
     var sc0=(sales&&sales.cites)||[],beat=heroSales&&sales.tone==='good'&&/^\+/.test(String(sales.value||''))
       &&(sc0.indexOf('sales.vs_forecast')>=0||sc0.indexOf('sales.vs_budget')>=0);
-    var h='<section class="hb-card hero dr-score'+(beat?' dr-beat':'')+'"'+(beat?' data-cheer="'+esc(String((p&&p.restaurant_id)||'')+':'+String((p&&p.business_date)||''))+'"':'')+' aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+'</div><div class="top"><div class="lh">';
+    var h='<section class="hb-card hero dr-score'+(beat?' dr-beat':'')+'"'+(beat?' data-cheer="'+esc(String((p&&p.restaurant_id)||'')+':'+String((p&&p.business_date)||''))+'"':'')+' aria-label="'+esc(sk)+'"><div class="hb-kicker">'+esc(sk)+(isNum(c.overall)?itip('How the score is weighed',said(c.basis)):'')+'</div><div class="top"><div class="lh">';
     h+=v?'<span class="verdict '+esc(v.tone||'')+'"><i aria-hidden="true"></i>'+esc(v.label)+'</span>':'<span class="verdict"><i aria-hidden="true"></i>Not scored yet</span>';
     if(heroSales){var vs=isNum(sales.score)?sales.value:sales.detail;
       h+='<div class="net">'+hn(esc(money(net)))+'<small>net</small></div>'
         +(vs?'<div class="vs '+esc(isNum(sales.score)?(sales.tone||''):'')+'">'+prose(vs)+'</div>':'');}
     h+='</div>';
-    if(isNum(c.overall))h+='<div class="overall"><div class="n">'+hn(c.overall)+'<small>/100</small></div><div class="l">Overall performance</div></div>';
+    if(isNum(c.overall))h+='<div class="overall"><div class="n">'+hn(c.overall)+'<small>/100</small></div><div class="l">Overall</div></div>';
     h+='</div><div class="comps">';
     for(i=0;i<cs.length;i++){var x=cs[i];
       if(heroSales&&x===sales)continue;
       if(!x.measured||x.value==null){h+=tile(x.label,esc(x.why||'Not measured'),'','off');continue;}
       var val=x.key==='guests'?'<span class="stars" aria-label="'+esc(x.detail||'')+'">'+esc(x.value)+'</span>':prose(x.value);
       h+=tile(x.label,val,x.detail?prose(x.detail):'',x.tone||'');}
-    h+='</div><div class="basis">'+esc(c.basis||'')+'</div></section>';
+    // A scored night's weighting is behind the kicker's "i"; a night not
+    // scored says why here (text round 10/17/26).
+    h+='</div>'+(isNum(c.overall)?'':'<div class="basis">'+esc(c.basis||'')+'</div>')+'</section>';
     return h;
   }
   // Three wins and three risks up front (dsr.scorecard.SHOWN_ITEMS); the
@@ -8596,7 +8625,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
     var acts=n.actions_tomorrow||[];
     if(acts.length){
-      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended actions</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+' <small>ranked by urgency, dollars and effort</small></h2></div></div><div class="hb-recs">';
+      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+itip('How the priorities are ranked','Ranked by urgency, dollars and effort. Each one is checked against the night\u2019s figures before it shows.')+'</h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
         // The first three show; the rest wait hidden in the same grid, and
         // "N more" under it reveals them above itself (ID1-15, 9/28/26).
@@ -8627,7 +8656,7 @@ svg:hover .hb-xh{opacity:1}
           // Two priorities that pull against each other: the owner keeps one
           // (lever_conflicts, the report's ranking).
           +(x.conflict&&!x.answered&&window.recConflictHtml?recConflictHtml(x.conflict,'dsr'):'')
-          +(uadj?'<div class="dr-note">Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; moved to '+esc(URGENCY[uadj.to]||'This week')+' because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.</div>':'')
+          +(uadj?'<div class="dr-note">Moved from '+esc(URGENCY[uadj.from]||'Today')+' to '+esc(URGENCY[uadj.to]||'This week')+itip('Why the urgency moved','Cavnar AI marked this '+esc(URGENCY[uadj.from]||'Today')+'; it moved because '+prose(uadj.why||'the figures it cites don\u2019t show that urgency')+'.')+'</div>':'')
           +acf+ans+'</div>';}
       h+='</div>'+(acts.length>SHOWN?'<div class="dr-more-recs">'+drMoreBtn(acts.length-SHOWN,acts.length-SHOWN===1?'priority':'priorities')+'</div>':'');}
     // Key numbers sit above the day after (owner, 10/1/26).
@@ -8653,7 +8682,7 @@ svg:hover .hb-xh{opacity:1}
   // at most two.
   function insightsHtml(list){
     if(!list||!list.length)return '';
-    var h='<div class="hb-sh"><div><div class="k">Cavnar AI</div><h2>AI insights</h2></div></div><div class="dr-calls">';
+    var h='<div class="hb-sh"><div><h2>AI insights</h2></div></div><div class="dr-calls">';
     for(var i=0;i<list.length;i++){var x=list[i];h+='<div class="dr-call"><div class="k">'+esc(x.label)+'</div><div class="t">'+prose(x.text)+'</div></div>';}
     return h+'</div>';
   }
@@ -8665,17 +8694,31 @@ svg:hover .hb-xh{opacity:1}
     var last=pts[pts.length-1].split(',');
     return '<svg class="dr-spark" width="'+w+'" height="'+hh+'" viewBox="0 0 '+w+' '+hh+'" aria-hidden="true"><polyline points="'+pts.join(' ')+'" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="'+last[0]+'" cy="'+last[1]+'" r="2.6" class="dot"/></svg>';
   }
-  function kpiTile(k){
+  // Every tile's direction is against the same night ("vs last Thursday"):
+  // said once over the tiles, not on each (text round 10/17/26). vs is
+  // that shared comparison, or '' when the tiles differ.
+  function vsOf(t){var i=String(t||'').lastIndexOf(' vs ');return i>=0?String(t).slice(i):'';}
+  function commonVs(list){var c=null,i;for(i=0;i<(list||[]).length;i++){var ch=list[i]&&list[i].change;if(!ch||!ch.text)continue;
+    var v=vsOf(ch.text);if(!v||(c!==null&&v!==c))return '';c=v;}return c||'';}
+  function kpiTile(k,vs){
     var h='<div class="dr-kpi"><div class="k">'+esc(k.label)+(k.estimate?' <small>est.</small>':'')+'</div><div class="row"><span class="v">'+hn(esc(k.value_text))+'</span>'+spark(k.spark)+'</div>';
-    if(k.change)h+='<div class="chg '+esc(k.change.tone||'')+'">'+prose(k.change.text)+'</div>';
+    if(k.change){var ct=String(k.change.text||'');if(vs&&ct.length>vs.length&&ct.slice(ct.length-vs.length)===vs)ct=ct.slice(0,ct.length-vs.length);
+      h+='<div class="chg '+esc(k.change.tone||'')+'">'+prose(ct)+'</div>';}
     if(k.streak)h+='<div class="stk '+esc(k.streak.tone||'')+'">'+esc(k.streak.text)+'</div>';
     if(k.detail)h+='<div class="sub">'+esc(k.detail)+'</div>';
     // The owner's goal names its date ("Your goal by 12/1/26: 30%" - the
     // prime-cost KPI, memory round 9/29/26); a plain target reads as before.
     if(k.target)h+='<div class="sub">'+(k.target.source==='goal'?prose(k.target.label)+': ':esc(k.target.label)+' ')+hn(esc(k.target.value_text))+'</div>';
-    if(k.peers){h+=k.peers.available?'<div class="sub">'+esc(k.peers.label)+' '+hn(esc(k.peers.value_text))+(isNum(k.peers.strength_pct)?' <small>'+hn(k.peers.strength_pct)+'% comparison strength</small>':'')+'</div>'
-      :'<div class="sub dim" title="'+esc(k.peers.why_not||'')+'">'+esc(k.peers.label)+': no fair comparison yet</div>';}
+    // A fair peer comparison shows on its tile; "no fair comparison yet" is
+    // said once under the tiles (peersNote), not on every one (text round
+    // 10/17/26).
+    if(k.peers&&k.peers.available)h+='<div class="sub">'+esc(k.peers.label)+' '+hn(esc(k.peers.value_text))+(isNum(k.peers.strength_pct)?' <small>'+hn(k.peers.strength_pct)+'% comparison strength</small>':'')+'</div>';
     return h+'</div>';
+  }
+  function peersNote(list){
+    var names=[],why='',fair=0,i;for(i=0;i<(list||[]).length;i++){var pr=list[i]&&list[i].peers;if(!pr)continue;
+      if(pr.available)fair++;else{names.push(list[i].label);if(!why&&pr.why_not)why=pr.why_not;}}
+    return names.length?'<div class="dr-note dim">Restaurants like yours: no fair comparison yet'+(fair?' for '+esc(names.join(', ')):'')+itip('Why there is no peer comparison',said(why))+'</div>':'';
   }
   // The manager's Top KPIs never repeat a tile Operations already shows.
   function notIn(list,other){if(!list||!other||!other.length)return list;var seen={},out=[],i;
@@ -8700,12 +8743,13 @@ svg:hover .hb-xh{opacity:1}
     for(i=0;i<list.length;i++){if(list[i]&&at[list[i].key])top.push(list[i]);else if(list[i])rest.push(list[i]);}
     top.sort(function(a,b){return at[a.key]-at[b.key];});
     var h='';
-    if(top.length){h+='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction <small>against the same weekday</small></h2></div></div><div class="dr-kpis">';
-      for(i=0;i<top.length;i++)h+=kpiTile(top[i]);
-      h+='</div>';}
-    if(rest.length){h+='<details class="dr-sec dr-allk" id="dr-allk" open><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more, with direction and trend</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
-      for(i=0;i<rest.length;i++)h+=kpiTile(rest[i]);
-      h+='</div></div></details>';}
+    var tv=commonVs(top),rv=commonVs(rest);
+    if(top.length){h+='<div class="hb-sh"><div><div class="k">Top KPIs</div><h2>The numbers, with direction'+(tv?' <small>'+esc(tv.slice(1))+'</small>':'')+'</h2></div></div><div class="dr-kpis">';
+      for(i=0;i<top.length;i++)h+=kpiTile(top[i],tv);
+      h+='</div>'+peersNote(top);}
+    if(rest.length){h+='<details class="dr-sec dr-allk" id="dr-allk" open><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more'+(rv?' · '+esc(rv.slice(1)):'')+'</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
+      for(i=0;i<rest.length;i++)h+=kpiTile(rest[i],rv);
+      h+='</div>'+peersNote(rest)+'</div></details>';}
     return h;
   }
   // ── The six KPIs the report leads with (dsr.kpis.big, the payload's
@@ -8735,10 +8779,10 @@ svg:hover .hb-xh{opacity:1}
     overtime:'<circle cx="12" cy="13.5" r="7.5"/><path d="M12 10v3.5l2 2M9.5 2.8h5"/>',
     rating:'<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>'};
   function kxIcon(key){return '<span class="kx-ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'+(KX_ICON[key]||'<circle cx="12" cy="12" r="4"/>')+'</svg></span>';}
-  function kxTrend(tr,cls){
+  function kxTrend(tr,cls,known){
     if(!tr)return '';
     var a=tr.dir==='up'?'↑':(tr.dir==='down'?'↓':'→');
-    return '<span class="kx-tr '+esc(cls||'')+' '+esc(tr.tone||'flat')+'"><b><i aria-hidden="true">'+a+'</i>'+hn(esc(tr.text))+'</b>'+(tr.vs?'<span>'+esc(tr.vs)+'</span>':'')+'</span>';
+    return '<span class="kx-tr '+esc(cls||'')+' '+esc(tr.tone||'flat')+'"><b><i aria-hidden="true">'+a+'</i>'+hn(esc(tr.text))+'</b>'+(tr.vs&&tr.vs!==known?'<span>'+esc(tr.vs)+'</span>':'')+'</span>';
   }
   function kxNum(t){
     var nm=bigNum(t.value_text);
@@ -8794,9 +8838,9 @@ svg:hover .hb-xh{opacity:1}
     if(t.note)h+='<div class="kx-n">'+prose(t.note)+'</div>';
     return h+'</div></article>';
   }
-  function kxCard(t,i){
+  function kxCard(t,i,vs){
     var h='<article class="kx-card '+esc(t.tone||'')+'" style="--i:'+i+'"><div class="kx-top">'+kxIcon(t.key)+'<span class="kx-lbl">'+esc(t.label)+(t.estimate?' <small>est.</small>':'')+'</span></div>'
-      +'<div class="kx-mid"><div class="kx-val">'+kxNum(t)+'</div><div class="kx-mini">'+kxPic(t,i,false)+'</div></div>'+kxTrend(t.trend,'');
+      +'<div class="kx-mid"><div class="kx-val">'+kxNum(t)+'</div><div class="kx-mini">'+kxPic(t,i,false)+'</div></div>'+kxTrend(t.trend,'',vs);
     var sub=t.sub||[];if(sub.length)h+='<div class="kx-s">'+prose(sub[0])+'</div>';
     return h+'</article>';
   }
@@ -8813,9 +8857,13 @@ svg:hover .hb-xh{opacity:1}
     var dn=drDayNames(p),hero=null,sec=[],ter=[],i;
     for(i=0;i<list.length;i++){var t=list[i],rk=t.rank||(i===0?'hero':(i<=4?'secondary':'tertiary'));
       if(rk==='hero'&&!hero)hero=t;else if(rk==='tertiary')ter.push(t);else sec.push(t);}
-    var h='<div class="hb-sh"><div><div class="k">Key numbers</div><h2>'+esc(dn?dn.day+' at a glance':'The night at a glance')+'</h2></div></div><div class="kx">';
+    // The secondary cards' shared comparison ("vs last Thursday") is said
+    // once in the heading, not under every card (text round 10/17/26).
+    var sv=null;for(i=0;i<sec.length;i++){var tv=sec[i].trend&&sec[i].trend.vs;if(!tv||(sv!==null&&tv!==sv)){sv='';break;}sv=tv;}
+    sv=sec.length>1?(sv||''):'';
+    var h='<div class="hb-sh"><div><div class="k">Key numbers</div><h2>'+esc(dn?dn.day+' at a glance':'The night at a glance')+(sv?' <small>'+esc(sv)+'</small>':'')+'</h2></div></div><div class="kx">';
     if(hero)h+=kxHero(hero);
-    for(i=0;i<sec.length;i++)h+=kxCard(sec[i],i+1);
+    for(i=0;i<sec.length;i++)h+=kxCard(sec[i],i+1,sv);
     if(ter.length){h+='<div class="kx-chips">';for(i=0;i<ter.length;i++)h+=kxChip(ter[i],i+sec.length+1);h+='</div>';}
     return h+'</div>';
   }
@@ -8881,22 +8929,22 @@ svg:hover .hb-xh{opacity:1}
     var ru=null;for(i=st+1;i<pk;i++){r=rows[i];var pv=rows[i-1];
       if(pv.net>0&&r.net>=1.5*pv.net&&r.net>=0.45*peak.net&&(!ru||r.net/pv.net>ru.net/rows[ru.k-1].net))ru={k:i,net:r.net};}
     if(ru){r=rows[ru.k];out.push({i:ru.k,kind:'rush',tone:'info',title:(r.hour>=15?'Dinner rush begins':'The rush begins'),
-        text:hn(money(r.net))+' at '+esc(hourLabel(r.hour,true))+', up from '+hn(money(rows[ru.k-1].net))+' the hour before.'});}
+        text:hn(money(r.net))+' at '+esc(hourLabel(r.hour,true))+', up from '+hn(money(rows[ru.k-1].net))+'.'});}
     var sp=null;for(i=0;i<n;i++){r=rows[i];if(r!==peak&&isNum(r.usual)&&r.usual>=0.1*peak.net&&r.net>=1.25*r.usual&&(!sp||r.net/r.usual>sp.net/sp.usual))sp=r;}
     if(sp)out.push({i:rows.indexOf(sp),kind:'spike',tone:'good',title:esc(hourLabel(sp.hour,true))+' ran '+hn(Math.round((sp.net/sp.usual-1)*100)+'%')+' above usual',
-      text:hn(money(sp.net))+' against a usual '+esc(wd)+'’s '+hn(money(sp.usual))+'.'});
+      text:hn(money(sp.net))+' vs a usual '+hn(money(sp.usual))+'.'});
     var dp=null;for(i=0;i<n;i++){r=rows[i];if(isNum(r.usual)&&r.usual>=0.15*peak.net&&r.net<=0.8*r.usual&&(!dp||r.usual-r.net>dp.usual-dp.net))dp=r;}
     if(dp){var staffed=isNum(dp.hours)&&isNum(medH)&&dp.hours>=medH;
       out.push({i:rows.indexOf(dp),kind:staffed?'dip':'missed',tone:'bad',title:staffed?'Sales dipped despite full staffing':'Missed revenue at '+esc(hourLabel(dp.hour,true)),
-        text:esc(hourLabel(dp.hour,true))+' came in '+hn(money(dp.usual-dp.net))+' below a usual '+esc(wd)+(staffed?', with '+hn(dp.hours.toFixed(1))+' hours on the clock.':'.')});}
+        text:hn(money(dp.usual-dp.net))+' below a usual '+esc(wd)+(staffed?' · '+hn(dp.hours.toFixed(1))+' labor hours.':'.')});}
     if(isNum(night)){var lo=null,ok=null;
       for(i=0;i<n;i++){r=rows[i];if(!isNum(r.splh)||r.hours<2)continue;if(r.splh<0.6*night&&(!lo||r.splh<lo.splh))lo=r;}
       var top=rows.slice().sort(function(a,b){return b.net-a.net;}).slice(0,3);
       for(i=0;i<top.length;i++){r=top[i];if(isNum(r.splh)&&r.hours>=2&&Math.abs(r.splh/night-1)<=0.15){ok=r;break;}}
       if(lo&&(!dp||lo!==dp))out.push({i:rows.indexOf(lo),kind:'labor',tone:'warn',title:'Labor ran ahead of demand',
-        text:esc(hourLabel(lo.hour,true))+': '+hn(money(lo.splh))+' per labor hour against '+hn(money(night))+' for the night.'});
+        text:hn(money(lo.splh))+' per labor hour at '+esc(hourLabel(lo.hour,true))+' vs '+hn(money(night))+' for the night.'});
       if(ok)out.push({i:rows.indexOf(ok),kind:'matched',tone:'good',title:'Staffing matched demand',
-        text:esc(hourLabel(ok.hour,true))+': '+hn(money(ok.splh))+' per labor hour, right on the night’s '+hn(money(night))+'.'});}
+        text:hn(money(ok.splh))+' per labor hour at '+esc(hourLabel(ok.hour,true))+', on the night’s '+hn(money(night))+'.'});}
     out.sort(function(a,b){return a.i-b.i;});
     return {list:out.slice(0,4),night:night};
   }
@@ -8905,8 +8953,8 @@ svg:hover .hb-xh{opacity:1}
     var s=(rush?'The rush began at <b>'+esc(hourLabel(rush.hour,true))+'</b> and peaked':'Sales peaked')+' at <b>'+esc(hourLabel(peak.hour,true))+'</b> with '+hn(money(peak.net));
     if(isNum(peak.usual)&&peak.usual>0){var d=Math.round((peak.net/peak.usual-1)*100);s+=d===0?', right on a usual '+esc(wd)+'.':', '+hn(Math.abs(d)+'%')+' '+(d>0?'above':'below')+' a usual '+esc(wd)+'.';}
     else s+='.';
-    for(i=0;i<cs.list.length;i++){var c=cs.list[i];if(c.kind==='labor'){s+=' Staffing ran ahead of demand at <b>'+esc(hourLabel(rows[c.i].hour,true))+'</b>.';break;}
-      if(c.kind==='dip'||c.kind==='missed'){s+=' <b>'+esc(hourLabel(rows[c.i].hour,true))+'</b> came in below a usual '+esc(wd)+'.';break;}}
+    // One sentence (text round 10/17/26): a labor or a dip hour is its own
+    // numbered call-out under the chart, so the story no longer says it too.
     return s;
   }
   // "What happened last night" when the report is yesterday's, "tonight"
@@ -8923,7 +8971,9 @@ svg:hover .hb-xh{opacity:1}
     var B=(p.facts&&p.facts.blocks)||{},s=B.sales;
     if(!s||s.status!=='ready')return '';
     var D=hourData(p),wd=(drDayNames(p)||{}).day||'night';
-    var head='<div class="hx-head"><div><div class="hb-kicker">Hour by hour</div><h3>'+esc(hxTitle(p,wd))+'</h3>';
+    // The usual night's window behind the kicker's "i" (text round 10/17/26).
+    var ty=s.detail&&s.detail.hourly_typical,tyb=ty&&ty.basis?'<b>A usual '+esc(wd)+'</b> is '+prose(String(ty.basis).replace(/\.$/,''))+'.':'';
+    var head='<div class="hx-head"><div><div class="hb-kicker">Hour by hour'+itip('Where the usual night comes from',tyb)+'</div><h3>'+esc(hxTitle(p,wd))+'</h3>';
     if(!D)return '<section class="hb-card dr-hourly hx hx-empty" aria-label="The night, hour by hour">'+head+'</div></div><div class="hx-ghost" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="hx-emsg">The hour-by-hour story appears once the POS sends this night’s sales by the hour.</div></section>';
     var rows=D.rows,n=rows.length,W=760,H=300,pl=48,pr=44,pt=74,pb=52,pw=W-pl-pr,ph=H-pt-pb,cw=pw/n,i;
     var peak=rows[0];for(i=1;i<n;i++)if(rows[i].net>peak.net)peak=rows[i];
@@ -8955,13 +9005,13 @@ svg:hover .hb-xh{opacity:1}
     var pd=isNum(peak.usual)&&peak.usual>0?Math.round((peak.net/peak.usual-1)*100):null;
     var card='<div class="hx-peak" style="left:'+Math.max(14,Math.min(86,cx(rows.indexOf(peak))/W*100)).toFixed(2)+'%;top:'+(y(peak.net)/H*100).toFixed(2)+'%"><div class="k">Peak hour</div><div class="v">'+hn(esc(hourLabel(peak.hour,true)))+'<span>'+hn(money(peak.net))+'</span></div>'
       +(pd!==null?'<div class="d '+(pd>=0?'good':'bad')+'">'+(pd>=0?'↑ ':'↓ ')+hn(Math.abs(pd)+'%')+' vs usual</div>':'')+'</div>';
-    var leg='<div class="hx-leg"><span><i class="hx-sw bar"></i>Net sales</span>'+(D.labor?'<span><i class="hx-sw line"></i>People on the clock</span>':'')+(D.typical?'<span><i class="hx-sw dash"></i>A usual '+esc(wd)+' <small>median of '+hn(D.typical.nights)+'</small></span>':'')+'<span><i class="hx-sw heat"></i>Busier hours, warmer</span></div>';
+    var leg='<div class="hx-leg"><span><i class="hx-sw bar"></i>Net sales</span>'+(D.labor?'<span><i class="hx-sw line"></i>People on the clock</span>':'')+(D.typical?'<span><i class="hx-sw dash"></i>A usual '+esc(wd)+'</span>':'')+'<span><i class="hx-sw heat"></i>Busier hours</span></div>';
     var h='<section class="hb-card dr-hourly hx" aria-label="The night, hour by hour">'+head+'<p class="hx-story">'+hxStory(rows,peak,cs,wd)+'</p></div>'+leg+'</div>'
       +'<div class="hx-plot"><div class="hx-in">'+svg+card+'<div class="hx-tip" hidden></div></div></div>';
     if(cs.list.length){h+='<div class="hx-call"><div class="hx-call-k"><span class="spark" aria-hidden="true"></span>What stood out</div><div class="hx-call-g">';
       for(i=0;i<cs.list.length;i++){var c=cs.list[i];h+='<div class="hx-c '+c.tone+'" style="--i:'+i+'"><span class="no">'+(rows[c.i]===peak?'★':(i+1))+'</span><div><div class="t">'+c.title+'</div><div class="s">'+c.text+'</div></div></div>';}
       h+='</div></div>';}
-    if(!D.typical)h+='<div class="dr-note">A usual night shows here once two finished reports exist for this weekday.</div>';
+    if(!D.typical)h+='<div class="dr-note">A usual night shows after two reports for this weekday.</div>';
     return h+'</section>';
   }
   // The hover card: one hour's figures over the column under the pointer
@@ -8998,11 +9048,16 @@ svg:hover .hb-xh{opacity:1}
     if(!svc||svc.status!=='ready')return '';
     var d=svc.detail||{},dp=d.dayparts||[],rm=d.rooms||[];
     if(!dp.length&&!rm.length)return '';
-    var h='<section class="hb-card dr-split" aria-label="Where the money came from"><div class="hb-kicker">Where the money came from</div>';
+    // How a check is put in a meal period or a room, behind the "i".
+    var sb=[];if(d.dayparts_basis)sb.push('<b>Meal periods:</b> '+prose(String(d.dayparts_basis).replace(/\.$/,''))+'.');if(d.rooms_basis)sb.push('<b>Rooms:</b> '+prose(String(d.rooms_basis).replace(/\.$/,''))+'.');
+    var h='<section class="hb-card dr-split" aria-label="Where the money came from"><div class="hb-kicker">Where the money came from'+itip('How sales are split',sb.join(' '))+'</div>';
     if(dp.length>1||(dp.length===1&&dp[0].name!=='Other'))h+='<div class="dr-split-g"><h3>By meal period</h3>'+splitRows(dp)+'</div>';
-    if(rm.length)h+='<div class="dr-split-g"><h3>By room</h3>'+splitRows(rm)+'</div>';
+    // Meal periods lead; the rooms open under "By room" when the meal
+    // periods are already drawn (text round 10/17/26).
+    var mp=dp.length>1||(dp.length===1&&dp[0].name!=='Other');
+    if(rm.length)h+=mp?'<details class="co-more dr-split-g"><summary>By room</summary>'+splitRows(rm)+'</details>':'<div class="dr-split-g"><h3>By room</h3>'+splitRows(rm)+'</div>';
     var dg=(svc.metrics||{}).drinks_per_guest;
-    if(isNum(dg))h+='<div class="dr-note">'+hn(dg.toFixed(2))+' drinks a guest across the night.</div>';
+    if(isNum(dg))h+='<div class="dr-note">'+hn(dg.toFixed(2))+' drinks a guest.</div>';
     return h+'</section>';
   }
   function laborHtml(lab,p){
@@ -9022,17 +9077,23 @@ svg:hover .hb-xh{opacity:1}
         +'<span class="h hb-num">'+(isNum(x.hours)?esc(x.hours.toFixed(1))+'h':'')+'</span>'
         +'<span class="c hb-num">'+(isNum(x.cost)?esc(money(x.cost)):'—')+'</span>'
         +'<span class="p hb-num">'+(isNum(ps)?esc(pct(ps))+' <small>of sales</small>':'')+'</span></div>';}
-    return '<section class="hb-card dr-dep" aria-label="Where the labor went"><div class="hb-kicker">Where the labor went</div>'
+    // How each department's dollars are priced, behind the "i" (text round
+    // 10/17/26).
+    return '<section class="hb-card dr-dep" aria-label="Where the labor went"><div class="hb-kicker">Where the labor went'+itip('How labor is priced by department',said((lab.detail||{}).departments_basis))+'</div>'
       +'<div class="dr-dep-bar" role="img" aria-label="Labor by department">'+bar+'</div><div class="dr-dep-rows">'+rows+'</div>'
-      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, salaries included.</div>':'')
-      +'<div class="dr-note dim">'+esc(cap((lab.detail||{}).departments_basis||''))+'</div></section>';
+      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, with salaries.</div>':'')+'</section>';
   }
   function serversHtml(svc){
     if(!svc||svc.status!=='ready')return '';
     var d=svc.detail||{},ss=d.servers||[];
     if(!ss.length)return '';
-    var h='<section class="hb-card dr-srv" aria-label="Servers and bartenders"><div class="dr-ch"><div><div class="hb-kicker">On the floor</div><h3>Servers and bartenders</h3></div>'
-      +(isNum(d.servers_below_floor)&&d.servers_below_floor?'<div class="dr-note">'+hn(d.servers_below_floor)+' with fewer than '+hn(d.servers_min_checks)+' checks not shown</div>':'')+'</div>'
+    // The floor's per-guest figure and who counts, behind the "i" (text
+    // round 10/17/26).
+    var fl=(svc.metrics||{}).server_floor_per_guest,sw=[];
+    if(isNum(fl))sw.push('<b>Per guest is set against the floor\u2019s '+hn(money(fl,true))+'.</b>');
+    if(d.servers_basis)sw.push(said(d.servers_basis));
+    var h='<section class="hb-card dr-srv" aria-label="Servers and bartenders"><div class="dr-ch"><div><div class="hb-kicker">Servers and bartenders'+itip('How the floor is read',sw.join(' '))+'</div></div>'
+      +(isNum(d.servers_below_floor)&&d.servers_below_floor?'<div class="dr-note">'+hn(d.servers_below_floor)+' under '+hn(d.servers_min_checks)+' checks not shown</div>':'')+'</div>'
       +'<div class="dr-stbl-w"><table class="dr-stbl"><thead><tr><th>Name</th><th>Checks</th><th>Guests</th><th>Net</th><th>Per guest</th><th>Drinks a guest</th><th>Card tip</th><th>Net an hour</th></tr></thead><tbody>';
     for(var i=0;i<ss.length;i++){var x=ss[i],vf=x.vs_floor,tn=isNum(vf)?(vf>=1?'good':(vf<=-1?'bad':'')):'';
       h+='<tr><td class="nm">'+esc(x.name)+'</td><td class="hb-num">'+esc(cnt(x.checks))+'</td><td class="hb-num">'+esc(cnt(x.guests))+'</td><td class="hb-num">'+esc(money(x.net))+'</td>'
@@ -9041,15 +9102,13 @@ svg:hover .hb-xh{opacity:1}
         +'<td class="hb-num">'+(isNum(x.tip_pct)?esc(pct(x.tip_pct)):'—')+'</td>'
         +'<td class="hb-num">'+(isNum(x.net_per_hour)?esc(money(x.net_per_hour)):'—')+'</td></tr>';}
     h+='</tbody></table></div>';
-    var fl=(svc.metrics||{}).server_floor_per_guest;
-    if(isNum(fl))h+='<div class="dr-note">Per guest is set against the floor’s '+hn(money(fl,true))+'.</div>';
-    return h+'<div class="dr-note dim">'+esc(cap(d.servers_basis||''))+'</div></section>';
+    return h+'</section>';
   }
   function lossHtml(svc){
     if(!svc||svc.status!=='ready')return '';
     var d=svc.detail||{},L=d.loss,E=d.timeclock_edits,h='',i;
     if(L&&L.given){var g=L.given,v=L.voids||{};
-      h+='<section class="hb-card dr-loss" aria-label="Comps, discounts and voids"><div class="hb-kicker">Given away</div>'
+      h+='<section class="hb-card dr-loss" aria-label="Comps, discounts and voids"><div class="hb-kicker">Given away'+itip('Where these figures come from',said(L.basis))+'</div>'
         +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(g.total))+'</div><div class="s">in comps, discounts and refunds'+(isNum(g.pct_of_gross)?' · '+hn(pct(g.pct_of_gross))+' of gross':'')+'</div></div>';
       // Comps and voids on their own, against the owner's target (Account →
       // Targets): discounts are prices, never in it (owner, 10/15/26).
@@ -9058,22 +9117,27 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="dr-loss-cv'+(tg===null?'':(cv.over?' bad':' good'))+'"><span>Comps &amp; voids</span><b class="hb-num">'+esc(pct(cv.pct_of_gross))+'</b>'
           +'<span>'+hn(money(cv.total))+' of '+hn(money(cv.gross))+' gross</span>'
           +(tg!==null?'<small>'+(cv.over?'over':'under')+' your '+hn(pct(tg))+' target</small>':'<small>no target set &mdash; Account &rarr; Targets</small>')+'</div>';}
-      var rs=g.by_reason||[];
-      if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
-      var ap=g.by_approver||[];
-      if(ap.length){h+='<div class="dr-loss-g"><h3>Approved by</h3>';for(i=0;i<ap.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(ap[i].approver)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(ap[i].lines))+'</span><span class="a hb-num">'+esc(money(ap[i].amount))+'</span></div>';h+='</div>';}
-      if(v.lines){h+='<div class="dr-loss-g"><h3>Voided lines <small>never reached the bill</small></h3>';var vr=v.by_reason||[];
+      // Voided lines stay on the card; who approved what, by reason, opens
+      // under one quiet "More" (details.co-more, text round 10/17/26).
+      if(v.lines){h+='<div class="dr-loss-g"><h3>Voided lines</h3>';var vr=v.by_reason||[];
         for(i=0;i<vr.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(vr[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(vr[i].lines))+'</span><span class="a hb-num">'+esc(money(vr[i].amount))+'</span></div>';
         h+='</div>';}
+      var rs=g.by_reason||[],ap=g.by_approver||[];
+      if(rs.length||ap.length)h+='<details class="co-more"><summary>By reason and approver</summary>';
+      if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
+      if(ap.length){h+='<div class="dr-loss-g"><h3>Approved by</h3>';for(i=0;i<ap.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(ap[i].approver)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(ap[i].lines))+'</span><span class="a hb-num">'+esc(money(ap[i].amount))+'</span></div>';h+='</div>';}
+      if(rs.length||ap.length)h+='</details>';
       h+='</section>';}
     if(E instanceof Array){
       h+='<section class="hb-card dr-edits" aria-label="Punch edits"><div class="hb-kicker">Punch edits</div>';
       if(!E.length)h+='<div class="dr-loss-top"><div class="v hb-num">0</div><div class="s">No punch was edited for this night.</div></div>';
-      else{h+='<div class="dr-loss-top"><div class="v hb-num">'+esc(cnt(E.length))+'</div><div class="s">punch'+(E.length===1?'':'es')+' a manager edited</div></div>';
+      // The count stays; who, when and by whom open under "More".
+      else{h+='<div class="dr-loss-top"><div class="v hb-num">'+esc(cnt(E.length))+'</div><div class="s">punch'+(E.length===1?'':'es')+' a manager edited</div></div><details class="co-more"><summary>Who and when</summary>';
         for(i=0;i<E.length&&i<8;i++){var x=E[i];
           h+='<div class="dr-edit-r"><div class="n">'+esc(x.employee)+(x.shared_login?' <small>shared POS login — not one person'+(x.role?' · '+esc(x.role):'')+'</small>':(x.role?' <small>'+esc(x.role)+'</small>':''))+'</div><div class="m">'+(x.clock_in?hn(esc(clock(x.clock_in)))+'–'+hn(esc(x.clock_out?clock(x.clock_out):'open')):'')+(isNum(x.hours)?' · '+hn(x.hours.toFixed(2))+'h':'')
             +' · edited by '+esc(x.edited_by)+(x.edited_at?' at '+hn(esc(clock(x.edited_at))):'')+(x.code?' · RPOWER code '+esc(x.code):'')+'</div></div>';}
-        if(E.length>8)h+='<div class="dr-note">'+hn(E.length-8)+' more in the POS.</div>';}
+        if(E.length>8)h+='<div class="dr-note">'+hn(E.length-8)+' more in the POS.</div>';
+        h+='</details>';}
       h+='</section>';}
     return h;
   }
@@ -9083,24 +9147,27 @@ svg:hover .hb-xh{opacity:1}
     if(!svc||svc.status!=='ready')return '';
     var R=(svc.detail||{}).register;if(!R)return '';
     var t=R.totals||{},T=R.tenders||[],P=R.payouts||[],h='',i;
-    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards</div>'
-      +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(t.all))+'</div><div class="s">taken tonight · cards '+hn(money(t.card))+' · cash '+hn(money(t.cash))+'</div></div>';
+    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards'+itip('Where these figures come from','Every payment, tip and payout as the POS recorded them. Paid out and in is petty cash and check requests entered on the POS.')+'</div>'
+      +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(t.all))+'</div><div class="s">taken · cards '+hn(money(t.card))+' · cash '+hn(money(t.cash))+(P.length?' · paid out '+hn(money(t.payouts)):'')+'</div></div>';
+    // The night's totals stay; each tender, the tips and every payout open
+    // under one "More" (text round 10/17/26).
+    h+='<details class="co-more"><summary>Tenders, tips and payouts</summary>';
     if(T.length){h+='<div class="dr-loss-g"><h3>By tender</h3>';
       for(i=0;i<T.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(T[i].method)+(T[i].tips?' <small>tips '+hn(money(T[i].tips))+'</small>':'')+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(T[i].payments))+'</span><span class="a hb-num">'+esc(money(T[i].amount))+'</span></div>';
       h+='</div>';}
     if(isNum(t.card_tips)&&t.card_tips)h+='<div class="dr-note">Card tips '+hn(money(t.card_tips))+(t.card_tip_fees?' · tip fees the POS recorded '+hn(money(t.card_tip_fees)):'')+'.</div>';
-    h+='<div class="dr-loss-g"><h3>Paid out and in <small>petty cash, check requests</small></h3>';
+    h+='<div class="dr-loss-g"><h3>Paid out and in</h3>';
     if(!P.length)h+='<div class="dr-note">'+esc(R.payouts_note||'')+'</div>';
     else{for(i=0;i<P.length;i++){var x=P[i];
         h+='<div class="dr-loss-r"><span class="n">'+esc(x.category)+(x.type==='pay-in'?' <small>pay-in</small>':'')+' <small>'+esc(x.approved_by)+(x.at?' · '+hn(esc(clock(x.at))):'')+(x.reference?' · '+esc(x.reference):'')+'</small></span><span class="sp"></span><span class="a hb-num">'+esc(money(x.amount))+'</span></div>';}
       h+='<div class="dr-note">Paid out '+hn(money(t.payouts))+(t.payins?' · paid in '+hn(money(t.payins)):'')+'.</div>';}
-    return h+'</div></section>';
+    return h+'</div></details></section>';
   }
   function detailHtml(p){
     var B=(p.facts&&p.facts.blocks)||{},svc=B.service,h='';
     var hr=hourHtml(p),mo=moneyHtml(svc),lb=laborHtml(B.labor,p),sv=serversHtml(svc),ls=lossHtml(svc),rg=registerHtml(svc);
     if(!(hr||mo||lb||sv||ls||rg))return '';
-    h+='<div class="hb-sh"><div><div class="k">The night in detail</div><h2>Where it came from, and where it went</h2></div></div><div class="dr-detail">';
+    h+='<div class="hb-sh"><div><h2>The night in detail</h2></div></div><div class="dr-detail">';
     h+=hr;
     if(mo&&lb)h+='<div class="dr-two dr-two-lg">'+mo+lb+'</div>';else h+=mo+lb;
     h+=sv;
@@ -9113,9 +9180,10 @@ svg:hover .hb-xh{opacity:1}
     var used={},rest=[],i;for(i=0;i<(big||[]).length;i++)used[big[i].key]=1;
     for(i=0;i<(list||[]).length;i++)if(list[i]&&!used[list[i].key])rest.push(list[i]);
     if(!rest.length)return '';
-    var h='<details class="dr-sec dr-allk" id="dr-allk" open><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more, with direction and trend</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
-    for(i=0;i<rest.length;i++)h+=kpiTile(rest[i]);
-    return h+'</div></div></details>';
+    var rv=commonVs(rest);
+    var h='<details class="dr-sec dr-allk" id="dr-allk" open><summary><span class="ttl">All KPIs</span><span class="sp"></span><span class="sum">'+hn(rest.length)+' more'+(rv?' · '+esc(rv.slice(1)):'')+'</span></summary><div class="dr-sec-b"><div class="dr-kpis">';
+    for(i=0;i<rest.length;i++)h+=kpiTile(rest[i],rv);
+    return h+'</div>'+peersNote(rest)+'</div></details>';
   }
   // Tomorrow's labor and the week's overtime (dsr.tomorrow labor_plan and
   // overtime_outlook): the schedule priced against the forecast, while it
@@ -9125,12 +9193,12 @@ svg:hover .hb-xh{opacity:1}
     var L=t.labor,O=t.overtime,h='<section class="hb-card dr-tlab" aria-label="Labor for the day after"><div class="dr-tlab-g">';
     if(L){var own=view==='owner'&&isNum(L.salaried_total_pct),pc=own?L.salaried_total_pct:L.hourly_pct,tg=L.target_pct;
       var gap=isNum(pc)&&isNum(tg)?Math.round((pc-tg)*10)/10:null,soft=L.target_source==='default',gt=isNum(gap)?(gap>0?(soft?'warn':'bad'):'good'):'';
-      h+='<div class="dr-tlab-a"><div class="hb-kicker">'+esc((t.weekday||'The day after')+'’s labor')+'</div>'
+      h+='<div class="dr-tlab-a"><div class="hb-kicker">'+esc((t.weekday||'The day after')+'’s labor')+itip('How the day after\u2019s labor is priced',said(L.basis))+'</div>'
         +'<div class="v hb-num '+gt+'">'+(isNum(pc)?esc(pct(pc)):'—')+'</div>'
         +'<div class="s">'+hn(esc(String(L.hours)))+' hours · '+hn(money(own?L.salaried_total_cost:L.hourly_cost))+(own?' with salaries':'')+(isNum(L.forecast_net)?' over a '+hn(money(L.forecast_net))+' forecast':'')+'</div>'
         +(isNum(gap)?'<div class="s '+gt+'">'+(gap===0?'On '+(soft?'Cavnar AI\u2019s starting ':'the ')+hn(tg+'%')+(soft?'':' target'):hn(Math.abs(gap).toFixed(1))+' pts '+(gap>0?'over':'under')+' '+(soft?'Cavnar AI\u2019s starting '+hn(tg+'%'):'the '+hn(tg+'%')+' target'))+'</div>':'')
         +(isNum(L.overtime_hours)&&L.overtime_hours>0?'<div class="s bad">'+hn(L.overtime_hours)+' overtime hours on it</div>':'')+'</div>';}
-    if(O){h+='<div class="dr-tlab-b"><div class="hb-kicker">Overtime this week</div>';
+    if(O){h+='<div class="dr-tlab-b"><div class="hb-kicker">Overtime this week'+itip('How overtime is projected',said(O.basis))+'</div>';
       var ps=O.people||[];
       if(!ps.length)h+='<div class="dr-ok">No one goes past 40 hours this week if the schedule holds.</div>';
       else{h+='<div class="s">'+hn(O.over_count)+' '+(O.over_count===1?'person goes':'people go')+' past 40 hours'+(isNum(O.extra_cost)&&O.extra_cost>0?' · about '+hn(money(O.extra_cost))+' extra':'')+'</div>';
@@ -9138,7 +9206,7 @@ svg:hover .hb-xh{opacity:1}
           h+='<div class="dr-ot-r"><div class="n">'+esc(x.employee)+(x.role?' <small>'+esc(x.role)+'</small>':'')+'</div><div class="m">'+hn(x.projected_hours)+'h scheduled · '+hn(x.overtime_hours)+'h over'+(isNum(x.extra_cost)?' · '+hn(money(x.extra_cost))+' extra':'')+'</div>'
             +((x.room||[]).length?'<div class="ok">Room: '+esc(x.room.join(', '))+'</div>':'')+'</div>';}}
       h+='</div>';}
-    return h+'</div><div class="dr-note dim">'+esc(cap((L&&L.basis)||(O&&O.basis)||''))+'</div></section>';
+    return h+'</div></section>';
   }
   // Manager: Today's shift and Operations.
   // The night's weekday and the next one, from the report's own business
@@ -9167,41 +9235,60 @@ svg:hover .hb-xh{opacity:1}
     for(var i=0;i<list.length;i++)h+=kpiTile(list[i]);
     return h+'</div>';
   }
+  // A day-after item's own line and what it rests on (text round 10/17/26):
+  // a game reads as the game, what games like it did here behind the "i"
+  // (tomorrow.build: an event's text is its plain line plus the measured effect;
+  // a game days out is "... - N days out" plus the same); any item's own
+  // basis joins it there. The whole sentence is still the item's text.
+  function tmrSplit(x){
+    var t=String((x&&x.text)||''),cut=-1,m;
+    if(x&&x.kind==='event'&&x.plain&&t.indexOf(x.plain)===0&&t.length>x.plain.length)cut=x.plain.length;
+    else if(x&&x.kind==='event_ahead'&&(m=/ days? out\. /.exec(t)))cut=m.index+m[0].length-2;
+    var more=cut<0?'':prose(t.slice(cut).replace(/^[.\s]+/,'').replace(/\.?$/,'.'));
+    if(x&&x.basis)more+=(more?' ':'')+said(x.basis);
+    return {t:cut<0?t:t.slice(0,cut),more:more};
+  }
   // Tomorrow: the prep list, Cavnar's forecast and the confidence it rests on.
   function tomorrowHtml(t,n,view){
     if(!t)return '';
     var it=t.items||[],fc=t.forecast,cf=t.confidence;
     var h='<div class="hb-sh"><div><div class="k">The day after</div><h2>'+esc(t.weekday||'The day after')+(t.date?' <small>'+esc(md(t.date))+'</small>':'')+'</h2></div></div><div class="dr-two dr-tmr">';
     h+='<div class="hb-card"><div class="hb-h3"><span>Get ready for</span></div>';
-    if(it.length){for(var i=0;i<it.length;i++)h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'<i class="cv-warn"></i>':'\u2022')+'</span><span class="t wrap">'+prose(it[i].text)+'</span></div>';}
+    if(it.length){for(var i=0;i<it.length;i++){var sp=tmrSplit(it[i]);h+='<div class="hb-row '+(it[i].tone==='warn'?'risk':'watch')+'"><span class="g" aria-hidden="true">'+(it[i].tone==='warn'?'<i class="cv-warn"></i>':'\u2022')+'</span><span class="t wrap">'+prose(sp.t)+itip('What this rests on',sp.more)+'</span></div>';}}
     else h+='<div class="hb-empty">Nothing on the books to prep for.</div>';
-    if(isNum(t.scheduled))h+='<div class="dr-note">'+hn(t.scheduled)+' on the published schedule.</div>';
+    if(isNum(t.scheduled))h+='<div class="dr-note">'+hn(t.scheduled)+' on the schedule.</div>';
     // Tomorrow's staffing action is a priority above: point to it rather
     // than say it a second time (ID1-19).
     var rec=-1,acts=(n&&n.actions_tomorrow)||[];
     for(var a=0;a<acts.length&&rec<0;a++){if(/staff|schedul|labor|shift|cover/i.test(String(acts[a].kind||'')+' '+String(acts[a].text||'')))rec=a;}
-    if(rec>=0)h+='<div class="dr-note">Staffing for tomorrow: see priority '+hn('#'+(rec+1))+' above.</div>';
-    h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar AI\u2019s forecast</span></div>';
-    if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div><div class="dr-note">'+esc(cap(fc.basis||''))+'</div>'
-      // The measured effects it applied, and the typical night before them
-      // (tomorrow.forecast effects / base, event_memory - 9/29/26).
-      +((fc.effects||[]).length?drEffects(fc.effects)+(isNum(fc.base)?'<div class="dr-note">Before those effects: '+hn(money(fc.base))+' on a typical '+esc(t.weekday||'night')+'.</div>':''):'');
+    if(rec>=0)h+='<div class="dr-note">Staffing: see priority '+hn('#'+(rec+1))+' above.</div>';
+    // The forecast's basis and the typical night before its measured effects
+    // (tomorrow.forecast basis / base, event_memory - 9/29/26) behind the
+    // heading's "i"; the range and the effect chips stay (text round 10/17/26).
+    var fcw=fc?said(fc.basis)+((fc.effects||[]).length&&isNum(fc.base)?' Before those effects: '+hn(money(fc.base))+' on a typical '+esc(t.weekday||'night')+'.':''):'';
+    h+='</div><div class="hb-card"><div class="hb-h3"><span>Cavnar AI\u2019s forecast'+itip('What the forecast rests on',fcw)+'</span></div>';
+    if(fc)h+='<div class="dr-fc">'+hn(esc(fc.text))+'</div>'+((fc.effects||[]).length?drEffects(fc.effects):'');
     else h+='<div class="hb-empty">Not enough history for this weekday yet.</div>';
-    if(cf){h+='<div class="dr-conf"><div class="k">AI confidence</div><div class="v">'+(isNum(cf.pct)?hn(cf.pct)+'<small>%</small>':'\u2014')+'</div><div class="sub">Based on '+esc((cf.based_on||[]).join(' \u00b7 '))+'</div>'
-      +((cf.watch||[]).length?'<div class="sub dim">Worth watching: '+esc(cf.watch.join(' \u00b7 '))+'</div>':'')
-      +((cf.missing||[]).length?'<div class="sub dim">Missing: '+esc(cf.missing.join(' \u00b7 '))+'</div>':'')+'<div class="sub dim">'+esc(cf.track||'')+'</div></div>';}
+    // The confidence as a real % (or a dash with the record it is waiting
+    // for, said); what it rests on and what to watch behind its "i".
+    if(cf){var cw=[];if((cf.based_on||[]).length)cw.push('<b>Based on</b> '+esc(cf.based_on.join(' \u00b7 '))+'.');
+      if(isNum(cf.pct)&&cf.track)cw.push(said(cf.track));
+      if((cf.watch||[]).length)cw.push('<b>Worth watching:</b> '+esc(cf.watch.join(' \u00b7 '))+'.');
+      h+='<div class="dr-conf"><div class="k">AI confidence'+itip('What the confidence rests on',cw.join(' '))+'</div><div class="v">'+(isNum(cf.pct)?hn(cf.pct)+'<small>%</small>':'\u2014')+'</div>'
+      +(!isNum(cf.pct)&&cf.track?'<div class="sub">'+prose(cf.track)+'</div>':'')
+      +((cf.missing||[]).length?'<div class="sub dim">Missing: '+esc(cf.missing.join(' \u00b7 '))+'</div>':'')+'</div>';}
     return h+'</div></div>'+tmrLaborHtml(t,view);
   }
   // How did yesterday turn out? Cavnar's predictions about this night, graded.
   function yesterdayHtml(y){
     if(!y||!(y.items||[]).length)return '';
-    var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Cavnar AI grading itself</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
+    var ac=y.accuracy||{},h='<div class="hb-sh"><div><div class="k">Predictions</div><h2>How did yesterday turn out?</h2></div></div><section class="hb-card dr-yest">';
     for(var i=0;i<y.items.length;i++){var x=y.items[i],o=x.outcome;
       h+='<div class="hb-row '+(o==='correct'?'win':(o==='incorrect'?'miss':'watch'))+'"><span class="g" aria-hidden="true">'+(o==='correct'?'<i class="cv-ok"></i>':(o==='incorrect'?'<i class="cv-bad"></i>':'\u2022'))+'</span><span class="t wrap">'+prose(x.text)
         +(x.actual_text?'<small>'+prose(x.actual_text)+'</small>':'')+'</span><span class="m">'+(o==='correct'?'Correct':(o==='incorrect'?'Incorrect':'Not graded'))+'</span></div>';}
     h+='<div class="dr-acc"><span class="k">Prediction accuracy</span>'
       +(isNum(ac.pct)?'<span class="v">'+hn(ac.pct)+'<small>%</small></span><span class="sub">'+hn(ac.correct)+' of '+hn(ac.graded)+' right, last '+hn(ac.window_days)+' days</span>'
-        :'<span class="sub">'+hn(ac.correct||0)+' of '+hn(ac.graded||0)+' right so far \u2014 a percentage after '+hn(ac.min_graded||5)+' graded</span>')+'</div>';
+        :'<span class="sub">'+hn(ac.correct||0)+' of '+hn(ac.graded||0)+' right so far</span>'+itip('When the accuracy shows','A percentage shows once '+hn(ac.min_graded||5)+' predictions are graded.'))+'</div>';
     return h+'</section>';
   }
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}
@@ -9526,6 +9613,7 @@ svg:hover .hb-xh{opacity:1}
       b.innerHTML=kind==='week'?weekHtml(d.week,d.view):periodHtml(d.period,d.view);
     }).catch(function(){if(tk===st.token)loadFailed(b,null);});
   }
+  var GRID_HOW='Totals add only the nights that were measured; a comparison (vs budget, vs last year, labor %) uses only the nights that have both sides.';
   function isOwnerGrid(g,view){return view==='owner'&&(g.withheld||[]).indexOf('budget')<0;}
   function gridCols(g,owner){
     var c=[],cs=g.categories||[];
@@ -9573,11 +9661,11 @@ svg:hover .hb-xh{opacity:1}
     var dm=t.days_measured||0,dash='<span class="dr-dim">—</span>';
     var tl=tile((wk?'Week':'Period')+' to date · net',isNum(t.net)?esc(money(t.net)):dash,
       hn(dm)+(wk?' of '+hn(rows.length):'')+' night'+(dm===1?'':'s')+' measured');
-    if(owner)tl+=isNum(t.vs_budget_net)?tile('vs budget',esc(smoney(t.vs_budget_net)),esc(spct(t.vs_budget_net_pct))+' on the same nights',t.vs_budget_net>=0?'good':'bad')
+    if(owner)tl+=isNum(t.vs_budget_net)?tile('vs budget',esc(smoney(t.vs_budget_net)),esc(spct(t.vs_budget_net_pct)),t.vs_budget_net>=0?'good':'bad')
       :tile('vs budget',dash,esc(t.budget_net_note||'No budget for these nights'));
-    tl+=isNum(t.vs_last_year_net)?tile('vs last year',esc(smoney(t.vs_last_year_net)),esc(spct(t.vs_last_year_net_pct))+' on the same nights',t.vs_last_year_net>=0?'good':'bad')
+    tl+=isNum(t.vs_last_year_net)?tile('vs last year',esc(smoney(t.vs_last_year_net)),esc(spct(t.vs_last_year_net_pct)),t.vs_last_year_net>=0?'good':'bad')
       :tile('vs last year',dash,esc(t.last_year_net_note||'No last-year nights to compare yet'));
-    if(labor)tl+=tile('Labor %',isNum(t.labor_pct)?esc(pct(t.labor_pct)):dash,'of net, nights with both');
+    if(labor)tl+=tile('Labor %',isNum(t.labor_pct)?esc(pct(t.labor_pct)):dash,'of net');
     var mx=0,anyBud=false;
     for(i=0;i<rows.length;i++){if(isNum(rows[i].net)&&rows[i].net>mx)mx=rows[i].net;if(owner&&isNum(rows[i].bud)){anyBud=true;if(rows[i].bud>mx)mx=rows[i].bud;}}
     var bars='';
@@ -9600,8 +9688,10 @@ svg:hover .hb-xh{opacity:1}
   function txCell(s){return '<td class="tx">'+(s?'<span class="tx1" title="'+esc(s)+'">'+esc(s)+'</span>':'<span class="dr-dim">—</span>')+'</td>';}
   function weekHtml(g,view){
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
-    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+'</h1>'
-      +'<div class="hb-sub">'+esc(weekday(g.start).slice(0,3))+' '+hn(esc(md(g.start)))+' – '+esc(weekday(g.end).slice(0,3))+' '+hn(esc(md(g.end)))+' <span class="sep">·</span> '+hn(t.days_measured||0)+' of '+hn(days.length)+' nights measured</div></div>'
+    // How the grid adds and compares, behind the heading's "i" (text round
+    // 10/17/26); the nights measured is the first tile's line.
+    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+itip('How the week adds up',GRID_HOW+' Last year is the same weekday 52 weeks back: that night\u2019s report, then your imported workbook, then the POS sync.')+'</h1>'
+      +'<div class="hb-sub">'+esc(weekday(g.start).slice(0,3))+' '+hn(esc(md(g.start)))+' – '+esc(weekday(g.end).slice(0,3))+' '+hn(esc(md(g.end)))+'</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,-7)+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
       +'<a class="cbtn cbtn-secondary cbtn-sm" href="/api/dsr/week.xlsx?date='+esc(g.start)+'" download>Export to Excel</a>'
@@ -9620,11 +9710,11 @@ svg:hover .hb-xh{opacity:1}
     var p=g.period_to_date;if(p)h+=totalRow('Period to date',hn(esc(md(p.start)))+' – '+hn(esc(md(p.end))),p,cols,3);
     h+='</tfoot></table></div>';
     h+=mixedNote([t,p]);
-    h+=note('Totals add only the nights that were measured; a comparison uses only the nights that have both sides. A dash was not measured — it is not $0. Last year is the same weekday 52 weeks back: that night’s report, then your imported workbook, then the POS sync.');
+    h+=note('A dash was not measured — it is not $0.');
     // Once last year is in, the import is a link, not a standing card (ID1-22).
     var hasLy=false;for(var y=0;y<days.length;y++)if(isNum(days[y].last_year_net))hasLy=true;
     if(owner)h+=budgetEditor(days)+importCard(hasLy);
-    else h+=note('Budget columns are the owner’s and aren’t part of your view.');
+    else h+=note('Budget columns are the owner’s.');
     return h;
   }
   // A total's gross cell says when it covers fewer nights than the net
@@ -9641,7 +9731,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function mixedNote(ts){
     for(var i=0;i<ts.length;i++)if(ts[i]&&ts[i].gross_mixed)
-      return note('Gross is counted two ways in these nights: items only on some, everything on the POS (items, tax and voids) on others — the gross totals add both. Net is the same either way.');
+      return note('Gross is counted two ways here (items only, or items, tax and voids) and the totals add both. Net is the same either way.');
     return '';
   }
   function totalRow(label,small,t,cols,blanks){
@@ -9652,8 +9742,8 @@ svg:hover .hb-xh{opacity:1}
   }
   function periodHtml(g,view){
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),ws=g.weeks||[],t=g.totals||{};
-    var h='<div class="dr-head"><div><div class="hb-kicker">Period</div><h1 class="hb-h1">'+esc(g.label||'Period')+'</h1>'
-      +'<div class="hb-sub">'+hn(esc(md(g.start)))+' – '+hn(esc(md(g.end)))+' <span class="sep">·</span> '+hn(t.days_measured||0)+' nights measured</div></div>'
+    var h='<div class="dr-head"><div><div class="hb-kicker">Period</div><h1 class="hb-h1">'+esc(g.label||'Period')+itip('How the period adds up',GRID_HOW)+'</h1>'
+      +'<div class="hb-sub">'+hn(esc(md(g.start)))+' – '+hn(esc(md(g.end)))+'</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.start,-1)+'">&larr; Period before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="period" data-date="'+addDays(g.end,1)+'">Period after &rarr;</button></div></div>';
     h+=gridSummary(g,owner,'period');
@@ -9666,8 +9756,8 @@ svg:hover .hb-xh{opacity:1}
       h+='</tr>';}
     h+='</tbody><tfoot>'+totalRow('Period',hn(t.days_measured||0)+' nights measured',t,cols,0)+'</tfoot></table></div>';
     h+=mixedNote([t]);
-    h+=note('Each week adds only its measured nights. A dash was not measured — it is not $0.');
-    if(!owner)h+=note('Budget columns are the owner’s and aren’t part of your view.');
+    h+=note('A dash was not measured — it is not $0.');
+    if(!owner)h+=note('Budget columns are the owner’s.');
     return h;
   }
   function budgetEditor(days){
@@ -9690,7 +9780,7 @@ svg:hover .hb-xh{opacity:1}
   function importCard(asLink){
     return (asLink?'<div class="dr-imp-link"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dr="imp-open">Import more last-year nights</button></div>':'')
       +'<section class="hb-card quiet dr-imp" id="dr-imp"'+(asLink?' hidden':'')+' aria-label="Import last year"><div class="hb-h3"><span>Last year, from your old workbooks</span></div>'
-      +'<div class="hb-empty">Your POS keeps about a month. Upload past nights — one row per night with gross, net and your categories — and Last year fills in from them. '
+      +'<div class="hb-empty">Upload past nights to fill in Last year.'+itip('What the workbook needs','Your POS keeps about a month. One row per night with gross, net and your categories.')+' '
       +'<a class="cbtn cbtn-text cbtn-inline cbtn-sm" href="/api/dsr/history/template.csv" download>Download the template</a></div>'
       // The file picker is a branded button (owner, 9/26/26): no native
       // box, no "no file selected"; the chosen file's name shows beside it.
