@@ -526,12 +526,22 @@ def summarise_inventory(conn, before_day, deadline=None) -> int:
         except (TypeError, ValueError):
             waste = {}
         cogs_v, pct = _week_food_cost(rid, r["week_end"])
+        # The week as the trend loader reads it from its raw row: the FOOD
+        # stock value (no alcohol, no negative stock — FC-CALC-23) and
+        # whether it was a full count (FC-CALC-02), so a summarised week
+        # past retention still brackets food cost % only when it was one.
+        import waste_trend as _wt
+        wk_row = _wt._week_from_row(str(r["week_end"])[:10], r["waste_json"], r["items_json"], r["inv_value"]) or {}
+        inv_value = wk_row.get("inv_value") if wk_row.get("inv_value") is not None else r["inv_value"]
+        kept = {k: waste[k] for k in ("total_waste_cost", "top_items", "inventory_value", "waste_rate_pct")
+                if k in waste}
+        if wk_row.get("counted"):
+            kept.update(counted=True, counted_on=wk_row.get("counted_on"))
         conn.execute(
             "INSERT OR IGNORE INTO inventory_weekly_summary (restaurant_id, week, week_end, inv_value, waste_value, "
             "waste_json, cogs, food_cost_pct, source) VALUES (?,?,?,?,?,?,?,?,?)",
-            (rid, wk, str(r["week_end"])[:10], r["inv_value"], waste.get("total_waste_cost"),
-             json.dumps({k: waste[k] for k in ("total_waste_cost", "top_items", "inventory_value", "waste_rate_pct")
-                         if k in waste}), cogs_v, pct, r["source"]))
+            (rid, wk, str(r["week_end"])[:10], inv_value, waste.get("total_waste_cost"),
+             json.dumps(kept), cogs_v, pct, r["source"]))
         written += 1
         _ingredient_costs(conn, rid, r)
         conn.commit()
@@ -546,7 +556,9 @@ def _week_food_cost(restaurant_id, week_end):
         import cogs
         d = date.fromisoformat(str(week_end)[:10])
         out = cogs.build_food_cost_pct(restaurant_id, days=7, today=d)
-        if out.get("ok"):
+        # That week's own figure or none (FC-CALC-01): a monthly count
+        # period ending near it repeated one figure for every week.
+        if out.get("ok") and cogs.covers_window(out, d - timedelta(days=6), d):
             return out.get("cogs"), out.get("pct")
     except Exception as e:
         log.debug("weekly food cost unavailable for %s %s: %s", restaurant_id, week_end, e)

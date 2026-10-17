@@ -122,9 +122,17 @@ def weekly_snapshot(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     rows from the render-time write, which upserts on top of the same
     (restaurant, week_end) key rather than competing with it.
 
-    Also stores `inv_value` — total counted stock value — which is exactly
+    Also stores `inv_value` — the FOOD stock value (cogs.food_stock_value:
+    no alcohol, no negative stock; FC-CALC-23 / AI-03) — which is exactly
     what cogs.inventory_value_near needs to bracket a COGS window, and which
-    the render-time writer never persisted as its own column.
+    the render-time writer never persisted as its own column. The total
+    with the Bar's bottles in it let a liquor delivery before the closing
+    snapshot cut food COGS by its whole value.
+
+    The waste figure is null when nothing was logged in the week
+    (FC-CALC-12): an owner who stopped logging read "$0, trending down".
+    `counted` / `counted_on` say whether the stock value is a full count
+    (waste_trend._counted, FC-CALC-02) — only a count anchors food cost %.
     """
     from inventory import analysis_for
     items, is_live, analysis = analysis_for(restaurant_id)
@@ -132,11 +140,21 @@ def weekly_snapshot(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {"ok": False, "reason": "sample data — nothing to snapshot"}
 
     from time_utils import restaurant_now_by_id
-    week_end = restaurant_now_by_id(restaurant_id).strftime("%Y-%m-%d")
+    import waste_trend as _wt
+    today = restaurant_now_by_id(restaurant_id).date()
+    week_end = today.isoformat()
+    week_start = (today - timedelta(days=6)).isoformat()
+    total_waste = analysis.get("total_waste_cost_week")
+    measured = _f(total_waste) > 0 or any(
+        _f(it.get("waste_last_week")) > 0 or str(it.get("last_waste_at") or "")[:10] >= week_start
+        for it in items or () if isinstance(it, dict))
+    counted, counted_on, share = _wt._counted(items, today)
     payload = {
-        "total_waste_cost": analysis.get("total_waste_cost_week", 0),
+        "total_waste_cost": round(_f(total_waste), 2) if measured else None,
         "top_items": [x["item"] for x in (analysis.get("waste_items") or [])[:4]],
+        "counted": counted, "counted_on": counted_on, "counted_share": share,
     }
+    inv_value = analysis.get("food_stock_value", analysis.get("total_stock_value"))
     conn = get_conn(db_path)
     try:
         existing = conn.execute(
@@ -146,21 +164,18 @@ def weekly_snapshot(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             conn.execute(
                 "UPDATE inventory_history SET waste_json=?, items_json=?, inv_value=?, "
                 "source=COALESCE(source,'scheduled'), saved_at=datetime('now') WHERE id=?",
-                (json.dumps(payload), json.dumps(items),
-                 analysis.get("total_stock_value"), existing["id"]))
+                (json.dumps(payload), json.dumps(items), inv_value, existing["id"]))
         else:
             conn.execute(
                 "INSERT INTO inventory_history "
                 "(restaurant_id, waste_json, week_end, items_json, inv_value, source) "
                 "VALUES (?,?,?,?,?,'scheduled')",
-                (restaurant_id, json.dumps(payload), week_end, json.dumps(items),
-                 analysis.get("total_stock_value")))
+                (restaurant_id, json.dumps(payload), week_end, json.dumps(items), inv_value))
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "week_end": week_end,
-            "waste": analysis.get("total_waste_cost_week", 0),
-            "inv_value": analysis.get("total_stock_value")}
+    return {"ok": True, "week_end": week_end, "waste": payload["total_waste_cost"],
+            "inv_value": inv_value, "counted": counted}
 
 
 # ── Where the waste lands ───────────────────────────────────────────────────
@@ -1042,6 +1057,50 @@ def _prime_labor(net_sales, share_pct, measured) -> tuple:
     return measured_labor + rest * float(share_pct) / 100.0, len(measured), rest, None
 
 
+PROFILE_WEEKS = 8           # weeks of archive behind the month-end weekday weighting
+PROFILE_MIN_DAYS = 21       # fewer trading days than this: a flat run rate
+
+
+def _month_scale(restaurant_id, month_start, end, days_in_month, db_path=DB_PATH):
+    """(scale, words): how much the month-to-date figures are multiplied by
+    for the month end. Weighted by the restaurant's own average sales per
+    weekday over the PROFILE_WEEKS before `end` (the final days in the POS
+    archive) when it has PROFILE_MIN_DAYS of them — the month's weight over
+    the weight of the days already in — else the flat days_in_month /
+    days_elapsed (AI-19)."""
+    elapsed = (end - month_start).days + 1
+    flat = (days_in_month / elapsed, "the current daily run rate")
+    try:
+        from canonical_facts import FINAL_SQL
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT date, sales FROM labor_daily_history WHERE restaurant_id=? AND sales IS NOT NULL "
+                f"AND sales > 0 AND date > ? AND date <= ? AND {FINAL_SQL}",
+                (restaurant_id, (end - timedelta(weeks=PROFILE_WEEKS)).isoformat(), end.isoformat())).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[food_cost_intelligence] weekday profile unreadable for {restaurant_id}: {e}")
+        return flat
+    by_wd = {}
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r["date"])[:10])
+        except ValueError:
+            continue
+        by_wd.setdefault(d.weekday(), []).append(_f(r["sales"]))
+    if sum(len(v) for v in by_wd.values()) < PROFILE_MIN_DAYS:
+        return flat
+    weight = {wd: sum(v) / len(v) for wd, v in by_wd.items()}
+    month = [month_start + timedelta(days=k) for k in range(days_in_month)]
+    have = sum(weight.get(d.weekday(), 0.0) for d in month if d <= end)
+    total = sum(weight.get(d.weekday(), 0.0) for d in month)
+    if have <= 0 or total <= 0:
+        return flat
+    return total / have, "this restaurant's own weekday pattern (its average sales by day of week)"
+
+
 def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhold: bool = True) -> dict:
     """Month-to-date prime cost, projected to month end.
 
@@ -1079,26 +1138,38 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                     "forecast_kind": "profitability_month", "prime_cost_accuracy": acc,
                     "reason": acc.get("reason") or "past projections here have often been wide, so this one is not shown"}
     month_start = today.replace(day=1)
-    days_elapsed = (today - month_start).days + 1
-    if days_elapsed < MIN_DAYS_FOR_PROJECTION:
+    # Month to date runs through the last COMPLETE business day
+    # (cogs.last_complete_day): sales, COGS and labor end on one day, and
+    # the run rate scales by the days actually in the figures (FC-CALC-14,
+    # POS-03). Sales stopped at yesterday while the scale counted today, so
+    # day 7 of a 31-day month projected 6 days of sales x 31/7 — 14% low.
+    end = min(today - timedelta(days=1), _cogs.last_complete_day(restaurant_id, today))
+    days_elapsed = (end - month_start).days + 1
+    if days_elapsed < MIN_DAYS_FOR_PROJECTION or days_elapsed < 1:
         # The same caveat every other answer carries (audit 10/1/26: the
         # first days of each month returned no basis at all).
         return {"available": False, "claim_kind": "forecast",
-                "reason": f"only {days_elapsed} days into the month — a run rate this early "
-                          f"is noise (needs {MIN_DAYS_FOR_PROJECTION})",
+                "reason": f"only {max(0, days_elapsed)} complete days into the month — a run rate this early "
+                          f"is noise (needs {max(1, MIN_DAYS_FOR_PROJECTION)})",
                 "basis": ("Prime cost = COGS + labor, month to date, projected to month end at the current "
                           "daily run rate. This is prime cost, not net profit — rent, utilities and overheads "
                           "are not in this system.")}
 
     missing = []
-    net_sales, sales_why = _cogs.net_sales_in_window(restaurant_id, month_start, today)
+    net_sales, sales_why = _cogs.net_sales_in_window(restaurant_id, month_start, end)
     if net_sales is None:
         missing.append({"component": "net sales", "why": sales_why or "unavailable"})
 
-    fc = _cogs.build_food_cost_pct(restaurant_id, days=days_elapsed, db_path=db_path, today=today)
+    fc = _cogs.build_food_cost_pct(restaurant_id, days=days_elapsed, db_path=db_path, today=end)
     if not fc.get("ok"):
         for m in (fc.get("missing") or []):
             missing.append(m)
+    # COGS for THIS month to date, or missing (FC-CALC-01): a Back Office
+    # kitchen measures count to count, and September's whole COGS added to
+    # October's 16 days of labor read prime cost by multiples.
+    cogs_mtd, cogs_why = _cogs.window_cogs(fc, month_start, end)
+    if fc.get("ok") and cogs_mtd is None:
+        missing.append({"component": "food cost for this month", "why": cogs_why})
 
     labor_cost, labor_pct, labor_why, labor_period = None, None, None, None
     labor_period_start = labor_period_end = None
@@ -1137,7 +1208,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     # report said prime cost 58% last night while the brief said 61.2% month
     # to date on a labor share carried over from another period, and neither
     # said why.
-    measured = _dsr_measured_labor(restaurant_id, month_start, today - timedelta(days=1), db_path=db_path)
+    measured = _dsr_measured_labor(restaurant_id, month_start, end, db_path=db_path)
     labor_measured_all = False
     if measured and net_sales is not None:
         _lc, _n, _rest, _why = _prime_labor(net_sales, labor_pct, measured)
@@ -1167,7 +1238,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                 "reason": "; ".join(m["component"] for m in missing) + " missing"}
 
     days_in_month = ((month_start + timedelta(days=32)).replace(day=1) - month_start).days
-    cogs_mtd = _f(fc["cogs"])
+    cogs_mtd = _f(cogs_mtd)
     labor_cost, n_measured, share_sales, _lwhy = _prime_labor(net_sales, labor_pct, measured)
     if n_measured and share_sales:
         labor_basis = "mixed"
@@ -1196,7 +1267,7 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     # the month's net carries the drink sales — so a bar-heavy month reads
     # low against a full prime cost. Said, with the drinks' share, and never
     # set against the 60–65% prime benchmark.
-    bev_mtd = _cogs.beverage_sales_in_window(restaurant_id, month_start, today - timedelta(days=1),
+    bev_mtd = _cogs.beverage_sales_in_window(restaurant_id, month_start, end,
                                              db_path=db_path)
     beverage_basis = "excluded" if bev_mtd else "none_measured"
     if bev_mtd:
@@ -1204,7 +1275,11 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
                   f"${bev_mtd:,.0f} of drink sales ({round(bev_mtd / net_sales * 100) if net_sales else 0}% of "
                   "sales) — so it reads low against a full prime cost and is not comparable with its 60–65% "
                   "benchmark.")
-    scale = days_in_month / days_elapsed
+    # The month-end run rate, weighted by this restaurant's own weekday
+    # pattern when the archive holds one (AI-19): a month that opened on a
+    # weekend ran high at a flat days_in_month / days_elapsed.
+    scale, scale_basis = _month_scale(restaurant_id, month_start, end, days_in_month, db_path=db_path)
+    basis = basis.replace("at the current daily run rate", f"at {scale_basis}")
     projected_sales = round(net_sales * scale)
     projected_prime = round(prime_mtd * scale)
 
@@ -1216,18 +1291,21 @@ def profitability_projection(restaurant_id: int, db_path: str = DB_PATH, withhol
     prev_sales, prev_sales_why = _cogs.net_sales_in_window(restaurant_id, prev_start, prev_end)
     prev_fc = _cogs.build_food_cost_pct(
         restaurant_id, days=(prev_end - prev_start).days + 1, db_path=db_path, today=prev_end)
+    prev_cogs, prev_cogs_why = _cogs.window_cogs(prev_fc, prev_start, prev_end)
     prev_measured = _dsr_measured_labor(restaurant_id, prev_start, prev_end, db_path=db_path) if prev_sales else {}
     prev_labor = _prime_labor(prev_sales, labor_pct, prev_measured)[0] if prev_sales else None
-    if prev_sales and prev_fc.get("ok") and prev_labor is not None:
+    if prev_sales and prev_cogs is not None and prev_labor is not None:
         # Last month measured the same way: the nightly report's labor
         # dollars where it measured them, the one labor share elsewhere.
         # Where both months rest on the share alone it cancels out, and the
         # month-over-month movement is entirely the FOOD cost component —
-        # said in comparison_basis.
-        prev_prime = _f(prev_fc["cogs"]) + prev_labor
+        # said in comparison_basis. Its COGS is last month's own, never a
+        # count period that merely ended near it (FC-CALC-01).
+        prev_prime = prev_cogs + prev_labor
         prev_pct = round(prev_prime / prev_sales * 100, 1)
     else:
-        prev_why = prev_sales_why or "last month cannot be measured the same way"
+        prev_why = prev_sales_why or (prev_cogs_why if prev_sales else None) or \
+            "last month cannot be measured the same way"
 
     delta_dollars = None
     if prev_pct is not None:
@@ -1693,14 +1771,18 @@ def _position_block(fc) -> str:
         why = "; ".join(f"{m['component']} ({m['why']})" for m in (fc.get("missing") or []))
         return (f"(Food cost % cannot be computed: {why or 'inputs missing'}. "
                 f"Do not state or estimate a food cost percentage.)")
-    line = f"Food cost is {fc['pct']}% of net sales over {fc['window_days']} days ({fc['label']})."
+    # One denominator, named for what it is (FC-CALC-11): food sales, or
+    # net sales when drinks are not separable on file.
+    over = "net sales" if fc.get("sales_basis") == "net_sales" else "food sales"
+    denom = fc.get("food_sales") if fc.get("food_sales") is not None else fc.get("net_sales")
+    line = f"Food cost is {fc['pct']}% of {over} over {fc['window_days']} days ({fc['label']})."
     if fc.get("target"):
         line += (f" Their own target is {fc['target']}%, so they are "
                  f"{abs(fc['variance_pts'])} points "
                  f"{'over' if fc['variance_pts'] > 0 else 'under'} it.")
-    line += (f" COGS ${fc['cogs']:,.0f} on ${fc['net_sales']:,.0f} net sales "
-             f"(opening ${fc['opening']:,.0f} + purchases ${fc['purchases']:,.0f} "
-             f"- closing ${fc['closing']:,.0f}).")
+    line += (f" COGS ${_f(fc['cogs']):,.0f} on ${_f(denom):,.0f} {over} "
+             f"(opening ${_f(fc['opening']):,.0f} + purchases ${_f(fc['purchases']):,.0f} "
+             f"- closing ${_f(fc['closing']):,.0f}).")
     return line
 
 
@@ -1813,11 +1895,17 @@ def typed_facts(drivers=None, food_cost=None, profitability=None) -> list:
                 F("food.cost.target_pct", fc.get("target"), "%", "plan"),
                 F("food.cost.variance_pts", fc.get("variance_pts"), "pts", "computed")]
         out += [F(f"food.cost.{k}", fc.get(k), "$", "measured")
-                for k in ("cogs", "net_sales", "opening", "purchases", "closing")]
+                for k in ("cogs", "food_sales", "net_sales", "opening", "purchases", "closing")]
     pp = profitability or {}
     if pp.get("available"):
-        out += [F(f"food.profit.{k}", pp.get(k), "%", "measured")
-                for k in ("prime_cost_pct", "food_cost_pct", "labor_pct", "prev_month_prime_pct")]
+        # Labor carried from the shift analysis's own period (a share, not
+        # these days' labor) makes labor % and prime % an estimate, never
+        # "measured" (AI-19); only the nightly report's every-night labor is.
+        lk = "measured" if pp.get("labor_basis") == "measured" else "estimate"
+        out += [F("food.profit.prime_cost_pct", pp.get("prime_cost_pct"), "%", lk),
+                F("food.profit.labor_pct", pp.get("labor_pct"), "%", lk),
+                F("food.profit.food_cost_pct", pp.get("food_cost_pct"), "%", "measured"),
+                F("food.profit.prev_month_prime_pct", pp.get("prev_month_prime_pct"), "%", lk)]
         out += [F("food.profit.net_sales_mtd", pp.get("net_sales_mtd"), "$", "measured"),
                 F("food.profit.projected_sales", pp.get("projected_sales"), "$", "projection", "month"),
                 F("food.profit.projected_prime_cost", pp.get("projected_prime_cost"), "$", "projection", "month")]

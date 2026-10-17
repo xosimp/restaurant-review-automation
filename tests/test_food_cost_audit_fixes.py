@@ -380,10 +380,13 @@ def test_food_cost_pct_is_cogs_over_sales_against_the_restaurants_target(monkeyp
     _m.update_restaurant(rid, {"food_cost_target_source": "set"}, db_path=db_path)
     monkeypatch.setattr(cogs_mod, "net_sales_in_window", lambda r, s, e: (10000.0, None))
     monkeypatch.setattr(cogs_mod, "purchases_in_window", lambda r, s, e, db_path=None: (3000.0, 4))
-    start = date.today() - timedelta(days=27)
+    # Two FULL counts (FC-CALC-02) at the window's edges: the window ends on
+    # the last complete day (FC-CALC-15), opening is the day before it starts.
+    end = cogs_mod.last_complete_day(rid)
+    start = end - timedelta(days=27)
     monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None, **_bounds: ([
-        {"week_end": start.isoformat(), "inv_value": 5000.0},
-        {"week_end": date.today().isoformat(), "inv_value": 4800.0},
+        {"week_end": (start - timedelta(days=1)).isoformat(), "inv_value": 5000.0, "counted": True},
+        {"week_end": end.isoformat(), "inv_value": 4800.0, "counted": True},
     ], 2))
     out = cogs_mod.build_food_cost_pct(rid, db_path=db_path)
     # COGS = 5000 + 3000 - 4800 = 3200 -> 32.0% of 10000
@@ -397,10 +400,11 @@ def test_an_impossible_count_is_refused_rather_than_reported_as_negative(monkeyp
     rid = _restaurant(db_path)
     monkeypatch.setattr(cogs_mod, "net_sales_in_window", lambda r, s, e: (10000.0, None))
     monkeypatch.setattr(cogs_mod, "purchases_in_window", lambda r, s, e, db_path=None: (100.0, 1))
-    start = date.today() - timedelta(days=27)
+    end = cogs_mod.last_complete_day(rid)
+    start = end - timedelta(days=27)
     monkeypatch.setattr(waste_trend, "load_waste_history", lambda r, l, db_path=None, **_bounds: ([
-        {"week_end": start.isoformat(), "inv_value": 1000.0},
-        {"week_end": date.today().isoformat(), "inv_value": 9000.0},
+        {"week_end": (start - timedelta(days=1)).isoformat(), "inv_value": 1000.0, "counted": True},
+        {"week_end": end.isoformat(), "inv_value": 9000.0, "counted": True},
     ], 2))
     out = cogs_mod.build_food_cost_pct(rid, db_path=db_path)
     assert out["ok"] is False and out["pct"] is None

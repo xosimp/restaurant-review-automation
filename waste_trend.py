@@ -69,14 +69,51 @@ def _label(d):
     return f"{d.month}/{d.day}"
 
 
+def _counted(items, week_end):
+    """(counted, counted_on, share) for one snapshot's items: the share of
+    its food stock value on items recounted on the count day — the
+    snapshot's own date or the day before it, since the 5am scheduled
+    snapshot reads the count taken the day before (FC-CALC-02). counted
+    when that share reaches cogs.COUNTED_SHARE; counted_on is the count
+    day itself. Items carrying no last_recount_at (the legacy CSV blob)
+    are never a count."""
+    import cogs as _cogs
+    total, by_day = 0.0, {}
+    days = {week_end.isoformat(), (week_end - timedelta(days=1)).isoformat()}
+    for it in items or ():
+        if not isinstance(it, dict) or _cogs.is_bar_item(it.get("category"), it.get("name") or it.get("item")):
+            continue
+        v = max(0.0, _f(it.get("current_stock"))) * _f(it.get("unit_cost"))
+        if v <= 0:
+            continue
+        total += v
+        day = str(it.get("last_recount_at") or "")[:10]
+        if day in days:
+            by_day[day] = by_day.get(day, 0.0) + v
+    if total <= 0 or not by_day:
+        return False, None, 0.0
+    share = sum(by_day.values()) / total
+    if share < _cogs.COUNTED_SHARE:
+        return False, None, round(share, 3)
+    return True, max(by_day, key=lambda d: by_day[d]), round(share, 3)
+
+
 def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
     """One chart week from one stored snapshot. Per-item detail (costs by
     item and by category, the purchase total behind the waste rate) only
     exists when the snapshot carried items_json — older rows and seeded
-    rows carry the total alone."""
+    rows carry the total alone.
+
+    `waste` is None when the snapshot measured none (FC-CALC-12): the
+    scheduled writer stores null for a week nobody logged waste in, and a
+    week with no figure at all is no figure — never a measured $0 that
+    read as the best week and "trending down". `counted` / `counted_on`
+    say whether its stock value is a real count (cogs.is_counted)."""
     try:
         data = json.loads(waste_json or "{}")
     except Exception:
+        data = {}
+    if not isinstance(data, dict):
         data = {}
     try:
         we = date.fromisoformat(week_end)
@@ -87,18 +124,23 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
     # therefore "the seven days ending when this was counted", and the payload
     # says so rather than implying a Mon-Sun week the data never described.
     ws = we - timedelta(days=6)
+    raw_waste = data.get("total_waste_cost")
     week = {
         "week_end": we.isoformat(),
         "start": ws.isoformat(),
         "label": _label(we),
         "start_label": _label(ws),
-        "waste": round(_f(data.get("total_waste_cost")), 2),
+        "waste": None if raw_waste is None else round(_f(raw_waste), 2),
         "rate": None,
         "inv_value": None,
         "purchased": None,
         "top_items": [{"item": n, "cost": None} for n in (data.get("top_items") or []) if n],
         "categories": None,
         "has_items": False,
+        # A count only when the writer (or the weekly summary) said so; a
+        # row with per-item detail is judged from its items below.
+        "counted": bool(data.get("counted")),
+        "counted_on": (str(data.get("counted_on"))[:10] if data.get("counted") and data.get("counted_on") else None),
     }
     if data.get("waste_rate_pct"):
         week["rate"] = round(_f(data.get("waste_rate_pct")), 1)
@@ -121,15 +163,11 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
             items = None
     if items:
         per_item, cats = [], {}
-        purchased = inv_value = 0.0
+        purchased = 0.0
         for it in items:
             unit_cost = _f(it.get("unit_cost"))
             waste_cost = _f(it.get("waste_last_week")) * unit_cost
             purchased += _f(it.get("last_order_qty")) * unit_cost
-            # Alcohol is the Bar's, never the food COGS anchor (R8).
-            import cogs as _cogs
-            if not _cogs.is_bar_item(it.get("category"), it.get("name") or it.get("item")):
-                inv_value += _f(it.get("current_stock")) * unit_cost
             cat = (it.get("category") or "other").strip().lower() or "other"
             cats[cat] = cats.get(cat, 0.0) + waste_cost
             if waste_cost > 0 and it.get("item"):
@@ -138,9 +176,15 @@ def _week_from_row(week_end, waste_json, items_json, inv_value_col=None):
         week["top_items"] = per_item[:5]
         week["categories"] = {k: round(v, 2) for k, v in cats.items() if v > 0}
         week["purchased"] = round(purchased, 2)
-        week["inv_value"] = round(inv_value, 2)
+        # Alcohol is the Bar's, never the food COGS anchor (R8), and a
+        # negative ledger stock is a count to take, not negative dollars on
+        # the shelf (FC-CALC-23) — the one rule, cogs.food_stock_value.
+        import cogs as _cogs
+        if any(isinstance(it, dict) and "current_stock" in it for it in items):
+            week["inv_value"] = _cogs.food_stock_value(items)
         week["has_items"] = True
-        if purchased > 0 and week["waste"] > 0:
+        week["counted"], week["counted_on"], week["counted_share"] = _counted(items, we)
+        if purchased > 0 and week["waste"]:
             week["rate"] = round(week["waste"] / purchased * 100, 1)
     return week
 
@@ -273,12 +317,52 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
         buckets[key] = w
     order.sort()
     weeks = [buckets[k] for k in order]
+    # A week whose snapshot measured no waste (nothing logged in it) is no
+    # figure, dropped from the series the way an unmeasured Back Office
+    # count is (FC-CALC-12); food cost % still reads its stock value
+    # (include_unmeasured).
+    if not include_unmeasured:
+        weeks = [w for w in weeks if w.get("waste") is not None]
+    _mark_partial(weeks)
     # total is every week on file, not just the ones fetched — build_waste_trend
     # decides which range buttons to offer from it.
     total = total_weeks + extra
     if limit and len(weeks) > limit:
         weeks = weeks[-limit:]
     return weeks, total
+
+
+def _mark_partial(weeks):
+    """Flag the newest week `partial` when its trailing seven days overlap
+    the week before it (AI-07). An ISO week's figure is its newest daily
+    snapshot — the seven days ending that day — so mid-week the current
+    bucket shares up to six days with last week's, and "week over week"
+    compared Tue–Mon with Mon–Sun. A partial week is charted, never
+    compared or forecast from (waste_trend_stats, forecast_log)."""
+    for w in weeks:
+        w.pop("partial", None)
+    if len(weeks) < 2 or weeks[-1].get("source") == "back_office_count":
+        return weeks
+    try:
+        gap = (date.fromisoformat(weeks[-1]["week_end"]) - date.fromisoformat(weeks[-2]["week_end"])).days
+    except (KeyError, TypeError, ValueError):
+        return weeks
+    if gap < 7:
+        weeks[-1]["partial"] = True
+    return weeks
+
+
+def complete_weeks(weeks):
+    """The series without a partial newest week (_mark_partial): what every
+    comparison, trend and forecast reads (AI-07)."""
+    return [w for w in weeks or () if not w.get("partial")]
+
+
+def _comparable(weeks):
+    """Complete weeks with a measured figure — the series every statistic
+    is computed over (FC-CALC-12, AI-07). A partial week only ever sits
+    last, so indices into this list are indices into the series."""
+    return [w for w in complete_weeks(weeks) if w.get("waste") is not None]
 
 
 def _direction(values):
@@ -409,7 +493,10 @@ def _anomalies(values):
 def waste_trend_stats(weeks, target_weekly=None):
     """Every derived number the card shows, computed once from the series.
     Pure: weeks in, dict out. All money is dollars per week unless the key
-    says otherwise."""
+    says otherwise. A week with no measured waste, or the partial newest
+    week (_mark_partial), is not in any figure (FC-CALC-12, AI-07): every
+    comparison is between complete, non-overlapping weeks."""
+    weeks = _comparable(weeks)
     n = len(weeks)
     values = [w["waste"] for w in weeks]
     stats = {
@@ -545,15 +632,21 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
             out.append({"text": f"Waste is holding steady across the last {n} weeks — no clear trend either way.",
                         "tone": "neutral", "confidence": conf_note, "trend_strength_pct": strength})
 
+    weeks = _comparable(weeks)
     if stats.get("wow_delta") is not None:
         d, p = stats["wow_delta"], stats["wow_pct"]
         pct_txt = f" ({abs(p):g}%)" if p is not None else ""
+        # Named by the week it is: the newest COMPLETE week (AI-07), which
+        # mid-week is last week, not "this week".
+        wk = f"the week ending {weeks[-1]['label']}" if weeks else "the latest week"
         if abs(d) < 1:
-            out.append({"text": "This week's waste is level with last week.", "tone": "neutral"})
+            out.append({"text": f"Waste in {wk} was level with the week before.", "tone": "neutral"})
         elif d > 0:
-            out.append({"text": f"Waste rose {_money(d)}{pct_txt} this week compared to last week.", "tone": "bad"})
+            out.append({"text": f"Waste rose {_money(d)}{pct_txt} in {wk} compared to the week before.",
+                        "tone": "bad"})
         else:
-            out.append({"text": f"Waste fell {_money(d)}{pct_txt} this week compared to last week.", "tone": "good"})
+            out.append({"text": f"Waste fell {_money(d)}{pct_txt} in {wk} compared to the week before.",
+                        "tone": "good"})
 
     worst = stats.get("worst")
     if worst and n >= WEEKS_FOR_COMPARISON and stats.get("avg"):
@@ -754,8 +847,10 @@ def build_waste_trend(restaurant_id, range_key="8w", analysis=None, is_live=True
             "anomaly": flag_by_index.get(i),
             "best": bool(stats["best"] and stats["best"]["index"] == i and len(weeks) >= WEEKS_FOR_COMPARISON),
             "worst": bool(stats["worst"] and stats["worst"]["index"] == i and len(weeks) >= WEEKS_FOR_COMPARISON),
-            "over_target": bool(target and w["waste"] > target),
+            "over_target": bool(target and w.get("waste") is not None and w["waste"] > target),
             "this_week": i == len(weeks) - 1,
+            # The newest week still in progress: charted, never compared (AI-07).
+            "partial": bool(w.get("partial")),
         }
 
     categories = sorted({c for w in weeks if w.get("categories") for c in w["categories"]})

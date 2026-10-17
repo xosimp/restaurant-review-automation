@@ -171,7 +171,10 @@ def test_food_cost_runs_count_to_count_on_back_office_invoices_and_food_sales(db
     out = cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)
     assert out["ok"] and (out["start"], out["end"]) == ((a + timedelta(days=1)).isoformat(), b.isoformat())
     assert (out["opening"], out["purchases"], out["closing"]) == (1000.0, 2000.0, 900.0)
-    assert out["net_sales"] == 14 * 200.0, "food sales, never net sales with the bar in it"
+    # One denominator key on every path (FC-CALC-11): food_sales; a Back
+    # Office kitchen has no net sales in it at all.
+    assert out["food_sales"] == 14 * 200.0, "food sales, never net sales with the bar in it"
+    assert out["sales_basis"] == "food_sales" and out["net_sales"] is None
     assert out["pct"] == round(2100.0 / 2800.0 * 100, 1) and out["window_days"] == 14
 
 

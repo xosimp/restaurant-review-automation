@@ -405,6 +405,10 @@ def _food_cost_pct(rid, start, end, param, db_path):
     if not out or not out.get("ok"):
         why = "; ".join(m.get("why", "") for m in (out or {}).get("missing") or []) or "not computable"
         return None, why
+    # The window measured must be the one asked (FC-CALC-01): an outcome's
+    # "after" read a Back Office count period that ended before the action.
+    if not cogs.covers_window(out, _d(start), _d(end)):
+        return None, cogs.window_cogs(out, _d(start), _d(end))[1]
     return out["pct"], out.get("basis") or ""
 
 
