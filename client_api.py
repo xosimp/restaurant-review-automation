@@ -162,7 +162,14 @@ def food_read_backoffice(rid, restaurant=None):
         feed = _bo_r.feed_state(rid)
         if not feed.get("on_file"):
             return None
-        key = "inv-insight:%s:bo:%s:%s" % (rid, feed.get("invoices_through"), feed.get("last_import"))
+        # Keyed on every input the read uses (SCALE-12): the invoices, and
+        # backoffice_counts.inputs_stamp - counts (MAX updated_at), the
+        # recipe book's loaded_at, the nightly report's newest food-sales
+        # night - and the restaurant's own date (the fiscal week it reads).
+        import backoffice_counts as _bc_r
+        from models import _restaurant_today as _rt_r
+        key = "inv-insight:%s:bo:%s:%s:%s:%s" % (rid, feed.get("invoices_through"), feed.get("last_import"),
+                                                 _bc_r.inputs_stamp(rid), _rt_r(rid))
         got = _cache_get(key)
         if got is None:
             from backoffice_read import food_read
