@@ -7122,9 +7122,19 @@ def _clean_quickcount_items(items):
         if not isinstance(raw, dict):
             rejected.append({"name": None, "why": "not an item"})
             continue
-        name = str(raw.get("name") or "").strip()[:120]
+        name = str(raw.get("name") or "").strip()
         if not name:
             rejected.append({"name": None, "why": "no name"})
+            continue
+        # The blob every food-cost read parses is bounded (FC/Bar audit
+        # 10/16/26, SEC-01): a row past the caps is named back, never stored.
+        if len(name) > FOOD_TRACKER_NAME_MAX:
+            rejected.append({"name": name[:FOOD_TRACKER_NAME_MAX],
+                             "why": f"name is longer than {FOOD_TRACKER_NAME_MAX} characters"})
+            continue
+        unit = str(raw.get("unit") or "").strip()
+        if len(unit) > FOOD_TRACKER_UNIT_MAX:
+            rejected.append({"name": name, "why": f"unit is longer than {FOOD_TRACKER_UNIT_MAX} characters"})
             continue
 
         def _num(key, required):
@@ -7147,20 +7157,88 @@ def _clean_quickcount_items(items):
         if usage is None:
             rejected.append({"name": name, "why": "usage is not a number"})
             continue
-        clean.append({"name": name, "unit": str(raw.get("unit") or "")[:40],
-                      "price": price, "usage": usage})
+        clean.append({"name": name, "unit": unit, "price": price, "usage": usage})
     return clean, rejected
+
+
+# The food tracker's blob (client_data.food_cost_json) — every food-cost read
+# parses it, so what one login can write into it is bounded (FC/Bar audit
+# 10/16/26, SEC-01: a looped 5 MB custom-item name grew it without limit).
+FOOD_TRACKER_NAME_MAX = 80
+FOOD_TRACKER_UNIT_MAX = 20
+FOOD_TRACKER_CUSTOM_MAX = 200        # custom items kept
+FOOD_TRACKER_COUNT_MAX = 200         # rows in one quick count (and so in current / previous)
+# Writes to the blob per restaurant per minute (any login, web or phone).
+FOOD_TRACKER_WRITES_PER_MINUTE = 60
+
+
+def _food_tracker_throttled(restaurant_id) -> bool:
+    """The per-restaurant write limit on the tracker's POSTs — the shared
+    durable sliding window (ai_utils.ai_rate_limited, bucket
+    'foodtracker')."""
+    try:
+        import ai_utils
+        return ai_utils.ai_rate_limited(f"foodtracker:{int(restaurant_id)}",
+                                        max_calls=FOOD_TRACKER_WRITES_PER_MINUTE, window_secs=60)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="food_tracker_throttle", restaurant_id=restaurant_id, kind="request")
+        return False
+
+
+def _mutate_food_cost_blob(restaurant_id, change):
+    """Read, change and write client_data.food_cost_json in ONE write
+    transaction (db_dialect.begin_write: SQLite BEGIN IMMEDIATE, Postgres the
+    restaurant's own advisory lock), so a phone quick count and a web
+    custom-item add in the same second both land (FC/Bar audit 10/16/26,
+    SCALE-05 - "owner edits never vanish"). `change(fc)` mutates the parsed
+    blob in place and returns (result, changed); the blob is written only
+    when changed. Returns result."""
+    import json as _json_blob
+    import db_dialect
+    from models import get_conn as _gc_blob
+    rid = int(restaurant_id)
+    conn = _gc_blob()
+    try:
+        db_dialect.begin_write(conn, "food_cost_json", rid)
+        row = conn.execute("SELECT id, food_cost_json FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+        fc = {}
+        if row and row["food_cost_json"]:
+            try:
+                fc = _json_blob.loads(row["food_cost_json"])
+            except Exception:
+                fc = {}
+        if not isinstance(fc, dict):
+            fc = {}
+        result, changed = change(fc)
+        if changed:
+            payload = _json_blob.dumps(fc)
+            if row:
+                conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') "
+                             "WHERE restaurant_id=?", (payload, rid))
+            else:
+                conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)", (rid, payload))
+            conn.commit()
+        else:
+            conn.rollback()
+        return result
+    except BaseException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def _do_food_cost_quickcount(restaurant_id, items):
     """Save Big-8 ingredient prices, compute week-over-week drift, return alerts."""
-    import json as _json_fc
     from datetime import datetime as _dt_fc
-    from models import get_client_data as _gcd, get_conn as _gcc
 
     if not items or not isinstance(items, list):
         return {"ok": False, "error": "No items provided"}, 400
-    if len(items) > 200:
+    if len(items) > FOOD_TRACKER_COUNT_MAX:
         return {"ok": False, "error": "Too many items in one count."}, 400
 
     # Validate and coerce before anything is persisted. The raw array used to
@@ -7174,27 +7252,32 @@ def _do_food_cost_quickcount(restaurant_id, items):
                 "rejected": rejected}, 400
 
     rid = restaurant_id
+    if _food_tracker_throttled(rid):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
     now_str = _dt_fc.now().strftime("%Y-%m-%d")
 
-    # Load existing saved data
-    existing_raw = _gcd(rid)
-    existing_fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            existing_fc = _json_fc.loads(existing_raw["food_cost_json"])
-        except Exception:
-            existing_fc = {}
+    def _change(existing_fc):
+        # Rotate current → previous — once per day. A second count the same
+        # day (a double-submit, a correction) replaces today's count and keeps
+        # the real baseline; it used to rotate again, so last week's prices
+        # were replaced by this week's and every drift read zero (DATA-27).
+        today_count = existing_fc.get("current")
+        if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
+            prev = existing_fc.get("previous") or None
+        else:
+            prev = today_count
+        if not isinstance(prev, dict):
+            prev = None
+        # Merge, don't replace. Rebuilding the blob from scratch dropped the
+        # custom_items key that _do_save_food_cost_custom_item writes and the
+        # template renders — so every quick count silently deleted every
+        # custom ingredient the owner had added. Read and written in one
+        # transaction, so a custom item added meanwhile stays (SCALE-05).
+        existing_fc["current"] = {"submitted_at": now_str, "items": items}
+        existing_fc["previous"] = prev or {}
+        return prev, True
 
-    # Rotate current → previous — once per day. A second count the same day
-    # (a double-submit, a correction) replaces today's count and keeps the
-    # real baseline; it used to rotate again, so last week's prices were
-    # replaced by this week's and every drift read zero (DATA-27).
-    today_count = existing_fc.get("current")
-    if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
-        prev = existing_fc.get("previous") or None
-    else:
-        prev = today_count
-    new_current = {"submitted_at": now_str, "items": items}
+    prev = _mutate_food_cost_blob(rid, _change)
 
     # Compute price drift vs previous submission
     drift = []
@@ -7227,24 +7310,6 @@ def _do_food_cost_quickcount(restaurant_id, items):
             except Exception:
                 pass
     drift.sort(key=lambda x: abs(x["weekly_impact"]), reverse=True)
-
-    # Merge, don't replace. Rebuilding the blob from scratch dropped the
-    # custom_items key that _do_save_food_cost_custom_item writes and the
-    # template renders — so every quick count silently deleted every custom
-    # ingredient the owner had added.
-    existing_fc["current"] = new_current
-    existing_fc["previous"] = prev or {}
-    save_payload = _json_fc.dumps(existing_fc)
-    conn = _gcc()
-    existing_row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-    if existing_row:
-        conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                     (save_payload, rid))
-    else:
-        conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)",
-                     (rid, save_payload))
-    conn.commit()
-    conn.close()
 
     total_impact = sum(d["weekly_impact"] for d in drift if d["direction"] == "up")
     return {
@@ -7360,39 +7425,35 @@ def food_cost_tracker(current_user):
 
 
 def _do_save_food_cost_custom_item(restaurant_id, name, unit):
-    """Persist a custom ingredient name+unit to food_cost_json so it appears on next load."""
-    import json as _jci
-    name = (name or "").strip()
-    unit = (unit or "").strip()
+    """Persist a custom ingredient name+unit to food_cost_json so it appears
+    on next load. Bounded (SEC-01): a name of at most FOOD_TRACKER_NAME_MAX
+    characters, a unit of FOOD_TRACKER_UNIT_MAX, at most
+    FOOD_TRACKER_CUSTOM_MAX items; read and written in one transaction
+    (SCALE-05)."""
+    name = str(name or "").strip()
+    unit = str(unit or "").strip()
     if not name:
         return {"ok": False, "error": "Name required"}, 400
+    if len(name) > FOOD_TRACKER_NAME_MAX:
+        return {"ok": False, "error": f"Keep the name to {FOOD_TRACKER_NAME_MAX} characters."}, 400
+    if len(unit) > FOOD_TRACKER_UNIT_MAX:
+        return {"ok": False, "error": f"Keep the unit to {FOOD_TRACKER_UNIT_MAX} characters."}, 400
+    if _food_tracker_throttled(restaurant_id):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
 
-    rid = restaurant_id
-    from models import get_client_data as _gcd_ci, get_conn as _gcc_ci
-    existing_raw = _gcd_ci(rid)
-    fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            fc = _jci.loads(existing_raw["food_cost_json"])
-        except Exception:
-            fc = {}
-
-    custom_items = fc.get("custom_items", [])
-    existing_names = [ci["name"].lower() for ci in custom_items if ci.get("name")]
-    if name.lower() not in existing_names:
+    def _change(fc):
+        custom_items = [ci for ci in (fc.get("custom_items") or []) if isinstance(ci, dict)]
+        if name.lower() in {str(ci.get("name") or "").lower() for ci in custom_items if ci.get("name")}:
+            return "exists", False
+        if len(custom_items) >= FOOD_TRACKER_CUSTOM_MAX:
+            return "full", False
         custom_items.append({"name": name, "unit": unit})
         fc["custom_items"] = custom_items
-        payload = _jci.dumps(fc)
-        conn = _gcc_ci()
-        row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-        if row:
-            conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                         (payload, rid))
-        else:
-            conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)", (rid, payload))
-        conn.commit()
-        conn.close()
+        return "added", True
 
+    if _mutate_food_cost_blob(restaurant_id, _change) == "full":
+        return {"ok": False, "error": f"The tracker holds {FOOD_TRACKER_CUSTOM_MAX} custom items — remove one "
+                                      "before adding another."}, 400
     return {"ok": True, "name": name, "unit": unit}, 200
 
 
@@ -7413,30 +7474,23 @@ def save_food_cost_custom_item(current_user):
 
 
 def _do_delete_food_cost_custom_item(restaurant_id, name):
-    """Remove a saved custom ingredient by name from food_cost_json."""
-    import json as _jcd
-    name = (name or "").strip().lower()
+    """Remove a saved custom ingredient by name from food_cost_json — read and
+    written in one transaction (SCALE-05)."""
+    name = str(name or "").strip().lower()
     if not name:
         return {"ok": False, "error": "Name required"}, 400
+    if _food_tracker_throttled(restaurant_id):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
 
-    rid = restaurant_id
-    from models import get_client_data as _gcd_d, get_conn as _gcc_d
-    existing_raw = _gcd_d(rid)
-    fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            fc = _jcd.loads(existing_raw["food_cost_json"])
-        except Exception:
-            fc = {}
+    def _change(fc):
+        custom_items = [ci for ci in (fc.get("custom_items") or []) if isinstance(ci, dict)]
+        kept = [ci for ci in custom_items if str(ci.get("name") or "").lower() != name]
+        if len(kept) == len(custom_items):
+            return None, False
+        fc["custom_items"] = kept
+        return None, True
 
-    custom_items = fc.get("custom_items", [])
-    fc["custom_items"] = [ci for ci in custom_items if (ci.get("name") or "").lower() != name]
-    payload = _jcd.dumps(fc)
-    conn = _gcc_d()
-    conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                 (payload, rid))
-    conn.commit()
-    conn.close()
+    _mutate_food_cost_blob(restaurant_id, _change)
     return {"ok": True}, 200
 
 

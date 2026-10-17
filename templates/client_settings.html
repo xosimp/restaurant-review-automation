@@ -1290,11 +1290,26 @@ async function fcCreateMenuItem() {
   fcLoadRecipes();
 }
 
+// The two inventory writes that reach the POS run on the admin job pool
+// (FC/Bar audit 10/16/26, SEC-03): the answer is a job id, and the result
+// comes from polling it, as refreshIgToken does.
+async function fcAdminJob(url, opts) {
+  const res = await fetch(url, opts);
+  const started = await res.json();
+  if (!started.ok || !started.job_id) return started;
+  for (let i = 0; i < 80; i++) {
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    const job = await (await fetch('/admin/api/admin-jobs/' + encodeURIComponent(started.job_id))).json();
+    if (job.status === 'pending') continue;
+    return job;
+  }
+  return {ok: false, error: 'Still running — reload this page in a minute to see the result.'};
+}
+
 async function fcDiscoverMenuItems() {
   const el = document.getElementById('fc-discover-result');
   el.textContent = 'Scanning recent POS sales…';
-  const res = await fetch('/admin/inventory/discover-menu-items/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
+  const data = await fcAdminJob('/admin/inventory/discover-menu-items/{{ restaurant.id }}', {method:'POST'});
   el.textContent = data.ok
     ? `✓ ${data.discovered} new, ${data.updated} updated, ${data.total_seen} menu items seen`
         + (data.hidden ? ` · ${data.hidden} modifiers, add-ons and money lines kept off this list` : '')
@@ -1376,14 +1391,14 @@ async function fcDeleteRecipeRow(menuItemId, recipeIngredientId) {
 async function fcResyncDepletion() {
   const businessDate = document.getElementById('fc-resync-date').value;
   const resultEl = document.getElementById('fc-resync-result');
-  const res = await fetch('/admin/inventory/resync-depletion/{{ restaurant.id }}', {
+  fcShowResult(resultEl, true, 'Reading the day from the POS…');
+  const data = await fcAdminJob('/admin/inventory/resync-depletion/{{ restaurant.id }}', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify(businessDate ? {business_date: businessDate} : {})
   });
-  const data = await res.json();
   if (data.ok) {
-    const unmapped = data.unmapped_selections.length
-      ? ` — ${data.unmapped_selections.length} unmapped selection(s), check recipes`
+    const unmapped = (data.unmapped_selections || []).length
+      ? ` — ${(data.unmapped_selections || []).length} unmapped selection(s), check recipes`
       : '';
     fcShowResult(resultEl, true, `✓ ${data.ingredients_updated} ingredient(s) updated${unmapped}`);
     fcLoadIngredients();

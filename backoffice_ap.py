@@ -63,7 +63,11 @@ from collections import Counter, OrderedDict, defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
-from fintech_invoices import _STATES, distributor_key, invoice_key
+# The loose key ('1-2' == '12'): bo_invoice_lines.invoice_key rows were
+# written with it, and Back Office spells a Fintech number its own way.
+# Fintech's own identity key is now strict (fintech_invoices.invoice_key,
+# ING-18, 10/16/26).
+from fintech_invoices import _STATES, distributor_key, loose_invoice_key as invoice_key
 
 log = logging.getLogger(__name__)
 
