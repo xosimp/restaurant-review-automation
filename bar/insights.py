@@ -172,8 +172,7 @@ def _insights(pc, pw, to_check) -> list:
         cats = pc.get("categories") or []
         tot = pc.get("total") or {}
         if fr.get("stale"):
-            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')} — check the "
-                                                   f"{FEED_LABEL} forward",
+            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')}",
                              (f"Sales through {fr.get('sales_through_mdy')}; " if fr.get("sales_through_mdy")
                               else "") + "nothing is judged until invoices catch up",
                              f"Check that {FEED_LABEL}'s daily file still reaches Cavnar AI", basis, _pour_conf(pc)))
