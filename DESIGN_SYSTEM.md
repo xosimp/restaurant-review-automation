@@ -2336,6 +2336,8 @@ Food Cost's heading carries **Food | Bar** (`nav.br-fsw`): Food is where you are
 
 ### Restaurant DNA — the restaurant's personality, revealed (10/8/26)
 
+**Home's hero column (10/17/26):** the DNA card is one size whether it is forming or formed — the forming card's 134px at the column's width (`.hb-dna-slot .dn-home`, owner: "same dimensions as EJ's"). Formed, it is an 88px radar, a read clamped to two lines, one line of traits (two at most; one that doesn't fit joins the "+N more" count, never clipped) and a 54px ring above Explore your DNA. At phone width it grows to its content.
+
 A signature screen, not a table (owner, 10/8/26: "make it feel like an AI is
 revealing the personality of the restaurant"). Data: `GET /api/dna` →
 `profile` + `story` (`intelligence/dna_story.py`). Web prefix `dn-`

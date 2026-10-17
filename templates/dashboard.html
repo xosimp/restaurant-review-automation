@@ -3033,6 +3033,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-dna-slot:empty{display:none}
 .hb-dna-slot>*{width:100%}
 .hb-dna-slot .dn-home,.hb-dna-slot .hb-card{margin-top:0!important}
+/* Home's hero column: the DNA card is one size whether it is forming or formed - the forming card's
+   134px (owner, 10/17/26: the demo's formed card ran twice as tall as EJ's). Formed, it is a smaller
+   radar, a two-line read, one line of traits and a smaller ring. */
+.hb-dna-slot .dn-home{height:134px;padding:18px 24px;gap:18px;grid-template-columns:88px minmax(0,1fr) auto;align-items:center}
+.hb-dna-slot .dn-home.quiet{padding:22px 26px;grid-template-columns:minmax(0,1fr)}
+.hb-dna-slot .dn-home .mini .dn-radar{max-width:88px}
+.hb-dna-slot .dn-home h3{font-size:17px;line-height:1.25;margin:5px 0 9px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hb-dna-slot .dn-home:not(.quiet) .dn-chips{flex-wrap:nowrap;overflow:hidden}
+.hb-dna-slot .dn-home .dn-chip{height:26px;font-size:12px;padding:0 10px;flex:0 0 auto}
+.hb-dna-slot .dn-home .go{gap:7px}
 @media (max-width:1000px){
   #hb-root>.hb-top{grid-template-columns:minmax(0,1fr);grid-template-areas:"lead" "side" "quick"}
   .hb-side .hb-pulse{justify-content:flex-start}
@@ -3879,6 +3889,7 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
   .dn-row .dn-sp{grid-column:1/-1;width:100%}
   .dn-home{grid-template-columns:84px minmax(0,1fr);gap:16px;padding:18px}
   .dn-home .go{grid-column:1/-1;flex-direction:row;justify-content:space-between}
+  .hb-dna-slot .dn-home{height:auto;grid-template-columns:84px minmax(0,1fr)}
   .dn-h2{font-size:27px}
 }
 @keyframes dnFlowY{to{top:100%}}
@@ -46440,13 +46451,24 @@ function sfw2RuleCheck(chk) {
       var first = String(s.headline || '').split('. ')[0], tr = (s.traits || []).slice(), chips = '', i, o = s.observed || {};
       if (first && first.slice(-1) !== '.') first += '.';
       tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
-      for (i = 0; i < tr.length && i < 4; i++) chips += chip(tr[i]);
-      if (tr.length > 4) chips += '<span class="dn-chip">+' + (tr.length - 4) + ' more</span>';
+      // In Home's hero column the card is the size of the forming one (owner, 10/17/26: "same dimensions as
+      // EJ's"): two traits on one line, the rest counted; under Before service it keeps four.
+      var NCH = el.classList && el.classList.contains('hb-dna-slot') ? 2 : 4, slot = NCH === 2;
+      for (i = 0; i < tr.length && i < NCH; i++) chips += chip(tr[i]);
+      if (tr.length > NCH) chips += '<span class="dn-chip">+' + (tr.length - NCH) + ' more</span>';
       el.innerHTML = '<a class="dn-home dn-fadein" href="/dna" aria-label="Open your Restaurant DNA">'
         + '<div class="mini">' + radar(s.axes || [], 120, true) + '</div>'
         + '<div><div class="hb-kicker">Restaurant DNA</div><h3>' + figs(first) + '</h3><div class="dn-chips">' + chips + '</div></div>'
-        + '<div class="go">' + ring((o.coverage_pct || 0) / 100, 76, (o.measured || 0) + '/' + (o.of || 0), 'measured') + '<span class="cbtn cbtn-soft cbtn-sm">Explore your DNA →</span></div></a>';
+        + '<div class="go">' + ring((o.coverage_pct || 0) / 100, slot ? 54 : 76, (o.measured || 0) + '/' + (o.of || 0), 'measured') + '<span class="cbtn cbtn-soft cbtn-sm">Explore your DNA →</span></div></a>';
       var a = el.querySelector('.dn-home');
+      // One line of traits in the hero column: a trait that doesn't fit joins the "+N more" count, never clipped.
+      var box = slot && a ? a.querySelector('.dn-chips') : null, extra = Math.max(0, tr.length - NCH), ts, mc;
+      while (box && box.scrollWidth > box.clientWidth + 1 && (ts = box.querySelectorAll('.dn-chip.t')).length > 1) {
+        ts[ts.length - 1].parentNode.removeChild(ts[ts.length - 1]); extra++;
+        mc = box.querySelector('.dn-chip:not(.t)');
+        if (!mc) { mc = document.createElement('span'); mc.className = 'dn-chip'; box.appendChild(mc); }
+        mc.textContent = '+' + extra + ' more';
+      }
       if (a) {
         a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; e.preventDefault(); window.dnaOpen(); });
         var rg = a.querySelectorAll('[data-off]'); setTimeout(function () { for (var k = 0; k < rg.length; k++) rg[k].style.strokeDashoffset = rg[k].getAttribute('data-off'); }, 120);
