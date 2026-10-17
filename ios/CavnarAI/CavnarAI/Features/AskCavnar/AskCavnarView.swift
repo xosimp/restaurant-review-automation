@@ -372,7 +372,7 @@ struct AskCavnarView: View {
                 VStack(spacing: 6) {
                     Text("Ask me anything")
                         .cavnarText(.headline)
-                    Text("Your numbers, or general advice on running the place — I'll pull in your real data whenever it's relevant.")
+                    Text("Your numbers, or advice on running the place.")
                         .cavnarText(.body)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
@@ -923,12 +923,14 @@ private struct AskCardAnswer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            // One finding, why, and the first thing to do (text round,
+            // 10/17/26): with a cause on the card its extra sentence, and
+            // what to expect, open with the full analysis.
             CavnarAnswerCard(
                 headline: card.headline,
-                summary: card.summary,
+                summary: Self.present(card.cause) == nil ? card.summary : nil,
                 cause: card.cause,
                 isHypothesis: card.causeFlagged,
-                expectedOutcome: card.outcome,
                 confidence: askConfidenceLine(message),
                 detailLabel: "Full analysis",
                 surface: nil
@@ -968,7 +970,25 @@ private struct AskCardAnswer: View {
         }
     }
 
+    private static func present(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
+    }
+
     @ViewBuilder private var detail: some View {
+        if Self.present(card.cause) != nil, let summary = Self.present(card.summary) {
+            CavnarMixedText(summary, role: .body)
+        }
+        if let outcome = Self.present(card.outcome) {
+            HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
+                Image(systemName: "arrow.up.forward")
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .accessibilityHidden(true)
+                CavnarMixedText(outcome, role: .secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
         if let text = detailText {
             TypewriterText(fullText: text, size: CavnarText.body.size, color: Color.cavnarInk, lineSpacing: 5,
                            startRevealed: true)

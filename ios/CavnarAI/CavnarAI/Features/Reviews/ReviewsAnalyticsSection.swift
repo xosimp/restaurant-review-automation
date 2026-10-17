@@ -170,10 +170,14 @@ struct ReviewsAnalyticsSection: View {
         // diagnosis card is the one action on screen.
         let unplaced = viewModel.diagnosis == nil
             ? viewModel.insightRecs.filter { r in !placed.contains { $0.key == r.key } } : []
+        // One finding, why, and the action (text round, 10/17/26): with a
+        // cause on the card the extra sentence opens with the evidence.
+        let visibleSummary = read.why == nil ? read.summary : nil
+        let foldedSummary = read.why == nil ? nil : read.summary
         return CavnarAnswerCard(
             kicker: "Cavnar AI\u{2019}s read on your reviews",
             headline: read.headline,
-            summary: read.summary,
+            summary: visibleSummary,
             cause: read.why,
             isHypothesis: viewModel.causesUnverified,
             detailLabel: "See the evidence"
@@ -189,6 +193,9 @@ struct ReviewsAnalyticsSection: View {
             }
         } detail: {
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if let foldedSummary {
+                    CavnarMixedText(foldedSummary, role: .body)
+                }
                 // How steady the rating's move is — its measured strength.
                 ratingTrendStrength
                 ForEach(Array(read.rest.enumerated()), id: \.offset) { _, line in
@@ -420,9 +427,8 @@ struct ReviewsAnalyticsSection: View {
             CavnarAnswerCard(
                 headline: d.cause,
                 summary: Self.diagnosisBasis(d),
-                alternativeCause: d.alternativeCause,
-                // Conditional on the cause, never a promise (NS1 H10).
-                expectedOutcome: OwnerCopy.expectedOutcome(d.expectedOutcome).map { "If this is the cause: \($0)" },
+                // The other reading and the expected outcome open with the
+                // evidence (text round, 10/17/26).
                 // How sure, as a percentage with what it rests on (K1/K6).
                 confidence: d.trust.map {
                     ConfidenceLine(confidence: $0, recKey: d.recKey, surface: "reviews", module: "reviews")
@@ -467,6 +473,13 @@ struct ReviewsAnalyticsSection: View {
     @ViewBuilder
     private func diagnosisReasoning(_ d: ReviewDiagnosis) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if let alt = d.alternativeCause, !alt.isEmpty {
+                reasoningRow("Could also be", alt)
+            }
+            // Conditional on the cause, never a promise (NS1 H10).
+            if let outcome = OwnerCopy.expectedOutcome(d.expectedOutcome) {
+                reasoningRow("If this is the cause", outcome)
+            }
             if let confirm = d.whatWouldConfirm, !confirm.isEmpty {
                 reasoningRow("What would tell them apart", confirm)
             }
@@ -573,23 +586,27 @@ struct ReviewsAnalyticsSection: View {
     /// and the assumption travelling with it are the honest version.
     private func revenueBlock(low: Double, high: Double, m: RevenueAtRisk) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-            Text("\("$" + abs(low).commaFormatted)–\("$" + abs(high).commaFormatted)")
-                .cavnarText(.figureM)
-            CavnarMixedText("a month \(m.direction == "at_risk" ? "at risk" : "of upside") across the restaurant, from the "
-                            + String(format: "%+.2f", m.ratingDelta ?? 0) + "\u{2605} move in your all-time rating over 30 days",
-                            role: .secondary)
-            if let assumption = m.assumption {
-                Text("Forecast, not a measurement. \(assumption)")
-                    .cavnarText(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                Text("\("$" + abs(low).commaFormatted)–\("$" + abs(high).commaFormatted)")
+                    .cavnarText(.figureM)
+                CavnarMixedText("a month \(m.direction == "at_risk" ? "at risk" : "of upside") \u{00B7} a forecast, not a measurement",
+                                role: .secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Forecast. \("$" + abs(low).commaFormatted) to \("$" + abs(high).commaFormatted) a month \(m.direction == "at_risk" ? "at risk" : "of upside").")
+            // What the range is computed from — one tap away (text round,
+            // 10/17/26), its own button outside the figure's element.
+            CavnarEvidenceSection(label: "See the basis") {
+                CavnarMixedText("From the " + String(format: "%+.2f", m.ratingDelta ?? 0)
+                                + "\u{2605} move in your all-time rating over 30 days, across the restaurant."
+                                + (m.assumption.map { " " + $0 } ?? ""),
+                                role: .caption)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(CavnarSpace.s)
         .background(Color.cavnarEmber.opacity(0.09),
                     in: RoundedRectangle(cornerRadius: 9))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Forecast. \("$" + abs(low).commaFormatted) to \("$" + abs(high).commaFormatted) a month \(m.direction == "at_risk" ? "at risk" : "of upside").")
     }
 
     /// "Trend strength 62%" — the rating trend's measured strength
@@ -715,7 +732,6 @@ struct ReviewsAnalyticsSection: View {
                     }
                 }
                 CavnarWebLinkRow(title: "Full analysis",
-                                 subtitle: "Topics week by week, sentiment and how replies were approved",
                                  path: "reviews/analytics", actionLabel: "Open on the web")
             }
             .cavnarCard()

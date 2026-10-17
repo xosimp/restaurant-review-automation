@@ -208,7 +208,7 @@ struct IntelView: View {
             } else {
                 CavnarEmptyHearth(
                     title: "No competitor data yet",
-                    message: "See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.",
+                    message: "See how you stack up against nearby restaurants. About 30 seconds.",
                     ctaLabel: "Fetch competitor data"
                 ) {
                     Task { await viewModel.refreshCompetitors() }
@@ -475,9 +475,17 @@ struct IntelView: View {
             }
             // n and radius behind the standing, and its tie band (#38) — or
             // why there is none yet.
-            if let basis = summary.standingLine != nil ? summary.standingBasis
-                : summary.standingWhyNot.map({ "No standing yet \u{2014} " + $0 }) {
-                HomeMixedText.make(basis, role: .caption)
+            if summary.standingLine != nil {
+                // How many places and how far — the basis, one tap away
+                // (text round, 10/17/26).
+                if let basis = summary.standingBasis, !basis.isEmpty {
+                    CavnarEvidenceSection(label: "See the basis") {
+                        HomeMixedText.make(basis, role: .caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else if let whyNot = summary.standingWhyNot {
+                HomeMixedText.make("No standing yet \u{2014} " + whyNot, role: .caption)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
@@ -590,10 +598,11 @@ struct IntelView: View {
 
     // MARK: - Recommendations
 
-    private static let recsShown = 3
+    private static let recsShown = 2
 
     /// What to do — the loudest of the market-analysis sections. The top
-    /// three, each with its answer row; the reviews it rests on and "Ask
+    /// two (three before the text round, 10/17/26), each with its answer
+    /// row, the rest behind "+N more"; the reviews it rests on and "Ask
     /// about this" are behind "See the evidence" (iOS readability round,
     /// 10/8/26: each carried four controls in a row).
     private func recommendationsSection(_ recommendations: [IntelRecommendation], firstNumber: Int = 1) -> some View {
@@ -798,7 +807,7 @@ struct IntelView: View {
             }
             // The market's history and your own rating over time are a
             // chart for the web; the phone keeps what changed this week.
-            CavnarWebLinkRow(title: "Ratings over time", subtitle: "The market\u{2019}s average and yours, week by week",
+            CavnarWebLinkRow(title: "Ratings over time",
                              path: "intel/history", actionLabel: "Open on the web")
             // How current the sources behind Intel are, from data health.
             DataHealthModuleBadge(module: "intel")
@@ -887,8 +896,8 @@ struct IntelView: View {
                 .padding(.top, 10)
             if let from = m.comparedFrom {
                 HomeMixedText.make(m.hasChanges
-                                   ? "Since your check on \(CavnarDate.mdy(from)): new places that opened near you, places Google marks closed, and ratings that really moved"
-                                   : "No new places, no closures, and no rating moved past normal ups and downs since \(CavnarDate.mdy(from))",
+                                   ? "Since \(CavnarDate.mdy(from))"
+                                   : "Nothing opened, closed or really moved since \(CavnarDate.mdy(from))",
                                    role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {

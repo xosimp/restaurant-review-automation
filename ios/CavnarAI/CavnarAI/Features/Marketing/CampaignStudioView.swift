@@ -558,7 +558,6 @@ struct CampaignStudioView: View {
                     }
                 }
                 CavnarWebLinkRow(title: "The whole email",
-                                 subtitle: "The letter, the button and how it looks, on the web",
                                  path: "marketing/newsletter", actionLabel: "Open on the web")
             }
         }

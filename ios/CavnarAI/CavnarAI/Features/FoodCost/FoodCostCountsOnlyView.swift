@@ -30,11 +30,9 @@ struct FoodCostCountsOnlyView: View {
                     Text("Counts & deliveries")
                         .font(.cavnar(.headline))
                         .foregroundStyle(Color.cavnarInk)
+                    // The status line is the card's one line; the buttons
+                    // below say what can be done (text round, 10/17/26).
                     HomeMixedText.make(statusLine, role: .secondary, color: .cavnarInk2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Count what\u{2019}s on hand, log what was thrown out, and receive what arrived. Costs and margins stay with the owner.")
-                        .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .cavnarCard()

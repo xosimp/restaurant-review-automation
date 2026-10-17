@@ -70,7 +70,8 @@ struct GuestTextClubView: View {
     private func joinLinkCard(_ url: String) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             CavnarKicker("Guest join link")
-            Text("Guests join by scanning or tapping this themselves — that's the only way anyone becomes text-eligible.")
+            // The consent rule, kept whole and said once.
+            Text("Only guests who scan or tap this themselves can be texted.")
                 .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -259,7 +260,7 @@ struct GuestTextClubView: View {
                     .buttonStyle(.plain)
                 }
             }
-            CavnarWebLinkRow(title: "All guests", subtitle: "Search and tidy the whole list on the web",
+            CavnarWebLinkRow(title: "All guests",
                              path: "marketing/guests", actionLabel: "Open on the web")
         }
         .cavnarCard()

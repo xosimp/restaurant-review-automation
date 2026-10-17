@@ -373,7 +373,7 @@ struct CampaignsTabSection: View {
             CavnarKicker("Create")
             Text("What should this campaign do?")
                 .cavnarText(.headline)
-            Text("One goal drafts the text, the email and the post at once. Nothing goes out until you send it.")
+            Text("Nothing goes out until you send it.")
                 .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button {

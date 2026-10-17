@@ -91,7 +91,6 @@ struct MarketingAnalyticsSection: View {
                     // at the card itself (re-audit 10/8/26 M6) — "marketing"
                     // opened Content.
                     CavnarWebLinkRow(title: "What posts did to sales",
-                                     subtitle: "Same weekday, before vs after \u{2014} by post, kind, occasion and dish",
                                      path: "marketing/attribution", actionLabel: "Open on the web")
                 }
                 // How you compare — the Benchmark Engine's card (#23).
@@ -188,13 +187,17 @@ struct MarketingAnalyticsSection: View {
                 // ONE forecast: the figure computed in Python (H8) — last
                 // week's level carried forward, never extrapolated — when
                 // there is one, else the brief's own line; tagged either way.
+                // Behind one tap (text round, 10/17/26): the brief leads
+                // with the read and the move; the forecast is a next look.
                 if let forecast = insight.computedForecast?.line ?? insight.forecast, !forecast.isEmpty {
-                    VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-                        ClaimKindTag(kind: "forecast")
-                        CavnarMixedText(forecast, role: .secondary)
+                    CavnarEvidenceSection(label: "See the forecast") {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                            ClaimKindTag(kind: "forecast")
+                            CavnarMixedText(forecast, role: .secondary)
+                        }
+                        .accessibilityElement(children: .combine)
                     }
-                    .padding(.top, 8)
-                    .accessibilityElement(children: .combine)
+                    .padding(.top, 4)
                 }
             } else {
                 Text("Publish a post or two and the brief will have something to say.")

@@ -324,11 +324,6 @@ struct FoodCostAnalyticsSection: View {
                             } else if let label = c.label {
                                 Text(label).cavnarText(.secondary)
                             }
-                            if let basis = c.basis {
-                                Text(basis)
-                                    .cavnarText(.caption)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Food cost \(String(format: "%.1f", pct)) percent of sales")
@@ -343,9 +338,24 @@ struct FoodCostAnalyticsSection: View {
                         }
                     }
                 }
+                // How the figure is built and how far to trust it — one tap
+                // away, not under the figure (text round, 10/17/26: "Web
+                // explains. iPhone decides.").
+                let basis = (a.cogs?.ok == true && a.cogs?.pct != nil) ? a.cogs?.basis : nil
                 let trustLines = Self.trustLines(a, cfoTrust: viewModel.cfo?.brief?.trust)
-                if !trustLines.isEmpty {
-                    CavnarMixedText(trustLines.joined(separator: "  \u{00B7}  "), role: .caption)
+                if basis != nil || !trustLines.isEmpty {
+                    CavnarEvidenceSection(label: "See the basis") {
+                        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+                            if let basis {
+                                Text(basis)
+                                    .cavnarText(.caption)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if !trustLines.isEmpty {
+                                CavnarMixedText(trustLines.joined(separator: "  \u{00B7}  "), role: .caption)
+                            }
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -432,8 +442,8 @@ struct FoodCostAnalyticsSection: View {
                     // The cause is Cavnar AI's read unless the server says
                     // it was measured or computed.
                     isHypothesis: dg?.cause != nil && whyKind != "measured" && whyKind != "computed",
-                    alternativeCause: dg?.alternativeCause,
-                    expectedOutcome: OwnerCopy.expectedOutcome(dg?.expectedOutcome).map { "If this is the cause: \($0)" },
+                    // The other reading and the expected outcome are proof,
+                    // not the decision: they open with the evidence.
                     confidence: dg?.cause == nil ? nil : dg?.trust.map {
                         ConfidenceLine(confidence: $0, recKey: dg?.recKey, surface: "food", module: "food")
                     },
@@ -500,6 +510,12 @@ struct FoodCostAnalyticsSection: View {
     private func fullRead(_ cfo: FoodCostCFO, drivers rest: [FoodCostCFO.Driver], atStake: String?) -> some View {
         let dg = cfo.diagnosis
         VStack(alignment: .leading, spacing: CavnarSpace.m) {
+            if let alt = dg?.alternativeCause, !alt.isEmpty {
+                readRow("Could also be", alt)
+            }
+            if let outcome = OwnerCopy.expectedOutcome(dg?.expectedOutcome) {
+                readRow("If this is the cause", outcome)
+            }
             // The drivers' monthly total, when the hero's recoverable figure
             // is the one on the card (F4) — an opportunity, never savings.
             if let atStake {
@@ -640,7 +656,10 @@ struct FoodCostAnalyticsSection: View {
             }
             // The dollars are the row's figure above; the caption says what
             // they are without printing them a second time (re-audit F3).
-            Text("\(Self.effortWords(d.difficulty)) \u{00B7} about that a month if left alone")
+            // The card's top driver carries the effort word alone; the
+            // full read says what the dollars are.
+            Text(compact ? Self.effortWords(d.difficulty)
+                         : "\(Self.effortWords(d.difficulty)) \u{00B7} about that a month if left alone")
                 .cavnarText(.caption)
                 .fixedSize(horizontal: false, vertical: true)
             // Where it is acted on (U4-9), the server's own nav path — the
@@ -955,9 +974,11 @@ struct FoodCostAnalyticsSection: View {
                     parRow(item)
                 }
             }
-            Text("From the close-out\u{2019}s 86 list. Raising a par changes what the order draft suggests.")
-                .cavnarText(.caption)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarEvidenceSection(label: "See the basis") {
+                Text("From the close-out\u{2019}s 86 list. Raising a par changes what the order draft suggests.")
+                    .cavnarText(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -1041,10 +1062,13 @@ struct FoodCostAnalyticsSection: View {
                     scorecardRepriceRow(dish)
                 }
             }
+            // What the suggested prices assume — one tap away.
             if let assumption, !assumption.isEmpty {
-                Text(assumption)
-                    .cavnarText(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
+                CavnarEvidenceSection(label: "See the basis") {
+                    Text(assumption)
+                        .cavnarText(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Button {
                 Haptic.light()
@@ -1058,7 +1082,7 @@ struct FoodCostAnalyticsSection: View {
                 .cavnarHitTarget()
             }
             .buttonStyle(.plain)
-            CavnarWebLinkRow(title: "Every dish\u{2019}s margin", subtitle: "Plate costs, dishes with no recipe, unmatched items",
+            CavnarWebLinkRow(title: "Every dish\u{2019}s margin",
                              path: "inventory/margins", actionLabel: "Open on the web")
         }
     }
