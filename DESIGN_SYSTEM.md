@@ -487,7 +487,7 @@ matches what it holds:
 
 | Container | Looks like | Wears it |
 |---|---|---|
-| **Ledger** (money summary) | An obsidian face, a brass catch along the top, a jigger's **ruler engraved along its foot** (minor ticks every 8px, majors every 40px), etched dividers between figures | The Bar's bought-vs-sold figures (`.br-cfigs`), the report's forecast for the day after (`.dr-tmr>.hb-card:nth-child(2)`), Home's worth card (`.hb-card:has(>.hb-vsplit)`). A card that mostly holds controls (Food Cost's Where the money is going, with its supplier picks) is never a Ledger. The ruler sits in its own 36px foot, never under text |
+| **Ledger** (money summary) | An obsidian face, a brass catch along the top, etched dividers between figures — no ruler along the foot (owner, 10/17/26: removed everywhere) | The Bar's bought-vs-sold figures (`.br-cfigs`), the report's forecast for the day after (`.dr-tmr>.hb-card:nth-child(2)`), Home's worth card (`.hb-card:has(>.hb-vsplit)`). A card that mostly holds controls (Food Cost's Where the money is going, with its supplier picks) is never a Ledger. |
 | **Slate** (a list) | The matte plate (§4 materials); a row under the pointer or open lights a 3px ember rail | `.br-vlist`, every `.hb-card` not named here |
 | **Instrument** (a chart or gauges) | Recessed, faint reticle; never warmed by the pointer, never lifted | `.br-kegs`, the report's hour-by-hour, meal-period and department cards (`.dr-hourly`, `.dr-split`, `.dr-dep`) |
 | **Ember glass** (Cavnar AI speaking) | §4 materials | `.lb2-ai` and the rest, plus the report's executive summary (`.dr-read`) and Home's last-night card (`.dr-home`) |
@@ -502,7 +502,7 @@ quarter of the rim, like every other pedestal.
 
 *Figures as metal, by role* (`background-clip:text`, a status colour always
 wins): **white-hot** the page's hero figure (`.br-big`, `.kx-hero .kx-val`,
-`.dr-score .net`, `.hb-focus .money`) with a warm glow under it;
+`.dr-score .net`, `.hb-focus .money`) — no glow filter on any figure (re-drawn every frame of a count-up, it made the counts stutter, owner 10/17/26);
 **molten** money at stake (a Ledger's lead, a driver's dollars, the day
 after's forecast, a Docket's number); **silver** a supporting figure (KPI
 tiles, the hero's sub-figures, neutral `.hb-stat` / `.lb2-op` / `.dr-kpi`

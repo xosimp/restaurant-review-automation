@@ -2045,7 +2045,9 @@ function cavCount(el, target, o) {
   function step(ts) {
     if (el._cavCount !== token) return;
     if (last === null) last = ts;
-    t += Math.min(ts - last, 34);
+    // Real time through a slow frame (capped at 120ms only so a stalled tab doesn't jump): capped at 34ms,
+    // a page busy painting counted in slow motion and in bursts (owner, 10/17/26).
+    t += Math.min(ts - last, 120);
     last = ts;
     var p = Math.min(t / dur, 1), v = target * Math.sin(p * Math.PI / 2), txt = p < 1 ? fmt(v) : final;
     if (txt !== shown) { el.textContent = txt; shown = txt; }
@@ -49715,7 +49717,7 @@ function sfw2RuleCheck(chk) {
    - The spectrum (--vx-*) is for marks, fills and chart strokes; text
      keeps --ink, --green, --red (identical on iOS).
    - Six containers, each with its own silhouette: Ledger (a money
-     summary: obsidian face, a jigger's ruler engraved along its foot, the
+     summary: obsidian face, a brass catch along its top (no ruler: owner, 10/17/26), the
      lead figure molten), Slate (a list), Instrument (gauges and charts,
      recessed), Ember glass (the AI), Register (a table: a recessed head
      band in the kicker's orange, rows that light a rail), Signal (an
@@ -49725,7 +49727,7 @@ function sfw2RuleCheck(chk) {
      (100cqw), so a short fill is cool and a long one runs hot - the scale,
      not a threshold in code.
    Every faint glow is still an image (render_glows.py); these gradients
-   are hard-stopped (ruler, hatch) or run between strong colours. */
+   are hard-stopped (the hatch) or run between strong colours. */
 [data-theme="dark"]{
   --vx-ember:#c84b2f;--vx-ember-hot:#ff7a45;--vx-ember-light:#ffb48a;
   --vx-gain:#34d399;--vx-gain-light:#8af0c4;
@@ -49737,8 +49739,6 @@ function sfw2RuleCheck(chk) {
   --vx-molten:linear-gradient(180deg,#fff0e6 0%,#ffc2a0 34%,#ff8a55 72%,#f0602f 100%);
   --vx-silver:linear-gradient(180deg,#ffffff 0%,#f0e9e1 45%,#c9bfb4 100%);
   --vx-whitehot:linear-gradient(180deg,#ffffff 0%,#fff6ef 46%,#ffcfb4 100%);
-  --vx-ruler:repeating-linear-gradient(90deg,rgba(255,232,206,.22) 0 1px,transparent 1px 8px);
-  --vx-ruler-major:repeating-linear-gradient(90deg,rgba(255,232,206,.42) 0 1px,transparent 1px 40px);
   --vx-hatch:repeating-linear-gradient(-45deg,rgba(255,138,90,.62) 0 1.5px,transparent 1.5px 5px);
   --vx-face-ledger:linear-gradient(180deg,#151210,var(--vx-obsidian));
   --vx-rim-ledger:linear-gradient(180deg,rgba(255,214,170,.34),rgba(255,214,170,.07) 26%,rgba(255,255,255,.025) 70%,rgba(0,0,0,.55));
@@ -49752,15 +49752,11 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] #bar .br-cfigs{
   border-color:transparent;
   background:
-    var(--vx-ruler-major) 24px calc(100% - 1px)/calc(100% - 48px) 10px no-repeat padding-box,
-    var(--vx-ruler) 24px calc(100% - 1px)/calc(100% - 48px) 5px no-repeat padding-box,
     var(--vx-face-ledger) padding-box,
     var(--vx-rim-ledger) border-box;
   box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9);
 }
-[data-theme="dark"] #bar .br-cfigs .fg{padding-bottom:30px}
 [data-theme="dark"] #bar .br-cfigs .fg+.fg::before{width:1px;background:rgba(0,0,0,.7);box-shadow:1px 0 0 rgba(255,236,214,.07)}
-[data-theme="dark"] #bar .br-cfigs .fg:first-child>b{filter:drop-shadow(0 0 22px rgba(255,110,60,.32))}
 [data-theme="dark"] #bar .br-swt{box-shadow:0 0 0 1px rgba(0,0,0,.4),0 0 9px color-mix(in srgb,var(--s,var(--ember)) 75%,transparent)}
 
 /* ── Slate: a list (bought vs sold) ──────────────────────────────────── */
@@ -49854,7 +49850,6 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money),
 [data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net,.hb-focus .money) .hb-num{
   background:var(--vx-whitehot);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
-[data-theme="dark"] :is(#bar .br-big,.kx-hero .kx-val,.dr-score .net){filter:drop-shadow(0 12px 30px rgba(255,120,70,.2))}
 [data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)),
 [data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)) .hb-num{
   background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
@@ -49876,11 +49871,8 @@ function sfw2RuleCheck(chk) {
 /* Ledger: a money summary - the Bar's bought vs sold figures, the
    report's forecast for the day after. */
 [data-theme="dark"] #panel-dsr .dr-tmr>.hb-card:nth-child(2){
-  /* The ruler gets its own strip under the last line, never over it (owner, 10/17/26: "getting cut off"). */
-  border-color:transparent;padding-bottom:36px;
+  border-color:transparent;
   background:
-    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
-    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
     var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
   box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
 [data-theme="dark"] #panel-dsr .dr-tmr .dr-fc,[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc .hb-num{
@@ -49932,10 +49924,8 @@ function sfw2RuleCheck(chk) {
   box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent)}
 /* Ledger on Home: what was measured - the worth tiles' card. */
 [data-theme="dark"] #panel-home .hb-card:has(>.hb-vsplit){
-  border-color:transparent;padding-bottom:30px;
+  border-color:transparent;
   background:
-    var(--vx-ruler-major) 22px calc(100% - 1px)/calc(100% - 44px) 10px no-repeat padding-box,
-    var(--vx-ruler) 22px calc(100% - 1px)/calc(100% - 44px) 5px no-repeat padding-box,
     var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
   box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
 /* Docket: a recommendation is a ticket - a row of punched holes under
@@ -49947,11 +49937,10 @@ function sfw2RuleCheck(chk) {
   background:radial-gradient(circle,var(--bg-base) 1.6px,rgba(255,236,214,.13) 2.1px,transparent 2.6px) 0 50%/11px 5px repeat-x}
 [data-theme="dark"] .hb-rec .no,[data-theme="dark"] .hb-rec .no *{
   background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
-[data-theme="dark"] .hb-rec .no{filter:drop-shadow(0 0 14px rgba(255,110,60,.3))}
 [data-theme="dark"] .hb-rec .meta .usd{color:var(--vx-ember-light);border-color:color-mix(in srgb,var(--vx-ember-hot) 40%,transparent);background:color-mix(in srgb,var(--vx-ember-hot) 10%,transparent)}
 
 /* Food Cost. Where the money is going stays Slate (it holds the supplier picks, not a figure strip -
-   the ruler under them read as a stray pattern, owner 10/17/26); its driver's dollars are molten.
+   owner 10/17/26); its driver's dollars are molten.
    Register: plate costs' heading row in the kicker's orange, a row lighting under the pointer. */
 [data-theme="dark"] #panel-inventory .fc2-drv .n,[data-theme="dark"] #panel-inventory .fc2-drv .n .hb-num{
   background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}

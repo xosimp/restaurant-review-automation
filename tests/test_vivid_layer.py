@@ -95,3 +95,12 @@ def test_endless_motions_never_run_layout_or_blur():
 def test_sheen_is_a_fixed_top_lip():
     assert "sheen-v1.png) 0 0/100% 100%" not in DASH
     assert "sheen-v1.png) 0 0/100% 120px no-repeat" in DASH
+
+
+def test_no_ruler_and_no_glow_filter_on_figures():
+    # Owner, 10/17/26: the rulers come off every card, and a figure's glow filter
+    # (re-drawn every frame of a count-up) made the counts stutter.
+    css = _vivid()
+    assert "vx-ruler" not in DASH
+    assert "drop-shadow" not in css
+    assert "t += Math.min(ts - last, 120);" in DASH
