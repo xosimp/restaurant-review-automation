@@ -519,3 +519,15 @@ def test_the_new_read_routes_answer_for_an_admin(db_path, monkeypatch):
         r = client.get(path)
         assert r.status_code == 200, (path, r.data[:300])
         assert r.get_json()["ok"] is True, path
+
+
+def test_the_customers_list_shows_demo_accounts_tagged_never_counted(db_path):
+    # Will opens the showcase demo from the Customers list (10/17/26).
+    _mk(db_path, billing_status="active")
+    demo = _mk(db_path, "Showcase Demo", is_demo=1, billing_status="internal")
+    plain = admin_ops.clients_page(segment="customer")
+    assert demo not in [i["id"] for i in plain["items"]]
+    withd = admin_ops.clients_page(segment="customer", include_demo=True)
+    row = next(i for i in withd["items"] if i["id"] == demo)
+    assert row["is_demo"] and row["segment"] == "internal"
+    assert withd["counts"] == plain["counts"]

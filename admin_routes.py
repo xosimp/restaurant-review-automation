@@ -6407,7 +6407,8 @@ def admin_api_clients_list(current_user):
                                                sort=a.get("sort", "name"), churn=a.get("churn"),
                                                has_issues=a.get("has_issues"),
                                                joined_days=a.get("joined_days", type=int),
-                                               inactive_days=a.get("inactive_days", type=int), **_page_args()))
+                                               inactive_days=a.get("inactive_days", type=int),
+                                               include_demo=a.get("include_demo") in ("1", "true"), **_page_args()))
 
 
 @admin_bp.route("/admin/api/onboarding")

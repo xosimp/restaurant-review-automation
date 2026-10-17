@@ -6402,7 +6402,7 @@ def _slim(r):
 
 
 def clients_page(q=None, health=None, segment="customer", status=None, sort="name", page=1, per_page=50,
-                 churn=None, has_issues=None, joined_days=None, inactive_days=None):
+                 churn=None, has_issues=None, joined_days=None, inactive_days=None, include_demo=False):
     """The fleet list, filtered, sorted and paged on the server as slim rows
     (#79) — the full records are ~8 KB each. Counts come from the full set.
 
@@ -6418,10 +6418,15 @@ def clients_page(q=None, health=None, segment="customer", status=None, sort="nam
     counts = {"health": {}, "status": {}, "segment": {}}
     for r in recs:
         counts["segment"][r["segment"]] = counts["segment"].get(r["segment"], 0) + 1
+    # The demo accounts listed with the customers (`include_demo`, the
+    # console's Customers list, 10/17/26: Will opens the showcase demo from
+    # it) — tagged "demo", still internal: never in these counts, attention
+    # or MRR.
+    demos = [r for r in recs if include_demo and seg == "customer" and r.get("is_demo")]
     for r in base:
         counts["health"][r["health"]] = counts["health"].get(r["health"], 0) + 1
         counts["status"][r["billing"]["status"]] = counts["status"].get(r["billing"]["status"], 0) + 1
-    items = base
+    items = base + demos
     if health:
         items = [r for r in items if r["health"] == health]
     if status:
