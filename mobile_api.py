@@ -544,11 +544,9 @@ def mobile_reset_password():
     conn.close()
     _clear_attempts(ip)
     try:
-        restaurant = get_restaurant(get_user_by_email_rid(email))
-        if restaurant and restaurant.owner_email:
-            from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
-                                        restaurant_id=restaurant.id)
+        # To the login whose password was reset, never the owner (10/16/26).
+        from emails import send_password_changed_to_user
+        send_password_changed_to_user(row["id"])
     except Exception:
         pass
     return jsonify(ok=True)
@@ -7669,11 +7667,9 @@ def mobile_change_password(current_user):
     update_password(current_user["id"], new_pw, keep_token=current_session_token())
     _log_account_event(current_user["restaurant_id"], "password_changed", current_user)
     try:
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        if restaurant and restaurant.owner_email:
-            from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
-                                        restaurant_id=restaurant.id)
+        # To the login whose password changed, never the owner (10/16/26).
+        from emails import send_password_changed_to_user
+        send_password_changed_to_user(current_user["id"])
     except Exception:
         pass  # the password change itself already succeeded — a failed confirmation email isn't worth failing the request over
     return jsonify(ok=True)

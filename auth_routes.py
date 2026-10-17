@@ -737,11 +737,9 @@ def change_password(current_user):
     from auth import current_session_token as _cst
     update_password(current_user["id"], new_pw, keep_token=_cst())
     try:
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        if restaurant and restaurant.owner_email:
-            from emails import send_password_changed_email
-            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name, tz=restaurant.timezone,
-                                        restaurant_id=restaurant.id)
+        # To the login whose password changed, never the owner (10/16/26).
+        from emails import send_password_changed_to_user
+        send_password_changed_to_user(current_user["id"])
     except Exception:
         pass  # the password change itself already succeeded
     return jsonify(ok=True)
