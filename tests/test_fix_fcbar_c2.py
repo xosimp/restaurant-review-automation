@@ -389,3 +389,195 @@ def test_a_trusted_supplier_never_auto_applies_a_name_match(db, monkeypatch):
     prop["lines"][0]["matched_by"] = "your_match"
     applied = ordering.auto_apply_if_trusted(rid, prop, db_path=db)["auto_applied"]
     assert [a["ingredient_id"] for a in applied] == [iid]
+
+
+# ── SEC-01 / SCALE-05: the food tracker's blob ────────────────────────────
+
+def _blob(db, rid):
+    rows = _rows(db, "SELECT food_cost_json FROM client_data WHERE restaurant_id=?", (rid,))
+    return json.loads(rows[0]["food_cost_json"]) if rows and rows[0]["food_cost_json"] else {}
+
+
+def test_a_custom_item_is_bounded(db, monkeypatch):
+    import client_api
+    monkeypatch.setattr(client_api, "FOOD_TRACKER_WRITES_PER_MINUTE", 10000)
+    rid = _rid(db)
+    assert client_api._do_save_food_cost_custom_item(rid, "x" * 10000, "lb")[1] == 400
+    assert client_api._do_save_food_cost_custom_item(rid, "Saffron", "u" * 21)[1] == 400
+    for i in range(client_api.FOOD_TRACKER_CUSTOM_MAX):
+        assert client_api._do_save_food_cost_custom_item(rid, f"Item {i}", "lb")[1] == 200
+    payload, status = client_api._do_save_food_cost_custom_item(rid, "One more", "lb")
+    assert status == 400 and "200" in payload["error"]
+    assert len(_blob(db, rid)["custom_items"]) == client_api.FOOD_TRACKER_CUSTOM_MAX
+    # The same name again is not a new item, and a delete makes room.
+    assert client_api._do_save_food_cost_custom_item(rid, "item 3", "lb")[1] == 200
+    assert client_api._do_delete_food_cost_custom_item(rid, "Item 3")[1] == 200
+    assert client_api._do_save_food_cost_custom_item(rid, "One more", "lb")[1] == 200
+
+
+def test_a_quick_count_row_past_the_caps_is_named_back_never_stored(db):
+    import client_api
+    rid = _rid(db)
+    payload, status = client_api._do_food_cost_quickcount(rid, [
+        {"name": "Chicken Breast", "unit": "lb", "price": 3.1, "usage": 40},
+        {"name": "y" * 81, "unit": "lb", "price": 2.0},
+        {"name": "Shrimp", "unit": "z" * 21, "price": 9.0}])
+    assert status == 200 and len(payload["rejected"]) == 2
+    assert [i["name"] for i in _blob(db, rid)["current"]["items"]] == ["Chicken Breast"]
+    assert client_api._do_food_cost_quickcount(rid, [{"name": "A", "price": 1}] * 201)[1] == 400
+
+
+def test_the_tracker_writes_are_rate_limited_per_restaurant(db, monkeypatch):
+    import client_api
+    rid = _rid(db)
+    monkeypatch.setattr(client_api, "FOOD_TRACKER_WRITES_PER_MINUTE", 2)
+    assert client_api._do_save_food_cost_custom_item(rid, "A", "lb")[1] == 200
+    assert client_api._do_save_food_cost_custom_item(rid, "B", "lb")[1] == 200
+    assert client_api._do_save_food_cost_custom_item(rid, "C", "lb")[1] == 429
+    other = _rid(db, "Other")
+    assert client_api._do_save_food_cost_custom_item(other, "C", "lb")[1] == 200
+
+
+def test_a_quick_count_and_a_custom_item_in_the_same_moment_both_land(db):
+    """The phone's quick count lands while the web's custom-item add is
+    between its read and its write: both edits are on file after."""
+    import threading
+    import time
+    import client_api
+    rid = _rid(db)
+    client_api._do_save_food_cost_custom_item(rid, "Saffron", "oz")
+    read, errors = threading.Event(), []
+
+    def slow_add(fc):
+        read.set()
+        time.sleep(0.4)            # the quick count arrives now
+        fc.setdefault("custom_items", []).append({"name": "Truffle", "unit": "oz"})
+        return "added", True
+
+    def web():
+        try:
+            client_api._mutate_food_cost_blob(rid, slow_add)
+        except Exception as e:     # pragma: no cover - reported below
+            errors.append(e)
+        finally:
+            models.close_thread_connections()
+    t = threading.Thread(target=web)
+    t.start()
+    assert read.wait(5)
+    payload, status = client_api._do_food_cost_quickcount(rid, [{"name": "Butter", "unit": "lb", "price": 4.0}])
+    t.join(10)
+    assert not errors and status == 200, (errors, payload)
+    fc = _blob(db, rid)
+    assert [c["name"] for c in fc["custom_items"]] == ["Saffron", "Truffle"]
+    assert [i["name"] for i in fc["current"]["items"]] == ["Butter"]
+
+
+# ── SEC-03: the admin inventory writes ────────────────────────────────────
+
+def test_every_admin_inventory_write_audits_itself_and_the_pos_ones_run_on_the_pool():
+    import os
+    import re
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "admin_routes.py"),
+               encoding="utf-8").read()
+    routes = re.findall(r'@admin_bp\.route\("(/admin/inventory/[^"]+)", methods=\["POST"\]\)\n@admin_required\n'
+                        r'def (\w+)\(', src)
+    assert len(routes) == 11, routes
+    for path, fn in routes:
+        body = src[src.index(f"def {fn}("):]
+        body = body[:body.index("\n@admin_bp.route(")]
+        assert "_inventory_audit(" in body or "_inventory_job(" in body, path
+    for fn in ("discover_menu_items_route", "resync_depletion_route"):
+        body = src[src.index(f"def {fn}("):]
+        body = body[:body.index("\n@admin_bp.route(")]
+        assert "_inventory_job(" in body and "jsonify(ok=True, **inventory_ledger" not in body, fn
+    helper = src[src.index("def _inventory_audit("):]
+    helper = helper[:helper.index("\ndef ")]
+    assert "admin_events.record_admin_action(" in helper
+
+
+@pytest.fixture
+def admin_client(db_path, monkeypatch):
+    import sys
+    from flask import Flask
+    import admin_routes
+    import auth
+    from auth import create_session, create_user, init_auth
+    real = models.get_conn
+    redirect = lambda *a, **k: real(db_path)
+    for mod in list(sys.modules.values()):
+        try:
+            if getattr(mod, "get_conn", None) is real:
+                monkeypatch.setattr(mod, "get_conn", redirect)
+        except Exception:
+            pass
+    for mod in (models, auth, admin_routes):
+        monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
+        monkeypatch.setattr(mod, "DB_PATH", db_path, raising=False)
+    init_auth(db_path=db_path)
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", lambda job_id, fn, *a: fn(*a))
+    app = Flask(__name__, template_folder="../templates")
+    app.secret_key = "c2"
+    app.register_blueprint(admin_routes.admin_bp)
+    hq = models.create_restaurant(models.Restaurant(name="Cavnar AI Admin", owner_email="w@c.test"), db_path=db_path)
+    uid = create_user(hq, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
+    c = app.test_client()
+    c.set_cookie("session_token", create_session(uid, password_verified_at=True, db_path=db_path))
+    c.set_cookie("csrf_js", "c2-csrf")
+    return c
+
+
+def _post(c, url, body=None):
+    return c.post(url, json=body if body is not None else {}, headers={"X-CSRF": "c2-csrf"})
+
+
+def test_an_ingredient_change_lands_in_the_typed_audit(admin_client, db_path):
+    rid = _rid(db_path, "Client Grill")
+    r = _post(admin_client, f"/admin/inventory/ingredients/{rid}", {"name": "Romaine", "unit": "case",
+                                                                  "unit_cost": 20})
+    iid = r.get_json()["id"]
+    assert _post(admin_client, f"/admin/inventory/ingredients/{rid}/{iid}", {"unit_cost": 24}).get_json()["ok"]
+    rows = _rows(db_path, "SELECT event_type, actor, target, before_json, after_json, result FROM admin_events "
+                          "WHERE event_type LIKE 'inventory.%' ORDER BY id")
+    assert [r["event_type"] for r in rows] == ["inventory.ingredient.created", "inventory.ingredient.updated"]
+    assert rows[1]["actor"] == "will" and rows[1]["result"] == "ok"
+    assert json.loads(rows[1]["before_json"]) == {"unit_cost": 20.0}
+    assert json.loads(rows[1]["after_json"]) == {"unit_cost": 24.0}
+
+
+def test_discovering_menu_items_is_an_admin_job_and_is_audited(admin_client, db_path, monkeypatch):
+    import inventory_ledger
+    rid = _rid(db_path, "Client Grill")
+    monkeypatch.setattr(inventory_ledger, "discover_menu_items",
+                        lambda r, days=7: {"discovered": 3, "updated": 1, "total_seen": 9, "hidden": 0})
+    r = _post(admin_client, f"/admin/inventory/discover-menu-items/{rid}")
+    assert r.status_code == 202 and r.get_json()["job_id"]
+    job = admin_client.get(f"/admin/api/admin-jobs/{r.get_json()['job_id']}").get_json()
+    assert job["ok"] is True and job["discovered"] == 3
+    (ev,) = _rows(db_path, "SELECT after_json, result FROM admin_events WHERE event_type='inventory.menu_items.discovered'")
+    assert ev["result"] == "ok" and json.loads(ev["after_json"])["discovered"] == 3
+
+
+# ── SEC-04: the activity ping's tab ───────────────────────────────────────
+
+def test_the_activity_tab_is_a_short_name_or_other():
+    import admin_routes
+    assert admin_routes._activity_tab("food-cost") == "food-cost"
+    assert admin_routes._activity_tab("Labor") == "labor"
+    assert admin_routes._activity_tab("x" * 1000000) == "other"
+    assert admin_routes._activity_tab("<script>") == "other"
+    assert admin_routes._activity_tab(None) == "other"
+
+
+# ── SCALE-11: a degraded read is heard ────────────────────────────────────
+
+def test_an_unreadable_alias_table_is_captured_and_degrades(db, monkeypatch):
+    import invoices
+    import ops
+    seen = []
+    monkeypatch.setattr(ops, "capture", lambda e, **k: seen.append(k.get("job")))
+
+    class Broken:
+        def execute(self, *a, **k):
+            raise RuntimeError("database is locked")
+    assert invoices._aliases(Broken(), 1, "Sysco") == {}
+    assert seen == ["invoice_aliases"]

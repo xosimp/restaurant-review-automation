@@ -48,6 +48,21 @@ def _admin_session(monkeypatch):
     monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1})
 
 
+@pytest.fixture(autouse=True)
+def _inline_admin_jobs(monkeypatch):
+    """discover-menu-items and resync-depletion reach the POS, so they run on
+    the admin job pool (FC/Bar audit 10/16/26, SEC-03): inline here, and
+    their result read from the job, as the console polls it."""
+    monkeypatch.setattr(admin_routes, "_submit_admin_job", lambda job_id, fn, *a: fn(*a))
+
+
+def _job_result(resp):
+    import ops
+    resp, status = resp
+    assert status == 202
+    return ops.read_async_job(resp.get_json()["job_id"])["result"]
+
+
 @pytest.fixture
 def app():
     flask_app = Flask(__name__)
@@ -230,7 +245,7 @@ def test_discover_add_delete_recipe_flow(app, db_path, monkeypatch):
     )
     with app.test_request_context(f"/admin/inventory/discover-menu-items/{rid}", method="POST"):
         resp = discover_menu_items_route(rid)
-    body = resp.get_json()
+    body = _job_result(resp)
     assert body["ok"] is True
     assert body["discovered"] == 1
 
@@ -288,7 +303,7 @@ def test_resync_depletion_route(app, db_path, monkeypatch):
     with app.test_request_context(f"/admin/inventory/resync-depletion/{rid}", method="POST",
                                    json={"business_date": "2026-08-20"}):
         resp = resync_depletion_route(rid)
-    body = resp.get_json()
+    body = _job_result(resp)
     assert body["ok"] is True
     assert body["ingredients_updated"] == 1
     assert inventory_ledger.list_ingredients(rid)[0]["current_stock"] == 18.5  # 20 - (5*0.3)

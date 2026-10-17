@@ -34,6 +34,19 @@ def get_conn(db_path=None):
     the first time this module was imported."""
     return _models_mod.get_conn(db_path) if db_path is not None else _models_mod.get_conn()
 
+
+def _captured(exc, job, restaurant_id=None):
+    """ops.capture for a read that degrades to "nothing learned" (FC/Bar
+    audit 10/16/26, SCALE-11): the degrade stays, and someone hears. Never
+    raises."""
+    try:
+        import ops
+        ops.capture(exc, job=job, context=f"restaurant_id={restaurant_id}" if restaurant_id else "",
+                    restaurant_id=restaurant_id)
+    except Exception:
+        pass
+
+
 ORDER_TRUST_MIN = 3          # prior orders to this supplier before one can go on its own
 ORDER_TRUST_EDIT_RATE = 0.20  # ...and at most this share of the owner's orders changed before sending
 ORDER_BAND = (0.65, 1.35)    # draft total must sit inside this multiple of the usual order
@@ -397,6 +410,7 @@ def order_corrections(restaurant_id, db_path=DB_PATH) -> dict:
             conn.close()
     except Exception as e:
         print(f"[ordering] order corrections unreadable for {restaurant_id}: {e}")
+        _captured(e, "order_corrections", restaurant_id)
         return {}
     ratios = {}
     for r in rows:
@@ -487,6 +501,7 @@ def par_suggestions(restaurant_id, db_path=DB_PATH, today=None) -> list:
             conn.close()
     except Exception as e:
         print(f"[ordering] par suggestions unreadable for {restaurant_id}: {e}")
+        _captured(e, "par_suggestions", restaurant_id)
         return []
     from time_utils import mdy, parse_stamp, restaurant_now_by_id
     import rec_ledger
@@ -529,6 +544,7 @@ def par_suggestions(restaurant_id, db_path=DB_PATH, today=None) -> list:
             conn.close()
     except Exception as e:
         print(f"[ordering] par-change cutoffs unreadable for {restaurant_id}: {e}")
+        _captured(e, "par_change_cutoffs", restaurant_id)
     out = []
     for r in rows:
         times, last = int(r["times"]), r["last"]

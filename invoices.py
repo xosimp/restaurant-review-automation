@@ -44,6 +44,17 @@ def get_conn(db_path=None):
 
 log = logging.getLogger(__name__)
 
+
+def _captured(exc, job, restaurant_id=None):
+    """ops.capture for a path that degrades to "no data" (FC/Bar audit
+    10/16/26, SCALE-11): the degrade stays, and someone hears. Never raises."""
+    try:
+        import ops
+        ops.capture(exc, job=job, context=f"restaurant_id={restaurant_id}" if restaurant_id else "",
+                    restaurant_id=restaurant_id)
+    except Exception:
+        pass
+
 # Reading prices off a photo is the one place in this product where a misread
 # digit goes straight into every plate cost, so this uses the most capable
 # model rather than the house default; invoices are a weekly, low-volume call.
@@ -389,8 +400,9 @@ def _aliases(conn, restaurant_id, supplier):
         return {r["description_key"]: r["ingredient_id"] for r in conn.execute(
             "SELECT description_key, ingredient_id FROM invoice_aliases WHERE restaurant_id=? AND supplier_key=?",
             (restaurant_id, alias_key(supplier))).fetchall()}
-    except Exception as e:           # a database from before the table
+    except Exception as e:           # a database from before the table, a lock, a translation miss
         log.warning("invoice aliases unreadable for %s: %s", restaurant_id, e)
+        _captured(e, "invoice_aliases", restaurant_id)
         return {}
 
 
@@ -540,7 +552,8 @@ def _alcohol(supplier, description, unit) -> str | None:
     try:
         import cogs
         return cogs.alcohol_category(description, supplier=supplier, unit=unit)
-    except Exception:
+    except Exception as e:           # degrades to "not alcohol": someone hears (SCALE-11)
+        _captured(e, "invoice_alcohol_check")
         return None
 
 
@@ -764,6 +777,7 @@ def apply(restaurant_id, import_id, selections, user_id=None, db_path=DB_PATH, a
                 remember_matches(conn, restaurant_id, row["supplier"], lines, applied, user_id=user_id)
             except Exception as e:
                 log.warning("invoice matches not remembered for %s: %s", restaurant_id, e)
+                _captured(e, "invoice_aliases_write", restaurant_id)
         conn.commit()
     finally:
         conn.close()
