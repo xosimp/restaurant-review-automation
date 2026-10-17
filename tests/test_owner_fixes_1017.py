@@ -89,3 +89,71 @@ def test_marketing_has_no_how_you_compare_and_its_cards_carry_no_day_count():
     for p in ("Features/Marketing/MarketingAnalyticsSection.swift", "Features/Labor/LaborAnalyticsSection.swift"):
         with open(os.path.join(ROOT, "ios", "CavnarAI", "CavnarAI", p), encoding="utf-8") as f:
             assert "HowYouCompareCard(" not in f.read(), p
+
+
+# ── Plate costs: add-ons apart from dishes, linked to the POS by name ────
+
+def test_add_on_buttons_link_to_one_recipe_and_never_to_a_sauce_of_them(db_path):
+    import backoffice_recipes as br
+    from models import Restaurant, create_restaurant, get_conn
+    rid = create_restaurant(Restaurant(name="Addon Co", owner_email="a@x.test"), db_path=db_path)
+    c = get_conn(db_path)
+    for i, n in enumerate(["Add Grill Chix", "Classic Buffalo`$1.99", "Add Jalapeno", "BBQ`$1.99", "Well Done"]):
+        c.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, business_date, item_name, item_kind, "
+                  "kind, qty, sales, sales_category) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (rid, "rpower", f"l{i}", "2026-10-10", n, "modifier", "sale", 1, 2.0,
+                   "(Modifiers)" if n == "Well Done" else "(Food Add-Ons)"))
+    c.commit(); c.close()
+    bk = {"recipes": [{"name": f"MOD- {n}", "group": "MENU ITEM>MODS", "ingredients": []} for n in
+                      ("ADD GRILLED CHICKEN", "WING SAUCE CLASSIC BUFFALO", "JALAPENO RANCH",
+                       "WING SAUCE DR. PEPPER BBQ", "WING SAUCE BBQ CHIP SPICE RUB")], "items": [], "pos_names": {}}
+    links = br.addon_links(rid, bk, "2026-10-01", "2026-10-15", db_path)
+    assert links["MOD- ADD GRILLED CHICKEN"] == ["Add Grill Chix"]
+    assert links["MOD- WING SAUCE CLASSIC BUFFALO"] == ["Classic Buffalo`$1.99"]
+    assert "MOD- JALAPENO RANCH" not in links, "the peppers are not the ranch"
+    assert links["MOD- WING SAUCE DR. PEPPER BBQ"] == ["BBQ`$1.99"], "the closest fit wins"
+    assert not any("Well Done" in v for v in links.values())
+    assert br._is_addon({"group": "MENU ITEM>MODS", "name": "MOD- ADD EGG"}) and not br._is_addon(
+        {"group": "MENU ITEM>PLATES", "name": "SMASHBURGER"})
+    assert br.addon_name("MOD- ADD GRILLED CHICKEN") == "ADD GRILLED CHICKEN"
+
+
+# ── tips: short, in points, the app's text face ──────────────────────────
+
+def test_long_tips_open_as_points_in_the_text_face():
+    page = _src()
+    assert "function cavTipList(lines,lead)" in page and "function cavTipFormat(p)" in page
+    assert "if(on)cavTipFormat(p);" in page, "every tip is formatted as it opens"
+    assert ".cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}" in page
+
+
+def test_the_tip_splitter_keeps_abbreviations_and_elements_whole():
+    import subprocess
+    page = _src()
+    js = page[page.index("var CAV_TIP_ABBR"):page.index("function cavTipFormat")]
+    out = subprocess.run(["node", "-"], input=js + "console.log(JSON.stringify(["
+                         "cavTipSplit('Brunch in St. Charles is busy. Totals add <span>1.5</span> nights. Done.'),"
+                         "cavTipSplit('<b>One. Two</b> stays whole. Next one.')]))", capture_output=True, text=True)
+    a, b = __import__("json").loads(out.stdout)
+    assert a == ["Brunch in St. Charles is busy.", "Totals add <span>1.5</span> nights.", "Done."]
+    assert b == ["<b>One. Two</b> stays whole.", "Next one."]
+
+
+# ── the Bar: Good to know is green; What this measures is a dialog ───────
+
+def test_good_to_know_is_green_and_what_this_measures_is_a_dialog():
+    page = _src()
+    ins = page[page.index("  function insights2(list) {"):page.index("  function overview(d, pc) {")]
+    assert "info: 'var(--hb-good)'" in ins and "info: 'green'" in ins
+    assert '<template id="br-why-tpl">' in page and "function whyOpen()" in page
+    assert "root.appendChild(m);" in page and "cModal.open('br-why-modal', {close: 'barWhyClose'})" in page
+
+
+# ── the Studio's setup card ──────────────────────────────────────────────
+
+def test_the_studio_setup_tabs_are_one_rounded_strip_with_no_sticky_bars():
+    page = _src()
+    assert "#ss-settings-setup #ss-settings .ss-tabs{position:static;display:flex" in page
+    assert "border-radius:14px;background:var(--sf-recess)" in page
+    assert "#ss-settings-setup .sw-gen{position:static;background:none}" in page
+    assert ".ss-stage[data-stage=\"setup\"] .ss-hero{text-align:center;margin:0 0 22px}" in page

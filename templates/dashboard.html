@@ -4508,7 +4508,7 @@ svg:hover .hb-xh{opacity:1}
   function locations(lc){
     if(!lc||!lc.ok||!(lc.metrics||[]).length)return (lc&&lc.why_not)?'<div class="hb-empty">Locations compared side by side appear once two or more are measured — '+esc(lc.why_not)+'.</div>':'';
     // How a gap is called sits behind the kicker's info tip (text round, 10/17/26).
-    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="bm-loc-tip" aria-expanded="false" aria-controls="bm-loc-tip" aria-label="How locations are compared">i</button><span class="cav-itp" id="bm-loc-tip" role="tooltip" hidden>Each against its own normal first, then against your other locations — a gap is called only when it is wider than both locations’ own week-to-week swing.</span></span></div>';
+    var h='<div class="hb-card bm-card"><div class="hb-kicker">How your locations compare<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="bm-loc-tip" aria-expanded="false" aria-controls="bm-loc-tip" aria-label="How locations are compared">i</button><span class="cav-itp" id="bm-loc-tip" role="tooltip" hidden>Each against its own normal, then your other locations. A gap shows only when it’s wider than both locations’ weekly swing.</span></span></div>';
     for(var i=0;i<lc.metrics.length;i++){var m=lc.metrics[i];
       h+='<div class="hb-sh" style="margin-top:12px"><div><div class="k dim">'+esc(m.label)+'</div></div></div><div class="bm-rows">';
       for(var j=0;j<(m.locations||[]).length;j++){var l=m.locations[j];
@@ -8645,7 +8645,7 @@ svg:hover .hb-xh{opacity:1}
         h+='<div class="hb-card"><div class="hb-h3"><span>Needs attention</span></div>'+(na.length?items(na,'important'):'<div class="hb-empty">Nothing called out.</div>')+'</div></div>';}}
     var acts=n.actions_tomorrow||[];
     if(acts.length){
-      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+itip('How the priorities are ranked','Ranked by urgency, dollars and effort. Each one is checked against the night\u2019s figures before it shows.')+'</h2></div></div><div class="hb-recs">';
+      var dnp=drDayNames(p);h+='<div class="hb-sh"><div><div class="k">AI recommended</div><h2>'+esc((sc&&sc.labels&&sc.labels.priorities)||(dnp?dnp.next+'\u2019s priorities':'Next priorities'))+itip('How the priorities are ranked','By urgency, dollars and effort, each checked against the night\u2019s figures.')+'</h2></div></div><div class="hb-recs">';
       for(var a=0;a<acts.length;a++){var x=acts[a],rk=x.rec_key||x.key||'',blk=String(rk).split(':')[2]||'';blk=blk.split('/')[0];
         // The first three show; the rest wait hidden in the same grid, and
         // "N more" under it reveals them above itself (ID1-15, 9/28/26).
@@ -9167,7 +9167,7 @@ svg:hover .hb-xh{opacity:1}
     if(!svc||svc.status!=='ready')return '';
     var R=(svc.detail||{}).register;if(!R)return '';
     var t=R.totals||{},T=R.tenders||[],P=R.payouts||[],h='',i;
-    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards'+itip('Where these figures come from','Every payment, tip and payout as the POS recorded them. Paid out and in is petty cash and check requests entered on the POS.')+'</div>'
+    h+='<section class="hb-card dr-loss" aria-label="Cash and cards"><div class="hb-kicker">Cash and cards'+itip('Where these figures come from','As the POS recorded them. Paid out / in: petty cash and check requests on the POS.')+'</div>'
       +'<div class="dr-loss-top"><div class="v hb-num">'+esc(money(t.all))+'</div><div class="s">taken · cards '+hn(money(t.card))+' · cash '+hn(money(t.cash))+(P.length?' · paid out '+hn(money(t.payouts)):'')+'</div></div>';
     // The night's totals stay; each tender, the tips and every payout open
     // under one "More" (text round 10/17/26).
@@ -9633,7 +9633,7 @@ svg:hover .hb-xh{opacity:1}
       b.innerHTML=kind==='week'?weekHtml(d.week,d.view):periodHtml(d.period,d.view);
     }).catch(function(){if(tk===st.token)loadFailed(b,null);});
   }
-  var GRID_HOW='Totals add only the nights that were measured; a comparison (vs budget, vs last year, labor %) uses only the nights that have both sides.';
+  var GRID_HOW='Totals add measured nights only. A comparison uses only nights with both sides.';
   function isOwnerGrid(g,view){return view==='owner'&&(g.withheld||[]).indexOf('budget')<0;}
   function gridCols(g,owner){
     var c=[],cs=g.categories||[];
@@ -9710,7 +9710,7 @@ svg:hover .hb-xh{opacity:1}
     var owner=isOwnerGrid(g,view),cols=gridCols(g,owner),days=g.days||[],t=g.totals||{};
     // How the grid adds and compares, behind the heading's "i" (text round
     // 10/17/26); the nights measured is the first tile's line.
-    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+itip('How the week adds up',GRID_HOW+' Last year is the same weekday 52 weeks back: that night\u2019s report, then your imported workbook, then the POS sync.')+'</h1>'
+    var h='<div class="dr-head"><div><div class="hb-kicker">Weekly grid</div><h1 class="hb-h1">'+esc(g.label||'Week')+itip('How the week adds up',GRID_HOW+' Last year: the same weekday 52 weeks back.')+'</h1>'
       +'<div class="hb-sub">'+esc(weekday(g.start).slice(0,3))+' '+hn(esc(md(g.start)))+' – '+esc(weekday(g.end).slice(0,3))+' '+hn(esc(md(g.end)))+'</div></div>'
       +'<div class="dr-acts"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,-7)+'">&larr; Week before</button>'
       +'<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dr="open" data-kind="week" data-date="'+addDays(g.start,7)+'">Week after &rarr;</button>'
@@ -10011,7 +10011,7 @@ svg:hover .hb-xh{opacity:1}
   </div>
   <div class="rh-head">
     <div class="hb-kicker">Your record</div>
-    <h1 class="hb-h1">Recommendations<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rh-tip" aria-expanded="false" aria-controls="rh-tip" aria-label="How this record is kept">i</button><span class="cav-itp" id="rh-tip" role="tooltip" hidden>What Cavnar AI suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</span></span></h1>
+    <h1 class="hb-h1">Recommendations<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rh-tip" aria-expanded="false" aria-controls="rh-tip" aria-label="How this record is kept">i</button><span class="cav-itp" id="rh-tip" role="tooltip" hidden>What Cavnar AI suggested, what you did, what was measured. Unanswered counts as not acted on.</span></span></h1>
   </div>
   <div id="rh-body" aria-live="polite"></div>
 </div>
@@ -10749,7 +10749,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   {# Search phrases worked into replies (reply_keywords; Danny, 10/9/26):
      anyone with Reviews edits the list; an add or a remove saves on its own. #}
   <section class="rv2-kw-box" id="rv-keywords" aria-labelledby="rv-kw-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-kw-tip" aria-expanded="false" aria-controls="rv-kw-tip" aria-label="How search phrases are used">i</button><span class="cav-itp" id="rv-kw-tip" role="tooltip" hidden>Cavnar AI works one of these into a reply when it reads naturally — never more than one, never in a reply to an unhappy guest.</span></span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-kw-h">Search phrases</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-kw-tip" aria-expanded="false" aria-controls="rv-kw-tip" aria-label="How search phrases are used">i</button><span class="cav-itp" id="rv-kw-tip" role="tooltip" hidden>One per reply, only where it reads naturally. Never to an unhappy guest.</span></span></div>
     <div class="rv2-kw-list" id="rv-kw-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-kw-add" id="rv-kw-form" onsubmit="rvKwAdd(event)"><input class="ac-input" id="rv-kw-in" maxlength="60" placeholder="e.g. brunch in St. Charles" aria-label="Add a search phrase" autocomplete="off"><button type="submit" class="cbtn cbtn-secondary cbtn-sm">Add</button></form>
   </section>
@@ -10758,7 +10758,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      10/9/26): anyone with Reviews edits them; each add, edit or remove
      saves on its own. #}
   <section class="rv2-prg-box" id="rv-programs" aria-labelledby="rv-prg-h">
-    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-prg-tip" aria-expanded="false" aria-controls="rv-prg-tip" aria-label="How membership programs are used">i</button><span class="cav-itp" id="rv-prg-tip" role="tooltip" hidden>When a happy guest mentions what a program is for, Cavnar AI invites them to it in one sentence: one program per reply, no prices, never on a 1-3 star review or on Yelp.</span></span></div>
+    <div class="rv2-kw-head"><span class="hb-kicker" id="rv-prg-h">Membership programs</span><span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rv-prg-tip" aria-expanded="false" aria-controls="rv-prg-tip" aria-label="How membership programs are used">i</button><span class="cav-itp" id="rv-prg-tip" role="tooltip" hidden><b>Offered to a happy guest who mentions what it’s for.</b> One sentence, one program per reply. No prices. Never on a 1–3 star review or on Yelp.</span></span></div>
     <div class="rv2-prg-list" id="rv-prg-list"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div>
     <form class="rv2-prg-form" id="rv-prg-form" onsubmit="rvPrgSave(event)" hidden>
       <input type="hidden" id="rv-prg-orig" value="">
@@ -11384,7 +11384,7 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
    "This week's draft was built"). */
 .ss-stage[data-stage="setup"] .ss-hero{text-align:center;margin:0 0 22px}
 .ss-stage[data-stage="setup"] .ss-hero h1{margin:6px 0 0}
-#ss-settings-setup{max-width:640px;margin:0 auto}
+#ss-settings-setup{max-width:700px;margin:0 auto}
 #ss-settings-setup #ss-settings .ss-tabs{position:static;display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:4px;margin:0 0 6px;padding:5px;border-radius:14px;background:var(--sf-recess);box-shadow:inset 0 0 0 1px var(--hb-line2)}
 #ss-settings-setup #ss-settings .ss-tabs button{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 10px;border-radius:10px;line-height:1;white-space:nowrap}
 #ss-settings-setup .sw-gen{position:static;background:none}
@@ -13766,15 +13766,16 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
-/* Every tip in the app's text face and size, whatever it sits inside (10/17/26: one inside a Space Grotesk figure
-   took the figure's face). Figures inside it stay Space Grotesk through .hb-num. */
-.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif}
-.cav-it .cav-itp{font-size:14px;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal}
+/* Every tip in the app's text face and size, whatever it sits inside (10/17/26: Home's "what this figure covers"
+   tip sits inside the $ figure, and `.hb-num, .hb-num *` sets Space Grotesk !important on everything in a figure).
+   Figures inside the tip stay Space Grotesk through their own .hb-num. */
+.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif!important}
+.cav-it .cav-itp{font-size:14px!important;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal}
 .cav-itp .hb-num{font-family:'Space Grotesk',sans-serif;background:none;border:0;padding:0;font-size:inherit;color:var(--ink)}
-.cav-itp .cav-tl-lead{display:block;margin-bottom:6px}
-.cav-itp .cav-tl{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
-.cav-itp .cav-tl li{position:relative;padding-left:14px}
-.cav-itp .cav-tl li:before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ember2)}
+.cav-tl-lead{display:block;margin-bottom:6px;color:var(--ink);font-weight:600}
+.cav-tl{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.cav-tl li{position:relative;padding-left:14px}
+.cav-tl li:before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ember2)}
 /* On a phone the tip opens from its "i" and is kept on screen by cavItipSet's clamp (UI-12): pinned right, an "i"
    mid-line pushed it off the left edge. */
 @media (max-width:640px){.cav-itp{left:0;right:auto}}
@@ -14212,7 +14213,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-sub{margin-top:26px}
 .fc2-pl-sub .k{font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .fc2-pl-sub .s{font-size:13px;color:var(--ink3);margin-top:3px}
-@media (max-width:640px){.fc2-pl{--pl-cols:minmax(0,1fr) 62px 70px 70px 66px}.fc2-pl-head{font-size:11px;letter-spacing:.04em}}
+@media (min-width:561px) and (max-width:640px){.fc2-pl{--pl-cols:minmax(0,1fr) 62px 70px 70px 66px}.fc2-pl-head{font-size:11px;letter-spacing:.04em}}
 /* The headings sort (owner, 10/16/26): the sortable-table button and chevron, right-aligned over figures. */
 .fc2-pl-head .csort-btn{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:none;border:0;box-shadow:none;height:auto;min-height:0;padding:0;margin:0;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
 
@@ -14229,7 +14230,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-lines .l .n{font-family:'Space Grotesk',sans-serif;color:var(--ink2);white-space:nowrap}
 .fc2-pl-lines .miss,.fc2-pl-row>summary .miss{color:var(--ember2)}
 .fc2-pl-more>summary{cursor:pointer;font-size:13.5px;color:var(--ember2);padding:10px 0;list-style:none}
-@media (max-width:560px){.fc2-pl-row>summary,.fc2-pl-head{grid-template-columns:minmax(0,1fr) repeat(2,minmax(56px,auto))}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
+@media (max-width:560px){.fc2-pl{--pl-cols:minmax(0,1fr) 64px 72px}.fc2-pl-row>summary .x,.fc2-pl-head .x{display:none}}
 .fc2-cfo{margin-top:18px;border:1px solid var(--hb-line);border-radius:12px;overflow:hidden;background:var(--surface)}
 .fc2-cfo-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--hb-line2)}
 .fc2-cfo-hd .t{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember)}
@@ -15408,7 +15409,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          here - cavNavSection switches to this tab and waits for the card
          loadMktAttribution un-hides. -->
     <div class="hb-card" id="mkt-attr-card" data-nav="marketing/attribution" style="display:none;margin-bottom:16px;padding:20px 22px">
-      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-attr-tip" aria-expanded="false" aria-controls="mkt-attr-tip" aria-label="How this is measured">i</button><span class="cav-itp" id="mkt-attr-tip" role="tooltip" hidden>Sales in the two days after each post, against the same weekday before it. Where the post named a dish, that dish&rsquo;s own units the same way, and reviews in the next two weeks that mentioned it. <b>Correlations, not proof</b> &mdash; a busy Friday is still a busy Friday.</span></span></div>
+      <div class="hb-kicker" style="margin-bottom:10px">What posts did to sales<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="mkt-attr-tip" aria-expanded="false" aria-controls="mkt-attr-tip" aria-label="How this is measured">i</button><span class="cav-itp" id="mkt-attr-tip" role="tooltip" hidden><b>Correlation, not proof.</b> Sales the 2 days after each post vs the same weekday before. A named dish: its own units, and reviews mentioning it within 2 weeks.</span></span></div>
       <div id="mkt-attr-body" style="font-size:15px;color:var(--ink2);line-height:1.6"></div>
     </div>
 
@@ -15788,7 +15789,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div id="aiv-card"><div id="aiv-body">
     <div class="in2-pre" id="aiv-idle">
       {# What the check is and what it can't see sits behind the info tip (text round, 10/17/26). #}
-      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="aiv-what-tip" aria-expanded="false" aria-controls="aiv-what-tip" aria-label="How the AI visibility check works">i</button><span class="cav-itp" id="aiv-what-tip" role="tooltip" hidden>This runs real guest-style queries through one AI search system — Perplexity's live web search — and shows whether you came up. What any AI assistant answers from is its own business, not something we can see.</span></span></h2>
+      <div class="t"><div class="hb-kicker">AI search presence</div><h2>Is {{ restaurant.name }} visible to AI search?<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="aiv-what-tip" aria-expanded="false" aria-controls="aiv-what-tip" aria-label="How the AI visibility check works">i</button><span class="cav-itp" id="aiv-what-tip" role="tooltip" hidden>Real guest-style searches on Perplexity’s live search: did you come up? Other assistants’ sources aren’t visible to us.</span></span></h2>
         <div class="meta">Three local queries · about ten seconds · Perplexity live search<span id="in2-last-run"></span></div>
         <div class="meta" id="aiv-stored-state" hidden></div></div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="cbtn cbtn-primary cbtn-lg" style="white-space:nowrap">Check AI visibility</button>
@@ -29720,9 +29721,8 @@ function fc2PlRender(){
      heading - it was a paragraph under the list (text round 10/17/26). */
   var notes=[],ni,nl=(d.note&&typeof d.note==='object')?d.note:(d.note?[d.note]:[]);
   for(ni=0;ni<nl.length;ni++)notes.push(fc2BoEsc(nl[ni]));
-  var tip=cavTipList((mt?['Green margin: <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span>+ of the price · Account → Targets']:[])
-    .concat(['Priced: <span class="hb-num">'+(pr.invoice||0)+'</span> from invoices · <span class="hb-num">'+(pr.back_office||0)+'</span> from '+fc2BoEsc(fc2FeedLabel(d))+((pr.unpriced||0)?' · <span class="hb-num">'+pr.unpriced+'</span> not yet':'')])
-    .concat(notes));
+  var tip=cavTipList(notes.concat(mt?['Green margin: <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span>+ of the price (Account → Targets).']:[])
+    .concat((pr.unpriced||0)?['<span class="hb-num">'+pr.unpriced+'</span> ingredient'+(pr.unpriced===1?'':'s')+' can’t be priced yet.']:[]));
   h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from '+fc2BoEsc(fc2FeedLabel(d))+' recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span>'+fc2Tip('fc2-pl-tip','How plate costs are priced',tip)+'</div><div class="fc2-cfo-bd">';
   if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>recipe cost of what sold, at today’s prices · <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> in sales fully priced</span></div>';
   h+=fc2SentenceLines(fc2Sentences(d.coverage));
@@ -29740,7 +29740,7 @@ function fc2PlRender(){
   if(ao.length){
     for(i=0;i<ao.length;i++)ah+=fc2PlRow(ao[i]);
     h+='<div class="fc2-pl-sub"><div class="k">Add-ons &amp; sauces</div><div class="s">Rung on a dish’s ticket · in the figure above, not in the dishes</div></div>'
-      +'<div class="fc2-pl-head" role="row" aria-hidden="true"><span>Add-on</span><span>Price</span><span>Plate cost</span><span>Plate cost %</span><span>Margin</span></div>'
+      +'<div class="fc2-pl-head" role="row" aria-hidden="true"><span>Add-on</span><span>Price</span><span>Plate cost</span><span class="x">Plate cost %</span><span class="x">Margin</span></div>'
       +'<div class="fc2-pl-list">'+ah+'</div>';
   }
   h+='</div>';
@@ -30305,7 +30305,7 @@ function fc2LoadWasteSources(){
       if(!d||!d.ok){fc2TileError(host,'Unexplained',d);return;}
       if(!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
       /* The warning stays in view; how the gap is read sits behind the "i" (text round 10/17/26). */
-      host.innerHTML='<span class="k">Unexplained'+fc2Tip('fc2-wsrc-tip','About unexplained waste','Counts that land under what should be on hand, with no waste logged for the difference. It may be waste, a portion or a miscount \u2014 a closer count tells them apart.')+'</span>'
+      host.innerHTML='<span class="k">Unexplained'+fc2Tip('fc2-wsrc-tip','About unexplained waste','Counted below what should be on hand, with no waste logged. Waste, portions or a miscount \u2014 a closer count tells them apart.')+'</span>'
         +'<span class="v warn"><span class="hb-num">'+d.inferred_pct+'%</span></span>'
         +'<span class="d">of the last '+(+d.window_days||7)+' days\u2019 waste (<span class="hb-num">$'+Math.round(d.inferred).toLocaleString()
         +'</span>) is a count gap, not logged waste \u2014 recount before acting on it.</span>';
@@ -30328,7 +30328,38 @@ function cavTipList(lines,lead){
   for(i=0;i<(lines||[]).length;i++)if(lines[i])li+='<li>'+lines[i]+'</li>';
   return h+(li?'<ul class="cav-tl">'+li+'</ul>':'');
 }
-function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
+/* A long tip reads at a glance (owner, 10/17/26): more than one sentence and over ~100 characters becomes points -
+   a bold lead kept as the lead, then one line per sentence. Split only between sentences at the top level of the
+   tip's HTML (never inside an element or a tag), never after a short abbreviation or inside a figure. ES5. */
+var CAV_TIP_ABBR={'st':1,'mr':1,'mrs':1,'dr':1,'vs':1,'e.g':1,'i.e':1,'no':1,'approx':1,'inc':1,'co':1,'jr':1};
+function cavTipSplit(html){
+  var out=[],cur='',depth=0,i,c,inTag=false,tag='';
+  for(i=0;i<html.length;i++){
+    c=html.charAt(i);cur+=c;
+    if(c==='<'){inTag=true;tag='';continue;}
+    if(inTag){if(c==='>'){inTag=false;var t=tag.toLowerCase();if(t.charAt(0)==='/')depth--;else if(t.charAt(t.length-1)!=='/'&&!/^(br|img|i |i$|hr|wbr)/.test(t)&&t.charAt(0)!=='!')depth++;}else tag+=c;continue;}
+    if(depth<=0&&(c==='.'||c==='!'||c==='?')&&html.charAt(i+1)===' '){
+      var nx=html.charAt(i+2),w=(cur.match(/([A-Za-z.]+)\.$/)||[])[1]||'';
+      if((/[A-Z“"<$\d]/.test(nx))&&!CAV_TIP_ABBR[w.toLowerCase()]){out.push(cur);cur='';i++;}
+    }
+  }
+  if(cur.replace(/\s+/g,''))out.push(cur);
+  return out;
+}
+function cavTipFormat(p){
+  if(!p||p.getAttribute('data-tipfmt'))return;
+  p.setAttribute('data-tipfmt','1');
+  if(p.querySelector('ul,ol,.cav-tl'))return;
+  var txt=(p.textContent||'').replace(/\s+/g,' ');
+  if(txt.length<100)return;
+  var html=p.innerHTML.replace(/^\s+|\s+$/g,''),lead='',i=0,m=/^<b>([\s\S]*?)<\/b>\s*/.exec(html);
+  if(m&&m[0].length<html.length){lead=m[1];html=html.slice(m[0].length);}
+  var parts=cavTipSplit(html);
+  if(parts.length<2&&!lead)return;
+  var lines=[];for(;i<parts.length;i++)lines.push(parts[i].replace(/^\s+|\s+$/g,''));
+  p.innerHTML=cavTipList(lines,lead);
+}
+function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){if(on)cavTipFormat(p);p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
   /* Kept on screen (UI-12): shifted left by what runs past the right edge, never past the left one. */
   if(p&&on&&p.getBoundingClientRect){var r=p.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,dx=0;
     if(r.right>vw-12)dx=(vw-12)-r.right;if(r.left+dx<12)dx=12-r.left;if(dx)p.style.marginLeft=Math.round(dx)+'px';}}
@@ -46193,7 +46224,7 @@ function sfw2RuleCheck(chk) {
       h += '<div class="dn-ax' + (l ? ' learn' : '') + '" data-ax="' + i + '"><div class="n">' + esc(a.label) + '<small>' + (l ? 'still learning' : (a.measured + ' of ' + a.of + ' measured')) + '</small></div>'
         + '<div class="bar">' + (l ? '' : '<i data-w="' + a.score + '"></i>') + '<u></u></div><div class="s">' + (l ? '—' : countHtml(String(a.score))) + '</div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up' + itip('dn-tip-shape', 'How the shape is read', 'Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI’s stated benchmark. Dashed spokes are still learning.') + '</h2>'
+    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up' + itip('dn-tip-shape', 'How the shape is read', 'Each axis 0–100; the dashed ring at 50 is the benchmark. Dashed spokes are still learning.') + '</h2>'
       + '<div class="dn-shape dn-rv">' + radar(ax, 360, false) + '<div class="dn-axes">' + h + '</div></div></section>';
   }
   function traits(s, dm) {
@@ -46236,7 +46267,7 @@ function sfw2RuleCheck(chk) {
         + '<div><div class="nm">' + esc(l.name) + (near ? '<span>Almost there</span>' : '') + '</div><div class="t">'
         + (pr ? figs(pr.have + ' of ' + pr.need + ' ' + pr.unit) : (l.dormant ? 'Not measurable on Cavnar AI yet — needs ' : 'Needs ') + esc(l.needs)) + '</div></div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits still taking shape' + itip('dn-tip-learn', 'How these fill in', 'Nothing here is guessed. Each fills in once its data clears the floor, closest first.') + '</h2>'
+    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits still taking shape' + itip('dn-tip-learn', 'How these fill in', 'Nothing guessed — each fills in once its data clears the floor.') + '</h2>'
       + '<div class="dn-learn">' + h + '</div>' + (ls.length > SHOWN ? '</details>' : '') + '</section>';
   }
   function evidenceAll(p) {
@@ -46424,7 +46455,9 @@ function sfw2RuleCheck(chk) {
 .br-why-card{width:560px;max-height:calc(100vh - 64px);overflow:auto;padding:26px 28px 22px}
 .br-why-hd{display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin-bottom:14px}
 .br-why-hd h3{margin:0;font:500 22px/1.2 'Clash Display',sans-serif;color:var(--ink)}
-.br-why-ft{display:flex;justify-content:flex-end;margin-top:18px}
+.br-why-ft{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.br-why .br-mleg{margin-top:14px}
+.br-why>*+*{margin-top:12px}
 .br-why b{color:var(--ink)}
 .br-why[hidden]{display:none}
 .br-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;font-size:14.5px;color:var(--ink);background:color-mix(in srgb,var(--c,var(--ink3)) 13%,transparent);border:1px solid color-mix(in srgb,var(--c,var(--ink3)) 34%,transparent)}
@@ -47322,16 +47355,22 @@ function sfw2RuleCheck(chk) {
     for (i = ps.length - 1; i >= 0; i--) if (ps[i].ok) return ps[i];
     return null;
   }
+  /* Lead and points in the shared tip-list shape (.cav-tl); the Bar's own copy, so the page runs on its own. */
+  function pts(lines, lead) {
+    var h = lead ? '<b class="cav-tl-lead">' + lead + '</b>' : '', li = '', i;
+    for (i = 0; i < lines.length; i++) if (lines[i]) li += '<li>' + lines[i] + '</li>';
+    return h + (li ? '<ul class="cav-tl">' + li + '</ul>' : '');
+  }
   function whyText(d, pc, counted) {
     if (counted) {
       var p = countedPeriod(d), t = (p && p.total) || {};
-      return '<b>Pour cost, counted.</b> What the bar used between two counts — the opening count, plus what it bought, minus the closing count — as a % of what it sold'
-        + (t.used != null ? ': ' + hn(money(t.begin)) + ' + ' + hn(money(t.purchases)) + ' − ' + hn(money(t.end)) + ' = ' + hn(money(t.used)) + ' used, against ' + hn(money(t.sales)) + ' sold.' : '.')
-        + ' The ranges it is read against are published for counted pour cost.';
+      /* Points, not a paragraph (owner, 10/17/26). */
+      return pts(['Used = the opening count, plus what was bought, minus the closing count.',
+        t.used != null ? hn(money(t.begin)) + ' + ' + hn(money(t.purchases)) + ' − ' + hn(money(t.end)) + ' = ' + hn(money(t.used)) + ' used, against ' + hn(money(t.sales)) + ' sold.' : '',
+        'Read against the ranges published for counted pour cost.'], 'Pour cost, counted');
     }
-    return '<b>Pour cost needs two counts.</b> What the bar used is the opening shelf count, plus what it bought, minus the closing count. Until two counts bracket four weeks, this figure is what you bought from distributors as a % of what the POS sold — a stock-up week reads high and a week drawing the shelf down reads low. '
-      + 'Count the bar at month-end — beer, liquor and wine at what you paid — and the figure becomes pour cost, counted.'
-      + '<div><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-counts" style="margin-top:12px">Count the bar</button></div>';
+    return pts(['A stock-up week reads high; a week drawing the shelf down reads low.',
+        'Count the bar at month-end — at what you paid — and this becomes pour cost.'], 'Pour cost needs two counts');
   }
   /* The hero chart's dates as a row in the flow, placed as the chart places
      its own (first left, last right, the rest centred on their point). */
@@ -47397,14 +47436,15 @@ function sfw2RuleCheck(chk) {
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
       + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-haspopup="dialog" aria-controls="br-why-modal">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
       /* A centred dialog over the dimmed page (owner, 10/17/26: it opened inside the card and pushed it down).
-         Inside #bar, which keeps the rest of the app inert while open. */
-      + '<div class="cmodal so-modal br-why-modal" id="br-why-modal" role="dialog" aria-modal="true" aria-labelledby="br-why-t" style="display:' + (ST.why ? 'flex' : 'none') + '">'
-      + '<div class="so-card br-why-card"><div class="br-why-hd"><h3 id="br-why-t">' + (counted ? 'How it’s worked out' : 'What this measures') + '</h3>'
+         Its content waits in a <template> (never displayed) and the dialog is built at the Bar's root when it
+         opens (whyOpen): inside the hero card, the card's transform and overflow captured and clipped it. */
+      + '</div><template id="br-why-tpl"><div class="so-card br-why-card"><div class="br-why-hd"><h3 id="br-why-t">' + (counted ? 'How it’s worked out' : 'What this measures') + '</h3>'
       + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
       + '<div class="br-why" id="br-why" data-br-explain="1">'
       + (pc.sub ? '<div class="br-ctx">' + esc2(cap0(pc.sub)) + '.</div>' : '') + whyText(d, pc, counted) + (rng ? meterLegend(v.c, counted ? null : t.prev_pct, t.target, ctxRange) : '') + bandNote + sales
       + (d.basis ? '<div class="br-sb">' + numify(d.basis) + '</div>' : '') + '</div>'
-      + '<div class="br-why-ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-whyclose="1">Close</button></div></div></div></div>'
+      + '<div class="br-why-ft">' + (counted ? '' : '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-counts">Count the bar</button>')
+      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-br-whyclose="1">Close</button></div></div></template>'
       + '<div class="br-hr">' + right + '</div></section>';
   }
   /* Why a trend can't draw yet (V45): measured readings, not points. */
@@ -48604,8 +48644,22 @@ function sfw2RuleCheck(chk) {
       + panel('cost', costPanel(d)) + panel('buying', buyPanel(d)) + panel('match', matchPanel(d)) + panel('stock', stockPanel(d));
     return h;
   }
-  /* The What-this-measures dialog's close (cModal calls it by name: Close, the scrim, Escape). */
-  window.barWhyClose = function () { ST.why = false; var m = $id('br-why-modal'); if (m) m.style.display = 'none'; };
+  /* The What-this-measures dialog: the hero keeps its content in #br-why-tpl; whyOpen builds the dialog as a direct
+     child of #bar - outside every card, so nothing transformed or clipped holds its fixed layer - and cModal
+     opens it (Close, the scrim and Escape close it through barWhyClose). */
+  function whyOpen() {
+    var root = $id('bar'), m = $id('br-why-modal'), tpl = $id('br-why-tpl');
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+    if (!root || !tpl) return;
+    m = document.createElement('div');
+    m.id = 'br-why-modal'; m.className = 'cmodal so-modal br-why-modal';
+    m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true'); m.setAttribute('aria-labelledby', 'br-why-t');
+    m.style.display = 'none'; m.innerHTML = tpl.innerHTML;
+    root.appendChild(m);
+    ST.why = true;
+    if (window.cModal) cModal.open('br-why-modal', {close: 'barWhyClose'}); else m.style.display = 'flex';
+  }
+  window.barWhyClose = function () { ST.why = false; var m = $id('br-why-modal'); if (m && m.parentNode) m.parentNode.removeChild(m); };
   function skeleton() {
     return '<div class="dn-k">Bar</div><div class="br-sk" role="status" aria-label="Loading" style="height:300px;margin-top:14px"></div>'
       + '<div class="br-cats"><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div></div>'
@@ -48845,6 +48899,7 @@ function sfw2RuleCheck(chk) {
   function valOf(sel) { var e = document.querySelector(sel); return e ? String(e.value || '').replace(/^\s+|\s+$/g, '') : ''; }
   function attrSel(a, v) { return '[' + a + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]'; }
   function goTo(id) {
+    if (window.cModal && cModal.isOpen('br-why-modal')) cModal.close('br-why-modal');
     var t = $id(id); if (!t) return;
     var pn = t.closest ? t.closest('[data-br-panel]') : null;
     if (pn) setTab(pn.getAttribute('data-br-panel'), false, true);
@@ -48973,7 +49028,7 @@ function sfw2RuleCheck(chk) {
         if (wantRemote()) fetchPrices(mv === 'next' && !!ST.pq, before);
         redrawList(before);
       } else if (a('data-br-why') != null) {
-        ST.why = true; if (window.cModal) cModal.open('br-why-modal', {close: 'barWhyClose'});
+        whyOpen();
       } else if (a('data-br-whyclose') != null) {
         if (window.cModal) cModal.close('br-why-modal'); else window.barWhyClose();
       } else if (a('data-br-go') != null) goTo(a('data-br-go'));

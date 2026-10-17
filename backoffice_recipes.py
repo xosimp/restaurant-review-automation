@@ -635,6 +635,9 @@ _ADDON_SAME = {"chix": "chicken", "grill": "grilled", "bleu": "blue", "chs": "ch
                "blueberries": "blueberry", "croutons": "crouton", "cola": "cola", "bech": "bechamel"}
 
 
+_ADDON_SAUCE = {"ranch", "aioli", "dressing", "mayo", "vinaigrette", "glaze", "dip", "gravy", "syrup"}
+
+
 def _addon_words(name) -> set:
     base = str(name or "").split("`")[0]
     words = re.findall(r"[a-z0-9]+", base.lower().replace("&", " "))
@@ -675,7 +678,9 @@ def addon_links(restaurant_id, bk, start, end, db_path=None) -> dict:
         pw = _addon_words(n)
         if not pw:
             continue
-        fits = [(len(w - pw), name) for name, w in words.items() if pw <= w]
+        # A recipe that is a sauce OF the button's item is another thing: "Add
+        # Jalapeno" (the peppers) is never MOD- JALAPENO RANCH.
+        fits = [(len(w - pw), name) for name, w in words.items() if pw <= w and not ((w - pw) & _ADDON_SAUCE)]
         if not fits:
             continue
         fits.sort()
@@ -772,8 +777,7 @@ def plates(restaurant_id, today=None, db_path=None, start=None, end=None, as_of=
                        "to_mdy": mdy(end.isoformat()), "days": (end - start).days + 1},
             "plates": dishes, "add_ons": add_ons, "summary": summary, "prices": srcs,
             # Short and in points (owner, 10/17/26: the tips were a paragraph).
-            "note": ("Recipe cost at today's supplier prices.",
-                     "Prices: each item's latest invoice, else Back Office's last price.",
+            "note": ("Recipe cost at today's prices: each item's latest invoice, else Back Office's.",
                      "Selling price: what the POS took over four weeks.",
                      f"Under 12% or over {high:g}% of the price: flagged, left out of the total.")}
 

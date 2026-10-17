@@ -196,7 +196,7 @@ def test_fc_calc_02_two_full_counts_measure_it(db_path):
     out = cogs.build_food_cost_pct(rid, days=7, today=T, db_path=db_path)
     assert out["ok"] and out["counted"] and out["cogs"] == 100.0
     assert out["pct"] == round(100.0 / 7000.0 * 100, 1)
-    assert "counted opening inventory" in out["basis"]
+    assert out["basis"].startswith("Counted inventory ")
 
 
 def test_fc_calc_02_a_snapshot_is_a_count_only_when_its_items_were_recounted():

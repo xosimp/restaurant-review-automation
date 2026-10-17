@@ -720,6 +720,10 @@ def test_m27_home_week_and_ios_receipt_count_real_pieces(db_path):
 
 def test_m16_unverified_marketing_read_offers_no_controls_and_keeps_its_flag(db_path, monkeypatch):
     import ai_utils
+    import marketing_opportunities
+    # No holiday card to lead the brief, whatever today is (10/17/26: Halloween's
+    # card replaced the model's lead, so its 340% never reached the check).
+    monkeypatch.setattr(marketing_opportunities, "holidays", lambda *a, **k: [])
     rid = _rid(db_path, module_marketing=1)
     monkeypatch.setattr(ai_utils, "create_with_retry",
                         lambda *a, **k: _msg("Hi, reach is up 340%.\n\n1. Post the carbonara.\n2. Feature brunch."))
