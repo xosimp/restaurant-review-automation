@@ -1277,10 +1277,11 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # DDL on the render path is exactly the cost waste_trend removed
             # with its own _SCHEMA_ENSURED guard.
             import json as _json_inv2
-            snapshot = {
-                "total_waste_cost": analysis['total_waste_cost_week'],
-                "top_items": [x["item"] for x in analysis["waste_items"][:4]]
-            }
+            # The one waste_json shape both writers use (FC-CALC-12: a week
+            # with nothing logged is null, never a render's $0).
+            import food_cost_intelligence as _fci_snap
+            from datetime import date as _date_snap
+            snapshot = _fci_snap.snapshot_payload(items, analysis, _date_snap.fromisoformat(_week_end_str))
             _items_json_str = _json_inv2.dumps(items) if items else None
             existing = _conn_inv.execute(
                 "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",

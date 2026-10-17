@@ -344,6 +344,17 @@ def test_fc_calc_12_a_snapshot_with_nothing_logged_stores_null_and_leaves_the_tr
     assert stats["weeks"] == 3 and stats["best"]["waste"] == 100.0
 
 
+def test_fc_calc_12_both_writers_share_one_snapshot_shape():
+    """A page render rewrote the scheduled row's null as $0."""
+    assert "snapshot_payload(items, analysis" in inspect.getsource(inventory.get_claude_insights)
+    p = fci.snapshot_payload([{"item": "Beef", "waste_last_week": 0, "last_waste_at": "2026-08-01"}],
+                             {"total_waste_cost_week": 0, "waste_items": []}, T)
+    assert p["total_waste_cost"] is None
+    p = fci.snapshot_payload([{"item": "Beef", "waste_last_week": 0, "last_waste_at": "2026-09-20"}],
+                             {"total_waste_cost_week": 0, "waste_items": []}, T)
+    assert p["total_waste_cost"] == 0.0, "a logged week with nothing costed is a measured zero"
+
+
 # ── FC-CALC-23 / AI-03: the snapshot's stock is food only, never negative ─
 
 def test_fc_calc_23_the_snapshot_writes_the_food_stock_value(db_path, monkeypatch):

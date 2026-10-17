@@ -106,6 +106,27 @@ def _one_row(conn, sql, params=()):
 
 # ── The history writer ──────────────────────────────────────────────────────
 
+def snapshot_payload(items, analysis, today) -> dict:
+    """The waste_json one inventory_history row stores — the ONE shape both
+    writers use (the scheduled weekly_snapshot and the render-time write in
+    inventory.get_claude_insights): the week's waste, None when nothing was
+    logged in the trailing seven days and no figure was typed (FC-CALC-12 —
+    a render rewrote the scheduled row's null as $0), its top items, and
+    whether its stock value is a full count (waste_trend._counted)."""
+    import waste_trend as _wt
+    week_start = (today - timedelta(days=6)).isoformat()
+    total_waste = (analysis or {}).get("total_waste_cost_week")
+    measured = _f(total_waste) > 0 or any(
+        _f(it.get("waste_last_week")) > 0 or str(it.get("last_waste_at") or "")[:10] >= week_start
+        for it in items or () if isinstance(it, dict))
+    counted, counted_on, share = _wt._counted(items, today)
+    return {
+        "total_waste_cost": round(_f(total_waste), 2) if measured else None,
+        "top_items": [x["item"] for x in ((analysis or {}).get("waste_items") or [])[:4]],
+        "counted": counted, "counted_on": counted_on, "counted_share": share,
+    }
+
+
 def weekly_snapshot(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Write today's inventory snapshot. Scheduled, not render-triggered.
 
@@ -140,20 +161,10 @@ def weekly_snapshot(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         return {"ok": False, "reason": "sample data — nothing to snapshot"}
 
     from time_utils import restaurant_now_by_id
-    import waste_trend as _wt
     today = restaurant_now_by_id(restaurant_id).date()
     week_end = today.isoformat()
-    week_start = (today - timedelta(days=6)).isoformat()
-    total_waste = analysis.get("total_waste_cost_week")
-    measured = _f(total_waste) > 0 or any(
-        _f(it.get("waste_last_week")) > 0 or str(it.get("last_waste_at") or "")[:10] >= week_start
-        for it in items or () if isinstance(it, dict))
-    counted, counted_on, share = _wt._counted(items, today)
-    payload = {
-        "total_waste_cost": round(_f(total_waste), 2) if measured else None,
-        "top_items": [x["item"] for x in (analysis.get("waste_items") or [])[:4]],
-        "counted": counted, "counted_on": counted_on, "counted_share": share,
-    }
+    payload = snapshot_payload(items, analysis, today)
+    counted = payload["counted"]
     inv_value = analysis.get("food_stock_value", analysis.get("total_stock_value"))
     conn = get_conn(db_path)
     try:
