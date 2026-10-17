@@ -128,8 +128,9 @@ def test_the_web_lists_pending_invoices_and_registers_the_invoice_head():
     assert '<div id="fc2-inv-pending" hidden></div>' in s
     assert "window.fc2LoadPendingInvoices=function(){" in s and "window.fc2OpenInvoice=function(id){" in s
     assert "cavNavRegister('invoice'," in s and 'data-nav="inventory/invoices"' in s
-    # loaded when Food Cost opens and after an apply
-    assert "loadFcMenu(); fc2LoadPendingInvoices(); }" in s
+    # loaded when the section is first on screen (UI-11: never for a hidden
+    # section) and after an apply
+    assert "if(inv&&!inv.hidden)whenSeen('fc2-invoice',function(){if(window.fc2LoadPendingInvoices)fc2LoadPendingInvoices();});" in s
     assert "renderInvoice();fc2LoadPendingInvoices();" in s
 
 
@@ -353,7 +354,9 @@ def test_the_order_card_loads_itself_and_edits_quantities():
     s = _src()
     assert 'onclick="loadOrderDraft()"' not in s, "the Load button is gone (U2-16)"
     # (Since 9/26/26 the card folds; the draft loads when its line is on screen.)
-    assert "whenSeen('fc2-order-send-d',loadOrderDraft);" in s and "whenSeen('mm-body',loadMenuMargins);" in s
+    # Menu margins joined the dish table (UI-10, 10/16/26), which loads when on screen.
+    assert "whenSeen('fc2-order-send-d',loadOrderDraft);" in s and "whenSeen('fc2-score-body'," in s
+    assert "loadMenuMargins" not in s
     assert 'data-so-qty="' in s and "if(lines.length)body.lines=lines;" in s
     assert "window.confirm(d.error" not in s, "resend is an inline confirm, not confirm()"
     assert "cavNavRegister('order'," in s and 'data-nav="inventory/order"' in s

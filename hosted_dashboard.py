@@ -896,7 +896,10 @@ def index(current_user):
     if _food_source and _food_source.get("on_file") and not (inv or {}).get("is_live"):
         try:
             from pos_food_waste import remakes as _remakes
-            _food_waste = _remakes(restaurant.id)
+            from models import _restaurant_today as _rt_mns
+            # The 7 days ending the restaurant's own yesterday, not the
+            # server's (UTC): the hero prints these dates (UI-04).
+            _food_waste = _remakes(restaurant.id, today=_rt_mns(restaurant.id))
         except Exception:
             _food_waste = None
     # The week a Back Office kitchen's read covers: its last complete fiscal

@@ -62,10 +62,12 @@ def test_the_obsidian_tile_is_the_web_twin_of_glowbadge():
 
 def test_the_web_can_assign_suppliers():
     s = _src()
-    assert "function fc2LoadSuppliers()" in s and "function fc2SupplierPick(sel)" in s
+    assert "function fc2LoadSuppliers(given)" in s and "function fc2SupplierPick(sel)" in s
     assert "function fc2AssignAllUnassigned(btn)" in s
     assert "/api/food-cost/ingredient-supplier" in s
-    assert "fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();" in s
+    # One count-sheet read feeds the sheet and Suppliers (UI-11, 10/16/26).
+    assert "fc2LoadCountSheet(true);fc2LoadRecipeDrafts();" in s
+    assert "if(withSuppliers)fc2LoadSuppliers(d||{ok:false});" in s
 
 
 def test_the_count_sheet_carries_the_supplier_for_the_web_block(db_path, monkeypatch):

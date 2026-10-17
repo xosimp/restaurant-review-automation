@@ -219,12 +219,16 @@ def test_the_food_cost_card_says_bought_vs_sold_and_loads_beside_the_cfo_read():
     # The bought-vs-sold card alone: the plate card's code follows it, and its
     # margin line rightly names the food cost target.
     fn = src[src.index("function fc2LoadBo(){"):src.index("var FC2_PL_SHOW=")]
-    # The basis ("Purchase-based: ...", the server's note) sits behind the card's "i" (owner, 10/16/26: no pill).
-    assert "Food bought vs sold" in fn and 'data-itip="fc2-bo-note"' in fn and "Purchase-based · not a count" not in fn
+    # The basis ("Purchase-based: ...", the server's note) is on the card, not only behind an "i" (UI-14,
+    # 10/16/26: 42% bought vs sold sat beside ~28% plate costs with nothing reconciling them); no pill.
+    assert "Food bought vs sold" in fn and "fc2BoEsc(d.note||" in fn and 'data-itip="fc2-bo-note"' not in fn
+    assert "Purchase-based · not a count" not in fn
+    # "4 weeks to M/D/YY" and the lag line, never "last four weeks" (UI-05).
+    assert "4 weeks to" in fn and "w.days_behind>7" in fn and "last four weeks" not in fn
     assert "<th class=\"n\">Bought from suppliers</th><th class=\"n\">Food sales</th>" in fn          # the months have headings
     assert "'alcohol_mixed','Alcohol, mixed" in src                                                    # a store's receipt
     assert "food cost" not in fn.lower().replace("/api/food-cost", ""), "a purchase ratio is never called food cost"
-    assert '<div id="fc2-bo" class="fc2-cfo" hidden></div>' in src
+    assert '<div id="fc2-bo" class="fc2-cfo" data-nav="inventory/bought" hidden></div>' in src
     assert src.count("fc2LoadBo();") >= 2, "loads where the CFO read loads"
 
 

@@ -568,7 +568,8 @@ def test_back_office_is_a_food_cost_source_without_an_api(db_path):
     src = open(admin_ops.__file__, encoding="utf-8").read()
     assert '"fed_by": "backoffice"' in src and 'or bool(bo.get("n"))' in src
     tpl = open(os.path.join(os.path.dirname(admin_ops.__file__), "templates", "dashboard.html"), encoding="utf-8").read()
-    assert "From your Back Office reports." in tpl and "{% if inv.is_live or not _bo %}<div class=\"hb-pulse\">" in tpl
+    # The feed named as the payload names it (UI-18, 10/16/26).
+    assert "From your {{ _bo_label }} reports." in tpl and "{% if inv.is_live or not _bo %}<div class=\"hb-pulse\">" in tpl
     # Behind an "i" by the heading, not a banner; the coverage line in plain words (10/16/26).
     assert 'data-itip="fc2-bo-tip"' in tpl and 'class="fc2-src"' not in tpl
     # Back Office on file is never "Sample data" (10/16/26: the banner came back when the note moved).

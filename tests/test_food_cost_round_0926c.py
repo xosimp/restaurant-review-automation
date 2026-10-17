@@ -62,10 +62,13 @@ def test_send_to_suppliers_folds_to_one_line():
     assert "#fc2-orders .hd+.fc2-orders,#fc2-orders .hd+.fc2-ok{margin-top:28px}" in SRC
 
 
-def test_no_dishes_is_a_null_dash():
+def test_no_dishes_says_where_recipes_come_from():
+    # UI-10 (10/16/26): the empty dish table says what is missing and where
+    # it is fixed - Draft them, or a recipe card scanned on the phone - not a
+    # bare dash (Menu margins' empty state pointed at a paste box that was gone).
     menu = _between("function loadFcMenu(){", "\n  }\n")
-    assert "fc2-null hb-num" in menu and "hb-empty\">'+_fcEsc(d.reason" not in menu
-    assert ".fc2-null{font-family:'Space Grotesk',sans-serif;font-size:44px" in SRC
+    assert "fc2EmptyHtml('No dish margins yet'" in menu and "Draft them" in menu and "on the phone" in menu
+    assert "fc2-null hb-num" not in menu
 
 
 def test_recipes_load_from_the_inventory_system_only():
