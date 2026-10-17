@@ -43,7 +43,7 @@ struct CavnarCaveat: View {
     static var exampleData: CavnarCaveat {
         CavnarCaveat(
             title: "Example data",
-            detail: "This is a sample pantry, not your numbers. Connect Toast or upload a count to see your own."
+            detail: "This is a sample pantry, not your numbers. Connect your POS or upload a count to see your own."
         )
     }
 

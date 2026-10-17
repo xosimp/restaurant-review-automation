@@ -184,7 +184,7 @@ struct MenuMarginsSheet: View {
 
     private func summaryCard(average: Double, data: MenuProfitability) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
-            CavnarKicker("Average food cost")
+            CavnarKicker("Average plate cost %")
             Text(Self.pct(average))
                 .cavnarText(.figureL)
                 .cavnarNumberGlow()
@@ -251,7 +251,7 @@ struct MenuMarginsSheet: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(item.foodCostPct.map(Self.pct) ?? DSRFormat.dash)
                     .cavnarText(.figureS, color: bandTextColor(item.costBand))
-                Text("food cost").cavnarText(.caption)
+                Text("plate cost %").cavnarText(.caption)
             }
         }
         .padding(.vertical, CavnarSpace.xs)

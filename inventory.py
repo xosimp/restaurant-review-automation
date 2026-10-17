@@ -1092,7 +1092,7 @@ def _supported_savings_block(analysis: dict) -> str:
 
 SAMPLE_DATA_NOTICE = (
     "Food Cost is showing example data — this restaurant has no inventory "
-    "connected yet. Connect Toast or upload a count to see your own numbers. "
+    "connected yet. Connect your POS or upload a count to see your own numbers. "
     "No analysis is generated for example data."
 )
 
