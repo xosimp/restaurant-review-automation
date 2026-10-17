@@ -11915,6 +11915,13 @@ def food_cost_purchase_vendor(current_user):
     return _m("mobile_food_cost_purchase_vendor")(current_user)
 
 
+@client_bp.route("/api/food-cost/purchases/entry", methods=["POST"])
+@login_required
+def food_cost_purchase_entry(current_user):
+    """Web twin — the one body is mobile_api.mobile_food_cost_purchase_entry."""
+    return _m("mobile_food_cost_purchase_entry")(current_user)
+
+
 @client_bp.route("/api/food-cost/bar")
 @login_required
 def food_cost_bar(current_user):

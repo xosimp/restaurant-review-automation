@@ -139,8 +139,13 @@ def test_alcohol_outside_fintech_reaches_the_bar_and_a_fintech_invoice_never_twi
     out = bo.outside_fintech(rid, db_path=db)
     assert out["matched"] == 2, "the itemized Breakthru invoice by number, the check-mode one by amount"
     got = sorted((e["vendor"], e["category"], e["amount"]) for e in out["entries"])
-    assert got == [("BINNY'S BEVERAGE DEPOT", "bar_consumables", 20.0), ("BINNY'S BEVERAGE DEPOT", "beer", 100.0),
-                   ("WINEBOW", "wine", 360.0), ("WINEBOW", "wine", 360.0), ("WINEBOW", "wine", 360.0)]
+    assert got == [("BINNY'S BEVERAGE DEPOT", "bar_consumables", 20.0), ("BINNY'S BEVERAGE DEPOT", "beer", 100.0)]
+    # Winebow supplies through Fintech and no Fintech invoice of theirs is
+    # $360: held to confirm, never silently added (fix round 10/16/26,
+    # LEAD-01 / BAR-CALC-08).
+    held = sorted((e["vendor"], e["category"], e["amount"]) for e in out["to_confirm"])
+    assert held == [("WINEBOW", "wine", 360.0)] * 3
+    assert all("Fintech" in e["why"] and e["fintech_distributor"] for e in out["to_confirm"])
     lines = {(l["distributor"], l["category"], l["net"]) for l in out["lines"]}
     assert ("BINNY'S BEVERAGE DEPOT", "na", 20.0) in lines, "bar consumables are mixers: not alcohol unless counted"
     assert all(l["kind"] == "backoffice" for l in out["lines"])
@@ -158,9 +163,13 @@ def test_the_bar_counts_them_in_bought_vs_sold_but_not_in_prices_products_or_gap
     cat = lambda p, k: next(c for c in p["pour_cost"]["categories"] if c["key"] == k)
     win = after["pour_cost"]["window"]
     in_win = sum(360.0 for days in (3, 3, 40) if win["from"] <= (TODAY - timedelta(days=days)).isoformat() <= win["to"])
-    assert round(cat(after, "wine")["purchases"] - (cat(before, "wine")["purchases"] or 0), 2) == in_win
+    # Winebow's $360 entries match no Fintech invoice of a Fintech house:
+    # held to confirm, not added to wine (LEAD-01); Binny's beer is counted.
+    assert round(cat(after, "wine")["purchases"] - (cat(before, "wine")["purchases"] or 0), 2) == 0.0
     assert after["outside_fintech"]["available"] and after["outside_fintech"]["matched_fintech"] == 2
-    assert {v["vendor"] for v in after["outside_fintech"]["vendors"]} >= {"WINEBOW"}
+    assert {v["vendor"] for v in after["outside_fintech"]["vendors"]} == {"BINNY'S BEVERAGE DEPOT"}
+    assert after["outside_fintech"]["to_confirm_total"] == in_win
+    assert {e["vendor"] for e in after["outside_fintech"]["to_confirm"]} == ({"WINEBOW"} if in_win else set())
     keys = {p["product_key"] for p in after.get("products") or []}
     assert not any(k.startswith("backoffice|") for k in keys), "a Back Office entry is no product"
     assert after["invoices"]["count"] == before["invoices"]["count"], "the Fintech feed is what 'invoices' counts"

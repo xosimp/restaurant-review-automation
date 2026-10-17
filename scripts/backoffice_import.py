@@ -91,10 +91,16 @@ def main(argv=None):
                    "date": inv["date"], "total": inv["total"], "lines": len(inv["lines"]), "adds_up": inv["adds_up"],
                    "by_gl": {k: round(v, 2) for k, v in sorted(by_gl.items(), key=lambda x: str(x[0]))}}
         else:
+            # What --apply would do: vendors whose rows don't add up are held
+            # (not saved), and the printout is the record over its dates —
+            # entries on file there that it no longer shows would be removed
+            # (into bo_invoice_removals). Nothing is written here.
             parsed = bo.parse_invoices_by_vendor(text)
+            pv = bo.preview_printout(a.rid, parsed)
             out = {"kind": "invoices_by_vendor", "vendors": len(parsed["vendors"]),
                    "entries": sum(len(v["rows"]) for v in parsed["vendors"]),
-                   "unparsed": parsed["unparsed"], "mismatched": parsed["mismatched"]}
+                   "unparsed": parsed["unparsed"], "orphans": parsed.get("orphans", 0),
+                   "mismatched": parsed["mismatched"], "held": pv["held"], "would_remove": pv["would_remove"]}
     out["applied"] = bool(a.apply)
     print(json.dumps(out, indent=1, default=str))
     return 0
