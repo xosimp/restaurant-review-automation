@@ -1599,8 +1599,13 @@ def feed_state(restaurant_id, db_path=None) -> dict:
                           ("SELECT loaded_at FROM bo_recipe_books WHERE restaurant_id=?", ("recipes_loaded",))):
             try:
                 row = conn.execute(sql, (int(restaurant_id),)).fetchone()
-            except Exception:
-                continue          # a table not created yet: that part is not on file
+            except Exception as e:
+                try:
+                    conn.rollback()   # Postgres: a failed statement aborts the transaction
+                except Exception:
+                    pass
+                _capture(e, "backoffice_feed_state", restaurant_id, db_path)
+                continue          # that part reads as not on file (SCALE-11: said, not silent)
             if row:
                 for i, k in enumerate(keys):
                     out[k] = row[i]
