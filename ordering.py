@@ -316,9 +316,16 @@ def auto_apply_if_trusted(restaurant_id, proposal, user_id=None, db_path=DB_PATH
     # Only lines whose reading was actually checked (invoices.propose's
     # `verified`): arithmetic that ran and agreed, and a current cost to judge
     # the move against. Everything else waits for the owner (AI-19).
+    # And only lines matched by the owner's own alias for this supplier
+    # (matched_by 'your_match'): a name match is a word subset, so "Chicken
+    # Breast" also matches CHICKEN BREAST BREADED FZN and "Cream" SOUR CREAM —
+    # a different product's price straight into plate costs with nobody
+    # looking (FC/Bar audit 10/16/26, AI-10 / ING-09). A name match waits for
+    # the owner, whose apply teaches the alias.
     picks = [{"index": ln["index"], "ingredient_id": ln["ingredient_id"], "unit_cost": ln["proposed_cost"]}
              for ln in (proposal.get("lines") or [])
              if ln.get("selected") and ln.get("verified") and ln.get("ingredient_id")
+             and ln.get("matched_by") == "your_match"
              and ln.get("proposed_cost") and not ln.get("note")]
     if not picks:
         return proposal

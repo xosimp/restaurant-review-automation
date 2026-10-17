@@ -285,6 +285,91 @@ def match_ingredient(description, ingredients):
     return hits[0][1]
 
 
+# Words on an invoice line that describe a product without making it another
+# one: its state, cut, grade, size or pack. "BUTTER SALTED 36/1LB" is still
+# butter; "PEANUT BUTTER" is not (FC/Bar audit 10/16/26, ING-09).
+_DESCRIPTORS = {
+    "fresh", "frozen", "frz", "fzn", "salted", "unsalted", "large", "medium", "small", "jumbo", "extra",
+    "grade", "sliced", "diced", "shredded", "chopped", "minced", "crushed", "grated", "peeled",
+    "bulk", "case", "pack", "pkg", "bag", "box", "tub", "jar", "can", "cans", "bottle", "bnls", "boneless",
+    "skinless", "sknls", "raw", "organic", "org", "premium", "fancy", "choice", "select", "prime", "usda",
+    "domestic", "imported", "natural", "pure", "plain", "regular", "reg", "loose", "random", "weight", "avg",
+    "lbs", "each", "count", "dozen", "doz", "gal", "gallon", "quart", "pint", "liter", "ltr", "pound",
+    "ounce", "ozs", "fluid", "approx", "per", "only",
+}
+
+
+def partial_match(description, ingredient) -> bool:
+    """True when a one-word ingredient name is only part of a longer product
+    name on the line — "Cream" in SOUR CREAM or ICE CREAM, "Butter" in PEANUT
+    BUTTER, "Lemon" in LEMON JUICE (ING-09 / AI-10). The line names
+    something beyond the ingredient and beyond a descriptor of it, so the
+    match is offered but never preselected, verified or auto-applied: the
+    owner picks it once and their alias (matched_by 'your_match') decides it
+    after that."""
+    name = _tokens((ingredient or {}).get("name"), drop=_NAME_FILLER)
+    if len(name) != 1:
+        return False
+    extra = _tokens(description, drop=_NAME_FILLER) - name - _DESCRIPTORS
+    return bool(extra)
+
+
+# An invoice price this many robust deviations from the ingredient's own
+# price history is never preselected (AI-10: a variant's or a misread price
+# well inside the 40% big-change guard). The deviation is the median absolute
+# deviation, floored at PRICE_MAD_FLOOR of the median so a price that never
+# moved does not flag every cent; judged only with PRICE_HISTORY_MIN prices.
+PRICE_ANOMALY_Z = 3.5
+PRICE_MAD_FLOOR = 0.03
+PRICE_HISTORY_MIN = 3
+PRICE_HISTORY_IMPORTS = 200
+
+
+def _price_history(conn, restaurant_id) -> dict:
+    """{ingredient_id: [unit costs]} from the costs applied on this
+    restaurant's scanned invoices (each applied line's old and new cost),
+    newest imports first."""
+    out = {}
+    try:
+        rows = conn.execute("SELECT applied_json FROM invoice_imports WHERE restaurant_id=? AND applied_json IS NOT NULL "
+                            "ORDER BY id DESC LIMIT ?", (restaurant_id, PRICE_HISTORY_IMPORTS)).fetchall()
+    except Exception as e:
+        import ops
+        ops.capture(e, job="invoice_price_history", context=f"restaurant_id={restaurant_id}",
+                    restaurant_id=restaurant_id)
+        return out
+    for r in rows:
+        try:
+            applied = json.loads(r["applied_json"] or "[]") or []
+        except (TypeError, ValueError):
+            continue
+        for a in applied:
+            if not isinstance(a, dict) or not a.get("ingredient_id"):
+                continue
+            for k in ("new_cost", "old_cost"):
+                v = a.get(k)
+                if isinstance(v, (int, float)) and math.isfinite(v) and v > 0:
+                    out.setdefault(int(a["ingredient_id"]), []).append(float(v))
+    return out
+
+
+def price_anomaly(cost, history):
+    """(median, robust z) when `cost` sits more than PRICE_ANOMALY_Z median
+    absolute deviations from the ingredient's own prices, else None."""
+    if cost is None or len(history or []) < PRICE_HISTORY_MIN:
+        return None
+    xs = sorted(history)
+    n = len(xs)
+    med = xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+    devs = sorted(abs(x - med) for x in xs)
+    mad = devs[n // 2] if n % 2 else (devs[n // 2 - 1] + devs[n // 2]) / 2
+    mad = max(mad, PRICE_MAD_FLOOR * med)
+    if mad <= 0:
+        return None
+    z = 0.6745 * (cost - med) / mad
+    return (round(med, 4), round(z, 1)) if abs(z) > PRICE_ANOMALY_Z else None
+
+
 # ── the owner's own matches (memory audit 9/29/26, food_corrections) ──────────
 #
 # match_ingredient works from ingredient names alone, so an owner who picks
@@ -350,6 +435,7 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
             "WHERE restaurant_id=? AND is_active=1", (restaurant_id,)).fetchall()]
         # The owner's own matches for this supplier come first (food_corrections).
         aliases = _aliases(conn, restaurant_id, extracted.get("supplier"))
+        history = _price_history(conn, restaurant_id)
     finally:
         conn.close()
     by_id = {x["id"]: x for x in ingredients}
@@ -361,7 +447,7 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 "unit_price": raw.get("unit_price"), "line_total": raw.get("line_total"),
                 "ingredient_id": None, "ingredient_name": None, "current_cost": None,
                 "proposed_cost": None, "change_pct": None, "selected": False, "note": None,
-                "verified": False, "matched_by": None}
+                "verified": False, "matched_by": None, "partial": False}
         ok = _adds_up(raw)
         ing = by_id.get(aliases.get(alias_key(line["description"])))
         if ing:
@@ -369,6 +455,8 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
         else:
             ing = match_ingredient(line["description"], ingredients)
             line["matched_by"] = "name" if ing else None
+            # "Cream" read off SOUR CREAM: offered, never preselected (ING-09).
+            line["partial"] = bool(ing) and partial_match(line["description"], ing)
         if ing:
             line.update(ingredient_id=ing["id"], ingredient_name=ing["name"],
                         current_cost=ing["unit_cost"])
@@ -397,12 +485,21 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 if cur > 0:
                     line["change_pct"] = round((cost - cur) / cur * 100, 1)
                 big = line["change_pct"] is not None and abs(line["change_pct"]) >= BIG_CHANGE_PCT
+                odd = price_anomaly(cost, history.get(ing["id"]))
                 if big:
                     line["note"] = "a large change — usually a unit mix-up; check before applying"
+                elif line.get("partial"):
+                    line["note"] = (f"the line names more than {ing['name']} — check it is the same product "
+                                    "before applying")
+                elif odd:
+                    line["price_anomaly"] = {"median": odd[0], "z": odd[1]}
+                    line["note"] = (f"out of line with what you have paid for {ing['name']} "
+                                    f"(usually ${odd[0]:,.2f}) — check before applying")
+                    big = True
                 # Preselected only when it plainly adds up (or can't be
                 # checked), matched exactly one ingredient, units agree, and
                 # the move is plausible.
-                line["selected"] = not big and cost != cur
+                line["selected"] = not big and not line.get("partial") and cost != cur
                 # Whether the reading passed BOTH checks this code has: the
                 # line's own arithmetic ran and agreed, and there was a
                 # current cost to compare the move against. A preselected
@@ -410,7 +507,7 @@ def propose(restaurant_id, extracted, db_path=DB_PATH):
                 # with nobody looking cannot — a $189 read for $1.89 on an
                 # ingredient with no cost yet, or a line whose quantity or
                 # total was not read, went straight into plate costs (AI-19).
-                line["verified"] = bool(ok is True and cur > 0 and not big)
+                line["verified"] = bool(ok is True and cur > 0 and not big and not line.get("partial"))
         # Alcohol belongs to the Bar (Food Cost → Bar, from the distributor
         # invoices): a line the Bar's sorter reads as beer, liquor or wine
         # for sure is never preselected or auto-applied, and says why —

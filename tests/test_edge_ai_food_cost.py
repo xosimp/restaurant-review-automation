@@ -135,10 +135,18 @@ def _scan_and_auto_apply(db_path, rid, lines, supplier="Fresh Co", sha=b"invoice
 
 
 def test_a_trusted_suppliers_clean_line_is_still_applied_on_scan(db_path):
-    """The control: the automation the exclusions below must not break."""
+    """The control: the automation the exclusions below must not break. The
+    line is the owner's own match for this supplier (an alias, matched_by
+    'your_match') - a name match alone waits for the owner (FC/Bar audit
+    10/16/26, AI-10; tests/test_fix_fcbar_c2.py)."""
     rid = _rid(db_path)
     romaine = _ingredient(db_path, rid, "Romaine Hearts", "case", 20.0)
     _earn_trust(db_path, rid, "Fresh Co", romaine)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO invoice_aliases (restaurant_id, supplier_key, description_key, ingredient_id) "
+                 "VALUES (?,?,?,?)", (rid, "fresh co", "romaine hearts 24ct", romaine))
+    conn.commit()
+    conn.close()
     out = _scan_and_auto_apply(db_path, rid, [
         {"description": "ROMAINE HEARTS 24CT", "quantity": 2, "unit": "CS",
          "unit_price": 22.5, "line_total": 45.0}])

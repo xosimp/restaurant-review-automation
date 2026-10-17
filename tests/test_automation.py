@@ -482,8 +482,9 @@ def test_invoice_trust_needs_three_full_accepts_and_then_applies_clean_lines(db_
                 # verified: the line's arithmetic ran and agreed and there was a
                 # current cost to compare against, as invoices.propose marks a
                 # clean line (AI-19 — only such lines are applied unattended).
+                # And matched by the owner's own alias (AI-10, 10/16/26).
                 "lines": [{"index": 0, "ingredient_id": ing, "proposed_cost": 22.5, "selected": True, "note": None,
-                           "verified": True},
+                           "verified": True, "matched_by": "your_match"},
                           {"index": 1, "ingredient_id": ing, "proposed_cost": 90.0, "selected": False,
                            "note": "a large change — usually a unit mix-up; check before applying"}]}
     conn = get_conn(db_path)

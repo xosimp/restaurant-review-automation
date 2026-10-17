@@ -294,3 +294,98 @@ def test_the_illinois_deposit_is_still_the_default():
 @pytest.mark.parametrize("desc", ["ALLAGASH WHITE 1/6BL", "MILLER LITE 1/2 BL", "HALF ACRE 1/4BBL"])
 def test_bl_kegs_are_kegs(desc):
     assert fi._is_keg({"description": desc, "uom": "CA"})
+
+
+# ── ING-09 / AI-10: scanned-invoice matching and the unattended apply ─────
+
+def _ingredient(db, rid, name, unit, cost):
+    conn = models.get_conn(db)
+    try:
+        iid = conn.execute("INSERT INTO ingredients (restaurant_id, name, unit, unit_cost, case_size, is_active) "
+                           "VALUES (?,?,?,?,1,1)", (rid, name, unit, cost)).lastrowid
+        conn.commit()
+        return iid
+    finally:
+        conn.close()
+
+
+def _line(desc, price, unit="qt", qty=1):
+    return {"description": desc, "quantity": qty, "unit": unit, "unit_price": price,
+            "line_total": round(qty * price, 2)}
+
+
+@pytest.mark.parametrize("ingredient,desc", [
+    ("Cream", "SOUR CREAM 1QT"), ("Cream", "ICE CREAM VANILLA"), ("Butter", "PEANUT BUTTER"),
+    ("Lemon", "LEMON JUICE"),
+])
+def test_a_one_word_ingredient_inside_another_product_is_offered_never_preselected(db, ingredient, desc):
+    import invoices
+    rid = _rid(db)
+    _ingredient(db, rid, ingredient, "qt", 3.10)
+    line = invoices.propose(rid, {"supplier": "Sysco", "lines": [_line(desc, 4.05)]}, db_path=db)["lines"][0]
+    assert line["ingredient_name"] == ingredient and line["partial"] is True
+    assert line["selected"] is False and line["verified"] is False and line["note"]
+
+
+def test_a_descriptor_beside_a_one_word_ingredient_is_still_that_ingredient(db):
+    import invoices
+    rid = _rid(db)
+    _ingredient(db, rid, "Butter", "qt", 3.10)
+    line = invoices.propose(rid, {"supplier": "Sysco", "lines": [_line("BUTTER SALTED 36/1LB", 3.40)]},
+                            db_path=db)["lines"][0]
+    assert line["partial"] is False and line["selected"] is True and line["verified"] is True
+
+
+def test_a_price_far_from_the_ingredients_own_history_is_not_preselected(db):
+    """+29% (inside the 40% big-change guard) on an ingredient whose price
+    has sat at $3.00-$3.10 on every applied invoice."""
+    import invoices
+    rid = _rid(db)
+    iid = _ingredient(db, rid, "Heavy Cream", "qt", 3.05)
+    conn = models.get_conn(db)
+    for i, (old, new) in enumerate(((3.00, 3.05), (3.05, 3.10), (3.10, 3.00), (3.00, 3.05))):
+        conn.execute("INSERT INTO invoice_imports (restaurant_id, supplier, image_sha, lines_json, applied_json, "
+                     "applied_at) VALUES (?,?,?,?,?,datetime('now'))",
+                     (rid, "Sysco", f"h{i}", "{}", json.dumps([{"index": 0, "ingredient_id": iid, "old_cost": old,
+                                                                 "new_cost": new, "by": "owner"}])))
+    conn.commit()
+    conn.close()
+    line = invoices.propose(rid, {"supplier": "Sysco", "lines": [_line("HEAVY CREAM 36% 1QT", 3.95)]},
+                            db_path=db)["lines"][0]
+    assert line["price_anomaly"]["median"] == 3.05
+    assert line["selected"] is False and line["verified"] is False and "usually $3.05" in line["note"]
+    # A price inside its usual band is still preselected.
+    ok = invoices.propose(rid, {"supplier": "Sysco", "lines": [_line("HEAVY CREAM 36% 1QT", 3.10)]},
+                          db_path=db)["lines"][0]
+    assert ok["selected"] is True and "price_anomaly" not in ok
+
+
+def test_price_anomaly_needs_a_history():
+    import invoices
+    assert invoices.price_anomaly(9.0, [3.0, 3.1]) is None
+    assert invoices.price_anomaly(3.2, [3.0, 3.0, 3.0]) is None          # a 7% move on a flat price
+    assert invoices.price_anomaly(4.0, [3.0, 3.0, 3.0]) is not None
+
+
+def test_a_trusted_supplier_never_auto_applies_a_name_match(db, monkeypatch):
+    """CHICKEN BREAST BREADED FZN matched "Chicken Breast" by its words: a
+    different product, 20-35% dearer. It waits for the owner; the same line
+    on the owner's own alias is applied."""
+    import invoices
+    import ordering
+    rid = _rid(db)
+    iid = _ingredient(db, rid, "Chicken Breast", "lb", 3.00)
+    monkeypatch.setattr(ordering, "invoice_trust",
+                        lambda *a, **k: {"trusted": True, "applied": 3, "full_accepts": 3})
+    prop = invoices.propose(rid, {"supplier": "Sysco", "lines": [_line("CHICKEN BREAST BREADED FZN", 3.60, "lb")]},
+                            db_path=db)
+    assert prop["lines"][0]["matched_by"] == "name" and prop["lines"][0]["verified"] is True
+    conn = models.get_conn(db)
+    prop["id"] = conn.execute("INSERT INTO invoice_imports (restaurant_id, supplier, image_sha, lines_json) "
+                              "VALUES (?,?,?,?)", (rid, "Sysco", "x1", json.dumps(prop))).lastrowid
+    conn.commit()
+    conn.close()
+    assert ordering.auto_apply_if_trusted(rid, prop, db_path=db)["auto_applied"] == []
+    prop["lines"][0]["matched_by"] = "your_match"
+    applied = ordering.auto_apply_if_trusted(rid, prop, db_path=db)["auto_applied"]
+    assert [a["ingredient_id"] for a in applied] == [iid]
