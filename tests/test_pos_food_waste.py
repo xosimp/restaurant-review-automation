@@ -48,5 +48,7 @@ def test_the_page_shows_real_waste_and_never_sample_stock_for_a_back_office_kitc
     tpl = open(os.path.join(os.path.dirname(pfw.__file__), "templates", "dashboard.html"), encoding="utf-8").read()
     assert "{% set _fw = food_waste if (_bo and not inv.is_live and food_waste and food_waste.available) else None %}" in tpl
     assert "dishes made and not sold, from your POS comps and voids, at plate cost" in tpl
-    assert "Your order list comes with your first kitchen count" in tpl
+    # One next step everywhere (UI-03, 10/16/26), named for the feed.
+    assert "{% set _bo_next = 'Stock and over-par come with your next ' ~ _bo_label ~ ' count.' %}" in tpl
+    assert "Your order list comes with your first kitchen count" not in tpl
     assert "{% if not (_bo and not inv.is_live) %}{% for item in inv.overstock %}" in tpl

@@ -3021,7 +3021,18 @@ def mobile_food_cost_purchases(current_user):
     try:
         # One read of the entries and their categories for the whole request
         # (backoffice_ap.purchases_view; SCALE-04, fix round 10/16/26).
-        out = _bo.purchases_view(rid, today=_bar_count_today(rid))
+        _today_p = _bar_count_today(rid)
+        out = _bo.purchases_view(rid, today=_today_p)
+        # How far the window's end sits behind yesterday: Back Office's
+        # invoices come in weekly exports and catch-up batches, so "4 weeks
+        # to 9/30/26" on 10/16 says so beside the figure (UI-05).
+        _w = out.get("window") if isinstance(out.get("window"), dict) else None
+        if _w and _w.get("to"):
+            try:
+                from datetime import date as _date_p
+                _w["days_behind"] = ((_today_p - timedelta(days=1)) - _date_p.fromisoformat(str(_w["to"])[:10])).days
+            except Exception:
+                _w["days_behind"] = None
     except Exception as e:
         _bar_capture(e, "food_purchases", rid)
         return jsonify(ok=False, error="Your supplier purchases couldn't be read just now. Cavnar AI has been told; "
@@ -3670,6 +3681,66 @@ def _food_cost_trust_block(rid):
     return out
 
 
+def _food_source_state(rid):
+    """Back Office as Food Cost's feed (backoffice_ap.feed_state) with the
+    name the copy says it by (`label`) and its invoice date in M/D/YY — or
+    None when it can't be read. One shape for the phone's analytics and
+    the web's page, so neither hard-codes the feed's name (UI-18)."""
+    try:
+        import backoffice_ap as _bo_fs
+        fs = dict(_bo_fs.feed_state(rid) or {})
+    except Exception:
+        return None
+    from time_utils import mdy as _mdy_fs
+    fs["label"] = fs.get("label") or "Back Office"
+    fs["invoices_through_mdy"] = _mdy_fs(str(fs["invoices_through"])[:10]) if fs.get("invoices_through") else None
+    return fs
+
+
+# The figures a sample pantry fills that a Back Office kitchen has no
+# measurement of until its count arrives: an empty list or no figure —
+# never the sample's rows and never a 0 (UI-01).
+_BO_EMPTY_LISTS = ("waste_items", "overstock", "critical_low", "reorder_soon", "order_reduction")
+_BO_NO_FIGURE = ("overstock_total", "waste_items_total", "recoverable_monthly", "annual_recoverable",
+                 "total_waste_cost_week", "monthly_waste_projection", "annual_waste_projection",
+                 "waste_rate_pct", "total_stock_value", "total_items", "total_purchased",
+                 "recoverable_kind", "annual_recoverable_basis", "last_updated",
+                 "window_from_counts", "window_age_days")
+
+
+def _food_cost_view(analysis, source):
+    """The analysis as this kitchen may be shown it. A Back Office kitchen
+    that is not live keeps none of the sample pantry's rows or figures."""
+    if source != "back_office":
+        return analysis
+    out = dict(analysis or {})
+    for k in _BO_EMPTY_LISTS:
+        out[k] = []
+    for k in _BO_NO_FIGURE:
+        out[k] = None
+    out.update(benchmark_label="—", benchmark_detail="", benchmark_state="no_data",
+               projection_basis="", purchases_basis="")
+    return out
+
+
+def _made_not_sold(rid):
+    """Food made and not sold, from the POS's comps and voids at plate cost
+    (pos_food_waste.remakes) over the 7 days ending yesterday, the
+    restaurant's own day: {total_cost, from_mdy, to_mdy, days, items,
+    uncosted} — or None when the POS has nothing for those days."""
+    try:
+        from pos_food_waste import remakes
+        from time_utils import mdy as _mdy_mns
+        fw = remakes(rid, today=_bar_count_today(rid))
+    except Exception:
+        return None
+    if not fw or not fw.get("available"):
+        return None
+    w = fw.get("window") or {}
+    return {"total_cost": fw.get("total_cost"), "from_mdy": _mdy_mns(w.get("from")), "to_mdy": _mdy_mns(w.get("to")),
+            "days": w.get("days"), "items": (fw.get("items") or [])[:6], "uncosted": len(fw.get("uncosted") or [])}
+
+
 @mobile_bp.route("/food-cost/analytics")
 @mobile_login_required
 def mobile_food_cost_analytics(current_user):
@@ -3683,10 +3754,22 @@ def mobile_food_cost_analytics(current_user):
     try:
         restaurant = get_restaurant(rid)
         items, is_live, analysis = analysis_for(rid)
-        try:
-            price_watch = build_price_watch(compute_item_trends(rid, items))
-        except Exception:
+        # Whose numbers these are (UI-01, 10/16/26): "live" (a count or an
+        # inventory system), "back_office" (Back Office's reports on file,
+        # no count yet - real figures, never the sample's) or "sample". The
+        # phone shows "Example data" on "sample" alone; a Back Office kitchen
+        # gets none of the sample pantry's rows, and the line that says when
+        # stock and over-par arrive.
+        food_source = _food_source_state(rid)
+        source = "live" if is_live else ("back_office" if (food_source or {}).get("on_file") else "sample")
+        if source == "back_office":
             price_watch = []
+        else:
+            try:
+                price_watch = build_price_watch(compute_item_trends(rid, items))
+            except Exception:
+                price_watch = []
+        shown = _food_cost_view(analysis, source)
         # One read for web and phone (audit #22): the same cache key and
         # stored read the web route uses.
         #
@@ -3723,53 +3806,61 @@ def mobile_food_cost_analytics(current_user):
             insight_error=insight_error,
             # Example data must never read as the owner's own numbers.
             is_live=bool(is_live),
+            source=source,
+            food_source=food_source,
+            # A Back Office kitchen's waste: what its POS says was made and
+            # not sold, with the days it covers (UI-03/UI-04).
+            made_not_sold=_made_not_sold(rid) if source == "back_office" else None,
+            # The one next step while stock waits on a count (UI-03).
+            count_line=(("Stock and over-par come with your next %s count." % (food_source or {}).get("label", "Back Office"))
+                        if source == "back_office" else None),
             # The Response Validation verdict the read carries (workstream
             # A); None until inventory returns a Validated str.
             validation=_rv_of(insight),
             **_insight_json(insight, _recs),
-            waste_items=analysis.get("waste_items", []),
-            overstock=analysis.get("overstock", []),
+            waste_items=shown.get("waste_items", []),
+            overstock=shown.get("overstock", []),
             # The lists above are truncated for display (waste_items[:6],
             # overstock[:5]). iOS summed the visible five and presented it as
             # the restaurant's total tied-up capital, which is an undercount
             # by construction whenever a sixth item is overstocked. Totals are
             # computed by analyse_inventory over the full lists; summing its
             # truncated lists here repeated the same undercount (MOD-FC-21).
-            overstock_total=analysis.get("overstock_total", 0),
-            waste_items_total=analysis.get("waste_items_total", 0),
-            critical_low=analysis.get("critical_low", []),
-            reorder_soon=analysis.get("reorder_soon", []),
-            order_reduction=analysis.get("order_reduction", []),
+            overstock_total=shown.get("overstock_total", 0),
+            waste_items_total=shown.get("waste_items_total", 0),
+            critical_low=shown.get("critical_low", []),
+            reorder_soon=shown.get("reorder_soon", []),
+            order_reduction=shown.get("order_reduction", []),
             price_watch=price_watch,
-            recoverable_monthly=analysis.get("recoverable_monthly", 0),
-            annual_recoverable=analysis.get("annual_recoverable", 0),
-            total_waste_cost_week=analysis.get("total_waste_cost_week", 0),
-            monthly_waste_projection=analysis.get("monthly_waste_projection", 0),
-            annual_waste_projection=analysis.get("annual_waste_projection", 0),
-            waste_rate_pct=analysis.get("waste_rate_pct", 0),
-            benchmark_label=analysis.get("benchmark_label", "—"),
-            benchmark_detail=analysis.get("benchmark_detail", ""),
+            recoverable_monthly=shown.get("recoverable_monthly", 0),
+            annual_recoverable=shown.get("annual_recoverable", 0),
+            total_waste_cost_week=shown.get("total_waste_cost_week", 0),
+            monthly_waste_projection=shown.get("monthly_waste_projection", 0),
+            annual_waste_projection=shown.get("annual_waste_projection", 0),
+            waste_rate_pct=shown.get("waste_rate_pct", 0),
+            benchmark_label=shown.get("benchmark_label", "—"),
+            benchmark_detail=shown.get("benchmark_detail", ""),
             # "not_measured" when nothing was logged — never a good result —
             # and the recoverable figure is an opportunity with its basis
             # (confidence audit I8; the web already had them).
-            benchmark_state=analysis.get("benchmark_state"),
-            recoverable_kind=analysis.get("recoverable_kind"),
-            annual_recoverable_basis=analysis.get("annual_recoverable_basis"),
-            total_stock_value=analysis.get("total_stock_value", 0),
-            total_items=analysis.get("total_items", 0),
-            week_start=_bo_week.get("start_mdy") or analysis.get("week_start", ""),
-            week_end=_bo_week.get("end_mdy") or analysis.get("week_end", ""),
-            last_updated=analysis.get("last_updated", ""),
+            benchmark_state=shown.get("benchmark_state"),
+            recoverable_kind=shown.get("recoverable_kind"),
+            annual_recoverable_basis=shown.get("annual_recoverable_basis"),
+            total_stock_value=shown.get("total_stock_value", 0),
+            total_items=shown.get("total_items", 0),
+            week_start=_bo_week.get("start_mdy") or shown.get("week_start", ""),
+            week_end=_bo_week.get("end_mdy") or shown.get("week_end", ""),
+            last_updated=shown.get("last_updated", ""),
             # The window label used to be hardcoded to "today back six days"
             # regardless of when anything was counted. These two say whether
             # it came from real count dates and how old the newest one is, so
             # the phone can stop presenting a three-week-old count as the
             # last seven days.
-            window_from_counts=analysis.get("window_from_counts", False),
-            window_age_days=analysis.get("window_age_days", 0),
-            projection_basis=analysis.get("projection_basis", ""),
-            purchases_basis=analysis.get("purchases_basis", ""),
-            total_purchased=analysis.get("total_purchased", 0),
+            window_from_counts=shown.get("window_from_counts", False),
+            window_age_days=shown.get("window_age_days", 0),
+            projection_basis=shown.get("projection_basis", ""),
+            purchases_basis=shown.get("purchases_basis", ""),
+            total_purchased=shown.get("total_purchased", 0),
             # Folded into this call rather than left as three more round
             # trips iOS never made. The COGS figure is the module's namesake
             # number, coverage says how far the rest of this payload can be

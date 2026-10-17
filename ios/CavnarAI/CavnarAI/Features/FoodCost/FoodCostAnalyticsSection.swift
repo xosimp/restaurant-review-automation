@@ -76,6 +76,13 @@ struct FoodCostAnalyticsSection: View {
                         decisionCard(viewModel.cfo,
                                      heroShowsRecoverable: hasHeroData(analytics) && (analytics.recoverableMonthly ?? 0) > 0)
                     }
+                    // A Back Office kitchen's own figures, read from its
+                    // reports: food bought vs sold and the plate costs, as
+                    // the web shows them (UI-01). Nothing renders without
+                    // Back Office on file.
+                    if analytics.foodSource?.onFile == true {
+                        FoodCostBackOfficeCard(viewModel: viewModel.backOffice, feedLabel: analytics.feedLabel)
+                    }
                     // What to order now — the page's actions.
                     orderSection(analytics)
                     // Dishes an ingredient rise has eaten into, each with the
@@ -113,7 +120,9 @@ struct FoodCostAnalyticsSection: View {
         // Something has to be ordered now: the send is pinned in thumb
         // reach (re-audit F6), not at the foot of the order list.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let a = viewModel.analytics, !a.criticalLow.isEmpty {
+            // Never pinned over example data: the sample's "Order now" is
+            // not this kitchen's order (UI-01/UI-08).
+            if let a = viewModel.analytics, !a.criticalLow.isEmpty, !a.showsExampleData {
                 CavnarPinnedBar {
                     sendOrderButton(primary: true)
                 }
@@ -132,7 +141,7 @@ struct FoodCostAnalyticsSection: View {
             Button("Cancel", role: .cancel) {}
         } message: { pending in
             Text(pending.suggestion.whyLine.map { "Why: \($0)" }
-                 ?? "The price that restores this dish\u{2019}s food cost %.")
+                 ?? "The price that restores this dish\u{2019}s plate cost %.")
         }
         // nav "inventory/pars" — the par section brought into view.
         .onChange(of: viewModel.scrollToPars && !viewModel.parSuggestions.isEmpty, initial: true) { _, go in
@@ -255,7 +264,7 @@ struct FoodCostAnalyticsSection: View {
     /// it can't be measured) or a waste figure to carry.
     private func hasHeroData(_ a: FoodCostAnalytics) -> Bool {
         a.cogs != nil || a.recipeCoverage != nil || a.wasteSplit != nil
-            || a.totalWasteCostWeek != nil
+            || a.totalWasteCostWeek != nil || a.madeNotSold?.totalCost != nil || a.countLine != nil
             || (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
     }
 
@@ -698,11 +707,18 @@ struct FoodCostAnalyticsSection: View {
                 // and the recoverable run-rate beside it — an OPPORTUNITY
                 // (I8, `recoverable_kind`): amber "available", never a
                 // win's green, and never summed with anything.
-                if a.totalWasteCostWeek != nil || (a.recoverableMonthly ?? 0) > 0 {
+                // A Back Office kitchen (UI-03): its waste is what the POS
+                // says was made and not sold, with the days it covers; stock
+                // and over-par wait on its next count, said once.
+                if a.isBackOffice {
+                    backOfficeWaste(a)
+                } else if a.totalWasteCostWeek != nil || (a.recoverableMonthly ?? 0) > 0 {
                     HStack(alignment: .top, spacing: CavnarSpace.l) {
                         if let week = a.totalWasteCostWeek {
                             VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
-                                Text("Waste this week").cavnarText(.secondary)
+                                // The days it covers beside the figure
+                                // (UI-04), not "this week".
+                                CavnarMixedText(Self.wasteWindowLabel(a), role: .secondary)
                                 HeroAnimatedNumber(numericValue: week, tone: Color.cavnarRed,
                                                    startFromZero: startFromZero)
                             }
@@ -768,6 +784,38 @@ struct FoodCostAnalyticsSection: View {
         .onAppear { viewModel.markHeroIntroPlayed() }
     }
 
+    /// "Waste · 10/9/26 – 10/15/26" — the count window the figure covers.
+    static func wasteWindowLabel(_ a: FoodCostAnalytics) -> String {
+        if let s = a.weekStart, let e = a.weekEnd, !s.isEmpty, !e.isEmpty {
+            return "Waste \u{00B7} \(s) \u{2013} \(e)"
+        }
+        return "Waste \u{00B7} last 7 days"
+    }
+
+    /// "Made and not sold · last 7 days" and its dates, then the one next
+    /// step while stock waits on a count. No figure is a dash, never $0.
+    private func backOfficeWaste(_ a: FoodCostAnalytics) -> some View {
+        VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
+            Text("Made and not sold \u{00B7} last 7 days").cavnarText(.secondary)
+            if let total = a.madeNotSold?.totalCost {
+                HeroAnimatedNumber(numericValue: total, tone: Color.cavnarInk,
+                                   startFromZero: !viewModel.hasPlayedHeroIntro)
+            } else {
+                Text("\u{2014}").cavnarText(.figureM, color: .cavnarInk3)
+                    .accessibilityLabel("Not measured")
+            }
+            if let range = a.madeNotSold?.rangeLine {
+                CavnarMixedText("From your POS comps and voids at plate cost \u{00B7} \(range)", role: .caption)
+            }
+            if let line = a.countLine {
+                CavnarMixedText(line, role: .secondary)
+                    .padding(.top, CavnarSpace.xxs)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
     /// Count-up-once hero number — same treatment and reasoning as
     /// LaborAnalyticsSection's LaborStatTile. A real drop shadow underneath
     /// (not just a glow) gives it something to sit on against the card's
@@ -810,7 +858,7 @@ struct FoodCostAnalyticsSection: View {
     private func orderSection(_ a: FoodCostAnalytics) -> some View {
         if !a.criticalLow.isEmpty || !a.reorderSoon.isEmpty || !a.orderReduction.isEmpty {
             VStack(alignment: .leading, spacing: CavnarSpace.l) {
-                sectionTitle("What to order")
+                sectionTitle(a.showsExampleData ? "What to order \u{00B7} example" : "What to order")
                 if !a.criticalLow.isEmpty {
                     actionGroup(title: "Order now", color: Color.cavnarRed, textColor: .cavnarRedText,
                                 items: a.criticalLow, showDays: true)
@@ -827,10 +875,13 @@ struct FoodCostAnalyticsSection: View {
                 // With something to order now it is pinned at the foot of
                 // the screen (F6); "order soon" alone keeps a secondary here
                 // — the decision card's step leads the page (F5).
-                if a.criticalLow.isEmpty && !a.reorderSoon.isEmpty {
+                if a.criticalLow.isEmpty && !a.reorderSoon.isEmpty && !a.showsExampleData {
                     sendOrderButton(primary: false)
                 }
             }
+            // Example rows are dimmed: never at the authority of the
+            // owner's own (UI-08).
+            .opacity(a.showsExampleData ? 0.55 : 1)
         }
     }
 

@@ -253,7 +253,7 @@ def test_the_web_confirms_recipe_drafts_with_their_yield_and_unit_warnings():
     s = _html()
     blk = s[s.index("function fc2LoadDraftList(msg){"):s.index("function fc2LineBand(ln){")]
     for needle in ("'/api/food-cost/recipe-drafts'", "data-recipe-accept=", "data-recipe-reject=",
-                   "data-recipe-yield=", "unit_warnings", "fc2DraftRecipes(this,true)"):
+                   "data-recipe-yield=", "unit_warnings", "fc2DraftRecipes(this)"):
         assert needle in blk, needle
 
 

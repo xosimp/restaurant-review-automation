@@ -61,19 +61,23 @@ def test_a_why_inside_a_modal_replaces_it():
 # ── Food Cost ───────────────────────────────────────────────────────────────
 
 def test_order_now_quantities_are_red_pills():
-    assert ".fc2-col.urgent .row .q .p{background:color-mix(in srgb,var(--hb-bad) 26%,transparent);color:var(--hb-bad)}" in SRC
+    # Light text on the red tint (UI-16, 10/16/26): red on 26% red read ~2:1.
+    assert ".fc2-col.urgent .row .q .p{background:color-mix(in srgb,var(--hb-bad) 34%,transparent);color:#ffecec}" in SRC
 
 
-def test_send_to_suppliers_sits_inside_suppliers():
+def test_send_to_suppliers_sits_with_what_to_order():
+    # UI-07 (10/16/26): see what to order, then send it, in one place - the
+    # send fold sits at the foot of What to order this week; who each
+    # ingredient comes from stays under Suppliers.
     sup = _between('<details class="hb-results fc2-work" id="fc2-work-suppliers" hidden>',
                    '<details class="hb-results fc2-work" id="fc2-work-recipes" hidden>')
-    assert 'id="fc2-order-send-d"' in sup and 'id="so-body"' in sup
-    orders = _between('<div class="fc2-sec" id="fc2-orders">', '<div class="lb2-sig lb2-sig-2 fc2-stock-sig" data-nav="inventory/stock">')
-    assert 'id="fc2-order-send-d"' not in orders
-    # A deep link opens every fold around its section; the order nav both.
+    assert 'id="fc2-order-send-d"' not in sup and 'id="fc2-suppliers"' in sup
+    orders = _between('<div class="fc2-sec" id="fc2-orders">', 'data-nav="inventory/stock">')
+    assert 'id="fc2-order-send-d"' in orders and 'id="so-body"' in orders
+    # A deep link opens every fold around its section; the order nav opens the send fold.
     nav = _between("function cavNavSection(p) {", "function cavNavIsPlace(p)")
     assert "while (d) { d.open = true;" in nav
-    assert "var sup=document.getElementById('fc2-work-suppliers');if(sup)sup.open=true;" in SRC
+    assert "var sup=document.getElementById('fc2-work-suppliers');if(sup)sup.open=true;" not in SRC
 
 
 def test_the_food_cost_hero_says_nothing_under_its_heading():

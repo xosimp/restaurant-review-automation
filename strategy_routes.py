@@ -666,7 +666,21 @@ def _do_metrics(u):
 
 def _do_dish_scorecard(u):
     import menu_intelligence
-    return {"ok": True, **menu_intelligence.dish_scorecard(_rid(u))}, 200
+    out = menu_intelligence.dish_scorecard(_rid(u))
+    # Each dish's plate cost % coloured the way Menu margins coloured it
+    # (cogs.dish_tone against cogs.dish_reference, Benchmarking #35), with
+    # the basis beside it: the web's one dish table took Menu margins' place
+    # (UI-10, 10/16/26). No reference, no colour.
+    try:
+        import cogs as _cogs
+        from models import get_restaurant
+        ref = _cogs.dish_reference(get_restaurant(_rid(u)))
+        for d in out.get("dishes") or ():
+            d["cost_tone"] = _cogs.dish_tone(d.get("food_cost_pct"), ref)
+        out["cost_reference"] = ref
+    except Exception:
+        out["cost_reference"] = None
+    return {"ok": True, **out}, 200
 
 
 def _do_reprice(u):

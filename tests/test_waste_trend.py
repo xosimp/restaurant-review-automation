@@ -455,11 +455,12 @@ def test_the_dashboard_fetches_the_trend_from_the_engine_exactly_once():
     assert "/api/food-cost/waste-trend" in html
     assert "/api/inv-trend" not in html, "the six-row legacy route is not the card's source"
     assert "loadInvTrend" not in html
-    # The page-load path: one initial fetch, plus one forced refresh after
-    # the insight call that writes this week's snapshot resolves.
+    # The page-load path: one initial fetch; a second only when the insight
+    # run wrote a newer week than the trend was drawn from (UI-11, 10/16/26:
+    # the history stamp), never unconditionally.
     body = html.split("function loadInvInsight(){", 1)[1].split("\nfunction ", 1)[0]
     assert body.count("loadWasteTrend();") == 1, "the trend used to be fetched twice per page load"
-    assert body.count("loadWasteTrend(true);") == 1, "this week's snapshot is written by the insight run"
+    assert body.count("loadWasteTrend(true);") == 0 and "wtStampCheck(d&&d.history_stamp);" in body
 
 
 def test_every_toggled_wt_section_has_a_hidden_override(db_path):
@@ -784,7 +785,9 @@ def test_target_percent_is_labeled_at_the_left_end_of_the_dashed_line():
     body = _dashboard_chart_body()
     assert "targetTxt=" in body
     target_block = body.split("var ty=y(target),tly=ty-7;", 1)[1].split("\n  }", 1)[0]
-    assert 'x="4"' in target_block and 'text-anchor="start"' in target_block, \
+    # The plot starts after the dollar scale's gutter (UI-02: the axis is
+    # drawn inside the SVG), so the left end is L+4.
+    assert 'x="\'+(L+4)+\'"' in target_block and 'text-anchor="start"' in target_block, \
         "the target label anchors at the left edge of the line"
     assert "d.target.pct+'% target, '+wtMoney(target)+'/week</text>'" in target_block
     assert 'text-anchor="end"' not in target_block, "one label, not one at each end"

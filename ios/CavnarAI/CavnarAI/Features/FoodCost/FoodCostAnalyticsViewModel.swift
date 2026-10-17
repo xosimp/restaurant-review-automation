@@ -53,6 +53,10 @@ final class FoodCostAnalyticsViewModel {
     /// The Bar card (UIX-10): the bar's four-week figure, its top insight,
     /// the price rises and Count the bar. Best-effort like the CFO read.
     let bar: BarCardViewModel
+    /// Food bought vs sold and the plate costs, for a kitchen whose Back
+    /// Office reports are on file (UI-01). Loaded after the analytics say
+    /// so; best-effort like the Bar card.
+    let backOffice: FoodCostBackOfficeViewModel
     var isLoading = false
     /// Why the last load failed, when it did. `try?` used to swallow the
     /// error and assign nil over previously good data, so a server failure
@@ -80,6 +84,7 @@ final class FoodCostAnalyticsViewModel {
     init(client: APIClient = .shared) {
         self.client = client
         self.bar = BarCardViewModel(client: client)
+        self.backOffice = FoodCostBackOfficeViewModel(client: client)
     }
 
     func configureCaching(restaurantId: Int) {
@@ -219,6 +224,11 @@ final class FoodCostAnalyticsViewModel {
         // Asked to show the pars and there are none: nothing to scroll to.
         if parSuggestions.isEmpty { scrollToPars = false }
         await barLoad
+        // The web's bought-vs-sold and plate costs, where Back Office's
+        // reports are on file - never for a kitchen that has none.
+        if analytics?.foodSource?.onFile == true {
+            await backOffice.load()
+        }
     }
 
     private func adoptTrend(_ t: FoodCostWasteTrend) {

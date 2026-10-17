@@ -66,7 +66,7 @@ def test_the_waste_and_over_par_lists_sit_under_the_order():
 
 
 def test_the_waste_row_is_one_size_of_control_and_no_rule():
-    load = SRC[SRC.index("function fc2LoadCountSheet(){"):SRC.index("function fc2LogWaste(btn){")]
+    load = SRC[SRC.index("function fc2LoadCountSheet(withSuppliers){"):SRC.index("function fc2LogWaste(btn){")]
     assert load.count("fc2-ctl") >= 3 and "fc2-ctl-btn" in load and 'style="max-width:90px"' not in load
     css = SRC[SRC.index(".fc2-waste-log{"):SRC.index(".fc2-waste-log{") + 400]
     assert "border-top" not in css.split("}")[0]
@@ -79,7 +79,7 @@ def test_a_supplier_change_reaches_send_to_suppliers_without_a_reload():
     for fn in ("function fc2SupplierPick(sel){", "function fc2SupplierSaveNew(btn){", "function fc2AssignAllUnassigned(btn){"):
         body = SRC[SRC.index(fn):SRC.index("\n}\n", SRC.index(fn))]
         assert "fc2ReloadOrderDraft()" in body, fn
-    sup = SRC[SRC.index("function fc2LoadSuppliers(){"):SRC.index("function fc2SupplierPost(")]
+    sup = SRC[SRC.index("function fc2LoadSuppliers(given){"):SRC.index("function fc2SupplierPost(")]
     assert 'class="ac-select fc2-ctl" data-sup-ing=' in sup
 
 

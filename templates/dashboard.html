@@ -1767,10 +1767,10 @@ function addCustomFoodItem(){
   if(!tbody)return;
   var tr=document.createElement('tr');
   tr.setAttribute('data-custom','1');
-  tr.innerHTML='<td><input type="text" class="fc2-in" placeholder="Item name" onblur="saveFcCustomItem(this)"></td>'
-    +'<td><input type="text" class="fc2-in" placeholder="unit"></td>'
-    +'<td><input type="number" class="fc2-in num" step="0.01" min="0" placeholder="0.00"></td>'
-    +'<td><input type="number" class="fc2-in num" step="0.1" min="0" placeholder="0"></td>'
+  tr.innerHTML='<td><input type="text" class="fc2-in" placeholder="Item name" aria-label="Item name" onblur="saveFcCustomItem(this)"></td>'
+    +'<td><input type="text" class="fc2-in" placeholder="unit" aria-label="Unit"></td>'
+    +'<td><input type="number" class="fc2-in num" step="0.01" min="0" placeholder="0.00" aria-label="Price per unit"></td>'
+    +'<td><input type="number" class="fc2-in num" step="0.1" min="0" placeholder="0" aria-label="Weekly usage"></td>'
     +'<td style="text-align:right;white-space:nowrap"><span class="fc-save-badge">UNSAVED</span> <button aria-label="Remove" class="rm" onclick="this.parentNode.parentNode.remove()" title="Remove item">&#x2715;</button></td>';
   tbody.appendChild(tr);
   tr.querySelector('input').focus();
@@ -13539,7 +13539,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
-@media (max-width:640px){.cav-itp{left:auto;right:-8px}}
+/* On a phone the tip opens from its "i" and is kept on screen by cavItipSet's clamp (UI-12): pinned right, an "i"
+   mid-line pushed it off the left edge. */
+@media (max-width:640px){.cav-itp{left:0;right:auto}}
 .fc2-sample b{color:var(--ember)}
 .fc2-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:20px}
 .fc2-hero-nums{display:flex;gap:40px;flex-wrap:wrap}
@@ -13578,16 +13580,18 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-wt-kpi .d b{font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink2)}
 .fc2-wt-kpi .d b.good{color:var(--hb-good)}.fc2-wt-kpi .d b.bad{color:var(--hb-bad)}
 .fc2-wt-chart{margin-top:18px;display:flex;gap:10px}
-/* padding-top matches the SVG's own padT (30) and padding-bottom its axis
-   gutter, so a scale label sits on the gridline it names. Without the top
-   inset every label floated ~25px above its line and reading a bar height off
-   the axis gave the wrong dollar figure. */
-.fc2-wt-chart .y{display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:58px;font-size:14.5px;color:var(--ink3);font-family:'Space Grotesk',sans-serif;padding-top:24px;padding-bottom:30px;flex-shrink:0}
+/* The dollar scale and the week labels are drawn inside the SVG, from the
+   bars' own x() and y(), at the box's own width (wtGeom, UI-02): one
+   geometry at every width. */
 /* Visible to a screen reader, not to the eye — the text equivalent of a chart. */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .fc2-wt-kpinote{grid-column:1/-1;font-size:13.5px;color:var(--ink3);padding:0 0 10px}
 .fc2-wt-chart .plot{flex:1;min-width:0;position:relative}
-.fc2-wt-chart .plot svg{display:block;width:100%;height:230px;overflow:visible}
+.fc2-wt-chart .plot svg{display:block;width:100%;height:256px;overflow:visible}
+.fc2-wt-chart .plot svg .fc2-wt-ylab,.fc2-wt-chart .plot svg .fc2-wt-xlab{font-size:14.5px;fill:var(--ink3)}
+.fc2-wt-chart .plot svg .fc2-wt-xlab.on{fill:var(--ink);font-weight:600}
+.fc2-wt-hit:focus{outline:none}
+.fc2-wt-hit:focus-visible{stroke:var(--ember2);stroke-width:2px}
 .fc2-wt-chart .plot svg text{font-family:'Space Grotesk',sans-serif}
 .fc2-wt-chart .plot svg .fc2-wt-bar.hb-bar{animation-duration:1.7s}
 /* The target/4-wk-avg rule lines wait for the bars to finish, then wipe in
@@ -13599,9 +13603,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
    avg line's curve as for the target line's straight dashes. */
 .fc2-wt-line-draw{transform-box:fill-box;transform-origin:0% 50%;transform:scaleX(0);animation:fc2LineDraw .8s cubic-bezier(.3,0,.15,1) forwards}
 @keyframes fc2LineDraw{to{transform:scaleX(1)}}
-.fc2-wt-chart .ax{display:flex;font-size:14.5px;color:var(--ink3);margin-top:6px}
-.fc2-wt-chart .ax span{flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.fc2-wt-chart .ax span.on{color:var(--ink);font-weight:600}
 .fc2-wt-hit{cursor:pointer}
 .fc2-wt-bar{transition:opacity .15s ease,filter .18s ease}
 .fc2-wt-chart.hov .fc2-wt-bar:not(.on){opacity:.45}
@@ -13700,6 +13701,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-act.reprice{border-color:var(--ember);color:var(--ember)}
 .fc2-inv-note{font-size:12.5px;color:var(--amber);margin-top:2px}
 .fc2-inv-in{width:92px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:14px;text-align:right}
+.fc2-mt .fc2-price-in{width:86px}
 .fc2-inv-sel{max-width:180px;background:transparent;border:1px solid var(--hb-line);border-radius:6px;padding:5px 7px;color:var(--ink);font-size:13px}
 .fc2-sec .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 /* A section's action sits level with its title (owner, 9/26/26: Upload
@@ -13732,11 +13734,16 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-col .row .q{text-align:right;flex-shrink:0}
 .fc2-col .row .q .l{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
 .fc2-col .row .q .p{display:inline-block;font-family:'Space Grotesk',sans-serif;font-size:14.5px;font-weight:700;color:var(--ink3);background:var(--hb-tint2);border-radius:6px;padding:3px 9px;margin-top:2px;white-space:nowrap}
+/* Light text on the tint, all three alike (UI-16, 10/16/26): green on 35% green and red on 26% red read about
+   2-2.6:1 on the dark surface, under AA for 14.5px; the soon pill's light text already passed. */
 .fc2-col.reduce .row .q .p{background:rgba(78,173,122,.35);color:#eafaf0}
 .fc2-col.soon .row .q .p{background:rgba(212,160,48,.35);color:#fff8e6}
-.fc2-col.reduce .row .q .p{color:var(--hb-good)}
 /* Order now reads as the reduce column does, in red (owner, 9/27/26). */
-.fc2-col.urgent .row .q .p{background:color-mix(in srgb,var(--hb-bad) 26%,transparent);color:var(--hb-bad)}
+.fc2-col.urgent .row .q .p{background:color-mix(in srgb,var(--hb-bad) 34%,transparent);color:#ffecec}
+/* Example data, dimmed and tagged (UI-08): the sample's order list and ledgers never at the owner's own authority. */
+.fc2-example{opacity:.55}
+.fc2-ex-tag{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:2px 7px;border-radius:999px;border:1px solid var(--hb-line)}
+.lb2-sig.fc2-stock-one{grid-template-columns:minmax(0,1fr);margin-top:48px;border-top:none;padding-top:6px}
 .fc2-col .row .q .s{font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;margin-top:3px}
 .fc2-col .row .q .s.good{color:var(--hb-good)}.fc2-col .row .q .s.bad{color:var(--hb-bad)}.fc2-col .row .q .s.dim{color:var(--ink3);font-weight:400}
 .fc2-col .none{font-size:13px;color:var(--ink3);padding:16px 0 6px 12px}
@@ -13777,9 +13784,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 #fc-submit-pill{flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(78,173,122,.12);border:1px solid rgba(78,173,122,.3);border-radius:8px}
 #fc-pill-line1{font-size:12.5px;font-weight:700;color:var(--hb-good);line-height:1.3;white-space:nowrap}
 #fc-pill-line2{font-size:10px;color:var(--ink3);letter-spacing:.02em;line-height:1.3;white-space:nowrap}
-.fc2-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px;margin-top:10px}
-/* A null is a dash in the number face, with air under it (owner, 9/26/26). */
-.fc2-null{font-family:'Space Grotesk',sans-serif;font-size:44px;font-weight:600;line-height:1;color:var(--ink3);margin:10px 0 36px}
 .fc2-send-d{margin-top:24px}
 .fc2-rcp{display:flex;flex-direction:column;gap:12px}
 .fc2-rcp-row{padding:12px 14px;border-radius:12px;background:var(--sf-recess)}
@@ -13801,16 +13805,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-draft-y{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink2);margin-top:10px}
 .fc2-draft-y .ac-input{max-width:110px}
 .fc2-draft-ft{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
-.fc2-tool .ch{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding-bottom:8px;border-bottom:1px solid var(--hb-line2)}
-.fc2-tool .bd{font-size:14px;color:var(--ink3);padding-top:10px;line-height:1.5}
-.fc2-tool table{width:100%;border-collapse:collapse;font-size:13.5px}
-.fc2-tool td{padding:6px 4px;border-bottom:1px solid var(--hb-line2);color:var(--ink2)}
-.fc2-tool td:first-child{color:var(--ink);font-weight:600}
-.fc2-tool td .num{font-family:'Space Grotesk',sans-serif}
-.fc2-tool input.price{width:66px;background:var(--hb-field);border:1px solid var(--hb-line);border-radius:5px;color:var(--ink);padding:3px 6px;font-size:13px;text-align:right;font-family:'Space Grotesk',sans-serif}
-.fc2-tool .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
-.fc2-tool .g b{font-size:14px;font-weight:600;color:var(--ink)}
-.fc2-tool .g span{font-size:12.5px;color:var(--ink3);display:block;margin-top:2px}
 /* The Order card's per-supplier lines (U2-15) - the same rows as the tools. */
 .fc2-send .g{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--hb-line2)}
 .fc2-send .g b{font-size:14px;font-weight:600;color:var(--ink)}
@@ -13820,6 +13814,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Fixed columns: a long quantity or line total never reflows the row. */
 .fc2-so-t{table-layout:fixed}
 .fc2-so-t col.q{width:190px}.fc2-so-t col.l{width:130px}
+/* A phone-width card (~320px) left the item name 0px at 190 + 130 (UI-12). */
+@media (max-width:560px){.fc2-so-t col.q{width:110px}.fc2-so-t col.l{width:72px}.fc2-sup-order .fc2-inv-in{width:64px;max-width:64px}}
 .fc2-so-t td.r,.fc2-so-t th.r{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .fc2-so-t td:first-child{overflow-wrap:anywhere}
 /* The supplier and its email sit on the table without a rule between. */
@@ -13990,6 +13986,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-cfo-bd{padding:15px 18px;display:flex;flex-direction:column;gap:14px}
 .fc2-hl{font-size:17px;line-height:1.5;color:var(--ink);font-weight:600}
 .fc2-cfo-basis{font-size:13px;color:var(--ink3);line-height:1.5}
+.fc2-cfo-basis.fc2-lag{color:var(--amber)}
 .fc2-cfo-more{border-top:1px solid var(--hb-line2);padding-top:10px}
 .fc2-cfo-more>summary{cursor:pointer;list-style:none;font-size:13.5px;font-weight:600;color:var(--ink3);display:flex;align-items:center;gap:6px}
 .fc2-cfo-more>summary::-webkit-details-marker{display:none}
@@ -14047,7 +14044,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-work{margin-top:0}
 .fc2-worksec .fc2-work+.fc2-work{border-top:1px solid var(--hb-line2)}
 .fc2-work>.fc2-block{margin:0 0 14px}
-@media(max-width:640px){.fc2-top-right{align-items:flex-start}.fc2-hero-fcp{padding-right:0;border-right:none}}
+@media(max-width:640px){.fc2-top-right{align-items:flex-start;max-width:none;width:100%}.fc2-hero-fcp{padding-right:0;border-right:none}}
 .fc2-row{display:flex;flex-direction:column;gap:3px}
 .fc2-row .k{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .fc2-row .v{font-size:14.5px;line-height:1.6;color:var(--ink2)}
@@ -14068,7 +14065,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-po{margin-top:14px}
 .fc2-po .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--hb-line2);font-size:13.5px;color:var(--ink2)}
 .fc2-po .row b{font-family:'Space Grotesk',sans-serif;color:var(--ink);font-weight:600}
-@media(max-width:900px){.fc2-orders,.fc2-tools{grid-template-columns:1fr}.fc2-col{margin-bottom:12px}}
+@media(max-width:900px){.fc2-orders{grid-template-columns:1fr}.fc2-col{margin-bottom:12px}}
 </style>
 
 <div class="hb-wrap">
@@ -14094,7 +14091,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {% set _boh_prices = _bo and _bo.invoices_through and not inv.is_live %}
   {# Food made and not sold, from the POS (pos_food_waste, 10/16/26): a Back Office kitchen's real waste. #}
   {% set _fw = food_waste if (_bo and not inv.is_live and food_waste and food_waste.available) else None %}
-  {% if not inv.is_live and _bo %}{% set _head = 'Read from your Back Office reports' %}{% set _tone = 'neutral' %}
+  {# One story for a Back Office kitchen (UI-03/UI-18, 10/16/26): the feed named as the payload names it, and one
+     next step wherever stock, over-par or the order list would otherwise ask for a count the page can't take. #}
+  {% set _bo_label = (_bo.label if (_bo and _bo.label) else 'Back Office') %}
+  {% set _bo_next = 'Stock and over-par come with your next ' ~ _bo_label ~ ' count.' %}
+  {% set _bo_wait = _bo and not inv.is_live %}
+  {% set _fw_dates = ((_fw.window['from']|format_date) ~ ' – ' ~ (_fw.window['to']|format_date)) if (_fw and _fw.window) else '' %}
+  {% if not inv.is_live and _bo %}{% set _head = 'Read from your ' ~ (_bo.label if _bo.label else 'Back Office') ~ ' reports' %}{% set _tone = 'neutral' %}
   {% elif not inv.is_live %}{% set _head = 'Add your inventory to light this up' %}{% set _tone = 'neutral' %}
   {% elif _inv_stale %}{% set _head = 'Counts are out of date' %}{% set _tone = 'warn' %}
   {% elif inv.benchmark_state == 'not_measured' %}{% set _head = 'No waste logged this week' %}{% set _tone = 'neutral' %}
@@ -14116,7 +14119,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          direction over many weeks. Both were unqualified, so "On track" could
          sit six inches above "Waste is climbing" with nothing explaining how
          both were true. Each now says which question it answers. #}
-      <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span>{% if not inv.is_live and _bo %}{# Back Office has no API (owner, 10/16/26): what that means sits behind an "i" by the heading it explains, not in a banner. #}<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="fc2-bo-tip" aria-expanded="false" aria-controls="fc2-bo-tip" aria-label="About your Back Office reports">i</button><span class="cav-itp" id="fc2-bo-tip" role="tooltip" hidden><b>From your Back Office reports.</b> Back Office has no API, so Cavnar AI reads the reports it exports{% if _bo.invoices_through %} — invoices through {{ _bo.invoices_through|format_date }}{% endif %}{% if _bo.recipes_loaded %}, and its recipe book{% endif %}. Waste and stock on hand come with your first count.</span></span>{% endif %}</h1>
+      <h1 class="hb-h1">Food cost. <span class="hb-head {{ _tone }}" id="fc2-head">{{ _head }}</span>{% if not inv.is_live and _bo %}{# Back Office has no API (owner, 10/16/26): what that means sits behind an "i" by the heading it explains, not in a banner. #}<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="fc2-bo-tip" aria-expanded="false" aria-controls="fc2-bo-tip" aria-label="About your {{ _bo_label }} reports">i</button><span class="cav-itp" id="fc2-bo-tip" role="tooltip" hidden><b>From your {{ _bo_label }} reports.</b> {{ _bo_label }} has no API, so Cavnar AI reads the reports it exports{% if _bo.invoices_through %} — invoices through {{ _bo.invoices_through|format_date }}{% endif %}{% if _bo.recipes_loaded %}, and its recipe book{% endif %}. {{ _bo_next }}</span></span>{% endif %}</h1>
       {# Food | Bar (owner, 10/14/26): Bar opens its own page over the dashboard at /bar, the way Restaurant DNA does.
          Bar fix round (V48): not tabs - Food is where you are, Bar is a link to its own page. #}
       <nav class="br-fsw fc2-sub" aria-label="Food Cost section"><span class="on" aria-current="page">Food</span><a href="/bar" data-bar-open="1">Bar</a></nav>
@@ -14149,8 +14152,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        CFO's ranked monthly at-stake, with its basis beside it. #}
     <div class="fc2-top-right">
       {% if inv.is_live or not _bo %}<div class="hb-pulse">
-        <span class="hb-chip {{ 'sample' if not inv.is_live else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="fc2-chip-waste">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
-        <span class="hb-chip {{ 'sample' if not inv.is_live else ('good' if inv.critical_low|length == 0 else 'bad') }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('neutral' if _inv_stale else ('bad' if _tone == 'bad' else ('warn' if inv.total_waste_cost_week > 0 else 'good'))) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num" id="fc2-chip-waste">${{ inv.total_waste_cost_week|int|format_num }}</span></span><span class="l">waste / wk</span></span>
+        <span class="hb-chip {{ 'sample' if not inv.is_live else ('neutral' if _inv_stale else ('good' if inv.critical_low|length == 0 else 'bad')) }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">{{ inv.critical_low|length }}</span></span><span class="l">critical low</span></span>
         {# A balance is not a verdict: a neutral chip (#31). #}
         <span class="hb-chip {{ 'sample' if not inv.is_live else 'neutral' }}"><span class="dot"><b></b><i></i></span><span class="v"><span class="hb-num">${{ inv.total_stock_value|int|format_num }}</span></span><span class="l">inventory value</span></span>
       </div>{% endif %}
@@ -14159,8 +14162,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {# The week's waste, measured from the count; its band verdict in words under it. #}
         {# Green at or near the target, red over it (owner, 9/26/26). #}
         {% set _wtone = 'good' if (inv.is_live and not _inv_stale and _wl in ['Under target','Near target']) else ('bad' if (inv.is_live and not _inv_stale and _wl in ['Over target','Well over target']) else '') %}
-        {% if not inv.is_live and _bo %}<div class="n fc2-waste-n"><div class="big"><span id="inv-week-waste" class="hb-num">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{% if _fw and _fw['items'] %}food made and not sold, from your POS{% else %}Comes with your first count{% endif %}</span></div></div>
-        {% else %}<div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste this week</div><div class="delta"><span>{{ _head }}</span></div></div>{% endif %}
+        {% if not inv.is_live and _bo %}<div class="n fc2-waste-n"><div class="big"><span id="inv-week-waste" class="hb-num">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span></div><div class="fc2-num-lbl">Made and not sold · last 7 days</div><div class="delta"><span>{% if _fw %}<span class="hb-num">{{ _fw_dates }}</span> · from your POS comps and voids, at plate cost{% else %}Nothing on your POS for these days{% endif %}</span></div></div>
+        {% else %}<div class="n fc2-waste-n{{ ' sample' if not inv.is_live }}"><div class="big{{ ' ' ~ _wtone if _wtone }}"><span id="inv-week-waste" class="hb-num">${{ inv.total_waste_cost_week|int|format_num }}</span></div><div class="fc2-num-lbl">Waste · <span class="hb-num">{{ inv.week_start }} – {{ inv.week_end }}</span></div><div class="delta"><span>{{ _head }}</span></div></div>{% endif %}
       </div>
     </div>
   </div>
@@ -14177,11 +14180,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# Food bought vs sold from Back Office (backoffice_ap, 10/15/26): what the
      food suppliers were paid as a % of the POS's food sales, purchase-based.
      Filled by /api/food-cost/purchases; hidden until there is a reading. #}
-  <div id="fc2-bo" class="fc2-cfo" hidden></div>
+  <div id="fc2-bo" class="fc2-cfo" data-nav="inventory/bought" hidden></div>
   {# Plate costs from the restaurant's Back Office recipes (backoffice_recipes,
      10/15/26): each dish's recipe at today's supplier prices beside what the
      POS took for it. Filled by /api/food-cost/plates; hidden without recipes. #}
-  <div id="fc2-pl" class="fc2-cfo" hidden></div>
+  <div id="fc2-pl" class="fc2-cfo" data-nav="inventory/plates" hidden></div>
   <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
@@ -14193,13 +14196,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="fc2-wt-verdict"><span id="fc2-wt-verdict">Reading your history…</span><span class="fc2-wt-pill" id="fc2-wt-pill" hidden></span></div>
         </div>
         <div class="fc2-wt-ctl" id="fc2-wt-ctl" hidden>
-          <div class="lb2-range" id="fc2-wt-ranges" role="tablist" aria-label="Trend range"></div>
+          <div class="lb2-range" id="fc2-wt-ranges" role="group" aria-label="Trend range"></div>
           <button type="button" class="cbtn cbtn-secondary cbtn-sm fc2-wt-tgl on" id="fc2-wt-target-tgl" onclick="wtToggleTarget()" aria-pressed="true">Target line</button>
         </div>
       </div>
       <div class="fc2-wt-kpis" id="fc2-wt-kpis" hidden></div>
       {% if inv.is_live and inv.annual_waste_projection %}<div class="fc2-wt-annual">Projected annual waste <span class="hb-num">${{ inv.annual_waste_projection|int|format_num }}</span> — this week’s count × 52, an estimate, not a measurement</div>{% endif %}
-      <div class="fc2-wt-chart" id="fc2-wt-chart"><div class="hb-load" style="height:230px;justify-content:center;width:100%"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
+      <div class="fc2-wt-chart" id="fc2-wt-chart"><div class="hb-load" style="height:256px;justify-content:center;width:100%"><canvas class="hb-orb" data-orb-state="working" width="44" height="44"></canvas></div></div>
       <div class="fc2-wt-leg" id="fc2-wt-leg" hidden></div>
       <div class="fc2-wt-drill" id="fc2-wt-drill" hidden></div>
       <div class="fc2-wt-obs" id="fc2-wt-obs" hidden></div>
@@ -14222,23 +14225,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <details class="hb-results fc2-work" id="fc2-work-suppliers" hidden>
       <summary><span class="hb-kicker">Suppliers</span><span id="fc2-work-suppliers-line"></span></summary>
     <section id="fc2-suppliers" class="fc2-block" aria-label="Suppliers" hidden></section>
-    {# One Order card (friction audit U2-15/16): the lines to send, grouped
-       by supplier with editable quantities, loaded when the card is first
-       on screen - the "Load" button and the sight-unseen send are gone.
-       Deliveries are received below it, into stock (U2-12). #}
-    {# Send to suppliers folds (owner, 9/26/26): one line - suppliers,
-       items and the total - until opened; the draft loads when the line is
-       on screen, so the line is true before anyone opens it. It lives inside
-       Suppliers, under This week's work (owner, 9/27/26): who you order
-       from, then what goes to each of them. #}
-    <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
-      <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
-    <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
-      <div class="ev-week" id="so-game" hidden></div>
-      <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
-      <div id="po-history" class="fc2-po"></div>
-    </div>
-    </details>
     </details>
     <details class="hb-results fc2-work" id="fc2-work-recipes" hidden>
       <summary><span class="hb-kicker">Recipes</span><span id="fc2-work-recipes-line"></span></summary>
@@ -14246,16 +14232,24 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     </details>
   </div>
 
+  {# Example data reads at less than the owner's own authority, and says so (UI-08): the sample's order list and
+     ledgers are dimmed and tagged, never drawn as this kitchen's. #}
+  {% set _example = not inv.is_live and not _bo %}
   <div class="fc2-sec" id="fc2-orders">
-    <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities</div><h2>What to order this week</h2><div class="sub">From days remaining, par levels and your last order.</div>
+    <div class="hd"><div><div class="hb-kicker">Order list · recommended quantities{% if _example %} · <span class="fc2-ex-tag">example</span>{% endif %}</div><h2>What to order this week</h2><div class="sub">From days remaining, par levels and your last order.</div>
       {# Auto-order where the order is (Friction #27): the same switch as
-         Account -> Automation & AI, on /api/food-cost/auto-order. #}
-      <span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Send <select id="fc2-autoorder-day" class="ac-select day-pick" onchange="fc2SaveAutoOrderDay(this)" aria-label="Day trusted supplier orders go out"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select> orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span></div></div>
-    {% if not inv.is_live and _bo %}
+         Account -> Automation & AI, on /api/food-cost/auto-order. Only once
+         a count exists (UI-03): beside an order list that waits on a count
+         it would offer to send orders nobody can see. #}
+      {% if inv.is_live %}<span class="rul-sw" id="fc2-autoorder-sw" style="border-top:0;padding:8px 0 0;gap:8px" hidden><label class="ac-switch"><input type="checkbox" id="fc2-autoorder" onchange="fc2SaveAutoOrder(this)" aria-label="Send orders to suppliers you've used before"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label><span class="sw-day">Send <select id="fc2-autoorder-day" class="ac-select day-pick" onchange="fc2SaveAutoOrderDay(this)" aria-label="Day trusted supplier orders go out"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select> orders to suppliers you&rsquo;ve used before</span><span class="ac-status" id="fc2-autoorder-status"></span></span>{% endif %}</div></div>
+    {% if _bo_wait %}
     {# An order list reads the shelf against its pars: without a count there is nothing true to say (10/16/26). #}
-    <div class="fc2-ok fc2-wait"><i></i>Your order list comes with your first kitchen count — it reads what is on the shelf against your pars.</div>
+    <div class="fc2-ok fc2-wait"><i></i>{{ _bo_next }} The order list reads what is on the shelf against your pars.</div>
+    {% elif _inv_stale %}
+    {# A count too old to order from is no all-clear (UI-09): a neutral line, never green, and no columns read off it. #}
+    <div class="fc2-ok fc2-wait"><i></i>The order list waits on a fresh count — the last one is too old to order from.</div>
     {% elif inv.critical_low or inv.reorder_soon or inv.order_reduction %}
-    <div class="fc2-orders">
+    <div class="fc2-orders{{ ' fc2-example' if _example }}">
       {% for _grp, _label, _items in [('urgent','Urgent — order now', inv.critical_low), ('soon','Order soon', inv.reorder_soon), ('reduce','Reduce order', inv.order_reduction)] %}
       <div class="fc2-col {{ _grp }}">
         <div class="ch"><span class="d"></span>{{ _label }}<span class="n">{{ _items|length }}</span></div>
@@ -14273,13 +14267,34 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
       {% endfor %}
     </div>
-    {% else %}
+    {% elif inv.is_live %}
     <div class="fc2-ok"><i></i>Your ordering looks well-calibrated this week — no adjustments needed.</div>
     {% endif %}
     {# Pars to raise (memory round 9/29/26, M6 food_corrections): an item the
        close-out 86'd on 2+ nights in 4 weeks, with the par that would have
        held; nothing changes until Raise par. cav-mem-wb memLoadPars. #}
     <div class="mem-pars" id="fc2-par-sug" data-nav="inventory/pars" hidden></div>
+    {# One Order card (friction audit U2-15/16): the lines to send, grouped
+       by supplier with editable quantities, loaded when the card is first
+       on screen - the "Load" button and the sight-unseen send are gone.
+       Deliveries are received below it, into stock (U2-12). #}
+    {# Send to suppliers folds (owner, 9/26/26): one line - suppliers,
+       items and the total - until opened; the draft loads when the line is
+       on screen, so the line is true before anyone opens it. It sits at the
+       foot of What to order this week (UI-07, 10/16/26): see what to order,
+       then send it, in one place - who each ingredient comes from stays
+       under Suppliers. A kitchen with no count has no order to send, so
+       the fold waits for one. #}
+    {% if inv.is_live %}
+    <details class="hb-results fc2-work fc2-send-d" id="fc2-order-send-d">
+      <summary><span class="hb-kicker">Send to suppliers</span><span id="so-sum-line">Building this week’s order…</span></summary>
+    <div class="fc2-send" id="fc2-order-send" data-nav="inventory/order">
+      <div class="ev-week" id="so-game" hidden></div>
+      <div class="bd" id="so-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div>
+      <div id="po-history" class="fc2-po"></div>
+    </div>
+    </details>
+    {% endif %}
     <div id="so-confirm-modal" class="cmodal so-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="so-confirm-t" onclick="if(event.target===this&&window.cModal)cModal.close('so-confirm-modal')">
       <div class="so-card">
         <div class="hb-kicker">Send to supplier</div>
@@ -14292,38 +14307,34 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
   {# Biggest waste items and Cash sitting over par sit under the order
      (owner, 9/26/26): what to buy first, then what the shelves hold —
-     with room between them and the order above (10/2/26). #}
-  <div class="lb2-sig lb2-sig-2 fc2-stock-sig" data-nav="inventory/stock">
-    {% if not inv.is_live and _bo %}
-    {# A Back Office kitchen (10/16/26): waste is what its POS says was made and not sold, at plate cost; stock over
-       par needs a count, and says so. #}
-    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span><small>last 7 days</small></div>
+     with room between them and the order above (10/2/26). Each says the
+     days it covers beside its figure (UI-04). #}
+  {% if _bo_wait %}
+  {# A Back Office kitchen (10/16/26): waste is what its POS says was made and not sold, at plate cost. Cash over par
+     needs a count: the tile waits for one rather than drawing a dash (UI-03) - the order list above says when. #}
+  <div class="lb2-sig fc2-stock-sig fc2-stock-one" data-nav="inventory/stock">
+    <div class="lb2-sg"><div class="k"><span>Biggest waste items · made and not sold</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">{% if _fw and _fw['items'] %}${{ _fw.total_cost|round|int|format_num }}{% else %}—{% endif %}</span><small>{% if _fw_dates %}<span class="hb-num">{{ _fw_dates }}</span>{% else %}last 7 days{% endif %}</small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>dishes made and not sold, from your POS comps and voids, at plate cost{% if _fw and _fw.uncosted %} · {{ _fw.uncosted|length }} more with no recipe cost{% endif %}</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">—</span><small>sitting over par</small></div>
-      <div class="fc2-ledger" id="fc2-ledger-stock"></div>
-    </div>
-    {% else %}
-    <div class="lb2-sg"><div class="k"><span>Biggest waste items</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small>this week</small></div>
+  </div>
+  {% else %}
+  <div class="lb2-sig lb2-sig-2 fc2-stock-sig{{ ' fc2-example' if _example }}" data-nav="inventory/stock">
+    <div class="lb2-sg"><div class="k"><span>Biggest waste items{% if _example %} · <span class="fc2-ex-tag">example</span>{% endif %}</span></div><div class="v"><span class="hb-num" id="fc2-waste-items-total">${{ inv.total_waste_cost_week|int|format_num }}</span><small><span class="hb-num">{{ inv.week_start }} – {{ inv.week_end }}</span></small></div>
       <div class="fc2-ledger" id="fc2-ledger-waste"></div>
       <div class="cap"><span>sorted by cost, largest first</span></div></div>
-    <div class="lb2-sg"><div class="k"><span>Cash sitting over par</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
+    <div class="lb2-sg"><div class="k"><span>Cash sitting over par{% if _example %} · <span class="fc2-ex-tag">example</span>{% endif %}</span></div><div class="v"><span class="hb-num">${{ _ostock_total|int|format_num }}</span><small>sitting over par</small></div>
       <div class="fc2-ledger" id="fc2-ledger-stock"></div>
-      <div class="cap"><span>current stock vs. par level</span></div></div>
-    {% endif %}
+      <div class="cap"><span>current stock vs. par level{% if inv.counted_to %} · counted <span class="hb-num">{{ inv.counted_to|format_date }}</span>{% endif %}</span></div></div>
   </div>
+  {% endif %}
 
   <div class="fc2-sec" id="fc2-menu" data-nav="inventory/menu"{% if _boh_recipes %} hidden{% endif %}>
     <div class="hd"><div><div class="hb-kicker">Your dishes</div><h2>Margin and what guests say</h2><div class="sub">One move for each dish, from your recipes, POS sales and reviews.</div></div></div>
-    <div id="fc2-score-body"><div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div></div>
+    {# One dish table (UI-10, 10/16/26): Menu margins repeated the scorecard's price and per-dish cost %, so its plate
+       cost and its editable price joined the scorecard and the table went. The phone's "Menu margins" rows open
+       here (inventory/margins). Loaded when the section is first on screen (UI-11). #}
+    <div id="fc2-score-body" data-nav="inventory/margins"><div class="hb-load" style="height:80px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="32" height="32"></canvas></div></div>
     <div id="fc2-reprice-body"></div>
-    {# Menu margins joined Your dishes (density round #43): plate cost and
-       margin for every priced dish, one section, not two. #}
-    <div id="fc2-tools">
-    <div class="fc2-tools">
-      <div class="fc2-tool" data-nav="inventory/margins"><div class="ch"><span>Menu margins</span><button onclick="loadMenuMargins()" class="cbtn cbtn-text cbtn-sm">Refresh</button></div><div class="bd" id="mm-body"><div class="hb-load" style="height:60px;justify-content:center"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div></div>
-    </div>
-    </div>
   </div>
 
   <div class="fc2-sec" id="fc2-invoice" data-nav="inventory/invoices"{% if _boh_prices %} hidden{% endif %}>
@@ -14391,14 +14402,14 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <tbody id="fc-rows">
           {% if food_cost_data and food_cost_data.current %}
             {% for _fci in food_cost_data.current['items'] %}
-            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"{{ ' readonly' if _fc_ledger }}></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.price }}" step="0.01" min="0" placeholder="0.00"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.usage }}" step="0.1" min="0" placeholder="0"{{ ' readonly' if _fc_ledger }}></td><td></td></tr>
+            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name" aria-label="Item name"{{ ' readonly' if _fc_ledger }}></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb" aria-label="Unit for {{ _fci.name }}"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.price }}" step="0.01" min="0" placeholder="0.00" aria-label="Price per unit for {{ _fci.name }}"{{ ' readonly' if _fc_ledger }}></td><td><input type="number" class="fc2-in num" value="{{ _fci.usage }}" step="0.1" min="0" placeholder="0" aria-label="Weekly usage for {{ _fci.name }}"{{ ' readonly' if _fc_ledger }}></td><td></td></tr>
             {% endfor %}
           {% else %}
             {% for _fci in [{"name":"Chicken Breast","unit":"lb"},{"name":"Beef/Steak","unit":"lb"},{"name":"Salmon / Fish","unit":"lb"},{"name":"Shrimp","unit":"lb"},{"name":"Heavy Cream","unit":"qt"},{"name":"Butter","unit":"lb"},{"name":"Produce (misc)","unit":"case"}] %}
-            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0"></td><td></td></tr>
+            <tr><td><input type="text" class="fc2-in" value="{{ _fci.name }}" placeholder="Item name" aria-label="Item name"></td><td><input type="text" class="fc2-in" value="{{ _fci.unit }}" placeholder="lb" aria-label="Unit for {{ _fci.name }}"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00" aria-label="Price per unit for {{ _fci.name }}"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0" aria-label="Weekly usage for {{ _fci.name }}"></td><td></td></tr>
             {% endfor %}
             {% for _ci in (food_cost_data.custom_items if food_cost_data and food_cost_data.custom_items else []) %}
-            <tr data-custom="1"><td><input type="text" class="fc2-in" value="{{ _ci.name }}" placeholder="Item name"></td><td><input type="text" class="fc2-in" value="{{ _ci.unit }}" placeholder="lb"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0"></td><td style="text-align:right;white-space:nowrap"><span class="fc-save-badge saved">SAVED</span> <button aria-label="Remove" class="rm" onclick="removeFcCustomItem(this,'{{ _ci.name|e }}')" title="Remove item">&#x2715;</button></td></tr>
+            <tr data-custom="1"><td><input type="text" class="fc2-in" value="{{ _ci.name }}" placeholder="Item name" aria-label="Item name"></td><td><input type="text" class="fc2-in" value="{{ _ci.unit }}" placeholder="lb" aria-label="Unit for {{ _ci.name }}"></td><td><input type="number" class="fc2-in num" value="" step="0.01" min="0" placeholder="0.00" aria-label="Price per unit for {{ _ci.name }}"></td><td><input type="number" class="fc2-in num" value="" step="0.1" min="0" placeholder="0" aria-label="Weekly usage for {{ _ci.name }}"></td><td style="text-align:right;white-space:nowrap"><span class="fc-save-badge saved">SAVED</span> <button aria-label="Remove" class="rm" onclick="removeFcCustomItem(this,'{{ _ci.name|e }}')" title="Remove item">&#x2715;</button></td></tr>
             {% endfor %}
           {% endif %}
         </tbody>
@@ -14432,6 +14443,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     {% if not (_bo and not inv.is_live) %}{% for item in inv.overstock %}{"name":"{{item.item|e}}","cost":{{item.overstock_cost|round(2)}},"stock":"{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}","par":"{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}"},{% endfor %}{% endif %}
   ];
   var _fc2CountFirst={{ 'true' if (_bo and not inv.is_live) else 'false' }};
+  // The feed's name for the cards' copy (UI-18), and whether its reports are on file at all: a kitchen with none
+  // never asks for bought vs sold or plate costs (UI-11).
+  window._fc2BoLabel={{ _bo_label|tojson }};
+  window._fc2BoNext={{ _bo_next|tojson }};
+  window._fc2BoOnFile={{ 'true' if _bo else 'false' }};
   function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   // Waste Ledger / Tied-Up Capital — every flagged item as a bar with its
   // dollars counting up beside it, sorted by cost (same chart as iOS).
@@ -14449,7 +14465,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     var el=document.getElementById(id);if(!el)return;
     if(el.dataset.done)return;el.dataset.done='1';
     var rows=(data||[]).slice().sort(function(a,b){return b[key]-a[key];}).slice(0,6);
-    if(!rows.length){el.innerHTML='<div class="fc2-empty">'+(amber?(_fc2CountFirst?'Comes with your first kitchen count':'Nothing over par this week'):(_fc2CountFirst?'Nothing made and not sold on your POS these 7 days':'No waste logged this week'))+'</div>';return;}
+    if(!rows.length){el.innerHTML='<div class="fc2-empty">'+(amber?(_fc2CountFirst?_mmEsc(window._fc2BoNext||''):'Nothing over par this week'):(_fc2CountFirst?'Nothing made and not sold on your POS these 7 days':'No waste logged this week'))+'</div>';return;}
     var max=rows[0][key]||1,h='';
     for(var i=0;i<rows.length;i++){var r=rows[i];
       h+='<div class="r"><div><div class="nm" title="'+_mmEsc(r.name)+'">'+_mmEsc(r.name)+'</div><div class="bar"><i class="'+(amber?'amber':'')+'" style="transition-delay:'+(i*120)+'ms;width:'+Math.max(4,Math.round(r[key]/max*100))+'%"></i></div><div class="sub">'+_mmEsc(detailFn(r))+'</div></div><div class="v '+(amber?'amber':'')+'" data-n="'+Math.round(r[key])+'">$0</div></div>';}
@@ -14466,46 +14482,30 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   }
   function renderWasteDonut(){_fc2Ledger('fc2-ledger-waste',_wasteDonutData,'cost',function(r){return r.detail||(r.qty+' wasted · '+r.pct+'% of stock');},false);}
   function renderOstockDonut(){_fc2Ledger('fc2-ledger-stock',_ostockDonutData,'cost',function(r){return r.stock+' on hand · par '+r.par;},true);}
-  function loadMenuMargins(){
-    var el = document.getElementById('mm-body');
-    var menu = document.getElementById('fc2-menu');
-    if (!el || (menu && menu.hidden)) return;
-    el.innerHTML = cavnarLoading('Working out plate costs…',22,'working');
-    fetch('/api/food-cost/menu-profitability').then(apiJson).then(function(d){
-      if(!d.ok){ el.innerHTML='<span style="color:var(--hb-bad)">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
-      // Nothing to table is a state, not a sentence: say what is missing
-      // and where it gets fixed, or the tool reads as if Load did nothing.
-      if(!d.priced.length){
-        var why=(!d.unpriced.length&&!d.unmapped.length)?'No dishes on file yet.':((d.unmapped.length?d.unmapped.length+' dish'+(d.unmapped.length===1?' has':'es have')+' no recipe':'')+(d.unmapped.length&&d.unpriced.length?' \u00b7 ':'')+(d.unpriced.length?d.unpriced.length+' with a recipe but no price':'')+'.');
-        el.innerHTML='<div class="fc2-tool-empty"><b>No margins to show yet</b><span>'+_mmEsc(why)+' A margin needs a recipe and a price: draft recipes from your menu in the section above, then set each price here.</span></div>';
-        return;
-      }
-      var html = '';
-      if(d.priced.length){
-        html += '<table data-sortable="menu-margins"><thead><tr><th>Dish</th><th class="r">Plate cost</th><th class="r">Price</th><th class="r">Food cost</th></tr></thead><tbody>';
-        d.priced.forEach(function(item){
-          // The server colours each dish against the owner's food-cost
-          // target or the published figure for the type (cost_tone,
-          // Benchmarking #35); with neither it is neutral ink.
-          var band = {good:'var(--hb-good)',warn:'var(--hb-warn)',bad:'var(--hb-bad)'}[item.cost_tone] || 'var(--ink2)';
-          html += '<tr><td>'+_mmEsc(item.name)+'</td><td class="num" data-sort-key="'+item.plate_cost.toFixed(2)+'" style="text-align:right;color:var(--ink3)">cost $'+item.plate_cost.toFixed(2)+'</td>';
-          html += '<td style="text-align:right"><input class="price" type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)"></td>';
-          html += '<td class="num" style="text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td></tr>';
-        });
-        html += '</tbody></table>';
-      }
-      if(d.unpriced.length){ html += '<div style="font-size:11px;color:var(--ink3);margin-top:10px">'+d.unpriced.length+' item'+(d.unpriced.length!==1?'s':'')+' with a recipe but no price set — add one to see their margin.</div>'; }
-      html += '<div style="font-size:11px;color:var(--ink3);margin-top:8px">'+_mmEsc(d.cost_reference&&d.cost_reference.basis?'Colours read against '+d.cost_reference.basis+'.':'No food-cost target and no published figure for your type, so dishes are not coloured — set a target in Settings to colour them.')+'</div>';
-      el.innerHTML = html;
-    }).catch(function(){ el.innerHTML='<span style="color:var(--hb-bad)">Couldn\'t load menu margins</span>'; });
-  }
+  // A card with nothing to show, or a read that failed, says so in its own
+  // place (UI-06): the bold state, then what is missing or the server's
+  // sentence. One builder for every Food Cost card.
+  function fc2EmptyHtml(title,why){return '<div class="fc2-tool-empty"><b>'+_mmEsc(title)+'</b>'+(why?'<span>'+_mmEsc(why)+'</span>':'')+'</div>';}
+  window.fc2EmptyHtml=fc2EmptyHtml;
+  // A card's frame with the server's sentence in its body, for a read that
+  // failed (d.error) - the card stays, so "broken" never reads as "not set
+  // up" (UI-06).
+  window.fc2CardError=function(host,kicker,d,fallback){
+    if(!host)return;
+    host.innerHTML='<div class="fc2-cfo-hd"><span class="t">'+_mmEsc(kicker)+'</span></div><div class="fc2-cfo-bd">'
+      +fc2EmptyHtml('Couldn’t read this just now',(d&&(d.error||d.why_not))||fallback||'Try again in a minute.')+'</div>';
+    host.hidden=false;
+  };
+  // A dish's price, typed in the dish table (UI-10: Menu margins' editable
+  // price joined the scorecard). Saved on change; the table reloads.
   function saveMenuPrice(input){
     var id = input.getAttribute('data-id');
     var price = parseFloat(input.value);
+    if(!(price>0)){if(typeof toast==='function')toast('A price is a number above 0','error');return;}
     fetch('/api/food-cost/menu-item-price', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({menu_item_id: id, sell_price: price})
     }).then(apiJson).then(function(d){
-      if(d.ok){ toast('Price saved','success'); loadMenuMargins(); }
+      if(d.ok){ toast('Price saved','success'); if(window.loadFcMenu)loadFcMenu(); }
       else { toast(d.error||'Couldn\'t save price','error'); }
     });
   }
@@ -14556,7 +14556,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           :(d.is_live===false?'Nothing to order yet':(una?'<b class="hb-num">'+una+'</b> item'+(una===1?'':'s')+' due, no supplier set':'Nothing to order this week'));}
       if(!groups.length){
         var un=(d.unassigned||[]).length,title,why;
-        if(d.is_live===false){title='Nothing to order yet';why=d.notice||'Food Cost is showing example data.';}
+        if(d.is_live===false){title='Nothing to order yet';why='Food Cost is showing example data \u2014 your own order fills in once your counts are in.';}
         else if(un){title='Suppliers needed';why=un+' item'+(un===1?' is':'s are')+' due but no supplier is set on '+(un===1?'it':'them')+'. Set one in the Suppliers block above and this fills in.';}
         else{title='Nothing to order';why='Nothing is below par this week.';}
         el.innerHTML='<div class="fc2-tool-empty"><b>'+_mmEsc(title)+'</b><span>'+_mmEsc(why)+'</span></div>';
@@ -14656,7 +14656,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     // A supplier set in the Suppliers block regroups the order at once
     // (owner, 9/26/26: "Suppliers needed" stayed until a page reload).
     window.fc2ReloadOrderDraft=function(){if(document.getElementById('so-body'))loadOrderDraft();};
-    whenSeen('mm-body',loadMenuMargins);
+    // Below the fold, fetched when first on screen (UI-11): the dish table
+    // and its reprices, and the scanned invoices waiting on the owner - a
+    // section the page hides (a Back Office kitchen's) is never fetched.
+    whenSeen('fc2-score-body',function(){if(window.loadFcMenu)loadFcMenu();});
+    var inv=document.getElementById('fc2-invoice');
+    if(inv&&!inv.hidden)whenSeen('fc2-invoice',function(){if(window.fc2LoadPendingInvoices)fc2LoadPendingInvoices();});
   });
   // Nav paths (nav.py): "order/<supplier email>" opens the order card on
   // that supplier; "inventory/order" is the card's data-nav section.
@@ -14664,7 +14669,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     cavNavOpenModule('inventory');
     var who=String(p.rest[0]||'').toLowerCase(),card=document.getElementById('fc2-order-send');
     var fold=document.getElementById('fc2-order-send-d');if(fold)fold.open=true;
-    var sup=document.getElementById('fc2-work-suppliers');if(sup)sup.open=true;
     function go(){var el=(who&&document.querySelector('[data-sup="'+who.replace(/"/g,'')+'"]'))||card;if(el&&el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});}
     if(!document.querySelector('[data-sup]'))loadOrderDraft();
     setTimeout(go,400);
@@ -29224,10 +29228,9 @@ function loadInvInsight(){
   loadWasteTrend();
   fc2LoadFoodCostPct();
   fc2LoadRecipeCoverage();
-  fc2LoadWasteSources();fc2LoadCountSheet();fc2LoadRecipeDrafts();fc2LoadSuppliers();
+  fc2LoadWasteSources();fc2LoadCountSheet(true);fc2LoadRecipeDrafts();
   fc2LoadCfo();
-  fc2LoadBo();
-  fc2LoadPlates();
+  if(window._fc2BoOnFile!==false){fc2LoadBo();fc2LoadPlates();}
   if(window.memLoadPars)memLoadPars();
   var fiveMin=5*60*1000;
   try{
@@ -29251,11 +29254,11 @@ function loadInvInsight(){
       cavSet('inv_insight',JSON.stringify(d||{}));cavSet('inv_insight_at',String(Date.now()));
       invRenderInsight(elInvInsight,d||{},true);
     }
-    // The insight run is what writes this week's inventory_history
-    // snapshot, so the trend fetched above may predate it — pull it once
-    // more now that the newest week exists (a cached insight wrote its
-    // snapshot earlier, so this only runs on a real fetch).
-    loadWasteTrend(true);
+    // The insight run can write this week's inventory_history snapshot,
+    // so the trend fetched above may predate it - pulled again only when
+    // the history's stamp moved past the one the trend was drawn from
+    // (UI-11). A server with no stamp keeps the old refetch.
+    wtStampCheck(d&&d.history_stamp);
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
     if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
@@ -29315,28 +29318,54 @@ function fc2BoRank(rows,total,muteLabel){var h='',i,max=0;for(i=0;i<rows.length;
     h+='<div class="fc2-bo-rk'+(mute?' mute':'')+'"><div class="t"><span class="nm">'+fc2BoEsc(r.label)+'</span><span class="v"><span class="hb-num">'+fc2Money(r.amount)+'</span><small class="hb-num">'+pct+'%</small></span></div>'
       +'<div class="bar"><i style="width:'+(max>0?Math.max(2,r.amount/max*100):0).toFixed(1)+'%"></i></div>'+(mute&&r.sub?'<div class="sub">'+fc2BoEsc(r.sub)+'</div>':'')+'</div>';}
   return h;}
+// Server sentences, whatever their shape: a string, a list of strings, or a
+// list of {text|line|sentence|why|label}. A sentence a newer server adds
+// (to_confirm, coverage) is shown without a page change.
+function fc2Sentences(x){
+  var out=[],i,v;if(x==null||x==='')return out;
+  if(typeof x==='string')return [x];
+  if(!(x instanceof Array))x=[x];
+  for(i=0;i<x.length;i++){v=x[i];if(v==null)continue;
+    if(typeof v==='string'){if(v)out.push(v);}
+    else if(typeof v==='object'){v=v.text||v.line||v.sentence||v.why||v.label;if(v)out.push(String(v));}}
+  return out;
+}
+function fc2SentenceLines(list){var h='',i;for(i=0;i<list.length;i++)h+='<div class="fc2-cfo-basis">'+fc2BoEsc(list[i])+'</div>';return h;}
+// The feed's name for the copy: the payload's, else the page's (UI-18).
+function fc2FeedLabel(d){return (d&&(d.source_label||(d.feed&&d.feed.label)))||window._fc2BoLabel||'Back Office';}
 function fc2LoadBo(){
   var host=document.getElementById('fc2-bo');if(!host)return;
   fetch('/api/food-cost/purchases',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
-      if(!d||!d.ok||!d.available){host.hidden=true;return;}
-      var w=d.window||{},h='',i,ms=d.months||[],vs=d.vendors||[],sup=d.suppliers||[];
-      // The basis behind an "i", not a line of small print (owner, 10/16/26).
-      h+='<div class="fc2-cfo-hd"><span class="t">Food bought vs sold</span><span class="m">from Back Office · <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span>'
-        +(d.note?'<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="fc2-bo-note" aria-expanded="false" aria-controls="fc2-bo-note" aria-label="How food bought vs sold is read">i</button><span class="cav-itp" id="fc2-bo-note" role="tooltip" hidden>'+fc2BoEsc(d.note)+'</span></span>':'')+'</div><div class="fc2-cfo-bd">';
-      // The figure says what it is beside it, once (owner, 10/16/26: the two sums repeated the table's headings).
-      h+='<div class="fc2-bo-fig"><b class="hb-num">'+(w.pct==null?'—':fc2BoEsc(w.pct)+'%')+'</b><div class="tx"><span class="l1">bought vs sold, last four weeks</span>'
-        +'<span class="l2"><span class="hb-num">'+fc2Money(w.purchases)+'</span> paid to food suppliers on <span class="hb-num">'+fc2Money(w.sales)+'</span> of food sales'+(w.pct!=null?' — about <span class="hb-num">$'+Math.round(w.pct)+'</span> of every <span class="hb-num">$100</span>':'')+'</span></div></div>';
+      // Hidden only when the server says there is nothing to read (UI-06);
+      // a read that failed keeps the card and says the server's sentence.
+      if(d&&d.ok&&d.available===false){host.hidden=true;return;}
+      if(!d||!d.ok){fc2CardError(host,'Food bought vs sold',d);return;}
+      var w=d.window||{},h='',i,ms=d.months||[],vs=d.vendors||[],sup=d.suppliers||[],feed=fc2FeedLabel(d);
+      h+='<div class="fc2-cfo-hd"><span class="t">'+fc2BoEsc(d.label||'Food bought vs sold')+'</span><span class="m">from '+fc2BoEsc(feed)+' · <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
+      // The figure says what it is beside it, once, and the dates it covers -
+      // "4 weeks to 9/30/26", never a bare "last 4 weeks" for a window that ended
+      // weeks ago (UI-05). A withheld figure is a dash with its reason, never 0.
+      var withheld=(w.pct==null);
+      h+='<div class="fc2-bo-fig"><b class="hb-num">'+(withheld?'—':fc2BoEsc(w.pct)+'%')+'</b><div class="tx"><span class="l1">bought vs sold · 4 weeks to <span class="hb-num">'+fc2BoEsc(w.to_mdy||'')+'</span></span>'
+        +'<span class="l2"><span class="hb-num">'+fc2Money(w.purchases)+'</span> paid to food suppliers on <span class="hb-num">'+fc2Money(w.sales)+'</span> of food sales'+(!withheld?' — about <span class="hb-num">$'+Math.round(w.pct)+'</span> of every <span class="hb-num">$100</span>':'')+'</span></div></div>';
+      if(withheld&&(w.why_not||d.why_not))h+='<div class="fc2-cfo-basis">'+fc2BoEsc(w.why_not||d.why_not)+'</div>';
+      // What it is and what it is not, on the card - not only behind an "i" (UI-14).
+      h+='<div class="fc2-cfo-basis">'+fc2BoEsc(d.note||'Purchase-based: what was paid to food suppliers as a % of food sales. A delivery or a stock-up moves it; a figure from counts needs an opening and a closing count.')+'</div>';
+      // Invoices that lag the POS (UI-05): the Bar's staleness line, when the
+      // window's end is more than a week before yesterday.
+      if(typeof w.days_behind==='number'&&w.days_behind>7)h+='<div class="fc2-cfo-basis fc2-lag"><i class="cv-warn" aria-hidden="true"></i> Invoices are <span class="hb-num">'+w.days_behind+'</span> days behind — the newest on file is <span class="hb-num">'+fc2BoEsc(w.to_mdy||'')+'</span>, so these four weeks end there.</div>';
+      h+=fc2SentenceLines(fc2Sentences(d.to_confirm).concat(fc2Sentences(d.coverage)));
       if(ms.length){h+='<table class="fc2-bo-tbl"><thead><tr><th>Month</th><th class="n">Bought from suppliers</th><th class="n">Food sales</th><th class="n">Bought vs sold</th></tr></thead><tbody>';
-        for(i=0;i<ms.length;i++){var m=ms[i];h+='<tr><td>'+fc2BoEsc(m.label)+(m.partial?' <span class="pt">so far</span>':'')+'</td><td class="n">'+fc2Money(m.purchases)+'</td><td class="n">'+fc2Money(m.sales)+'</td><td class="n"><b>'+(m.pct==null?'—':fc2BoEsc(m.pct)+'%')+'</b></td></tr>';}
+        for(i=0;i<ms.length;i++){var m=ms[i];h+='<tr><td>'+fc2BoEsc(m.label)+(m.partial?' <span class="pt">'+(m.from_mdy&&m.to_mdy?'<span class="hb-num">'+fc2BoEsc(m.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(m.to_mdy)+'</span>':'so far')+'</span>':'')+'</td><td class="n">'+fc2Money(m.purchases)+'</td><td class="n">'+fc2Money(m.sales)+'</td><td class="n"><b>'+(m.pct==null?'—':fc2BoEsc(m.pct)+'%')+'</b></td></tr>';}
         h+='</tbody></table>';}
       // Where the four weeks' food money went: by supplier, and by account
       // where an invoice's lines say what each item was.
       var vt=0,vr=[];for(i=0;i<vs.length;i++)vt+=vs[i].amount||0;
       for(i=0;i<vs.length&&i<5;i++)vr.push({label:fc2BoName(vs[i].vendor),amount:vs[i].amount});
       var bc=d.by_category||[],split=false,cr=[],ct=0;for(i=0;i<bc.length;i++){ct+=bc[i].amount||0;if(bc[i].label!=='Not split yet')split=true;}
-      for(i=0;i<bc.length&&i<7;i++)cr.push({label:bc[i].label==='Not split yet'?'Not itemized yet':bc[i].label,amount:bc[i].amount,sub:'invoices on file without their line items — each one printed from Back Office splits it'});
+      for(i=0;i<bc.length&&i<7;i++)cr.push({label:bc[i].label==='Not split yet'?'Not itemized yet':bc[i].label,amount:bc[i].amount,sub:'invoices on file without their line items — each one printed from '+feed+' splits it'});
       if(vr.length||split){h+='<div class="fc2-bo-split">';
         if(vr.length)h+='<div class="col"><div class="hd">By supplier</div>'+fc2BoRank(vr,vt)+'</div>';
         if(split)h+='<div class="col"><div class="hd">By kind of food</div>'+fc2BoRank(cr,ct,'Not itemized yet')+'</div>';
@@ -29350,7 +29379,7 @@ function fc2LoadBo(){
         h+='</div>';}
       h+='</div>';
       host.innerHTML=h;host.hidden=false;
-    })['catch'](function(){host.hidden=true;});
+    })['catch'](function(){fc2CardError(host,'Food bought vs sold',null,'Check your connection and reload the page.');});
 }
 document.addEventListener('change',function(ev){
   var t=ev.target;if(!t||!t.getAttribute||!t.getAttribute('data-fc2-bo-sort')||!t.value)return;
@@ -29380,7 +29409,7 @@ function fc2PlRow(p){
   var mt=_fc2Pl.d&&_fc2Pl.d.margin_target,good=mt&&p.margin_pct!=null&&p.margin_pct>=mt.pct;
   h+='<span class="n x">'+(p.cost_pct==null?'—':e(p.cost_pct)+'%')+'</span><span class="n x'+(good?' good':'')+'"'+(p.margin_pct!=null?' title="'+e(p.margin_pct)+'% of the price"':'')+'>'+(p.margin==null?'—':fc2PlMoney(p.margin))+'</span></summary><div class="fc2-pl-lines">';
   for(i=0;i<p.lines.length;i++){var l=p.lines[i];
-    h+='<div class="l"><span>'+(l.qty==null?'':'<span class="hb-num">'+e(l.qty)+'</span> ')+e(l.unit)+' '+e(l.name)+(l.per?' · '+e(l.per)+(l.source==='invoice'?' (invoice)':' (Back Office)'):'')+(l.flag?' · '+e(l.flag):'')+'</span>'+(l.missing?'<span class="miss">'+e(l.missing)+'</span>':'<span class="n">'+fc2PlMoney(l.cost)+'</span>')+'</div>';}
+    h+='<div class="l"><span>'+(l.qty==null?'':'<span class="hb-num">'+e(l.qty)+'</span> ')+e(l.unit)+' '+e(l.name)+(l.per?' · '+e(l.per)+(l.source==='invoice'?' (invoice)':' ('+e(fc2FeedLabel(_fc2Pl.d))+')'):'')+(l.flag?' · '+e(l.flag):'')+'</span>'+(l.missing?'<span class="miss">'+e(l.missing)+'</span>':'<span class="n">'+fc2PlMoney(l.cost)+'</span>')+'</div>';}
   for(i=0;i<p.missing.length;i++){var m=p.missing[i];if(m.via)h+='<div class="l"><span>'+e(m.via)+' › '+e(m.name)+'</span><span class="miss">'+e(m.reason)+'</span></div>';}
   return h+'</div></details>';
 }
@@ -29388,7 +29417,7 @@ function fc2PlRow(p){
 // dish's name A to Z), a second click flips it; a dish with no figure in that
 // column always sorts last. Unsorted, dishes run by what they sold.
 var _fc2Pl={d:null,k:null,desc:true};
-var FC2_PL_COLS=[['name','Dish',''],['price','Price',''],['cost','Cost',''],['cost_pct','Cost %','x'],['margin','Margin','x']];
+var FC2_PL_COLS=[['name','Dish',''],['price','Price',''],['cost','Plate cost',''],['cost_pct','Plate cost %','x'],['margin','Margin','x']];
 var FC2_PL_CHEV='<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function fc2PlSorted(){
   var ps=(_fc2Pl.d.plates||[]).slice(),k=_fc2Pl.k,desc=_fc2Pl.desc;
@@ -29408,17 +29437,19 @@ function fc2PlSorted(){
 function fc2PlRender(){
   var host=document.getElementById('fc2-pl'),d=_fc2Pl.d;if(!host||!d)return;
   var w=d.window||{},s=d.summary||{},ps=fc2PlSorted(),h='',i,rows='',rest='',hd='';
-  h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from Back Office recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
-  if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>what the recipes cost for the dishes that sold, at today’s prices · the fully priced dishes, <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> sold</span></div>';
+  h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from '+fc2BoEsc(fc2FeedLabel(d))+' recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span></div><div class="fc2-cfo-bd">';
+  if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>plate cost % of the dishes that sold — what their recipes cost at today’s prices, over what they sold for · the fully priced dishes, <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> sold</span></div>';
+  h+=fc2SentenceLines(fc2Sentences(d.coverage));
+  if(!ps.length)h+=fc2EmptyHtml('No dishes to cost yet',d.why_not||'');
   for(i=0;i<FC2_PL_COLS.length;i++){var c=FC2_PL_COLS[i],on=_fc2Pl.k===c[0];
     var dir=on?((c[0]==='name'?!_fc2Pl.desc:_fc2Pl.desc)?'descending':'ascending'):'';
-    hd+='<span class="'+c[2]+'"'+(on?' aria-sort="'+dir+'"':'')+'><button type="button" class="cbtn cbtn-text cbtn-inline csort-btn" data-pl-sort="'+c[0]+'" title="Sort by '+c[1].toLowerCase()+'"><span>'+c[1]+'</span><span class="csort-ic">'+FC2_PL_CHEV+'</span></button></span>';}
-  h+='<div class="fc2-pl-head">'+hd+'</div><div class="fc2-pl-list">';
+    hd+='<span role="columnheader" class="'+c[2]+'"'+(on?' aria-sort="'+dir+'"':'')+'><button type="button" class="cbtn cbtn-text cbtn-inline csort-btn" data-pl-sort="'+c[0]+'" title="Sort by '+c[1].toLowerCase()+'"><span>'+c[1]+'</span><span class="csort-ic">'+FC2_PL_CHEV+'</span></button></span>';}
+  h+='<div class="fc2-pl-head" role="row">'+hd+'</div><div class="fc2-pl-list">';
   for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
   h+=rows+'</div>';
   if(rest)h+='<details class="fc2-pl-more"'+(_fc2Pl.more?' open':'')+'><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
   var pr=d.prices||{},mt=d.margin_target;
-  h+='<div class="fc2-cfo-basis">'+(mt?'Margins in green are at or above <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span> of the price ('+fc2BoEsc(mt.source==='set'?'your plate margin target':'100 minus the food cost target')+'; set it in Account → Targets). ':'')+'Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from Back Office: <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'')+'</div></div>';
+  h+='<div class="fc2-cfo-basis">'+(mt?'Margins in green are at or above <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span> of the price ('+fc2BoEsc(mt.source==='set'?'your plate margin target':'100 minus the food cost target')+'; set it in Account → Targets). ':'')+'Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from '+fc2BoEsc(fc2FeedLabel(d))+': <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'')+'</div></div>';
   host.innerHTML=h;host.hidden=false;
 }
 function fc2LoadPlates(){
@@ -29437,16 +29468,19 @@ function fc2LoadPlates(){
   fetch('/api/food-cost/plates',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
-      if(!d||!d.ok||!d.available||!(d.plates||[]).length){host.hidden=true;return;}
+      // Hidden only when there is nothing to read (UI-06); a failed read keeps
+      // the card and says the server's sentence.
+      if(d&&d.ok&&d.available===false){host.hidden=true;return;}
+      if(!d||!d.ok){fc2CardError(host,'Plate costs',d);return;}
       _fc2Pl.d=d;fc2PlRender();
-    })['catch'](function(){host.hidden=true;});
+    })['catch'](function(){fc2CardError(host,'Plate costs',null,'Check your connection and reload the page.');});
 }
 function fc2LoadCfo(){
   var host=document.getElementById('fc2-cfo');if(!host)return;
   fetch('/api/food-cost/cfo',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
-      if(!d||!d.ok){host.hidden=true;return;}
+      if(!d||!d.ok){fc2CardError(host,'Where the money is going',d);return;}
       var b=d.brief||{},dg=d.diagnosis,drv=(d.drivers&&d.drivers.drivers)||[];
       if(!drv.length&&!(dg&&dg.cause)){host.hidden=true;return;}
       // The first "why" block (density round #43): the headline, the top
@@ -29561,10 +29595,7 @@ function fc2LoadCfo(){
       if(dg&&(dg.unsupported_figures||[]).length){
         applyFigureCaveat(host.querySelector('.fc2-cfo-bd'),{figures_verified:false,unsupported_figures:dg.unsupported_figures});
       }
-      // Today (#48): the top driver leads the sentence under the h1.
-      var td=document.getElementById('fc2-today-drv');
-      if(td&&drv.length)td.innerHTML=wtEsc(String(drv[0].label||'').replace(/\.$/,''))+' (<span class="hb-num">'+fc2Money(drv[0].dollars_monthly)+'</span>/mo at stake) · ';
-    }).catch(function(){host.hidden=true;});
+    }).catch(function(){fc2CardError(host,'Where the money is going',null,'Check your connection and reload the page.');});
 }
 
 // One line for a forecast's own record (contract K8, forecast_log.accuracy):
@@ -29595,6 +29626,8 @@ function fc2LoadFoodCostPct(){
     .then(apiJson)
     .then(function(d){
       if(!d)return;
+      // A read that failed: the dash and the server's sentence (UI-06).
+      if(!d.ok&&d.error&&!(d.missing||[]).length){host.innerHTML='<div class="v neutral"><span class="hb-num">\u2014</span></div><div class="k">Food cost</div><div class="d">'+wtEsc(d.error)+'</div>';host.hidden=false;return;}
       if(d.ok&&d.pct!=null){
         var tone=d.tone||'neutral';
         // The target named as the server names it (Benchmarking #10):
@@ -29636,7 +29669,7 @@ function fc2LoadFoodCostPct(){
         +'<div class="d" title="'+wtEsc(why.join('; '))+'">'+wtEsc(d.unmeasured_line||'Not enough recorded to work it out yet')+'</div>';
       host.hidden=false;
     })
-    .catch(function(){ host.hidden=true; });
+    .catch(function(){ host.innerHTML='<div class="v neutral"><span class="hb-num">\u2014</span></div><div class="k">Food cost</div><div class="d">Couldn\u2019t be read just now \u2014 check your connection.</div>';host.hidden=false; });
 }
 // ── the count sheet, pre-filled ─────────────────────────────────────────────
 // Opens with the ledger's expected on-hand in every box (last recount +
@@ -29666,7 +29699,7 @@ function fc2LoadRecipeDrafts(msg){
     var on=synced&&window.mdyAt?mdyAt(src.synced_at):'';
     var h=fc2BlockHead(FC2_ICON.recipe,'Recipes',synced?'Your recipes':'Recipes',synced?rs.length:0,
       synced?('From '+label+(on?' · synced '+on:'')+'. Every plate cost and depletion reads these.')
-            :'Every dish and its ingredients load here from your inventory system once it’s connected.');
+            :'Draft a recipe for each dish the POS sold, or scan a recipe card on the phone; every plate cost and depletion reads them.');
     if(synced&&rs.length){
       h+='<div class="fc2-rcp">';
       for(i=0;i<rs.length;i++){var r=rs[i],ls='';
@@ -29676,7 +29709,7 @@ function fc2LoadRecipeDrafts(msg){
     }
     if(!synced)h+='<div id="fc2-drafts"><div class="dr-pulse" role="status" aria-label="Loading recipe drafts"><i></i></div></div>';
     el.innerHTML=h;el.hidden=false;
-    fc2WorkRow('recipes',synced?('<b class="hb-num">'+rs.length+'</b> recipe'+(rs.length===1?'':'s')+' from '+esc(label)):'load once your inventory system is connected');
+    fc2WorkRow('recipes',synced?('<b class="hb-num">'+rs.length+'</b> recipe'+(rs.length===1?'':'s')+' from '+esc(label)):'draft them from your POS dishes');
     if(!synced)fc2LoadDraftList(msg);
   }).catch(function(){});
 }
@@ -29691,7 +29724,7 @@ function fc2LoadDraftList(msg){
     if(!d||!d.ok){box.innerHTML='';return;}
     var ds=d.drafts||[],h='',i,j,miss=+d.missing||0,ings=+d.ingredients||0;
     h+='<div class="fc2-drafts-k"><span class="hb-kicker">Recipes to confirm</span>'+(ds.length?'<span class="hb-num">'+ds.length+'</span>':'')+'</div>';
-    if(!ds.length)h+='<div class="hb-empty">No drafts waiting. Drafts arrive Tuesday mornings for dishes the POS created without a recipe.</div>';
+    if(!ds.length)h+='<div class="hb-empty">No drafts waiting. A dish the POS sold without a recipe gets one here to confirm — Draft them below, or scan a recipe card on the phone.</div>';
     var sure=fc2ConfidentDrafts(ds);
     if(sure.length>1)h+='<div class="fc2-drafts-all"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-accept-all="'+esc(sure.join(','))+'">Accept the '+sure.length+' sure ones</button><span>every line sure, every unit converted</span></div>';
     for(i=0;i<ds.length;i++){var dr=ds[i],ls='',ws=dr.unit_warnings||[],wl=[];
@@ -29707,7 +29740,7 @@ function fc2LoadDraftList(msg){
         +'<div class="ls">'+ls+'</div>'
         +(dr.needs_yield?'<label class="fc2-draft-y">This card is a batch. Plates it makes <input class="ac-input ac-num" type="number" min="1" step="any" data-recipe-yield="'+esc(dr.id)+'" aria-label="Plates this card makes"></label>':'')
         +'<div class="fc2-draft-ft"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-recipe-accept="'+esc(dr.id)+'">Accept recipe</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-recipe-reject="'+esc(dr.id)+'">Not right</button></div></div>';}
-    if(miss>0&&ings>0)h+='<div class="fc2-menu-draft"><div class="t"><b>'+miss+' dish'+(miss===1?'':'es')+' on the POS without a recipe</b><span>Cavnar AI drafts each from your ingredient list; you confirm every line above before anything is written.</span></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this,true)">Draft them</button></div>';
+    if(miss>0&&ings>0)h+='<div class="fc2-menu-draft"><div class="t"><b>'+miss+' dish'+(miss===1?'':'es')+' on the POS without a recipe</b><span>Cavnar AI drafts each from your ingredient list; you confirm every line above before anything is written.</span></div><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="fc2DraftRecipes(this)">Draft them</button></div>';
     h+='<div class="ac-status" id="fc2-menu-status"></div>';
     box.innerHTML=h;
     var st=document.getElementById('fc2-menu-status');if(st&&msg)st.textContent=msg;
@@ -29739,29 +29772,23 @@ document.addEventListener('click',function(e){
     fetch('/api/food-cost/recipe-drafts/'+encodeURIComponent(id)+'/accept',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(apiJson).then(function(d){if(d&&d.ok)n++;next();}).catch(function(){next();});
   })();
 });
-function fc2DraftRecipes(btn,missingOnly){
-  var ta=document.getElementById('fc2-menu-text'),st=document.getElementById('fc2-menu-status');
-  var menu=missingOnly?'':((ta&&ta.value)||'');
-  if(!missingOnly&&!menu.trim()){if(st)st.textContent='Paste your menu first \u2014 one dish a line.';return;}
-  var done=cbtnBusy(btn,'Drafting\u2026');
-  fetch('/api/food-cost/recipes/draft',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:menu})}).then(apiJson).then(function(d){
+// Drafts a recipe for each POS dish that has none (recipes.draft_missing,
+// through /food-cost/recipes/draft with no menu text). The menu paste and
+// the CSV import that once fed this had lost their fields (9/26/26); their
+// readers are gone too (UI-10). The phone still drafts from a pasted menu
+// and a recipe card through the same route.
+function fc2DraftRecipes(btn){
+  var st=document.getElementById('fc2-menu-status');
+  var done=cbtnBusy(btn,'Drafting…');
+  fetch('/api/food-cost/recipes/draft',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({menu:''})}).then(apiJson).then(function(d){
     done();
     if(!d||!d.ok){if(st)st.textContent=(d&&d.error)||'Could not draft just now.';return;}
-    var msg=d.drafted?('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s')+' \u2014 confirm them above.'):(d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1)+'.':(d.already_covered?'Those dishes already have a recipe or a draft.':'Nothing to draft.'));
+    var msg=d.drafted?('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s')+' — confirm them above.'):(d.reason?d.reason.charAt(0).toUpperCase()+d.reason.slice(1)+'.':(d.already_covered?'Those dishes already have a recipe or a draft.':'Nothing to draft.'));
     if(d.created)msg+=' '+d.created+' new dish'+(d.created===1?'':'es')+' added.';
-    if(d.remaining>0)msg+=' '+d.remaining+' more to go \u2014 click again for the next batch.';
+    if(d.remaining>0)msg+=' '+d.remaining+' more to go — click again for the next batch.';
     if(typeof toast==='function'&&d.drafted)toast('Drafted '+d.drafted+' recipe'+(d.drafted===1?'':'s'),'success');
     if(d.drafted||d.created)fc2LoadRecipeDrafts(msg);else if(st)st.textContent=msg;
-  }).catch(function(){done();if(st)st.textContent='Could not draft \u2014 check your connection.';});
-}
-function fc2ImportRecipes(btn){
-  var csv=(document.getElementById('fc2-import-csv')||{}).value||'';var st=document.getElementById('fc2-import-status');
-  if(!csv.trim()){if(st)st.textContent='Paste a CSV first.';return;}
-  var done=cbtnBusy(btn,'Importing\u2026');
-  fetch('/api/food-cost/recipes/import',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:csv})}).then(apiJson).then(function(d){
-    done();if(st)st.textContent=d&&d.ok?('Imported '+d.written+' line'+(d.written===1?'':'s')+(d.updated?' \u00b7 '+d.updated+' corrected':'')+(d.skipped?' \u00b7 '+d.skipped+' skipped':'')+((d.unknown_ingredients||[]).length?' \u00b7 unknown: '+d.unknown_ingredients.join(', '):'')+(d.truncated_rows?' \u00b7 '+d.truncated_rows+' rows past the limit not read':'')+'.'+((d.unlinked_dishes||[]).length?' Not linked to a POS item, so they won\'t deplete stock: '+d.unlinked_dishes.join(', ')+'.':'')):((d&&d.error)||'Could not import.');
-    if(d&&d.ok)fc2LoadRecipeDrafts();
-  }).catch(function(){done();if(st)st.textContent='Could not import \u2014 check your connection.';});
+  }).catch(function(){done();if(st)st.textContent='Could not draft — check your connection.';});
 }
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-recipe-accept],[data-recipe-reject]'):null;if(!t)return;
@@ -29807,9 +29834,14 @@ function fc2BlockHead(icon,kicker,title,cnt,sub){
 // The weekly order groups itself by the supplier on each ingredient, and
 // until now that field could only be set from the phone.
 var _fc2SupNewFor=null;
-function fc2LoadSuppliers(){
+// given: the count sheet's own response, when it was just read for the
+// sheet (UI-11: one request, not two); a supplier change reads it again.
+function fc2LoadSuppliers(given){
+  if(given&&typeof given==='object'){fc2RenderSuppliers(given);return;}
+  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(fc2RenderSuppliers)['catch'](function(){});
+}
+function fc2RenderSuppliers(d){
   var el=document.getElementById('fc2-suppliers');if(!el)return;
-  fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;fc2WorkRow('suppliers',null);return;}
     var synced=!!(d.source&&d.source.synced);
     var items=d.items,sups={},keys=[],un=0,i;
@@ -29830,7 +29862,6 @@ function fc2LoadSuppliers(){
     el.innerHTML=h;el.hidden=false;
     el._sups=sups;
     fc2WorkRow('suppliers','<b class="hb-num">'+keys.length+'</b> supplier'+(keys.length===1?'':'s')+(un?' · <b class="hb-num">'+un+'</b> ingredient'+(un===1?'':'s')+' without one':' · every ingredient has one'));
-  }).catch(function(){});
 }
 function fc2SupplierPost(ing,sname,semail,cb){
   fetch('/api/food-cost/ingredient-supplier',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:ing,supplier_name:sname,supplier_email:semail})}).then(apiJson).then(function(d){cb(d&&d.ok,d&&d.error);}).catch(function(){cb(false,'Could not save \u2014 check your connection.');});
@@ -29868,9 +29899,11 @@ function fc2AssignAllUnassigned(btn){
     fc2SupplierPost(todo.shift(),sup.name,sup.email,function(ok){if(ok)n++;next();});
   })();
 }
-function fc2LoadCountSheet(){
+function fc2LoadCountSheet(withSuppliers){
   var el=document.getElementById('fc2-count');if(!el)return;
   fetch('/api/food-cost/count-sheet',{credentials:'same-origin'}).then(apiJson).then(function(d){
+    // Suppliers read the same sheet: handed this response, not a second request (UI-11).
+    if(withSuppliers)fc2LoadSuppliers(d||{ok:false});
     if(!d||!d.ok||!(d.items||[]).length){el.hidden=true;fc2WorkRow('count',null);return;}
     // Where the ledger stood when this sheet opened: a delivery received
     // after it is asked about on save, never guessed (re-audit F2-7).
@@ -29966,18 +29999,30 @@ function fc2LoadWasteSources(){
   fetch('/api/food-cost/waste-sources',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
-      // Only worth saying when a meaningful slice is unexplained.
-      if(!d||!d.ok||!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
+      // Only worth saying when a meaningful slice is unexplained; a read
+      // that failed says so in the tile (UI-06).
+      if(!d||!d.ok){fc2TileError(host,'Unexplained',d);return;}
+      if(!d.has_data||!d.inferred||d.inferred_pct==null||d.inferred_pct<10){host.hidden=true;return;}
       host.innerHTML='<span class="k">Unexplained</span>'
         +'<span class="v warn"><span class="hb-num">'+d.inferred_pct+'%</span></span>'
-        +'<span class="d">of this week\u2019s waste ($'+Math.round(d.inferred).toLocaleString()
+        +'<span class="d">of the last '+(+d.window_days||7)+' days\u2019 waste ($'+Math.round(d.inferred).toLocaleString()
         +') came from counts landing under expectation rather than recorded waste \u2014 worth a closer count before acting on it.</span>';
       host.hidden=false;
     })
-    .catch(function(){host.hidden=true;});
+    .catch(function(){fc2TileError(host,'Unexplained',null);});
+}
+// A position tile whose read failed: its heading, a dash and the server's
+// sentence - never hidden as if there were nothing to say (UI-06).
+function fc2TileError(host,k,d){
+  if(!host)return;
+  host.innerHTML='<span class="k">'+wtEsc(k)+'</span><span class="v"><span class="hb-num">\u2014</span></span><span class="d">'+wtEsc((d&&(d.error||d.why_not))||'Couldn\u2019t be read just now \u2014 try again in a minute.')+'</span>';
+  host.hidden=false;
 }
 /* Info tips (.cav-it): one open at a time; a click outside or Esc closes them. */
-function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p)p.hidden=!on;if(b)b.setAttribute('aria-expanded',on?'true':'false');}
+function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
+  /* Kept on screen (UI-12): shifted left by what runs past the right edge, never past the left one. */
+  if(p&&on&&p.getBoundingClientRect){var r=p.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,dx=0;
+    if(r.right>vw-12)dx=(vw-12)-r.right;if(r.left+dx<12)dx=12-r.left;if(dx)p.style.marginLeft=Math.round(dx)+'px';}}
 document.addEventListener('click',function(e){
   var t=e.target;if(!t||!t.closest)return;
   if(t.closest('.cav-itp'))return;
@@ -29995,7 +30040,8 @@ function fc2LoadRecipeCoverage(){
   fetch('/api/food-cost/recipe-coverage',{headers:{'Accept':'application/json'}})
     .then(apiJson)
     .then(function(d){
-      if(!d||!d.ok||!d.has_data||d.coverage_pct==null){host.hidden=true;return;}
+      if(!d||!d.ok){fc2TileError(host,'Recipe coverage',d);return;}
+      if(!d.has_data||d.coverage_pct==null){host.hidden=true;return;}
       var pct=d.coverage_pct;
       var tone=pct>=90?'good':(pct>=70?'warn':'bad');
       var h='<span class="k">Recipe coverage</span>'
@@ -30010,7 +30056,7 @@ function fc2LoadRecipeCoverage(){
       h+='</span>';
       host.innerHTML=h;host.hidden=false;
     })
-    .catch(function(){host.hidden=true;});
+    .catch(function(){fc2TileError(host,'Recipe coverage',null);});
 }
 function loadWasteTrend(force){
   var key=_wt.range;
@@ -30021,8 +30067,18 @@ function loadWasteTrend(force){
     _wt.inflight=null;
     if(!d||!d.ok){_wt.data={ok:false,weeks:[]};renderWasteTrend();return;}
     _wt.cache[d.range]=d;_wt.range=d.range;_wt.data=d;renderWasteTrend();
+    // Read before the insight's write landed: once more, once.
+    if(_wt.want!==undefined&&d.history_stamp!==undefined&&d.history_stamp!==_wt.want&&!_wt.rechecked){_wt.rechecked=true;loadWasteTrend(true);}
   }).catch(function(){if(_wt.inflight!==req)return;_wt.inflight=null;_wt.data={ok:false,weeks:[]};renderWasteTrend();});
   _wt.inflight=req;
+}
+// The insight's history stamp against the trend's: equal means the trend
+// on screen already holds every week the insight wrote. A trend still in
+// flight is checked when it lands (loadWasteTrend).
+function wtStampCheck(stamp){
+  if(stamp===undefined){loadWasteTrend(true);return;}
+  _wt.want=stamp;
+  if(_wt.data&&_wt.data.ok&&!_wt.inflight&&_wt.data.history_stamp!==stamp)loadWasteTrend(true);
 }
 function wtSetRange(r){if(r===_wt.range&&_wt.data&&_wt.data.ok)return;_wt.range=r;_wt.sel=null;_wt.cat=null;loadWasteTrend();}
 function wtToggleTarget(){_wt.showTarget=!_wt.showTarget;var b=document.getElementById('fc2-wt-target-tgl');if(b){b.classList.toggle('on',_wt.showTarget);b.setAttribute('aria-pressed',_wt.showTarget?'true':'false');}if(_wt.data&&_wt.data.ok){wtDrawChart();wtDrawLegend();}}
@@ -30081,7 +30137,7 @@ function wtDrawRanges(d){
   var rs=d.ranges||['8w'];
   if(rs.length<2){box.hidden=true;return;}
   box.hidden=false;var h='';
-  for(var i=0;i<rs.length;i++){var r=rs[i];h+='<button type="button" role="tab" aria-selected="'+(r===d.range?'true':'false')+'" class="'+(r===d.range?'on':'')+'" onclick="wtSetRange(\''+r+'\')">'+(r==='all'?'All':parseInt(r,10)+'w')+'</button>';}
+  for(var i=0;i<rs.length;i++){var r=rs[i];h+='<button type="button" aria-pressed="'+(r===d.range?'true':'false')+'" class="'+(r===d.range?'on':'')+'" onclick="wtSetRange(\''+r+'\')">'+(r==='all'?'All':parseInt(r,10)+'w')+'</button>';}
   box.innerHTML=h;
 }
 function wtDrawKpis(d){
@@ -30101,7 +30157,8 @@ function wtDrawKpis(d){
   // The "Annual opportunity" tile is gone (density round #25): the page
   // carries one opportunity figure, the CFO's ranked monthly at-stake.
   // The server still sends savings_if_at_target; this card no longer draws it.
-  box.innerHTML=catNote+tile('This week',wtMoney(s.latest),'',t1d)
+  var lw=d.weeks[n-1]||{},lwl=lw.start_label&&lw.label?'Week of '+wtEsc(lw.start_label)+'–'+wtEsc(lw.label):'Latest week';
+  box.innerHTML=catNote+tile(lwl,wtMoney(s.latest),'',t1d)
     +tile('4-week average',wtMoney(s.rolling4),'',t2d)
     +tile('vs target',t3v,t3c,t3d);
 }
@@ -30114,6 +30171,29 @@ function wtSeriesValue(w){
   if(!_wt.cat)return w.waste;
   if(!w.has_items)return null;
   return (w.categories&&w.categories[_wt.cat])||0;
+}
+// One geometry for the bars and both axes (UI-02, 10/16/26). The SVG is
+// sized to the box it is drawn in (W = the box's width, 1:1, preserveAspect
+// none) and the dollar scale and the week labels are drawn inside it, from
+// the same x() and y() as the bars - so a label sits on its gridline and
+// under its bar at any width. It used to be a fixed 760-wide viewBox
+// (meet) beside HTML axis rows that always spanned the whole box: the two
+// only lined up at exactly 760px (a phone read the wrong dollars off the
+// axis; a wide desktop's first and last week labels sat ~60px off their
+// bars). Redrawn when the box's width changes (wtWatchWidth).
+var WT_H=256,WT_BASE=224,WT_PADT=30,WT_GUT=58,WT_LBL=52;
+function wtGeom(width,n){
+  var W=Math.max(160,Math.round(width||760)),L=WT_GUT,P=W-L,dense=n>26;
+  var want=dense?Math.max(2,P*0.006):Math.max(8,P*0.024);
+  // Never so wide a gap that a bar has no room: at most 40% of a slot.
+  var gap=Math.max(1,Math.min(want,P*0.4/(n+1))),bw=(P-gap*(n+1))/n;
+  // As many week labels as fit (one per WT_LBL px), the newest always.
+  var fit=Math.max(1,Math.floor(P/WT_LBL)),every=Math.max(dense?Math.ceil(n/13):1,Math.ceil(n/fit));
+  return {W:W,H:WT_H,L:L,P:P,base:WT_BASE,padT:WT_PADT,gap:gap,bw:bw,dense:dense,every:every,
+    x:function(i){return L+gap+i*(bw+gap);},
+    cx:function(i){return L+gap+i*(bw+gap)+bw/2;},
+    y:function(v,top){return WT_PADT+(WT_BASE-WT_PADT)*(1-v/top);},
+    labelled:function(i){return i===n-1||(i%every===0&&n-1-i>=every);}};
 }
 function wtDrawChart(){
   var d=_wt.data,host=document.getElementById('fc2-wt-chart');if(!d||!host)return;
@@ -30131,11 +30211,11 @@ function wtDrawChart(){
   // Rolling 4-week average at each point (shorter windows at the start).
   var roll=[];
   for(var i=0;i<n;i++){var sum=0,c=0;for(var j=Math.max(0,i-3);j<=i;j++){if(vals[j]!=null){sum+=vals[j];c++;}}roll.push(c?sum/c:null);}
-  var W=760,H=230,padT=30,base=H-6;
+  var G=wtGeom(host.clientWidth,n),W=G.W,H=G.H,L=G.L,base=G.base;
+  _wt.w=W;wtWatchWidth(host);
   var top=wtNiceTop(Math.max(max*1.15,targetVal?targetVal*1.2:0,20));
-  function y(v){return padT+(base-padT)*(1-v/top);}
-  var dense=n>26,veryDense=n>52;
-  var gap=dense?Math.max(2,W*0.006):Math.max(8,W*0.024),bw=(W-gap*(n+1))/n;
+  function y(v){return G.y(v,top);}
+  var dense=G.dense,gap=G.gap,bw=G.bw;
   var animate=!_wt.animated[d.range]&&!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   _wt.animated[d.range]=true;
   // When the bars finish growing in (their own stagger + the 1.7s duration
@@ -30145,12 +30225,7 @@ function wtDrawChart(){
   // bars rather than racing them.
   var barsDoneMs=animate?((n-1)*(dense?18:140)+1700):0;
   var lineDrawMs=800;
-  // xMidYMid meet, not none: with "none" the viewBox stretched to the
-  // container width, so on a phone the x-scale was roughly half the y-scale
-  // and every $ label, SPIKE/BEST/WORST tag and rule label was squeezed to
-  // half width. The gauge and the Intel chart in this same file already use
-  // meet — this was the odd one out.
-  var svg='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Weekly waste, '+n+' weeks">';
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" width="'+W+'" height="'+H+'" preserveAspectRatio="none" role="img" aria-label="Weekly waste, '+n+' weeks">';
   // A soft resting shadow (gives each bar a "lifted off the page" feel
   // without the heavy black glow the old wide-blur version left between
   // bars) plus a vertical gradient per tone — brand ember on top, a
@@ -30162,11 +30237,12 @@ function wtDrawChart(){
     +'<linearGradient id="fc2wtBarGood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#72d4a3"/><stop offset="42%" stop-color="#4ead7a"/><stop offset="100%" stop-color="#337d59"/></linearGradient>'
     +'<linearGradient id="fc2wtBarNeutral" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8d8378"/><stop offset="42%" stop-color="#6d645b"/><stop offset="100%" stop-color="#4a4038"/></linearGradient>'
     +'</defs>';
-  for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="0" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
-  svg+='<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
-  var yLab='',steps=[top,top*.75,top*.5,top*.25,0];
-  for(var q=0;q<steps.length;q++)yLab+='<span>$'+Math.round(steps[q]).toLocaleString()+'</span>';
-  var ax='',bars='',labels='';
+  // The dollar scale: each label on the gridline it names, both from y().
+  var axis='',steps=[top,top*.75,top*.5,top*.25,0];
+  for(var g=1;g<=4;g++){var gy=y(top*g/4);svg+='<line x1="'+L+'" y1="'+gy.toFixed(1)+'" x2="'+W+'" y2="'+gy.toFixed(1)+'" stroke="currentColor" stroke-opacity=".07"/>';}
+  svg+='<line x1="'+L+'" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="currentColor" stroke-opacity=".14"/>';
+  for(var q=0;q<steps.length;q++)axis+='<text class="fc2-wt-ylab" x="'+(L-10)+'" y="'+(y(steps[q])+5).toFixed(1)+'" text-anchor="end">$'+Math.round(steps[q]).toLocaleString()+'</text>';
+  var bars='',labels='',hits='';
   var lab='style="paint-order:stroke;stroke:var(--paper);stroke-width:4px;stroke-linejoin:round"';
   // Everything that isn't a bar (target band/line/label, avg line/label,
   // the per-bar $ labels and SPIKE/WORST/BEST tags) used to be static —
@@ -30180,12 +30256,14 @@ function wtDrawChart(){
   // further down) so the low-opacity pill sits behind everything else.
   if(target){
     var bandTy=y(target),bandH=18;
-    svg+='<g'+fadeIn+'><rect x="0" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+W+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".22"/></g>';
+    svg+='<g'+fadeIn+'><rect x="'+L+'" y="'+(bandTy-bandH/2).toFixed(1)+'" width="'+G.P+'" height="'+bandH+'" rx="'+(bandH/2)+'" fill="#4ead7a" fill-opacity=".22"/></g>';
   }
+  // A bar's own $ label only where it fits over the bar.
+  var barLabels=!dense&&bw>=30;
   for(var i=0;i<n;i++){
-    var w=weeks[i],f=w.flags||{},x=gap+i*(bw+gap),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
-    var every=veryDense?Math.ceil(n/13):(dense?Math.ceil(n/13):1);
-    ax+='<span class="'+(on?'on':'')+'">'+((i%every===0||isLast)?wtEsc(w.label):'')+'</span>';
+    var w=weeks[i],f=w.flags||{},x=G.x(i),val=vals[i],isLast=i===n-1,on=(_wt.sel===i);
+    // The week label under its bar, centred on the same x as the bar.
+    if(G.labelled(i))axis+='<text class="fc2-wt-xlab'+(on?' on':'')+'" x="'+G.cx(i).toFixed(1)+'" y="'+(base+22)+'" text-anchor="middle">'+wtEsc(w.label)+'</text>';
     if(val==null){
       bars+='<rect class="fc2-wt-bar" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+(base-8).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="8" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="3 3"/>';
     } else {
@@ -30200,24 +30278,26 @@ function wtDrawChart(){
       var stroke=f.anomaly==='spike'?' stroke="#e3333f" stroke-width="2"':(isLast?' stroke="#e8956a" stroke-width="1.5" stroke-opacity=".9"':' stroke="rgba(255,255,255,.14)" stroke-width="1"');
       var delay=animate?' style="animation-delay:'+(i*(dense?18:140))+'ms"':'';
       bars+='<rect class="fc2-wt-bar'+(animate?' hb-bar':'')+(on?' sel':'')+'" data-i="'+i+'" x="'+x.toFixed(1)+'" y="'+by.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" rx="'+(dense?3:6)+'" fill="'+fill+'" fill-opacity="'+op+'" filter="url(#fc2wtLift)"'+stroke+delay+'/>';
-      if(!dense){
+      if(barLabels){
         labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-6).toFixed(1)+'" text-anchor="middle" font-size="13" font-weight="'+(isLast?'700':'600')+'" fill="currentColor" fill-opacity="'+(isLast?'1':'.8')+'">'+wtMoney(val)+'</text>';
         if(f.anomaly==='spike')labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e3333f">SPIKE</text>';
         else if(f.worst&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#e3333f" fill-opacity=".85">WORST</text>';
         else if(f.best&&n>=3)labels+='<text x="'+(x+bw/2).toFixed(1)+'" y="'+(by-21).toFixed(1)+'" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing=".3" fill="#4ead7a" fill-opacity=".9">BEST</text>';
       }
     }
-    // Full-column hit area so a short bar is as easy to hover as a tall one.
-    // (The table equivalent below carries the same numbers for screen readers.)
-    bars+='<rect class="fc2-wt-hit" data-i="'+i+'" x="'+(x-gap/2).toFixed(1)+'" y="0" width="'+(bw+gap).toFixed(1)+'" height="'+H+'" fill="transparent"/>';
+    // Full-column hit area so a short bar is as easy to hover as a tall one,
+    // and a button by keyboard (UI-15): Tab reaches each week, Enter or
+    // Space opens its top waste items, as a click does.
+    var wk='Week of '+(w.start_label||'')+' to '+(w.label||'')+', '+(val==null?'not recorded':wtMoney(val));
+    hits+='<rect class="fc2-wt-hit" data-i="'+i+'" role="button" tabindex="0" aria-pressed="'+(on?'true':'false')+'" aria-label="'+wtEsc(wk)+'. Show its top waste items" x="'+(x-gap/2).toFixed(1)+'" y="0" width="'+(bw+gap).toFixed(1)+'" height="'+base+'" fill="transparent"/>';
   }
   svg+=bars;
   // Rolling 4-week average as a single quiet line — no glow, no dots.
-  var pts=[];for(var i=0;i<n;i++){if(roll[i]!=null)pts.push([gap+i*(bw+gap)+bw/2,y(roll[i])]);}
+  var pts=[];for(var i=0;i<n;i++){if(roll[i]!=null)pts.push([G.cx(i),y(roll[i])]);}
   // Rule labels sit at the right edge, and dodge each other and the last
   // bar's value label — the old chart printed "8-wk avg" straight over
   // this week's figure whenever the two landed at the same height.
-  var lastVal=vals[n-1],lastLabelY=(lastVal!=null&&!dense)?y(lastVal)-6:-99,avgLabelY=null;
+  var lastVal=vals[n-1],lastLabelY=(lastVal!=null&&barLabels)?y(lastVal)-6:-99,avgLabelY=null;
   // The line itself grows in via a scaleX wipe (left to right) once the
   // bars finish — a stroke-dasharray reveal would fight the target line's
   // own small dash pattern, since both would need the same attribute.
@@ -30239,21 +30319,21 @@ function wtDrawChart(){
   if(target){
     var ty=y(target),tly=ty-7;
     if((avgLabelY!=null&&Math.abs(tly-avgLabelY)<15)||Math.abs(tly-lastLabelY)<15)tly=ty+14;
-    targetG+='<line'+lineDraw+' x1="0" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
+    targetG+='<line'+lineDraw+' x1="'+L+'" y1="'+ty.toFixed(1)+'" x2="'+W+'" y2="'+ty.toFixed(1)+'" stroke="#4ead7a" stroke-opacity=".85" stroke-width="1.5" stroke-dasharray="4 5"/>';
     // One label, at the line's left end: the percent the dashed line stands
     // for and the dollars it works out to for this restaurant. It used to
     // be two labels at opposite ends of the same line.
-    targetTxt='<text '+lab+' x="4" y="'+tly.toFixed(1)+'" text-anchor="start" font-size="12.5" font-weight="700" fill="#4ead7a">'+d.target.pct+'% target, '+wtMoney(target)+'/week</text>';
+    targetTxt='<text '+lab+' x="'+(L+4)+'" y="'+tly.toFixed(1)+'" text-anchor="start" font-size="12.5" font-weight="700" fill="#4ead7a">'+d.target.pct+'% target, '+wtMoney(target)+'/week</text>';
     svg+=targetG+'<g'+lineLabelFade+'>'+targetTxt+'</g>';
   }
   if(labels)svg+='<g'+fadeIn+'>'+labels+'</g>';
-  svg+='</svg>';
+  svg+='<g class="fc2-wt-axis">'+axis+'</g>'+hits+'</svg>';
   // A text equivalent of the same series. The chart itself is a picture to a
   // screen reader; without this the whole card was unreadable to one.
   var tbl='<table class="sr-only"><caption>Weekly waste</caption><thead><tr><th>Week ending</th><th>Waste</th></tr></thead><tbody>';
   for(var ti=0;ti<n;ti++){var tv=vals[ti];tbl+='<tr><td>'+wtEsc(weeks[ti].label)+'</td><td>'+(tv==null?'not recorded':wtMoney(tv))+'</td></tr>';}
   tbl+='</tbody></table>';
-  host.innerHTML='<div class="y">'+yLab+'</div><div class="plot">'+svg+'<div class="ax">'+ax+'</div></div>'+tbl;
+  host.innerHTML='<div class="plot">'+svg+'</div>'+tbl;
   host.classList.remove('hov');
   // Some browsers don't repaint an already-inserted SVG <text> once a
   // webfont it's waiting on finishes loading (unlike ordinary HTML text,
@@ -30272,7 +30352,24 @@ function wtDrawChart(){
     host.addEventListener('mousemove',function(e){var tip=document.getElementById('fc2-wt-tip');if(tip&&tip.style.display==='block')wtTipPos(e);});
     host.addEventListener('mouseleave',function(){wtHover(null);});
     host.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(t)wtSelect(parseInt(t.getAttribute('data-i'),10));});
+    // The keyboard twin of hover and click (UI-15): focus shows the week's
+    // tip beside its bar, Enter or Space opens it and keeps focus on it.
+    host.addEventListener('focusin',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(!t)return;var r=t.getBoundingClientRect();wtHover(parseInt(t.getAttribute('data-i'),10),{clientX:r.left+r.width/2,clientY:r.top+40});});
+    host.addEventListener('focusout',function(){wtHover(null);});
+    host.addEventListener('keydown',function(e){var t=e.target&&e.target.closest?e.target.closest('.fc2-wt-hit'):null;if(!t)return;
+      var k=e.key||'';if(k!=='Enter'&&k!==' '&&k!=='Spacebar')return;e.preventDefault();
+      var i=parseInt(t.getAttribute('data-i'),10);wtSelect(i);
+      var nb=host.querySelector('.fc2-wt-hit[data-i="'+i+'"]');if(nb&&nb.focus)nb.focus();});
   }
+}
+// Redraws the chart when its box changes width (a resize, a rotate, the
+// panel opening after a draw made while it was hidden), so the drawing and
+// its axes stay one geometry. Only a real change of width redraws.
+function wtWatchWidth(host){
+  if(host._wtWatch)return;host._wtWatch=true;
+  function check(){var w=Math.max(160,Math.round(host.clientWidth||760));if(host.clientWidth&&w!==_wt.w&&_wt.data&&_wt.data.ok&&_wt.data.weeks&&_wt.data.weeks.length)wtDrawChart();}
+  if(window.ResizeObserver){try{new ResizeObserver(function(){clearTimeout(host._wtT);host._wtT=setTimeout(check,80);}).observe(host);return;}catch(e){}}
+  window.addEventListener('resize',function(){clearTimeout(host._wtT);host._wtT=setTimeout(check,120);});
 }
 function wtTipPos(e){var tip=document.getElementById('fc2-wt-tip');if(!tip)return;var tx=e.clientX+16,ty=e.clientY-12,tw=tip.offsetWidth||240;if(tx+tw+8>window.innerWidth)tx=e.clientX-tw-16;if(ty+tip.offsetHeight>window.innerHeight)ty=window.innerHeight-tip.offsetHeight-8;tip.style.left=tx+'px';tip.style.top=ty+'px';}
 function wtHover(i,e){
@@ -33975,34 +34072,60 @@ document.addEventListener('click',function(ev){
   };
 
   // ── Food Cost: dish scorecard, reprice suggestions, invoice scanning ──────
-  var _fcMenuLoaded = false;
+  window.loadFcMenu = function(){ loadFcMenu(); };
   function _fcEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function _fcMoney(v,dp){return v==null?'—':'$'+Number(v).toFixed(dp==null?2:dp);}
   function loadFcMenu(){
     var sb=document.getElementById('fc2-score-body');if(!sb)return;
     var fm=document.getElementById('fc2-menu');if(fm&&fm.hidden)return;
     fetch('/api/food-cost/dish-scorecard',{credentials:'same-origin'}).then(apiJson).then(function(d){
-      if(!d||!d.ok){var sec=document.getElementById('fc2-menu');if(sec)sec.style.display='none';return;}
+      // A read that failed says the server's sentence where the table goes;
+      // the section stays (UI-06: it used to vanish with Menu margins in it).
+      if(!d||!d.ok){sb.innerHTML=window.fc2EmptyHtml?fc2EmptyHtml('Your dishes couldn’t be read just now',(d&&d.error)||'Try again in a minute.'):'';return;}
       var rows=d.dishes||[];
-      // Nothing to score is a null, not a sentence (owner, 9/26/26).
-      if(!rows.length){sb.innerHTML='<div class="fc2-null hb-num" aria-label="'+_fcEsc(d.reason||'No dishes to score yet')+'" title="'+_fcEsc(d.reason||'')+'">\u2014</div>';return;}
-      var h='<div class="fc2-table-scroll"><table class="fc2-mt" data-sortable="dish-scorecard"><thead><tr><th>Dish</th><th class="r">Price</th><th class="r">Food cost</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
+      // Nothing to table is a state, not a dash (UI-10): what is missing and
+      // where it is fixed - the POS dishes drafted under Recipes, or a recipe
+      // card scanned on the phone - then a price typed here.
+      if(!rows.length){
+        var miss=[],un=+d.unmapped_count||0,up=+d.unpriced_count||0;
+        if(un)miss.push(un+' dish'+(un===1?' has':'es have')+' no recipe');
+        if(up)miss.push(up+' with a recipe but no price');
+        sb.innerHTML=fc2EmptyHtml('No dish margins yet',(miss.length?miss.join(' · ')+'. ':'')+'A margin needs a recipe and a price: draft recipes for your POS dishes under Recipes (Draft them), or scan a recipe card on the phone, then set each price here.');
+        return;
+      }
+      // One dish table (UI-10): the plate cost and the editable price that
+      // Menu margins carried sit beside the move. The per-dish figure is
+      // "Plate cost %" - the recipe's cost at today's prices over the menu
+      // price - never "Food cost", which is the page's actual figure (UI-14).
+      var h='<div class="fc2-table-scroll"><table class="fc2-mt" data-sortable="dish-scorecard"><thead><tr><th>Dish</th><th class="r">Plate cost</th><th class="r">Price</th><th class="r">Plate cost %</th><th class="r">Sold</th><th class="r">Guests</th><th>Move</th></tr></thead><tbody>';
       var ACT={urgent:'Protect',fix:'Fix',cut:'Cut',reprice:'Reprice',promote:'Promote',review:'Review'};
       for(var i=0;i<rows.length;i++){var x=rows[i],pm=x.positive_mentions||0,nm=x.negative_mentions||0;
         // A plate cost far outside any real food cost is flagged as a
         // likely unit mismatch (inventory_ledger._unit_sanity); the % is
         // marked, not trusted, and the dish's move waits on the check.
         var uw=x.unit_warning;
+        var price=(x.id!=null&&x.sell_price!=null)
+          ?'<input class="fc2-inv-in fc2-price-in" type="number" step="0.01" min="0" inputmode="decimal" value="'+Number(x.sell_price).toFixed(2)+'" data-id="'+_fcEsc(x.id)+'" aria-label="Price of '+_fcEsc(x.name)+'" onchange="saveMenuPrice(this)">'
+          :_fcMoney(x.sell_price);
         h+='<tr><td><b>'+_fcEsc(x.name)+'</b>'+(x.why?'<div class="why">'+_fcEsc(x.why)+'</div>':'')+(uw?'<div class="why fc2-unit-warn">'+_fcEsc(uw)+'</div>':'')+'</td>'
-          +'<td class="r hb-num">'+_fcMoney(x.sell_price)+'</td>'
-          +'<td class="r hb-num">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%'+(uw?' <span class="fc2-unit-q" title="Check the units">?</span>':''):'—')+'</td>'
+          +'<td class="r hb-num"'+(x.plate_cost!=null?' data-sort-key="'+Number(x.plate_cost).toFixed(2)+'"':'')+'>'+_fcMoney(x.plate_cost)+'</td>'
+          +'<td class="r hb-num"'+(x.sell_price!=null?' data-sort-key="'+Number(x.sell_price).toFixed(2)+'"':'')+'>'+price+'</td>'
+          // The server colours each dish against the owner's target or the
+          // published figure for the type (cost_tone, Benchmarking #35); with
+          // neither it is neutral ink, and a unit warning is never coloured.
+          +'<td class="r hb-num" style="color:'+((!uw&&{good:'var(--hb-good)',warn:'var(--hb-warn)',bad:'var(--hb-bad)'}[x.cost_tone])||'var(--ink)')+'">'+(x.food_cost_pct!=null?Number(x.food_cost_pct).toFixed(1)+'%'+(uw?' <span class="fc2-unit-q" title="Check the units">?</span>':''):'—')+'</td>'
           +'<td class="r hb-num">'+(x.units_sold!=null?x.units_sold:'—')+'</td>'
           +'<td class="r hb-num"'+((pm||nm)?' data-sort-key="'+(pm-nm)+'"':'')+'>'+((pm||nm)?('+'+pm+' / −'+nm):'<span style="color:var(--ink3)">—</span>')+'</td>'
           // A plate cost that fails the unit check cannot justify cutting or
           // repricing the dish: the move waits on the check (B6 sub-audit).
           +'<td>'+(uw&&(x.action==='cut'||x.action==='reprice')?'<span class="fc2-act review" title="'+_fcEsc(uw)+'">Check units first</span>':(x.action?'<span class="fc2-act '+_fcEsc(x.action)+'">'+_fcEsc(ACT[x.action]||x.action)+'</span>':''))+'</td></tr>';}
-      sb.innerHTML=h+'</tbody></table></div>';
-    }).catch(function(){sb.innerHTML='<div class="hb-empty">Couldn\'t load the scorecard.</div>';});
+      h+='</tbody></table></div>';
+      var up2=+d.unpriced_count||0,um2=+d.unmapped_count||0;
+      var cref=d.cost_reference;
+      h+='<div class="fc2-cfo-basis" style="margin-top:10px">'+_fcEsc(cref&&cref.basis?'Plate cost % coloured against '+cref.basis+'.':'No food cost target and no published figure for your type, so dishes are not coloured — set a target in Account → Targets to colour them.')+'</div>';
+      if(up2||um2)h+='<div class="fc2-cfo-basis" style="margin-top:10px">'+(up2?up2+' dish'+(up2===1?'':'es')+' with a recipe but no price':'')+(up2&&um2?' · ':'')+(um2?um2+' with no recipe':'')+' — not in the table until '+(up2&&!um2?'a price is set':'each has both')+'.</div>';
+      sb.innerHTML=h;
+    }).catch(function(){sb.innerHTML=fc2EmptyHtml('Your dishes couldn’t be read just now','Check your connection and reload the page.');});
     fetch('/api/food-cost/reprice',{credentials:'same-origin'}).then(apiJson).then(function(d){
       var el=document.getElementById('fc2-reprice-body');if(!el||!d||!d.ok)return;
       var sg=d.suggestions||[];if(!sg.length)return;
@@ -34167,7 +34290,8 @@ document.addEventListener('click',function(ev){
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
     if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); if (typeof loadOpsSettings === 'function') loadOpsSettings(); }
-    if (n === 'inventory' && !_fcMenuLoaded) { _fcMenuLoaded = true; loadFcMenu(); fc2LoadPendingInvoices(); }
+    // Your dishes and the scanned invoices load when first on screen (UI-11:
+    // the panel's own whenSeen), not every time Food Cost opens.
     if (n === 'marketing' && !_gcLoaded) {
       _gcLoaded = true;
       loadMktOpps();
@@ -41730,7 +41854,8 @@ window.cavPalette = cavPalette;
   };
   document.addEventListener('DOMContentLoaded', function () {
     var orders = $id('fc2-orders');
-    if (orders && window.cavnarWhenVisible) cavnarWhenVisible(orders, loadAutoOrderSwitch);
+    // Only where the switch is drawn: a kitchen with no count has none, and never asks for it (UI-11).
+    if (orders && $id('fc2-autoorder-sw') && window.cavnarWhenVisible) cavnarWhenVisible(orders, loadAutoOrderSwitch);
     var tg = $id('as-tg-card');
     if (tg && window.cavnarWhenVisible) cavnarWhenVisible($id('acct-restaurant') || tg, tgLoad);
     var av = document.querySelectorAll('[data-people-picker]');
@@ -43492,8 +43617,6 @@ table[data-sortable] th.r .cbtn.csort-btn{flex-direction:row-reverse}
 /* Sorted away from its day order, the schedule shows each row's day. */
 #sched-table.csort-on tbody td:first-child{color:var(--ember2)!important}
 /* Menu margins gained a header row to sort by. */
-.fc2-tool table[data-sortable] th{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);text-align:left;padding:0 8px 6px 0;border-bottom:1px solid var(--hb-line2)}
-.fc2-tool table[data-sortable] th.r{text-align:right}
 @media (prefers-reduced-motion:reduce){table[data-sortable] th .csort-ic{transition:none}}
 /* end sortable tables css */
 

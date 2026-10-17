@@ -5157,7 +5157,7 @@ def inv_insight_api(current_user):
         if _bo_read:
             from backoffice_read import food_read_html
             return jsonify(insight=food_read_html(_bo_read), is_live=False, source="back_office", recs=[],
-                           validation=None)
+                           validation=None, history_stamp=waste_history_stamp(rid))
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
                        # Read from a back-office system's real figures, not the
@@ -5166,7 +5166,11 @@ def inv_insight_api(current_user):
                        recs=flat_recs(recs),
                        # The Response Validation verdict the read carries
                        # (workstream A); None until the text is a Validated str.
-                       validation=_rv_food.validation_of(insight))
+                       validation=_rv_food.validation_of(insight),
+                       # The waste history's stamp after this read wrote
+                       # its week: the page refetches the trend only when it
+                       # moved (UI-11).
+                       history_stamp=waste_history_stamp(rid))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -5200,6 +5204,24 @@ def waste_trend_analysis(rid):
     return analysis, is_live
 
 
+def waste_history_stamp(rid):
+    """When this restaurant's waste history last changed (the newest
+    inventory_history `saved_at`, as text; None with no history). The web's
+    Food Cost page compares the stamp its trend was drawn from with the one
+    the insight run left, and refetches the trend only when the insight
+    wrote a week (UI-11: it used to refetch on every insight)."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT MAX(saved_at) AS s FROM inventory_history WHERE restaurant_id=?",
+                               (int(rid),)).fetchone()
+        finally:
+            conn.close()
+        return str(row["s"]) if row and row["s"] is not None else None
+    except Exception:
+        return None
+
+
 def _do_waste_trend(rid, range_key="8w"):
     """(payload, status) — the Waste Trend card for one restaurant and one
     range, the ONE body behind the web's /api/food-cost/waste-trend, the
@@ -5225,6 +5247,7 @@ def _do_waste_trend(rid, range_key="8w"):
     tgt = dict(out.get("target") or {})
     tgt["label"] = "your target" if own else _thr_wt.STARTING_TARGET_LABEL
     out["target"] = tgt
+    out["history_stamp"] = waste_history_stamp(rid)
     return out, 200
 
 
