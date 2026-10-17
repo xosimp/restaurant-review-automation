@@ -20,7 +20,7 @@ struct ComingSoonView: View {
             // Not "available on desktop today": the registry's coming-soon
             // modules (models._MODULE_REGISTRY — Waitlist, Bar & Alcohol)
             // are not built anywhere yet, web included.
-            Text("It isn\u{2019}t built yet, on the web or in the app. It will open here when it\u{2019}s ready.")
+            Text("It will open here when it\u{2019}s ready.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk2)
                 .multilineTextAlignment(.center)

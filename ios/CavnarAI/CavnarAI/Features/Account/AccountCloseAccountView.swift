@@ -290,7 +290,7 @@ struct AccountPauseSection: View {
                         }
                         AccountActionRow(
                             label: "Pause the subscription",
-                            detail: "Billing stops, nothing is invoiced, and it resumes on its own. Your data keeps flowing, so the day you come back the brief is current.",
+                            detail: "Billing stops, nothing is invoiced, and it resumes on its own.",
                             symbol: "pause.fill", busy: busy, showsDivider: false
                         ) { confirming = true }
                     }

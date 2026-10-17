@@ -69,7 +69,7 @@ struct ForgotPasswordSheet: View {
 
     private var emailStep: some View {
         Group {
-            Text("Enter the email on your account and we'll send a 6-digit code to reset your password.")
+            Text("We'll email a 6-digit code to reset your password.")
                 .font(.cavnar(.body))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)

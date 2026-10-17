@@ -1037,10 +1037,9 @@ struct PersonSheet: View {
         if person.canEdit != false {
             AccountSection(kicker: "Add a role") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("A role they can work beyond their shifts so far \u{2014} trained on bar, or a promotion.")
-                        .cavnarText(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    TextField("Role", text: $viewModel.newRole)
+                    // The kicker and the field say it (text-reduction
+                    // round 10/17/26); the example rides in the placeholder.
+                    TextField("Role, e.g. Bartender", text: $viewModel.newRole)
                         .cavnarTextFieldStyle()
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled()
@@ -1051,7 +1050,7 @@ struct PersonSheet: View {
                         HStack(spacing: 8) {
                             Image(systemName: viewModel.newRolePrimary ? "checkmark.square.fill" : "square")
                                 .foregroundStyle(viewModel.newRolePrimary ? Color.cavnarEmber2 : Color.cavnarInk3)
-                            Text("A promotion \u{2014} make it their role on the roster")
+                            Text("A promotion \u{2014} their roster role")
                                 .cavnarText(.secondary)
                         }
                     }

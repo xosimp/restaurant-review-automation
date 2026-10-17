@@ -244,10 +244,8 @@ struct AccountPeopleRulesView: View {
         if model.rulesLoaded {
             AccountSection(kicker: "House rules") {
                 VStack(alignment: .leading, spacing: 10) {
-                    // One line (iOS readability round — it was a paragraph).
-                    Text("Staff\u{2019}s questions in the app are answered from these.")
-                        .cavnarText(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // No line under the kicker (text-reduction round
+                    // 10/17/26): the hero says staff look these up.
                     if let hr = model.houseRules, !hr.body.isEmpty {
                         // Three lines, the rest a tap away (re-audit M17:
                         // the full text ran down the page).
@@ -311,9 +309,6 @@ struct AccountPeopleRulesView: View {
         if model.docsLoaded {
             VStack(alignment: .leading, spacing: 8) {
                 CavnarKicker("Staff docs")
-                Text("Menu specs, allergens and how you do things \u{2014} read only in the app.")
-                    .cavnarText(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 0) {
                     if model.docs.isEmpty {
                         Text("No docs yet.")
@@ -376,7 +371,7 @@ struct AccountPeopleRulesView: View {
                         addButton("Add a certificate") { editingCert = StaffCertEditorTarget(cert: nil) }
                     }
                 }
-                HomeMixedText.make("Who holds which certificate until when. The holder and you are told "
+                HomeMixedText.make("You and the holder are told "
                                    + (model.remindDays.map { "\($0) days" } ?? "a month")
                                    + " before one expires.", role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)

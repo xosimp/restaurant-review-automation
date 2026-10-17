@@ -44,7 +44,6 @@ struct AccountMyNotifications: View {
         AccountSection(kicker: "Just for you") {
             AccountSwitchRow(
                 label: "Push to my phone",
-                detail: "Only your own phones. The restaurant\u{2019}s alert settings still apply to everyone else.",
                 isOn: Binding(get: { p.mine.pushEnabled },
                               set: { on in Task { await viewModel.saveMine(.pushEnabled(on)) } }),
                 busy: viewModel.saving == "push_enabled",
@@ -54,7 +53,7 @@ struct AccountMyNotifications: View {
             // not the restaurant's sum) — one tap mutes it for them alone.
             ForEach(viewModel.neverOpened) { n in
                 VStack(alignment: .leading, spacing: 6) {
-                    CavnarMixedText("You never open \u{201C}\(n.label)\u{201D} on your phone (\(n.delivered) in \(n.days) days) \u{2014} mute it just for you?",
+                    CavnarMixedText("You never open \u{201C}\(n.label)\u{201D} (\(n.delivered) in \(n.days) days).",
                                     role: .body)
                     Button {
                         Haptic.light()
@@ -75,9 +74,8 @@ struct AccountMyNotifications: View {
                           valueIsNumber: !p.mine.mutedTypes.isEmpty) { showingMuted = true }
             AccountSwitchRow(
                 label: "My own quiet hours",
-                detail: p.mine.hasQuietHours
-                    ? "Pushes to your phone wait from \(AccountPreferences.clock(p.mine.quietStart)) until \(AccountPreferences.clock(p.mine.quietEnd))."
-                    : "On top of the restaurant\u{2019}s quiet hours, never instead of them.",
+                // The From / Until rows show the hours once it's on.
+                detail: p.mine.hasQuietHours ? nil : "Adds to the restaurant\u{2019}s quiet hours.",
                 isOn: Binding(get: { p.mine.hasQuietHours },
                               set: { on in Task { await viewModel.setQuietHours(on) } }),
                 busy: viewModel.saving == "quiet",
@@ -97,7 +95,6 @@ struct AccountMyNotifications: View {
             if let brief = p.mine.morningBrief {
                 AccountSwitchRow(
                     label: "My morning brief",
-                    detail: "This location\u{2019}s brief, sent to you.",
                     isOn: Binding(get: { brief },
                                   set: { on in Task { await viewModel.saveMine(.morningBrief(on)) } }),
                     busy: viewModel.saving == "morning_brief",
@@ -122,7 +119,7 @@ struct AccountMutedTypesSheet: View {
                     AccountHero(title: "Muted on my phone") {
                         GlowBadge(systemImage: "bell.slash", size: 56)
                     } subtitle: {
-                        Text("Only your own phones. Everyone else still gets them.")
+                        Text("Your phone only.")
                     }
                     if let p = viewModel.prefs {
                         let types = p.checklist(extra: viewModel.neverOpened.map { ($0.alertType, $0.label) })
@@ -143,7 +140,7 @@ struct AccountMutedTypesSheet: View {
                                 )
                             }
                         }
-                        Text("Health and safety mentions, an issue assigned to you and a cover you\u{2019}re asked for always reach you.")
+                        Text("Health and safety, your issues and cover requests always reach you.")
                             .cavnarText(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }

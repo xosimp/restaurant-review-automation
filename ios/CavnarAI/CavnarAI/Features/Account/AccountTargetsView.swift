@@ -34,8 +34,7 @@ struct AccountTargetsView: View {
                             .accessibilityLabel("Loading your targets")
                     } else if let p = model.payload {
                         if !model.canEdit {
-                            CavnarCaveat(title: "Only the account owner can change these",
-                                         detail: "These are the targets and rates your restaurant uses.")
+                            CavnarCaveat(title: "Only the account owner can change these")
                         }
                         targetsSection(p)
                         revenueSection(p)
@@ -103,7 +102,6 @@ struct AccountTargetsView: View {
                       note: p.noteFor(TargetsPayload.Field.wine))
             numberRow("Comps & voids target", key: TargetsPayload.Field.compVoid, suffix: "%",
                       placeholder: "Not set",
-                      caption: "The most comps and voided lines may be, as a % of gross sales. Discounts aren\u{2019}t counted.",
                       note: p.noteFor(TargetsPayload.Field.compVoid))
             AccountKVRow(label: "Payroll week starts", showsDivider: false) {
                 Picker("Payroll week starts", selection: Binding(
@@ -117,6 +115,11 @@ struct AccountTargetsView: View {
                 .labelsHidden().tint(Color.cavnarEmber)
                 .disabled(!model.canEdit)
             }
+            // What the alcohol and comps figures are, and where each
+            // fallback range comes from — one tap away (text-reduction
+            // round 10/17/26); each row keeps only its blank's range.
+            CavnarEvidenceSection(label: "How these are judged", text: TargetsPayload.judgedNote)
+                .padding(.vertical, 4)
         }
     }
 
@@ -126,7 +129,7 @@ struct AccountTargetsView: View {
                       note: p.noteFor(TargetsPayload.Field.monthly))
             numberRow("By the week", key: TargetsPayload.Field.weekly, prefix: "$",
                       note: p.noteFor(TargetsPayload.Field.weekly))
-            Text("One target: typing either fills the other (a month is 52 ÷ 12 weeks). Only the one you typed is saved.")
+            Text("Typing either fills the other; only the one you typed is saved.")
                 .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, 6)
@@ -140,14 +143,14 @@ struct AccountTargetsView: View {
             numberRow("Blended hourly rate", key: TargetsPayload.Field.hourly, prefix: "$",
                       note: p.noteFor(TargetsPayload.Field.hourly) ?? "Costs an hour nobody has a rate for.")
             if p.roles.isEmpty {
-                Text("No roles yet \u{2014} they come from your shifts and the roster.")
+                Text("No roles yet.")
                     .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2).padding(.vertical, 9)
             }
             ForEach(p.roles, id: \.self) { role in
                 roleRow(p, role: role)
             }
             if !p.salariedRoles.isEmpty {
-                Text("\(p.salariedRoles.joined(separator: ", ")) \(p.salariedRoles.count == 1 ? "isn\u{2019}t" : "aren\u{2019}t") listed: everyone in \(p.salariedRoles.count == 1 ? "it" : "them") is salaried, set below.")
+                Text("\(p.salariedRoles.joined(separator: ", ")): all salaried, set below.")
                     .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 6)
@@ -233,7 +236,7 @@ struct AccountTargetsView: View {
     private func salariedSection(_ p: TargetsPayload) -> some View {
         AccountSection(kicker: p.salaried.isEmpty ? "Salaried staff" : "Salaried staff \u{00B7} \(p.salaried.count)") {
             if p.salaried.isEmpty {
-                Text("Nobody yet. Add the people paid a salary and Labor shows their pay beside hourly labor.")
+                Text("Nobody yet \u{2014} add who\u{2019}s paid a salary.")
                     .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 9)
@@ -589,17 +592,22 @@ struct TargetsPayload: Decodable {
     static func alcoholCaption(_ key: String) -> String? {
         switch key {
         case Field.bar:
-            return "Beer, liquor and wine bought as a % of their sales, on the Bar page. Blank uses each category\u{2019}s range."
+            return "Blank uses each category\u{2019}s range."
         case Field.beer:
-            return "Bought as a % of their sales. Blank uses 20\u{2013}26%, Cavnar AI\u{2019}s starting range."
+            return "Blank uses 20\u{2013}26%."
         case Field.liquor:
-            return "Bought as a % of their sales. Blank uses the industry 14\u{2013}20% (Provi, 2021)."
+            return "Blank uses 14\u{2013}20%."
         case Field.wine:
-            return "Bought as a % of their sales. Blank uses the industry 30\u{2013}40% (Backbar, 2019)."
+            return "Blank uses 30\u{2013}40%."
         default:
             return nil
         }
     }
+
+    /// Behind "How these are judged": what each figure is and where each
+    /// blank's range comes from (benchmark_registry), plus the revenue
+    /// target's month-to-week rule.
+    static let judgedNote = "Alcohol targets are beer, liquor and wine bought as a % of their sales, on the Bar page. Beer & seltzer\u{2019}s 20\u{2013}26% is Cavnar AI\u{2019}s starting range; liquor\u{2019}s 14\u{2013}20% is the industry range (Provi, 2021); wine\u{2019}s 30\u{2013}40% is the industry range (Backbar, 2019). Comps & voids is the most comps and voided lines may be, as a % of gross sales; discounts aren\u{2019}t counted. For the revenue target, a month is 52 \u{00F7} 12 weeks."
 
     static func money(_ v: Double) -> String {
         v == v.rounded() ? "$\(Int(v))" : String(format: "$%.2f", v)

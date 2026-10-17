@@ -218,14 +218,14 @@ struct RestaurantDNAScreen: View {
                             // M18): the axis rows, what moves together and
                             // every measurement are the web's /dna page.
                             CavnarWebLinkRow(title: "Every measurement and what moves together",
-                                             subtitle: "Each axis, each dimension\u{2019}s weeks and how it was measured",
                                              path: "dna", actionLabel: "Open on the web")
                                 .padding(.top, CavnarSpace.section)
+                            // How a trait is named and what 50 means, one
+                            // tap away (text-reduction round 10/17/26).
                             if let basis = s.basis {
-                                Text(basis + (p.note.map { " " + $0 } ?? ""))
-                                    .cavnarText(.caption, color: .cavnarInk2)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .padding(.top, CavnarSpace.xl)
+                                CavnarEvidenceSection(label: "How traits are named",
+                                                      text: basis + (p.note.map { " " + $0 } ?? ""))
+                                    .padding(.top, CavnarSpace.l)
                             }
                         } else {
                             Text("Your DNA is still forming.")
@@ -313,7 +313,9 @@ struct RestaurantDNAScreen: View {
         let parts = s.headParts
         let o = s.observed
         return VStack(alignment: .leading, spacing: 0) {
-            CavnarKicker("Restaurant DNA" + (p.asOf.map { " \u{00B7} as of \($0)" } ?? ""))
+            // The top bar carries the title and "as of" (text-reduction
+            // round 10/17/26: the kicker said both again).
+            CavnarKicker("The read")
             HomeMixedText.make(parts.head, role: .title, numberColor: .cavnarEmber2)
                 .lineSpacing(CavnarText.title.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
@@ -324,10 +326,8 @@ struct RestaurantDNAScreen: View {
                     .padding(.top, 14)
                     .dnaReveal(delay: 0.25)
             }
-            if let lede = s.lede {
-                CavnarMixedText(lede, role: .secondary)
-                    .padding(.top, 12)
-            }
+            // The lede ("Over 214 nights … measured 9 of 24 traits") is the
+            // coverage line under the figure, so it is not said twice.
             AccountFlowLayout(spacing: 8, lineSpacing: 8) {
                 ForEach(s.identity) { DNAChip(label: $0.label) }
                 ForEach(s.orderedTraits) { t in DNAChip(label: t.name, icon: t.icon, earned: true, watch: t.isWatch) }
@@ -369,14 +369,13 @@ struct RestaurantDNAScreen: View {
         }
     }
 
-    /// "of the profile filled in · 9 of 24 traits measured · 15 still
-    /// learning · 214 nights of sales watched since 3/1/26".
+    /// "of the profile filled in · 9 of 24 traits · 214 nights since
+    /// 3/1/26" — the strand under it labels measured and still learning.
     static func coverageLine(_ o: RestaurantDNA.Story.Observed?) -> String {
         var bits = ["of the profile filled in",
-                    "\(o?.measured ?? 0) of \(o?.of ?? 0) traits measured",
-                    "\(o?.learning ?? 0) still learning"]
+                    "\(o?.measured ?? 0) of \(o?.of ?? 0) traits"]
         if let n = o?.nights, n > 0 {
-            bits.append("\(n) nights of sales watched" + (o?.since.map { " since \($0)" } ?? ""))
+            bits.append("\(n) nights" + (o?.since.map { " since \($0)" } ?? ""))
         }
         return bits.joined(separator: " \u{00B7} ")
     }
@@ -388,7 +387,7 @@ struct RestaurantDNAScreen: View {
         if s.axes.count >= 3 {
             VStack(alignment: .leading, spacing: 0) {
                 sectionHead("The shape", "How it measures up",
-                            "Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI\u{2019}s stated benchmark. Dashed spokes are still learning.")
+                            "Dashed ring: the benchmark, 50. Dashed spoke: still learning.")
                 DNARadar(axes: s.axes)
                     .padding(.horizontal, 22)
                     .padding(.top, 18)
@@ -401,8 +400,8 @@ struct RestaurantDNAScreen: View {
     @ViewBuilder
     private func traitsSection(_ s: RestaurantDNA.Story, _ d: RestaurantDNA) -> some View {
         sectionHead("Traits", s.traits.isEmpty ? "No traits earned yet" : "What it\u{2019}s become",
-                    s.traits.isEmpty ? "A trait is named only when a measured figure clears its rule. As more of your data comes in, they appear here."
-                                     : "Each trait is earned by a measured figure against the rule shown under it.")
+                    // The rule behind every trait is in "How traits are named".
+                    s.traits.isEmpty ? "Named only when a measured figure clears its rule." : nil)
         ForEach(Array(s.orderedTraits.enumerated()), id: \.element.id) { i, t in
             DNATraitCard(trait: t, dna: d, featured: i == 0 && !t.isWatch)
                 .padding(.top, 14)
@@ -416,7 +415,7 @@ struct RestaurantDNAScreen: View {
     private func learningSection(_ s: RestaurantDNA.Story) -> some View {
         if !s.learning.isEmpty {
             sectionHead("Still learning", "\(s.learning.count) traits are still taking shape",
-                        "Nothing here is guessed. Each fills in once its data clears the floor, closest first.")
+                        "Nothing here is guessed \u{2014} closest to filling in first.")
             VStack(spacing: 10) {
                 ForEach(s.learning) { l in
                     let near = (l.progress?.pct ?? 0) >= 75

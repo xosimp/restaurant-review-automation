@@ -105,7 +105,7 @@ struct RegisterView: View {
                             Text("Create your account")
                                 .font(.cavnarHeadline(24))
                                 .foregroundStyle(Color.cavnarInk)
-                            Text("Every module on, free to start. Your restaurant's on Cavnar AI in under a minute.")
+                            Text("Every module on, free to start.")
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)

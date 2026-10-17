@@ -67,7 +67,8 @@ struct AccountHelpView: View {
                     AccountHero(title: "Help & FAQ") {
                         GlowBadge(systemImage: "questionmark.circle", size: 64)
                     } subtitle: {
-                        Text("Common questions about Cavnar AI")
+                        // The title says it (text-reduction round 10/17/26).
+                        EmptyView()
                     }
 
                     consultantCard
@@ -131,7 +132,7 @@ struct AccountHelpView: View {
                         .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1))
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Will Cavnar").font(.cavnarBody(CavnarType.body, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        Text("Founder, Cavnar AI · your dedicated restaurant intelligence consultant")
+                        Text("Founder, Cavnar AI")
                             .font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }

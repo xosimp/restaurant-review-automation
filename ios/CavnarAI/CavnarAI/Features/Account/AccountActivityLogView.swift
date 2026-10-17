@@ -36,7 +36,7 @@ struct AccountActivityLogView: View {
                     AccountHero(title: "Activity") {
                         GlowBadge(systemImage: "list.bullet.rectangle", size: 64)
                     } subtitle: {
-                        Text("Every change to your account, and who made it")
+                        Text("Every change, and who made it")
                     }
 
                     VStack(alignment: .leading, spacing: 0) {
@@ -115,7 +115,7 @@ struct AccountActivityLogView: View {
                     if viewModel.activity.count > Self.shown || viewModel.changes.count > Self.shown {
                         VStack(alignment: .leading, spacing: 0) {
                             CavnarWebLinkRow(title: "The full history",
-                                             subtitle: "Account activity and change history, every entry.",
+                                             subtitle: "Every entry.",
                                              path: "account/security", actionLabel: "Open on the web")
                         }
                         .accountCard()

@@ -65,7 +65,7 @@ struct AccountConnectionsDetailView: View {
                             CavnarWebLinkRow(
                                 title: "Connect a POS",
                                 subtitle: isOwner
-                                    ? "\(Self.unconnectedPOS(connections)) connect with keys from your POS account."
+                                    ? "\(Self.unconnectedPOS(connections))."
                                     : "Only the account owner can connect a POS.",
                                 path: "account/integrations",
                                 actionLabel: "Edit on the web"
@@ -134,7 +134,7 @@ struct AccountConnectionsDetailView: View {
         return AccountHero(title: connected == 0 ? "Nothing connected yet" : "\(connected) of \(connections.all.count) connected") {
             GlowBadge(systemImage: "link", size: 64)
         } subtitle: {
-            Text("Where Cavnar AI reads your reviews, sales and labor.")
+            Text("Reviews, sales and labor.")
         }
     }
 
@@ -380,7 +380,7 @@ struct AccountConnectionsDetailView: View {
                         connected: rp.connected,
                         statusText: line?.text ?? (rp.serverSyncLine == nil ? rp.lastSyncedText : nil),
                         tone: line?.tone) {
-                Text("Set up by Cavnar AI from your RPOWER account \u{2014} contact us to change it.")
+                Text("Set up by Cavnar AI \u{2014} contact us to change it.")
                     .cavnarText(.caption)
                     .fixedSize(horizontal: false, vertical: true)
                 if rp.connected {

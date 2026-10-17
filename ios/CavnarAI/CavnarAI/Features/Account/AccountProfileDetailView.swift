@@ -450,10 +450,10 @@ struct AccountProfileDetailView: View {
     /// "Only drafted 5-star replies, never anything lower" while 4-star
     /// replies were going out too).
     private var autoApproveRuleLine: String {
-        let bands = autoApprove4star ? "Drafted 5- and 4-star replies" : "Only drafted 5-star replies"
-        let floor = autoApprove4star ? "never 3 stars or below, and anything sensitive still waits for you."
-                                     : "never anything lower."
-        return "\(bands), \(floor) \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today."
+        // One line (text-reduction round 10/17/26): the bands, the guard,
+        // today's count. "Anything sensitive waits" stays — it is the rule.
+        let bands = autoApprove4star ? "5\u{2605} and 4\u{2605} drafts post" : "5\u{2605} drafts post"
+        return "\(bands); anything sensitive waits. \(viewModel.summary?.reviews.approvedToday ?? 0) today."
     }
 
     /// Auto-approve publishes replies with nobody reading them first, so
@@ -503,7 +503,7 @@ struct AccountProfileDetailView: View {
                 if showingAutoApproveMore {
                     AccountSwitchRow(
                         label: "Include 4-star reviews",
-                        detail: "Same ceiling, same rule: anything sensitive still waits for you. Never 3 stars or below.",
+                        detail: "Never 3\u{2605} or below.",
                         isOn: Binding(get: { autoApprove4star }, set: { on in autoApprove4star = on; saveAutoApprove() }),
                         busy: viewModel.isSavingAutoApprove,
                         showsDivider: true
@@ -518,7 +518,7 @@ struct AccountProfileDetailView: View {
                     }
                     AccountSwitchRow(
                         label: "Extend it as you earn it",
-                        detail: "Once you've approved 10 replies on a star band in 30 days and edited at most 1 in 10, that band goes out on its own too \u{2014} 3\u{2605} at most, never lower.",
+                        detail: "After 10 approvals in 30 days with at most 1 edit, a band posts on its own. Never below 3\u{2605}.",
                         isOn: Binding(get: { autoApproveEarned }, set: { on in autoApproveEarned = on; saveAutoApprove() }),
                         busy: viewModel.isSavingAutoApprove,
                         showsDivider: false

@@ -220,7 +220,7 @@ struct AccountRestaurantProfileSheet: View {
         AccountSection(kicker: "Is this still right?") {
             VStack(alignment: .leading, spacing: 6) {
                 Text(r.text).cavnarText(.label)
-                Text("From your own figures. Who you're compared with doesn't change until you confirm.")
+                Text("Who you're compared with changes only when you confirm.")
                     .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if canEdit {

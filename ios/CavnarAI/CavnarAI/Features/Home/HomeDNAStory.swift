@@ -738,11 +738,11 @@ struct DNATraitCard: View {
         case "weekend_driven", "weekday_business":
             if let x = v("weekend_share") { DNASplitBar(weekendShare: x) }
         case "long_hours":
-            if let x = v("open_hours") { ringRow(x / 168, "\(Int(x))h", "\(Int(x)) of the 168 hours in a week. The stated benchmark is about 70.") }
+            if let x = v("open_hours") { ringRow(x / 168, "\(Int(x))h", "Of 168 hours a week \u{00B7} benchmark about 70") }
         case "overtime_controlled":
             if let x = v("overtime_intensity") { DNAGauge(lo: 0, hi: 0.1, value: x, typical: 0.03, format: Self.pct, label: "Overtime share of hours") }
         case "answers_reviews":
-            if let x = v("reply_rate") { ringRow(x, Self.pct(x), "Of the last 30 days\u{2019} reviews. The stated benchmark is about 60%.") }
+            if let x = v("reply_rate") { ringRow(x, Self.pct(x), "Of the last 30 days\u{2019} reviews \u{00B7} benchmark about 60%") }
         case "open_to_advice":
             if let x = v("rec_uptake") { ringRow(x, Self.pct(x), "Of recommendations answered or expired in 90 days.") }
         case "well_rated", "guest_favorite":
