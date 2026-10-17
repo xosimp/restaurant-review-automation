@@ -161,7 +161,9 @@ def test_the_prime_cost_projection_carries_its_corrected_month_end(monkeypatch):
     rid = _rid()
     monkeypatch.setattr(fci, "_local_today", lambda r: date(2026, 9, 20))
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda *a, **k: (20000.0, None))
-    monkeypatch.setattr(cogs, "build_food_cost_pct", lambda *a, **k: {"ok": True, "cogs": 6000.0, "pct": 30.0})
+    monkeypatch.setattr(cogs, "build_food_cost_pct", lambda r, days=28, db_path=None, today=None: {
+        "ok": True, "cogs": 6000.0, "pct": 30.0, "window_days": days,
+        "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     monkeypatch.setattr(labor, "analyse_shifts_for_restaurant",
                         lambda r: {"is_live": True, "total_sales": 20000.0, "overall_labor_pct": 30.0,
                                    "date_range": {"start": "2026-09-01", "end": "2026-09-19"}})

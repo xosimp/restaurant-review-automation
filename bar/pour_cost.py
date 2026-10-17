@@ -210,9 +210,18 @@ def _gaps(lines, start, end, sales=None, owner_stopped=()) -> list:
 def _total(cats, mixed=0.0) -> dict:
     """The total over the categories measured on BOTH sides and complete
     (V10): {purchases, sales, pct, ratio, partial, excluded:[{key, label,
-    why, text}], included}. A category bought with no sales on the report,
-    sold with no invoices, with invoices missing or credits over purchases
-    is left out and named; the total is never a blend of one-sided money."""
+    why, text}], included, mixed_alcohol, mixed_beside, mixed_basis}. A
+    category bought with no sales on the report, sold with no invoices,
+    with invoices missing or credits over purchases is left out and named;
+    the total is never a blend of one-sided money.
+
+    One basis and one window (BAR-CALC-12/13, 10/16/26): a counted
+    category's `used` over its count dates and a purchase category's
+    `bought` over the four weeks are never summed — with both, there is no
+    total (`mixed_basis`, pct None) and each category reads alone. Mixed
+    store alcohol (a receipt with beer, wine and liquor at once) is in the
+    total only when every pour category is in it on purchases; otherwise it
+    is reported beside the total (`mixed_beside`), never inside it."""
     inc, exc = [], []
     for c in cats.values():
         b, s = c["_bought"], c["_sold"]
@@ -230,16 +239,24 @@ def _total(cats, mixed=0.0) -> dict:
                         "text": f"{c['label']} sold {_money(s)} with no {c['label'].lower()} invoices on file"})
         elif b > 0 and s > 0:
             inc.append(c)
+    bases = {c.get("basis") or "purchases" for c in inc}
+    mixed_basis = len(bases) > 1
     # Alcohol bought mixed (a store's receipt: beer, wine and liquor at once)
-    # belongs to the total alone — never to one category (owner, 10/16/26).
-    mixed = float(mixed or 0) if inc else 0.0
-    bought = sum(c["_bought"] for c in inc) + mixed
+    # belongs to the total alone — never to one category (owner, 10/16/26) —
+    # and only to a total over every pour category, on purchases.
+    mixed = float(mixed or 0)
+    whole = bool(inc) and not exc and len(inc) == len(POUR_CATEGORIES) and bases == {"purchases"}
+    inside = mixed if whole else 0.0
+    beside = 0.0 if whole else mixed
+    bought = sum(c["_bought"] for c in inc) + inside
     sold = sum(c["_sold"] for c in inc)
-    ratio = bought / sold if sold > 0 and bought > 0 else None
-    return {"purchases": round(bought, 2), "sales": round(sold, 2), "_bought": bought, "_sold": sold,
+    ratio = bought / sold if sold > 0 and bought > 0 and not mixed_basis else None
+    return {"purchases": round(bought, 2) if not mixed_basis else None,
+            "sales": round(sold, 2) if not mixed_basis else None, "_bought": bought, "_sold": sold,
             "ratio": ratio, "pct": round(ratio * 100, 1) if ratio is not None else None,
             "partial": bool(exc), "excluded": exc, "included": [c["key"] for c in inc],
-            "mixed_alcohol": round(mixed, 2)}
+            "mixed_alcohol": round(inside, 2), "mixed_beside": round(beside, 2) if beside else None,
+            "mixed_basis": mixed_basis}
 
 
 def _read(lines, sales, start, end, owner_stopped=()) -> dict:
@@ -368,7 +385,10 @@ def window_span(lines, sales, today) -> dict:
     {why_not} when there is none. bar.build asks bar.counts for a counted
     period over this window before the reading is built."""
     today_iso = today.isoformat()
-    inv_dates = ledger_of(lines).days_through(today_iso)
+    # The invoice side is the Fintech feed: a Back Office entry's date never
+    # stretches the overlap or a month row past the days the feed covers
+    # (BAR-CALC-15) — Back Office alone only when there is no feed at all.
+    inv_dates = ledger_of(lines).feed_days_through(today_iso)
     sale_dates = [d for d in sales_index(sales).all_days if d <= today_iso]
     if not inv_dates or not sale_dates:
         return {"why_not": ("No distributor invoices on file yet." if not inv_dates
@@ -381,13 +401,17 @@ def window_span(lines, sales, today) -> dict:
 
 
 def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), restaurant=None,
-               counted=None, sales_gaps=()) -> dict:
+               counted=None, sales_gaps=(), sales_missing=(), unmapped_of=None) -> dict:
     """The page's reading. `targets` maps None (overall) / beer / liquor /
     wine to thresholds.bar_target_for's dict (or a bare number); `feed` is
     the invoice feed's status (bar.feed, W2; None = unknown); `counted` is
     the counted period covering this window (bar.counts.latest_counted, W6a)
     or None; `sales_gaps` the nights whose drink sales weren't sorted
-    (bar.sales, V5) — one inside the window keeps it from being judged.
+    (bar.sales, V5) — one inside the window keeps it from being judged;
+    `sales_missing` the nights the bar trades with no report on file at all
+    (BAR-CALC-02), the same; `unmapped_of(start, end)` the window's unmapped
+    drink sales ({pct, usd, hold}; BAR-CALC-03) — held back above
+    bar.judge.UNMAPPED_HOLD_PCT of the drink sales.
     The basis is "counted" when every measured category rests on
     two counts, else "purchases" (each category says its own `basis`)."""
     head = {"basis": "purchases", "label": BASIS_LABELS["purchases"], "sub": BASIS_SUBS["purchases"]}
@@ -403,6 +427,9 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
     usual = usual_open_share(sales, start)
     win_open = open_days(sales, start, end)
     gap_nights = tuple(d for d in sales_gaps if start <= d <= end)
+    missing_nights = tuple(d for d in sales_missing if start <= d <= end)
+    um = unmapped_of(start, end) if unmapped_of else None
+    hold_unmapped = um if (um and um.get("hold")) else None
     w = _read(lines, sales, start, end, owner_stopped)
     cur, gaps = w["cats"], w["gaps"]
     trend = _trend(lines, sales, lo, hi, owner_stopped)
@@ -442,16 +469,22 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
             x["stock_up"] = None
             v = judge(x["pct"], x["_bought"], window_days=_days(counted["from"], counted["to"]), fresh=fresh,
                       unbalanced=bool(x.get("unbalanced")),
-                      sales_gap=tuple(d for d in sales_gaps if counted["from"] < d <= counted["to"]))
+                      sales_gap=tuple(d for d in sales_gaps if counted["from"] < d <= counted["to"]),
+                      sales_missing=tuple(d for d in sales_missing if counted["from"] < d <= counted["to"]),
+                      unmapped=hold_unmapped)
         else:
             x["basis"] = "purchases"
             # The range rule (a reading over twice the range's top) is only
             # read on a whole window: a short one is not judged for being short.
-            x["stock_up"] = (stock_up(lines, c, start, end, x["pct"] if days >= MIN_DAYS else None, rs["range"][1])
+            # The stock-up test runs against the threshold that judges the
+            # reading: the target when it is below the range's top (BAR-CALC-06).
+            x["stock_up"] = (stock_up(lines, c, start, end, x["pct"] if days >= MIN_DAYS else None, rs["range"][1],
+                                      judge_at=jt["pct"] if jt else None, bought=x["_bought"], sold=x["_sold"])
                              if x["pct"] is not None else None)
             v = judge(x["pct"], x["_bought"], window_days=days, open_n=len(win_open), have_n=x["days_with_sales"],
                       usual_share=usual, fresh=fresh, stock=x["stock_up"], incomplete=bool(x.get("incomplete")),
-                      unbalanced=bool(x.get("unbalanced")), sales_gap=gap_nights)
+                      unbalanced=bool(x.get("unbalanced")), sales_gap=gap_nights, sales_missing=missing_nights,
+                      unmapped=hold_unmapped)
         x.update(v)
         if v["judged"]:
             _verdict(x, jt, scope)
@@ -459,7 +492,10 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
             x["tone"] = None
     # The total over what each category's reading rests on (used, for a
     # counted category); with no count it is the trend's own figure.
-    tot = _total(cur) if counted else w["total"]
+    # With counts, the total is over what each category's reading rests on —
+    # and only when they all rest on the same basis (BAR-CALC-13).
+    mixed_store = sum(l["net"] for l in ledger_of(lines).in_cat("alcohol_mixed", start, end))
+    tot = _total(cur, mixed_store) if counted else w["total"]
     measured = [cur[c]["basis"] for c in POUR_CATEGORIES if cur[c]["pct"] is not None]
     if measured and all(b == "counted" for b in measured):
         head = {"basis": "counted", "label": BASIS_LABELS["counted"], "sub": BASIS_SUBS["counted"]}
@@ -470,6 +506,7 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
                   round(sum(ranges[k]["range"][1] * v for k, v in weights.items()) / wsum, 1)] if wsum else None)
     tv = judge(tot["pct"], tot["_bought"], window_days=days, open_n=len(win_open), usual_share=usual, fresh=fresh,
                incomplete=bool(gaps), unbalanced=bool(w["unbalanced"]), sales_gap=gap_nights,
+               sales_missing=missing_nights, unmapped=hold_unmapped, mixed_basis=bool(tot.get("mixed_basis")),
                stock=next((c["stock_up"] for c in inc if c.get("stock_up")), None))
     extra = sorted({r for c in inc for r in c["reasons"] if r == "sales_coverage"})
     if extra:
@@ -480,6 +517,8 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
             tv["not_judged_text"] = "Some categories' sales aren't on file for every open day yet."
     total = {"purchases": tot["purchases"], "sales": tot["sales"], "pct": tot["pct"],
              "partial": tot["partial"], "excluded": tot["excluded"], "included": tot["included"],
+             "mixed_alcohol": tot.get("mixed_alcohol"), "mixed_beside": tot.get("mixed_beside"),
+             "mixed_basis": bool(tot.get("mixed_basis")),
              # The range for this bar's own mix: each included category's
              # range weighted by its share of the sales (exact for the
              # aggregate ratio).
@@ -545,8 +584,9 @@ def _pour_cost(lines, sales, today, targets=None, feed=None, owner_stopped=(), r
                 categories=[_public(cur[c]) for c in POUR_CATEGORIES],
                 total=total, trend=trend, trend_noise=noise, context_13w=context,
                 months=months, overlap={"from_mdy": _mdy(lo), "to_mdy": _mdy(hi)},
-                gaps=gaps, complete=not gaps and not w["unbalanced"], unbalanced=w["unbalanced"],
-                stopped=stopped(lines, end, owner_set), freshness=fresh)
+                gaps=gaps, complete=not gaps and not w["unbalanced"] and not missing_nights,
+                unbalanced=w["unbalanced"], sales_missing=[{"date": d, "date_mdy": _mdy(d)} for d in missing_nights],
+                unmapped=um, stopped=stopped(lines, end, owner_set), freshness=fresh)
 
 
 def _trend(lines, sales, lo, hi, owner_stopped=()) -> list:

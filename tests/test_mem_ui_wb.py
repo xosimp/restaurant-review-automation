@@ -378,7 +378,9 @@ def test_the_studio_shows_what_the_draft_was_asked_to_do(page):
     assert "if (k === 'asked') return full('sw-asked');" in page
     assert "memSchedExtras(data)" in page[page.index("function _schedHandleResult"):]
     assert "detail_thinned_at: d.detail_thinned_at" in page             # a reopened week says it was trimmed
-    assert "data.labor_target_label" in page[page.index("var par = document.getElementById('sw-par')"):]
+    # The PAR box is drawn by swParHtml (above swFill), which carries the label.
+    assert "par.innerHTML = swParHtml(data)" in page[page.index("var par = document.getElementById('sw-par')"):]
+    assert "data.labor_target_label" in page[page.index("function swParHtml"):page.index("function swFill")]
 
 
 def test_hidden_schedule_kinds_say_when_they_are_tried_again(page):

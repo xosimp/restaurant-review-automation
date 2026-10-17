@@ -28,8 +28,11 @@ def _db(db_path, monkeypatch):
     monkeypatch.setattr(fci, "_local_today", lambda rid: TODAY)
     monkeypatch.setattr(fci, "forecast_accuracy", lambda *a, **k: None)
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (40000.0, None))
+    # The payload carries the window it measured: the projection only adds
+    # COGS for the days it asked about (cogs.window_cogs, FC-CALC-01).
     monkeypatch.setattr(cogs, "build_food_cost_pct", lambda r, days=28, db_path=None, today=None: {
-        "ok": True, "cogs": 12000.0, "pct": 30.0, "target": 28.0})
+        "ok": True, "cogs": 12000.0, "pct": 30.0, "target": 28.0, "window_days": days,
+        "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     yield
 
 

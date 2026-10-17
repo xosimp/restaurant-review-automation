@@ -162,7 +162,14 @@ def food_read_backoffice(rid, restaurant=None):
         feed = _bo_r.feed_state(rid)
         if not feed.get("on_file"):
             return None
-        key = "inv-insight:%s:bo:%s:%s" % (rid, feed.get("invoices_through"), feed.get("last_import"))
+        # Keyed on every input the read uses (SCALE-12): the invoices, and
+        # backoffice_counts.inputs_stamp - counts (MAX updated_at), the
+        # recipe book's loaded_at, the nightly report's newest food-sales
+        # night - and the restaurant's own date (the fiscal week it reads).
+        import backoffice_counts as _bc_r
+        from models import _restaurant_today as _rt_r
+        key = "inv-insight:%s:bo:%s:%s:%s:%s" % (rid, feed.get("invoices_through"), feed.get("last_import"),
+                                                 _bc_r.inputs_stamp(rid), _rt_r(rid))
         got = _cache_get(key)
         if got is None:
             from backoffice_read import food_read
@@ -1205,19 +1212,25 @@ def labor_read_evidence(rid, analysis=None) -> dict:
 
 
 def food_read_evidence(rid, is_live=True) -> dict:
-    """The Food read's Evidence Strength input: the ISO weeks of inventory
-    counts on file in the last eight (waste_trend.load_waste_history — the
-    series every food figure here is read from; N_FULL "weeks"). A sample
+    """The Food read's Evidence Strength input: the ISO weeks of the last
+    eight that hold a REAL inventory count (waste_trend.count_weeks, AI-06
+    — a full ledger count or a submitted Back Office count; N_FULL
+    "weeks"). It counted weeks of daily snapshots, so one count eight weeks
+    ago read "8 weeks of inventory counts" at full strength. A sample
     pantry scores 0."""
     if not is_live:
         return {"sample": True, "basis": "a sample pantry"}
     try:
-        from waste_trend import load_waste_history
-        weeks, _total = load_waste_history(rid, 8)
-        n = len(weeks or [])
-        return {"n": n, "kind": "weeks", "basis": f"{n} week{'s' if n != 1 else ''} of inventory counts"}
+        from waste_trend import count_weeks
+        n = count_weeks(rid, 8)
+        return {"n": n, "kind": "weeks",
+                "basis": f"{n} week{'s' if n != 1 else ''} with an inventory count in the last 8"}
     except Exception as e:
-        print(f"[food] read evidence unavailable rid={rid}: {e}")
+        try:
+            import ops
+            ops.capture(e, job="food_read_evidence", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
         return {"n": None, "basis": "the counts could not be read"}
 
 
@@ -1242,8 +1255,25 @@ def marketing_read_evidence(rid) -> dict:
         return {"n": None, "basis": "the posts could not be read"}
 
 
+def _line_driver(text, drivers):
+    """The ranked cost driver a read line names — its item (an ingredient
+    or a dish) as a whole word in the line, the longest name first so
+    "Brisket Sammy" wins over "Brisket" — or None (AI-13)."""
+    import re as _re_ld
+    low = " ".join(str(text or "").lower().split())
+    best, best_len = None, 0
+    for d in drivers or ():
+        if not isinstance(d, dict):
+            continue
+        for name in {d.get("item"), d.get("dish")} - {None, ""}:
+            n = " ".join(str(name).lower().split())
+            if len(n) > best_len and _re_ld.search(r"(?<![a-z0-9])" + _re_ld.escape(n) + r"(?![a-z0-9])", low):
+                best, best_len = d, len(n)
+    return best
+
+
 def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=True, evidence=None,
-                      sources=None):
+                      sources=None, drivers=None):
     """The numbered recommendations of a model read, each with a stable
     rec_ledger key ("<prefix>:<hash of the line>") — audit #21.
 
@@ -1286,8 +1316,31 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
     except Exception:
         _ctx = None
     srcs = tuple(sources) if sources is not None else ()
+    # A food line is as strong as the driver it restates (AI-13): a
+    # menu-price line resting on a 1-of-6-reviewed draft recipe showed the
+    # same % as a waste line with eight weeks behind it, both scored on the
+    # read's weeks of counts. Each line binds to the ranked driver it names
+    # and takes that driver's own measured evidence; the read's evidence
+    # only when it names none.
+    drivers = list(drivers or ())
+    if module == "food" and not drivers:
+        try:
+            import food_cost_intelligence as _fci_lines
+            drivers = _fci_lines.ranked_drivers_on_file(rid)
+        except Exception as e:
+            print(f"[insight] food drivers unavailable rid={rid}: {e}")
+            drivers = []
     for it in items:
-        it["confidence"] = read_line_confidence(rid, it["key"], evidence, srcs, promote=promote, ctx=_ctx)
+        bound = _line_driver(it["text"], drivers) if drivers else None
+        ev = evidence
+        if bound is not None:
+            try:
+                import food_cost_intelligence as _fci_ev
+                ev = dict(bound.get("evidence_input") or _fci_ev.driver_evidence(bound))
+            except Exception:
+                ev = evidence
+            it["bound_driver"] = bound.get("label") or bound.get("item")
+        it["confidence"] = read_line_confidence(rid, it["key"], ev, srcs, promote=promote, ctx=_ctx)
         try:
             it["advice_signature"] = insight_store.advice_signature(it["key"], it["text"])
         except Exception:
@@ -5104,7 +5157,7 @@ def inv_insight_api(current_user):
         if _bo_read:
             from backoffice_read import food_read_html
             return jsonify(insight=food_read_html(_bo_read), is_live=False, source="back_office", recs=[],
-                           validation=None)
+                           validation=None, history_stamp=waste_history_stamp(rid))
         return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
                        is_live=bool(is_live),
                        # Read from a back-office system's real figures, not the
@@ -5113,7 +5166,11 @@ def inv_insight_api(current_user):
                        recs=flat_recs(recs),
                        # The Response Validation verdict the read carries
                        # (workstream A); None until the text is a Validated str.
-                       validation=_rv_food.validation_of(insight))
+                       validation=_rv_food.validation_of(insight),
+                       # The waste history's stamp after this read wrote
+                       # its week: the page refetches the trend only when it
+                       # moved (UI-11).
+                       history_stamp=waste_history_stamp(rid))
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -5147,6 +5204,24 @@ def waste_trend_analysis(rid):
     return analysis, is_live
 
 
+def waste_history_stamp(rid):
+    """When this restaurant's waste history last changed (the newest
+    inventory_history `saved_at`, as text; None with no history). The web's
+    Food Cost page compares the stamp its trend was drawn from with the one
+    the insight run left, and refetches the trend only when the insight
+    wrote a week (UI-11: it used to refetch on every insight)."""
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT MAX(saved_at) AS s FROM inventory_history WHERE restaurant_id=?",
+                               (int(rid),)).fetchone()
+        finally:
+            conn.close()
+        return str(row["s"]) if row and row["s"] is not None else None
+    except Exception:
+        return None
+
+
 def _do_waste_trend(rid, range_key="8w"):
     """(payload, status) — the Waste Trend card for one restaurant and one
     range, the ONE body behind the web's /api/food-cost/waste-trend, the
@@ -5172,6 +5247,7 @@ def _do_waste_trend(rid, range_key="8w"):
     tgt = dict(out.get("target") or {})
     tgt["label"] = "your target" if own else _thr_wt.STARTING_TARGET_LABEL
     out["target"] = tgt
+    out["history_stamp"] = waste_history_stamp(rid)
     return out, 200
 
 
@@ -7115,9 +7191,19 @@ def _clean_quickcount_items(items):
         if not isinstance(raw, dict):
             rejected.append({"name": None, "why": "not an item"})
             continue
-        name = str(raw.get("name") or "").strip()[:120]
+        name = str(raw.get("name") or "").strip()
         if not name:
             rejected.append({"name": None, "why": "no name"})
+            continue
+        # The blob every food-cost read parses is bounded (FC/Bar audit
+        # 10/16/26, SEC-01): a row past the caps is named back, never stored.
+        if len(name) > FOOD_TRACKER_NAME_MAX:
+            rejected.append({"name": name[:FOOD_TRACKER_NAME_MAX],
+                             "why": f"name is longer than {FOOD_TRACKER_NAME_MAX} characters"})
+            continue
+        unit = str(raw.get("unit") or "").strip()
+        if len(unit) > FOOD_TRACKER_UNIT_MAX:
+            rejected.append({"name": name, "why": f"unit is longer than {FOOD_TRACKER_UNIT_MAX} characters"})
             continue
 
         def _num(key, required):
@@ -7140,20 +7226,88 @@ def _clean_quickcount_items(items):
         if usage is None:
             rejected.append({"name": name, "why": "usage is not a number"})
             continue
-        clean.append({"name": name, "unit": str(raw.get("unit") or "")[:40],
-                      "price": price, "usage": usage})
+        clean.append({"name": name, "unit": unit, "price": price, "usage": usage})
     return clean, rejected
+
+
+# The food tracker's blob (client_data.food_cost_json) — every food-cost read
+# parses it, so what one login can write into it is bounded (FC/Bar audit
+# 10/16/26, SEC-01: a looped 5 MB custom-item name grew it without limit).
+FOOD_TRACKER_NAME_MAX = 80
+FOOD_TRACKER_UNIT_MAX = 20
+FOOD_TRACKER_CUSTOM_MAX = 200        # custom items kept
+FOOD_TRACKER_COUNT_MAX = 200         # rows in one quick count (and so in current / previous)
+# Writes to the blob per restaurant per minute (any login, web or phone).
+FOOD_TRACKER_WRITES_PER_MINUTE = 60
+
+
+def _food_tracker_throttled(restaurant_id) -> bool:
+    """The per-restaurant write limit on the tracker's POSTs — the shared
+    durable sliding window (ai_utils.ai_rate_limited, bucket
+    'foodtracker')."""
+    try:
+        import ai_utils
+        return ai_utils.ai_rate_limited(f"foodtracker:{int(restaurant_id)}",
+                                        max_calls=FOOD_TRACKER_WRITES_PER_MINUTE, window_secs=60)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="food_tracker_throttle", restaurant_id=restaurant_id, kind="request")
+        return False
+
+
+def _mutate_food_cost_blob(restaurant_id, change):
+    """Read, change and write client_data.food_cost_json in ONE write
+    transaction (db_dialect.begin_write: SQLite BEGIN IMMEDIATE, Postgres the
+    restaurant's own advisory lock), so a phone quick count and a web
+    custom-item add in the same second both land (FC/Bar audit 10/16/26,
+    SCALE-05 - "owner edits never vanish"). `change(fc)` mutates the parsed
+    blob in place and returns (result, changed); the blob is written only
+    when changed. Returns result."""
+    import json as _json_blob
+    import db_dialect
+    from models import get_conn as _gc_blob
+    rid = int(restaurant_id)
+    conn = _gc_blob()
+    try:
+        db_dialect.begin_write(conn, "food_cost_json", rid)
+        row = conn.execute("SELECT id, food_cost_json FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+        fc = {}
+        if row and row["food_cost_json"]:
+            try:
+                fc = _json_blob.loads(row["food_cost_json"])
+            except Exception:
+                fc = {}
+        if not isinstance(fc, dict):
+            fc = {}
+        result, changed = change(fc)
+        if changed:
+            payload = _json_blob.dumps(fc)
+            if row:
+                conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') "
+                             "WHERE restaurant_id=?", (payload, rid))
+            else:
+                conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)", (rid, payload))
+            conn.commit()
+        else:
+            conn.rollback()
+        return result
+    except BaseException:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def _do_food_cost_quickcount(restaurant_id, items):
     """Save Big-8 ingredient prices, compute week-over-week drift, return alerts."""
-    import json as _json_fc
     from datetime import datetime as _dt_fc
-    from models import get_client_data as _gcd, get_conn as _gcc
 
     if not items or not isinstance(items, list):
         return {"ok": False, "error": "No items provided"}, 400
-    if len(items) > 200:
+    if len(items) > FOOD_TRACKER_COUNT_MAX:
         return {"ok": False, "error": "Too many items in one count."}, 400
 
     # Validate and coerce before anything is persisted. The raw array used to
@@ -7167,27 +7321,32 @@ def _do_food_cost_quickcount(restaurant_id, items):
                 "rejected": rejected}, 400
 
     rid = restaurant_id
+    if _food_tracker_throttled(rid):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
     now_str = _dt_fc.now().strftime("%Y-%m-%d")
 
-    # Load existing saved data
-    existing_raw = _gcd(rid)
-    existing_fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            existing_fc = _json_fc.loads(existing_raw["food_cost_json"])
-        except Exception:
-            existing_fc = {}
+    def _change(existing_fc):
+        # Rotate current → previous — once per day. A second count the same
+        # day (a double-submit, a correction) replaces today's count and keeps
+        # the real baseline; it used to rotate again, so last week's prices
+        # were replaced by this week's and every drift read zero (DATA-27).
+        today_count = existing_fc.get("current")
+        if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
+            prev = existing_fc.get("previous") or None
+        else:
+            prev = today_count
+        if not isinstance(prev, dict):
+            prev = None
+        # Merge, don't replace. Rebuilding the blob from scratch dropped the
+        # custom_items key that _do_save_food_cost_custom_item writes and the
+        # template renders — so every quick count silently deleted every
+        # custom ingredient the owner had added. Read and written in one
+        # transaction, so a custom item added meanwhile stays (SCALE-05).
+        existing_fc["current"] = {"submitted_at": now_str, "items": items}
+        existing_fc["previous"] = prev or {}
+        return prev, True
 
-    # Rotate current → previous — once per day. A second count the same day
-    # (a double-submit, a correction) replaces today's count and keeps the
-    # real baseline; it used to rotate again, so last week's prices were
-    # replaced by this week's and every drift read zero (DATA-27).
-    today_count = existing_fc.get("current")
-    if isinstance(today_count, dict) and today_count.get("submitted_at") == now_str:
-        prev = existing_fc.get("previous") or None
-    else:
-        prev = today_count
-    new_current = {"submitted_at": now_str, "items": items}
+    prev = _mutate_food_cost_blob(rid, _change)
 
     # Compute price drift vs previous submission
     drift = []
@@ -7220,24 +7379,6 @@ def _do_food_cost_quickcount(restaurant_id, items):
             except Exception:
                 pass
     drift.sort(key=lambda x: abs(x["weekly_impact"]), reverse=True)
-
-    # Merge, don't replace. Rebuilding the blob from scratch dropped the
-    # custom_items key that _do_save_food_cost_custom_item writes and the
-    # template renders — so every quick count silently deleted every custom
-    # ingredient the owner had added.
-    existing_fc["current"] = new_current
-    existing_fc["previous"] = prev or {}
-    save_payload = _json_fc.dumps(existing_fc)
-    conn = _gcc()
-    existing_row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-    if existing_row:
-        conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                     (save_payload, rid))
-    else:
-        conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)",
-                     (rid, save_payload))
-    conn.commit()
-    conn.close()
 
     total_impact = sum(d["weekly_impact"] for d in drift if d["direction"] == "up")
     return {
@@ -7353,39 +7494,35 @@ def food_cost_tracker(current_user):
 
 
 def _do_save_food_cost_custom_item(restaurant_id, name, unit):
-    """Persist a custom ingredient name+unit to food_cost_json so it appears on next load."""
-    import json as _jci
-    name = (name or "").strip()
-    unit = (unit or "").strip()
+    """Persist a custom ingredient name+unit to food_cost_json so it appears
+    on next load. Bounded (SEC-01): a name of at most FOOD_TRACKER_NAME_MAX
+    characters, a unit of FOOD_TRACKER_UNIT_MAX, at most
+    FOOD_TRACKER_CUSTOM_MAX items; read and written in one transaction
+    (SCALE-05)."""
+    name = str(name or "").strip()
+    unit = str(unit or "").strip()
     if not name:
         return {"ok": False, "error": "Name required"}, 400
+    if len(name) > FOOD_TRACKER_NAME_MAX:
+        return {"ok": False, "error": f"Keep the name to {FOOD_TRACKER_NAME_MAX} characters."}, 400
+    if len(unit) > FOOD_TRACKER_UNIT_MAX:
+        return {"ok": False, "error": f"Keep the unit to {FOOD_TRACKER_UNIT_MAX} characters."}, 400
+    if _food_tracker_throttled(restaurant_id):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
 
-    rid = restaurant_id
-    from models import get_client_data as _gcd_ci, get_conn as _gcc_ci
-    existing_raw = _gcd_ci(rid)
-    fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            fc = _jci.loads(existing_raw["food_cost_json"])
-        except Exception:
-            fc = {}
-
-    custom_items = fc.get("custom_items", [])
-    existing_names = [ci["name"].lower() for ci in custom_items if ci.get("name")]
-    if name.lower() not in existing_names:
+    def _change(fc):
+        custom_items = [ci for ci in (fc.get("custom_items") or []) if isinstance(ci, dict)]
+        if name.lower() in {str(ci.get("name") or "").lower() for ci in custom_items if ci.get("name")}:
+            return "exists", False
+        if len(custom_items) >= FOOD_TRACKER_CUSTOM_MAX:
+            return "full", False
         custom_items.append({"name": name, "unit": unit})
         fc["custom_items"] = custom_items
-        payload = _jci.dumps(fc)
-        conn = _gcc_ci()
-        row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
-        if row:
-            conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                         (payload, rid))
-        else:
-            conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)", (rid, payload))
-        conn.commit()
-        conn.close()
+        return "added", True
 
+    if _mutate_food_cost_blob(restaurant_id, _change) == "full":
+        return {"ok": False, "error": f"The tracker holds {FOOD_TRACKER_CUSTOM_MAX} custom items — remove one "
+                                      "before adding another."}, 400
     return {"ok": True, "name": name, "unit": unit}, 200
 
 
@@ -7406,30 +7543,23 @@ def save_food_cost_custom_item(current_user):
 
 
 def _do_delete_food_cost_custom_item(restaurant_id, name):
-    """Remove a saved custom ingredient by name from food_cost_json."""
-    import json as _jcd
-    name = (name or "").strip().lower()
+    """Remove a saved custom ingredient by name from food_cost_json — read and
+    written in one transaction (SCALE-05)."""
+    name = str(name or "").strip().lower()
     if not name:
         return {"ok": False, "error": "Name required"}, 400
+    if _food_tracker_throttled(restaurant_id):
+        return {"ok": False, "error": "Too many changes at once — wait a minute and try again."}, 429
 
-    rid = restaurant_id
-    from models import get_client_data as _gcd_d, get_conn as _gcc_d
-    existing_raw = _gcd_d(rid)
-    fc = {}
-    if existing_raw and existing_raw.get("food_cost_json"):
-        try:
-            fc = _jcd.loads(existing_raw["food_cost_json"])
-        except Exception:
-            fc = {}
+    def _change(fc):
+        custom_items = [ci for ci in (fc.get("custom_items") or []) if isinstance(ci, dict)]
+        kept = [ci for ci in custom_items if str(ci.get("name") or "").lower() != name]
+        if len(kept) == len(custom_items):
+            return None, False
+        fc["custom_items"] = kept
+        return None, True
 
-    custom_items = fc.get("custom_items", [])
-    fc["custom_items"] = [ci for ci in custom_items if (ci.get("name") or "").lower() != name]
-    payload = _jcd.dumps(fc)
-    conn = _gcc_d()
-    conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
-                 (payload, rid))
-    conn.commit()
-    conn.close()
+    _mutate_food_cost_blob(restaurant_id, _change)
     return {"ok": True}, 200
 
 
@@ -11906,6 +12036,13 @@ def food_cost_plates(current_user):
 def food_cost_purchase_vendor(current_user):
     """Web twin — the one body is mobile_api.mobile_food_cost_purchase_vendor."""
     return _m("mobile_food_cost_purchase_vendor")(current_user)
+
+
+@client_bp.route("/api/food-cost/purchases/entry", methods=["POST"])
+@login_required
+def food_cost_purchase_entry(current_user):
+    """Web twin — the one body is mobile_api.mobile_food_cost_purchase_entry."""
+    return _m("mobile_food_cost_purchase_entry")(current_user)
 
 
 @client_bp.route("/api/food-cost/bar")

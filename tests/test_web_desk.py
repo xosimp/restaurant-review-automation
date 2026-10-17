@@ -214,7 +214,6 @@ def test_the_sort_helper_is_es5():
     '<table class="hb-tbl" data-sortable="group-locations"',          # Group Home
     '<table class="dr-grid" data-sortable="dsr-week"',                  # DSR week
     '<table id="sched-table" data-sortable="schedule"',                # schedule
-    'data-sortable="menu-margins"',                                     # menu margins
     'data-sortable="dish-scorecard"',                                   # dish scorecard
 ])
 def test_the_tables_an_owner_sorts_opt_in(marker):

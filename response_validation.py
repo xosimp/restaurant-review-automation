@@ -27,12 +27,18 @@ mode_for(), which reads RESPONSE_VALIDATION_MODE from the environment.
 
 THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
   F1 a figure must be one of the facts (DSR written-precision tolerance;
-     hedged "about $1,200" may round to its zeros)      withhold / drop
+     hedged "about $1,200" may round to its zeros), or a change, share or
+     ratio of two facts of ONE family, entity, period and compatible kind
+     (never a benchmark or a global figure); a stock quantity ("12 lbs",
+     "5 cases") is an item's own figure; "doubled / halved / tripled" is a
+     100% / 50% / 200% change                           withhold / drop
   F2 a figure in a sentence naming an entity belongs to it withhold / drop
   F3 a money period must match the fact's, both ways: "a month" on a
      period-less fact, "on pace" on a non-projection     withhold / drop
   F4 kind flip: saved / recovered / losing / will save only on a measured,
-     DELIVERED fact; an opportunity is rewritten to "about $X a month is
+     DELIVERED fact; "$X/month saved" after the figure becomes "an
+     opportunity (an estimate, a projection) of about $X/month"; otherwise
+     an opportunity is rewritten to "about $X a month is
      available (an opportunity, not money saved)"; an estimate gets "could"
      and "about"; an opportunity with no hedge is labelled   rewrite, else
                                                           withhold / drop
@@ -50,7 +56,8 @@ THE RULES (codes are stable; PROMPT_LIBRARY.md → Response Validation):
      (ai_guard.rewrite_confidence_claims)                      rewrite
   K1 a causal connective (the full list — since, when, following, is why,
      the reason, behind, responsible for, blame, triggered, explains, after,
-     led to, drove, paid off, tied to, linked to, as a result …) may not
+     led to, drove, paid off, tied to, linked to, as a result, comes down
+     to, points to, is down to, stems from, a "Why:" lead-in …) may not
      state more than its anchor's strength: supported ≥ likely ≥
      association. Too strong → rewritten down ("caused" → "may have
      contributed to"); no anchor but a fact on both sides → "moved
@@ -200,7 +207,7 @@ from itertools import combinations
 import ai_guard as _g
 from confidence_engine import HIGH_AT, MEDIUM_AT
 
-VERSION = "rv3"   # rv3 (10/16/26): a paired run binds in order beside another figure; a count of reviews is never a day's figure (F2). rv2 (9/29/26): a paired list binds its figures in order (F2)
+VERSION = "rv4"   # rv4 (10/16/26, food + bar audit): a derived % or ratio only inside one fact family, entity, period and kind (AI-01); "Why:", "comes down to", "points to", "is down to" are causes (K1, AI-02); stock quantities and "doubled/halved" are checked (F1, AI-08), and a present-tense move ("is climbing") against the fact's direction is X1 (AI-08); "$X/month saved" rewrites to one noun phrase (F4, AI-20). rv3 (10/16/26): a paired run binds in order beside another figure; a count of reviews is never a day's figure (F2). rv2 (9/29/26): a paired list binds its figures in order (F2)
 
 # ── closed vocabularies ─────────────────────────────────────────────────────
 
@@ -729,8 +736,27 @@ _MOVE_PAST = (r"(?:rose|fell|dropped|climbed|slipped|declined|jumped|increased|d
               r"have\s+gotten\s+(?:worse|better)|has\s+gotten\s+(?:worse|better)|ran|hit|landed|averaged|"
               r"totall?ed|stayed|slid|lagged|trailed)")
 _MOVE_PAST_RE = re.compile(r"\b" + _MOVE_PAST + r"\b", re.I)
+# The same moves in the present: "waste is climbing week over week" when
+# the prompt said waste was down (food + bar audit 10/16/26, AI-08). Motion
+# verbs only — "is higher than the recipes call for" compares, and "is down
+# to" names a cause (K1).
+_MOVE_NOW_UP = ("climbing", "rising", "growing", "increasing", "spiking", "jumping", "creeping", "trending up",
+                "going up", "climbs", "rises", "grows", "increases", "keeps climbing", "keeps rising")
+_MOVE_NOW_DOWN = ("falling", "dropping", "declining", "decreasing", "shrinking", "slipping", "sliding", "easing",
+                  "trending down", "going down", "falls", "drops", "declines", "decreases", "shrinks",
+                  "keeps falling", "keeps dropping")
+_MOVE_NOW = (r"(?:(?:is|are|has\s+been|have\s+been|keeps?|kept)\s+)?(?:"
+             + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in sorted(_MOVE_NOW_UP + _MOVE_NOW_DOWN, key=len,
+                                                                          reverse=True)) + r")")
+_NOW_UP_WORDS = frozenset(w for p in _MOVE_NOW_UP for w in p.split() if w not in ("keeps", "trending", "going"))
+_NOW_DOWN_WORDS = frozenset(w for p in _MOVE_NOW_DOWN for w in p.split() if w not in ("keeps", "trending", "going"))
 
 # Realised money verbs (NS3 R2), losses, and promises about money.
+# "$520.00/month saved": the figure's own period between it and the verb.
+_POSTFIX_PERIOD = (r"(?P<per>\s*/\s*(?:mo|month|wk|week|yr|year)\b|\s+(?:a|per|each|every)\s+(?:month|week|year)\b|"
+                   r"\s+per\s+annum\b)?")
+_POSTFIX_KIND_NOUN = {"opportunity": "an opportunity", "estimate": "an estimate", "projection": "a projection",
+                      "forecast": "a forecast"}
 _REALISED_RE = re.compile(
     r"\b(?:saved|have\s+saved|has\s+saved|are\s+saving|is\s+saving|saving\s+you|saves\s+you|save\s+you|"
     r"recovered|recouped|clawed\s+back|earned|made\s+you|delivered|paid\s+off|you\s+kept|avoided|"
@@ -792,6 +818,18 @@ _COUNTED_BARE_RE = re.compile(
     r"shifts?|reviews?|reviewers?|guests?|covers?|orders?|items?|posts?|people|staff|employees?|visits?|"
     r"restaurants?|locations?|competitors?|mentions?|complaints?|tables?)\b", re.I)
 _HOUR_WORDS = {"hours", "hour", "hrs", "hr", "h"}
+# A quantity of stock (AI-08, 10/16/26): "Cut 12 lbs from the brisket order"
+# and "order 5 cases" are counts of an item, checked like any count and bound
+# to the item's own figures — they used to pass unread.
+_QTY_WORDS = {"lb", "lbs", "pound", "pounds", "oz", "ounce", "ounces", "case", "cases", "each", "ea", "unit",
+              "units", "bottle", "bottles", "keg", "kegs", "gallon", "gallons", "gal"}
+# A change stated as a multiple with no figure: "brisket waste doubled" is a
+# 100% rise, "halved" a 50% fall, "tripled" a 200% rise — each checked as
+# that %, within the looseness the word itself carries.
+_MULTIPLE_WORD_RE = re.compile(r"(?<![\w-])(doubl(?:ed|es|ing)|halv(?:ed|es|ing)|tripl(?:ed|es|ing)|"
+                               r"quadrupl(?:ed|es|ing))(?![\w-])", re.I)
+_MULTIPLE_WORD_PCT = {"doubl": (100.0, 20.0), "halv": (50.0, 10.0), "tripl": (200.0, 30.0),
+                      "quadrupl": (300.0, 40.0)}
 _COUNT_NOUNS = set(_g.COUNT_NOUNS) | {"no-shows", "nights", "shifts", "tables"}
 _MULT_RE = re.compile(r"(?<![\w.$])(\d+(?:\.\d+)?)\s?(?:x|×|times)\b(?!\s*(?:a|per|each)\s+(?:day|week|month|night|"
                       r"shift|year))", re.I)
@@ -933,6 +971,22 @@ _CAUSAL = [
     (r"as\s+a\s+result\s+of|(?<!as\s)(?<!a\s)result\s+of", 3, True, False, "possibly as a result of", "alongside"),
     (r"owing\s+to|on\s+account\s+of", 3, True, False, "possibly owing to", "alongside"),
     (r"stem(?:s|med|ming)?\s+from", 3, True, False, "may stem from", None),
+    # The food read's "Why: …" sentence and the plain-English ways of naming
+    # a cause (AI-02, 10/16/26): "Why: line cooks are over-portioning",
+    # "this comes down to portioning", "waste points to over-portioning"
+    # passed with no anchor at all. "Waste is down to $80" is a level, not a
+    # cause. "Why:" is the label the reads' prompts ask for over the stored
+    # (likely) cause, so a likely anchor carries it; nothing less does.
+    (r"why\s*:", 2, True, False, None, None),
+    (r"(?:comes?|came|coming)\s+down\s+to|boil(?:s|ed|ing)?\s+down\s+to", 3, True, False,
+     "may come down to", None),
+    (r"(?<!\d\s)(?<!\d)point(?:s|ed|ing)\s+to(?!\s+(?:\$|\d|the\s+(?:same|left|right)))", 3, True, False,
+     "may point to", None),
+    (r"(?:is|are|was|were)\s+(?:all\s+|largely\s+|mostly\s+|mainly\s+)?down\s+to"
+     r"(?!\s*(?:\$|\d|about|around|roughly|just|only|under|below|near|a\s+(?:few|couple)|one|two|three|four|five|"
+     r"six|seven|eight|nine|ten|zero|nothing|none))", 3, True, False,
+     _copula_swap({"is": "may be down to", "are": "may be down to", "was": "may have been down to",
+                   "were": "may have been down to"}), None),
     (r"attribut(?:able|ed)\s+to", 3, True, False, "possibly attributable to", "alongside"),
     (r"fu(?:e)?l(?:l)?ed\s+by", 3, True, False, "possibly fuelled by", "alongside"),
     # "Most of the waste came from salmon" is composition, not a cause.
@@ -1032,7 +1086,7 @@ _CAUSAL_HINT_RE = re.compile(
     r"\b(?:because|due|caus|driven|thanks|result|owing|account|stem|attribut|fuel|fule|full|came|comes|reason|"
     r"since|when|once|following|after|with|blame|led|lead|drov|driv|trigger|hurt|boost|why|behind|responsib|"
     r"explain|contribut|play|paid|pays|paying|tied|linked|related|connected|associated|impact|effect|affected|"
-    r"means|so|worked|bring|brought|lift)", re.I)
+    r"means|so|worked|bring|brought|lift|down|point|boil)", re.I)
 
 # Honest co-movement wording: never a claim (NS6 §D "moved together").
 _NEGATED_ANCHOR_RE = re.compile(r"^\s*NOT\s+a\s+cause|\bnot\b.{0,30}\bcaus", re.I)
@@ -1926,6 +1980,55 @@ def _root(w):
             return w[:-len(suf)]
     return w
 
+
+# Words in a fact key that say WHEN or AGAINST WHAT a figure is, not what it
+# measures: "sales.this_week" and "sales.last_week" are one family.
+_FAMILY_SKIP_WORDS = _GENERIC_KEY_WORDS | {
+    "this", "prior", "previous", "current", "curr", "now", "then", "start", "end", "old", "new", "before",
+    "after", "first", "latest", "base", "baseline", "actual", "period", "day", "days", "weeks", "months",
+    "years", "next", "per", "the", "and", "for", "food", "bar"}
+
+
+@functools.lru_cache(maxsize=4096)
+def _key_family(key) -> frozenset:
+    """The words a fact key names its measure by (rooted, period and
+    comparator words left out): the family a derived % or ratio stays
+    inside."""
+    return frozenset(_root(w) for w in re.split(r"[_.\W]+", str(key or "").lower())
+                     if len(w) >= 3 and w not in _FAMILY_SKIP_WORDS)
+
+
+_KIND_GROUPS = ({"measured", "computed", "price"},)
+_PLAN_COMPARABLE = {"measured", "computed", "projection", "forecast", "prediction"}
+
+
+def _derivable_pair(a, b) -> bool:
+    """Whether a change, share or ratio between facts a and b can back a
+    figure (AI-01, 10/16/26): never with a benchmark or a global (any-
+    sentence) figure; only between facts of one entity, one key family, one
+    period and compatible kinds — a measured week, a projected month and an
+    item's waste are three different things, and the % between any two of
+    them is arithmetic the model did, not a measurement. "Waste rose 85%"
+    used to be backed by an item's $80 against the monthly $520."""
+    if a.kind == "benchmark" or b.kind == "benchmark":
+        return False
+    if a.key == "global" or b.key == "global" or a.key.startswith("global.") or b.key.startswith("global."):
+        return False
+    if (a.entity or "").lower() != (b.entity or "").lower():
+        return False
+    if a.period and b.period and a.period != b.period:
+        return False
+    if a.kind != b.kind:
+        ka, kb = a.kind, b.kind
+        if not (any(ka in g and kb in g for g in _KIND_GROUPS)
+                or (ka == "plan" and kb in _PLAN_COMPARABLE) or (kb == "plan" and ka in _PLAN_COMPARABLE)):
+            return False
+    fa, fb = _key_family(a.key), _key_family(b.key)
+    if not fa or not fb:
+        return a.key == b.key
+    return fa <= fb or fb <= fa
+
+
 @functools.lru_cache(maxsize=8)
 def _context_pool_for(txt: str) -> dict:
     """The prompt text's figures, by unit, for the hybrid fallback — pure in
@@ -2047,9 +2150,10 @@ class _Facts:
             self._pairs[unit] = list(combinations(fs, 2))
         return self._pairs[unit]
 
-    def derived(self, ctype, value, tol):
+    def derived(self, ctype, value, tol, change_only=False):
         """[(facts, how)] of two facts that back the figure: a difference,
-        for % a change or share, for x a ratio."""
+        for % a change or share (a change only with `change_only` — "tripled"
+        is never a share), for x a ratio."""
         out = []
         v = abs(value)
         if ctype in ("money", "count", "h", "star"):
@@ -2064,14 +2168,18 @@ class _Facts:
         elif ctype == "pct":
             for u in ("$", "count", "h"):
                 for a, b in self.pairs(u):
+                    if not _derivable_pair(a, b):
+                        continue
                     for x, y in ((a, b), (b, a)):
                         if y.value and (abs(v - abs((x.value - y.value) / y.value * 100)) <= tol
-                                        or abs(v - abs(x.value / y.value * 100)) <= tol):
+                                        or (not change_only and abs(v - abs(x.value / y.value * 100)) <= tol)):
                             out.append(((x, y), "change"))
                             break
         elif ctype == "x":
             for u in ("$", "count", "%", "h"):
                 for a, b in self.pairs(u):
+                    if not _derivable_pair(a, b):
+                        continue
                     for x, y in ((a, b), (b, a)):
                         if y.value and abs(v - abs(x.value / y.value)) <= max(tol, 0.05 * v):
                             out.append(((x, y), "ratio"))
@@ -2148,7 +2256,7 @@ class _Run:
             subject = (f.entity or f.key.split(".")[0]).lower()
             if f.direction and len(subject) >= 4:
                 self.moves.append((f, subject, re.compile(r"\b" + re.escape(subject) + r"\w*\s+(?:\w+\s+){0,2}?("
-                                                          + _MOVE_PAST + r")\b", re.I)))
+                                                          + _MOVE_PAST + "|" + _MOVE_NOW + r")\b", re.I)))
 
     # ── findings ──
     def emit(self, rule, sev_i, sev_u=None, span="", detail="", caveat=None):
@@ -2520,6 +2628,9 @@ class _Run:
             if k == "bare" and nxt and nxt[0] in ("stars", "star", "★"):
                 out.append(("star", c))           # a star delta: "by 0.4 stars"
                 continue
+            if k == "bare" and nxt and nxt[0] in _QTY_WORDS:
+                out.append(("count", dict(c, qty=True)))
+                continue
             if k == "bare" and _MONEY_VERB_BEFORE_RE.search(t[:c["start"]]) and c["value"] >= 10:
                 out.append(("money", c))
                 continue
@@ -2541,13 +2652,33 @@ class _Run:
             out.append(("x", {"kind": "x", "value": float(m.group(1)), "decimals": len(m.group(1).split(".")[1])
                               if "." in m.group(1) else 0, "mult": 1.0, "raw": m.group(0), "start": m.start(),
                               "end": m.end(), "year": False}))
+        for m in _MULTIPLE_WORD_RE.finditer(t):
+            value, tol = _MULTIPLE_WORD_PCT[next(k for k in _MULTIPLE_WORD_PCT if m.group(1).lower().startswith(k))]
+            out.append(("pct", {"kind": "pct", "value": value, "decimals": 0, "mult": 1.0, "raw": m.group(0),
+                                "start": m.start(), "end": m.end(), "year": False, "tol": tol, "word": True}))
         return t, out
 
     def _match(self, t, ctype, c):
         """(facts, how) backing claim c: 'direct' | 'diff' | 'change' |
         'ratio' | None."""
         hedged = bool(_HEDGE_NEAR_FIGURE_RE.search(t[:c["start"]]))
-        tol = 0.051 if ctype == "star" else (0.5 + 1e-9 if ctype == "count" else _g.precision_tolerance(c, hedged))
+        tol = c.get("tol") or (0.051 if ctype == "star" else
+                               (0.5 + 1e-9 if ctype == "count" else _g.precision_tolerance(c, hedged)))
+        if c.get("qty") and self.facts.entities:
+            # A quantity of stock is an item's own figure (or the difference
+            # of two of one item's figures: "12 lbs less than last order"),
+            # never a week total, a target or a number the prompt happened
+            # to hold.
+            direct = [f for f in self.facts.direct(ctype, c["value"], tol) if f.entity]
+            if direct:
+                return direct, "direct", tol
+            v = abs(c["value"])
+            for own in self.facts.entities.values():
+                fs = [f for f in own if f.unit in ("count", "")][:40]
+                for a, b in combinations(fs, 2):
+                    if _derivable_pair(a, b) and abs(v - abs(a.value - b.value)) <= tol:
+                        return [a, b], "diff", tol
+            return [], None, tol
         direct = self.facts.direct(ctype, c["value"], tol)
         if direct:
             return direct, "direct", tol
@@ -2555,7 +2686,7 @@ class _Run:
             ctxf = self._context_facts(ctype, c["value"], tol)
             if ctxf:
                 return ctxf, "direct", tol
-        der = self.facts.derived(ctype, c["value"], tol)
+        der = self.facts.derived(ctype, c["value"], tol, change_only=bool(c.get("word")))
         if der:
             fs = []
             for pair, _how in der:
@@ -2672,6 +2803,10 @@ class _Run:
                 return s
             if verb_m:
                 verb = verb_m.group(0)
+                if len(money) == 1 and len(kinds) == 1 and kinds <= set(_POSTFIX_KIND_NOUN):
+                    new = self._postfix_saving(s, c, facts[0], kinds)
+                    if new is not None:
+                        return new
                 if kinds == {"opportunity"} and len(money) == 1:
                     f = facts[0]
                     per = {"month": " a month", "week": " a week", "year": " a year"}.get(f.period, "")
@@ -2729,6 +2864,31 @@ class _Run:
         (r"\bcost\s+you\b", "may have cost you"),
         (r"\blost\b", "may have lost"),
     ]
+
+    def _postfix_saving(self, s, c, f, kinds):
+        """"— $520.00/month saved, low effort": the figure and its verb
+        rewritten as one noun phrase — "— an opportunity of about
+        $520.00/month, low effort" — or None when the verb does not follow
+        the figure. Swapping the verb alone gave "$520.00/month could save"
+        and replacing the sentence lost the recommendation (AI-20)."""
+        raw = c["raw"]
+        m = re.search(r"(?:\b(?:about|roughly|around|approximately)\s+)?" + re.escape(raw) + _POSTFIX_PERIOD
+                      + r"\s+(?:saved|recovered|recouped|clawed\s+back)\b", s, re.I)
+        if not m:
+            return None
+        per = m.group("per")
+        word = None
+        if per:
+            word = next((w for k, w in (("mo", "month"), ("wk", "week"), ("week", "week"), ("yr", "year"),
+                                        ("year", "year"), ("annum", "year")) if k in per.lower()), None)
+        word = word or {"month": "month", "week": "week", "year": "year"}.get(f.period)
+        amount = raw if raw.startswith("$") else f"${abs(f.value):,.0f}"
+        noun = _POSTFIX_KIND_NOUN[next(iter(kinds))]
+        phrase = f"{noun} of about {amount}" + (f"/{word}" if word else "")
+        new = s[:m.start()] + phrase + s[m.end():]
+        self.rewrite("F4", m.group(0), phrase)
+        self.emit("F4", "info", span=m.group(0), detail="estimate, projection or opportunity worded as money saved")
+        return new
 
     def _hedge_estimate(self, s, c, verb, kinds):
         """An estimate or projection worded as money saved or lost, with
@@ -2918,7 +3078,7 @@ class _Run:
                     if self._scaled_hit:
                         continue
                 other = [f for f in self.facts.all if abs(abs(f.value) - abs(c["value"])) <= tol]
-                if other:
+                if other and not (c.get("qty") or c.get("word")):
                     self.emit("F8", "withhold", "drop", c["raw"], f"backed only by a {other[0].unit or 'bare'} figure",
                               f"A figure here isn't backed by a figure of the same unit: {c['raw']}.")
                 else:
@@ -3598,8 +3758,9 @@ class _Run:
             if not m:
                 continue
             words = set(m.group(1).lower().split())
-            said = (-1 if words & (_g.DIRECTION_BEFORE_DOWN | {"down", "slowed"}) else
-                    1 if words & (_g.DIRECTION_BEFORE_UP | {"up", "climbed", "jumped", "spiked", "grew"}) else 0)
+            said = (-1 if words & (_g.DIRECTION_BEFORE_DOWN | {"down", "slowed"} | _NOW_DOWN_WORDS) else
+                    1 if words & (_g.DIRECTION_BEFORE_UP | {"up", "climbed", "jumped", "spiked", "grew"}
+                                  | _NOW_UP_WORDS) else 0)
             if said and said != f.direction:
                 self.emit("X1", "caveat", "drop", m.group(0), f"the data says {subject} went "
                           f"{'up' if f.direction > 0 else 'down'}",

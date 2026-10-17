@@ -1860,6 +1860,15 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_ticket_lines", "parent_atom", "TEXT"),
         ("pos_ticket_lines", "mod_level", "INTEGER"),
         ("pos_ticket_lines", "parent_line_id", "TEXT"),
+        # Food & bar audit 10/16/26 (pos_archive.archive_day): whether the
+        # night's modifier links were read (POS-12: 0 = the ticketitem read
+        # failed, the day is archived again; NULL = stored before 10/16/26),
+        # and the nightly reconcile against RPOWER's own ticket type totals
+        # (POS-11): our revenue lines minus RPOWER's, and the dollars on
+        # lines of a sales type we could not read. NULL = not compared.
+        ("pos_archive_days", "links_ok", "INTEGER"),
+        ("pos_archive_days", "recon_gap", "REAL"),
+        ("pos_archive_days", "unknown_sales", "REAL"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -4759,6 +4768,9 @@ def init_db(db_path: str = DB_PATH):
     # Back Office's invoices and chart of accounts (backoffice_ap, 10/15/26).
     from backoffice_ap import init_backoffice_ap
     init_backoffice_ap(db_path)
+    # Waste between Back Office counts, kept until an input moves (SCALE-01).
+    from backoffice_counts import init_backoffice_counts
+    init_backoffice_counts(db_path)
     # Bought vs rung's owner-confirmed cocktail specs (bar.variance) and the
     # bar's waste log (bar.waste) — F2 / F14, bar fix round 10/15/26.
     from bar.variance import init_bar_variance

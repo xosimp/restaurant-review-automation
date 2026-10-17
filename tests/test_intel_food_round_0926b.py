@@ -102,10 +102,10 @@ def test_back_office_is_not_connected_until_its_api_exists(monkeypatch):
 def test_the_page_steps_aside_once_a_sync_lands():
     assert "{% set _fc_synced = inv_sync and inv_sync.synced %}" in SRC
     assert '<div class="fc2-submit"{% if _fc_synced %} hidden{% endif %}>' in SRC
-    count = _between("function fc2LoadCountSheet(){", "function fc2LogWaste(btn){")
+    count = _between("function fc2LoadCountSheet(withSuppliers){", "function fc2LogWaste(btn){")
     assert "var src=d.source||{},synced=!!src.synced" in count and "(synced?' readonly':'')" in count
     assert "h+='</div>'+(synced?'':'<div class=\"fc2-count-ft\">" in count
-    sup = _between("function fc2LoadSuppliers(){", "function fc2SupplierPost(")
+    sup = _between("function fc2LoadSuppliers(given){", "function fc2SupplierPost(")
     assert "(synced?' disabled':'')" in sup
     routes = open("strategy_routes.py", encoding="utf-8").read()
     assert '"ledger_mark": int(mark or 0), "source": source}' in routes

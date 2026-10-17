@@ -10,7 +10,12 @@ measured figure, no model call (the Bar's read is built the same way).
 
 The read covers the restaurant's last complete fiscal week
 (restaurants.fiscal_week_start_dow, else week_start_day — EJ's runs
-Wednesday to Tuesday), never a trailing seven days ending today.
+Wednesday to Tuesday), never a trailing seven days ending today. When the
+invoices on file stop short of the week's end, the headline says so and
+reads the week "so far", with no up or down against the week before
+(AI-12): a week missing its last deliveries is not a week that came in low.
+What the recipes say the dishes should have used is set against all food
+sales only when the fully priced dishes are most of them (FC-CALC-07).
 """
 from collections import defaultdict
 from datetime import date, timedelta
@@ -23,7 +28,13 @@ MOVE_USD = 500.0
 
 def fiscal_week(restaurant, today=None):
     """(start, end) of the last complete week in the restaurant's own week."""
-    today = today or date.today()
+    if today is None:
+        rid = getattr(restaurant, "id", None)
+        if rid:
+            from models import _restaurant_today
+            today = _restaurant_today(rid)
+        else:
+            today = date.today()
     dow = getattr(restaurant, "fiscal_week_start_dow", None)
     if dow is None:
         dow = getattr(restaurant, "week_start_day", 0) or 0
@@ -59,16 +70,29 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
     food = [x for x in bo.entries(restaurant_id, start=first, end=e, db_path=db_path) if x["category"] == "food"]
     if not food:
         return None
-    sales = bo._food_sales(restaurant_id, first, e, db_path)
+    # Twelve weeks of nights so the days the restaurant trades are its own.
+    fsd = bo.food_sales_detail(restaurant_id, (start - timedelta(days=84)).isoformat(), e, db_path)
+    sales, partial = fsd["by_date"], set(fsd["partial"])
 
     def window(a, b):
+        """(bought, food sales, covered) — `covered` False unless sales
+        cover WINDOW_MIN_COVERAGE of the days the restaurant trades in it,
+        a partly Unmapped night not counting (FC-CALC-03, food_bought_vs_
+        sold's gate): a week's invoices over three nights of sales is no
+        bought-vs-sold figure."""
         p = sum(float(x["amount"]) for x in food if a <= x["date"] <= b)
         f = sum(v for d, v in sales.items() if a <= d <= b)
-        return p, f
+        nights = sum(1 for d, v in sales.items() if a <= d <= b and v > 0 and d not in partial)
+        trading = bo._trading_days(sales, a, b)
+        return p, f, (nights > 0 and nights >= bo.WINDOW_MIN_COVERAGE * trading), nights, trading
 
-    bought, fsales = window(s, e)
-    pb, pf = window((start - timedelta(days=7)).isoformat(), (start - timedelta(days=1)).isoformat())
-    fb, ff = window((end - timedelta(days=27)).isoformat(), e)
+    bought, fsales, w_ok, w_nights, w_trading = window(s, e)
+    pb, pf, p_ok, _n, _t = window((start - timedelta(days=7)).isoformat(), (start - timedelta(days=1)).isoformat())
+    fb, ff, f_ok, _n, _t = window((end - timedelta(days=27)).isoformat(), e)
+    if not p_ok:
+        pb = pf = 0.0
+    if not f_ok:
+        fb = ff = 0.0
     feed = bo.feed_state(restaurant_id, db_path)
     facts = {"bought": round(bought, 2), "food_sales": round(fsales, 2), "prev_bought": round(pb, 2),
              "prev_food_sales": round(pf, 2), "four_week_bought": round(fb, 2), "four_week_sales": round(ff, 2),
@@ -79,16 +103,30 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         out["text"] = (f"No food sales are on file for {week} yet, so there is nothing to set the "
                        f"{_money(bought)} of food bought that week against.")
         return out
+    if not w_ok:
+        facts.update(nights=w_nights, trading_days=w_trading)
+        out["text"] = (f"Food sales cover {w_nights} of the {w_trading} days you trade in {week} — too few to "
+                       f"set the {_money(bought)} of food bought that week against.")
+        return out
     pct = 100.0 * bought / fsales
     facts["pct"] = round(pct, 1)
     # A headline and labelled points, never one paragraph (owner, 10/16/26:
     # "too big of a paragraph"): what moved, then each figure on its own row.
     lead = f"{_pct(pct)} bought vs sold"
     points = [("Bought", f"{_money(bought)} of food against {_money(fsales)} of food sales")]
+    through = feed.get("invoices_through")
+    lagging = bool(through) and through < e
+    if lagging:
+        # The lag leads, and the week is read "so far" with no up or down.
+        facts["invoices_lag"] = True
+        lead = (f"Invoices are on file through {mdy(through)}, so the week's purchases may be short: "
+                f"{_pct(pct)} bought vs sold so far")
     if pf > 0:
         prev = 100.0 * pb / pf
         facts["prev_pct"] = round(prev, 1)
-        if abs(pct - prev) >= 0.5:
+        if lagging:
+            points.append(("Week before", f"{_pct(prev)} — not set against a week whose invoices are not all in"))
+        elif abs(pct - prev) >= 0.5:
             lead += f" — {'up' if pct > prev else 'down'} from {_pct(prev)} the week before"
         else:
             lead += " — level with the week before"
@@ -97,18 +135,30 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         # The figure and its end date; why four weeks is steadier was a
         # second clause on every read (text round 10/17/26).
         points.append(("Four weeks", f"{_pct(100.0 * fb / ff)} to {mdy(e)}"))
-    pl = br.plates(restaurant_id, today=today, db_path=db_path, start=start, end=end)
-    rp = ((pl.get("summary") or {}).get("cost_pct")) if pl.get("available") else None
-    measured = [p for p in bc.waste_periods(restaurant_id, today=today, db_path=db_path)
-                if p.get("waste") is not None and s <= p["end"] <= e]
+    pl = br.plates(restaurant_id, today=today, db_path=db_path, start=start, end=end, as_of=end)
+    summ = (pl.get("summary") or {}) if pl.get("available") else {}
+    rp = summ.get("cost_pct")
+    cover = (summ.get("covered_sales") or 0.0) / fsales
+    measured = [p for p in bc.waste_periods(restaurant_id, db_path=db_path, since=s, until=e)
+                if p.get("waste") is not None]
     if measured:
         m = measured[-1]
-        facts.update(counted_waste=m["waste"], counted_used=m["used"], recipe_pct=m["recipe_pct"])
+        facts.update(counted_waste=m["waste"], counted_used=m["used"], recipe_pct=m["recipe_pct"],
+                     recipe_coverage_pct=m.get("coverage_pct"))
         points.append(("Counted", f"{mdy(m['start'])} – {mdy(m['end'])}: {_money(m['used'])} of food used, "
                                   f"{_pct(m['used_pct'])} of food sales"))
+        # The coverage stands beside the figure: the recipe % is the priced
+        # dishes', set against all food sales (FC-CALC-07).
         points.append(("Beyond recipes", f"{_money(m['waste'])} more than the recipes call for "
-                                         f"({_pct(m['recipe_pct'])} by recipe)"))
+                                         f"({_pct(m['recipe_pct'])} by recipe, on dishes that are "
+                                         f"{_pct(m['coverage_pct'])} of food sales)"))
+    elif rp is not None and cover < bc.MIN_COVERAGE:
+        # One dish's recipe % never stands for every dish sold (FC-CALC-07).
+        facts.update(recipe_pct=rp, recipe_coverage_pct=round(100 * cover, 1))
+        points.append(("By recipe", f"{_pct(rp)} on the fully priced dishes — {_pct(100 * cover)} of food sales, "
+                                    "too few to say what the rest should have used"))
     elif rp is not None:
+        facts["recipe_coverage_pct"] = round(100 * cover, 1)
         gap = pct - rp
         facts.update(recipe_pct=rp, gap_usd=round(fsales * gap / 100.0, 2))
         points.append(("By recipe", f"{_pct(rp)} — what the dishes sold should have used"))
@@ -141,9 +191,6 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         facts["mover"] = {"account": n, "week": round(v, 2), "prior_avg": round(a, 2), "prior_weeks": len(prior)}
         points.append((n, f"{_money(v)}, {abs(v - a) / a * 100:.0f}% {'above' if v > a else 'below'} its "
                            f"weekly average of the {len(prior)} weeks before"))
-    if feed.get("invoices_through") and feed["invoices_through"] < e:
-        points.append(("Invoices", f"on file through {mdy(feed['invoices_through'])} — the week's purchases "
-                                   "may be short"))
     out["lead"], out["points"] = lead + ".", [{"label": k, "text": v} for k, v in points]
     # The phone and the cache read plain text: the headline, then a line per point.
     out["text"] = out["lead"] + "\n" + "\n".join(f"• {k}: {v}." for k, v in points)

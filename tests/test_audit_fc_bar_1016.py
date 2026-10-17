@@ -90,7 +90,6 @@ def _price(item, invoices):
 
 # ── FC-CALC: food cost calculations ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-01: Back Office food cost returns another period's COGS for the window asked")
 def test_fc_calc_01_back_office_food_cost_stays_inside_the_window_it_is_asked_for(db):
     """Monthly counts 8/31 and 9/30. October month to date (16 days to
     10/16) must not come back as September's 9/1-9/30 COGS."""
@@ -118,7 +117,6 @@ def test_fc_calc_01_back_office_food_cost_stays_inside_the_window_it_is_asked_fo
         f"asked for {asked_from}..{today}, got COGS {out['cogs']} for {out['start']}..{out['end']}"
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-03 / POS-01: bought-vs-sold headline divides 28 days of invoices by 7 nights of sales")
 def test_fc_calc_03_bought_vs_sold_headline_needs_sales_for_its_window(db):
     """The nightly report started a week ago (7 nights x $1,000); $2,800 of
     invoices weekly for four weeks. 160% is not a reading; the window must
@@ -136,7 +134,6 @@ def test_fc_calc_03_bought_vs_sold_headline_needs_sales_for_its_window(db):
     assert w["pct"] is None or (w["from"] >= (t - timedelta(days=7)).isoformat() and w["pct"] < 100), w
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-04: a credit memo under its invoice's number overwrites the invoice")
 def test_fc_calc_04_a_credit_memo_sharing_its_invoice_number_is_kept_beside_it(db):
     """GFS 9041200735 +$900 on 10/1 and the same number -$200 on 10/3; the
     vendor total prints $700 and both rows must be stored."""
@@ -153,7 +150,6 @@ def test_fc_calc_04_a_credit_memo_sharing_its_invoice_number_is_kept_beside_it(d
     assert len(rows) == 2 and round(sum(r["amount"] for r in rows), 2) == 700.0, [r["amount"] for r in rows]
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-06: a count with no food account is read as $0 food on hand")
 def test_fc_calc_06_a_bar_only_count_is_not_zero_food_on_hand(db):
     """9/29 count: produce $6,000 + beer. 10/13: beer only (the kitchen did
     not count). Closing food is unmeasured, never $0."""
@@ -177,7 +173,6 @@ def test_fc_calc_06_a_bar_only_count_is_not_zero_food_on_hand(db):
     assert out["ok"] is False and out["pct"] is None, (out["closing"], out["pct"], out["missing"])
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-08 / ING-07: a catch-weight case landing on a whole pound is priced ~20x low")
 def test_fc_calc_08_whole_pound_catch_weight_is_still_a_price_per_pound():
     """A 20 lb case billed per pound: 20.4 lb at $4.50 reads $4.50/lb; 20.00
     lb at $4.50 must too (or be refused), never $0.225/lb."""
@@ -197,7 +192,6 @@ def test_fc_calc_08_whole_pound_catch_weight_is_still_a_price_per_pound():
     assert "error" in got or got["per_base"] > 1.0, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-08: a half case billed at the case price is read as billed by weight (~10x high)")
 def test_fc_calc_08_a_split_case_is_not_read_as_billed_by_weight():
     """Half a 10 lb case of mushrooms (qty 0.5) at the $25 case price is
     $2.50/lb, or refused - never $25/lb."""
@@ -209,7 +203,6 @@ def test_fc_calc_08_a_split_case_is_not_read_as_billed_by_weight():
     assert "error" in got or abs(got["per_base"] - 2.50) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-09: an invoice line with no unit amount prices the ingredient at $0")
 def test_fc_calc_09_a_line_with_no_unit_amount_is_never_a_zero_price():
     item = {"name": "CHEESE CHEDDAR", "gl": "4050 DAIRY", "vendors": [
         {"vendor": "GFS", "sku": "555", "purchase_unit": "Case", "pack_unit": "Pound", "per_pack": "20",
@@ -219,7 +212,6 @@ def test_fc_calc_09_a_line_with_no_unit_amount_is_never_a_zero_price():
     assert "error" in got or got["per_base"] > 0, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-09 / ING-08: the newest line being a credit makes a negative ingredient price")
 def test_fc_calc_09_a_credit_line_never_becomes_the_ingredient_price(db):
     """Parmesan bought at $9.10/lb (a 19.6 lb case), then a -1 case credit
     for -$182: the price stays $9.10/lb."""
@@ -237,7 +229,6 @@ def test_fc_calc_09_a_credit_line_never_becomes_the_ingredient_price(db):
     assert "error" not in got and got["per_base"] > 0 and abs(got["per_base"] - 9.10) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="ING-06: an item number shared by two suppliers prices one from the other's line")
 def test_ing_06_a_sku_shared_across_vendors_prices_each_from_its_own(db):
     """GFS 591122 is a $39.26 onion sack; Sysco 591122 a $48 10 lb case of
     cheddar. The cheddar is $4.80/lb, never priced off the onions."""
@@ -255,7 +246,6 @@ def test_ing_06_a_sku_shared_across_vendors_prices_each_from_its_own(db):
     assert abs(got["per_base"] - 4.80) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-12: a snapshot with no measured waste is charted as a $0 week")
 def test_fc_calc_12_a_week_with_no_waste_measured_is_not_zero_waste():
     """A stored snapshot whose waste figure is null (nothing logged) reads
     waste None in the trend, never a measured $0."""
@@ -267,7 +257,6 @@ def test_fc_calc_12_a_week_with_no_waste_measured_is_not_zero_waste():
 
 # ── BAR-CALC: bar calculations ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-01: stock bought before the counted span makes all usage read as variance")
 def test_bar_calc_01_counted_variance_prices_stock_bought_before_the_span(db):
     """Beer counted 9/10 -> 10/10 with $80 used: exactly 40 Miller cans at $2,
     all sold and matched; the cases came 9/1, before the span. Variance is
@@ -286,7 +275,6 @@ def test_bar_calc_01_counted_variance_prices_stock_bought_before_the_span(db):
     assert beer.get("variance_usd") is None or abs(beer["variance_usd"]) < 1.0, beer
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-04: a case line with no unit of measure is read as one can")
 def test_bar_calc_04_a_uom_less_case_line_is_never_one_can(db):
     """'MILLER LITE 24/12 CAN', uom NULL, 2 at $48: 48 cans, or no dollars at
     all - never $48 a can and '$1,824 more sold than bought'."""
@@ -307,7 +295,6 @@ def test_bar_calc_04_a_uom_less_case_line_is_never_one_can(db):
     assert (v["totals"].get("gap_usd") or 0) > -1000, v["totals"].get("gap_usd")
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-06: the stock-up guard runs only above the range top, so a delivery reads over target")
 def test_bar_calc_06_a_stock_up_below_the_range_top_is_not_judged():
     """Beer steady at 20% (target 20%), one extra $3,000 delivery in the
     window: a stock-up, held back - never '$3,000 over your target'."""
@@ -329,7 +316,6 @@ def test_bar_calc_06_a_stock_up_below_the_range_top_is_not_judged():
     assert beer["judged"] is False, (beer["pct"], beer.get("stock_up"), beer.get("over_target_usd"), beer["range"])
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-07: drink margins cost a bottle of wine sold as it comes as a 5-oz glass")
 def test_bar_calc_07_a_bottle_of_wine_mapped_with_no_pour_costs_the_bottle(db):
     """'Btl Chateau Souverain' mapped with no pour (a bottle sold as it comes)
     to a $12 bottle, $40 on the menu: cost $12, 30% - not a 5 oz glass."""
@@ -355,7 +341,6 @@ def test_bar_calc_07_a_bottle_of_wine_mapped_with_no_pour_costs_the_bottle(db):
     assert rows[0]["cost"] == 12.0 and rows[0]["cost_pct"] == 30.0, (rows[0]["cost"], rows[0]["pour_label"])
 
 
-@pytest.mark.xfail(strict=True, reason="BAR-CALC-09 / ING-15: the pack parser misses N/SIZE shapes like 6/1.75L and 12/750ML")
 @pytest.mark.parametrize("desc,uom,cat,units,ml", [
     ("TITOS VDK 6/1.75L", "CA", "liquor", 6, 1750.0),
     ("TITOS VDK 12/750ML", "CA", "liquor", 12, 750.0),
@@ -370,7 +355,6 @@ def test_bar_calc_09_the_pack_parser_reads_count_slash_size(desc, uom, cat, unit
 
 # ── ING: Back Office <-> Fintech matching and intake ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="ING-01: an itemized BO invoice split across GLs is counted again against Fintech")
 def test_ing_01_an_itemized_invoice_on_two_accounts_matches_fintech_whole(db):
     """Breakthru 555 ($1,010) is on Fintech; its Back Office page has liquor
     $400, wine $600 and $10 tax. None of it is alcohol outside Fintech."""
@@ -389,7 +373,6 @@ def test_ing_01_an_itemized_invoice_on_two_accounts_matches_fintech_whole(db):
     assert out["lines"] == [], [(l["category"], l["cost"]) for l in out["lines"]]
 
 
-@pytest.mark.xfail(strict=True, reason="ING-02: the invoice-number match ignores the distributor")
 def test_ing_02_an_invoice_number_match_needs_the_same_distributor(db):
     """Oak Wine Cellars' invoice 1001 ($480) is not Breakthru's Fintech 1001
     ($250); Breakthru's $250 payment is that Fintech invoice."""
@@ -407,7 +390,6 @@ def test_ing_02_an_invoice_number_match_needs_the_same_distributor(db):
     assert counted == [("OAK WINE CELLARS", 480.0)] and out["matched"] == 1, counted
 
 
-@pytest.mark.xfail(strict=True, reason="ING-03 / FC-CALC-05: a food vendor sharing a first word with a Fintech beer house is filed as beer")
 def test_ing_03_a_food_vendor_is_not_matched_to_a_fintech_house_on_one_word(db):
     """Back Office 'CHICAGO PRODUCE CO' with Fintech 'Chicago Beverage
     Systems' on file: not beer, not from Fintech, and not in the Bar."""
@@ -423,7 +405,6 @@ def test_ing_03_a_food_vendor_is_not_matched_to_a_fintech_house_on_one_word(db):
     assert bo.outside_fintech(rid, db_path=db)["lines"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-05 / ING-03: _match_fintech_vendor matches on a single shared first word")
 @pytest.mark.parametrize("vk,fin", [
     ("chicago meat authority", "chicago beverage systems"),
     ("southern food group", "southern glazers wine and spirits of il"),
@@ -432,7 +413,6 @@ def test_fc_calc_05_one_shared_first_word_is_not_the_same_vendor(vk, fin):
     assert bo._match_fintech_vendor(vk, [fin]) is None
 
 
-@pytest.mark.xfail(strict=True, reason="ING-04: one payment covering three Fintech invoices is counted again")
 def test_ing_04_a_batch_payment_for_three_fintech_invoices_is_matched(db):
     """Breakthru Fintech invoices $300 + $450 + $250; one $1,000 check-mode
     entry pays them. Nothing is counted outside Fintech."""
@@ -447,13 +427,11 @@ def test_ing_04_a_batch_payment_for_three_fintech_invoices_is_matched(db):
     assert out["lines"] == [], [(l["category"], l["cost"]) for l in out["lines"]]
 
 
-@pytest.mark.xfail(strict=True, reason="ING-05: email_intake._unsigned_not_forged accepts a DMARC fail as merely unsigned")
 def test_ing_05_a_dmarc_fail_is_not_unsigned_mail():
     import email_intake as ei
     assert ei._unsigned_not_forged({"spf": "none", "dkim": "none", "dmarc": "fail"}) is False
 
 
-@pytest.mark.xfail(strict=True, reason="ING-05: fintech_invoices.vouch passes a forged file with no store column")
 def test_ing_05_vouch_refuses_a_file_that_names_no_store(db):
     rid = _rid(db)
     real = FT_HEAD + ("Breakthru Beverage Illinois LLC,128850598,10/01/2026,420.00,000001 St. Charles,9031,"
@@ -466,7 +444,6 @@ def test_ing_05_vouch_refuses_a_file_that_names_no_store(db):
     assert ok is False, why
 
 
-@pytest.mark.xfail(strict=True, reason="ING-09: invoices.match_ingredient prices 'Cream' from SOUR CREAM and pre-selects it verified")
 def test_ing_09_sour_cream_is_not_verified_as_cream(db):
     import invoices
     rid = _rid(db)
@@ -483,7 +460,6 @@ def test_ing_09_sour_cream_is_not_verified_as_cream(db):
         {k: line.get(k) for k in ("ingredient_name", "selected", "verified", "matched_by")}
 
 
-@pytest.mark.xfail(strict=True, reason="ING-10 / SCALE-03: read_file marks the file stored before its rows are written")
 def test_ing_10_a_failed_write_is_read_again_on_retry(db, monkeypatch):
     rid = _rid(db)
     txt = _printout([f"{B}SYSCO{NB} $100.00", f"{NB} 5555 {C} 09/05/2026 {NB}$100.00 {NB} 0{NB}"]).encode()
@@ -504,7 +480,6 @@ def test_ing_10_a_failed_write_is_read_again_on_retry(db, monkeypatch):
     assert again["status"] == "stored" and n == 1, (again, n)
 
 
-@pytest.mark.xfail(strict=True, reason="ING-11: a Fintech credit memo carrying its invoice's number is never counted")
 def test_ing_11_a_same_number_credit_memo_is_its_own_document(db):
     """Southern 4471 for $600, then a credit memo 4471 for -$300: both on
     file, net $300 - not a 'conflict' version that is never written."""
@@ -521,7 +496,6 @@ def test_ing_11_a_same_number_credit_memo_is_its_own_document(db):
 
 # ── POS-06: one classifier for a ticket line ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="POS-06: promo/hashdisc lines are classified differently by rpower.line_kind and rpower._line_kind")
 @pytest.mark.parametrize("flag", ["type_promo", "type_hashdisc"])
 def test_pos_06_the_archive_and_the_nightly_report_agree_a_discount_is_a_discount(flag):
     import rpower
@@ -542,7 +516,6 @@ def _food_ctx(**kw):
     return rv.ValidationContext(restaurant_id=1, surface="food_insight", facts=facts, **kw)
 
 
-@pytest.mark.xfail(strict=True, reason="AI-01: a % is 'backed' by any two unrelated facts whose ratio or change happens to match")
 def test_ai_01_an_invented_percentage_is_not_backed_by_unrelated_facts():
     """'Waste rose 85% this week.' - 85% is only ($80 brisket waste vs the
     $520 monthly projection), an unrelated pair: F1, as 37% already is."""
@@ -552,7 +525,6 @@ def test_ai_01_an_invented_percentage_is_not_backed_by_unrelated_facts():
     assert "F1" in rv.validate("Waste rose 85% this week.", ctx).codes
 
 
-@pytest.mark.xfail(strict=True, reason="AI-02: a 'Why:' cause sentence passes with no cause anchors")
 def test_ai_02_a_why_line_needs_a_cause_anchor():
     """With no cause anchors, 'Why: line cooks are over-portioning the
     brisket.' is checked as a cause (K1, or dropped), as 'because' is."""
@@ -566,7 +538,6 @@ def test_ai_02_a_why_line_needs_a_cause_anchor():
 
 # ── SCALE-01: waste periods cost the recipes once ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="SCALE-01: waste_periods re-reads the book and invoice prices once per count period")
 def test_scale_01_waste_periods_cost_the_recipes_once_for_every_period(db, monkeypatch):
     rid = _kitchen(db)
     bc.save_counts(rid, {"inventory_counts": [_count(TODAY - timedelta(days=d), f)

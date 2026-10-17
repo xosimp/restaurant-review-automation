@@ -285,6 +285,20 @@ struct FoodCostAnalytics: Decodable {
     /// older server (which didn't send it) still decodes, and defaults to
     /// live — absent means the old behaviour, not "assume it's fake".
     let isLive: Bool?
+    /// Whose numbers these are (UI-01, 10/16/26): "live", "back_office"
+    /// (the restaurant's Back Office reports on file and no count yet —
+    /// real figures, with none of the sample pantry's rows) or "sample".
+    /// Absent on an older server; `showsExampleData` falls back to isLive.
+    var source: String? = nil
+    /// The feed Food Cost reads when no count is connected — its name for
+    /// the copy (`label`, "Back Office") and how far its invoices run.
+    var foodSource: FoodSource? = nil
+    /// A Back Office kitchen's waste: what its POS says was made and not
+    /// sold over the 7 days ending yesterday, at plate cost.
+    var madeNotSold: MadeNotSold? = nil
+    /// The one next step while stock and over-par wait on a count
+    /// ("Stock and over-par come with your next Back Office count.").
+    var countLine: String? = nil
     /// Actual food cost % — COGS over net sales against the restaurant's own
     /// target. The module's namesake number: computed by `cogs.py` all along,
     /// exposed on its own endpoint, and never once requested by this app, so
@@ -350,6 +364,36 @@ struct FoodCostAnalytics: Decodable {
         var targetIsOwnersOrSeeded: Bool { foodCostTargetSource != "default" }
     }
 
+    struct FoodSource: Decodable {
+        let label: String?
+        let onFile: Bool?
+        let invoicesThroughMdy: String?
+        enum CodingKeys: String, CodingKey {
+            case label
+            case onFile = "on_file"
+            case invoicesThroughMdy = "invoices_through_mdy"
+        }
+    }
+
+    struct MadeNotSold: Decodable {
+        let totalCost: Double?
+        let fromMdy: String?
+        let toMdy: String?
+        let days: Int?
+        let uncosted: Int?
+        enum CodingKeys: String, CodingKey {
+            case totalCost = "total_cost"
+            case fromMdy = "from_mdy"
+            case toMdy = "to_mdy"
+            case days, uncosted
+        }
+        /// "10/9/26 – 10/15/26"
+        var rangeLine: String? {
+            guard let f = fromMdy, let t = toMdy else { return nil }
+            return "\(f) \u{2013} \(t)"
+        }
+    }
+
     struct RecipeCoverage: Decodable {
         let coveragePct: Double?
         let uncoveredCount: Int?
@@ -412,13 +456,28 @@ struct FoodCostAnalytics: Decodable {
         case weekEnd = "week_end"
         case lastUpdated = "last_updated"
         case isLive = "is_live"
+        case source
+        case foodSource = "food_source"
+        case madeNotSold = "made_not_sold"
+        case countLine = "count_line"
         case overstockTotal = "overstock_total"
         case wasteItemsTotal = "waste_items_total"
         case insightUnverified = "insight_unverified"
     }
 
-    /// Example data must never be read as the owner's own numbers.
-    var showsExampleData: Bool { isLive == false }
+    /// Example data must never be read as the owner's own numbers — and a
+    /// Back Office kitchen's real read is never called example data
+    /// (UI-01). An older server sends no `source`: not live means sample.
+    var showsExampleData: Bool {
+        if let source { return source == "sample" }
+        return isLive == false
+    }
+
+    /// A kitchen read from Back Office's reports with no count yet.
+    var isBackOffice: Bool { source == "back_office" }
+
+    /// The feed's name for the copy — the payload's, never hard-coded.
+    var feedLabel: String { foodSource?.label ?? "Back Office" }
 
     /// The benchmark's kind of reading (I8): the server's `benchmark_state`,
     /// else — for the mobile route, which does not pass it through — read
@@ -962,5 +1021,131 @@ struct RepriceApplyResult: Decodable {
         case suggestedPrice = "suggested_price"
         case recKey = "rec_key"
         case trackerRefused = "tracker_refused"
+    }
+}
+
+
+// MARK: - Back Office: food bought vs sold, plate costs (UI-01)
+
+/// Server sentences that may arrive as a string, a list of strings or a
+/// list of objects carrying `text` / `line` / `sentence` / `why` — read
+/// generically, so a sentence a newer server adds (`to_confirm`,
+/// `coverage`) is shown without a new build.
+struct FoodCostSentences: Decodable, Hashable {
+    let lines: [String]
+
+    private struct Keyed: Decodable {
+        let text: String?, line: String?, sentence: String?, why: String?, label: String?
+        var best: String? { text ?? line ?? sentence ?? why ?? label }
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) {
+            lines = [s]
+        } else if let list = try? c.decode([String].self) {
+            lines = list
+        } else if let list = try? c.decode([Keyed].self) {
+            lines = list.compactMap(\.best)
+        } else if let one = try? c.decode(Keyed.self), let s = one.best {
+            lines = [s]
+        } else {
+            lines = []
+        }
+    }
+}
+
+/// GET /mobile/api/food-cost/purchases — what the food suppliers were paid
+/// as a % of the POS's food sales over four weeks. Purchase-based: never
+/// called food cost. A withheld figure (`window.pct` null) is a dash with
+/// the server's reason, never a 0.
+struct FoodCostPurchases: Decodable {
+    struct Window: Decodable {
+        let fromMdy: String?
+        let toMdy: String?
+        let pct: Double?
+        let purchases: Double?
+        let sales: Double?
+        /// Days between the window's end and yesterday (the newest invoice
+        /// lags the POS); nil from an older server.
+        let daysBehind: Int?
+        let whyNot: String?
+        enum CodingKeys: String, CodingKey {
+            case pct, purchases, sales
+            case fromMdy = "from_mdy"
+            case toMdy = "to_mdy"
+            case daysBehind = "days_behind"
+            case whyNot = "why_not"
+        }
+    }
+    let ok: Bool
+    let available: Bool?
+    let whyNot: String?
+    let error: String?
+    let label: String?
+    let note: String?
+    let window: Window?
+    let toConfirm: FoodCostSentences?
+    let coverage: FoodCostSentences?
+    enum CodingKeys: String, CodingKey {
+        case ok, available, error, label, note, window, coverage
+        case whyNot = "why_not"
+        case toConfirm = "to_confirm"
+    }
+
+    /// The lag line, when the newest invoice ends more than a week before
+    /// yesterday: "Invoices are 16 days behind — the newest on file is
+    /// 9/30/26."
+    var lagLine: String? {
+        guard let d = window?.daysBehind, d > 7 else { return nil }
+        return "Invoices are \(d) days behind" + (window?.toMdy.map { " \u{2014} the newest on file is \($0)" } ?? "") + "."
+    }
+}
+
+/// GET /mobile/api/food-cost/plates — each dish's recipe at today's
+/// supplier prices beside what the POS took for it.
+struct FoodCostPlates: Decodable {
+    struct Window: Decodable {
+        let fromMdy: String?
+        let toMdy: String?
+        enum CodingKeys: String, CodingKey {
+            case fromMdy = "from_mdy"
+            case toMdy = "to_mdy"
+        }
+    }
+    struct Summary: Decodable {
+        let costPct: Double?
+        let coveredSales: Double?
+        let mappedSales: Double?
+        enum CodingKeys: String, CodingKey {
+            case costPct = "cost_pct"
+            case coveredSales = "covered_sales"
+            case mappedSales = "mapped_sales"
+        }
+    }
+    struct Plate: Decodable, Identifiable {
+        let name: String
+        let cost: Double?
+        let complete: Bool?
+        let price: Double?
+        let costPct: Double?
+        let units: Double?
+        var id: String { name }
+        enum CodingKeys: String, CodingKey {
+            case name, cost, complete, price, units
+            case costPct = "cost_pct"
+        }
+    }
+    let ok: Bool
+    let available: Bool?
+    let whyNot: String?
+    let error: String?
+    let window: Window?
+    let summary: Summary?
+    let plates: [Plate]?
+    let coverage: FoodCostSentences?
+    enum CodingKeys: String, CodingKey {
+        case ok, available, error, window, summary, plates, coverage
+        case whyNot = "why_not"
     }
 }

@@ -50,6 +50,35 @@ struct FoodCostBarCard: View {
                     Task { await viewModel.load() }
                 }
             }
+        } else if viewModel.isLoading {
+            // The house's loading state while the first read is out
+            // (UI-20, 10/16/26: on Food Cost and Home the card used to
+            // vanish until the payload arrived).
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if showsTitle {
+                    Text("Bar").cavnarText(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                CavnarSkeletonLines(widths: [0.4, 1.0, 0.86, 0.55])
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cavnarCard()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading the bar")
+            }
+        } else if let why = viewModel.errorText {
+            // The server's own sentence when the read failed — never a card
+            // that silently isn't there (UI-20).
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if showsTitle {
+                    Text("Bar").cavnarText(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Text(why)
+                    .cavnarText(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cavnarCard()
+            }
         }
     }
 
@@ -246,32 +275,47 @@ struct FoodCostBarCard: View {
 // MARK: - Model
 
 /// Reads the Bar payload for the card. Best-effort like Food Cost's other
-/// side reads: a failure or a refusal hides the card, never the screen.
+/// side reads: a refusal (403 — a login without the Bar) hides the card; a
+/// first read still out shows the shared skeleton; a failed read with
+/// nothing on screen shows the server's sentence (UI-20), never the screen.
 @Observable
 @MainActor
 final class BarCardViewModel {
     private(set) var payload: BarPayload?
     private(set) var isLoading = false
+    /// The server's sentence when the read failed and nothing is on screen.
+    private(set) var errorText: String?
     /// "Bar count saved for 10/15/26" after a count, until it fades.
     var posted: String?
 
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
 
+    static let failedSentence = "The bar's numbers couldn't be read just now. Try again in a minute."
+
     func load() async {
         isLoading = true
         defer { isLoading = false }
         do {
             let p: BarPayload = try await client.send("/mobile/api/food-cost/bar", hapticOnError: false)
-            // `ok: false` is the server failing to build it — hide, unless
-            // an earlier good read is already on screen.
-            if p.ok { payload = p }
+            // `ok: false` is the server failing to build it — the sentence,
+            // unless an earlier good read is already on screen.
+            if p.ok {
+                payload = p
+                errorText = nil
+            } else if payload == nil {
+                errorText = Self.failedSentence
+            }
         } catch is CancellationError {
             // The screen went away mid-load.
         } catch let error as APIClient.APIError where error.status == 403 {
             payload = nil
+            errorText = nil
+        } catch let error as APIClient.APIError {
+            // Keep what is on screen; with nothing on screen, say why.
+            if payload == nil { errorText = error.message.isEmpty ? Self.failedSentence : error.message }
         } catch {
-            // Keep what is on screen; nothing loaded means no card.
+            if payload == nil { errorText = Self.failedSentence }
         }
     }
 }

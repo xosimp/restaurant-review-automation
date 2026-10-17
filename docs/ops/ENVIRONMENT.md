@@ -186,6 +186,7 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `AI_BREAKER_SYNC_SECONDS` | `"5"` | How often a process reads the shared provider breaker (`ai_breakers`). | ai_utils.py |
 | `BAR_CACHE_TTL_SECONDS` | `"600"` | The Bar page's kept payload is rebuilt at least this often even when its data stamp is unchanged (a safety net; every Bar write and data change already rebuilds it). | bar/cache.py |
 | `BAR_CACHE_ENTRIES` | `"16"` | How many restaurants' Bar payloads one process keeps (LRU). | bar/cache.py |
+| `BAR_BUILD_CONCURRENCY` | `"2"` | How many cold Bar page builds one process runs at once; a request beyond it waits for one to finish (food & bar audit 10/16/26, SCALE-08). | bar/cache.py |
 | `DATABASE_URL` | — | A `postgres://` URL makes Postgres the database behind `models.get_conn` (db_dialect). **Set only at the cutover** (POSTGRES_CUTOVER.md). | models.py, db_dialect.py |
 | `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
 | `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |

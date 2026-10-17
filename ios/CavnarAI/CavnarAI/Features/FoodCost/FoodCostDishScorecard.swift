@@ -265,7 +265,7 @@ struct DishScorecardSheet: View {
                 Button("Cancel", role: .cancel) {}
             } message: { dish in
                 Text(viewModel.suggestion(for: dish)?.whyLine.map { "Why: \($0)" }
-                     ?? "The price that restores this dish\u{2019}s food cost %.")
+                     ?? "The price that restores this dish\u{2019}s plate cost %.")
             }
             .alert("Check the units first", isPresented: Binding(get: { unitsFor != nil }, set: { if !$0 { unitsFor = nil } }),
                    presenting: unitsFor) { _ in
@@ -426,10 +426,10 @@ struct DishScorecardSheet: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// "$14.00 · 34.2% food cost" — "?" on a food cost whose units failed
+    /// "$14.00 · 34.2% plate cost" — "?" on a plate cost whose units failed
     /// the check.
     static func priceLine(_ dish: DishScorecard.Dish) -> String {
-        let pct = dish.foodCostPct.map { String(format: "%.1f%% food cost", $0) + (dish.unitWarning != nil ? " ?" : "") }
+        let pct = dish.foodCostPct.map { String(format: "%.1f%% plate cost", $0) + (dish.unitWarning != nil ? " ?" : "") }
         return [DSRFormat.money(dish.sellPrice), pct].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
@@ -464,7 +464,7 @@ struct DishPriceSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 CavnarMixedText("Now \(DSRFormat.money(dish.sellPrice))"
-                                + (dish.foodCostPct.map { String(format: " \u{00B7} %.1f%% food cost", $0) } ?? ""),
+                                + (dish.foodCostPct.map { String(format: " \u{00B7} %.1f%% plate cost", $0) } ?? ""),
                                 role: .secondary)
                 TextField("New menu price", text: $text)
                     .keyboardType(.decimalPad)

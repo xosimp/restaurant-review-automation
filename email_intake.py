@@ -221,9 +221,12 @@ def sender_allowed(sender, allowed) -> bool:
     return addr in allowed or domain in allowed
 
 
-# Readers whose files can vouch for themselves when the email can't
-# (fintech_invoices.vouch): the file is parsed, never written, and must name
-# only stores and distributors the restaurant's invoices already carry.
+# Readers whose files can vouch for themselves when the email can't — mail
+# that is unsigned (SPF and DKIM gray / none) and NOT disowned by DMARC
+# (`_unsigned_not_forged`): the file is parsed, never written, and must name
+# a store on every invoice, only stores and distributors the restaurant's
+# invoices already carry, have an earlier file's layout and sit inside each
+# distributor's prices (fintech_invoices.vouch).
 VOUCHERS = {"fintech": "fintech_invoices:vouch"}
 
 
@@ -234,9 +237,36 @@ def _voucher(kind):
 
 
 def _unsigned_not_forged(auth) -> bool:
-    """Neither SPF nor DKIM failed - the mail was unsigned (gray / unknown),
-    not caught forged. A DMARC fail on its own only says neither passed."""
+    """Neither SPF nor DKIM failed and DMARC did not fail - the mail was
+    unsigned (gray / unknown) from a domain with no DMARC verdict against
+    it, not caught forged. A DMARC fail IS a forgery verdict (FC/Bar audit
+    10/16/26, ING-05 / SEC-02): a spoofed From header sent from a host with
+    no SPF record and no signature reads exactly {spf none, dkim none,
+    dmarc fail} - the receiving server is saying the From domain's own
+    policy disowns the message. Such mail is held for an admin's release,
+    never read on its file's word."""
     if not isinstance(auth, dict):
+        return False
+    if str(auth.get("dmarc") or "unknown").lower() == "fail":
+        return False
+    return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
+
+
+def _unsigned_dmarc_fail(auth) -> bool:
+    """Nothing signed (SPF and DKIM gray / none) and DMARC fail - Fintech's
+    own mail on 10/15 and 10/16/26 read exactly this, and so does a spoofed
+    From from a host with no SPF record, so the email alone can't say which.
+    Owner, 10/16/26: "I shouldn't have to keep doing this" - such mail is
+    NOT trusted on its own word (_unsigned_not_forged stays False for it)
+    but may take the hardened vouch path: every invoice names a known store,
+    the file has an earlier file's layout, totals and unit prices sit inside
+    the distributor's history and nothing on file changes
+    (fintech_invoices.vouch). A file that fails any of that stays held.
+    An SPF or DKIM FAIL never comes here. The lasting fix is Fintech signing
+    its mail (DKIM / DMARC alignment)."""
+    if not isinstance(auth, dict):
+        return False
+    if str(auth.get("dmarc") or "unknown").lower() != "fail":
         return False
     return all(str(auth.get(k) or "unknown").lower() in ("gray", "unknown", "none", "neutral") for k in ("spf", "dkim"))
 
@@ -608,7 +638,8 @@ def process(email_id, db_path=None, released=False):
                         "held, never read", processed_at=_now())
             return {"status": "held_sender"}
         passed, why = auth_verdict(auth)
-        unsigned = not passed and _unsigned_not_forged(auth) and row["kind"] in VOUCHERS
+        unsigned = (not passed and (_unsigned_not_forged(auth) or _unsigned_dmarc_fail(auth))
+                    and row["kind"] in VOUCHERS)
         if not passed and not unsigned:
             _set(email_id, db_path, status="held_auth", sender=sender[:300], subject=subject[:500], auth=auth_json,
                  detail=f"Resend could not vouch for the sender ({why}) — held, never read", processed_at=_now())
@@ -617,7 +648,7 @@ def process(email_id, db_path=None, released=False):
         unsigned = False
     listing = _api_get(f"/emails/receiving/{email_id}/attachments")
     attachments = listing.get("data") or []
-    fetched = {}
+    fetched, vouched_why = {}, {}
     if unsigned:
         # Unsigned, not forged, from a listed sender to the secret address: the
         # files must vouch for themselves before any is read (owner, 10/16/26 -
@@ -637,6 +668,8 @@ def process(email_id, db_path=None, released=False):
             ok, vwhy = _voucher(row["kind"])(row["restaurant_id"], name, fetched[att.get("id") or name], db_path=db_path)
             if not ok:
                 whys.append(f"{name}: {vwhy}")
+            else:
+                vouched_why[att.get("id") or name] = vwhy
         if whys or not attachments:
             _set(email_id, db_path, status="held_auth", sender=sender[:300], subject=subject[:500], auth=auth_json,
                  detail=f"Resend could not vouch for the sender ({why}) and the files didn't vouch for themselves "
@@ -678,8 +711,14 @@ def process(email_id, db_path=None, released=False):
         results.append({"file": name, **res})
     status, read = email_status(results)
     if unsigned:
-        for r in results:          # read because the file vouched for itself (fintech_invoices.vouch)
+        # Read because the file vouched for itself (fintech_invoices.vouch),
+        # never because the email was authenticated: said so on every file
+        # and on the email's row (`vouched`), so the admin's card reads
+        # "read · file vouched", not a plain "read" (FC/Bar audit 10/16/26,
+        # SEC-02).
+        for att, r in zip(attachments, results):
             r["vouched"] = True
+            r["vouch"] = vouched_why.get(att.get("id") or att.get("filename") or "attachment")
     _set(email_id, db_path, status=status, sender=sender[:300], subject=subject[:500], files=len(read), auth=auth_json,
          detail=json.dumps(results, default=str)[:4000], processed_at=_now())
     if row["kind"] == "fintech":
@@ -803,6 +842,14 @@ def release(restaurant_id, email_id, released_by=None, db_path=None) -> dict:
     return {"before": {"status": row["status"], "sender": row.get("sender")}, "after": {"status": "queued"}}
 
 
+def _vouched(detail) -> bool:
+    """An email read on its files' own word (unsigned mail whose files
+    vouched for themselves): its stored detail lists files marked
+    `vouched` (read as text: the detail is cut at 4,000 characters, which
+    can leave it unparseable)."""
+    return bool(detail) and str(detail).startswith("[") and '"vouched": true' in str(detail)
+
+
 def recent(restaurant_id=None, limit=20, db_path=None):
     """The latest received emails, newest first (ops reads)."""
     conn = get_conn(db_path)
@@ -850,6 +897,7 @@ def admin_view(restaurant_id, db_path=None) -> dict:
             e["auth"] = None
         e["releasable"] = e.get("status") in HELD
         e["needs_a_look"] = e.get("status") in NEEDS_A_LOOK
+        e["vouched"] = _vouched(e.get("detail"))
     from bar.feed import feed_status
     return {"routes": routes_for(restaurant_id, db_path=db_path), "emails": emails, "files": files,
             "feed": feed_status(restaurant_id, db_path=db_path), "source_health": dict(sh) if sh else None,

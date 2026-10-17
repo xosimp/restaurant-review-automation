@@ -251,7 +251,10 @@ def test_dish_colours_read_the_owners_target_or_the_published_band():
 
 def test_both_clients_draw_the_servers_dish_colour():
     dash = _read("templates", "dashboard.html")
-    assert "item.food_cost_pct>=40" not in dash and "[item.cost_tone]" in dash
+    # Menu margins joined the dish table (UI-10, 10/16/26); the dish's
+    # plate cost % takes the server's colour there.
+    assert "item.food_cost_pct>=40" not in dash and "[x.cost_tone]" in dash
+    assert 'd["cost_tone"] = _cogs.dish_tone(' in _read("strategy_routes.py")
     mp = _read("ios", "CavnarAI", "CavnarAI", "Models", "MenuProfitability.swift")
     assert "pct >= 40" not in mp and "cost_tone" in mp
     assert 'item["cost_tone"] = _cogs.dish_tone(' in _read("mobile_api.py")

@@ -13,8 +13,13 @@ twin and its paging routes read `page(...)`:
      product sorts, counts, bar mapping, stopped distributors and W5's
      settings / packs / links / deal sheet / drink map, W6b's drink specs
      and waste log, the nightly report's sales metrics, the archived bar
-     nights and the ticket archive's days, the POS catalog and menu prices, the restaurant's own row (targets, hours, fiscal
-     calendar, timezone), the Bar's shared write generation and the day.
+     nights and the ticket archive's days, the POS catalog and menu prices,
+     the restaurant row's columns the build reads (RESTAURANT_COLUMNS:
+     targets and who set them, hours and closed days, fiscal calendar,
+     timezone, joined date, module and billing state — never the whole
+     row: `last_activity` moves on every tab switch and made every Bar or
+     Home open a 1.3 s cold build, SCALE-02), the Bar's shared write
+     generation and the day.
   2. The payload is kept per (database, restaurant) with the stamp it was
      built on; a request whose stamp matches is served the kept payload.
      A burst of opens for one restaurant shares one build (single-flight).
@@ -31,6 +36,12 @@ on a database stamp is right in every worker process (CLAUDE.md, gunicorn
 workers), and the kept copy is bounded (MAX_ENTRIES, LRU) and never older
 than TTL_SECONDS whatever the stamp says (the safety net for a writer this
 list doesn't name yet).
+
+A cold build is heavy (~150 MB transient, ~1–2 s CPU at EJ's): at most
+BUILD_CONCURRENCY of them run at once in a process (SCALE-08), every other
+one waits its turn, and a sweep (bar_signals.run_price_push) reads with
+`keep=False` so it never fills the interactive LRU with cold payloads
+(SCALE-07).
 
 The page payload is the full build with its long lists capped (PAGE_CAPS);
 the whole lists are served a page at a time by `price_rows` and
@@ -49,6 +60,29 @@ from bar.common import get_conn
 TTL_SECONDS = float(os.environ.get("BAR_CACHE_TTL_SECONDS", "600"))
 MAX_ENTRIES = int(os.environ.get("BAR_CACHE_ENTRIES", "16"))
 GEN_PREFIX = "bar_gen:"
+# Cold builds at once in one process (SCALE-08): four tenants opening the
+# Bar together held ~600 MB.
+BUILD_CONCURRENCY = max(1, int(os.environ.get("BAR_BUILD_CONCURRENCY", "2")))
+_BUILD_SLOTS = threading.BoundedSemaphore(BUILD_CONCURRENCY)
+_building = [0]                  # builds running now (tests read it)
+_building_peak = [0]
+
+
+def _restaurant_columns():
+    import models as _m
+    return tuple(_m.BAR_TARGET_FIELDS.values()) + (
+        "target_setters_json",                      # who set a target: "your target" vs "the target Cavnar AI set"
+        "open_times_json", "close_times_json",      # trading days (bar.counts._trading_days)
+        "compliance_json",                          # closed weekdays and dates (schedule_rules.closures)
+        "timezone",
+        "fiscal_week_start_dow", "fiscal_year_start", "fiscal_period_scheme", "fiscal_years_json",  # month rows
+        "created_at",                               # bar.build.oldest_believable
+        "module_inventory", "billing_status")
+
+
+# The restaurant row's columns the build reads (SCALE-02); a column the Bar
+# starts reading is added here, or its change waits out TTL_SECONDS.
+RESTAURANT_COLUMNS = _restaurant_columns()
 
 # The price watch's lists and the products, capped in the page payload
 # (each list's full length is in `totals`); the routes page through them.
@@ -123,6 +157,25 @@ def _read(conn, sql, args):
     return tuple(row) if row is not None else None
 
 
+def _restaurant_part(conn, rid) -> str:
+    """The restaurant row's RESTAURANT_COLUMNS, as text for the stamp."""
+    try:
+        row = conn.execute("SELECT * FROM restaurants WHERE id=?", (rid,)).fetchone()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return "None"
+    if row is None:
+        return "None"
+    try:
+        d = dict(row)
+    except (TypeError, ValueError):
+        return repr(tuple(row))
+    return repr(tuple((k, d.get(k)) for k in RESTAURANT_COLUMNS))
+
+
 def stamp(restaurant_id, db_path=None, today=None) -> str:
     """A digest of everything the Bar payload is built from (module note)."""
     rid = int(restaurant_id)
@@ -132,7 +185,7 @@ def stamp(restaurant_id, db_path=None, today=None) -> str:
         for table, aggs in _SOURCES:
             parts.append(repr(_read(conn, f"SELECT {aggs} FROM {table} WHERE restaurant_id=?", (rid,))))
         parts.append(repr(_read(conn, _DSR_SQL, (rid,))))
-        parts.append(repr(_read(conn, "SELECT * FROM restaurants WHERE id=?", (rid,))))
+        parts.append(_restaurant_part(conn, rid))
         parts.append(repr(_read(conn, "SELECT value FROM job_cursors WHERE key=?", (GEN_PREFIX + str(rid),))))
     finally:
         conn.close()
@@ -168,9 +221,12 @@ def clear() -> None:
         _flights.clear()
 
 
-def full(restaurant_id, db_path=None, today=None, build=None) -> dict:
+def full(restaurant_id, db_path=None, today=None, build=None, keep=True) -> dict:
     """The whole payload (bar.build.build), served from the kept copy while
-    its stamp holds. `build` is the builder (tests count its calls)."""
+    its stamp holds. `build` is the builder (tests count its calls). A cold
+    build takes one of BUILD_CONCURRENCY slots; `keep=False` (a scheduled
+    sweep) reads a kept copy when there is one but never keeps what it
+    builds."""
     if build is None:
         from bar.build import build as _build
         build = _build
@@ -186,7 +242,17 @@ def full(restaurant_id, db_path=None, today=None, build=None) -> dict:
         hit = _hit(key, st)          # another request built it while this one waited
         if hit is not None:
             return hit
-        payload = build(restaurant_id, db_path=db_path, today=today)
+        with _BUILD_SLOTS:
+            with _lock:
+                _building[0] += 1
+                _building_peak[0] = max(_building_peak[0], _building[0])
+            try:
+                payload = build(restaurant_id, db_path=db_path, today=today)
+            finally:
+                with _lock:
+                    _building[0] -= 1
+        if not keep:
+            return payload
         with _lock:
             _kept[key] = {"stamp": st, "payload": payload, "at": time.monotonic()}
             _kept.move_to_end(key)

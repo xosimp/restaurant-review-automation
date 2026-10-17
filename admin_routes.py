@@ -677,11 +677,58 @@ def _seed_review_account_job(script, rotate, actor):
     return result
 
 
+# ── the admin inventory writes (FC/Bar audit 10/16/26, SEC-03) ─────────────
+# Each one changes a client's stock or recipe ledger, so each audits itself
+# through the one typed call (admin_events.record_admin_action: actor,
+# target, before/after, result — CLAUDE.md); the two that reach the POS
+# (discover-menu-items, resync-depletion) run on the admin job pool, never on
+# one of the four request threads.
+
+_INGREDIENT_AUDIT_FIELDS = ("name", "category", "unit", "par_level", "unit_cost", "case_size", "current_stock",
+                            "avg_daily_usage", "waste_last_week", "is_active")
+
+
+def _inventory_audit(actor, action, restaurant_id, target=None, before=None, after=None, result="ok"):
+    import admin_events
+    admin_events.record_admin_action(actor, f"inventory.{action}", restaurant_id=restaurant_id, target=target,
+                                     before=before, after=after, result=result)
+
+
+def _ingredient_state(restaurant_id, ingredient_id):
+    """The ingredient's audited fields as they stand, or None (another
+    restaurant's, or gone)."""
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM ingredients WHERE id=? AND restaurant_id=?",
+                           (int(ingredient_id), int(restaurant_id))).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    row = dict(row)
+    return {k: row.get(k) for k in _INGREDIENT_AUDIT_FIELDS}
+
+
+def _ingredient_count(restaurant_id):
+    conn = get_conn()
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM ingredients WHERE restaurant_id=? AND is_active=1",
+                                (int(restaurant_id),)).fetchone()[0])
+    finally:
+        conn.close()
+
+
 @admin_bp.route("/admin/inventory/import-csv/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def import_csv_to_ingredients_route(restaurant_id, current_user):
     import inventory_ledger
-    return jsonify(ok=True, **inventory_ledger.import_csv_to_ingredients(restaurant_id))
+    before = {"ingredients": _ingredient_count(restaurant_id)}
+    out = inventory_ledger.import_csv_to_ingredients(restaurant_id)
+    _inventory_audit(current_user, "csv_imported", restaurant_id, before=before,
+                     after={"ingredients": _ingredient_count(restaurant_id),
+                            **{k: v for k, v in (out or {}).items() if isinstance(v, (int, float, str, bool))}},
+                     result="ok" if (out or {}).get("ok", True) is not False else "failed")
+    return jsonify(ok=True, **out)
 
 
 @admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>", methods=["GET"])
@@ -731,9 +778,12 @@ def create_ingredient_route(restaurant_id, current_user):
         amounts[key], err = _ingredient_amount(data, key, default, positive=positive, most=most)
         if err:
             return jsonify(ok=False, error=err), 400
+    category, unit = _ingredient_label(data.get("category"), 40), _ingredient_label(data.get("unit"), 20)
     ingredient_id = inventory_ledger.create_ingredient(
-        restaurant_id, name=name, category=_ingredient_label(data.get("category"), 40),
-        unit=_ingredient_label(data.get("unit"), 20), **amounts)
+        restaurant_id, name=name, category=category, unit=unit, **amounts)
+    _inventory_audit(current_user, "ingredient.created", restaurant_id, target=("ingredient", ingredient_id),
+                     after={"name": name, "category": category, "unit": unit, **amounts},
+                     result="ok" if ingredient_id else "failed")
     return jsonify(ok=True, id=ingredient_id)
 
 
@@ -758,8 +808,13 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
             # NaN is stored as NULL and broke the restaurant's analysis (MOD-FC-6).
             if not math.isfinite(fields[key]) or fields[key] < 0:
                 return jsonify(ok=False, error=f"{key.replace('_', ' ')} must be a number of 0 or more."), 400
+    before = _ingredient_state(restaurant_id, ingredient_id)
     if not inventory_ledger.update_ingredient(restaurant_id, ingredient_id, **fields):
+        _inventory_audit(current_user, "ingredient.updated", restaurant_id, target=("ingredient", ingredient_id),
+                         before=before, after=fields, result="failed")
         return jsonify(ok=False, error="That ingredient isn't this restaurant's, or nothing changed."), 404
+    _inventory_audit(current_user, "ingredient.updated", restaurant_id, target=("ingredient", ingredient_id),
+                     before={k: (before or {}).get(k) for k in fields}, after=fields)
     return jsonify(ok=True)
 
 
@@ -767,19 +822,54 @@ def update_ingredient_route(restaurant_id, ingredient_id, current_user):
 @admin_required
 def delete_ingredient_route(restaurant_id, ingredient_id, current_user):
     import inventory_ledger
+    before = _ingredient_state(restaurant_id, ingredient_id)
     if not inventory_ledger.deactivate_ingredient(restaurant_id, ingredient_id):
+        _inventory_audit(current_user, "ingredient.deactivated", restaurant_id, target=("ingredient", ingredient_id),
+                         result="failed")
         return jsonify(ok=False, error="That ingredient isn't this restaurant's."), 404
+    _inventory_audit(current_user, "ingredient.deactivated", restaurant_id, target=("ingredient", ingredient_id),
+                     before=before, after={"is_active": 0})
     return jsonify(ok=True)
+
+
+def _inventory_job(kind, restaurant_id, actor, action, work, before=None):
+    """Run a POS-reaching inventory write on the admin job pool and audit it
+    when it ends (result and counts in `after`). Returns the response: a job
+    to poll at /admin/api/admin-jobs/<job_id>."""
+    actor_name = (actor or {}).get("username") if isinstance(actor, dict) else actor
+    actor_ref = {"username": actor_name, "id": (actor or {}).get("id")} if isinstance(actor, dict) else actor
+
+    def _run():
+        try:
+            out = dict(work() or {})
+        except Exception as e:
+            _ops.capture(e, job=f"admin_job:{kind}", context=f"restaurant_id={restaurant_id}",
+                         restaurant_id=restaurant_id)
+            _inventory_audit(actor_ref, action, restaurant_id, before=before, after={"error": _safe_err(e)},
+                             result="error")
+            return {"ok": False, "error": _safe_err(e)}
+        out.setdefault("ok", True)
+        _inventory_audit(actor_ref, action, restaurant_id, before=before,
+                         after={k: (len(v) if isinstance(v, (list, dict)) else v) for k, v in out.items()
+                                if isinstance(v, (int, float, str, bool, list, dict))},
+                         result="ok" if out.get("ok") is not False else "failed")
+        return out
+    job_id, joined = _start_admin_job(kind, restaurant_id, _run)
+    if job_id is None:
+        _inventory_audit(actor_ref, action, restaurant_id, before=before, result="refused")
+        return jsonify(ok=False, error="The server is busy with other admin jobs. Try again in a minute."), 503
+    return jsonify(ok=True, job_id=job_id, joined=joined), 202
 
 
 @admin_bp.route("/admin/inventory/discover-menu-items/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def discover_menu_items_route(restaurant_id, current_user):
+    """Seven days of POS fetches: on the admin job pool (SEC-03). Poll
+    /admin/api/admin-jobs/<job_id> for {discovered, updated, total_seen,
+    hidden}."""
     import inventory_ledger
-    try:
-        return jsonify(ok=True, **inventory_ledger.discover_menu_items(restaurant_id))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+    return _inventory_job("admin_discover_menu_items", restaurant_id, current_user, "menu_items.discovered",
+                          lambda: inventory_ledger.discover_menu_items(restaurant_id))
 
 
 @admin_bp.route("/admin/inventory/menu-items/<int:restaurant_id>", methods=["POST"])
@@ -793,6 +883,8 @@ def create_menu_item_route(restaurant_id, current_user):
     if not name:
         return jsonify(ok=False, error="Menu item name required"), 400
     menu_item_id = inventory_ledger.create_menu_item(restaurant_id, name)
+    _inventory_audit(current_user, "menu_item.created", restaurant_id, target=("menu_item", menu_item_id),
+                     after={"name": name}, result="ok" if menu_item_id else "failed")
     return jsonify(ok=True, id=menu_item_id)
 
 
@@ -838,6 +930,9 @@ def add_recipe_ingredient_route(menu_item_id, current_user):
     # as the dish — a recipe that reaches across locations silently costs one
     # location's plate from another's prices.
     row_id = inventory_ledger.add_recipe_ingredient(rid, menu_item_id, ingredient_id, qty_per_unit)
+    _inventory_audit(current_user, "recipe.ingredient_added", rid, target=("menu_item", menu_item_id),
+                     after={"ingredient_id": ingredient_id, "qty_per_unit": qty_per_unit, "row_id": row_id},
+                     result="ok" if row_id else "refused")
     if not row_id:
         return jsonify(ok=False, error="That ingredient belongs to a different restaurant."), 400
     return jsonify(ok=True, id=row_id)
@@ -850,8 +945,20 @@ def delete_recipe_ingredient_route(menu_item_id, recipe_ingredient_id, current_u
     rid = _restaurant_of_menu_item(menu_item_id)
     if rid is None:
         return jsonify(ok=False, error="No such menu item."), 404
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT ri.ingredient_id, ri.qty_per_unit FROM recipe_ingredients ri JOIN menu_items m "
+                           "ON m.id = ri.menu_item_id WHERE ri.id=? AND m.restaurant_id=?",
+                           (recipe_ingredient_id, rid)).fetchone()
+    finally:
+        conn.close()
+    before = dict(row) if row else None
     if not inventory_ledger.delete_recipe_ingredient(rid, recipe_ingredient_id):
+        _inventory_audit(current_user, "recipe.ingredient_removed", rid,
+                         target=("recipe_ingredient", recipe_ingredient_id), result="failed")
         return jsonify(ok=False, error="That recipe row isn't this restaurant's."), 404
+    _inventory_audit(current_user, "recipe.ingredient_removed", rid, target=("recipe_ingredient", recipe_ingredient_id),
+                     before=before, after=None)
     return jsonify(ok=True)
 
 
@@ -869,6 +976,7 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
     _refused = _sr_sync._synced_refusal(restaurant_id, "Counts")
     if _refused:
         return jsonify(**_refused[0]), _refused[1]
+    before = _ingredient_state(restaurant_id, ingredient_id)
     try:
         result = inventory_ledger.record_recount(
             restaurant_id, ingredient_id, float(data["counted_qty"]),
@@ -876,6 +984,11 @@ def record_recount_route(restaurant_id, ingredient_id, current_user):
         )
     except (TypeError, ValueError):
         return jsonify(ok=False, error="counted_qty must be a number of 0 or more"), 400
+    after = {k: v for k, v in (result or {}).items() if isinstance(v, (int, float, str, bool))}
+    _inventory_audit(current_user, "stock.recounted", restaurant_id, target=("ingredient", ingredient_id),
+                     before={"current_stock": (before or {}).get("current_stock")},
+                     after={"counted_qty": data.get("counted_qty"), **after},
+                     result="failed" if result.get("ok") is False else "ok")
     if result.get("ok") is False:
         return jsonify(**result), 404
     return jsonify(ok=True, **result)
@@ -895,10 +1008,14 @@ def record_receiving_route(restaurant_id, ingredient_id, current_user):
     if not (_qty > 0 and _qty != float("inf")):
         # A delivery is a positive quantity; a correction is a recount (MOD-FC-12).
         return jsonify(ok=False, error="qty must be more than 0 — use a recount to correct stock"), 400
+    before = _ingredient_state(restaurant_id, ingredient_id)
     event_id = inventory_ledger.record_receiving(
         restaurant_id, ingredient_id, float(data["qty"]),
         source="admin", note=data.get("note")
     )
+    _inventory_audit(current_user, "stock.received", restaurant_id, target=("ingredient", ingredient_id),
+                     before={"current_stock": (before or {}).get("current_stock")},
+                     after={"qty": _qty, "event_id": event_id}, result="ok" if event_id else "failed")
     if not event_id:
         return jsonify(ok=False, error="That ingredient isn't this restaurant's."), 404
     return jsonify(ok=True, id=event_id)
@@ -916,10 +1033,12 @@ def resync_depletion_route(restaurant_id, current_user):
     except ValueError:
         # A bad date used to 500 the request (fix round #142).
         return jsonify(ok=False, error="Pick a business date."), 400
-    try:
-        return jsonify(ok=True, **inventory_ledger.compute_daily_depletion(restaurant_id, business_date))
-    except Exception as e:
-        return jsonify(ok=False, error=_safe_err(e))
+    # A POS fetch for the day: on the admin job pool (SEC-03). Poll
+    # /admin/api/admin-jobs/<job_id> for {ingredients_updated,
+    # unmapped_selections}.
+    return _inventory_job("admin_resync_depletion", restaurant_id, current_user, "depletion.resynced",
+                          lambda: inventory_ledger.compute_daily_depletion(restaurant_id, business_date),
+                          before={"business_date": business_date.isoformat()})
 
 
 # Internal admin only. These were @login_required with the restaurant taken
@@ -1988,8 +2107,21 @@ def log_activity_route(current_user):
         return jsonify(ok=True, skipped="view_as")
     from models import log_activity
     data = request.get_json(silent=True) or {}
-    log_activity(current_user["restaurant_id"], data.get("tab",""))
+    log_activity(current_user["restaurant_id"], _activity_tab(data.get("tab")))
     return jsonify(ok=True)
+
+
+# A tab name as the dashboard's router sends it ('labor', 'food-cost',
+# 'panel_x'): restaurants.last_active_tab is read on every request, so any
+# login's free text never reaches it (FC/Bar audit 10/16/26, SEC-04: a 5 MB
+# 'tab' was stored as sent).
+import re as _re_tab  # noqa: E402
+_TAB_RE = _re_tab.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
+
+
+def _activity_tab(raw) -> str:
+    tab = str(raw or "").strip().lower()[:41]
+    return tab if _TAB_RE.fullmatch(tab) else "other"
 
 @admin_bp.route("/admin/resend-contract/<int:restaurant_id>", methods=["POST"])
 @admin_required

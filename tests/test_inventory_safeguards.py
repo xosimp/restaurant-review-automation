@@ -165,7 +165,11 @@ class TestEventScaling:
         scaled = [_item(item="Salmon Fillet", par_level=10, current_stock=2,
                         avg_daily_usage=1, waste_last_week=0)]
         analyse_inventory(base, today=MONDAY)
-        analyse_inventory(scaled, upcoming_holidays="Valentine's Day (Feb 14)", today=MONDAY)
+        # A holiday inside the order's window. "(Feb 14)" from 8/24/26 only
+        # scaled because a date already past this year read as no date at
+        # all (full strength); it is next year's now, months out (AI-11).
+        near = f"Valentine's Day ({THURSDAY.strftime('%b')} {THURSDAY.day})"
+        analyse_inventory(scaled, upcoming_holidays=near, today=MONDAY)
         assert base[0]["event_scaled"] is False
         assert scaled[0]["event_scaled"] is True
         assert scaled[0]["suggested_order_qty"] > base[0]["suggested_order_qty"]

@@ -603,7 +603,14 @@ def test_a_late_feed_with_a_held_file_says_it_is_held_and_where_to_release_it(db
     assert sh["error_class"] == "held"
 
 
-UNSIGNED = {"spf": "gray", "dkim": "gray", "dmarc": "fail"}      # Fintech's own mail, 10/15 and 10/16/26
+# Unsigned mail (SPF and DKIM gray / none): a file may vouch for it.
+# Fintech's own 10/15 and 10/16/26 mail read DMARC FAIL with nothing signed -
+# the same verdict a spoofed From produces - so it is never trusted on its
+# own word, but its file may vouch through the hardened check (store on every
+# invoice, an earlier file's layout, prices inside history; owner 10/16/26,
+# FC/Bar fix round). An SPF or DKIM fail is always held.
+UNSIGNED = {"spf": "gray", "dkim": "gray", "dmarc": "gray"}
+FINTECH_1015 = {"spf": "gray", "dkim": "gray", "dmarc": "fail"}
 
 
 def _unsigned_email(db, monkeypatch, rid, eid, body, auth=UNSIGNED):
@@ -640,3 +647,9 @@ def test_unsigned_mail_with_a_new_distributor_or_a_forged_signature_stays_held(d
     forged = {"spf": "fail", "dkim": "gray", "dmarc": "fail"}
     good = _printout("10/14/2026").replace(b"101153056", b"101153098")
     assert _unsigned_email(db, monkeypatch, rid, "u3", good, auth=forged)["status"] == "held_auth"
+    # DMARC fail with nothing signed: read only because the file vouched (the
+    # good file does); the stranger's file under the same verdict stays held.
+    out = _unsigned_email(db, monkeypatch, rid, "u4", good, auth=FINTECH_1015)
+    assert out["status"] == "done" and out["files"][0]["vouched"] is True
+    stranger2 = stranger.replace(b"55501", b"55502")
+    assert _unsigned_email(db, monkeypatch, rid, "u5", stranger2, auth=FINTECH_1015)["status"] == "held_auth"

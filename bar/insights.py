@@ -14,6 +14,7 @@ increase and a decrease the same way. Every card carries `basis` and a
 days, coverage and invoices and how far behind the invoices are (R19).
 """
 from bar.common import MAX_INSIGHTS, _money
+from bar.feed import FEED_LABEL
 from bar.judge import MIN_DAYS, confidence
 
 # A price change worth a card: this much a month at the bar's usual buying
@@ -125,11 +126,15 @@ def _price_cards(pw, pc) -> list:
         share = top / whole if whole else 0
         first = float(held_up[0]["forward_monthly_usd"]) / whole if whole else 1
         if share >= max(0.5, CONCENTRATION_OVER_UNIFORM * 3 / n) and first <= 0.5:
+            # Evidence from the purchases behind the increases, never the
+            # count of products read as invoices (AI-09, 10/16/26: seven held
+            # increases read "Evidence 100%").
+            bought = sum(int(r.get("purchases") or 0) for r in held_up)
             out.append(_card("concentration", "info",
                              f"Three products carry {round(share * 100)}% of the price increases that held",
                              f"+{_money(top)} of +{_money(whole)} a month at your usual buying, across {n} products",
                              "Start with these three when you next talk to your distributors", "prices",
-                             confidence(invoices=n, lag_days=lag)))
+                             confidence(invoices=bought if bought else None, lag_days=lag)))
     # The ladder as a finding (V3): what the order size costs, from the
     # distributor's own billing — "order 3 kegs, save $15 a keg".
     ladders = [x for x in (pw.get("ladders") or [])
@@ -167,20 +172,26 @@ def _insights(pc, pw, to_check) -> list:
         cats = pc.get("categories") or []
         tot = pc.get("total") or {}
         if fr.get("stale"):
-            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')}",
+            out.append(_card("feed_stale", "warn", f"No invoices since {fr.get('invoices_through_mdy')} — check the "
+                                                   f"{FEED_LABEL} forward",
                              (f"Sales through {fr.get('sales_through_mdy')}; " if fr.get("sales_through_mdy")
                               else "") + "nothing is judged until invoices catch up",
-                             "Check that Fintech's daily file still reaches Cavnar AI", basis, _pour_conf(pc)))
+                             f"Check that {FEED_LABEL}'s daily file still reaches Cavnar AI", basis, _pour_conf(pc)))
         for g in (pc.get("gaps") or [])[:1]:
             what = ", ".join(c for c in g.get("categories") or []) or "what they supply"
             out.append(_card("gap", "warn", f"Invoices from {g['distributor']} aren't on file",
                              f"Nothing between {g['from_mdy']} and {g['to_mdy']} — {what} reads low until they arrive",
-                             "Forward Fintech's invoice detail for those dates, or mark that the bar stopped "
-                             f"buying from {g['distributor']}", basis, _pour_conf(pc)))
+                             f"Forward {FEED_LABEL}'s invoice detail for those dates, or say the bar stopped buying "
+                             f"from {g['distributor']}", basis, _pour_conf(pc)))
         for c in cats:
             s = c.get("stock_up")
             if s and "stock_up" in (c.get("reasons") or []):
-                times = (f" — {s['amount'] / s['median_week']:.0f}× its usual week" if s.get("median_week") else "")
+                if s.get("why") == "extra_delivery":
+                    times = " — on top of that week's usual delivery"
+                elif s.get("median_week"):
+                    times = f" — {s['amount'] / s['median_week']:.0f}× its usual week"
+                else:
+                    times = ""
                 out.append(_card("stock_up:" + c["key"], "info",
                                  f"A large {c['label'].lower()} delivery on {s['date_mdy']}",
                                  f"{s['amount_text']} from {s['distributor']}{times}",

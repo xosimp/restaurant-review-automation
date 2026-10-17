@@ -13,7 +13,7 @@ price for the product (bar.prices) through its pack (bar.products).
 import re
 
 from bar.common import _mdy, display_name, get_conn
-from bar.products import _now, unit_costs
+from bar.products import _now, parse_pack, unit_costs
 
 _WORD = re.compile(r"[A-Z]{3,}")
 _STOP = {"THE", "AND", "BTL", "CAN", "CASE", "LIQ", "VDK", "WHSKY", "BRBN", "TEQ", "750ML", "BAR", "LOOSE"}
@@ -146,36 +146,54 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
         tiers = s["tiers"]
         st = min(tiers.values(), key=lambda x: x["tier"])  # the smallest tier: the frontline price
         l = s["line"]
-        p = dict(pour or {})
-        if m.get("pour_oz"):
-            p.update(liquor_oz=m["pour_oz"], wine_oz=m["pour_oz"], draft_oz=m["pour_oz"])
-        now = unit_costs(st["reference"], l.get("uom"), l["description"], l["category"], pour=p)
-        if not now or now.get("per_pour") is None:
+        # The pour the variance counts (BAR-CALC-07, 10/16/26): a bottle-named
+        # or no-pour 1:1 item is the whole bottle or can, a draft its stated
+        # size — never a 5 oz glass of a bottle sold whole.
+        from bar.variance import pour_target
+        mode, oz, _basis, assume = pour_target(l["category"], parse_pack(l["description"], l.get("uom"), l["category"]),
+                                               m.get("pour_oz"), item["name"], pour)
+        if mode == "unknown":
             continue
+        p = dict(pour or {})
+        if mode == "oz":
+            p.update(liquor_oz=oz, wine_oz=oz, draft_oz=oz)
+        now = unit_costs(st["reference"], l.get("uom"), l["description"], l["category"], pour=p)
+        if not now:
+            continue
+        cost_now = now["per_each"] if mode == "each" else now.get("per_pour")
+        if cost_now is None:
+            continue
+        label = f"one {now['each']}" if mode == "each" else now["pour_label"]
         before, changed = None, None
         ch = st.get("change")
         if ch:
-            b = unit_costs(ch["from"], l.get("uom"), l["description"], l["category"], pour=p)
-            before, changed = (b or {}).get("per_pour"), ch["since"]
-        mm = drink_margin(now["per_pour"], item["price"], before)
+            b = unit_costs(ch["from"], l.get("uom"), l["description"], l["category"], pour=p) or {}
+            before, changed = (b.get("per_each") if mode == "each" else b.get("per_pour")), ch["since"]
+        mm = drink_margin(cost_now, item["price"], before)
         rows.append(dict(mm, provider=k[0], item_id=k[1], item=item["name"], level=item["level"],
                          product_key=m["product_key"], product=display_name(l["description"]),
-                         pour_label=now["pour_label"], confidence=now["confidence"], assumes=now["assumes"],
+                         pour_label=label, confidence=now["confidence"],
+                         assumes=now["assumes"] + ([assume] if assume else []),
                          changed_mdy=_mdy(changed) if changed else None))
     rows.sort(key=lambda r: -(r["cost_pct"] or 0))
     # Suggestions: menu items not mapped whose name shares words with a
     # bought liquor, wine or beer product. Never used until confirmed.
     products = {}
+    from bar.classify import is_keg
     for sk, v in analysis["series"].items():
         l = v["line"]
         if l["category"] in ("liquor", "wine", "beer"):
-            products.setdefault(l["product_key"], (display_name(l["description"]), _words(l["description"])))
+            keg = is_keg(l["description"], l.get("uom"))
+            pk = parse_pack(l["description"], l.get("uom"), l["category"])
+            cont = pk.get("container_oz") if pk.get("size_source") == "parsed" and not keg else None
+            products.setdefault(l["product_key"], (display_name(l["description"]), _words(l["description"]), keg, cont,
+                                                      l["category"]))
     # Only what the POS sells as a drink (owner, 10/15/26: the wing sauce
     # "Blueberry Scotch Bonnet" was offered Glenmorangie Scotch), on the
     # recipe cards' matcher: a brand word, not a spirit word, and the same
     # beer variety ("Coors Banquet" is not Coors Light).
-    from bar.variance import _best_product, _words as _vwords, variants, stated_oz, _POS_NOISE, _NOT_ITEM_RE
-    vprod = {pk: (name, _vwords(name)) for pk, (name, _pw) in products.items() if not _NOT_ITEM_RE.search(name)}
+    from bar.variance import _best_product, _words as _vwords, form_fits, variants, stated_oz, _POS_NOISE, _NOT_ITEM_RE
+    vprod = {pk: (name, _vwords(name)) for pk, (name, _pw, _k, _c, _cat) in products.items() if not _NOT_ITEM_RE.search(name)}
     sugg = []
     for k, item in menu.items():
         if k in mapped or (drink_items is not None and k not in drink_items):
@@ -184,7 +202,10 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
         if not w:
             continue
         want = variants(item["name"])
-        pool = {pk: v for pk, v in vprod.items() if variants(v[0]) == want}
+        # The same variety, and never across a draft / can boundary or a
+        # stated container size (ING-20: "Miller Lite Draft" is not the cans).
+        pool = {pk: v for pk, v in vprod.items() if variants(v[0]) == want
+                and form_fits(item["name"], products[pk][4], products[pk][2], products[pk][3])}
         pk, name, score = _best_product(" ".join(sorted(w)), pool)
         # A weak name match is not shown at all (owner, 10/15/26: "hide weak
         # name matches"): it needs half its words shared, or the product's

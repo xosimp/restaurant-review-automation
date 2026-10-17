@@ -26,7 +26,10 @@ def _count(end, food, beer=500.0, status="Submitted"):
 
 def _kitchen(db):
     """EJ's shape: the chart of accounts, $200 of food sales a night, a
-    $2,000 produce invoice five days ago, the recipe book and its sales."""
+    $2,000 produce invoice five days ago, the recipe book and its sales -
+    ten Brisket Sammies a night for 20 nights, $180 of the $200, so the
+    priced dish covers enough of food sales for its recipe % to stand for
+    them (FC-CALC-07: one dish at 13% of sales used to set "expected")."""
     rid = _rid(db)
     bo.read_file(rid, "coa.csv", COA.encode(), db_path=db)
     c = _conn(db)
@@ -41,7 +44,7 @@ def _kitchen(db):
                                           "unit": "Case", "qty": "100.00", "amt": "20.00", "ext": "2000.00"}]}]},
         db_path=db)
     _invoice(db, rid)
-    _sold(db, rid, "Brisket Sammy", 20, 18.0)
+    _sold(db, rid, "Brisket Sammy", 200, 18.0)
     br.load(rid, BOOK, db_path=db)
     return rid
 
@@ -69,8 +72,10 @@ def test_waste_is_what_the_kitchen_used_beyond_what_the_recipes_say(db):
     assert (p["start"], p["end"], p["days"]) == ((a + timedelta(days=1)).isoformat(), b.isoformat(), 14)
     assert p["bought"] == 2000.0 and p["used"] == 1000.0 + 2000.0 - 900.0
     assert p["food_sales"] == 14 * 200.0 and p["nights"] == 14
-    # The sammy is the one fully priced dish: $5.08 of recipe on an $18 plate.
+    # The sammy is the one fully priced dish: $5.08 of recipe on an $18
+    # plate, $2,520 of the $2,800 of food sales (90%).
     assert p["recipe_pct"] == round(100 * (4.455 + 0.125 + 0.5) / 18.0, 1)
+    assert p["recipe_sales"] == 14 * 180.0 and p["coverage_pct"] == 90.0
     assert p["expected"] == round(2800.0 * p["recipe_pct"] / 100, 2)
     assert p["waste"] == round(p["used"] - p["expected"], 2)
     assert p["rate"] == round(100 * p["waste"] / 2000.0, 1)
@@ -98,7 +103,10 @@ def test_the_trend_charts_measured_periods_and_food_cost_gets_every_count(db):
     bc.save_counts(rid, {"inventory_counts": [_count(b, 900.0)]}, db_path=db)
     weeks, total = waste_trend.load_waste_history(rid, db_path=db)
     assert [w["week_end"] for w in weeks] == [b.isoformat()] and total == 1
-    assert weeks[0]["waste"] == bc.waste_periods(rid, db_path=db)[0]["waste"] and weeks[0]["purchased"] == 2000.0
+    # A 14-day period is put per week (FC-CALC-13): half its waste and purchases.
+    period = bc.waste_periods(rid, db_path=db)[0]
+    assert weeks[0]["waste"] == round(period["waste"] * 7 / 14, 2) and weeks[0]["purchased"] == 1000.0
+    assert weeks[0]["period_waste"] == period["waste"] and weeks[0]["days"] == 14 and weeks[0]["per_week"]
     assert weeks[0]["start"] == (a + timedelta(days=1)).isoformat(), "the period the counts bracket, not a guessed week"
     assert len(waste_trend.load_waste_history(rid, db_path=db, include_unmeasured=True)[0]) == 2
 
@@ -127,6 +135,7 @@ def test_the_read_covers_the_last_complete_fiscal_week():
 
 def test_the_read_states_measured_figures_and_never_example_data(db):
     import backoffice_read as brd
+    from time_utils import mdy
     rid = _kitchen(db)
     today = TODAY
     out = brd.food_read(rid, restaurant=_R(today.weekday()), today=today, db_path=db)
@@ -134,7 +143,10 @@ def test_the_read_states_measured_figures_and_never_example_data(db):
     assert (out["week_start"], out["week_end"]) == (s.isoformat(), e.isoformat())
     f = out["facts"]
     assert f["bought"] == 2000.0 and f["food_sales"] == 1400.0 and f["pct"] == round(100 * 2000 / 1400, 1)
-    assert out["lead"].startswith(f"{f['pct']}% bought vs sold"), "a headline, then points - never one paragraph"
+    # The fixture's newest invoice is five days old, so the week's invoices
+    # are not all in: the lag leads, "so far", no up or down (AI-12).
+    assert out["lead"] == (f"Invoices are on file through {mdy(f['invoices_through'])}, so the week's purchases "
+                           f"may be short: {f['pct']}% bought vs sold so far."), "a headline, then points"
     labels = [p["label"] for p in out["points"]]
     assert labels[0] == "Bought" and "By recipe" in labels and "Next" in labels, "no counts on file yet"
     assert out["points"][0]["text"] == "$2,000 of food against $1,400 of food sales"
@@ -171,7 +183,10 @@ def test_food_cost_runs_count_to_count_on_back_office_invoices_and_food_sales(db
     out = cogs.build_food_cost_pct(rid, db_path=db, today=TODAY)
     assert out["ok"] and (out["start"], out["end"]) == ((a + timedelta(days=1)).isoformat(), b.isoformat())
     assert (out["opening"], out["purchases"], out["closing"]) == (1000.0, 2000.0, 900.0)
-    assert out["net_sales"] == 14 * 200.0, "food sales, never net sales with the bar in it"
+    # One denominator key on every path (FC-CALC-11): food_sales; a Back
+    # Office kitchen has no net sales in it at all.
+    assert out["food_sales"] == 14 * 200.0, "food sales, never net sales with the bar in it"
+    assert out["sales_basis"] == "food_sales" and out["net_sales"] is None
     assert out["pct"] == round(2100.0 / 2800.0 * 100, 1) and out["window_days"] == 14
 
 
@@ -188,7 +203,7 @@ def test_the_margin_line_is_the_owners_target_else_100_minus_the_food_cost_targe
     rid = _rid(db)
     r = models.get_restaurant(rid, db_path=db)
     t = br.margin_target(r)
-    assert t["source"] == "food_cost_target" and t["pct"] == round(100 - float(__import__("cogs").dish_reference(r)["pct"]), 1)
+    assert t["source"] == "from_food_target" and t["pct"] == round(100 - float(__import__("cogs").dish_reference(r)["pct"]), 1)
     models.update_restaurant(rid, {"plate_margin_target_pct": 72.5}, db_path=db)
     r = models.get_restaurant(rid, db_path=db)
     assert r.plate_margin_target_pct == 72.5, "whitelisted, hydrated"

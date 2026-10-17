@@ -3596,14 +3596,34 @@ def _prune_inventory_history(conn, deadline=None, refused=None):
         # An old row goes when a later snapshot of its week exists (the
         # same rows the per-week "latest id" subquery kept, in SQL Postgres
         # takes too — it refused that GROUP BY's ungrouped week_end).
-        cur = conn.execute(
-            "DELETE FROM inventory_history WHERE week_end < date('now', ?) AND EXISTS ("
+        # A snapshot taken on a real count stays (food & bar audit 10/16/26,
+        # FC-CALC-02): food cost % is anchored only on counted snapshots,
+        # dated by the count day, and the week's latest one is often not it.
+        # Counted is read from the items (waste_trend._counted), so the
+        # candidates are read one at a time and only the rest deleted.
+        import waste_trend as _wt
+        from datetime import date as _ih_date
+        cand = conn.execute(
+            "SELECT id, week_end FROM inventory_history WHERE week_end < date('now', ?) AND EXISTS ("
             "  SELECT 1 FROM inventory_history h2 WHERE h2.restaurant_id = inventory_history.restaurant_id"
             "  AND date(h2.week_end, 'weekday 0', '-6 days') = date(inventory_history.week_end, 'weekday 0', '-6 days')"
             "  AND (h2.week_end > inventory_history.week_end OR (h2.week_end = inventory_history.week_end"
             "       AND h2.id > inventory_history.id)))",
-            (f"-{daily_days} days",))
-        n += max(0, cur.rowcount or 0)
+            (f"-{daily_days} days",)).fetchall()
+        drop = []
+        for row in cand:
+            try:
+                got = conn.execute("SELECT items_json FROM inventory_history WHERE id=?", (row["id"],)).fetchone()
+                items = json.loads(got["items_json"]) if got and got["items_json"] else None
+                kept = bool(items) and _wt._counted(items, _ih_date.fromisoformat(str(row["week_end"])[:10]))[0]
+            except Exception:
+                kept = False
+            if not kept:
+                drop.append(int(row["id"]))
+        for i in range(0, len(drop), 500):
+            part = drop[i:i + 500]
+            dc = conn.execute(f"DELETE FROM inventory_history WHERE id IN ({','.join('?' * len(part))})", tuple(part))
+            n += max(0, dc.rowcount or 0)
     elif refused is not None and retention_state("inventory_daily_detail")["state"] == "below_floor":
         refused.append(retention_state("inventory_daily_detail"))
     conn.commit()

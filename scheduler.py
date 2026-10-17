@@ -3762,6 +3762,59 @@ def run_learning_memory():
     return c
 
 
+def food_cost_diagnosis_one(restaurant_id):
+    """One restaurant's food cost diagnosis: {"diagnosed": 1} or {"skipped":
+    why}; raises on a failure. The body both the direct-call sweep
+    (run_food_cost_diagnoses) and the scheduler's queue rows
+    (food_cost_diagnoses_pass -> strategy_jobs LEARNERS
+    "food_cost_diagnosis", run by the queue worker) run."""
+    from models import get_restaurant
+    import food_cost_intelligence as fci
+    r = get_restaurant(restaurant_id)
+    # A restaurant whose AI budget is spent gets no diagnosis rather than a
+    # refused call and a captured exception.
+    if r and _ai_budget_spent(restaurant_id):
+        return {"skipped": "ai budget spent"}
+    # Its batched read (#58) has not landed by now: stopped waiting for, and
+    # written synchronously here. One that landed is reused by diagnose()'s
+    # evidence-hash rule.
+    _cancel_open_batch_items(fci.BATCH_WORKFLOW, restaurant_id)
+    out = fci.diagnose(restaurant_id)
+    if not (out and out.get("ok")):
+        return {"skipped": "no diagnosis"}
+    # A fresh cause makes every cached food-cost narrative for this
+    # restaurant out of date — it is what the narrative is now built around.
+    # (In the queue worker this drops that process's copy; the web
+    # process's own expires on its five-minute TTL.)
+    try:
+        from client_api import invalidate_insight_cache
+        invalidate_insight_cache(restaurant_id)
+    except Exception:
+        pass
+    return {"diagnosed": 1}
+
+
+def food_cost_diagnoses_pass(day=None):
+    """What scheduler_loop runs at 6am for the food cost diagnoses (food &
+    bar audit 10/16/26 SCALE-07): the batch's landed answers collected on
+    the scheduler thread, then one queue row per Food Cost restaurant for
+    the queue worker (strategy_jobs.fan_out) — never the 40-minute inline
+    sweep in the web process, which reached ~1,000 restaurants a night. The
+    morning briefs wait for the rows to finish (QUEUED_INPUTS). Standard
+    counts are the rows queued. run_food_cost_diagnoses stays the direct-call
+    body (Run now, a script)."""
+    from models import get_conn
+    import strategy_jobs
+    _collect_before_cancelling("food_cost_diagnoses")
+    conn = get_conn()
+    try:
+        ids = [row["id"] for row in conn.execute(
+            "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()).fetchall()]
+    finally:
+        conn.close()
+    return strategy_jobs.fan_out("food_cost_diagnosis", ids, day or _chi_now().date())
+
+
 def run_food_cost_diagnoses():
     """Daily — the root-cause read over each restaurant's ranked cost drivers.
 
@@ -3770,9 +3823,10 @@ def run_food_cost_diagnoses():
     restaurant over the drivers food_cost_intelligence.cost_drivers already
     ranked, so it runs here rather than on the critical path of a page load.
     The insight endpoint and the morning brief both READ what this writes.
+    The direct-call body (Run now, a script): the scheduler fans the same
+    per-restaurant work out to the queue (food_cost_diagnoses_pass).
     """
-    from models import get_conn, get_restaurant
-    import food_cost_intelligence as fci
+    from models import get_conn
     _collect_before_cancelling("food_cost_diagnoses")
     conn = get_conn()
     rows = conn.execute(
@@ -3784,32 +3838,9 @@ def run_food_cost_diagnoses():
 
     def _one(rid):
         try:
-            r = get_restaurant(rid)
-            # A restaurant whose AI budget is spent gets no diagnosis rather
-            # than a refused call and a captured exception.
-            if r and _ai_budget_spent(rid):
-                with lock:
-                    c["skipped"] += 1
-                return
-            # Its batched read (#58) has not landed by now: stopped waiting
-            # for, and written synchronously below. One that landed is
-            # reused by diagnose()'s evidence-hash rule.
-            _cancel_open_batch_items(fci.BATCH_WORKFLOW, rid)
-            out = fci.diagnose(rid)
-            if out and out.get("ok"):
-                with lock:
-                    c["diagnosed"] += 1
-                # A fresh cause makes every cached food-cost narrative for
-                # this restaurant out of date — it is what the narrative is
-                # now built around.
-                try:
-                    from client_api import invalidate_insight_cache
-                    invalidate_insight_cache(rid)
-                except Exception:
-                    pass
-            else:
-                with lock:
-                    c["skipped"] += 1
+            res = food_cost_diagnosis_one(rid)
+            with lock:
+                c["diagnosed" if res.get("diagnosed") else "skipped"] += 1
         except Exception as e:
             with lock:
                 c["failed"] += 1
@@ -5197,15 +5228,28 @@ def _tick_pause():
     time.sleep(SCHEDULER_TICK_SECONDS)
 
 
+# Inputs whose work the job fans out onto the queue (SCALE-07): settled only
+# once the job ran AND its rows for the day have finished.
+QUEUED_INPUTS = {"food_cost_diagnoses": "food_cost_diagnosis"}
+
+
 def _morning_input_pending(ops, now, inputs=BRIEF_INPUTS):
     """The first of `inputs` that is due today and not settled, or None —
-    always None from BRIEF_INPUT_WAIT_UNTIL_HOUR on."""
+    always None from BRIEF_INPUT_WAIT_UNTIL_HOUR on. A queued input is
+    settled once its rows are done too (QUEUED_INPUTS)."""
     if now.hour >= BRIEF_INPUT_WAIT_UNTIL_HOUR:
         return None
     day = str(now.date())
     for job, hour in inputs:
         if now.hour >= hour and not ops.settled(job, day):
             return job
+        if now.hour >= hour and job in QUEUED_INPUTS:
+            try:
+                import strategy_jobs
+                if strategy_jobs.open_rows(QUEUED_INPUTS[job], day):
+                    return job
+            except Exception as e:
+                log.warning(f"queued input {job} not read: {e}")
     return None
 
 
@@ -5701,8 +5745,8 @@ def scheduler_loop():
                     _ops.settled("food_cost_diagnoses_batch", _d) and \
                     _batch_waited("food_cost_diagnosis", now) and \
                     _ops.claim_period("food_cost_diagnoses", str(today)):
-                log.info("Running food cost root-cause diagnoses...")
-                if not _ops.run_in_lane("sweep", "food_cost_diagnoses", run_food_cost_diagnoses):
+                log.info("Queueing food cost root-cause diagnoses...")
+                if not _ops.run_in_lane("sweep", "food_cost_diagnoses", food_cost_diagnoses_pass):
                     _ops.release_period("food_cost_diagnoses", str(today))
 
             # 6am+ — close outcome trackers whose window ended and mark met
@@ -5791,10 +5835,12 @@ def scheduler_loop():
 
             # Hourly on Mondays — from 9am local, each restaurant's biggest
             # bar price increase that held, worth $25 a month, pushed once
-            # (bar_signals.run_price_push; barfix W9, Decision 7).
+            # (barfix W9, Decision 7): the restaurants in their window
+            # claimed here, each push a queue row for the queue worker
+            # (strategy_jobs.bar_price_push_pass; food & bar audit SCALE-07).
             if now.weekday() == 0 and _ops.claim_period("bar_price_push", f"{today}-{now.hour}"):
-                from bar_signals import run_price_push
-                _ops.run_job("bar_price_push", run_price_push)
+                from strategy_jobs import bar_price_push_pass
+                _ops.run_job("bar_price_push", bar_price_push_pass)
 
             # Hourly — shift requests whose shift has passed expire (a swap
             # for last Tuesday no longer executes), and an open shift still

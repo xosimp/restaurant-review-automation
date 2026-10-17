@@ -240,14 +240,21 @@ def diagnosis_source(age_days, as_of_iso) -> dict:
             "state": ce.state(pct), "error": None}
 
 
-def diagnosis_anchor_strength(dg):
+def diagnosis_anchor_strength(dg, by_band=False):
     """How strongly unattended output may lean on a stored diagnosis's cause
     (DH3-9): "likely" while it is within its refresh, "association" once it
     is stale, None (no anchor) past STALE_ANCHOR_MAX_DAYS or when its age
-    can't be read."""
+    can't be read.
+
+    `by_band` (the food read, AI-14): a diagnosis whose own capped band is
+    "low" — the model rated it low, or the validator capped it there for
+    an unverified figure — is a hypothesis, so it anchors an association
+    ("may be", "consistent with") even when fresh, never "Most likely"."""
     if not dg or not dg.get("cause"):
         return None
     if not dg.get("stale"):
+        if by_band and str(dg.get("confidence") or "low").strip().lower() == "low":
+            return "association"
         return "likely"
     age, _iso = diagnosis_age(dg)
     if age is None or age > STALE_ANCHOR_MAX_DAYS:
@@ -286,21 +293,25 @@ def review_diagnosis_input(dg, restaurant_row=None) -> dict:
 def food_diagnosis_input(restaurant_id, dg, db_path=None) -> dict:
     """THE Evidence Strength input of the stored food cost diagnosis —
     read by the Food Cost card, Home and the one-thing hero alike (B1 H3/
-    H4). Its sample is the food data itself — the ISO weeks of inventory
-    counts in the last eight (waste_trend.load_waste_history, N_FULL
-    "weeks") — raised boundedly by each other module whose verified figure
-    agrees, capped by the validator's capped band. A diagnosis with no
-    cross-check used to read 0% while its prose said "medium" (B1 H4)."""
+    H4). Its sample is the food data itself — the ISO weeks of the last
+    eight holding a REAL inventory count (waste_trend.count_weeks, AI-06;
+    N_FULL "weeks"), never weeks of daily snapshots — raised boundedly by
+    each other module whose verified figure agrees, capped by the
+    validator's capped band. A diagnosis with no cross-check used to read
+    0% while its prose said "medium" (B1 H4)."""
     dg = dg or {}
     try:
-        from waste_trend import load_waste_history
-        weeks, _t = load_waste_history(restaurant_id, 8, db_path=db_path)
-        n = len(weeks or [])
+        from waste_trend import count_weeks
+        n = count_weeks(restaurant_id, 8, db_path=db_path)
     except Exception as e:
-        print(f"[rec_trust] food weeks unreadable for {restaurant_id}: {e}")
+        try:
+            import ops
+            ops.capture(e, job="food_diagnosis_input", context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            pass
         n = None
     k = verified_evidence_count(dg)
-    basis = (f"{n} week{'s' if n != 1 else ''} of inventory counts" if n is not None
+    basis = (f"{n} week{'s' if n != 1 else ''} with an inventory count in the last 8" if n is not None
              else "the counts could not be read")
     return diagnosis_evidence(dg, n, "weeks", basis, corroborating=k)
 

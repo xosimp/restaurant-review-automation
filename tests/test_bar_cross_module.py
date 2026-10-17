@@ -203,7 +203,9 @@ def test_the_price_push_is_a_registered_job_refused_off_the_scheduler(db_path, m
     spec = jobs_registry.JOBS["bar_price_push"]
     assert spec["target"] == ("bar_signals", "run_price_push") and spec["sends"] is True
     src = open(os.path.join(ROOT, "scheduler.py"), encoding="utf-8").read()
-    assert '_ops.run_job("bar_price_push", run_price_push)' in src
+    # The loop queues the pushes (food & bar audit 10/16/26 SCALE-07); Run
+    # now still runs run_price_push, the registry's target.
+    assert '_ops.run_job("bar_price_push", bar_price_push_pass)' in src
     rid = _rid(db_path)
     _bar(db_path, rid)
     monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: False)

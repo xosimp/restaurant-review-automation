@@ -391,8 +391,13 @@ def opportunity(restaurant_id: int, db_path: str = DB_PATH, denied_modules=None)
                     _dated(items, withheld, restaurant, {"key": "inventory", "label": "Waste above tolerance",
                                                           "monthly": round(v, 2), "module": "inventory"},
                            ("inventory", "waste"), None, db_path)
-        except Exception:
-            pass
+        except Exception as e:
+            # Degraded to no food item — reported, never silent (SCALE-11).
+            try:
+                import ops
+                ops.capture(e, job="value_delivered.opportunity", context=f"restaurant_id={restaurant_id} inventory")
+            except Exception:
+                pass
     return {"items": items,
             "monthly": round(sum(i["monthly"] for i in items), 2),
             # Items held back because a source they rest on is stale: named,

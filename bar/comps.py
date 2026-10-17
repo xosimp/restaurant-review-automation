@@ -23,6 +23,16 @@ It is never an accusation:
 The bar's lines: lines on bar tickets (an is_bar room or a "Bar" profit
 center); a store that marks no ticket as the bar's falls back to the lines
 of its beer, liquor and wine categories (the bar mapping), and says so.
+
+Comps (POS-14, 10/16/26): the totals carry the comp-type lines AND the
+check discounts that comped a whole ticket or were named "100%" — the same
+allocation the Bar's sales read as "Poured, not paid" (bar.sales._allocate
+over the same lines, per night) — so the two blocks agree. The by-shift
+rates read comp-type lines and voids only (a check discount has no line of
+its own to place on a shift), and say so (`shifts.basis_text`).
+
+Its span ends on the restaurant's own yesterday (time_utils), never the
+server's UTC date (POS-18).
 """
 import re
 from collections import defaultdict
@@ -115,11 +125,37 @@ def _game_nights(restaurant_id, start, end, db_path=None) -> set:
         return set()
 
 
+def _local_today(restaurant_id):
+    try:
+        from time_utils import restaurant_now_by_id
+        return restaurant_now_by_id(int(restaurant_id)).date()
+    except Exception:
+        return date.today()
+
+
+def _check_comps(rows, filed, is_bar_line) -> float:
+    """The check discounts on the bar's lines that comped a whole ticket or
+    were named "100%" — bar.sales._allocate's `comps100`, night by night, on
+    the cells `is_bar_line` keeps."""
+    from bar.sales import _allocate
+    by_night = defaultdict(list)
+    for r in rows:
+        by_night[r["business_date"]].append(r)
+    total = 0.0
+    for night in by_night.values():
+        cells, _basis = _allocate(night, filed)
+        for key, c in cells.items():
+            if is_bar_line(key):
+                total += c["comps100"]
+    return total
+
+
 def comps_block(restaurant_id, today=None, db_path=None) -> dict:
-    """{available, span, basis, totals {sales_usd, comp_usd, void_usd,
-    rate_pct, events}, game_nights, shifts {available, why | baseline_rate_pct,
-    by_bartender [...], outside}, flagged [...], note}."""
-    today = today or date.today()
+    """{available, span, basis, totals {sales_usd, comp_usd, comp_lines_usd,
+    check_comps_usd, void_usd, rate_pct, events}, game_nights, shifts
+    {available, why | baseline_rate_pct, by_bartender [...], outside,
+    basis_text}, flagged [...], note}."""
+    today = today or _local_today(restaurant_id)
     spike, min_dollars, min_events = _rules()
     conn = get_conn(db_path)
     try:
@@ -133,9 +169,11 @@ def comps_block(restaurant_id, today=None, db_path=None) -> dict:
             "SELECT ticket_id, is_bar, profit_center, server_name FROM pos_tickets WHERE restaurant_id=? "
             "AND business_date>=? AND business_date<=?", (int(restaurant_id), start, end)).fetchall()}
         rows = [dict(r) for r in conn.execute(
-            "SELECT ticket_id, business_date, item_id, kind, sales, loss_amount, reason, approver_id, item_at, "
-            "department, sales_category, category_id FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? "
-            "AND business_date<=? AND kind IN ('sale','comp','void')", (int(restaurant_id), start, end)).fetchall()]
+            "SELECT line_id, ticket_id, business_date, item_id, item_name, kind, sales, loss_amount, reason, "
+            "approver_id, item_at, department, sales_category, category_id, discounted, parent_line_id "
+            "FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? "
+            "AND business_date<=? AND kind IN ('sale','comp','void','discount')",
+            (int(restaurant_id), start, end)).fetchall()]
         names = {str(r[0]): r[1] for r in conn.execute(
             "SELECT employee_id, MAX(employee_name) FROM pos_punches WHERE restaurant_id=? AND employee_id IS NOT NULL "
             "GROUP BY employee_id", (int(restaurant_id),)).fetchall()}
@@ -145,14 +183,22 @@ def comps_block(restaurant_id, today=None, db_path=None) -> dict:
         conn.close()
     bar_tickets = {t for t, r in tickets.items()
                    if r.get("is_bar") or _BAR_CENTER_RE.search(str(r.get("profit_center") or ""))}
+    from bar.mapping import Mapping, key_for
+    mp = Mapping(restaurant_id, db_path)
+
+    def drink_cell(key):
+        return mp.resolve(*key_for(*key))["kind"] in POUR_CATEGORIES
+    discounts = [r for r in rows if r["kind"] == "discount"]
+    rows = [r for r in rows if r["kind"] != "discount"]
     if bar_tickets:
         basis = "bar_tickets"
         mine = [r for r in rows if r["ticket_id"] in bar_tickets]
+        on_bar = [r for r in rows + discounts if r["ticket_id"] in bar_tickets]
+        check_comps = _check_comps(on_bar, filed, lambda key: True)
     else:
-        from bar.mapping import Mapping, key_for
-        mp = Mapping(restaurant_id, db_path)
         basis = "drink_categories"
-        mine = [r for r in rows if mp.resolve(*key_for(*filed(r)))["kind"] in POUR_CATEGORIES]
+        mine = [r for r in rows if drink_cell(filed(r))]
+        check_comps = _check_comps(rows + discounts, filed, drink_cell)
     games = _game_nights(restaurant_id, start, end, db_path)
 
     def tally(lines):
@@ -179,11 +225,21 @@ def comps_block(restaurant_id, today=None, db_path=None) -> dict:
     regular = [r for r in mine if r["business_date"] not in games]
     on_games = [r for r in mine if r["business_date"] in games]
     tot = tally(regular)
+    totals = public(tot)
+    # The check-discount comps sit in the totals beside the comp lines, as
+    # the Bar's "Poured, not paid" counts them (POS-14). Over the whole span:
+    # game nights included, so the two blocks agree.
+    totals["comp_lines_usd"] = totals["comp_usd"]
+    totals["check_comps_usd"] = round(check_comps, 2)
+    totals["comp_usd"] = round(totals["comp_usd"] + check_comps, 2)
+    loss = totals["comp_usd"] + totals["void_usd"]
+    totals["rate_pct"] = round(loss / tot["sales_usd"] * 100, 2) if tot["sales_usd"] > 0 else None
     out = {"available": bool(mine), "span": {"from": start, "to": end, "from_mdy": _mdy(start), "to_mdy": _mdy(end)},
            "basis": basis,
            "basis_text": ("the bar's tickets (its room or profit center)" if basis == "bar_tickets" else
                           "beer, liquor and wine lines (no ticket is marked as the bar's)"),
-           "totals": public(tot),
+           "comps_text": "comp lines and check discounts that comped a whole ticket or were named 100%",
+           "totals": totals,
            "reasons": [{"reason": k, "amount": round(v, 2)} for k, v in
                        sorted(tot["reasons"].items(), key=lambda kv: -kv[1])][:8],
            "game_nights": dict(public(tally(on_games)), nights=len({r["business_date"] for r in on_games})),
@@ -246,6 +302,7 @@ def comps_block(restaurant_id, today=None, db_path=None) -> dict:
     rows_out.sort(key=lambda r: (r["rate_pct"] is None, -(r["rate_pct"] or 0)))
     all_base = tally([r for i, s in enumerate(shifts) if s["date"] not in games for r in on_shift.get(i, [])])
     out["shifts"] = {"available": True, "by_bartender": rows_out, "min_shifts": MIN_SHIFTS,
+                     "basis_text": "comp-type lines and voids only — a check discount has no line to place on a shift",
                      "baseline_rate_pct": public(all_base)["rate_pct"],
                      "outside": dict(public(tally(outside)), why="sold outside every scheduled bartender's shift")}
     return out
