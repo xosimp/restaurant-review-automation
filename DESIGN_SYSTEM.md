@@ -487,7 +487,7 @@ matches what it holds:
 
 | Container | Looks like | Wears it |
 |---|---|---|
-| **Ledger** (money summary) | An obsidian face, a brass catch along the top, a jigger's **ruler engraved along its foot** (minor ticks every 8px, majors every 40px), etched dividers between figures | The Bar's bought-vs-sold figures (`.br-cfigs`), the report's forecast for the day after (`.dr-tmr>.hb-card:nth-child(2)`), Home's worth card (`.hb-card:has(>.hb-vsplit)`), Food Cost's Where the money is going (`.fc2-cfo`) |
+| **Ledger** (money summary) | An obsidian face, a brass catch along the top, a jigger's **ruler engraved along its foot** (minor ticks every 8px, majors every 40px), etched dividers between figures | The Bar's bought-vs-sold figures (`.br-cfigs`), the report's forecast for the day after (`.dr-tmr>.hb-card:nth-child(2)`), Home's worth card (`.hb-card:has(>.hb-vsplit)`). A card that mostly holds controls (Food Cost's Where the money is going, with its supplier picks) is never a Ledger. The ruler sits in its own 36px foot, never under text |
 | **Slate** (a list) | The matte plate (§4 materials); a row under the pointer or open lights a 3px ember rail | `.br-vlist`, every `.hb-card` not named here |
 | **Instrument** (a chart or gauges) | Recessed, faint reticle; never warmed by the pointer, never lifted | `.br-kegs`, the report's hour-by-hour, meal-period and department cards (`.dr-hourly`, `.dr-split`, `.dr-dep`) |
 | **Ember glass** (Cavnar AI speaking) | §4 materials | `.lb2-ai` and the rest, plus the report's executive summary (`.dr-read`) and Home's last-night card (`.dr-home`) |
@@ -496,7 +496,7 @@ matches what it holds:
 | **Docket** (a recommendation) | A row of **punched holes under its top edge** — a kitchen ticket's tear-off — and its number molten | Every `.hb-card.hb-rec` (Home, the report's priorities, Marketing's openings) |
 | **KPI tile** (a series' figure) | Its own hue (`--s`) entering at the top-left corner through `mask-corner-tl-v1.png` and running in along the top as a 1px filament; the figure metal tinted toward the hue | The Bar's category cards (`.br-cat`) — gold, blue, plum, never three ember outlines |
 
-Pedestal stays the page's one hero. The report's score card loses its full
+The materials' sheen (`sheen-v1.png`) is a fixed 120px catch along the top lip, never stretched to the card's height — on an opened section it ran down behind the tiles and read as a grey panel (owner, 10/17/26). Pedestal stays the page's one hero. The report's score card loses its full
 conic ember ring: the ember enters at its top-left corner and dies within a
 quarter of the rim, like every other pedestal.
 
@@ -1133,6 +1133,12 @@ figures. Recipe lines carry a % or nothing, never a confidence word.
 ---
 
 ## 11. Animation
+
+**Cost (web, 10/17/26).** A motion that never stops moves only `transform` and `opacity` — never `top`,
+`left`, `width` or `height` (the AI read's ember thread ran a layout every frame, forever, and Food Cost
+lagged). No `filter: blur()` on an animated or large layer (the heroes' ambient blob, 600×1000px on Food
+Cost's waste shell), and no `backdrop-filter` on a pane over the flat canvas — it blurs nothing visible
+and re-blurs every scroll and animation frame. `tests/test_vivid_layer.py` holds these.
 
 Web `cm-*` classes and keyframes in `dashboard.html`; iOS
 `CavnarMotion.swift` (the numbered set, `// MARK: - NN ·`) plus

@@ -683,3 +683,26 @@ def test_the_guest_score_reads_the_seven_days_ending_the_night(db):
     assert not thin["measured"] and "last 7 days" in thin["why"]
     old = scorecard._guests({"avg_rating": 4.6, "received": 6}, {})          # a report from before the window
     assert old["measured"] and old["detail"] == "4.6 across 6 reviews"
+
+
+def test_a_back_office_kitchen_is_never_not_connected(db, monkeypatch):
+    # Owner, 10/17/26: EJ's report said Food · Not connected while Food Cost
+    # showed its Back Office figures. With Back Office on file the block is
+    # that reading, purchase-based and said so; with nothing on file it is
+    # still not connected.
+    import backoffice_ap
+    rid = _rid(db, "Back Office Co")
+    monkeypatch.setattr(backoffice_ap, "feed_state", lambda r, **k: {"on_file": True, "invoices_through": "2026-10-15"})
+    monkeypatch.setattr(backoffice_ap, "food_bought_vs_sold", lambda r, **k: {
+        "available": True, "window": {"from_mdy": "9/18/26", "to_mdy": "10/15/26", "days": 28,
+                                      "purchases": 50000.0, "sales": 118000.0, "pct": 42.4, "withheld": None}})
+    b = block_food.collect(_ctx(db, rid))
+    assert b["status"] == dsr.READY and b["source"] == "backoffice"
+    assert b["metrics"]["bought_vs_sold_pct"] == 42.4 and b["metrics"]["food_bought"] == 50000.0
+    bo = b["detail"]["backoffice"]
+    assert bo["from_mdy"] == "9/18/26" and bo["invoices_through"] == "10/15/26" and "Purchase-based" in bo["basis"]
+    assert "est_food_cost_pct" not in b["metrics"]     # never called a food cost
+
+    monkeypatch.setattr(backoffice_ap, "feed_state", lambda r, **k: {"on_file": False})
+    b = block_food.collect(_ctx(db, rid))
+    assert b["status"] == dsr.NOT_CONNECTED and b["reason"].startswith("Inventory isn't set up")

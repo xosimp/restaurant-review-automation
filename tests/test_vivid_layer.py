@@ -76,3 +76,22 @@ def test_every_container_is_documented():
     for name in ("**Ledger**", "**Slate**", "**Instrument**", "**Ember glass**", "**Register**", "**Signal**",
                  "**Docket**", "**KPI tile**", "--vx-heat", "white-hot", "molten", "silver", "foam head", "pour line"):
         assert name in DOC, name
+
+
+def test_endless_motions_never_run_layout_or_blur():
+    # Food Cost lagged (owner, 10/17/26): the ember thread animated top/left
+    # forever, the hero's ambient blob carried a blur filter, and the glass
+    # re-blurred its backdrop every frame.
+    for name in ("emberTravel", "emberTravelH", "brandAmbient"):
+        m = re.search(r"@keyframes " + name + r"\{(.*?)\}\}", DASH, re.S)
+        assert m, name
+        assert not re.search(r"(^|[{;])\s*(top|left|width|height)\s*:", m.group(1)), name
+    amb = re.search(r"\.rv2-hero:before,\.lb2-hero:before\{([^}]*)\}", DASH)
+    assert amb and "filter:blur" not in amb.group(1)
+    glass = re.search(r'\[data-theme="dark"\] \.lb2-ai,\[data-theme="dark"\] \.cp-ai,[^{]*\{([^}]*)\}', DASH)
+    assert glass and "backdrop-filter" not in glass.group(1)
+
+
+def test_sheen_is_a_fixed_top_lip():
+    assert "sheen-v1.png) 0 0/100% 100%" not in DASH
+    assert "sheen-v1.png) 0 0/100% 120px no-repeat" in DASH

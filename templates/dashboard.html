@@ -1403,7 +1403,7 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 /* hero: the module's focal point */
 .rv2-hero,.lb2-hero{position:relative;padding:26px 28px 24px;border-radius:20px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:var(--elev-hero);overflow:hidden;transition:box-shadow .25s ease,transform .25s ease}
 [data-theme="dark"] .rv2-hero,[data-theme="dark"] .lb2-hero{background:var(--surface-glass),var(--surface);border-color:var(--line-hi)}
-.rv2-hero:before,.lb2-hero:before{content:'';position:absolute;left:-12%;top:-45%;width:58%;height:130%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);filter:blur(14px);pointer-events:none;animation:brandAmbient 9s ease-in-out infinite alternate}
+.rv2-hero:before,.lb2-hero:before{content:'';position:absolute;left:-12%;top:-45%;width:58%;height:130%;background:radial-gradient(closest-side,var(--ambient),transparent 72%);pointer-events:none;will-change:transform,opacity;animation:brandAmbient 9s ease-in-out infinite alternate}
 .rv2-hero>*,.lb2-hero>*{position:relative}
 @keyframes brandAmbient{from{transform:translate(0,0) scale(1);opacity:.85}to{transform:translate(6%,4%) scale(1.08);opacity:1}}
 .lb2-hero .lb2-ai{margin-top:18px}
@@ -1458,8 +1458,10 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .ember-thread.h{width:64px;height:2px;margin:0 2px;background:linear-gradient(90deg,var(--ember2),var(--ember),var(--ember2))}
 .ember-thread.h:before{top:-3px;left:-2px;animation-name:emberTravelH}
 .ember-thread.fresh:after{content:'';position:absolute;left:-6px;bottom:-7px;width:14px;height:14px;border-radius:50%;border:2px solid var(--ember);opacity:.7;animation:emberRing 2.2s ease-out infinite}
-@keyframes emberTravel{0%{top:-2px;opacity:0}12%{opacity:1}88%{opacity:1}100%{top:calc(100% - 6px);opacity:0}}
-@keyframes emberTravelH{0%{left:-2px;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 6px);opacity:0}}
+/* transform, never top/left: the dot ran a layout every frame, forever, beside every AI read - Food Cost
+   lagged (owner, 10/17/26). The tracks are fixed (68px tall, 64px wide), so the travel is too. */
+@keyframes emberTravel{0%{transform:translateY(0);opacity:0}12%{opacity:1}88%{opacity:1}100%{transform:translateY(64px);opacity:0}}
+@keyframes emberTravelH{0%{transform:translateX(0);opacity:0}12%{opacity:1}88%{opacity:1}100%{transform:translateX(60px);opacity:0}}
 @keyframes emberRing{0%{transform:scale(.6);opacity:.8}100%{transform:scale(1.8);opacity:0}}
 /* Home's module-to-finding line becomes the thread */
 .hb-join .ln:before{left:-2px;top:-3px;margin:0;width:8px;height:8px;box-shadow:0 0 12px 3px color-mix(in srgb,var(--ember) 55%,transparent);animation:emberTravelH 2.4s ease-in-out infinite}
@@ -7981,7 +7983,7 @@ svg:hover .hb-xh{opacity:1}
   var BLOCKS=['sales','labor','food','reviews','intel','marketing','closeout'];
   var BLOCK={sales:'Sales',labor:'Labor',service:'Service',food:'Food',reviews:'Reviews',marketing:'Marketing',intel:'Intel',closeout:'Manager close-out'};
   var BSTATUS={awaiting:'Awaiting',unavailable:'Unavailable',not_connected:'Not connected'};
-  var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar AI',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
+  var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar AI',backoffice:'Back Office',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
   var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
   var URGENCY={before_service:'Today',this_week:'This week',next_schedule:'Next schedule',next_order:'Next order'};
   var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand'};
@@ -9343,6 +9345,7 @@ svg:hover .hb-xh{opacity:1}
     if(name==='reviews'&&isNum(m.received))return hn(cnt(m.received))+' new'+(isNum(m.avg_rating)?' · '+hn(m.avg_rating.toFixed(1)+'★'):'');
     // A closed block still carries its number (ID1-17).
     if(name==='food'&&isNum(m.est_food_cost_pct))return hn(pct(m.est_food_cost_pct))+' est. food cost';
+    if(name==='food'&&isNum(m.bought_vs_sold_pct))return hn(pct(m.bought_vs_sold_pct))+' bought vs sold';
     if(name==='marketing'&&isNum(m.posts_published))return hn(cnt(m.posts_published))+' post'+(m.posts_published===1?'':'s')+(isNum(m.reach)?' · '+hn(cnt(m.reach))+' reach':'');
     if(name==='intel'&&isNum(m.weather_high_f))return 'High '+hn(Math.round(m.weather_high_f)+'°')+(isNum(m.events_listed)?' · '+hn(cnt(m.events_listed))+' event'+(m.events_listed===1?'':'s'):'');
     if(name==='closeout'&&b.detail&&b.detail.submitted_by)return 'Filed by '+esc(b.detail.submitted_by);
@@ -9428,6 +9431,15 @@ svg:hover .hb-xh{opacity:1}
       return h;},
     food:function(b){
       var m=b.metrics||{},d=b.detail||{},t='',est=d.estimate||{};
+      // A Back Office kitchen (dsr/block_food._backoffice, 10/17/26): food bought vs sold over its window,
+      // purchase-based and said so - never "not connected" while Food Cost shows its figures.
+      if(d.backoffice){var bo=d.backoffice;
+        if(!bo.available)return note(esc(bo.why_not||'Back Office food invoices are on file; the window isn\u2019t readable yet.'));
+        var win=(bo.from_mdy&&bo.to_mdy)?hn(bo.from_mdy)+' \u2013 '+hn(bo.to_mdy):'';
+        t=tile('Food bought vs sold',isNum(m.bought_vs_sold_pct)?esc(pct(m.bought_vs_sold_pct)):'\u2014',isNum(m.bought_vs_sold_pct)?win:(bo.withheld?prose(bo.withheld):win));
+        if(isNum(m.food_bought))t+=tile('Bought',esc(money(m.food_bought)),'food suppliers'+(bo.invoices_through?' \u00b7 invoices through '+hn(bo.invoices_through):''));
+        if(isNum(m.food_sold))t+=tile('Food sold',esc(money(m.food_sold)),'the POS\u2019s food sales');
+        return '<div class="hb-stats">'+t+'</div>'+note(esc(bo.basis||''));}
       if(has(m,'est_food_cost_pct'))t+=tile('Est. food cost',esc(pct(m.est_food_cost_pct)),(isNum(m.est_food_cost)?hn(money(m.est_food_cost,true))+' by recipe':'')+(isNum(m.recipe_coverage_pct)&&m.recipe_coverage_pct<100?' · '+hn(pct(m.recipe_coverage_pct,0))+' of units sold costed':''));
       if(has(m,'waste_logged'))t+=tile('Waste logged',esc(money(m.waste_logged,true)),isNum(m.waste_inferred)?hn(money(m.waste_counted,true))+' counted · '+hn(money(m.waste_inferred,true))+' inferred':'');
       if(isNum(m.variance_cost))t+=tile('Variance',esc(money(m.variance_cost,true)),isNum(m.variance_items)?hn(cnt(m.variance_items))+' item'+(m.variance_items===1?'':'s')+' over recipe':'');
@@ -49549,12 +49561,14 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .cp-card,[data-theme="dark"] .kx-card,[data-theme="dark"] #bar .br-card,[data-theme="dark"] .sw .lb2-preview,[data-theme="dark"] .sw-side,[data-theme="dark"] #bar .br-insl{
   border-color:transparent;
   background:
-    url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
+    url(/static/img/glow/sheen-v1.png) 0 0/100% 120px no-repeat padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     var(--cv-rim) border-box;
   box-shadow:var(--cv-lip),var(--cv-drop);
   transition:box-shadow .32s var(--cv-ease),transform .32s var(--cv-ease);
 }
+/* The sheen is the top lip's catch, a fixed 120px - stretched to the card's height, an opened section's
+   fade ran down behind its tiles and read as a grey panel the card's width (owner, 10/17/26). */
 /* What can be acted on lifts toward the light; what is only read warms. */
 [data-theme="dark"] .hb-card.lift:hover,[data-theme="dark"] .hb-card.hb-rec:hover,[data-theme="dark"] .hb-sig.cards .hb-sg:hover,
 [data-theme="dark"] .lb2-op:hover,[data-theme="dark"] .sb-card:hover,[data-theme="dark"] .ss-tile:hover,[data-theme="dark"] .cal-card:hover,
@@ -49595,7 +49609,8 @@ function sfw2RuleCheck(chk) {
     url(/static/img/glow/corner-tl-ember-v1.png) 0 0/100% 100% no-repeat padding-box,
     linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,#fff 3%),color-mix(in srgb,var(--surface) 80%,#000 6%)) padding-box,
     linear-gradient(132deg,color-mix(in srgb,var(--ember2) 70%,transparent),color-mix(in srgb,var(--ember2) 22%,transparent) 9%,rgba(255,248,240,.085) 24%,rgba(255,255,255,.04) 58%,rgba(0,0,0,.3)) border-box;
-  -webkit-backdrop-filter:blur(16px) saturate(135%);backdrop-filter:blur(16px) saturate(135%);
+  /* No backdrop blur: over the flat canvas it changed nothing visible and re-blurred the pane every scroll
+     and animation frame (Food Cost lagged, owner 10/17/26). The glass is its gradients and its corner light. */
   box-shadow:inset 0 -1px 0 rgba(0,0,0,.3),0 1px 0 rgba(0,0,0,.5),0 12px 28px -20px rgba(0,0,0,.75),-14px -10px 40px -32px color-mix(in srgb,var(--ember) 60%,transparent);
   transition:box-shadow .35s var(--cv-ease);
 }
@@ -49637,7 +49652,7 @@ function sfw2RuleCheck(chk) {
   border-left:1px solid transparent;
   background:
     var(--cv-spill) padding-box,
-    url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
+    url(/static/img/glow/sheen-v1.png) 0 0/100% 120px no-repeat padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
   box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
@@ -49729,7 +49744,7 @@ function sfw2RuleCheck(chk) {
 /* ── Slate: a list (bought vs sold) ──────────────────────────────────── */
 [data-theme="dark"] #bar .br-vlist{
   border-color:transparent;
-  background:url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,var(--cv-rim) border-box;
+  background:url(/static/img/glow/sheen-v1.png) 0 0/100% 120px no-repeat padding-box,linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,var(--cv-rim) border-box;
   box-shadow:var(--cv-lip),var(--cv-drop)}
 [data-theme="dark"] #bar .br-vr>summary{box-shadow:inset 0 0 0 transparent;transition:background .25s var(--vx-ease),box-shadow .3s var(--vx-ease)}
 [data-theme="dark"] #bar .br-vr>summary:hover,[data-theme="dark"] #bar .br-vr[open]>summary{background:rgba(255,240,226,.035);box-shadow:inset 3px 0 0 var(--vx-ember)}
@@ -49859,7 +49874,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] #panel-dsr .hb-card.dr-wins,[data-theme="dark"] #panel-dsr .hb-card.dr-risks{
   --cv-tone:var(--vx-gain);--cv-spill:url(/static/img/glow/signal-green-v1.png) 0 0/100% 100% no-repeat;
   border-color:transparent;
-  background:var(--cv-spill) padding-box,url(/static/img/glow/sheen-v1.png) 0 0/100% 100% no-repeat padding-box,
+  background:var(--cv-spill) padding-box,url(/static/img/glow/sheen-v1.png) 0 0/100% 120px no-repeat padding-box,
     linear-gradient(180deg,var(--cv-plate-top),var(--cv-plate-bot)) padding-box,
     linear-gradient(90deg,color-mix(in srgb,var(--cv-tone) 55%,transparent),rgba(255,244,230,.08) 18%,rgba(255,255,255,.035) 60%,rgba(0,0,0,.25)) border-box;
   box-shadow:inset 3px 0 0 var(--cv-tone),inset 9px 0 16px -10px color-mix(in srgb,var(--cv-tone) 70%,transparent),
@@ -49910,17 +49925,9 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .hb-rec .no{filter:drop-shadow(0 0 14px rgba(255,110,60,.3))}
 [data-theme="dark"] .hb-rec .meta .usd{color:var(--vx-ember-light);border-color:color-mix(in srgb,var(--vx-ember-hot) 40%,transparent);background:color-mix(in srgb,var(--vx-ember-hot) 10%,transparent)}
 
-/* Food Cost. Ledger: where the money is going (money at stake, its
-   drivers) - the driver's dollars molten. Register: plate costs' heading
-   row in the kicker's orange, a row lighting under the pointer. */
-[data-theme="dark"] #panel-inventory .fc2-cfo{
-  border-color:transparent;padding-bottom:22px;
-  background:
-    var(--vx-ruler-major) 18px calc(100% - 1px)/calc(100% - 36px) 10px no-repeat padding-box,
-    var(--vx-ruler) 18px calc(100% - 1px)/calc(100% - 36px) 5px no-repeat padding-box,
-    var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
-  box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
-[data-theme="dark"] #panel-inventory .fc2-cfo-hd{border-bottom-color:rgba(0,0,0,.55);box-shadow:0 1px 0 rgba(255,236,214,.05)}
+/* Food Cost. Where the money is going stays Slate (it holds the supplier picks, not a figure strip -
+   the ruler under them read as a stray pattern, owner 10/17/26); its driver's dollars are molten.
+   Register: plate costs' heading row in the kicker's orange, a row lighting under the pointer. */
 [data-theme="dark"] #panel-inventory .fc2-drv .n,[data-theme="dark"] #panel-inventory .fc2-drv .n .hb-num{
   background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
 [data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b),[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b) .hb-num{
@@ -49952,6 +49959,9 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) thead th{
   background:none;color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:nth-child(even) td{background-color:rgba(255,240,226,.018)}
+/* The orange rule is the only line under the head: the first row drops its own top rule (owner, 10/17/26). */
+[data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t,#bar .br-t2) tbody tr:first-child td{border-top-color:transparent}
+[data-theme="dark"] .fc2-pl-head+.fc2-pl-list>.fc2-pl-row:first-child{border-top-color:transparent}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody td{transition:background-color .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td{background-color:rgba(255,240,226,.048)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 var(--vx-ember)}

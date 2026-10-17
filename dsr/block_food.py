@@ -298,6 +298,36 @@ def _variance(ctx, ledger):
     }
 
 
+def _backoffice(ctx):
+    """A kitchen whose food is read from Back Office exports (recipes,
+    invoices, counts - backoffice_ap.feed_state on file) and not from
+    Cavnar AI's own inventory: the block is that reading, never "not
+    connected" (owner, 10/17/26: EJ's report said Not connected while Food
+    Cost showed its Back Office figures). Food bought vs sold over its
+    window to the last day both sides cover - purchase-based, said so, never
+    called a food cost - with the source named. None when nothing from Back
+    Office is on file."""
+    import backoffice_ap as bap
+    from time_utils import mdy
+    kw = {"db_path": ctx.db_path} if getattr(ctx, "db_path", None) else {}
+    state = bap.feed_state(ctx.restaurant_id, **kw)
+    if not state.get("on_file"):
+        return None
+    bvs = bap.food_bought_vs_sold(ctx.restaurant_id, today=ctx.business_date, **kw)
+    w = (bvs or {}).get("window") or {}
+    detail = {"backoffice": {
+        "available": bool((bvs or {}).get("available")),
+        "why_not": (bvs or {}).get("why_not"),
+        "from_mdy": w.get("from_mdy"), "to_mdy": w.get("to_mdy"), "days": w.get("days"),
+        "withheld": w.get("withheld"),
+        "invoices_through": mdy(state["invoices_through"]) if state.get("invoices_through") else None,
+        "basis": ("Purchase-based, from Back Office: what was paid food suppliers as a % of the POS's food "
+                  "sales over the window - a delivery or a stock-up moves it; a food cost % needs two counts."),
+    }}
+    metrics = {"bought_vs_sold_pct": w.get("pct"), "food_bought": w.get("purchases"), "food_sold": w.get("sales")}
+    return dsr.block(dsr.READY, source="backoffice", metrics=metrics, detail=detail)
+
+
 # ── the block ───────────────────────────────────────────────────────────────
 
 def collect(ctx):
@@ -312,6 +342,9 @@ def collect(ctx):
         return dsr.block(dsr.UNAVAILABLE, source="cavnar", block_name="food")
     _items, is_live, analysis = got
     if not is_live:
+        bo = common.guard(ctx, "food", "backoffice", lambda: _backoffice(ctx), gaps)
+        if bo:
+            return bo
         return dsr.block(dsr.NOT_CONNECTED, source="cavnar", block_name="food",
                          reason="Inventory isn't set up — no ingredients or counts on file")
 
