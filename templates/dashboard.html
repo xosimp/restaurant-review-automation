@@ -3339,7 +3339,16 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-focus .ft .also .m.rich{display:inline-flex;flex-direction:column;gap:3px;border-radius:12px;padding:8px 12px}
 .hb-focus .ft .also .m.rich .cf{margin-top:2px}
 .hb-also-ev{display:block;font-size:13px;font-weight:500;color:var(--ink3);line-height:1.45}
-.hb-dbasis{display:block;font-family:'Apfel Grotezk',sans-serif;margin-top:5px;font-size:12.5px;font-weight:500;color:var(--ink3);line-height:1.45;letter-spacing:0;text-transform:none}
+/* What a dollar figure covers sits behind an info tip beside the figure
+   (text round, 10/17/26): the scope is one tap away, never a second line. */
+.hb-dbasis.cav-it{margin-left:8px;font-family:'Apfel Grotezk',sans-serif;letter-spacing:0;text-transform:none}
+.hb-dbasis .cbtn.cav-ib,.hb-tip-i .cbtn.cav-ib{width:22px;height:22px;min-height:22px;min-width:22px;font-size:12px}
+.hb-tip-i.cav-it{margin-left:8px}
+/* The focus card clips its overflow, and its figure sits at the foot: the tip opens upward. */
+.hb-focus .cav-itp{top:auto;bottom:calc(100% + 10px)}
+#panel-home .hb-att .t.wrap{overflow:visible}
+/* A card is its own stacking context (will-change): an open tip lifts it over the next card. */
+#panel-home .hb-card:has(.cav-itp:not([hidden])),#panel-home .hb-bench:has(.cav-itp:not([hidden])){position:relative;z-index:30}
 .hb-clear.warn{color:var(--hb-warn);font-size:15.5px}
 /* a link between two modules — the "across your restaurant" mark */
 .hb-join{display:flex;align-items:center;margin:6px 0 16px;flex-wrap:wrap;row-gap:8px}
@@ -3368,10 +3377,11 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .hb-rec .hb-x{opacity:.5}.hb-rec:hover .hb-x{opacity:1}
 .hb-rec .why{font-size:14px;color:var(--ink2);line-height:1.45}
 .hb-rec .meta{display:flex;flex-wrap:wrap;gap:6px}
-.hb-rec .meta span{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 9px}
+.hb-rec .meta{align-items:center}
+.hb-rec .meta>span{font-size:11.5px;font-weight:600;letter-spacing:.04em;color:var(--ink3);background:var(--hb-inner);border:1px solid var(--hb-line2);border-radius:999px;padding:3px 9px}
 .hb-rec .meta .usd{color:var(--ember);border-color:var(--hb-line)}
-.hb-rec .meta .hb-dbasis{flex-basis:100%;background:none;border:0;padding:0;border-radius:0;font-size:12.5px;font-weight:500;letter-spacing:0;margin-top:0}
-.hb-rec .meta .hb-dbasis .hb-num{background:none;border:0;padding:0;font-size:inherit;letter-spacing:0}
+.hb-rec .meta>span.hb-dbasis{background:none;border:0;padding:0;border-radius:0;margin-left:0}
+.hb-rec-more .im{font-size:13px;color:var(--ink3);margin-top:6px}
 /* .hb-conf is now the shared .cf confidence line (K1), which carries its
    own tone; the old high/low colours (low was ember2, against §9) went
    with the band-only line. */
@@ -3524,6 +3534,8 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 /* A brief line's extras (9/29/26): the report's calls for tonight as a
    small recessed list, and a conflict's choice. */
 .hb-tl .it .t .hb-tl-calls{display:flex;flex-direction:column;gap:3px;margin-top:8px;padding:9px 12px;border-radius:10px;background:var(--hb-inner,var(--sf-recess));border:1px solid var(--hb-line2,var(--paper3))}
+.hb-tl .it .t .hb-tl-more{display:block;margin-top:6px}
+.hb-tl .it .t .hb-tl-more .hb-tl-calls{margin-top:0}
 .hb-tl .it .t .hb-tl-calls .k{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember2)}
 .hb-tl .it .t .hb-tl-calls .c{font-size:14px;font-weight:500;color:var(--ink2);line-height:1.45}
 .hb-tl .it .t .hb-tl-calls .c:before{content:'\2192';color:var(--ember2);margin-right:6px}
@@ -4434,15 +4446,23 @@ svg:hover .hb-xh{opacity:1}
     if(!el)return;
     load('home').then(function(d){
       if(!d||!d.ok||!(d.rows||[]).length){el.hidden=true;el.innerHTML='';return;}
-      var w=d.who||{},h='<div class="hb-fresh" aria-label="How you compare"><span class="hb-fresh-k">How you compare'+(w.text?' · '+num(w.text):'')+'</span>';
+      // Text round (10/17/26): who the rows are read against, and why there
+      // is no like-for-like group yet, sit behind one info tip by the kicker;
+      // a row names its group only when the rows come from different groups
+      // (#26), and the Confirm your profile action stays on the strip.
+      var w=d.who||{},bm=d.below_minimum||{},ba=bm.action,tip=[];
+      if(w.text)tip.push(num(w.text)+'.');
+      if(bm.text)tip.push(esc(bm.text));
+      if(ba&&ba.kind==='profile'){if(ba.suggestion)tip.push(esc(ba.suggestion));if(ba.can_edit===false)tip.push('The account owner can confirm it in Account.');}
+      var h='<div class="hb-fresh" aria-label="How you compare"><span class="hb-fresh-k">How you compare'
+        +(tip.length?'<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="hb-bench-tip" aria-expanded="false" aria-controls="hb-bench-tip" aria-label="What this is compared against">i</button><span class="cav-itp" id="hb-bench-tip" role="tooltip" hidden>'+tip.join(' ')+'</span></span>':'')+'</span>';
       if(d.strength&&isNum(d.strength.pct))h+='<span class="hb-fresh-it"><b>'+d.strength.pct+'%</b> comparison strength</span>';
-      // Each row names its own group and strength when the rows come from
-      // different groups (#26): one header credited them all to the first.
+      var mixed=w.kind==='mixed'||(w.groups||0)>1;
       for(var i=0;i<d.rows.length;i++){var r=d.rows[i];
-        h+='<span class="hb-fresh-it '+(PILL[r.tone]||'unknown')+'"><i></i><b>'+esc(r.label)+'</b> <span class="bs">'+num(r.value_text)+(r.standing?' · '+esc(r.standing):'')+(r.tag&&!d.strength?' <small>('+num(r.tag)+')</small>':'')+'</span>'
+        h+='<span class="hb-fresh-it '+(PILL[r.tone]||'unknown')+'"><i></i><b>'+esc(r.label)+'</b> <span class="bs">'+num(r.value_text)+(r.standing?' · '+esc(r.standing):'')+(r.tag&&!d.strength&&mixed?' <small>('+num(r.tag)+')</small>':'')+'</span>'
           +(r.action&&r.action.ask?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-ask="'+esc(r.action.ask)+'">Ask →</button>':(r.open_module?' <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-open-module="'+esc(r.open_module)+'">Open →</button>':''))+'</span>';}
+      if(ba&&ba.kind==='profile'&&ba.can_edit!==false)h+='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-bm-profile="1">'+esc(ba.label||'Confirm your profile')+' →</button>';
       h+='</div>';
-      if(d.below_minimum&&d.below_minimum.text)h+='<div class="bm-sub" style="margin-top:6px;font-size:12.5px;color:var(--ink3)">'+esc(d.below_minimum.text)+profileAction(d.below_minimum.action)+'</div>';
       el.innerHTML=h;el.hidden=false;
     }).catch(function(){el.hidden=true;});
   }
@@ -5283,6 +5303,19 @@ svg:hover .hb-xh{opacity:1}
     if(!g)return {};var ff=g.cross&&g.cross.fix_first;if(ff&&ff.what)return {};
     return att.length?{att:1}:(recs.length?{rec:1}:{});}
   function hbNorm(t){return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/^\s+|\s+$/g,'');}
+  // A why of two or more sentences shows its first (at least five words) and
+  // keeps the rest for the card's disclosure (text round, 10/17/26): [shown,
+  // rest]. A rest that carries a warning or a money caveat is never moved.
+  var HB_WHY_KEEP=/not money|money saved|estimat|opportunit|sample|not measured|out of date|projected|partial|guess/i;
+  function hbSplitWhy(t){
+    t=String(t||'').replace(/^\s+|\s+$/g,'');
+    var re=/[.!?](?=\s+[A-Z0-9$“"])/g,m;
+    while((m=re.exec(t))!==null){var head=t.slice(0,m.index+1),rest=t.slice(m.index+1).replace(/^\s+/,'');
+      if(head.split(/\s+/).length<5)continue;
+      if(!rest||HB_WHY_KEEP.test(rest))return [t,''];
+      return [head,rest];}
+    return [t,''];
+  }
   function hbFreshEvidence(ev,said){
     said=String(said||'');
     return (ev||[]).filter(function(x){var ns=String(x).match(/\d[\d,]*(?:\.\d+)?/g)||[];if(!ns.length)return true;
@@ -5363,6 +5396,9 @@ svg:hover .hb-xh{opacity:1}
     // only restates it.
     if(confirm&&hbNorm(confirm)===hbNorm(lead))confirm='';
     ev=hbFreshEvidence(ev,lead+' '+why);
+    // One sentence of why on the card (text round, 10/17/26); the rest opens
+    // first in its "Why this?" panel.
+    var whyRest='';if(why&&!clear){var wsp=hbSplitWhy(why);why=wsp[0];whyRest=wsp[1];}
     _hbFocusLead=kick+'|'+lead;
     var h='<section class="hb-card hero hb-focus'+(clear?' clear':'')+' hb-rise" id="hb-focus" aria-label="Today">';
     // Freshness is the header chip's to say (density fix #21); the card's
@@ -5391,7 +5427,7 @@ svg:hover .hb-xh{opacity:1}
     if(lo&&!clear){if(lo.caution&&window.recCautionHtml)h+=recCautionHtml(lo.caution);
       if(window.recPrevHtml)h+=recPrevHtml(lo);
       if(lo.conflict&&window.recConflictHtml)h+=recConflictHtml(lo.conflict,'home');}
-    var basis='';
+    var basis=whyRest?'<div style="margin-bottom:10px">'+num(whyRest)+'</div>':'';
     // The panel's kicker already says "What it rests on"; the list is not
     // titled twice (owner, 9/30/26).
     if(ev.length){basis+='<div style="margin-bottom:10px"><ul style="margin:0;padding-left:18px">';for(var e=0;e<ev.length;e++)basis+='<li>'+num(ev[e])+'</li>';basis+='</ul></div>';}
@@ -5510,7 +5546,14 @@ svg:hover .hb-xh{opacity:1}
   // What a dollar figure covers (dollars_basis): one Home page can carry
   // three labor figures - one weekday's trim, the whole schedule's gap, a
   // week of it - and each says its scope under the figure (B4 H7).
-  function hbDollarsBasis(b){return b?'<span class="hb-dbasis">covers '+num(String(b).replace(/\.$/,''))+'</span>':'';}
+  // Text round (10/17/26): the scope is an info tip (.cav-it) beside the
+  // figure, not a line under it. The note (an adjustment) rides in the same tip.
+  function hbDollarsBasis(b,note){
+    if(!b&&!note)return '';
+    hbDollarsBasis.n=(hbDollarsBasis.n||0)+1;var id='hb-db-'+hbDollarsBasis.n;
+    var t=(note?num(String(note).charAt(0).toUpperCase()+String(note).slice(1).replace(/\.$/,''))+'. ':'')+(b?'This figure covers '+num(String(b).replace(/\.$/,''))+'.':'');
+    return '<span class="cav-it hb-dbasis"><button type="button" class="cbtn cav-ib" data-itip="'+id+'" aria-expanded="false" aria-controls="'+id+'" aria-label="What this figure covers">i</button><span class="cav-itp" id="'+id+'" role="tooltip" hidden>'+t+'</span></span>';
+  }
   function hbRecDollars(r){
     if(!r||!r.dollars_monthly)return '';
     var adj=(typeof r.dollars_adjusted==='number'&&isFinite(r.dollars_adjusted))?r.dollars_adjusted:null;
@@ -5518,7 +5561,7 @@ svg:hover .hb-xh{opacity:1}
     var kw=esc(typeof cavMoneyKindWord==='function'?cavMoneyKindWord(r.dollars_kind||(r.money&&r.money.kind),'at stake'):'at stake');
     if(adj===null)return '<span class="usd hb-num">$'+Math.round(r.dollars_monthly).toLocaleString()+'/mo '+kw+'</span>'+hbDollarsBasis(r.dollars_basis);
     var n=+r.calibration_n||0,note=r.calibration_note||(n?'adjusted from '+n+' measured result'+(n===1?'':'s'):'adjusted from measured results');
-    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo '+kw+'</span><span>'+num(note)+'</span>'+hbDollarsBasis(r.dollars_basis);
+    return '<span class="usd hb-num" title="Stated $'+Math.round(r.dollars_monthly).toLocaleString()+'/mo before the adjustment">$'+Math.round(adj).toLocaleString()+'/mo '+kw+'</span>'+hbDollarsBasis(r.dollars_basis,note);
   }
   // One card, one lead (density fix #23): the title, why, the dollar figure,
   // the confidence as a pill and one action, with Done / Not for us. What
@@ -5527,7 +5570,9 @@ svg:hover .hb-xh{opacity:1}
   function hbRecCard(r,j,skip,isNew,trk,d){
     var c=r.confidence_detail||r.confidence||null,meta=[];
     if(r.timeframe)meta.push('<span>'+esc(r.timeframe)+'</span>');
-    if(r.impact)meta.push('<span>'+esc(r.impact)+'</span>');
+    // One sentence of why on the card (text round, 10/17/26); the rest, and
+    // what the card moves (its impact), wait under Details.
+    var ws=hbSplitWhy(r.why);
     // A kind that went quiet, shown again because its re-test date came or
     // its figure doubled (decisions.quiet_state, memory round 9/29/26).
     if(r.retest)meta.push('<span class="rt">Back for a re-test</span>');
@@ -5536,14 +5581,16 @@ svg:hover .hb-xh{opacity:1}
     if(r.action&&r.action.kind==='reprice')act='<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-reprice-key="'+esc(r.key)+'" data-reprice-dish="'+esc(r.action.dish)+'" data-reprice-price="'+esc(r.action.price)+'">'+esc(r.action.label||'Reprice')+'</button>';
     else if(r.action&&r.action.kind==='publish_replies')act='<button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="hbAct(\'publish_replies\',\'reviews\',this,'+(+r.action.count||0)+')">'+esc(r.action_label||'Publish now')+'</button>';
     var who=(d&&d.assignees)||[];
-    var more=(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
-      +(r.if_ignored?'<div class="ig"><b>Risk if left alone:</b> '+num(r.if_ignored)+'</div>':'');
+    var more=(ws[1]?'<div class="why">'+num(ws[1])+'</div>':'')
+      +(r.evidence?'<div class="ev">'+num(r.evidence)+'</div>':'')
+      +(r.if_ignored?'<div class="ig"><b>Risk if left alone:</b> '+num(r.if_ignored)+'</div>':'')
+      +(r.impact?'<div class="im">Moves: '+esc(r.impact)+'</div>':'');
     var moreActs=trk
       +(r.alternative?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-explain="'+esc(r.alternative)+'" data-explain-title="What else could explain it" data-explain-kicker="A question, not a finding" data-explain-key="'+esc(r.key)+'">Could also be…</button>':'')
       +(who.length?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-assign-key="'+esc(r.key)+'" data-track-title="'+esc(r.title)+'" data-assign-detail="'+esc(r.why||'')+'">Assign</button>':'');
     return '<div class="hb-card hb-rec hb-rise'+(isNew?' new':'')+'" style="--i:'+j+'"><div class="top"><span class="no">0'+(j+1+(skip||0))+'</span><button type="button" class="hb-x" title="Hide for two weeks" aria-label="Hide" data-dismiss-key="'+esc(r.key)+'" data-track-title="'+esc(r.title||'')+'"'+((r.times_hidden||0)>=1?' data-ask-why="1"':'')+'>✕</button></div>'
       +'<div class="t">'+num(r.title)+(r.model_written?' '+cavConf.claimTag('',true):'')+'</div>'
-      +(r.why?'<div class="why">'+num(r.why)+'</div>':'')
+      +(ws[0]?'<div class="why">'+num(ws[0])+'</div>':'')
       // Another module's evidence against it (a service complaint cluster
       // on the night a trim names: caution, ranked lower by rank_penalty),
       // and what was said about it before - the owner's earlier answer or a
@@ -6511,7 +6558,7 @@ svg:hover .hb-xh{opacity:1}
     // belongs beside them. Not Track - a brief line names a move, not a
     // number to measure. The module is the line's own (the server's
     // morning_brief._LINE_MODULE), never the screen's.
-    else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=lines[i];
+    else{h+='<div class="hb-tl">';for(var i=0;i<lines.length;i++){var l=hbBriefLine(lines[i]);
       var ans=(l.rec_key&&l.answerable&&typeof recControlsHtml==='function')?recControlsHtml(l.rec_key,'home',l.module||BRIEF_MOD[l.key]||'home',{noTrack:1,also:l.rec_keys||[]}):'';
       // The line's direct action first — send, open the order, answer the
       // replies — and "Ask →" as the secondary (friction #46).
@@ -6525,8 +6572,14 @@ svg:hover .hb-xh{opacity:1}
     // K8: how far the demand forecast in this brief has been off here,
     // measured against the nights that closed (dsr_metrics vs_forecast).
     var da=g.brief&&(g.brief.demand_accuracy||(g.brief.brief&&g.brief.brief.demand_accuracy));
-    if(da&&+da.n_nights>0&&window.demandAccuracyText)h+='<div class="hb-empty" style="font-size:12.5px;margin-top:10px">'+cavConf.claimTag('forecast')+' Past demand forecasts here: '
-      +demandAccuracyText(da)+'.</div>';
+    // Text round (10/17/26): the share of nights inside the range on the
+    // line, the full record (nights, mean error, the lean) in its info tip.
+    if(da&&+da.n_nights>0&&window.demandAccuracyText){var dnr=+da.n_ranged||0,dip=da.inside_range_pct;
+      h+='<div class="hb-empty" style="font-size:12.5px;margin-top:10px">'+cavConf.claimTag('forecast')+' '
+        +((dip!=null&&dnr>0)?'Inside its range on <span class="hb-num">'+Math.round(+dip)+'%</span> of <span class="hb-num">'+dnr+'</span> night'+(dnr===1?'':'s')
+          :'Demand forecasts, <span class="hb-num">'+(+da.n_nights)+'</span> night'+(+da.n_nights===1?'':'s')+' measured')
+        +'<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="hb-fc-tip" aria-expanded="false" aria-controls="hb-fc-tip" aria-label="How past forecasts did">i</button><span class="cav-itp" id="hb-fc-tip" role="tooltip" hidden>Past demand forecasts here: '
+        +demandAccuracyText(da)+'.</span></span></div>';}
     h+='</div>';
     // Open issues live in the Needs attention card (hbAttnSetIssues); goals
     // and results are built by _hbMeasured below.
@@ -6575,12 +6628,38 @@ svg:hover .hb-xh{opacity:1}
   // note for today ("Your note for today: ...", memory:constraint) and a
   // remembered effect ("Remembered: ...", memory:event) are lines like any
   // other - their words say where they came from.
+  // Text round (10/17/26): a line that ends on what it rests on in brackets
+  // ("Prime cost month to date: 37.2% of sales, 1.1 points above last month
+  // (sales through 10/15/26; labor measured every night …)") says the figure
+  // and keeps the bracket behind an info tip. A bracket with a figure ($ or
+  // %), a confidence, an estimate or sample label, or under three words stays
+  // in the sentence.
+  var HB_BRIEF_KEEP=/[%$]|confiden|estimat|sample|projected|opportunit|forecast|not measured/i;
+  function hbBriefBasis(t){
+    var s=String(t||'').replace(/\s+$/,''),dot='',depth=0,i,c;
+    if(s.charAt(s.length-1)==='.'){dot='.';s=s.slice(0,-1);}
+    if(s.charAt(s.length-1)!==')')return null;
+    for(i=s.length-1;i>=0;i--){c=s.charAt(i);if(c===')')depth++;else if(c==='('){depth--;if(!depth)break;}}
+    if(i<=0)return null;
+    var inner=s.slice(i+1,-1).replace(/^\s+|\s+$/g,''),head=s.slice(0,i).replace(/\s+$/,'');
+    if(!head||!inner||HB_BRIEF_KEEP.test(inner)||inner.split(/\s+/).length<3)return null;
+    return {text:head+(dot||'.'),basis:inner};
+  }
+  function hbBriefLine(l){
+    if(!l||(l.rows&&l.rows.length))return l;
+    var b=hbBriefBasis(l.text);if(!b)return l;
+    var c={},k;for(k in l)if(l.hasOwnProperty(k))c[k]=l[k];
+    c.text=b.text;c._basis=b.basis;return c;
+  }
   function hbBriefExtra(l){
     var h='';
+    if(l._basis){hbBriefExtra.n=(hbBriefExtra.n||0)+1;var bid='hb-bb-'+hbBriefExtra.n;
+      h+='<span class="cav-it hb-tip-i"><button type="button" class="cbtn cav-ib" data-itip="'+bid+'" aria-expanded="false" aria-controls="'+bid+'" aria-label="What this rests on">i</button><span class="cav-itp" id="'+bid+'" role="tooltip" hidden>'+num(l._basis.charAt(0).toUpperCase()+l._basis.slice(1))+'.</span></span>';}
     var ps=(l.source==='dsr'&&l.key==='today')?(l.predictions||[]):[];
-    if(ps.length){h+='<span class="hb-tl-calls"><span class="k">The report’s calls</span>';
-      for(var i=0;i<Math.min(ps.length,4);i++)if(ps[i])h+='<span class="c">'+num(ps[i])+'</span>';
-      h+='</span>';}
+    // The calls wait behind a "The report's calls" disclosure (text round,
+    // 10/17/26): the line says the night, the calls are its evidence.
+    if(ps.length){var pn=0,pc='';for(var i=0;i<Math.min(ps.length,4);i++)if(ps[i]){pn++;pc+='<span class="c">'+num(ps[i])+'</span>';}
+      if(pn)h+='<details class="hb-rec-more hb-tl-more"><summary>The report’s calls <span class="hb-num">'+pn+'</span></summary><span class="hb-tl-calls">'+pc+'</span></details>';}
     if(l.conflict&&window.recConflictHtml)h+=recConflictHtml(l.conflict,'home');
     return h;
   }
