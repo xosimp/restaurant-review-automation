@@ -58,7 +58,10 @@ from bar.mapping import Mapping, key_for
 
 DRINK_KINDS = ("beer", "liquor", "wine", "na")
 UNMAPPED_REPORT = "Unmapped"          # dsr.UNMAPPED: the report's own name for sales it couldn't place
-# Unmapped sales above this share of the window's sales are said on the page (R10).
+# Unmapped sales above this share of the window's DRINK sales (beer, liquor,
+# wine and the unmapped themselves — never the whole restaurant's, where
+# food dilutes it: BAR-CALC-03) are said on the page (R10), and hold every
+# reading back (bar.judge.UNMAPPED_HOLD_PCT).
 UNMAPPED_SAY_PCT = 2.0
 _FULL_COMP_RE = re.compile(r"100\s*%")
 _UNASSIGNED = "Unassigned"            # rpower.UNASSIGNED_DEPARTMENT
@@ -409,14 +412,19 @@ def bar_sales(restaurant_id, db_path=None, since=None, until=None, mapping=None)
     return detail
 
 
-def window_basis(detail, start=None, end=None) -> dict:
+def window_basis(detail, start=None, end=None, expected=None) -> dict:
     """The sales basis of [start, end] (PLAN payload `sales_basis`): {label,
-    discounts_usd, comps_usd, unmapped_usd, unmapped_pct, unmapped_say,
-    mapping_needed, unmapped_categories [{key, kind, sales_usd, why}],
-    gross_usd, net_usd, nights, covered_nights, estimated_nights,
-    gaps [{date, date_mdy, why, say, net}]}. Drinks here are beer, liquor
-    and wine — the pour categories; non-alcoholic drinks are `na_usd`."""
-    dis = comps = poured = unmapped = gross = net = na = all_sales = 0.0
+    discounts_usd, comps_usd, unmapped_usd, unmapped_pct (of the drink
+    sales), unmapped_say, unmapped_hold, mapping_needed, unmapped_categories
+    [{key, kind, sales_usd, why}], gross_usd, net_usd, nights,
+    covered_nights, estimated_nights, gaps [{date, date_mdy, why, say,
+    net}]}. Drinks here are beer, liquor and wine — the pour categories;
+    non-alcoholic drinks are `na_usd`. `expected` (ISO dates the bar
+    trades, bar.counts._trading_days) names a night with no report at all
+    as a gap too (`no_report`, BAR-CALC-02) — before, a night that never
+    arrived appeared nowhere."""
+    from bar.judge import UNMAPPED_HOLD_PCT
+    dis = comps = poured = unmapped = gross = net = na = 0.0
     needed = False
     unm = defaultdict(lambda: {"sales_usd": 0.0, "why": None, "kind": None})
     gaps, covered, estimated, count = [], 0, 0, 0
@@ -430,7 +438,6 @@ def window_basis(detail, start=None, end=None) -> dict:
             continue
         covered += 1
         estimated += 1 if n["discount_basis"] == "estimated" else 0
-        all_sales += max(0.0, _f(n["net"]))
         for k in POUR_CATEGORIES:
             v = n["drinks"][k]
             dis += v["discounts_only"]
@@ -447,14 +454,23 @@ def window_basis(detail, start=None, end=None) -> dict:
                 u["sales_usd"] += c["gross"]
                 u["why"], u["kind"] = c["why"], c["key_kind"]
                 unmapped += c["gross"]
-    base = all_sales or (gross + unmapped)
+    nights = detail.get("nights") or {}
+    for d in expected or ():
+        if (start and d < start) or (end and d > end) or d in nights:
+            continue
+        gaps.append({"date": d, "date_mdy": _mdy(d), "why": "no_report",
+                     "say": "no nightly report on file for a night the bar trades", "net": None})
+    gaps.sort(key=lambda g: g["date"])
+    # Against the drink sales, not the restaurant's (BAR-CALC-03).
+    base = gross + unmapped
     pct = round(unmapped / base * 100, 1) if base > 0 and unmapped > 0 else 0.0
     label = "POS drink sales after comps and check discounts"
     if estimated:
         label += f" (check discounts estimated for {estimated} night{'s' if estimated != 1 else ''})"
     return {"label": label, "discounts_usd": round(dis, 2), "comps_usd": round(comps, 2),
             "comps_label": "Poured, not paid", "poured_not_paid_usd": round(poured, 2),
-            "unmapped_usd": round(unmapped, 2), "unmapped_pct": pct, "unmapped_say": pct > UNMAPPED_SAY_PCT,
+            "unmapped_usd": round(unmapped, 2), "unmapped_pct": pct, "unmapped_base": "drink_sales",
+            "unmapped_say": pct > UNMAPPED_SAY_PCT, "unmapped_hold": pct > UNMAPPED_HOLD_PCT,
             "mapping_needed": needed,
             "unmapped_categories": sorted(({"key": k[1], "kind": v["kind"], "sales_usd": round(v["sales_usd"], 2),
                                             "why": v["why"]} for k, v in unm.items()),

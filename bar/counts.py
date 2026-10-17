@@ -19,8 +19,9 @@ WITHHELD, with a `missing` list naming why, unless every part was measured —
     edge (two counts that resolve to the same date bracket nothing);
   * the distributors' invoices complete across it (bar.pour_cost._gaps: a
     distributor whose invoices stop for much longer than its own rhythm);
-  * sales by category on at least SALES_COVERAGE_FLOOR of its trading days
-    (the weekdays the restaurant trades, models.trading_weekdays);
+  * sales by category on every trading day of the span (SALES_COVERAGE_FLOOR:
+    the weekdays the restaurant trades, models.trading_weekdays, less the
+    days it marked closed, schedule_rules.closures — BAR-CALC-02);
   * a used figure that is possible (not negative, not above the sales).
 
 A count dated D is the shelf at the close of D ("Count the bar tonight"), so
@@ -58,8 +59,10 @@ SOURCES = ("owner", "backoffice", "import")
 # A count this far from a span's edge still brackets it; further, the span
 # is not the one the count measured.
 COUNT_TOLERANCE_DAYS = 10
-# Sales by category on at least this share of the span's trading days.
-SALES_COVERAGE_FLOOR = 0.90
+# Sales by category on this share of the span's trading days: every one of
+# them (BAR-CALC-02, 10/16/26: at 0.90 a tenth of the nights could be
+# missing and their drinks read as poured, not sold).
+SALES_COVERAGE_FLOOR = 1.0
 # A bar's whole shelf by category, typed in dollars.
 MAX_COUNT_VALUE = 1_000_000
 MAX_NOTE_CHARS = 500
@@ -254,19 +257,31 @@ def _near(dates, target, exclude=None):
     return best[1] if best else None
 
 
-def _trading_days(restaurant_id, a, b, db_path=None) -> list:
-    """The ISO dates in [a, b] on a weekday the restaurant trades
-    (models.trading_weekdays: all seven when no hours are set)."""
+def _trading_days(restaurant_id, a, b, db_path=None, restaurant=None) -> list:
+    """The ISO dates in [a, b] the restaurant trades: a weekday it trades
+    (models.trading_weekdays: all seven when no hours are set) that isn't a
+    weekday or a date the owner marked closed (schedule_rules.closures) —
+    the nights a nightly report is expected (BAR-CALC-02)."""
+    trades, closed_days, closed_dates = None, set(), set()
     try:
         import models as _m
-        r = _m.get_restaurant(int(restaurant_id), db_path=db_path) if db_path else _m.get_restaurant(int(restaurant_id))
+        r = restaurant
+        if r is None:
+            r = _m.get_restaurant(int(restaurant_id), db_path=db_path) if db_path else _m.get_restaurant(int(restaurant_id))
         trades = _m.trading_weekdays(r) if r is not None else None
+        if r is not None:
+            from schedule_rules import closures
+            cl = closures(r)
+            closed_days, closed_dates = set(cl.get("closed_weekdays") or ()), set(cl.get("closed_dates") or ())
     except Exception:
-        trades = None
+        pass
+    a = a if isinstance(a, date) else date.fromisoformat(str(a)[:10])
+    b = b if isinstance(b, date) else date.fromisoformat(str(b)[:10])
     out, d = [], a
     while d <= b:
-        if not trades or d.strftime("%A") in trades:
-            out.append(d.isoformat())
+        wd, iso = d.strftime("%A"), d.isoformat()
+        if (not trades or wd in trades) and wd not in closed_days and iso not in closed_dates:
+            out.append(iso)
         d += timedelta(days=1)
     return out
 
@@ -360,10 +375,18 @@ def true_pour_cost(restaurant_id, start, end, db_path=None, lines=None, sales=No
         trading = _trading_days(restaurant_id, date.fromisoformat(s), date.fromisoformat(e), db_path)
         sold_days = {d for cat in COUNT_CATEGORIES for d, v in (sales.get(cat) or {}).items()
                      if s <= d <= e and v is not None}
-        covered = len([d for d in trading if d in sold_days])
-        if not trading or covered < SALES_COVERAGE_FLOOR * len(trading):
-            x["missing"].append(_missing("sales", f"sales by category on {covered} of {len(trading)} trading days "
-                                                  f"from {_mdy(s)} to {_mdy(e)}"))
+        # Every night the bar trades needs its sales (BAR-CALC-02): a missing
+        # night's drinks would read as poured and not sold. A night the bar
+        # was closed is marked closed in its hours (schedule_rules.closures).
+        absent = [d for d in trading if d not in sold_days]
+        if not trading or len(trading) - len(absent) < SALES_COVERAGE_FLOOR * len(trading):
+            said = ""
+            if absent:
+                said = (f" — none on file for {', '.join(_mdy(d) for d in absent[:3])}"
+                        + (f" and {len(absent) - 3} more" if len(absent) > 3 else "")
+                        + " (mark a night closed in your hours if the bar didn't open)")
+            x["missing"].append(_missing("sales", f"sales by category on {len(trading) - len(absent)} of "
+                                                  f"{len(trading)} trading days from {_mdy(s)} to {_mdy(e)}{said}"))
         bought = round(sum(float(l["net"] or 0) for l in span_lines if l["category"] == c), 2)
         sold = round(sum(float(v or 0) for d, v in (sales.get(c) or {}).items() if s <= d <= e), 2)
         x["purchases"], x["sales"] = bought, sold
@@ -433,7 +456,10 @@ def counted(restaurant_id, today=None, db_path=None, lines=None, sales=None) -> 
         p = true_pour_cost(restaurant_id, a, b, db_path=db_path, lines=lines, sales=sales, rows=rows)
         out["periods"].append({
             "from": a, "to": b, "from_mdy": _mdy(a), "to_mdy": _mdy(b), "ok": p["ok"],
-            "categories": {c: {k: p["categories"][c][k] for k in ("begin", "purchases", "end", "used", "sales", "pct")}
+            # Each category's own count dates ride along: the variance reads
+            # each category over its own span (BAR-CALC-14).
+            "categories": {c: {k: p["categories"][c][k] for k in ("begin", "purchases", "end", "used", "sales", "pct",
+                                                                  "begin_date", "end_date")}
                            for c in COUNT_CATEGORIES},
             "total": p["total"], "missing": p["missing"]})
     out["available"] = any(p["ok"] for p in out["periods"])

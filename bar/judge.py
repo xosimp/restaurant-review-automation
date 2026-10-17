@@ -14,8 +14,16 @@ A reading is judged only when:
 - the invoice feed is fresh: invoices no more than FEED_GRACE_DAYS behind
   today, or the slowest active house's own rhythm (V22);
 - no stock-up sits in the window: one delivery over STOCK_UP_WEEK_MULTIPLE x
-  that house's median week, or a reading over STOCK_UP_RANGE_MULTIPLE x the
-  range's top — the delivery is named, never judged as over-pouring (V11);
+  that house's median week, an extra delivery (its week over
+  STOCK_UP_EXTRA_WEEK_MULTIPLE x the median) without which the reading sits
+  at or under the threshold that judges it, or a reading over
+  STOCK_UP_RANGE_MULTIPLE x the range's top — the delivery is named, never
+  judged as over-pouring (V11). The test runs against the threshold that
+  judges the reading — the owner's target when it is below the range's top
+  (BAR-CALC-06), not only the range's top;
+- the bar's drink sales are sorted: unmapped POS sales no more than
+  UNMAPPED_HOLD_PCT of the drink sales (BAR-CALC-03), and a nightly report
+  on file for every night the bar trades (BAR-CALC-02, `sales_missing`);
 - the category is complete: no distributor's invoices missing (the gap
   detector, bar.pour_cost._gaps), no unbalanced invoice (W1 exposes
   `balanced` per line), and credits not exceeding purchases (V37).
@@ -54,18 +62,27 @@ STOCK_UP_RANGE_MULTIPLE = 2.0
 # Breakthru, 3x that house's small beer weeks, held back a 21% beer reading
 # inside its range, though beer buys ~$13,000 in four weeks).
 STOCK_UP_MIN_SHARE = 0.25
+# An extra delivery: its house's week holding it runs over this multiple of
+# the house's median week, and without it the reading sits at or under the
+# threshold that judges it — the delivery IS what reads over (BAR-CALC-06,
+# 10/16/26: a $3,000 pre-game order on top of a steady $4,000 week read
+# "$3,000 more bought than your 20% target").
+STOCK_UP_EXTRA_WEEK_MULTIPLE = 1.5
+# Unmapped POS sales above this share of the drink sales hold every reading
+# back (BAR-CALC-03): which category they belong to can't be told.
+UNMAPPED_HOLD_PCT = 2.0
 # How far back a house's rhythm and median week are read.
 HISTORY_DAYS = 91
 
 # Why a reading is not judged, most telling first; `not_judged` is the
 # first that applies, `reasons` all of them.
-REASONS = ("feed_stale", "credits_exceed", "no_reading", "short_window", "closed_days", "sales_coverage",
-           "sales_gap", "incomplete", "unbalanced", "stock_up")
+REASONS = ("feed_stale", "credits_exceed", "no_reading", "mixed_basis", "short_window", "closed_days",
+           "sales_coverage", "sales_gap", "unmapped", "incomplete", "unbalanced", "stock_up")
 
 # The sentence each reason is said with (owner copy; never "pour cost" for a
 # purchase ratio). Filled by `reason_text`.
 _REASON_TEXT = {
-    "feed_stale": "No invoices since {last_mdy} — check the Fintech forward. Nothing is judged until they arrive.",
+    "feed_stale": "No invoices since {last_mdy} — check the {feed} forward. Nothing is judged until they arrive.",
     "credits_exceed": "Credits exceed purchases in this window, so there is no reading to judge.",
     "no_reading": "Not measured: purchases and sales aren't both on file for this window.",
     "short_window": "Judged once four weeks of invoices and sales are on file — {days} of 28 days so far.",
@@ -75,6 +92,12 @@ _REASON_TEXT = {
                       "nightly reports fill in.",
     "sales_gap": "The nightly report for {gap_mdy} didn't sort its drink sales into categories, so this window "
                  "isn't judged until that night is repaired.",
+    "sales_missing": "No nightly report is on file for {missing_mdy}, a night the bar trades, so this window isn't "
+                     "judged until it arrives — or mark the night closed in your hours.",
+    "unmapped": "{unmapped_text} of the drink sales in this window aren't sorted into beer, liquor or wine, so no "
+                "category is judged until they are.",
+    "mixed_basis": "Some categories are counted and some are bought vs sold over different windows, so there is no "
+                   "one total — read each category.",
     "incomplete": "Some invoices for this category aren't on file, so it reads low until they are.",
     "unbalanced": "An invoice for this category didn't add up to its total, so it isn't judged until it's re-read.",
     "stock_up": "A large delivery on {date_mdy} — {amount_text} from {distributor} — makes this window read high; it "
@@ -178,7 +201,7 @@ def freshness(lines, sales, today, feed=None) -> dict:
     more than FEED_GRACE_DAYS behind today, or more than the slowest active
     house's rhythm if that is longer (capped at FEED_GRACE_MAX_DAYS)."""
     today_iso = today.isoformat()
-    inv = ledger_of(lines).days_through(today_iso)
+    inv = ledger_of(lines).feed_days_through(today_iso)
     sal = [d for d in sales_index(sales).all_days if d <= today_iso]
     through = (feed or {}).get("invoices_through") or (inv[-1] if inv else None)
     hs = houses(lines, today_iso)
@@ -204,16 +227,21 @@ def _week(iso):
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
-def stock_up(lines, cat, start, end, pct=None, range_hi=None):
+def stock_up(lines, cat, start, end, pct=None, range_hi=None, judge_at=None, bought=None, sold=None):
     """The delivery that makes [start, end] read high for `cat`, or None —
-    only ever for a reading above its range's top (a stock-up makes a window
-    read high; it never explains a reading inside or below the range):
+    only ever for a reading above the threshold that judges it (`judge_at`:
+    the owner's target when it is below the range's top, else the range's
+    top — BAR-CALC-06; a stock-up makes a window read high, it never
+    explains a reading at or under its threshold):
     {date, date_mdy, distributor, amount, amount_text, why}. A delivery is a
     stock-up when it is over STOCK_UP_WEEK_MULTIPLE x its house's median week
     of `cat` (weeks with a delivery, in the HISTORY_DAYS to `end`, the
-    delivery itself left out; at least STOCK_UP_MIN_WEEKS of them), or —
-    whatever the history — when the reading is over STOCK_UP_RANGE_MULTIPLE x
-    the range's top (the window's largest delivery is named)."""
+    delivery itself left out; at least STOCK_UP_MIN_WEEKS of them); or an
+    extra delivery — its house's week over STOCK_UP_EXTRA_WEEK_MULTIPLE x the
+    median — without which the reading (`bought` ÷ `sold`) sits at or under
+    `judge_at`; or — whatever the history — when the reading is over
+    STOCK_UP_RANGE_MULTIPLE x the range's top (the window's largest delivery
+    is named)."""
     since = (_d(end) - timedelta(days=HISTORY_DAYS)).isoformat()
     deliveries = defaultdict(float)
     weeks = defaultdict(lambda: defaultdict(float))
@@ -225,8 +253,10 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
             weeks[l["distributor"]][(_week(d), d)] += l["net"]
     if not deliveries:
         return None
-    if pct is None or not range_hi or pct <= range_hi:
+    at = min(x for x in (judge_at, range_hi) if x) if (judge_at or range_hi) else None
+    if pct is None or not at or pct <= at:
         return None
+    window_bought = bought if bought is not None else sum(v for v in deliveries.values() if v > 0)
     bought = sum(v for v in deliveries.values() if v > 0)
     best = None
     usual = set()
@@ -244,9 +274,15 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
         if amt > STOCK_UP_WEEK_MULTIPLE * median and amt >= STOCK_UP_MIN_SHARE * bought:
             if best is None or amt > best[2]:
                 best = (dist, d, amt, "house_week", median)
-        else:
-            usual.add((dist, d))
-    if best is None and pct > STOCK_UP_RANGE_MULTIPLE * range_hi:
+            continue
+        week = sum(v for (wk, _dd), v in weeks[dist].items() if wk == _week(d))
+        if (sold and sold > 0 and week > STOCK_UP_EXTRA_WEEK_MULTIPLE * median
+                and (window_bought - amt) / sold * 100 <= at + 1e-9):
+            if best is None or amt > best[2]:
+                best = (dist, d, amt, "extra_delivery", median)
+            continue
+        usual.add((dist, d))
+    if best is None and range_hi and pct > STOCK_UP_RANGE_MULTIPLE * range_hi:
         # The window's largest delivery, unless its own house's history
         # shows it is an ordinary week: a bar that buys this much every
         # week is read as it is, not excused as a stock-up.
@@ -264,7 +300,8 @@ def stock_up(lines, cat, start, end, pct=None, range_hi=None):
 # ── the judgement ─────────────────────────────────────────────────────────
 
 def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=None, fresh=None,
-          stock=None, incomplete=False, unbalanced=False, sales_gap=()) -> dict:
+          stock=None, incomplete=False, unbalanced=False, sales_gap=(), sales_missing=(), unmapped=None,
+          mixed_basis=False) -> dict:
     """{judged, not_judged, reasons, not_judged_text} for one reading.
 
     pct / purchases     the reading and the window's net purchases
@@ -277,7 +314,13 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
     incomplete          a distributor's invoices missing (_gaps)
     unbalanced          an invoice in the window that didn't add up
     sales_gap           nights in the window whose drink sales weren't
-                        sorted (bar.sales, V5): ISO dates"""
+                        sorted (bar.sales, V5): ISO dates
+    sales_missing       nights the bar trades with no report on file at all
+                        (BAR-CALC-02): ISO dates — reason `sales_gap`
+    unmapped            the window's unmapped share when it holds the
+                        reading back ({pct, usd}; BAR-CALC-03) or None
+    mixed_basis         a total over categories on different bases or
+                        windows (BAR-CALC-13)"""
     reasons = []
     if fresh and fresh.get("stale"):
         reasons.append("feed_stale")
@@ -291,8 +334,12 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
         reasons.append("closed_days")
     if have_n is not None and open_n and have_n < MIN_SALES_COVERAGE * open_n:
         reasons.append("sales_coverage")
-    if sales_gap:
+    if mixed_basis:
+        reasons.append("mixed_basis")
+    if sales_gap or sales_missing:
         reasons.append("sales_gap")
+    if unmapped:
+        reasons.append("unmapped")
     if incomplete:
         reasons.append("incomplete")
     if unbalanced:
@@ -301,12 +348,20 @@ def judge(pct, purchases, *, window_days, open_n=None, have_n=None, usual_share=
         reasons.append("stock_up")
     reasons = sorted(set(reasons), key=REASONS.index)
     first = reasons[0] if reasons else None
-    facts = {"days": window_days, "open_days": open_n, "have": have_n,
+    from bar.feed import FEED_LABEL
+    facts = {"days": window_days, "open_days": open_n, "have": have_n, "feed": FEED_LABEL,
              "last_mdy": (fresh or {}).get("invoices_through_mdy") or "—",
-             "gap_mdy": ", ".join(_mdy(d) for d in sales_gap) if sales_gap else ""}
+             "gap_mdy": ", ".join(_mdy(d) for d in sales_gap) if sales_gap else "",
+             "missing_mdy": ", ".join(_mdy(d) for d in tuple(sales_missing)[:3])
+                            + (f" and {len(sales_missing) - 3} more" if len(sales_missing) > 3 else ""),
+             "unmapped_text": (f"{_money((unmapped or {}).get('usd') or 0)} ({(unmapped or {}).get('pct') or 0:g}%)"
+                               if unmapped else "")}
     facts.update(stock or {})
+    text_key = first
+    if first == "sales_gap" and sales_missing and not sales_gap:
+        text_key = "sales_missing"
     return {"judged": not reasons, "not_judged": first, "reasons": reasons,
-            "not_judged_text": reason_text(first, **facts) if first else None}
+            "not_judged_text": reason_text(text_key, **facts) if first else None}
 
 
 # ── evidence and freshness as percentages (R19) ───────────────────────────
@@ -317,7 +372,14 @@ def confidence(window_days=None, coverage=None, invoices=None, lag_days=None) ->
     sales coverage x the invoices in it (four or more is whole); freshness =
     100 while invoices are two days behind or less, falling to 0 at
     fourteen. A part that is unknown counts as whole (None -> not held
-    against it); an unknown lag gives no freshness (None)."""
+    against it), but with NO measured part there is no evidence figure —
+    None, shown "—", never 100% (AI-09, 10/16/26: "N products sorted by a
+    guess" read "Evidence 100%"); an unknown lag gives no freshness (None)."""
+    if window_days is None and coverage is None and invoices is None:
+        fr = None
+        if lag_days is not None:
+            fr = round(max(0.0, min(100.0, 100.0 - 100.0 * max(0, lag_days - 2) / 12.0)))
+        return {"evidence_pct": None, "freshness_pct": fr}
     ev = 1.0
     if window_days is not None:
         ev *= min(1.0, max(0.0, window_days / MIN_DAYS))

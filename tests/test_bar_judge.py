@@ -704,7 +704,10 @@ def test_insights_carry_basis_and_confidence():
     for i in ins:
         assert set(i) == {"key", "tone", "headline", "metric", "action", "basis", "confidence"}
         assert set(i["confidence"]) == {"evidence_pct", "freshness_pct"}
-        assert 0 <= i["confidence"]["evidence_pct"] <= 100
+        # A card that measured nothing (to_check) has no evidence figure,
+        # never 100% (FC/Bar audit 10/16/26 AI-09).
+        ev = i["confidence"]["evidence_pct"]
+        assert (ev is None) if i["key"] == "to_check" else (0 <= ev <= 100)
     assert next(i for i in ins if i["key"] == "over_target:liquor")["basis"] == "purchases"
     short = bi._insights(pc_of([L("B", "2026-10-01", "liquor", 1200)], daily(date(2026, 9, 30), 5, liquor=400),
                                today=date(2026, 10, 5)), {}, 0)
