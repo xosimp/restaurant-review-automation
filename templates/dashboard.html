@@ -7388,6 +7388,11 @@ svg:hover .hb-xh{opacity:1}
 .dr-detail{display:flex;flex-direction:column;gap:22px;margin-top:20px}
 .dr-detail .hb-card{padding:26px 28px}
 .dr-two-lg{gap:22px;margin-top:0}
+/* Given away and Punch edits: each card its own height - an opened fold never stretches its neighbour (owner, 10/17/26). */
+.dr-two-top{align-items:start}
+.dr-loss-more{margin-top:4px}
+.dr-loss .co-more .dr-loss-r{padding:7px 0}
+.dr-loss .co-more .dr-loss-g h3{margin:16px 0 6px}
 @media (max-width:1020px){.dr-two-lg{grid-template-columns:1fr}}
 .dr-dep{container-type:inline-size}
 .dr-ch{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px}
@@ -9144,8 +9149,15 @@ svg:hover .hb-xh{opacity:1}
         h+='</div>';}
       var rs=g.by_reason||[],ap=g.by_approver||[];
       if(rs.length||ap.length)h+='<details class="co-more"><summary>By reason and approver</summary>';
-      if(rs.length){h+='<div class="dr-loss-g"><h3>By reason</h3>';for(i=0;i<rs.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(cap(rs[i].kind))+' · '+esc(rs[i].reason)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(rs[i].lines))+'</span><span class="a hb-num">'+esc(money(rs[i].amount))+'</span></div>';h+='</div>';}
-      if(ap.length){h+='<div class="dr-loss-g"><h3>Approved by</h3>';for(i=0;i<ap.length;i++)h+='<div class="dr-loss-r"><span class="n">'+esc(ap[i].approver)+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(ap[i].lines))+'</span><span class="a hb-num">'+esc(money(ap[i].amount))+'</span></div>';h+='</div>';}
+      // Three of each show; the rest fold under their own "N more" (owner, 10/17/26: opened, the list
+      // ran the card - and the Punch edits card beside it - far too tall).
+      var lossRows=function(list,title,label){var o='<div class="dr-loss-g"><h3>'+title+'</h3>',k,more='',SHOW=3;
+        for(k=0;k<list.length;k++){var r='<div class="dr-loss-r"><span class="n">'+label(list[k])+'</span><span class="sp"></span><span class="c hb-num">'+esc(cnt(list[k].lines))+'</span><span class="a hb-num">'+esc(money(list[k].amount))+'</span></div>';
+          if(k<SHOW)o+=r;else more+=r;}
+        if(more)o+='<details class="co-more dr-loss-more"><summary>'+hn(list.length-SHOW)+' more</summary>'+more+'</details>';
+        return o+'</div>';};
+      if(rs.length)h+=lossRows(rs,'By reason',function(x){return esc(cap(x.kind))+' \u00b7 '+esc(x.reason);});
+      if(ap.length)h+=lossRows(ap,'Approved by',function(x){return esc(x.approver);});
       if(rs.length||ap.length)h+='</details>';
       h+='</section>';}
     if(E instanceof Array){
@@ -9191,7 +9203,7 @@ svg:hover .hb-xh{opacity:1}
     h+=hr;
     if(mo&&lb)h+='<div class="dr-two dr-two-lg">'+mo+lb+'</div>';else h+=mo+lb;
     h+=sv;
-    if(ls)h+='<div class="dr-two dr-two-lg">'+ls+'</div>';
+    if(ls)h+='<div class="dr-two dr-two-lg dr-two-top">'+ls+'</div>';
     h+=rg;
     return h+'</div>';
   }
@@ -49934,10 +49946,11 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .hb-row.good .d,[data-theme="dark"] .hb-tl .it.good .d{background:radial-gradient(circle at 34% 30%,#d8ffef 0,var(--vx-gain) 46%,#0d7a4e 100%);box-shadow:0 0 0 3px color-mix(in srgb,var(--vx-gain) 15%,transparent),0 0 12px color-mix(in srgb,var(--vx-gain) 70%,transparent)}
 [data-theme="dark"] .hb-row.watch .d,[data-theme="dark"] .hb-tl .it:not(.critical):not(.important):not(.good) .d{background:radial-gradient(circle at 34% 30%,#fffaf2 0,#a99d8e 50%,#4e463d 100%);box-shadow:0 0 0 3px rgba(255,240,226,.05)}
 
-/* Register: every table - a recessed head band in the kicker's orange,
+/* Register: every table - its head in the kicker's orange over one ruled line (no filled band: inside a
+   padded card it read as a sharp black box, owner 10/17/26),
    a warm zebra, and a row that lights an ember rail under the pointer. */
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) thead th{
-  background:rgba(0,0,0,.3);color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent)}
+  background:none;color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:nth-child(even) td{background-color:rgba(255,240,226,.018)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody td{transition:background-color .2s var(--vx-ease),box-shadow .25s var(--vx-ease)}
 [data-theme="dark"] :is(.fc2-mt,.hb-tbl,.dr-tbl,.dr-stbl,.ts-tbl,.rst-tbl,.int-tbl,.fc2-bo-tbl,.fc2-table,.ss-crew-t) tbody tr:hover td{background-color:rgba(255,240,226,.048)}
