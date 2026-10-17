@@ -2829,27 +2829,40 @@ def mobile_bar_waste(current_user):
 @mobile_login_required
 def mobile_bar_waste_save(current_user):
     """{waste_date: YYYY-MM-DD, product_key, qty, unit: each|oz|keg,
-    reason: spill|breakage|comp|line_clean|other, note} — one event."""
-    import bar.waste as _bw
+    reason: spill|breakage|comp|line_clean|other, note} — one event, at
+    most once per Idempotency-Key (header, or `idempotency_key` in the
+    body): a phone's retry or a double tap logs the spill once, answered
+    from the first send (SCALE-10, client_api._once's pattern)."""
     if not _bar_count_enters(current_user):
         return jsonify(ok=False, error="Only someone who can count stock can log bar waste."), 403
-    rid = current_user["restaurant_id"]
+    import strategy_routes as _sr_bw
     b = request.get_json(silent=True) or {}
+    payload, status = _sr_bw._idempotent(lambda u: _bar_waste_save_body(u, b), "bar_waste",
+                                         busy="That waste entry is still being logged — check back in a moment.")(
+        current_user)
+    return jsonify(**payload), status
+
+
+def _bar_waste_save_body(current_user, b):
+    """(payload, status): one bar waste entry written, the Bar's kept
+    payload dropped and the change logged — run once per Idempotency-Key."""
+    import bar.waste as _bw
+    rid = current_user["restaurant_id"]
     try:
         res = _bw.log_waste(rid, b.get("waste_date"), b.get("product_key"), b.get("qty"), b.get("unit"),
                             b.get("reason"), note=b.get("note"), user_id=_bar_viewer(current_user),
                             today=_bar_count_today(rid))
     except ValueError as e:
-        return jsonify(ok=False, error=(e.args[0] if e.args else "That entry didn't save.")), 400
+        return {"ok": False, "error": (e.args[0] if e.args else "That entry didn't save.")}, 400
     except Exception as e:
         _bar_capture(e, "bar_write", rid)
-        return jsonify(ok=False, error=_BAR_WRITE_FAILED), 500
+        return {"ok": False, "error": _BAR_WRITE_FAILED}, 500
     import bar.cache as _bcache
     _bcache.invalidate(rid)
     _log_account_event(rid, "bar_waste_logged", current_user,
                        detail=(f"{res['waste_date_mdy']}: {res['qty']:g} {_bw.UNIT_LABELS[res['unit']]} "
                                f"{res['product']} ({_bw.REASON_LABELS[res['reason']].lower()})")[:500])
-    return jsonify(**res)
+    return res, 200
 
 
 @mobile_bp.route("/food-cost/bar/waste/<int:entry_id>", methods=["DELETE"])

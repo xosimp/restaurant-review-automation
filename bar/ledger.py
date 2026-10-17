@@ -47,6 +47,9 @@ class Ledger:
         self.rows = rows
         self.dates = [_day(l) for l in rows]
         self.days = sorted(set(self.dates))
+        # The Fintech feed's own invoice days (a Back Office entry left out):
+        # what the overlap with sales is bounded by (BAR-CALC-15).
+        self.feed_days = sorted({d for d, l in zip(self.dates, rows) if l.get("kind") != "backoffice"})
         by_cat, by_dist = defaultdict(list), defaultdict(list)
         for l in rows:
             by_cat[l["category"]].append(l)
@@ -112,6 +115,12 @@ class Ledger:
     def days_through(self, end):
         """The distinct invoice days on or before `end`."""
         return self.days[:bisect_right(self.days, end)]
+
+    def feed_days_through(self, end):
+        """The Fintech feed's distinct invoice days on or before `end` — every
+        invoice day when no line is the feed's (Back Office alone)."""
+        days = self.feed_days or self.days
+        return days[:bisect_right(days, end)]
 
     # ── houses (bar.judge.houses, read per end from the per-day sums) ─────
     def houses(self, end, history_days, to_date, minus_days):

@@ -343,7 +343,10 @@ def test_unmapped_sales_in_the_window_are_named(db):
     _metrics(db, rid, day, {"sales.net": 10000.0, "sales.dep:Beer": 2000.0, "sales.dep:Gameday": 500.0,
                             "sales.dep:Food": 7500.0})
     basis = bsales.window_basis(bsales.bar_sales(rid, db_path=db))
-    assert basis["unmapped_usd"] == 500.0 and basis["unmapped_pct"] == 5.0 and basis["unmapped_say"] is True
+    # Against the drink sales ($2,000 of beer + the $500 unmapped), never the
+    # restaurant's $10,000 where food dilutes it (FC/Bar audit 10/16/26 BAR-CALC-03).
+    assert basis["unmapped_usd"] == 500.0 and basis["unmapped_pct"] == 20.0 and basis["unmapped_say"] is True
+    assert basis["unmapped_hold"] is True and basis["unmapped_base"] == "drink_sales"
     assert basis["unmapped_categories"][0]["key"] == "Gameday"
 
 

@@ -17,7 +17,10 @@ def _distributors(lines) -> list:
         b = by[l["distributor"]]
         b["invoices"].add(l["invoice_number"])
         if l["category"] == "fee":
-            b["fees"] += float(l["cost"] or 0)
+            # An invoice discount spread over the products (BAR-CALC-18) is
+            # in their spend already, not a fee as well.
+            if not l.get("allocated"):
+                b["fees"] += float(l["cost"] or 0)
         elif l["category"] == "deposit":
             b["deposits"] += float(l["cost"] or 0)
         else:

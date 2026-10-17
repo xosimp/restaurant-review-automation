@@ -71,10 +71,14 @@ def _day(value, today):
 def bought_products(restaurant_id, db_path=None, lines=None) -> dict:
     """{product_key: {name, category}} — the beer, liquor and wine the bar
     has bought: the products a waste entry can name (V40's rule: a key the
-    invoices never carried is refused)."""
+    invoices never carried is refused). Read from the distinct products on
+    file (bar.purchases.product_catalog), never every invoice line per
+    request (SCALE-09); `lines` when a caller already holds them."""
     if lines is None:
-        from bar.purchases import _lines
-        lines = _lines(restaurant_id, db_path)
+        from bar.purchases import product_catalog
+        return {k: {"name": v["name"], "category": v["category"]}
+                for k, v in product_catalog(restaurant_id, db_path).items()
+                if v["category"] in ("beer", "liquor", "wine")}
     out = {}
     for l in lines:
         if l.get("kind") == "item" and l.get("category") in ("beer", "liquor", "wine"):

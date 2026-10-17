@@ -46906,6 +46906,7 @@ function sfw2RuleCheck(chk) {
       for (i = 0; i < exc.length; i++) xs.push(String(exc[i].label || exc[i].key).toLowerCase() + (exc[i].text ? ' (' + exc[i].text + ')' : ''));
       ex = '<div class="br-ctx">The total leaves out ' + numify(xs.join('; ')) + '.</div>';
     } else if (t.partial) ex = '<div class="br-ctx">The total covers only the categories measured on both sides.</div>';
+    if (t.mixed_beside) ex += '<div class="br-ctx">' + hn(money(t.mixed_beside)) + ' of alcohol bought at a store, beer, wine and liquor on one receipt, sits beside the total, not in it — every category isn’t in the total on purchases.</div>';
     var c13 = pc.context_13w, sb = d.sales_basis || {};
     var sales = '<div class="br-sb">Sales: ' + numify(sb.label || 'POS drink sales after comps and check discounts')
       + (sb.discounts_usd > 0 ? ' · ' + hn(money(sb.discounts_usd)) + ' in check discounts taken off' : '')
@@ -46926,8 +46927,8 @@ function sfw2RuleCheck(chk) {
       + (t.target == null && t.pct != null ? '<div class="br-tgset">The range is context. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-targets="1">Set an alcohol target in Account → Targets</button></div>' : '')
       + meter(t.pct, rng, counted ? null : t.prev_pct, v.c, t.target, ctxRange, tlabel)
       + over + ex
-      + '<div class="br-figs"><div class="br-fig"><div class="v">' + cnt(t.purchases, 0, '$') + '</div><div class="l">' + (counted ? 'used · opening + bought − closing' : 'bought from distributors') + '</div></div>'
-      + '<div class="br-fig"><div class="v">' + cnt(t.sales, 0, '$') + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
+      + '<div class="br-figs"><div class="br-fig"><div class="v">' + (t.purchases == null ? '—' : cnt(t.purchases, 0, '$')) + '</div><div class="l">' + (counted ? 'used · opening + bought − closing' : 'bought from distributors') + '</div></div>'
+      + '<div class="br-fig"><div class="v">' + (t.sales == null ? '—' : cnt(t.sales, 0, '$')) + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
       + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-expanded="' + (ST.why ? 'true' : 'false') + '" aria-controls="br-why">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
       + '<div class="br-why" id="br-why" data-br-explain="1"' + (ST.why ? '' : ' hidden') + '>'
@@ -46945,34 +46946,35 @@ function sfw2RuleCheck(chk) {
   /* ── what needs fixing first ────────────────────────────────────────── */
   function catNames(keys) { var o = [], i; for (i = 0; i < (keys || []).length; i++) o.push(LABELS[keys[i]] || keys[i]); return o.join(', '); }
   function alerts(d, pc) {
-    var out = [], i, fr = pc.freshness || {}, feed = d.feed || {};
+    var out = [], i, fr = pc.freshness || {}, feed = d.feed || {}, fl = feed.label || 'the invoice feed';
     var stale = fr.stale_days || feed.stale_days;
-    if (fr.stale || feed.stale_days) out.push('<div class="br-warn"><b>Invoices are ' + (stale ? hn(stale) + ' days ' : '') + 'behind.</b> The newest is from ' + hn(fr.invoices_through_mdy || feed.invoices_through_mdy || d.as_of_mdy) + '. Check that Fintech’s daily file is still being forwarded — nothing is judged until invoices catch up.</div>');
-    var hf = d.held_future || [];
+    if (fr.stale || feed.stale_days) out.push('<div class="br-warn"><b>Invoices are ' + (stale ? hn(stale) + ' days ' : '') + 'behind.</b> The newest is from ' + hn(fr.invoices_through_mdy || feed.invoices_through_mdy || d.as_of_mdy) + '. Check that ' + esc2(fl) + '’s daily file is still being forwarded — nothing is judged until invoices catch up.</div>');
+    var hf = d.held_future || [], hfn = d.held_future_total || hf.length;
     if (hf.length) {
       var li = '';
       for (i = 0; i < hf.length; i++) li += '<li><b>' + esc2(hf[i].distributor) + '</b> #' + esc2(hf[i].invoice_number) + ' · dated ' + hn(hf[i].date_mdy) + (hf[i].received_mdy ? ', its file arrived ' + hn(hf[i].received_mdy) : '') + '</li>';
-      out.push('<div class="br-warn info"><b>' + hn(hf.length) + ' ' + plural(hf.length, 'invoice is', 'invoices are') + ' dated after today or more than a week after the file arrived</b> and held for a date check — they count once the date is corrected, or arrives if it’s within a week of the file.<ul>' + li + '</ul></div>');
+      out.push('<div class="br-warn info"><b>' + hn(hfn) + ' ' + plural(hfn, 'invoice is', 'invoices are') + ' dated after today or more than a week after the file arrived</b> and held for a date check — they count once the date is corrected, or arrives if it’s within a week of the file.<ul>' + li + '</ul></div>');
     }
-    var ho = d.held_old || [];
+    var ho = d.held_old || [], hon = d.held_old_total || ho.length;
     if (ho.length) {
       var lo = '';
       for (i = 0; i < Math.min(ho.length, 8); i++) lo += '<li><b>' + esc2(ho[i].distributor) + '</b> #' + esc2(ho[i].invoice_number) + ' · dated ' + hn(ho[i].date_mdy) + '</li>';
-      out.push('<div class="br-warn info"><b>' + hn(ho.length) + ' ' + plural(ho.length, 'invoice is', 'invoices are') + ' dated more than two years before you joined Cavnar AI</b> and held for a date check — a mis-typed year would otherwise stretch the month table and the price history.<ul>' + lo + '</ul></div>');
+      out.push('<div class="br-warn info"><b>' + hn(hon) + ' ' + plural(hon, 'invoice is', 'invoices are') + ' dated more than two years before you joined Cavnar AI</b> and held for a date check — a mis-typed year would otherwise stretch the month table and the price history.<ul>' + lo + '</ul></div>');
     }
     var gs = pc.gaps || [];
     if (gs.length) {
       var gl = '';
       for (i = 0; i < gs.length; i++) gl += '<li><b>' + esc2(gs[i].distributor) + '</b> — nothing on file ' + hn(gs[i].from_mdy) + '–' + hn(gs[i].to_mdy) + ((gs[i].categories || []).length ? ' (' + esc2(catNames(gs[i].categories)) + ')' : '')
         + (OWNER ? '<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-stop="' + esc2(gs[i].distributor) + '">We stopped buying from them</button>' : '') + '</li>';
-      out.push('<div class="br-warn"><b>Some invoices aren’t on file yet.</b> What these distributors supply reads low until they arrive — forward Fintech’s invoice detail for those dates.<ul>' + gl + '</ul></div>');
+      out.push('<div class="br-warn"><b>Some invoices aren’t on file yet.</b> What these distributors supply reads low until they arrive — forward ' + esc2(fl) + '’s invoice detail for those dates.<ul>' + gl + '</ul></div>');
     }
-    var sg = pc.sales_gaps || [];
+    var sg = pc.sales_gaps || [], sgNo = 0;
+    for (i = 0; i < sg.length; i++) if (sg[i].why === 'no_report') sgNo++;
     if (sg.length) {
       var sl = '';
       for (i = 0; i < sg.length; i++) sl += '<li><b>' + hn(sg[i].date_mdy) + '</b> — ' + numify(sg[i].say || 'the night’s drink sales aren’t sorted') + '</li>';
-      out.push('<div class="br-warn"><b>' + (sg.length === 1 ? 'A night’s' : hn(sg.length) + ' nights’') + ' drink sales aren’t sorted into beer, liquor and wine.</b> Those nights are left out and the window isn’t judged until they’re repaired.<ul>' + sl + '</ul>'
-        + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Check the bar mapping</button></div>');
+      out.push('<div class="br-warn"><b>' + (sg.length === 1 ? 'A night’s' : hn(sg.length) + ' nights’') + ' drink sales ' + (sgNo === sg.length ? 'aren’t on file' : (sgNo ? 'aren’t on file or aren’t sorted into beer, liquor and wine' : 'aren’t sorted into beer, liquor and wine')) + '.</b> Those nights are left out and the window isn’t judged until they’re in' + (sgNo ? ' — or marked closed in your hours if the bar didn’t open' : '') + '.<ul>' + sl + '</ul>'
+        + (sgNo === sg.length ? '' : '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Check the bar mapping</button>') + '</div>');
     }
     var sb = d.sales_basis || {};
     // Only when unsorted sales move the figures (owner, 10/15/26: the bare
@@ -46982,7 +46984,7 @@ function sfw2RuleCheck(chk) {
       var uc = sb.unmapped_categories || [], ul = '';
       for (i = 0; i < uc.length && i < 6; i++) ul += '<li>' + esc2(uc[i].key) + ' — ' + hn(money(uc[i].sales_usd)) + (uc[i].why ? ' · ' + esc2(uc[i].why) : '') + '</li>';
       out.push('<div class="br-warn">' + (sb.unmapped_usd > 0
-          ? '<b>' + hn(money(sb.unmapped_usd)) + ' of POS sales' + (sb.unmapped_pct != null ? ' (' + hn(sb.unmapped_pct + '%') + ')' : '') + ' aren’t sorted into beer, liquor or wine.</b> Until they are, the bar’s sales read low.'
+          ? '<b>' + hn(money(sb.unmapped_usd)) + ' of POS sales' + (sb.unmapped_pct != null ? ' (' + hn(sb.unmapped_pct + '%') + ' of the drink sales)' : '') + ' aren’t sorted into beer, liquor or wine.</b> Until they are, the bar’s sales read low' + (sb.unmapped_hold ? ' and nothing is judged' : '') + '.'
           : '<b>Confirm which POS categories are bar sales.</b> Cavnar AI is reading its own suggestions until you do.')
         + (ul ? '<ul>' + ul + '</ul>' : '') + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-go="br-mapsec">Sort your POS categories</button></div>');
     }
@@ -46992,23 +46994,27 @@ function sfw2RuleCheck(chk) {
   }
 
   /* ── the three categories ───────────────────────────────────────────── */
-  /* A card's chart fits its own line, and the dashed box spans exactly the
-     line's height, lowest point to highest (owner, 10/15/26: "they should
-     span the total height of the line in each"); the range is the meter's. */
-  function sparkFit(sp) {
-    var mn = null, mx = null, j;
+  /* The dashed box spans exactly the line's height, lowest point to highest
+     (owner, 10/15/26: "they should span the total height of the line in
+     each"); the range is the meter's. Given every card's line (all) the
+     three cards share one scale, so a 0.4-point wobble never fills a card
+     the way a 10-point swing does (UI-19, 10/16/26). */
+  function sparkFit(sp, all) {
+    var mn = null, mx = null, j, k, lo = null, hi = null, lists = all || [sp];
     for (j = 0; j < (sp || []).length; j++) if (sp[j] != null) { mn = mn == null ? sp[j] : Math.min(mn, sp[j]); mx = mx == null ? sp[j] : Math.max(mx, sp[j]); }
     if (mn == null) return null;
-    var w = (mx - mn) || 1, pad = w * 0.08;
-    return {min: mn - pad, max: mx + pad, band: [mn, mx]};
+    for (k = 0; k < lists.length; k++) for (j = 0; j < (lists[k] || []).length; j++) if (lists[k][j] != null) { lo = lo == null ? lists[k][j] : Math.min(lo, lists[k][j]); hi = hi == null ? lists[k][j] : Math.max(hi, lists[k][j]); }
+    var w = (hi - lo) || 1, pad = w * 0.08;
+    return {min: lo - pad, max: hi + pad, band: [mn, mx]};
   }
   function cats(pc) {
-    var h = '', i;
+    var h = '', i, allSp = [];
+    for (i = 0; i < pc.categories.length; i++) allSp.push(pc.categories[i].spark || []);
     for (i = 0; i < pc.categories.length; i++) {
       var c = pc.categories[i], counted = c.basis === 'counted', v = verdict(c, counted), s = seriesOf(c.key), sp = c.spark || [];
       var jt = c.judge_target || (c.target != null ? {pct: c.target, phrase: phraseOf(c.target_label, c.target)} : null);
       var delta = (!counted && c.prev_pct != null && c.pct != null && !c.incomplete) ? (c.pct - c.prev_pct) : null;
-      var fit = sparkFit(sp), noise = (pc.trend_noise || {})[c.key];
+      var fit = sparkFit(sp, allSp), noise = (pc.trend_noise || {})[c.key];
       h += '<article class="br-card lift br-cat br-rise" style="--s:' + s.css + ';animation-delay:' + (0.08 + i * 0.07) + 's" aria-label="' + esc2(c.label) + '">'
         + '<div class="hd"><span class="nm"><i></i>' + esc2(c.label) + '</span>' + pillHtml(v, true) + '</div>';
       if (c.pct == null) {
@@ -47239,12 +47245,12 @@ function sfw2RuleCheck(chk) {
           + (b.rate_pct == null ? '<span class="m">' + esc2(b.too_few || 'too few shifts') + '</span>' : hn(b.rate_pct + '%')) + '</td></tr>';
       }
       h += '<div class="br-scroll"><table class="br-t"><thead><tr><th>Scheduled bartender</th><th class="n">Shifts</th><th class="n">Bar sales</th><th class="n">Comps</th><th class="n">Voids</th><th class="n">Rate</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-        + '<p class="br-note">The bar’s own rate is ' + hn((sh.baseline_rate_pct || 0) + '%') + '; a rate shows after ' + hn(sh.min_shifts || 6) + ' shifts.</p>';
+        + '<p class="br-note">The bar’s own rate is ' + hn((sh.baseline_rate_pct || 0) + '%') + '; a rate shows after ' + hn(sh.min_shifts || 6) + ' shifts.' + (sh.basis_text ? ' Shift rates read ' + numify(sh.basis_text) + '.' : '') + '</p>';
     } else if (sh.why) h += '<p class="br-note">' + numify(sh.why) + '</p>';
     var fl = c.flagged || [], fh = '';
     for (i = 0; i < fl.length; i++) fh += '<div class="br-warn info"><b>' + numify(fl[i].headline) + '</b>' + (fl[i].alternative ? ' ' + numify(fl[i].alternative) : '') + '</div>';
     return '<div class="br-sub" id="br-comps"><div class="br-k">Comps &amp; voids · ' + hn((c.span || {}).from_mdy) + ' – ' + hn((c.span || {}).to_mdy) + '</div><h3>Poured, not paid, by shift</h3>'
-      + '<p class="br-note" style="margin-top:0">From ' + esc2(c.basis_text || 'the bar’s tickets') + ': ' + hn(money(t.comp_usd)) + ' comped and ' + hn(money(t.void_usd)) + ' voided on ' + hn(money(t.sales_usd)) + ' of sales' + (t.rate_pct != null ? ' (' + hn(t.rate_pct + '%') + ')' : '') + (rs.length ? ' · ' + numify(rs.join(' · ')) : '')
+      + '<p class="br-note" style="margin-top:0">From ' + esc2(c.basis_text || 'the bar’s tickets') + ': ' + hn(money(t.comp_usd)) + ' comped' + (t.check_comps_usd ? ' (' + hn(money(t.check_comps_usd)) + ' of it 100% check discounts)' : '') + ' and ' + hn(money(t.void_usd)) + ' voided on ' + hn(money(t.sales_usd)) + ' of sales' + (t.rate_pct != null ? ' (' + hn(t.rate_pct + '%') + ')' : '') + (rs.length ? ' · ' + numify(rs.join(' · ')) : '')
       + ((c.game_nights || {}).nights ? ' · game nights apart: ' + hn(c.game_nights.nights) + ' ' + plural(c.game_nights.nights, 'night') + ', ' + hn(money(c.game_nights.comp_usd)) + ' comped' : '') + '.</p>'
       + (fh ? '<div class="br-alerts">' + fh + '</div>' : '') + h
       + '<p class="br-note">' + numify(c.note || 'A pattern worth reviewing, not a finding of wrongdoing.') + '</p></div>';
@@ -47704,11 +47710,18 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < sp.length; i++) if (sp[i].bottles_bought > 0) { sc += +sp[i].paid_extra_usd || 0; scn++; }
     var ld = 0, ldn = 0, ls = pw.ladders || [];
     for (i = 0; i < ls.length; i++) if (ls[i].proven && ls[i].save_90d_at_best) { ld += +ls[i].save_90d_at_best || 0; ldn++; }
-    if (v.unmapped_total) out.push({usd: +v.unmapped_sales_usd || 0, fig: cnt(v.unmapped_sales_usd || 0, 0, '$'), l: hn(v.unmapped_total) + ' POS ' + plural(v.unmapped_total, 'drink') + ' not matched', s: 'sold, left out of bought vs sold until matched', go: 'br-unm', tone: 'act', cta: 'Match them'});
-    if (s.tier_flags_usd > 0) out.push({usd: +s.tier_flags_usd, fig: cnt(s.tier_flags_usd, 0, '$'), l: 'Billed above the deal', s: hn(s.tier_flags_n) + ' ' + plural(s.tier_flags_n, 'line') + ' to ask back', go: 'br-tflags', tone: 'bad', cta: 'See them'});
-    if (sc > 0) out.push({usd: sc, fig: cnt(sc, 0, '$'), l: 'Extra paid by the bottle', s: hn(scn) + ' ' + plural(scn, 'product') + ' bought outside a case', go: 'br-split', tone: 'warn', cta: 'See them'});
-    if (ld > 0) out.push({usd: ld, fig: cnt(ld, 0, '$'), l: 'Less at a bigger order', s: 'last 90 days · ' + hn(ldn) + ' proven order-size ' + plural(ldn, 'price'), go: 'br-lads', tone: 'warn', cta: 'See them'});
-    if (s.up_forward_monthly_usd > 0) out.push({usd: (+s.up_forward_monthly_usd) * 3, fig: hn('+' + money(s.up_forward_monthly_usd)) + '<small>/mo</small>', l: hn(s.up_n) + ' price ' + plural(s.up_n, 'increase') + ' that held', s: 'at your usual buying', go: 'br-prices', tone: 'bad', cta: 'See prices'});
+    /* Only money at stake is ranked, and all of it per month (UI-13,
+       10/16/26): an amount over a span is shown as its monthly rate with the
+       span's total beside it. Unmatched drinks are work, never dollars — their
+       sales are what was sold, not what is at stake. */
+    var lb = +pw.lookback_days || 120;
+    function perMo(usd, days) { return (+usd || 0) * 30 / days; }
+    function moFig(v) { return cnt(v, 0, '$') + '<small>/mo</small>'; }
+    if (v.unmapped_total) out.push({usd: 0, fig: cnt(v.unmapped_total), l: 'POS ' + plural(v.unmapped_total, 'drink') + ' not matched', s: hn(money(v.unmapped_sales_usd || 0)) + ' sold, left out of bought vs sold until matched', go: 'br-unm', tone: 'act', cta: 'Match them'});
+    if (s.tier_flags_usd > 0) { var tfm = perMo(s.tier_flags_usd, lb); out.push({usd: tfm, fig: moFig(tfm), l: 'Billed above the deal', s: hn(money(s.tier_flags_usd)) + ' over ' + hn(lb) + ' days · ' + hn(s.tier_flags_n) + ' ' + plural(s.tier_flags_n, 'line') + ' to ask back', go: 'br-tflags', tone: 'bad', cta: 'See them'}); }
+    if (sc > 0) { var scm = perMo(sc, lb); out.push({usd: scm, fig: moFig(scm), l: 'Extra paid by the bottle', s: hn(money(sc)) + ' over ' + hn(lb) + ' days · ' + hn(scn) + ' ' + plural(scn, 'product') + ' bought outside a case', go: 'br-split', tone: 'warn', cta: 'See them'}); }
+    if (ld > 0) { var ldm = perMo(ld, 90); out.push({usd: ldm, fig: moFig(ldm), l: 'Less at a bigger order', s: hn(money(ld)) + ' over the last 90 days · ' + hn(ldn) + ' proven order-size ' + plural(ldn, 'price'), go: 'br-lads', tone: 'warn', cta: 'See them'}); }
+    if (s.up_forward_monthly_usd > 0) out.push({usd: +s.up_forward_monthly_usd, fig: hn('+' + money(s.up_forward_monthly_usd)) + '<small>/mo</small>', l: hn(s.up_n) + ' price ' + plural(s.up_n, 'increase') + ' that held', s: 'at your usual buying', go: 'br-prices', tone: 'bad', cta: 'See prices'});
     if (v.suggestions_total) out.push({usd: 0, fig: cnt(v.suggestions_total), l: 'Recipe ' + plural(v.suggestions_total, 'card') + ' to confirm', s: 'a cocktail counts once its card is confirmed', go: 'br-specs', tone: 'act', cta: 'Confirm'});
     if ((m.suggestions || []).length) out.push({usd: 0, fig: cnt(m.suggestions.length), l: 'Name ' + plural(m.suggestions.length, 'match', 'matches') + ' to check', s: 'a yes shows its drink cost', go: 'br-namem', tone: 'act', cta: 'Check'});
     if (!cn.last_count_mdy) out.push({usd: 0, fig: 'Not yet', l: 'No bar count', s: cn.next_due_mdy ? 'first due ' + hn(cn.next_due_mdy) + ' — two make counted pour cost' : 'two make counted pour cost', go: 'br-counts', tone: 'act', cta: 'Count'});
@@ -47732,14 +47745,14 @@ function sfw2RuleCheck(chk) {
         + '<span class="f">' + x.fig + '</span><span class="l">' + x.l + '</span><span class="s">' + x.s + '</span>'
         + '<span class="go">' + esc2(x.cta) + ARROW_GO + '</span></button>';
     }
-    return '<section class="br-sec2 br-ovs">' + head('Where the money is', 'ranked by dollars', 'Each tile is something Cavnar AI found in your invoices and POS sales, largest dollar figure first; the work waiting on you follows. A tile opens the view it comes from.')
+    return '<section class="br-sec2 br-ovs">' + head('Where the money is', 'ranked by dollars a month', 'Each tile is money at stake Cavnar AI found in your invoices, as a monthly rate so they compare — largest first; the work waiting on you follows. A tile opens the view it comes from.')
       + '<div class="br-sigs' + (show < 5 ? ' few' : '') + '" style="--n:' + show + '">' + h + '</div>' + (also ? '<div class="br-alsos">' + also + '</div>' : '') + '</section>';
   }
   function insights2(list) {
     if (!list || !list.length) return '';
     var label = {good: 'Going well', warn: 'Worth a look', bad: 'Needs attention', info: 'Good to know'},
         col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--ember2)'}, lead = list[0], rest = '', i;
-    var conf = function (x) { var cf = x.confidence || {}; return cf.evidence_pct != null ? '<div class="br-cfl">Evidence ' + hn(cf.evidence_pct + '%') + (cf.freshness_pct != null ? ' · Freshness ' + hn(cf.freshness_pct + '%') : '') + '</div>' : ''; };
+    var conf = function (x) { var cf = x.confidence || {}; return (cf.evidence_pct != null || cf.freshness_pct != null) ? '<div class="br-cfl">Evidence ' + (cf.evidence_pct != null ? hn(cf.evidence_pct + '%') : '—') + (cf.freshness_pct != null ? ' · Freshness ' + hn(cf.freshness_pct + '%') : '') + '</div>' : ''; };
     var lh = '<article class="br-feat br-rise" style="--c:' + (col[lead.tone] || 'var(--ember2)') + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
       + '<div class="fl"><div class="t"><i></i>' + esc2(label[lead.tone] || 'Good to know') + '</div><div class="h">' + numify(lead.headline) + '</div></div>'
       + '<div class="fr"><div class="m">' + numify(lead.metric) + '</div>' + conf(lead) + '<div class="a">' + numify(lead.action) + '</div></div></article>';
@@ -47806,7 +47819,9 @@ function sfw2RuleCheck(chk) {
         if (!LABELS.hasOwnProperty(k) || !v.categories[k]) continue;
         var c = v.categories[k];
         cs += tile(esc2(LABELS[k]), c.variance_usd == null ? '—' : cnt(c.variance_usd, 0, '$'),
-                   c.variance_usd == null ? numify(c.why || 'Withheld') : 'used ' + hn(money(c.used_usd)) + ' against ' + hn(money(c.theoretical_usd)) + ' sold · ' + hn((c.coverage_pct || 0) + '%') + ' of sales matched', '', 0);
+                   c.variance_usd == null ? numify(c.why || 'Withheld') : 'used ' + hn(money(c.used_usd)) + ' against ' + hn(money(c.theoretical_usd)) + ' sold'
+                     + (c.comped_usd ? ' + ' + hn(money(c.comped_usd)) + ' comped' : '') + (c.waste_usd ? ' + ' + hn(money(c.waste_usd)) + ' logged waste' : '')
+                     + (c.from_mdy ? ' · ' + hn(c.from_mdy) + '–' + hn(c.to_mdy) : '') + ' · ' + hn((c.coverage_pct || 0) + '%') + ' of drink sales matched', '', 0);
       }
       pre = '<div class="br-sum" style="grid-template-columns:repeat(3,minmax(0,1fr))">' + cs + '</div>' + (v.item_note ? '<p class="br-note">' + numify(v.item_note) + '</p>' : '');
     }

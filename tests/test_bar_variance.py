@@ -230,29 +230,34 @@ def test_two_counts_make_it_variance_by_category_withheld_below_coverage(db):
     assert v["basis"] == "variance" and v["label"] == "Variance" and v["item_basis"] == "bought_vs_rung"
     beer = v["categories"]["beer"]
     # Bud Light (unmapped) is a fifth of beer sales: variance withheld, never computed on 80%.
-    assert beer["variance_usd"] is None and "needs 90%" in beer["why"]
+    assert beer["variance_usd"] is None and f"needs {int(bv.CATEGORY_COVERAGE_FLOOR * 100)}%" in beer["why"]
     assert v["categories"]["liquor"]["why"]
     assert callable(bcn.counted)  # the counts module owns `used` (bar.counts.counted builds the block)
 
 
-def test_full_coverage_gives_category_variance_and_waste_never_moves_it(db):
+def test_full_coverage_gives_category_variance_and_waste_is_a_named_part(db):
     """F2's positive path (the withheld one is above): every beer the POS
-    sold matched, so variance = what the counts say was used − the
-    theoretical dollars of what was rung; F14: a waste entry is shown
-    beside it and never netted out of it."""
+    sold matched, so variance = what the counts say was used − (the
+    theoretical dollars of what was sold + what was comped + logged waste),
+    each part shown beside it (FC/Bar audit 10/16/26 BAR-CALC-05 — F14's
+    "waste never moves it" read logged waste as missing stock). A product
+    row's gap still never nets the waste: it stays beside the row."""
     rid = _rid(db)
     _miller(db, rid)
     _map(db, rid, "B9", "lakeshore beverage|1001")        # the Bud Light button pours from the Miller cases
     block = {"periods": [{"from": _iso(-1), "to": _iso(30), "ok": True,
                           "categories": {"beer": {"used": 130.0}, "liquor": {"used": None}, "wine": {"used": None}}}]}
     beer = bv.compute(rid, today=TODAY, db_path=db, counted=block)["variance"]["categories"]["beer"]
-    assert beer["coverage_pct"] >= 90 and beer["theoretical_usd"] == 100.0, beer   # 50 cans rung × $2
-    assert beer["variance_usd"] == round(130.0 - beer["theoretical_usd"], 2) == 30.0
+    assert beer["coverage_pct"] >= 95 and beer["theoretical_usd"] == 100.0, beer   # 50 cans rung × $2
+    assert beer["comped_usd"] == 2.0 and beer["waste_usd"] == 0.0               # one comped can
+    assert beer["variance_usd"] == round(130.0 - 100.0 - 2.0, 2) == 28.0
     bw.log_waste(rid, _iso(5), "lakeshore beverage|1001", 3, "each", "breakage", user_id=1, today=TODAY, db_path=db)
     res = bv.compute(rid, today=TODAY, db_path=db, counted=block)
     bv.attach_waste(res, rid, db_path=db)
-    assert res["variance"]["categories"]["beer"]["variance_usd"] == 30.0
-    assert _item(res, "miller")["waste_units"] == 3
+    beer = res["variance"]["categories"]["beer"]
+    assert beer["waste_usd"] == 6.0 and beer["variance_usd"] == 22.0 and beer["explained_usd"] == 108.0
+    m = _item(res, "miller")
+    assert m["waste_units"] == 3 and m["gap_usd"] == round(m["bought_usd"] - m["theoretical_usd"], 2)
 
 
 def test_waste_is_shown_beside_the_gap_never_netted(db):

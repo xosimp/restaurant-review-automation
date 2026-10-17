@@ -13,6 +13,10 @@ from datetime import date, timedelta
 
 from bar.common import _mdy, get_conn
 
+# The invoice feed's name, said wherever the page names it (UI-18): the
+# payload's `feed.label`, never a vendor typed into the page's copy.
+FEED_LABEL = "Fintech"
+
 # Invoices more than this many days behind today: the feed has stopped
 # (the judgement floor's "invoices fresh", PLAN decision 10, reads the same).
 FEED_STALE_DAYS = 7
@@ -65,7 +69,7 @@ def feed_status(restaurant_id, today=None, db_path=None) -> dict:
     sales = str(s["d"])[:10] if s and s["d"] else None
     last_file = local_iso(f["at"], (tz["timezone"] if tz else None) or None) if f and f["at"] else None
     behind = (day - date.fromisoformat(inv)).days if inv else None
-    return {"invoices_through": inv, "invoices_through_mdy": _mdy(inv) if inv else None,
+    return {"label": FEED_LABEL, "invoices_through": inv, "invoices_through_mdy": _mdy(inv) if inv else None,
             "sales_through": sales, "sales_through_mdy": _mdy(sales) if sales else None,
             "last_file": last_file, "last_file_mdy": _mdy(last_file) if last_file else None,
             "stale_days": behind if behind is not None and behind > FEED_STALE_DAYS else None}

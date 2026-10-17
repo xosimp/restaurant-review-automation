@@ -13,7 +13,27 @@ from fintech_invoices import distributor_key, item_key
 
 # Description words, checked in this order (a keg is beer whatever else it
 # says; a vodka seltzer is sold under the POS's Seltzer, inside Beer).
-_KEG_RE = re.compile(r"\b(1/2\s*BB|1/2BBL|1/2\s*BARREL|1/4\s*BB|1/6\s*BB|1/6BBL|BBL|BARREL|KEG|50L|30L|20L|K\s+1/2|K\s+50L|SIXTEL)\b")
+#
+# THE keg pattern (BAR-CALC-10 / ING-16, 10/16/26), shared with the Fintech
+# reader's deposit split (fintech_invoices._is_keg reads KEG_RE / is_keg):
+# a fraction of a barrel in any spelling (1/2 BBL, 1/2BB, 1/6BL, 1/2 BL,
+# 1/4 BARREL), BBL, KEG, a sixtel or pony, a litre keg (50L, 30L, 20L), K 1/2,
+# or gallons. A bare BARREL is never a keg: "JAMESON BLACK BARREL" and
+# "KNOB CREEK SINGLE BARREL" are whiskey — BARREL counts only with a fraction
+# ("1/2 BARREL", "HALF BARREL") or with the keg unit (KE / KG), which is_keg
+# reads from the line's unit.
+KEG_RE = re.compile(r"(?:\b1/[246]\s*(?:BBL|BB|BL|BARREL|KEG)S?\b|\bHALF\s+BARREL\b|\bBBL\b|\bKEGS?\b|\bSIXTEL\b|"
+                    r"\bPONY\s+KEG\b|(?<![\d.])\b(?:50|30|20)\s?L\b(?!\s*BOX)|\bK\s+1/[246]\b|\bK\s+50L\b|"
+                    r"\b\d{1,2}(?:\.\d+)?\s*GAL(?:LONS?)?\b)", re.I)
+_KEG_RE = KEG_RE
+
+
+def is_keg(description, uom=None) -> bool:
+    """A keg: the keg unit (KE / KG) or KEG_RE in the description. The one
+    test the category (classify) and the deposit split share."""
+    return str(uom or "").upper() in ("KE", "KG") or bool(KEG_RE.search(str(description or "")))
+
+
 _FEE_RE = re.compile(r"\b(SERVICE\s*CHARGE|SALES\s*TAX|TAX|FUEL|DELIVERY|FREIGHT|SURCHARGE|DISCOUNT|REVERSAL|"
                      r"SUMMARY\s*LEVEL|ADJUSTMENT)\b")
 _SUPPLY_RE = re.compile(r"\b(COASTERS?|GLASSWARE|GLASS|BUCKET|NAPKINS?|STRAWS?|PICKS?|SLEEVE|TAP\s*HANDLE|HANDLE|CO2|"
@@ -34,7 +54,9 @@ _LIQUOR_RE = re.compile(r"\b(VODKA|VDK|TEQ|TEQUILA|WHSKY|WHISKY|WHISKEY|WHSK|BRB
                         r"TANQUERAY|HENDRICKS|BOMBAY|BEEFEATER|SMIRNOFF|ABSOLUT|DEEP\s*EDDY|NEW\s*AMSTERDAM|"
                         r"KOVAL|RUMCHATA|HORNITOS|TEREMANA|LUNAZUL|1800|BBN|SCHNPS|CURACAO|LIMONCELLO|BITTERS?|VERM|ELDER|"
                         r"J\s*WALKER|JOHNNIE\s*WALKER|JACK\s*DANIELS?|HAYDENS?|JAMES\s*E\s*PEPPER|HENRY\s*AND\s*SONS|MCGILLS|DEKUYPER|"
-                        r"PALLINI|CARPANO|BITTERMENS)\b")
+                        r"PALLINI|CARPANO|BITTERMENS|KNOB\s*CREEK|SINGLE\s*BARREL|BARREL\s*PROOF|SMALL\s*BATCH|"
+                        r"BLACK\s*BARREL|EAGLE\s*RARE|BLANTONS?|ELIJAH\s*CRAIG|FOUR\s*ROSES|WILD\s*TURKEY|"
+                        r"JIM\s*BEAM|EVAN\s*WILLIAMS|OLD\s*FORESTER|BASIL\s*HAYDEN)\b")
 _BEER_RE = re.compile(r"(\d+NR\b|\d+CN\b|\bMHL\b)|\b(NR|LN|12Z|16Z|19\.2Z|24Z|25Z|24/12|2/12|4/6|6/4|LAGER|IPA|STOUT|PILS|"
                       r"PILSNER|PORTER|LITE|ULTRA|MILLER|COORS|BUD|BUDWEISER|MICHELOB|MODELO|CORONA|STELLA|"
                       r"GUINNESS|HEINEKEN|BLUE\s*MOON|GOOSE\s*ISLAND|REVOLUTION|HALF\s*ACRE|3\s*FLOYDS|DAISY\s*CUTTER|"
@@ -165,16 +187,27 @@ def is_mixer(description) -> bool:
 
 
 def _by_words(d, dist) -> tuple:
-    """(category, confident) from the description's words alone, or None."""
+    """(category, confident) from the description's words alone, or None.
+
+    A beer's pack and container words (24NR, 4/6, 12Z, a can count) and its
+    style words (STOUT, LAGER, IPA, a brewery) beat a single spirit or wine
+    word, and when both fire the sort is a guess the owner confirms
+    (BAR-CALC-10 / ING-16, 10/16/26: "GOOSE ISLAND BOURBON COUNTY STOUT" was
+    liquor and "KRONENBOURG 1664 BLANC 4/6 12Z NR" wine, both sure)."""
     if _SELTZER_RE.search(d):
         return "beer", True
-    if _BOND_RE.search(d) or _LIQUOR_RE.search(d):
+    if _BOND_RE.search(d):
         return "liquor", True
-    if _WINE_RE.search(d):
+    liquor, wine, beer = bool(_LIQUOR_RE.search(d)), bool(_WINE_RE.search(d)), bool(_BEER_RE.search(d))
+    if beer and (liquor or wine):
+        return "beer", False
+    if liquor:
+        return "liquor", True
+    if wine:
         return "wine", True
     if _NA_RE.search(d):
         return "na", True
-    if _BEER_RE.search(d):
+    if beer:
         return "beer", True
     # A weak word alone is a guess the owner confirms (V28).
     if _WEAK_WINE_RE.search(d):

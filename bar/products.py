@@ -356,13 +356,33 @@ _KEGS = ((re.compile(r"\b1/2\s*(?:BBL|BL|BB|BARREL)|\b1/2BB|\bK\s+1/2\b|\bHALF\s
          (re.compile(r"\b50\s*L\b|\bK\s+50L\b"), 1690.7, "50 L"),
          (re.compile(r"\b30\s*L\b"), 1014.4, "30 L"),
          (re.compile(r"\b20\s*L\b"), 676.3, "20 L"))
-_SIZE_RE = re.compile(r"(?<![\d/.])(\d+(?:\.\d+)?)\s*(ML|M|LTR|L|OZ|Z)\b")
-_TRIPLE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d+(?:\.\d+)?)\b")
-_SLASH_RE = re.compile(r"\b(\d{1,2})/(\d+(?:\.\d+)?)(?:PK)?\b(?!\s*(?:BBL|BL|BB|BARREL)\b)")
+# A keg stated in gallons ("GUINNESS 13.2 GAL" is a 50 L keg, 1,690 oz — not
+# the 1/2 barrel a KE unit would otherwise be assumed to be).
+_GALLON_RE = re.compile(r"\b(\d{1,2}(?:\.\d+)?)\s*(?:GAL|GALLON|GALLONS)\b")
+# A size may follow a slash ("12/750ML", "6/1.75L"): only a digit or a
+# decimal point before it means it is not a size of its own.
+_SIZE_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*(ML|M|LTR|L|OZ|Z)\b")
+_TRIPLE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d+(?:\.\d+)?)\s?(ML|M|LTR|L|OZ|Z)?\b")
+# N/SIZE with or without its unit: 12/750, 12/750ML, 6/1.75L, 12/1L, 24/12OZ,
+# 6/4PK (BAR-CALC-09 / ING-15: "12/750ML" has no word boundary between 750
+# and ML, so the unit has to be part of the pattern).
+_SLASH_RE = re.compile(r"\b(\d{1,2})/(\d+(?:\.\d+)?)\s?(ML|M|LTR|L|OZ|Z)?(?:PK)?\b(?!\s*(?:BBL|BL|BB|BARREL)\b)")
 _B_RE = re.compile(r"\b(\d{1,2})B\b")
 _C_RE = re.compile(r"\bC(\d{1,2})\b")
 _COUNT_RE = re.compile(r"\b(\d{1,2})\s*(NR|CN|CANS?|LN|BTLS?|BOTTLES?|PK|PACK|LP)\b")
 _TWO_DIGIT_RE = re.compile(r"(?<![\d/.$])\b(\d{2})\b(?!\s*(?:ML|M|L|LTR|OZ|Z|PK|NR|CN|B)\b)(?![/.]\d)")
+
+
+def _ml_of(n, unit):
+    """Millilitres for a number in a stated unit, or None when the pair
+    can't be a container (an 'M' under 50, a 40 L, a 200 OZ)."""
+    if unit == "ML" or (unit == "M" and n >= 50):
+        return n
+    if unit in ("L", "LTR") and 0 < n <= 20:
+        return n * 1000
+    if unit in ("OZ", "Z") and 0 < n <= 128:
+        return n * _ML_PER_OZ
+    return None
 
 
 def parse_pack(description, uom=None, category=None) -> dict:
@@ -390,6 +410,13 @@ def _parse_pack(description, uom, category) -> dict:
                        container_ml=round(oz * _ML_PER_OZ, 1), size_source="parsed", units_per_case=1,
                        units_source="parsed")
             return out
+    g = _GALLON_RE.search(d)
+    if g and 2 <= float(g.group(1)) <= 16 and (u in ("KE", "KG", "") or cat == "beer"):
+        oz = round(float(g.group(1)) * 128.0, 1)
+        out.update(keg_oz=oz, keg_label=f"{float(g.group(1)):g} gal", each="keg", container_oz=oz,
+                   container_ml=round(oz * _ML_PER_OZ, 1), size_source="parsed", units_per_case=1,
+                   units_source="parsed")
+        return out
     if u in ("KE", "KG"):
         out.update(each="keg", keg_oz=1984.0, keg_label="1/2 barrel", container_oz=1984.0,
                    container_ml=round(1984.0 * _ML_PER_OZ, 1), size_source="assumed", units_per_case=1,
@@ -400,20 +427,31 @@ def _parse_pack(description, uom, category) -> dict:
     if m:
         a, b, c = int(m.group(1)), int(m.group(2)), float(m.group(3))
         count = a * b
-        if c < 50:
-            out.update(container_oz=c, container_ml=round(c * _ML_PER_OZ, 1), size_source="parsed")
-        else:
-            out.update(container_ml=c, container_oz=round(c / _ML_PER_OZ, 2), size_source="parsed")
+        ml = _ml_of(c, m.group(4))
+        if ml is None:
+            ml = c * _ML_PER_OZ if c < 50 else c
+        out.update(container_ml=round(ml, 1), container_oz=round(ml / _ML_PER_OZ, 2), size_source="parsed")
     if count is None:
         m = _B_RE.search(d) or _C_RE.search(d)
         if m:
             count = int(m.group(1))
     if count is None:
         for m in _SLASH_RE.finditer(d):
-            a, b = int(m.group(1)), float(m.group(2))
+            a, b, unit = int(m.group(1)), float(m.group(2)), m.group(3)
             if a <= 1:
                 continue  # 1/2, 1/4, 1/6: a keg's fraction, not a pack
-            if b >= 50:  # 12/750: twelve 750 ml bottles
+            ml = _ml_of(b, unit) if unit else None
+            if ml is not None and unit in ("OZ", "Z") and a < 12 and 12 <= a * b <= 48:
+                # 2/12OZ, 4/6Z: packs to a case; the ounces are read below.
+                ml = None
+                count = int(a * b)
+            elif ml is not None and ml >= 30:
+                # 12/750ML, 6/1.75L, 12/1L, 24/12OZ: N containers of a stated size.
+                count = a
+                out.update(container_ml=round(ml, 1), container_oz=round(ml / _ML_PER_OZ, 2), size_source="parsed")
+            elif unit:
+                continue
+            elif b >= 50:  # 12/750: twelve 750 ml bottles
                 count = a
                 out.update(container_ml=b, container_oz=round(b / _ML_PER_OZ, 2), size_source="parsed")
             elif 12 <= a * b <= 48:  # 4/6, 6/4PK, 2/12: packs to a case
@@ -436,14 +474,8 @@ def _parse_pack(description, uom, category) -> dict:
         out["units_per_case"], out["units_source"] = count, "parsed"
     if out["container_ml"] is None:
         for m in _SIZE_RE.finditer(d):
-            n, unit = float(m.group(1)), m.group(2)
-            if unit in ("ML",) or (unit == "M" and n >= 50):
-                ml = n
-            elif unit in ("L", "LTR") and n <= 20:
-                ml = n * 1000
-            elif unit in ("OZ", "Z") and n <= 128:
-                ml = n * _ML_PER_OZ
-            else:
+            ml = _ml_of(float(m.group(1)), m.group(2))
+            if ml is None:
                 continue
             out.update(container_ml=round(ml, 1), container_oz=round(ml / _ML_PER_OZ, 2), size_source="parsed")
             break
@@ -463,11 +495,19 @@ def _parse_pack(description, uom, category) -> dict:
         if cat == "beer":
             out["units_per_case"], out["units_source"] = 24, "assumed"
         elif cat in ("liquor", "wine"):
+            # The case a size usually ships in: 1.5 L and 1.75 L six, 50 ml
+            # minis 120 (BAR-CALC-09), 375 ml and under 24, else 12.
             ml = out["container_ml"] or 0
-            out["units_per_case"] = 6 if ml >= 1700 else (24 if 0 < ml <= 400 else 12)
+            out["units_per_case"] = (6 if ml >= 1500 else (120 if 0 < ml <= 50 else (24 if 0 < ml <= 400 else 12)))
             out["units_source"] = "assumed"
     if not is_case:
-        out["units_per_case"], out["units_source"] = 1, "parsed"
+        if u:
+            out["units_per_case"], out["units_source"] = 1, "parsed"
+        elif not count:
+            # No unit of measure and no count in the words (BAR-CALC-04): a
+            # case or a can can't be told, so the line holds no known units
+            # — never read as one each. A count the words state stays.
+            out["units_per_case"], out["units_source"] = None, "none"
     if out["container_ml"] is None and cat == "beer" and out["each"] in ("can", "bottle"):
         out.update(container_ml=round(12 * _ML_PER_OZ, 1), container_oz=12.0, size_source="assumed")
     return out
@@ -506,6 +546,8 @@ def unit_costs(price, uom, description, category, override=None, pour=None) -> d
     assumes = []
     if pk["units_source"] == "assumed" and str(uom or "").upper() in ("CA", "CS"):
         assumes.append(f"assumes {units} a case")
+    if pk["units_source"] == "none":
+        assumes.append("no unit of measure on the invoice — read as one each")
     if pk["size_source"] == "assumed":
         assumes.append(("assumes a 1/2 barrel" if pk["each"] == "keg" else f"assumes {pk['container_oz']:g} oz"))
     oz = pk["container_oz"]

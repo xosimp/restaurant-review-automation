@@ -464,25 +464,15 @@ def test_scale_07_the_loop_queues_the_diagnoses_and_the_price_push():
     assert "run_food_cost_diagnoses)" not in loop and "import run_price_push" not in loop
 
 
-def test_scale_07_the_price_push_claims_the_window_and_queues_the_push(db_path, monkeypatch):
+def test_scale_07_the_price_push_pass_is_the_one_queued_fan_out(db_path, monkeypatch):
+    """D and C1 each built a fan-out; the loop's pass is bar_signals.run_price_push
+    (C1's), so one Monday queues one `bar_price_push` row per restaurant."""
     import bar_signals
-    import scheduler
     import strategy_jobs
-    import job_queue
-    rid = _rid(db_path, module_inventory=1, billing_status="active")
-    monkeypatch.setattr(job_queue, "kick", lambda *a, **k: None)
-    monkeypatch.setattr(bar_signals, "_restaurants_with_invoices", lambda db_path=None: [rid])
-    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
-    monkeypatch.setattr(scheduler, "local_due", lambda r, h, until=14, claim_key=None, now_local=None: True)
-    pushed = []
-    monkeypatch.setattr(bar_signals, "push_increase", lambda r, today=None, db_path=None: pushed.append(today) or 1)
+    seen = []
+    monkeypatch.setattr(bar_signals, "run_price_push", lambda db_path=None, now=None: seen.append(now) or {"queued": 1})
     monday = datetime(2026, 10, 19, 9, 15)
-    out = strategy_jobs.bar_price_push_pass(now=monday)
-    assert out["queued"] == 1 and pushed == []
-    row = _q(db_path, "SELECT payload_json FROM jobs WHERE kind='learner'")[0]
-    import json
-    job = type("J", (), {"payload": json.loads(row["payload_json"])})
-    assert strategy_jobs.run_queued_learner(job) == {"pushed": 1} and pushed == [date(2026, 10, 19)]
+    assert strategy_jobs.bar_price_push_pass(now=monday) == {"queued": 1} and seen == [monday]
 
 
 # ── SCALE-06: the dashboard computes the Back Office food cards only for a

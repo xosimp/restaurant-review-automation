@@ -5,8 +5,10 @@ import functools
 from datetime import date, timedelta
 
 from bar.common import LABELS, _mdy
+from bar.counts import _trading_days
 from bar.counts import counted as _counted
 from bar.counts import latest_counted
+from bar.feed import FEED_LABEL
 from bar.insights import _insights
 from bar.judge import owner_stopped
 from bar.ledger import Lines, Sales
@@ -53,6 +55,8 @@ def oldest_believable(restaurant):
     return (joined - timedelta(days=OLDEST_BEFORE_JOINING_DAYS)).isoformat()
 
 
+# The held invoices the payload lists (each list's length beside it).
+HELD_CAP = 50
 # An invoice dated more than this long after its file arrived is held (V35).
 LATEST_AFTER_RECEIPT_DAYS = 7
 
@@ -118,8 +122,9 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
     all_lines = _lines(restaurant_id, db_path)
     if not all_lines:
         return {"ok": True, "available": False,
-                "why_not": "No distributor invoices yet. Once Fintech's daily file reaches Cavnar AI, "
-                           "the bar's prices and what it buys against what it sells fill in here."}
+                "why_not": f"No distributor invoices yet. Once {FEED_LABEL}'s daily file reaches Cavnar AI, "
+                           "the bar's prices and what it buys against what it sells fill in here.",
+                "feed": {"label": FEED_LABEL}}
     # An invoice dated after today, or more than two years before the
     # restaurant joined Cavnar AI, is a typo or a mis-read: held for a date
     # check, never the page's "as of", the latest price, or a month row
@@ -155,7 +160,19 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
     # per-day figures and keeps the window from being judged (V5).
     sales_detail = bar_sales(restaurant_id, db_path)
     sales = Sales({k: v for k, v in sales_detail["by_category"].items() if k in ("beer", "liquor", "wine")})
-    sales_gaps = sorted(d for d, n in (sales_detail.get("nights") or {}).items() if n.get("gap"))
+    nights = sales_detail.get("nights") or {}
+    sales_gaps = sorted(d for d, n in nights.items() if n.get("gap"))
+    # The nights the bar trades with no report on file at all (BAR-CALC-02):
+    # from the first night on file to the last, a trading day (its hours,
+    # less the days marked closed) that never arrived is missing, never a
+    # quiet night.
+    expected = (_trading_days(restaurant_id, min(nights), max(nights), db_path=db_path, restaurant=restaurant)
+                if nights else [])
+    sales_missing = [d for d in expected if d not in nights]
+
+    def unmapped_of(a, b):
+        wb = window_basis(sales_detail, a, b)
+        return {"pct": wb["unmapped_pct"], "usd": wb["unmapped_usd"], "hold": wb["unmapped_hold"]}
     feed = _feed_status(restaurant_id, db_path, today)
     # "Invoices through" is the Fintech feed; a Back Office entry buys but is not the feed.
     inv_dates = sorted({str(l["invoice_date"])[:10] for l in lines if l.get("kind") != "backoffice"}
@@ -171,9 +188,10 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
               if "why_not" not in span else None)
     pour = _pour_cost(lines, sales, today, targets=target_details(restaurant_id, db_path, restaurant=restaurant),
                       feed=feed, owner_stopped=owner_stopped(restaurant_id, db_path), restaurant=restaurant,
-                      counted=period, sales_gaps=sales_gaps)
+                      counted=period, sales_gaps=sales_gaps, sales_missing=sales_missing, unmapped_of=unmapped_of)
     win = pour.get("window") if pour.get("available") else None
-    sales_basis = window_basis(sales_detail, win["from"], win["to"]) if win else sales_detail["basis_all"]
+    sales_basis = (window_basis(sales_detail, win["from"], win["to"], expected=expected) if win
+                   else sales_detail["basis_all"])
     if win:
         pour["sales_gaps"] = sales_basis["gaps"]
         if sales_basis["gaps"]:
@@ -198,13 +216,15 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
             "as_of": inv_dates[-1], "as_of_mdy": _mdy(inv_dates[-1]),
             "invoices": {"from_mdy": _mdy(inv_dates[0]), "to_mdy": _mdy(inv_dates[-1]),
                          "count": len({(l["distributor"], l["invoice_number"]) for l in lines if l.get("kind") != "backoffice"})},
-            "held_future": held_rows,
-            "held_old": held_old,
-            "feed": feed or {"invoices_through": fresh.get("invoices_through"),
-                             "invoices_through_mdy": fresh.get("invoices_through_mdy"),
-                             "sales_through_mdy": fresh.get("sales_through_mdy"),
-                             "last_file_mdy": fresh.get("last_file_mdy"),
-                             "stale_days": fresh.get("stale_days")},
+            # Capped (SCALE-08): a mis-dated export can hold hundreds; the
+            # count rides beside the list.
+            "held_future": held_rows[:HELD_CAP], "held_future_total": len(held_rows),
+            "held_old": held_old[:HELD_CAP], "held_old_total": len(held_old),
+            "feed": dict(feed or {"invoices_through": fresh.get("invoices_through"),
+                                  "invoices_through_mdy": fresh.get("invoices_through_mdy"),
+                                  "sales_through_mdy": fresh.get("sales_through_mdy"),
+                                  "last_file_mdy": fresh.get("last_file_mdy"),
+                                  "stale_days": fresh.get("stale_days")}, label=FEED_LABEL),
             "pour_cost": pour,
             "counted": counted,
             # Alcohol in the window paid through Back Office and not on Fintech.
@@ -230,11 +250,11 @@ def _build(restaurant_id, db_path=None, today=None) -> dict:
             "other_spend": other_spend,
             "categories": [{"key": c, "label": LABELS[c]} for c in ("beer", "liquor", "wine", "na", "supplies", "other")],
             "sales_basis": sales_basis,
-            "basis": (("Purchases are Fintech's distributor invoices; sales are the POS's drink sales after comps "
+            "basis": ((f"Purchases are {FEED_LABEL}'s distributor invoices; sales are the POS's drink sales after comps "
                        "and check discounts, under your bar mapping. Pour cost (counted) is what the bar used between two counts — opening count plus "
                        "purchases minus closing count — as a % of what it sold; the month table is bought vs sold.")
                       if pour.get("basis") == "counted" else
-                      ("Purchases are Fintech's distributor invoices; sales are the POS's drink sales after comps "
+                      (f"Purchases are {FEED_LABEL}'s distributor invoices; sales are the POS's drink sales after comps "
                        "and check discounts, under your bar mapping. Bought vs sold is what the bar bought as a % of what it sold, over four weeks and "
                        "by month — it becomes pour cost (counted) once two bar counts bracket a window. The ranges "
                        "describe counted pour cost, so they are context for it."))}

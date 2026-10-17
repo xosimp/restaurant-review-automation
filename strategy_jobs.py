@@ -1989,43 +1989,14 @@ def bar_price_push_one(restaurant_id, today=None, db_path=None):
 
 def bar_price_push_pass(db_path=None, now=None):
     """What scheduler_loop runs hourly on Mondays for the bar price push
-    (SCALE-07): the cheap part on the scheduler thread — which restaurants
-    with distributor invoices are in their own 9am-2pm Monday window, each
-    claimed once a day as bar_signals.run_price_push claims it — and the
-    push itself as one `learner` row per restaurant for the queue worker.
-    Refused off the production scheduler, as the inline sweep is.
-    bar_signals.run_price_push stays the direct-call body (Run now, a
-    script); the scheduler never runs it inline."""
+    (SCALE-07): bar_signals.run_price_push, the one path - one
+    `bar_price_push` queue row per restaurant due at its own hour, run by
+    the queue worker (bar_signals.run_queued_price_push claims the day and
+    reads the Bar payload without filling the interactive cache). Workstreams
+    D and C1 each built a fan-out (10/16/26); this keeps C1's and drops the
+    second, so a Monday can never queue the push twice."""
     import bar_signals
-    import models as _m
-    import scheduler as _sched
-    from time_utils import restaurant_now
-    ids = bar_signals._restaurants_with_invoices(db_path)
-    if not _sched.scheduling_allowed():
-        return _counts(0, 0, 0, len(ids), False, reason="not the production scheduler")
-    due, skipped = {}, 0
-    for rid in ids:
-        r = _m.get_restaurant(rid, db_path=db_path) if db_path else _m.get_restaurant(rid)
-        if r is None or (getattr(r, "billing_status", None) or "trial").lower() in _m.BLOCKED_BILLING_STATES \
-                or not getattr(r, "module_inventory", 0):
-            skipped += 1
-            continue
-        local = now or restaurant_now(r, naive=True)
-        if local.weekday() != 0 or not _sched.local_due(r, bar_signals.PUSH_HOUR, until=bar_signals.PUSH_UNTIL,
-                                                         claim_key="bar_price_push", now_local=local):
-            skipped += 1
-            continue
-        due[rid] = local.date()
-    if not due:
-        return _counts(0, 0, 0, skipped, False, queued=0)
-    days = sorted({str(d) for d in due.values()})
-    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": skipped, "hit_bound": False, "queued": 0}
-    for day in days:
-        group = [rid for rid, d in due.items() if str(d) == day]
-        c = fan_out("bar_price_push", group, day, db_path=db_path or DB_PATH, today_by_id=due)
-        for k in ("attempted", "ok", "skipped", "queued"):
-            out[k] += c.get(k, 0)
-    return out
+    return bar_signals.run_price_push(db_path=db_path, now=now)
 
 
 def learner_pass(name, fn=None):

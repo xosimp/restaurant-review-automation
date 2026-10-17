@@ -208,7 +208,7 @@ def test_counted_block_and_latest_counted(db):
     assert block["next_due_mdy"] == "11/30/26"
     (p,) = block["periods"]
     assert p["from_mdy"] == "9/30/26" and p["to_mdy"] == "10/31/26" and p["categories"]["beer"]["pct"] == 21.7
-    assert set(p["categories"]["beer"]) == {"begin", "purchases", "end", "used", "sales", "pct"}
+    assert set(p["categories"]["beer"]) == {"begin", "purchases", "end", "used", "sales", "pct", "begin_date", "end_date"}
     assert bcn.latest_counted(rid, block=block)["to"] == "2026-10-31"
     assert bcn.latest_counted(rid, block=block, window={"from": "2026-10-04", "to": "2026-10-31"}) is not None
     assert bcn.latest_counted(rid, block=block, window={"from": "2026-11-01", "to": "2026-11-28"}) is None

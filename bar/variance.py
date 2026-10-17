@@ -22,8 +22,19 @@ Two stages, both from data already on file:
   comp or void. Where RPOWER keeps an alternate quantity in ounces
   (pos_sales_categories.alt_qty_unit + the line's aqu_count) the rung
   ounces are RPOWER's own; where it keeps a cost on the line
-  (ticketsales cost) the theoretical dollars are RPOWER's; each row says
-  which basis it used.
+  (ticketsales cost) that cost is shown beside the row as a cross-check
+  (`rpower_cost_usd`) — theoretical dollars stay on invoice cost
+  (BAR-CALC-17); each row says which basis it used.
+
+Pricing (BAR-CALC-01, 10/16/26): a product's cost per each and per ounce is
+what it cost in the span — its item lines with known units, plus its
+per-unit charge lines and its own rebates (BAR-CALC-19) — else, when
+nothing measurable was bought in the span (stock bought before it), the
+latest purchase before it, said as an assumption. A drink whose product has
+no cost, or whose pour is unknown (a pitcher with no size, BAR-CALC-16), is
+not matched: its sales stay in the category's base and the matched share
+falls. An invoice line with no unit of measure and no count in its words
+adds no units and no dollars (BAR-CALC-04).
 
   Cocktails: the bar's recipe cards (docs/clients/simple-ejs/bar_recipes.json
   for Simple EJ's) load as SUGGESTED specs (`bar_drink_specs`: a POS button,
@@ -32,7 +43,8 @@ Two stages, both from data already on file:
 
 Comps (the POS's comp lines) are "poured, not paid": shown apart, never
 counted as rung. Voids are shown apart too and counted nowhere. Logged waste
-(bar.waste) is shown beside each row, never netted.
+(bar.waste) is shown beside each row, never netted into a product's gap; a
+category's counted variance subtracts comps and waste as named parts.
 
 A POS item in a beer, liquor or wine category (the bar mapping) that is not
 matched to a product is EXCLUDED and NAMED (`unmapped`) — never counted as 0
@@ -40,10 +52,14 @@ rung, which would read as a whole product's purchases gone missing.
 
 The label: "Bought vs sold, by product" until two bar counts bracket the span; then
 "Variance" — each category's used dollars from the counts (bar.counts:
-begin + bought − end) against the theoretical dollars of what was rung,
-withheld until the matched drinks carry CATEGORY_COVERAGE_FLOOR of the
-category's POS sales. The counts are category values, so each product row
-stays bought vs rung (item counts would make each row a variance).
+begin + bought − end) against what the POS says left the shelf: the
+theoretical cost of what was sold, plus what was comped and what was logged
+as waste, the parts shown beside it (BAR-CALC-05) — each over the
+category's OWN count dates (BAR-CALC-14) — withheld until the matched drinks
+carry CATEGORY_COVERAGE_FLOOR of the category's POS drink sales (set-aside
+and unmatched drinks count against it). The counts are category values, so
+each product row stays bought vs rung (item counts would make each row a
+variance).
 
 Withheld with a reason when the two sides don't line up: fewer than
 MIN_SPAN_DAYS where both invoices and archived POS nights are on file, or
@@ -66,7 +82,11 @@ log = logging.getLogger("bar.variance")
 SPAN_DAYS = 56
 MIN_SPAN_DAYS = 28
 ARCHIVE_COVERAGE_FLOOR = 0.90
-CATEGORY_COVERAGE_FLOOR = 0.90
+# Counted variance needs the matched drinks to carry this share of the
+# category's POS drink sales — set-aside and unmatched sales count against
+# it, since they carry no theoretical cost (BAR-CALC-05, 10/16/26: at 90%
+# a tenth of what was poured read as variance).
+CATEGORY_COVERAGE_FLOOR = 0.95
 MAX_ITEMS = 60
 MAX_UNMAPPED = 25
 MAX_SUGGESTIONS = 40
@@ -390,9 +410,11 @@ def _span(lines, nights, today, counted=None) -> dict:
     for p in reversed((counted or {}).get("periods") or []):
         if not p.get("ok"):
             continue
-        a = (date.fromisoformat(p["from"]) + timedelta(days=1)).isoformat()
-        if a >= pos[0] and p["to"] <= pos[-1] and p["to"] <= inv[-1]:
-            return {"from": a, "to": p["to"], "basis": "variance", "period": p}
+        # The widest of the categories' own count spans (each category's
+        # theoretical is read over its own dates: BAR-CALC-14).
+        a, b = _period_span(p)
+        if a >= pos[0] and b <= pos[-1] and b <= inv[-1]:
+            return {"from": a, "to": b, "basis": "variance", "period": p}
         break
     end = min(inv[-1], pos[-1])
     start = max((date.fromisoformat(end) - timedelta(days=SPAN_DAYS - 1)).isoformat(), inv[0], pos[0])
@@ -403,6 +425,24 @@ def _span(lines, nights, today, counted=None) -> dict:
         return {"why": (f"Invoices and POS item sales overlap for {days} day{'s' if days != 1 else ''} "
                         f"({_mdy(start)}–{_mdy(end)}); bought vs sold needs {MIN_SPAN_DAYS}.")}
     return {"from": start, "to": end, "basis": "bought_vs_rung", "period": None}
+
+
+def _cat_span(period, c):
+    """(from, to) ISO of one category's own count span — the night after
+    its opening count through its closing count (bar.counts) — else the
+    period's."""
+    pc = ((period or {}).get("categories") or {}).get(c) or {}
+    bd, ed = pc.get("begin_date") or period.get("from"), pc.get("end_date") or period.get("to")
+    return (date.fromisoformat(str(bd)[:10]) + timedelta(days=1)).isoformat(), str(ed)[:10]
+
+
+def _period_span(period) -> tuple:
+    """(from, to): the widest of the measured categories' own spans."""
+    spans = [_cat_span(period, c) for c in POUR_CATEGORIES
+             if (((period.get("categories") or {}).get(c) or {}).get("used") is not None)]
+    if not spans:
+        spans = [_cat_span(period, None)]
+    return min(s[0] for s in spans), max(s[1] for s in spans)
 
 
 def _trading_days(restaurant_id, a, b, db_path=None) -> list:
@@ -420,8 +460,13 @@ class _Product:
         self.pack = None
         self.bought_each = 0.0
         self.bought_oz = 0.0
-        self.bought_usd = 0.0
+        self.bought_usd = 0.0         # in-span item lines with known units, plus charges and rebates
+        self.item_usd = 0.0           # in-span item lines with known units
+        self.oz_item_usd = 0.0        # ... of those, the lines whose ounces are known
+        self.extra_usd = 0.0          # per-unit charge lines and the product's own rebates (BAR-CALC-19)
         self.oz_known = True
+        self.units_unknown = 0        # in-span lines with no unit and no count (BAR-CALC-04)
+        self.history = []             # (date, each, oz|None, net): every bought line with known units
         self.assumes = set()
         self.distributors = set()
         self.uom_missing = False
@@ -429,32 +474,134 @@ class _Product:
         self._last = ""
         self.rung_each = defaultdict(float)
         self.rung_oz = defaultdict(float)
+        self.rung_each_day = defaultdict(lambda: defaultdict(float))
+        self.rung_oz_day = defaultdict(lambda: defaultdict(float))
         self.rpower_cost = 0.0
         self.rpower_cost_lines = 0
         self.rung_lines = 0
         self.basis = set()
         self.drinks = set()
+        self.per_each = None
+        self.per_oz = None
+        self.priced_from = None       # the purchase date a price was read from, when none fell in the span
+
+
+# A serving whose size its name must state (BAR-CALC-16): a pitcher, a mug,
+# a stein, a growler or a half pour holds nothing the bar's default draft
+# pour says. "Half pint" is 8 oz; a tower is 100 (stated_oz).
+_SERVE_RE = re.compile(r"\b(pitchers?|mugs?|steins?|growlers?|half[\s-]?pours?)\b", re.I)
+
+
+def pour_target(category, pack, pour_oz, item_name, cfg=None):
+    """(mode each|oz|unknown, oz, basis, assumption) for one POS drink poured
+    from one bought product — THE rule, shared by the variance and the
+    drink margins (BAR-CALC-07):
+
+    - the owner's pour first; a pour at the whole container is the
+      container sold as it comes;
+    - a packaged beer (no pour for its category) is one can or bottle;
+    - a keg pours the size the button names ("Dos Equis 22oz", a tower 100
+      oz); a pitcher, mug or half pour that names no size is `unknown` —
+      never the 16 oz default (BAR-CALC-16);
+    - a wine named as a bottle ("Btl", "Bottle") is the whole bottle;
+    - else the bar's default pour, said as an assumption."""
+    pk = pack or {}
+    cont = pk.get("container_oz")
+    if pour_oz:
+        oz = float(pour_oz)
+        if pk.get("each") != "keg" and cont and oz >= 0.95 * cont:
+            return "each", None, "owner_pour", None
+        return "oz", oz, "owner_pour", None
+    oz, label, _yield = pour_for(category, pk, cfg)
+    if oz is None:
+        return "each", None, "one_each", None
+    if pk.get("each") == "keg":
+        said = stated_oz(item_name)
+        if said:
+            # "Dos Equis 22oz" pours 22, not the 16 oz default (10/15/26: five
+            # 22oz drafts matched without a pour were counted at 16).
+            return "oz", said, "stated_pour", None
+        if _SERVE_RE.search(str(item_name or "")):
+            return ("unknown", None, "no_size",
+                    f"{item_name} names no size — set its pour to count it")
+    if category == "wine" and pk.get("each") != "keg" and WHOLE_BOTTLE_RE.search(str(item_name or "")):
+        return "each", None, "one_each", f"{item_name} read as a whole bottle from its POS name"
+    return "oz", oz, "default_pour", f"assumes the {label} (no pour set for {item_name or 'this drink'})"
 
 
 def _pour_target(m, prod, cfg, item_name):
     """(mode, oz, basis, assumption) for one drink-map row on its product."""
-    pk = prod.pack or {}
-    cont = pk.get("container_oz")
-    if m.get("pour_oz"):
-        oz = float(m["pour_oz"])
-        if pk.get("each") != "keg" and cont and oz >= 0.95 * cont:
-            return "each", None, "owner_pour", None
-        return "oz", oz, "owner_pour", None
-    oz, label, _yield = pour_for(prod.category, pk, cfg)
-    if oz is None:
-        return "each", None, "one_each", None
-    if pk.get("each") == "keg" and stated_oz(item_name):
-        # "Dos Equis 22oz" pours 22, not the 16 oz default (10/15/26: five
-        # 22oz drafts matched without a pour were counted at 16).
-        return "oz", stated_oz(item_name), "stated_pour", None
-    if prod.category == "wine" and pk.get("each") != "keg" and WHOLE_BOTTLE_RE.search(str(item_name or "")):
-        return "each", None, "one_each", f"{item_name} read as a whole bottle from its POS name"
-    return "oz", oz, "default_pour", f"assumes the {label} (no pour set for {item_name or 'this drink'})"
+    return pour_target(prod.category, prod.pack, m.get("pour_oz"), item_name, cfg)
+
+
+def _line_units(l, packs, ck):
+    """(pack, units, ounces) one item line bought — the owner's pack first;
+    units None when the line has no unit of measure and its words state no
+    count (BAR-CALC-04), ounces None when the size isn't known."""
+    pk = parse_pack(l["description"], l.get("uom"), l["category"])
+    ov = packs.get(l["product_key"]) or packs.get(ck) or {}
+    uom = str(l.get("uom") or "").upper()
+    if ov.get("units_per_case") and uom in ("CA", "CS"):
+        pk.update(units_per_case=int(ov["units_per_case"]), units_source="owner")
+    if ov.get("container_ml"):
+        pk.update(container_oz=round(float(ov["container_ml"]) / _ML_PER_OZ, 2), size_source="owner")
+    if pk["units_per_case"] is None:
+        return pk, None, None
+    each = _f(l["qty"]) * pk["units_per_case"]
+    oz = each * float(pk["container_oz"]) if pk.get("container_oz") else None
+    return pk, each, oz
+
+
+def _price(p, start):
+    """The product's cost per each and per ounce (BAR-CALC-01): what it
+    cost in the span — its item lines with known units, plus its charges
+    and rebates — else, when nothing measurable was bought in the span, the
+    latest purchase before it. Never priced from nothing: None."""
+    if p.bought_each > 0 and p.item_usd > 0:
+        p.per_each = (p.item_usd + p.extra_usd) / p.bought_each
+    if p.bought_oz > 0 and p.oz_item_usd > 0:
+        share = p.oz_item_usd / p.item_usd if p.item_usd > 0 else 1.0
+        p.per_oz = (p.oz_item_usd + p.extra_usd * share) / p.bought_oz
+    if p.per_each is None or p.per_oz is None:
+        before = [h for h in p.history if h[0] < start and h[1] > 0 and h[3] > 0]
+        if before:
+            if p.per_each is None:
+                day = max(h[0] for h in before)
+                hs = [h for h in before if h[0] == day]
+                p.per_each = sum(h[3] for h in hs) / sum(h[1] for h in hs)
+                p.priced_from = day
+            if p.per_oz is None:
+                with_oz = [h for h in before if h[2]]
+                if with_oz:
+                    day = max(h[0] for h in with_oz)
+                    hs = [h for h in with_oz if h[0] == day]
+                    p.per_oz = sum(h[3] for h in hs) / sum(h[2] for h in hs)
+                    p.priced_from = p.priced_from or day
+
+
+def _rebate_targets(rebate, items):
+    """The in-span item lines a product's own rebate line lowers: the one
+    line on its invoice, in its category, whose quantity it reverses, else
+    every such line pro rata by its cost. [(line, share)]."""
+    same = [l for l in items if l.get("invoice_id") == rebate.get("invoice_id")
+            and l.get("category") == rebate.get("category") and _f(l["qty"]) > 0 and _f(l["net"]) > 0]
+    q = -_f(rebate.get("qty"))
+    exact = [l for l in same if q > 0 and abs(_f(l["qty"]) - q) < 1e-6]
+    if len(exact) == 1:
+        return [(exact[0], 1.0)]
+    total = sum(_f(l["net"]) for l in same)
+    return [(l, _f(l["net"]) / total) for l in same] if total > 0 else []
+
+
+def _bucket_tickets(pos_rows) -> set:
+    """Tickets whose bucket's beers ring on their own "<beer>`Bucket" lines:
+    only there is a bucket's own line its price alone (BAR-CALC-16)."""
+    out = set()
+    for r in pos_rows:
+        base, sep, group = str(r.get("item_name") or "").partition("`")
+        if sep and re.search(r"bucket", group, re.I):
+            out.add(r.get("ticket_id"))
+    return out
 
 
 def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, cfg=None, mapping=None,
@@ -495,12 +642,26 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     if canon is None:
         canon = canonical_keys(lines, product_links(restaurant_id, db_path))
     packs = pack_overrides(restaurant_id, db_path)
-    # Purchases in the span, per canonical product.
+    # Purchases per canonical product: what was bought in the span, and every
+    # bought line's unit cost for pricing what was sold from stock bought
+    # before it (BAR-CALC-01).
     prods = {}
     newest = {}
+    span_items, rebates, charges = [], [], []
     for l in lines:
         d = str(l["invoice_date"])[:10]
-        if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES:
+        if l.get("category") not in POUR_CATEGORIES:
+            continue
+        kind = l.get("kind")
+        if kind == "charge":
+            if start <= d <= end:
+                charges.append(l)
+            continue
+        if kind != "item":
+            continue
+        if l.get("rebate"):
+            if start <= d <= end:
+                rebates.append(l)
             continue
         ck = canon.get(l["product_key"], l["product_key"])
         p = prods.get(ck)
@@ -511,30 +672,55 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         if ck not in newest or d >= p._last:
             p._last = d
             newest[ck] = l
-        if not (start <= d <= end):
+        if d > end:
             continue
-        pk = parse_pack(l["description"], l.get("uom"), l["category"])
-        ov = packs.get(l["product_key"]) or packs.get(ck) or {}
+        pk, each, oz = _line_units(l, packs, ck)
+        if each is not None and _f(l["qty"]) > 0:
+            p.history.append((d, each, oz, _f(l["net"])))
+        if d < start:
+            continue
         uom = str(l.get("uom") or "").upper()
-        if ov.get("units_per_case") and uom in ("CA", "CS"):
-            pk.update(units_per_case=int(ov["units_per_case"]), units_source="owner")
-        if ov.get("container_ml"):
-            pk.update(container_oz=round(float(ov["container_ml"]) / _ML_PER_OZ, 2), size_source="owner")
-        each = _f(l["qty"]) * (pk["units_per_case"] or 1)
-        p.bought_each += each
-        p.bought_usd += _f(l["net"])
         p.distributors.add(l["distributor"])
-        if pk.get("container_oz"):
-            p.bought_oz += each * float(pk["container_oz"])
+        if not uom:
+            p.uom_missing = True
+        if each is None:
+            # No unit and no count: no units and no dollars in this
+            # product's math, said beside it (BAR-CALC-04).
+            p.units_unknown += 1
+            continue
+        span_items.append(l)
+        p.bought_each += each
+        p.item_usd += _f(l["net"])
+        if oz is not None:
+            p.bought_oz += oz
+            p.oz_item_usd += _f(l["net"])
         else:
             p.oz_known = False
         if not uom:
-            p.uom_missing = True
-            p.assumes.add("no unit of measure on some invoices — read as one each")
+            p.assumes.add(f"no unit of measure on some invoices — read as the {pk['units_per_case']} the "
+                          "description states")
         if pk["units_source"] == "assumed" and uom in ("CA", "CS"):
             p.assumes.add(f"assumes {pk['units_per_case']} a case")
         if pk["size_source"] == "assumed":
             p.assumes.add("assumes a 1/2 barrel" if pk.get("each") == "keg" else f"assumes {pk['container_oz']:g} oz")
+    # A per-unit charge (SGWS's $2.29 a bottle) is part of what its product
+    # cost; a product's own rebate line lowers it (BAR-CALC-19).
+    for l in charges:
+        ck = canon.get(l["product_key"], l["product_key"])
+        if ck in prods:
+            prods[ck].extra_usd += _f(l["net"])
+    for rb in rebates:
+        for l, share in _rebate_targets(rb, span_items):
+            ck = canon.get(l["product_key"], l["product_key"])
+            prods[ck].extra_usd += _f(rb["net"]) * share
+    for p in prods.values():
+        p.bought_usd = p.item_usd + p.extra_usd
+        _price(p, start)
+        if p.units_unknown:
+            p.assumes.add(f"{p.units_unknown} invoice line{'s' if p.units_unknown != 1 else ''} with no unit of "
+                          "measure or count left out — units bought unknown")
+        if p.priced_from:
+            p.assumes.add(f"priced at the {_mdy(p.priced_from)} purchase — none in the span to price it from")
     for ck, l in newest.items():
         p = prods[ck]
         p.name = display_name(l["description"])
@@ -606,13 +792,11 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     # Walk the POS lines: modifiers follow their parent.
     by_id = {r["line_id"]: r for r in pos_rows}
     mult = defaultdict(lambda: 1.0)
-    children = defaultdict(list)
     for r in pos_rows:
         par = r.get("parent_line_id")
-        if par and par in by_id:
-            children[par].append(r)
-            if DOUBLE_RE.search(str(r.get("item_name") or "")):
-                mult[par] = 2.0
+        if par and par in by_id and DOUBLE_RE.search(str(r.get("item_name") or "")):
+            mult[par] = 2.0
+    bucket_tickets = _bucket_tickets(pos_rows)
     linked_nights = sum(1 for d in have if nights.get(d, 1) >= 4)
     if mapping is None:
         from bar.mapping import Mapping
@@ -623,7 +807,9 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     aside_sales = defaultdict(float)
     drink_items = set()     # POS items sold as beer, liquor or wine under the mapping
     cat_sales = defaultdict(float)
-    mapped_sales = defaultdict(float)
+    cat_sales_day = defaultdict(lambda: defaultdict(float))
+    matched_lines = []      # (category, date, sales, product keys, every pour known)
+    unsized = set()
     spec_pending = {(s["provider"], s["item_name"].lower()) for s in suggested}
     for r in pos_rows:
         par = by_id.get(r.get("parent_line_id")) if r.get("parent_line_id") else None
@@ -637,8 +823,10 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         dep, sub = filed(r)
         bar_kind = mapping.resolve(*key_for(dep, sub))["kind"]
         is_drink = bar_kind in POUR_CATEGORIES
+        day = str(r["business_date"])[:10]
         if kind == "sale" and is_drink:
             cat_sales[bar_kind] += _f(r["sales"])
+            cat_sales_day[bar_kind][day] += _f(r["sales"])
             if r["item_id"]:
                 drink_items.add((r["provider"], str(r["item_id"])))
         k = (r["provider"], str(r["item_id"] or ""))
@@ -646,7 +834,11 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         if not tg:
             pure_mod = par is not None and (DOUBLE_RE.search(str(r.get("item_name") or "")) or _f(r["sales"]) == 0)
             why = owner_aside.get(k) or set_aside_reason(r["item_name"])
+            if why == "bucket" and r.get("ticket_id") not in bucket_tickets:
+                why = None          # a bucket rung as one item: its beers are in it, ask about it
             if is_drink and kind == "sale" and r["item_id"] and not pure_mod and qty and why:
+                # Set aside, and still in the matched share's base: its sales
+                # carry no theoretical (BAR-CALC-05).
                 a = aside.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"], "category": bar_kind,
                                          "reason": why, "label": SET_ASIDE.get(why, why), "owner": k in owner_aside,
                                          "rung_units": 0.0, "sales_usd": 0.0})
@@ -661,8 +853,9 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                 u["rung_units"] += qty
                 u["sales_usd"] += _f(r["sales"])
             continue
+        known = all(mode != "unknown" for _ck, mode, _oz, _b, _a in tg)
         if kind == "sale" and is_drink:
-            mapped_sales[bar_kind] += _f(r["sales"])
+            matched_lines.append((bar_kind, day, _f(r["sales"]), tuple(t[0] for t in tg), known))
         unit_alt = alt.get(str(r.get("category_id") or ""))
         aqu = _f(r.get("aqu_count"))
         for ck, mode, oz, basis, assume in tg:
@@ -670,9 +863,16 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             p.drinks.add(r["item_name"] or k[1])
             if assume:
                 p.assumes.add(assume)
+            if mode == "unknown":
+                unsized.add(r["item_name"] or k[1])
+                p.basis.add(basis)
+                continue
             if mode == "each":
+                cont_oz = float((p.pack or {}).get("container_oz") or 0)
                 p.rung_each[kind] += qty * m
-                p.rung_oz[kind] += qty * m * float((p.pack or {}).get("container_oz") or 0)
+                p.rung_oz[kind] += qty * m * cont_oz
+                p.rung_each_day[kind][day] += qty * m
+                p.rung_oz_day[kind][day] += qty * m * cont_oz
                 p.basis.add(basis)
             else:
                 line_oz = qty * m * oz
@@ -683,6 +883,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                     p.basis.add(basis)
                 p.mode = "oz"
                 p.rung_oz[kind] += line_oz
+                p.rung_oz_day[kind][day] += line_oz
             if kind == "sale":
                 p.rung_lines += 1
                 if len(tg) == 1 and _f(r.get("cost")) > 0:
@@ -697,24 +898,36 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             gapped.add(g["distributor"])
     except Exception:
         log.exception("[bar.variance] distributor gaps unread for %s", restaurant_id)
+
+    def per_of(p):
+        return p.per_oz if p.mode == "oz" else p.per_each
+
+    # A drink is matched only when every product it pours from has a cost
+    # and every pour is known: anything else leaves the matched share's base,
+    # so coverage falls and the variance is withheld (BAR-CALC-01).
+    matched_day = defaultdict(lambda: defaultdict(float))
+    for c, d, s, cks, known in matched_lines:
+        if known and all(per_of(prods[ck]) is not None for ck in cks):
+            matched_day[c][d] += s
+    mapped_sales = {c: sum(v.values()) for c, v in matched_day.items()}
     items, kegs = [], []
     for ck, p in prods.items():
         if not p.drinks:
             continue
         unit = p.mode
+        complete_units = not p.units_unknown
         if unit == "oz":
-            bought = p.bought_oz if p.oz_known else None
+            bought = p.bought_oz if (p.oz_known and complete_units) else None
             rung, comped, voided = p.rung_oz["sale"], p.rung_oz["comp"], p.rung_oz["void"]
-            per = (p.bought_usd / p.bought_oz) if p.bought_oz > 0 else None
         else:
-            bought = p.bought_each
+            bought = p.bought_each if complete_units else None
             rung, comped, voided = p.rung_each["sale"], p.rung_each["comp"], p.rung_each["void"]
-            per = (p.bought_usd / p.bought_each) if p.bought_each > 0 else None
+        per = per_of(p)
         gap = (bought - rung) if bought is not None else None
+        # Theoretical dollars stay on invoice cost; RPOWER's own line cost is
+        # a cross-check beside them, never the figure (BAR-CALC-17).
+        theoretical_usd = rung * per if per is not None else None
         rp_all = p.rpower_cost_lines and p.rpower_cost_lines == p.rung_lines
-        theoretical_usd = (p.rpower_cost if rp_all else (rung * per if per is not None else None))
-        if rp_all:
-            p.basis.add("rpower_cost")
         gap_usd = (p.bought_usd - theoretical_usd) if theoretical_usd is not None and bought is not None else None
         incomplete = bool(p.distributors & gapped)
         assumes = sorted(p.assumes)
@@ -722,7 +935,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
             assumes.append("a bottle size isn't on the invoice — ounces bought unknown")
         if unit == "oz" and linked_nights < len(have) and any(b != "one_each" for b in p.basis):
             assumes.append(f"modifier links (a Double, an add-on) on {linked_nights} of {len(have)} nights")
-        if incomplete or bought is None or p.uom_missing:
+        if incomplete or bought is None or p.uom_missing or per is None:
             conf = "low"
         elif assumes:
             conf = "medium"
@@ -733,7 +946,10 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                "bought_units": _r(bought), "rung_units": _r(rung), "comped_units": _r(comped),
                "voided_units": _r(voided), "gap_units": _r(gap),
                "bought_usd": round(p.bought_usd, 2),
+               "charges_usd": round(p.extra_usd, 2) if p.extra_usd else None,
                "theoretical_usd": round(theoretical_usd, 2) if theoretical_usd is not None else None,
+               "rpower_cost_usd": round(p.rpower_cost, 2) if rp_all else None,
+               "priced_from": p.priced_from, "priced_from_mdy": _mdy(p.priced_from) if p.priced_from else None,
                "comped_usd": round(comped * per, 2) if per is not None else None,
                "gap_usd": round(gap_usd, 2) if gap_usd is not None else None,
                "gap_pct": round(gap / bought * 100, 1) if gap is not None and bought else None,
@@ -751,32 +967,34 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         u["sales_usd"] = round(u["sales_usd"], 2)
     for u in unmapped_rows[:MAX_UNMAPPED]:
         u["suggest"] = suggest_pour(u["item"], u["category"], _cands) or None
-    # Set-aside sales are no drink to match: out of the matched share's base.
-    for kk, v in aside_sales.items():
-        cat_sales[kk] = max(0.0, cat_sales[kk] - v)
     aside_rows = sorted(aside.values(), key=lambda a: -a["sales_usd"])
     for a in aside_rows:
         a["rung_units"] = _r(a["rung_units"])
         a["sales_usd"] = round(a["sales_usd"], 2)
     totals = _totals(items, cat_sales, mapped_sales)
-    out = {"set_aside": aside_rows, "set_aside_total": len(aside_rows),
-           "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),"available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
+    out = {"set_aside": aside_rows[:MAX_UNMAPPED], "set_aside_total": len(aside_rows),
+           "set_aside_sales_usd": round(sum(a["sales_usd"] for a in aside_rows), 2),
+           "available": bool(items), "basis": "bought_vs_rung", "label": LABELS["bought_vs_rung"],
            "span": span_out, "items": items[:MAX_ITEMS], "items_total": len(items),
            "unmapped": unmapped_rows[:MAX_UNMAPPED], "unmapped_total": len(unmapped_rows),
            "unmapped_sales_usd": round(sum(u["sales_usd"] for u in unmapped_rows), 2),
+           "unsized": sorted(unsized)[:MAX_UNMAPPED],
            "totals": totals, "incomplete_distributors": sorted(gapped),
            "suggestions": [_spec_public(s, _names) for s in suggested[:MAX_SUGGESTIONS]],
            "suggestions_total": len(suggested),
            "note": ("Comps are poured, not paid: shown apart, never counted as sold. A POS drink not matched to a "
-                    "product is left out and named, never counted as zero.")}
+                    "product — or set aside — is left out of the matched share and named, never counted as zero.")}
     if not items:
         out["why"] = ("No POS drink is matched to a bought product yet. Match a drink to what you buy and its "
                       "bought vs sold appears here.")
     if sp["basis"] == "variance":
+        waste = _waste_by_product_day(restaurant_id, prods, start, end, db_path)
         out.update(basis="variance", label=LABELS["variance"], item_basis="bought_vs_rung",
-                   categories=_counted_variance(sp["period"], totals),
+                   categories=_counted_variance(sp["period"], prods, per_of, cat_sales_day, matched_day, waste,
+                                                (start, end)),
                    item_note="Counts are by category, so each product reads bought vs sold; a category's "
-                             "variance is what the counts say it used against what was sold.")
+                             "variance is what the counts say it used against what was sold, comped and "
+                             "logged as waste, each priced at what the product cost.")
     return {"variance": out, "keg_yield": _keg_yield(kegs, cfg), "span": span_out, "products": prods,
             "drink_items": drink_items}
 
@@ -788,10 +1006,12 @@ def _r(v, n=1):
 def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
     """{product_key: the product's readable name} from the purchase lines —
     what a recipe card names as "Poured from" (10/15/26: a key the page's
-    product list didn't carry read as "euclid beverage north aurora|3101756")."""
+    product list didn't carry read as "euclid beverage north aurora|3101756").
+    Without `lines`, read from the distinct products on file
+    (bar.purchases.product_catalog, SCALE-09), never every invoice line."""
     if lines is None:
-        from bar.purchases import _lines
-        lines = _lines(restaurant_id, db_path)
+        from bar.purchases import product_catalog
+        return {k: v["name"] for k, v in product_catalog(restaurant_id, db_path, kinds=("item", "charge")).items()}
     out = {}
     for l in lines or []:
         if l.get("product_key") and l.get("description"):
@@ -799,8 +1019,7 @@ def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
     return out
 
 
-_SIZE_RE = re.compile(r"(\d{1,2}(?:\.\d)?)\s*oz\b", re.I)
-_KEG_RE = re.compile(r"\b(1/2|1/4|1/6)\s*(bbl|barrel|keg)\b|\bbarrel\b|\b\d{2}\s*l\b|\bkeg\b", re.I)
+_SIZE_RE = re.compile(r"(\d{1,3}(?:\.\d)?)\s*oz\b", re.I)
 _NOT_ITEM_RE = re.compile(r"discount|deposit|empties|fee\b|charge|credit|handle", re.I)
 # A beer's variety must agree (owner, 10/15/26: "Coors Banquet" was offered
 # Coors Light 24 cans): Light, Ultra, Banquet, Original, Zero are different beers.
@@ -824,29 +1043,68 @@ def variants(text) -> set:
 
 
 def stated_oz(name):
-    """The ounces a POS button's name states: "22oz" -> 22; a tower is 3 L,
-    taken as 100 oz (owner, 10/15/26: "ALL towers are 3L, 100oz")."""
+    """The ounces a POS button's name states: "22oz" -> 22, "60 oz pitcher"
+    -> 60; a tower is 3 L, taken as 100 oz (owner, 10/15/26: "ALL towers are
+    3L, 100oz"); a half pint 8. A pitcher or mug that states nothing is None
+    (BAR-CALC-16: never the draft default)."""
     n = str(name or "")
     if re.search(r"\btower\b", n, re.I):
         return 100.0
     m = _SIZE_RE.search(n)
-    return float(m.group(1)) if m else None
+    if m:
+        return float(m.group(1))
+    if re.search(r"\bhalf[\s-]?pint\b", n, re.I):
+        return 8.0
+    return None
 
 
-_POS_NOISE = re.compile(r"\b(\d{1,2}(?:\.\d)?\s*oz|btl|bottle|can|gl|glass|dft|draft|draught|n/a|na|tower)\b", re.I)
+_POS_NOISE = re.compile(r"\b(\d{1,3}(?:\.\d)?\s*oz|btl|bottle|can|gl|glass|dft|draft|draught|n/a|na|tower|pitchers?|mugs?|half pint|tap)\b", re.I)
+
+
+# How a POS button says its drink is served (ING-20): from a keg, or as a
+# can or bottle. A button that says neither can pour from either.
+_DRAFT_WORDS = re.compile(r"\b(draft|draught|dft|tap|pitchers?|tower|mugs?|steins?|pints?|half[\s-]?pint)\b", re.I)
+_PACKAGE_WORDS = re.compile(r"\b(cans?|btl|btls|bottles?|tall\s*boy|tallboy)\b", re.I)
 
 
 def pour_candidates(lines) -> dict:
-    """{product_key: (name, words, category, keg)} — the bought beer, liquor
-    and wine a POS drink can pour from (never a discount, deposit or fee)."""
+    """{product_key: (name, words, category, keg, variants, container_oz)} —
+    the bought beer, liquor and wine a POS drink can pour from (never a
+    discount, deposit or fee); a keg by the one shared test
+    (bar.classify.is_keg), and the container's ounces when the invoice says."""
+    from bar.classify import is_keg
     out = {}
     for l in lines or []:
         d = l.get("description") or ""
         if l.get("kind") != "item" or l.get("category") not in POUR_CATEGORIES or _NOT_ITEM_RE.search(d):
             continue
-        keg = str(l.get("uom") or "").upper() == "KE" or bool(_KEG_RE.search(d))
-        out.setdefault(l["product_key"], (display_name(d), _words(d), l["category"], keg, variants(d)))
+        if l["product_key"] in out:
+            continue
+        keg = is_keg(d, l.get("uom"))
+        pk = parse_pack(d, l.get("uom"), l["category"])
+        cont = pk.get("container_oz") if pk.get("size_source") == "parsed" and not keg else None
+        out[l["product_key"]] = (display_name(d), _words(d), l["category"], keg, variants(d), cont)
     return out
+
+
+def form_fits(item_name, category, keg, container_oz=None) -> bool:
+    """Whether a POS drink can pour from a product of this form (ING-20): a
+    draft, tap, pitcher or tower button only from a keg; a can or bottle
+    button never from one, and when it states its ounces, only from a
+    container that size. A beer button that names a draft size (16 oz or
+    more, no can or bottle word) is a draft."""
+    name = str(item_name or "")
+    package = bool(_PACKAGE_WORDS.search(name))
+    oz = stated_oz(name)
+    draft = bool(_DRAFT_WORDS.search(name)) or (category == "beer" and not package and oz is not None and oz >= 10)
+    if draft and not package:
+        return bool(keg)
+    if package:
+        if keg:
+            return False
+        if oz is not None and container_oz and abs(float(container_oz) - oz) > 0.6:
+            return False
+    return True
 
 
 def suggest_pour(item_name, category, cands) -> dict:
@@ -858,14 +1116,16 @@ def suggest_pour(item_name, category, cands) -> dict:
     a match until they press Match."""
     name = str(item_name or "")
     oz = stated_oz(name)
-    draft = category == "beer" and oz is not None and oz >= 10
+    draft = (category == "beer" and not _PACKAGE_WORDS.search(name)
+             and (bool(_DRAFT_WORDS.search(name)) or (oz is not None and oz >= 10)))
     words = _words(_POS_NOISE.sub(" ", name))
     if not words:
         return {}
     want = variants(name)
-    pool = {k: (n, w) for k, (n, w, c, keg, var) in cands.items() if c == category and (keg if draft else True)
-            and var == want}
-    if category == "beer" and not draft:
+    # Never across a draft / can boundary or a stated size (ING-20).
+    pool = {k: (c[0], c[1]) for k, c in cands.items() if c[2] == category and c[4] == want
+            and form_fits(name, category, c[3], c[5] if len(c) > 5 else None)}
+    if category == "beer" and not draft and not _PACKAGE_WORDS.search(name):
         pool = {k: v for k, v in pool.items() if not cands[k][3]} or pool
     key, pname, score = _best_product(" ".join(sorted(words)), pool)
     if not key or score < 0.2:
@@ -881,39 +1141,115 @@ def _spec_public(s, names=None) -> dict:
 
 
 def _totals(items, cat_sales, mapped_sales) -> dict:
+    """Per category: the rows' bought, theoretical and gap dollars (a row
+    with no figure adds nothing, never a $0), and the matched share — the
+    sales of drinks matched to a priced product over ALL the category's POS
+    drink sales, set-aside ones included (BAR-CALC-05)."""
     by = {}
     for c in POUR_CATEGORIES:
         rows = [i for i in items if i["category"] == c]
         sales = cat_sales.get(c, 0.0)
         by[c] = {"items": len(rows),
                  "bought_usd": round(sum(i["bought_usd"] for i in rows), 2),
-                 "theoretical_usd": round(sum(i["theoretical_usd"] or 0 for i in rows), 2),
-                 "gap_usd": round(sum(i["gap_usd"] or 0 for i in rows if i["gap_usd"] is not None), 2),
-                 "comped_usd": round(sum(i["comped_usd"] or 0 for i in rows), 2),
+                 "theoretical_usd": round(sum(i["theoretical_usd"] for i in rows if i["theoretical_usd"] is not None), 2),
+                 "gap_usd": round(sum(i["gap_usd"] for i in rows if i["gap_usd"] is not None), 2),
+                 "comped_usd": round(sum(i["comped_usd"] for i in rows if i["comped_usd"] is not None), 2),
                  "pos_sales_usd": round(sales, 2),
+                 "matched_sales_usd": round(mapped_sales.get(c, 0.0), 2),
                  "coverage_pct": round(mapped_sales.get(c, 0.0) / sales * 100, 1) if sales > 0 else None}
     return {"gap_usd": round(sum(v["gap_usd"] for v in by.values()), 2),
             "comped_usd": round(sum(v["comped_usd"] for v in by.values()), 2),
             "by_category": by}
 
 
-def _counted_variance(period, totals) -> dict:
-    """Per category, from the counts: used (begin + bought − end) against the
-    theoretical dollars of what was rung — withheld below the coverage floor."""
+def _waste_units(p, w):
+    """A waste entry in the product's own units (ounces for a poured
+    product, each otherwise), or None when it can't be converted."""
+    cont = float((p.pack or {}).get("container_oz") or 0)
+    keg_oz = float((p.pack or {}).get("keg_oz") or 0)
+    q = float(w["qty"])
+    if p.mode == "oz":
+        if w["unit"] == "oz":
+            return q
+        if w["unit"] == "keg":
+            return q * keg_oz if keg_oz else None
+        return q * cont if cont else None
+    if w["unit"] == "each":
+        return q
+    if w["unit"] == "oz" and cont:
+        return q / cont
+    return None
+
+
+def _waste_by_product_day(restaurant_id, prods, start, end, db_path=None) -> list:
+    """[(product key, date, units | None)] for every waste entry over the
+    span on a product this computation knows."""
+    from bar.waste import waste_rows
+    links = {}
+    try:
+        from bar.products import product_links
+        links = product_links(restaurant_id, db_path)
+    except Exception:
+        pass
+    out = []
+    for w in waste_rows(restaurant_id, start, end, db_path=db_path):
+        k = links.get(w["product_key"], w["product_key"])
+        p = prods.get(k) or prods.get(w["product_key"])
+        if p is None:
+            continue
+        out.append((p.key, str(w["waste_date"])[:10], _waste_units(p, w)))
+    return out
+
+
+def _counted_variance(period, prods, per_of, cat_sales_day, matched_day, waste, span) -> dict:
+    """Per category, from the counts: used (begin + bought − end) against
+    what the POS says left the shelf — the theoretical cost of what was sold,
+    plus what was comped and what was logged as waste, each priced at what
+    the product cost (BAR-CALC-05) — every part over the category's OWN
+    count span (BAR-CALC-14). The parts are shown beside the variance, never
+    folded out of sight. Withheld below the coverage floor, the matched share
+    measured over that same span against all the category's drink sales."""
     out = {}
     for c in POUR_CATEGORIES:
         pc = (period.get("categories") or {}).get(c) or {}
-        t = totals["by_category"][c]
         used = pc.get("used")
-        row = {"used_usd": used, "theoretical_usd": t["theoretical_usd"], "coverage_pct": t["coverage_pct"],
-               "comped_usd": t["comped_usd"], "variance_usd": None, "why": None}
+        a, b = _cat_span(period, c) if used is not None else span
+        sold = comped = waste_usd = 0.0
+        uncosted = 0
+        for p in prods.values():
+            if p.category != c:
+                continue
+            per = per_of(p)
+            if per is None:
+                continue
+            series = p.rung_oz_day if p.mode == "oz" else p.rung_each_day
+            sold += per * sum(v for d, v in series["sale"].items() if a <= d <= b)
+            comped += per * sum(v for d, v in series["comp"].items() if a <= d <= b)
+        for key, d, units in waste:
+            p = prods[key]
+            if p.category != c or not (a <= d <= b):
+                continue
+            per = per_of(p)
+            if units is None or per is None:
+                uncosted += 1
+                continue
+            waste_usd += units * per
+        sales = sum(v for d, v in cat_sales_day.get(c, {}).items() if a <= d <= b)
+        matched = sum(v for d, v in matched_day.get(c, {}).items() if a <= d <= b)
+        cov = round(matched / sales * 100, 1) if sales > 0 else None
+        explained = sold + comped + waste_usd
+        row = {"used_usd": used, "from": a, "to": b, "from_mdy": _mdy(a), "to_mdy": _mdy(b),
+               "theoretical_usd": round(sold, 2), "comped_usd": round(comped, 2), "waste_usd": round(waste_usd, 2),
+               "waste_uncosted": uncosted, "explained_usd": round(explained, 2),
+               "pos_sales_usd": round(sales, 2), "unmatched_sales_usd": round(max(0.0, sales - matched), 2),
+               "coverage_pct": cov, "variance_usd": None, "why": None}
         if used is None:
             row["why"] = "the counts didn't measure this category over the span"
-        elif t["coverage_pct"] is None or t["coverage_pct"] < CATEGORY_COVERAGE_FLOOR * 100:
-            row["why"] = (f"matched drinks carry {t['coverage_pct'] or 0:g}% of this category's POS sales; variance "
+        elif cov is None or cov < CATEGORY_COVERAGE_FLOOR * 100:
+            row["why"] = (f"matched drinks carry {cov or 0:g}% of this category's POS drink sales; variance "
                           f"needs {int(CATEGORY_COVERAGE_FLOOR * 100)}%")
         else:
-            row["variance_usd"] = round(used - t["theoretical_usd"], 2)
+            row["variance_usd"] = round(used - explained, 2)
         out[c] = row
     return out
 
@@ -970,13 +1306,7 @@ def attach_waste(result, restaurant_id, db_path=None) -> dict:
         p = prods.get(k) or prods.get(w["product_key"])
         if p is None:
             continue
-        cont = float((p.pack or {}).get("container_oz") or 0)
-        keg_oz = float((p.pack or {}).get("keg_oz") or 0)
-        q = float(w["qty"])
-        if p.mode == "oz":
-            n = q if w["unit"] == "oz" else (q * keg_oz if w["unit"] == "keg" else q * cont)
-        else:
-            n = q if w["unit"] == "each" else (q / cont if w["unit"] == "oz" and cont else None)
+        n = _waste_units(p, w)
         b = by[p.key]
         b["entries"] += 1
         if n is not None and b["units"] is not None:
