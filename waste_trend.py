@@ -256,9 +256,18 @@ def load_waste_history(restaurant_id, limit=None, db_path=None, since=None, unti
             order.append(key)
         buckets[key] = week  # rows arrive oldest→newest, so the last one wins
     try:
+        # Bounded before it is read: only the counts inside since/until, and
+        # those read from their kept periods (bo_waste_periods) - never a
+        # re-costing of the recipe book per count (SCALE-01).
         import backoffice_counts as _bc
-        counted = _bc.waste_weeks(restaurant_id, db_path=db_path)
-    except Exception:
+        counted = _bc.waste_weeks(restaurant_id, db_path=db_path, since=since, until=hi)
+    except Exception as _e:
+        # Still degrades to "no counts", but never silently (SCALE-11).
+        try:
+            import ops as _ops
+            _ops.capture(_e, job="waste_trend.load_waste_history", restaurant_id=restaurant_id, db_path=db_path)
+        except Exception:
+            pass
         counted = []
     extra = 0
     for w in counted:

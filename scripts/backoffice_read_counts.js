@@ -44,13 +44,25 @@ for (var p of periods) {
   var d = await page('/Inventory/GetInventorySubmittal?unitFinancialCalendarId=' + p.id);
   var glById = {}, gls = [];
   d.querySelectorAll('input[name$=".Amount.Value"][name^="InventoryGLAccounts"]').forEach(function (inp) {
-    var row = inp.closest('li, tr, .row');
-    var cells = Array.prototype.map.call(row.querySelectorAll('div, td'), txt).filter(function (s) { return s; });
-    var gl = cells.filter(function (s) { return /^\d{4}$/.test(s); })[0] || null;
-    var name = cells.filter(function (s) { return /[A-Z]{3}/.test(s) && !/\$/.test(s); })[0] || null;
+    var row = inp.closest('li, tr, .row') || inp.parentNode;
     var idx = /\[(\d+)\]/.exec(inp.name)[1];
+    var cells = Array.prototype.map.call(row.querySelectorAll('div, td, span'), txt).filter(function (s) { return s; });
+    // The GL number is what the importer categorises by (through the chart
+    // of accounts), so it is read every way the page may carry it: its own
+    // cell ("4031"), the front of a combined cell ("4031 MEAT INVENTORY",
+    // "4031 - Meat Inventory"), or a hidden input of the row's account.
+    var gl = null, name = null;
+    cells.forEach(function (s) {
+      var m = /^(\d{3,6})(?:\s*[-–:]?\s*(.*))?$/.exec(s);
+      if (m && !gl) { gl = m[1]; if (m[2] && /[A-Za-z]{3}/.test(m[2]) && !/\$/.test(m[2])) name = m[2]; }
+    });
+    if (!gl) {
+      var num = d.querySelector('input[name^="InventoryGLAccounts[' + idx + ']"][name$="Number"]');
+      if (num && /^\d{3,6}$/.test((num.value || '').trim())) gl = num.value.trim();
+    }
+    if (!name) name = cells.filter(function (s) { return /[A-Z]{3}/.test(s) && !/\$/.test(s) && !/^\d+$/.test(s); })[0] || null;
     var ref = d.querySelector('input[name="InventoryGLAccounts[' + idx + '].InventoryGLAccountReferenceId"]');
-    if (ref) glById[ref.value] = name;
+    if (ref) glById[ref.value] = name || gl;
     gls.push({ gl: gl, name: name, amount: inp.value });
   });
   var items = [], seen = {};

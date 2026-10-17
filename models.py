@@ -4759,6 +4759,9 @@ def init_db(db_path: str = DB_PATH):
     # Back Office's invoices and chart of accounts (backoffice_ap, 10/15/26).
     from backoffice_ap import init_backoffice_ap
     init_backoffice_ap(db_path)
+    # Waste between Back Office counts, kept until an input moves (SCALE-01).
+    from backoffice_counts import init_backoffice_counts
+    init_backoffice_counts(db_path)
     # Bought vs rung's owner-confirmed cocktail specs (bar.variance) and the
     # bar's waste log (bar.waste) — F2 / F14, bar fix round 10/15/26.
     from bar.variance import init_bar_variance
