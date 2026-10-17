@@ -1984,7 +1984,8 @@ def local_due(restaurant, hour, until=14, claim_key=None, now_local=None, day=No
         return False
     if not (hour <= local.hour < until):
         if claim_key is not None and local.hour >= until:
-            note_missed_window(claim_key, getattr(restaurant, "id", restaurant), local.date().isoformat())
+            note_missed_window(claim_key, getattr(restaurant, "id", restaurant), local.date().isoformat(),
+                               window_open_hour=hour)
         return False
     if claim_key is None:
         return True
@@ -1992,7 +1993,7 @@ def local_due(restaurant, hour, until=14, claim_key=None, now_local=None, day=No
                              local.date().isoformat())
 
 
-def note_missed_window(job, restaurant_id, local_date):
+def note_missed_window(job, restaurant_id, local_date, window_open_hour=None):
     """Record that `job`'s window for this restaurant closed on `local_date`
     with nothing claimed — the job never got its turn while the window was
     open (a long pass held the loop, an outage, a deploy). Nothing recorded
@@ -2002,7 +2003,7 @@ def note_missed_window(job, restaurant_id, local_date):
     try:
         if _ops.period_claimed(f"{job}:{restaurant_id}", local_date):
             return False
-        return _ops.record_missed_window(job, restaurant_id, local_date)
+        return _ops.record_missed_window(job, restaurant_id, local_date, window_open_hour=window_open_hour)
     except Exception as e:
         log.warning(f"missed window not noted ({job}, {restaurant_id}): {e}")
         return False
@@ -4353,7 +4354,8 @@ def run_auto_publish_schedules():
             continue
         if local.hour >= AUTO_PUBLISH_UNTIL:
             # Its window closed with the day unclaimed: recorded (#131).
-            note_missed_window("auto_publish_schedule", r.id, local.date().isoformat())
+            note_missed_window("auto_publish_schedule", r.id, local.date().isoformat(),
+                               window_open_hour=AUTO_PUBLISH_HOUR)
         if not (AUTO_PUBLISH_HOUR <= local.hour < AUTO_PUBLISH_UNTIL):
             counts["skipped"] += 1
             continue
