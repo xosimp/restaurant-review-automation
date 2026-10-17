@@ -515,7 +515,6 @@ def test_ing_11_a_same_number_credit_memo_is_its_own_document(db):
 
 # ── POS-06: one classifier for a ticket line ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="POS-06: promo/hashdisc lines are classified differently by rpower.line_kind and rpower._line_kind")
 @pytest.mark.parametrize("flag", ["type_promo", "type_hashdisc"])
 def test_pos_06_the_archive_and_the_nightly_report_agree_a_discount_is_a_discount(flag):
     import rpower
