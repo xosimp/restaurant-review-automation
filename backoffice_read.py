@@ -94,8 +94,9 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
             lead += " — level with the week before"
     if ff > 0:
         facts["four_week_pct"] = round(100.0 * fb / ff, 1)
-        points.append(("Four weeks", f"{_pct(100.0 * fb / ff)} to {mdy(e)} — steadier than one week, which moves "
-                                     "with when deliveries land"))
+        # The figure and its end date; why four weeks is steadier was a
+        # second clause on every read (text round 10/17/26).
+        points.append(("Four weeks", f"{_pct(100.0 * fb / ff)} to {mdy(e)}"))
     pl = br.plates(restaurant_id, today=today, db_path=db_path, start=start, end=end)
     rp = ((pl.get("summary") or {}).get("cost_pct")) if pl.get("available") else None
     measured = [p for p in bc.waste_periods(restaurant_id, today=today, db_path=db_path)
@@ -112,10 +113,10 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         facts.update(recipe_pct=rp, gap_usd=round(fsales * gap / 100.0, 2))
         points.append(("By recipe", f"{_pct(rp)} — what the dishes sold should have used"))
         if gap > 0:
-            points.append(("Not in a recipe", f"about {_money(fsales * gap / 100.0)}: waste, portions, staff meals, "
-                                              "items no recipe lists, and stock still on the shelf"))
+            points.append(("Not in a recipe", f"about {_money(fsales * gap / 100.0)} — waste, portions, staff meals "
+                                              "or stock on the shelf"))
         if not bc.counts(restaurant_id, db_path):
-            points.append(("Next", "weekly counts in Back Office separate stock on the shelf from waste"))
+            points.append(("Next", "weekly Back Office counts split shelf stock from waste"))
     # The account that moved most against its own weekly average of the four
     # weeks before — over the weeks whose invoices are split by account
     # (their lines on file), never a week whose food sits in "Not split yet".
@@ -141,7 +142,7 @@ def food_read(restaurant_id, restaurant=None, today=None, db_path=None) -> dict 
         points.append((n, f"{_money(v)}, {abs(v - a) / a * 100:.0f}% {'above' if v > a else 'below'} its "
                            f"weekly average of the {len(prior)} weeks before"))
     if feed.get("invoices_through") and feed["invoices_through"] < e:
-        points.append(("Invoices", f"on file through {mdy(feed['invoices_through'])}, so the week's purchases "
+        points.append(("Invoices", f"on file through {mdy(feed['invoices_through'])} — the week's purchases "
                                    "may be short"))
     out["lead"], out["points"] = lead + ".", [{"label": k, "text": v} for k, v in points]
     # The phone and the cache read plain text: the headline, then a line per point.

@@ -539,10 +539,10 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
             out.append({"text": f"Waste is trending up about {pct:g}% across the last {n} weeks.",
                         "tone": "bad", "confidence": conf_note, "trend_strength_pct": strength})
         elif stats["direction"] == "improving":
-            out.append({"text": f"Waste is trending down about {pct:g}% across the last {n} weeks — the current direction is the right one.",
+            out.append({"text": f"Waste is trending down about {pct:g}% across the last {n} weeks.",
                         "tone": "good", "confidence": conf_note, "trend_strength_pct": strength})
         else:
-            out.append({"text": f"Waste is holding steady across the last {n} weeks — no clear trend either way.",
+            out.append({"text": f"Waste is holding steady across the last {n} weeks.",
                         "tone": "neutral", "confidence": conf_note, "trend_strength_pct": strength})
 
     if stats.get("wow_delta") is not None:
@@ -551,9 +551,9 @@ def waste_trend_observations(stats, weeks, target_pct=WASTE_TARGET_PCT):
         if abs(d) < 1:
             out.append({"text": "This week's waste is level with last week.", "tone": "neutral"})
         elif d > 0:
-            out.append({"text": f"Waste rose {_money(d)}{pct_txt} this week compared to last week.", "tone": "bad"})
+            out.append({"text": f"Waste rose {_money(d)}{pct_txt} on last week.", "tone": "bad"})
         else:
-            out.append({"text": f"Waste fell {_money(d)}{pct_txt} this week compared to last week.", "tone": "good"})
+            out.append({"text": f"Waste fell {_money(d)}{pct_txt} on last week.", "tone": "good"})
 
     worst = stats.get("worst")
     if worst and n >= WEEKS_FOR_COMPARISON and stats.get("avg"):
