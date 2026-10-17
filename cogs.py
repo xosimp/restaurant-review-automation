@@ -52,6 +52,17 @@ def local_today(restaurant_id):
         return date.today()
 
 
+def _degraded(exc, where, restaurant_id=None):
+    """A read that failed and was degraded to "unknown" — reported to the
+    failure digest, never silent (SCALE-11): a Postgres translation miss or
+    a lock read as "no sales" or "no counts", and nobody was paged."""
+    try:
+        import ops
+        ops.capture(exc, job=f"cogs.{where}", context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        pass
+
+
 def last_delivery_date(restaurant_id, db_path=None):
     """ISO date of the newest logged delivery (receiving event), or None."""
     from models import get_conn, DB_PATH
@@ -145,7 +156,8 @@ def beverage_sales_in_window(restaurant_id, start, end, db_path=None):
                 (restaurant_id, str(start)[:10], str(end)[:10])).fetchall()
         finally:
             conn.close()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "beverage_sales_in_window", restaurant_id)
         return None
     bev = [_f(r["v"]) for r in rows if " ".join(str(r["metric"])[10:].lower().split()) in BEVERAGE_CATEGORIES]
     return round(sum(bev), 2) if bev and sum(bev) > 0 else None
@@ -185,8 +197,9 @@ def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DA
 
     `weeks` is waste_trend.load_waste_history's series; entries carry
     inv_value only when their snapshot included per-item detail. Returns
-    (value, snapshot_date) or (None, None).
-    """
+    (value, snapshot_date) or (None, None). build_food_cost_pct hands it
+    only COUNTED weeks (is_counted), each dated by its count day
+    (FC-CALC-02)."""
     best, best_gap, best_day = None, None, None
     for w in weeks or []:
         if w.get("inv_value") in (None, 0):
@@ -201,34 +214,128 @@ def inventory_value_near(weeks, target_day, tolerance_days=SNAPSHOT_TOLERANCE_DA
     return best, (best_day.isoformat() if best_day else None)
 
 
-def _archived_net_sales(restaurant_id, start, end, today=None):
-    """Net sales for the window from the LOCAL archive, or None.
+# A snapshot is a COUNT when the items recounted on its count day carry at
+# least this share of its food stock value (FC-CALC-02). Between counts the
+# ledger's stock is the last count + receipts - recipe depletion - logged
+# waste, so a COGS bracketed by two such figures is recipe depletion plus
+# logged waste: the recipes' theoretical cost, never a measurement.
+COUNTED_SHARE = 0.8
 
-    labor_daily_history carries one row per business date with that day's
-    sales, written by each provider's nightly sync_to_db. Reading it is free
-    and works when the POS is unreachable.
 
-    Coverage takes two things. The archive must span the window — its
-    earliest row at or before `start`, its latest at or after `end` — and it
-    must have a row for (nearly) every day the restaurant trades inside it.
-    Spanning alone was the whole test, so an archive with a three-week hole
-    in the middle was summed as three weeks of zero sales and read food cost
-    about eleven times too high (MOD-FC-16). "Every day it trades" is every
-    date whose weekday has sales somewhere in the window or the eight weeks
-    before it: a restaurant closed on Mondays has no Monday row and is not
-    counted short for it. One missing day in ten (a holiday, a snow day) is
-    allowed; more falls through to the live POS rather than quietly
-    returning a smaller number — an under-reported sales figure inflates
-    food cost %.
+def is_counted(week) -> bool:
+    """True when a waste-history week's stock value is a real count: a
+    snapshot whose items were (nearly all) recounted on its count day
+    (waste_trend._week_from_row sets `counted`), or a Back Office count."""
+    if not week:
+        return False
+    return bool(week.get("counted")) or week.get("source") == "back_office_count"
 
-    A window ending today is judged through yesterday. The nightly sync
-    archives each business date after it closes, so an archive complete
-    through yesterday never reached `end`, and every load of a window
-    ending today called the live POS (MOD-FC-17) — the traffic the RPOWER
-    integrator asked us not to send. Today's sales are not in the figure
-    until tonight's sync writes them.
-    """
+
+def edge_tolerance(days) -> int:
+    """How far a count may sit from a window's edge and still bracket it:
+    SNAPSHOT_TOLERANCE_DAYS for the 28-day window, proportionally less for
+    a shorter one (2 days for a week), so a 7-day window is never measured
+    by counts most of a week away (FC-CALC-01)."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = DEFAULT_WINDOW_DAYS
+    return max(2, min(SNAPSHOT_TOLERANCE_DAYS, days * SNAPSHOT_TOLERANCE_DAYS // DEFAULT_WINDOW_DAYS))
+
+
+def last_complete_day(restaurant_id, today=None):
+    """The last business date a food cost window may end on: the
+    restaurant's last COMPLETE business day (pos.complete_through - after
+    its close, before the next day's open), so purchases, the closing count
+    and sales all end on one day (FC-CALC-15, POS-02, POS-17). Purchases
+    and the closing count used to run through today while sales stopped at
+    yesterday, and between midnight and 5am "yesterday" was a night still
+    trading.
+
+    `today` is an as-of date: a past day (a closed week, last month) is
+    complete and is its own end; the current day ends at the last complete
+    day; a future as-of date (a test, a plan) ends on its eve."""
+    real = local_today(restaurant_id)
+    if today is not None and today > real:
+        return today - timedelta(days=1)
+    ct = None
+    try:
+        import pos
+        ct = pos._complete_through_for(restaurant_id)
+    except Exception:
+        ct = None
+    if ct is None or ct >= real:
+        ct = real - timedelta(days=1)
+    if today is None or today >= real:
+        return ct
+    return min(today, ct)
+
+
+def covers_window(fc, start, end, tolerance=None) -> bool:
+    """Whether a build_food_cost_pct payload measured (about) the window a
+    caller asked for: ok, and its own start and end within the edge
+    tolerance of [start, end]. Every caller that sets COGS beside another
+    figure for that window checks this (FC-CALC-01): a Back Office kitchen
+    measures count to count, and a payload for September is not October's
+    month to date."""
+    if not fc or not fc.get("ok"):
+        return False
+    try:
+        s = date.fromisoformat(str(fc["start"])[:10])
+        e = date.fromisoformat(str(fc["end"])[:10])
+        a0 = date.fromisoformat(str(start)[:10])
+        a1 = date.fromisoformat(str(end)[:10])
+    except (KeyError, TypeError, ValueError):
+        return False
+    tol = edge_tolerance((a1 - a0).days + 1) if tolerance is None else tolerance
+    return abs((s - a0).days) <= tol and abs((e - a1).days) <= tol
+
+
+def window_cogs(fc, start, end):
+    """(COGS dollars for [start, end], why-missing): the payload's COGS when
+    it covers the window (covers_window), scaled by days when its counted
+    period is a few days longer or shorter than the one asked; (None, why)
+    when it measured another period or nothing at all."""
+    if not fc or not fc.get("ok"):
+        return None, "; ".join(m.get("why", "") for m in (fc or {}).get("missing") or []) or "not computable"
+    if not covers_window(fc, start, end):
+        from time_utils import mdy as _m
+        return None, (f"food cost was measured {_m(str(fc.get('start'))[:10])} to {_m(str(fc.get('end'))[:10])} — "
+                      f"the counts don't bracket {_m(str(start)[:10])} to {_m(str(end)[:10])}")
+    asked = (date.fromisoformat(str(end)[:10]) - date.fromisoformat(str(start)[:10])).days + 1
+    had = int(fc.get("window_days") or asked) or asked
+    return round(_f(fc.get("cogs")) * asked / had, 2), None
+
+
+def _sales_note(have, expected):
+    """The owner-facing note on a sales total scaled for missing days, or
+    None when every trading day was there (POS-04)."""
+    if expected and 0 < have < expected:
+        return (f"sales on file for {have} of {expected} trading days, scaled to the whole window "
+                "(an estimate)")
+    return None
+
+
+def _scaled_total(in_window, reference, d0, d1):
+    """(total, have, expected) over [d0, d1] under the one coverage rule
+    (_covers_trading_days), the total scaled up by expected / have when a
+    trading day is missing (POS-04): a missing day used to be summed as $0,
+    reading food cost % up to ~11% high as a measurement. (None, have,
+    expected) when coverage fails or nothing sold."""
+    ok, have, expected = _covers_trading_days(in_window, reference, d0, d1)
+    total = sum(in_window.values())
+    if not ok or not in_window or total <= 0:
+        return None, have, expected
+    if 0 < have < expected:
+        total = total * expected / have
+    return round(total, 2), have, expected
+
+
+def _archive_detail(restaurant_id, start, end, today=None):
+    """(total, have, expected) from the LOCAL archive, or None - see
+    _archived_net_sales."""
     from models import get_conn
+    from canonical_facts import FINAL_SQL
     try:
         d0 = date.fromisoformat(str(start)[:10])
         d1 = date.fromisoformat(str(end)[:10])
@@ -244,17 +351,21 @@ def _archived_net_sales(restaurant_id, start, end, today=None):
     try:
         conn = get_conn()
         try:
+            # Final days only (POS-04): a day read while it was trading
+            # (final=0) is a partial night, and stays one whenever the next
+            # sync fails - summed, it was a whole day's sales.
             rows = conn.execute(
                 "SELECT date, sales FROM labor_daily_history "
                 "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 "
-                "  AND date >= ? AND date <= ?", (restaurant_id, lookback, e)).fetchall()
+                f"  AND date >= ? AND date <= ? AND {FINAL_SQL}", (restaurant_id, lookback, e)).fetchall()
             edges = conn.execute(
                 "SELECT MIN(date) AS first, MAX(date) AS last FROM labor_daily_history "
-                "WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0",
+                f"WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0 AND {FINAL_SQL}",
                 (restaurant_id,)).fetchone()
         finally:
             conn.close()
-    except Exception:
+    except Exception as exc:
+        _degraded(exc, "archived_net_sales", restaurant_id)
         return None
     if not edges or not edges["first"]:
         return None
@@ -270,10 +381,43 @@ def _archived_net_sales(restaurant_id, start, end, today=None):
     in_window = {d: v for d, v in by_day.items() if d0 <= d <= d1}
     if not in_window:
         return None
-    if not _covers_trading_days(in_window, by_day, d0, d1)[0]:
+    total, have, expected = _scaled_total(in_window, by_day, d0, d1)
+    if total is None:
         return None          # a hole inside the span: not what the restaurant sold
-    total = sum(in_window.values())
-    return round(total, 2) if total > 0 else None
+    return total, have, expected
+
+
+def _archived_net_sales(restaurant_id, start, end, today=None):
+    """Net sales for the window from the LOCAL archive, or None.
+
+    labor_daily_history carries one row per business date with that day's
+    sales, written by each provider's nightly sync_to_db. Reading it is free
+    and works when the POS is unreachable.
+
+    Coverage takes two things. The archive must span the window - its
+    earliest row at or before `start`, its latest at or after `end` - and it
+    must have a row for (nearly) every day the restaurant trades inside it.
+    Spanning alone was the whole test, so an archive with a three-week hole
+    in the middle was summed as three weeks of zero sales and read food cost
+    about eleven times too high (MOD-FC-16). "Every day it trades" is every
+    date whose weekday has sales somewhere in the window or the eight weeks
+    before it: a restaurant closed on Mondays has no Monday row and is not
+    counted short for it. One missing day in ten (a holiday, a snow day) is
+    allowed, and the total is scaled up for it (POS-04) rather than summed
+    as a $0 day; more falls through to the live POS rather than quietly
+    returning a smaller number - an under-reported sales figure inflates
+    food cost %. Only final days count: a provisional night (final=0) is
+    missing, not whole.
+
+    A window ending today is judged through yesterday. The nightly sync
+    archives each business date after it closes, so an archive complete
+    through yesterday never reached `end`, and every load of a window
+    ending today called the live POS (MOD-FC-17) - the traffic the RPOWER
+    integrator asked us not to send. Today's sales are not in the figure
+    until tonight's sync writes them.
+    """
+    got = _archive_detail(restaurant_id, start, end, today=today)
+    return got[0] if got else None
 
 
 def _covers_trading_days(in_window, reference, d0, d1):
@@ -281,8 +425,9 @@ def _covers_trading_days(in_window, reference, d0, d1):
     figure for (nearly) every day the restaurant trades between d0 and d1.
     Trading days are the weekdays with sales anywhere in `reference` (a
     closed-Monday restaurant is not counted short for Mondays). One missing
-    day in ten is allowed. The one coverage rule for net sales — the archive
-    and the live POS both answer to it (CA3 F14)."""
+    day in ten is allowed. The one coverage rule for net sales - the archive
+    and the live POS both answer to it (CA3 F14) - and for a Back Office
+    kitchen's food sales (FC-CALC-16)."""
     trading_weekdays = {d.weekday() for d in reference}
     expected = sum(1 for k in range((d1 - d0).days + 1)
                    if (d0 + timedelta(days=k)).weekday() in trading_weekdays)
@@ -292,7 +437,9 @@ def _covers_trading_days(in_window, reference, d0, d1):
 
 def net_sales_in_window(restaurant_id, start, end):
     """Net sales for the window, or None when it cannot be known. None means
-    unknown — never 0.
+    unknown - never 0. Returns (total, why): `why` says what is missing when
+    the total is None, and is the estimate note when a missing trading day
+    was scaled for (POS-04) - None for a whole window.
 
     Reads the LOCAL ARCHIVE first and only calls the POS when the archive
     does not span the window.
@@ -300,7 +447,7 @@ def net_sales_in_window(restaurant_id, start, end):
     Two reasons, and the second is a vendor requirement rather than an
     optimisation. RPOWER's integrator asked explicitly that we "download and
     archive the data" rather than query it repeatedly, and told us there is
-    no sandbox — every call is against a live store. Meanwhile this function
+    no sandbox - every call is against a live store. Meanwhile this function
     is reached twice per profitability_projection, which is reached by
     business_intelligence.gather, which runs on every Ask Cavnar context
     build. That is a lot of traffic against an API whose rate limits we have
@@ -312,9 +459,9 @@ def net_sales_in_window(restaurant_id, start, end):
     pos.connected_provider knew perfectly well which POS they were on, so the
     one number this module is named after could never be computed for them.
     """
-    archived = _archived_net_sales(restaurant_id, start, end)
+    archived = _archive_detail(restaurant_id, start, end)
     if archived is not None:
-        return archived, None
+        return archived[0], _sales_note(archived[1], archived[2])
     try:
         import pos
         by_date, _provider = pos.fetch_business_days(restaurant_id, start, end)
@@ -332,7 +479,9 @@ def net_sales_in_window(restaurant_id, start, end):
     # summed whatever days came back, so a POS that answered for 9 of 28
     # days gave a sales figure a third of the truth and a food cost % three
     # times too high. Judged through yesterday, like the archive: today's
-    # sales are not in until tonight's close.
+    # sales are not in until tonight's close - and only the window's
+    # complete days are summed (POS-02): the live total used to carry
+    # today's half day, so the live and archive paths disagreed.
     live = {}
     for k, v in by_date.items():
         try:
@@ -341,21 +490,21 @@ def net_sales_in_window(restaurant_id, start, end):
             continue
         if _f(v) > 0:
             live[d] = live.get(d, 0.0) + _f(v)
-    total = sum(live.values())
-    if total <= 0:
+    if sum(live.values()) <= 0:
         return None, "POS reported no sales for this window"
     try:
         d0 = date.fromisoformat(str(start)[:10])
         d1 = min(date.fromisoformat(str(end)[:10]), local_today(restaurant_id) - timedelta(days=1))
     except ValueError:
         return None, "window dates unreadable"
-    if d1 >= d0:
-        closed = {d: v for d, v in live.items() if d0 <= d <= d1}
-        ok, have, expected = _covers_trading_days(closed, live, d0, d1)
-        if not ok:
-            return None, (f"POS returned sales for {have} of {expected} trading days in this window — "
-                          "too few to state a food cost %")
-    return round(total, 2), None
+    if d1 < d0:
+        return None, "no complete business day in this window yet"
+    closed = {d: v for d, v in live.items() if d0 <= d <= d1}
+    total, have, expected = _scaled_total(closed, live, d0, d1)
+    if total is None:
+        return None, (f"POS returned sales for {have} of {expected} trading days in this window - "
+                      "too few to state a food cost %")
+    return total, _sales_note(have, expected)
 
 
 # Above this, COGS / net sales is not a food cost % but a data error.
@@ -484,7 +633,7 @@ def _engine_industry_food_cost(restaurant):
         cm = _engine.compare(getattr(restaurant, "id", None), "food_cost_pct_28d", kinds=("industry",),
                              restaurant=restaurant, rows=[])
     except Exception as e:
-        print(f"[cogs] food cost industry comparison unavailable: {e}")
+        _degraded(e, "industry_comparison", getattr(restaurant, "id", None))
         return None
     ind = next((c for c in cm.get("comparisons") or () if c.get("kind") == "industry"), None)
     if not ind or not ind.get("available") or ind.get("low") is None or ind.get("high") is None:
@@ -492,15 +641,62 @@ def _engine_industry_food_cost(restaurant):
     return ind
 
 
+def _within(day, target, tol) -> bool:
+    try:
+        return abs((date.fromisoformat(str(day)[:10]) - target).days) <= tol
+    except (TypeError, ValueError):
+        return False
+
+
+def _has_food(count) -> bool:
+    """A Back Office count that carries a food account (FC-CALC-06): a
+    bar-only week is not $0 of food on hand. backoffice_counts marks it
+    `has_food` when it can; else any food GL value on the count."""
+    if "has_food" in (count or {}):
+        return bool(count["has_food"])
+    return _f((count.get("by_category") or {}).get("food")) > 0
+
+
+def _food_sales_window(restaurant_id, start, end, db_path=None):
+    """(total, have, expected) of the nightly report's food sales over
+    [start, end] under the one coverage rule (_scaled_total), trading days
+    read from the eight weeks before (FC-CALC-16: a restaurant closed Sunday
+    and Monday is not 2 nights short every week), or (None, have, expected)."""
+    import backoffice_ap as bo
+    raw = bo._food_sales(restaurant_id, (start - timedelta(days=56)).isoformat(), end.isoformat(), db_path)
+    by_day = {}
+    for k, v in (raw or {}).items():
+        try:
+            d = date.fromisoformat(str(k)[:10])
+        except ValueError:
+            continue
+        if _f(v) > 0:
+            by_day[d] = by_day.get(d, 0.0) + _f(v)
+    in_window = {d: v for d, v in by_day.items() if start <= d <= end}
+    return _scaled_total(in_window, by_day, start, end)
+
+
 def _backoffice_components(restaurant_id, today, days, db_path=None):
     """Food cost's components for a kitchen on Back Office, or None when it
     is not one (Back Office food on file and no delivery ever logged here).
 
-    The window runs count to count: closing is the latest submitted count on
-    or before `today`, opening the earlier count nearest `days` before it —
-    never a trailing window whose edges miss the counts by days. Purchases
-    are Back Office's food invoices in between; sales the nightly report's
-    food categories (backoffice_ap._food_sales), not net sales."""
+    `today` is the window's last day (build_food_cost_pct passes
+    last_complete_day). The figure runs count to count: closing is the
+    latest submitted food count on or before it, opening the earlier count
+    nearest the day before the window starts. Purchases are Back Office's
+    food invoices in between; sales the nightly report's food categories
+    (backoffice_ap._food_sales), not net sales.
+
+    The counts must bracket the window asked for (FC-CALC-01): the closing
+    count within edge_tolerance(days) of its end, the opening no further
+    than that before its start. A kitchen counting monthly asked for
+    October's first 16 days used to get September's whole COGS, which prime
+    cost added to October's labor and the outcomes engine read as "after".
+    Refused instead — "counts don't bracket this window". An opening count
+    INSIDE the window gives a shorter period that is still all inside it
+    (two counts a fortnight apart); `covers_asked` says whether it is the
+    window asked for, and every caller that needs exactly that window
+    checks covers_window()."""
     from models import get_conn, DB_PATH
     import backoffice_ap as bo
     import backoffice_counts as bc
@@ -509,16 +705,20 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
     try:
         logged = conn.execute("SELECT 1 FROM ingredient_stock_events WHERE restaurant_id=? AND event_type='receiving' "
                               "LIMIT 1", (restaurant_id,)).fetchone()
-    except Exception:
+    except Exception as e:
+        _degraded(e, "backoffice_components", restaurant_id)
         logged = None
     finally:
         conn.close()
     if logged or not bo.feed_state(restaurant_id, db_path).get("invoices_through"):
         return None
-    cs = [c for c in bc.counts(restaurant_id, db_path) if c["end"] <= today.isoformat()]
-    base = {"start": today - timedelta(days=days - 1), "end": today, "days": days, "opening": None,
+    w_end = today
+    w_start = today - timedelta(days=days - 1)
+    tol = edge_tolerance(days)
+    cs = [c for c in bc.counts(restaurant_id, db_path) if c["end"] <= w_end.isoformat() and _has_food(c)]
+    base = {"start": w_start, "end": w_end, "days": days, "opening": None,
             "opening_day": None, "closing": None, "closing_day": None, "purchases": None, "n_receipts": 0,
-            "food_sales": None, "missing": [], "unmeasured_line": None,
+            "food_sales": None, "sales_note": None, "missing": [], "unmeasured_line": None, "covers_asked": False,
             "basis": ("COGS = food on hand at one Back Office count + food bought on Back Office invoices − food on "
                       "hand at the next count, divided by the POS's food sales for the same days.")}
     if len(cs) < 2:
@@ -529,53 +729,127 @@ def _backoffice_components(restaurant_id, today, days, db_path=None):
                                    else "Comes with your second Back Office count")
         return base
     close = cs[-1]
-    target = (date.fromisoformat(close["end"]) - timedelta(days=days)).isoformat()
-    open_ = min(cs[:-1], key=lambda c: abs((date.fromisoformat(c["end"]) - date.fromisoformat(target)).days))
+    close_gap = (w_end - date.fromisoformat(close["end"])).days
+    if close_gap > tol:
+        base["missing"].append({"component": "a count at the window's end",
+                                "why": (f"the counts don't bracket {mdy(w_start)} to {mdy(w_end)}: the last Back "
+                                        f"Office count is {mdy(close['end'])}, {close_gap} days before its end")})
+        base["unmeasured_line"] = "Comes with your next Back Office count"
+        return base
+    open_target = w_start - timedelta(days=1)
+    earlier = [c for c in cs[:-1] if (open_target - date.fromisoformat(c["end"])).days <= tol]
+    if not earlier:
+        base["missing"].append({"component": "a count at the window's start",
+                                "why": (f"the counts don't bracket {mdy(w_start)} to {mdy(w_end)}: no Back Office "
+                                        f"count within {tol} days before it starts")})
+        return base
+    open_ = min(earlier, key=lambda c: abs((date.fromisoformat(c["end"]) - open_target).days))
     start = date.fromisoformat(open_["end"]) + timedelta(days=1)
     end = date.fromisoformat(close["end"])
     n_days = (end - start).days + 1
     food = [e for e in bo.entries(restaurant_id, start=start.isoformat(), end=end.isoformat(), db_path=db_path)
             if e["category"] == "food"]
-    sales = bo._food_sales(restaurant_id, start.isoformat(), end.isoformat(), db_path)
-    nights = sum(1 for v in sales.values() if v > 0)
+    sales_total, have, expected = _food_sales_window(restaurant_id, start, end, db_path)
     base.update(start=start, end=end, days=n_days, opening=open_["food"], opening_day=open_["end"],
                 closing=close["food"], closing_day=close["end"],
                 purchases=round(sum(float(e["amount"]) for e in food), 2), n_receipts=len(food),
-                food_sales=round(sum(sales.values()), 2) if sales else None,
+                food_sales=sales_total, sales_note=_sales_note(have, expected),
+                covers_asked=(abs((start - w_start).days) <= tol and abs((end - w_end).days) <= tol),
                 basis=(f"COGS = food on hand at the {mdy(open_['end'])} Back Office count + food bought on Back "
                        f"Office invoices − food on hand at the {mdy(close['end'])} count, divided by the POS's "
                        f"food sales for {mdy(start.isoformat())} to {mdy(end.isoformat())}."))
     if not food:
         base["missing"].append({"component": "purchases", "why": "no Back Office food invoices between the counts"})
         base["purchases"] = None
-    if not sales or nights < 0.8 * n_days:
+    if sales_total is None:
         base["missing"].append({"component": "food sales",
-                                "why": f"the nightly report has food sales for {nights} of {n_days} days"})
+                                "why": f"the nightly report has food sales for {have} of {expected} trading days"})
         base["food_sales"] = None
     return base
 
 
+def _beverage_window(restaurant_id, start, end, db_path=None):
+    """(drink sales over [start, end] or None, why) from the nightly
+    report's mapped beverage categories (dsr.kpis.BEVERAGE_CATEGORIES), per
+    night under the one coverage rule and scaled like sales. (None, None)
+    when no beverage category is on file at all — drinks are then not
+    separable from net sales, said by the caller; (None, why) when the
+    report's nights do not cover the window."""
+    from models import get_conn, DB_PATH
+    from dsr.kpis import BEVERAGE_CATEGORIES
+    try:
+        conn = get_conn(db_path or DB_PATH)
+        try:
+            rows = conn.execute(
+                "SELECT business_date, metric, value FROM dsr_metrics WHERE restaurant_id=? "
+                "AND metric >= 'sales.cat:' AND metric < 'sales.cat;' AND business_date >= ? AND business_date <= ? "
+                "AND value IS NOT NULL",
+                (restaurant_id, (start - timedelta(days=56)).isoformat(), end.isoformat())).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        _degraded(e, "beverage_window", restaurant_id)
+        return None, None
+    nights, bev, any_bev = {}, {}, False
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r["business_date"])[:10])
+        except ValueError:
+            continue
+        v = _f(r["value"])
+        nights[d] = nights.get(d, 0.0) + v
+        if " ".join(str(r["metric"])[10:].lower().split()) in BEVERAGE_CATEGORIES:
+            any_bev = True
+            bev[d] = bev.get(d, 0.0) + v
+    if not any_bev:
+        return None, None
+    in_window = {d: v for d, v in nights.items() if start <= d <= end and v > 0}
+    ok, have, expected = _covers_trading_days(in_window, {d for d, v in nights.items() if v > 0}, start, end)
+    if not ok or not in_window:
+        return None, (f"the nightly report's drink sales cover {have} of {expected} trading days, so food "
+                      "sales can't be separated from net sales")
+    total = sum(bev.get(d, 0.0) for d in in_window)
+    if 0 < have < expected:
+        total = total * expected / have
+    return round(total, 2), None
+
+
 def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, today=None):
-    """Actual food cost % for one restaurant over the trailing `days`.
+    """Actual food cost % for one restaurant over the `days` ending on its
+    last complete business day (last_complete_day).
 
     Returns a payload that always says what it knows and what it doesn't:
 
         ok            — whether a percentage could be computed at all
-        pct           — COGS / net sales * 100, or None
-        cogs, opening, closing, purchases, net_sales — the components
+        pct           — COGS / food sales * 100, or None
+        cogs, opening, closing, purchases — the components
+        food_sales    — the denominator: food sales (sales_basis says how
+                        they were measured: "food_sales" from the nightly
+                        report's food categories, "net_less_beverage" net
+                        sales less its drink sales, or "net_sales" when
+                        drinks are not separable on file — said in `basis`)
+        net_sales     — POS net sales over the window (inventory path)
+        start, end    — the period ACTUALLY measured, count to count;
+                        asked_start / asked_end the window asked for, and
+                        covers_asked whether they match (covers_window)
         target        — restaurants.food_cost_target
         missing       — list of {component, why} for anything absent
         basis         — one sentence naming the identity and the window
+        theoretical   — on a ledger kitchen with no full count at an edge,
+                        the recipes' theoretical figure, labelled so and
+                        never `ok` (FC-CALC-02)
 
     A missing component yields ok=False and pct=None. It never yields a
     number computed from a substituted zero.
     """
     from models import get_restaurant
     from waste_trend import load_waste_history
+    from time_utils import mdy as _mdy
 
-    today = today or local_today(restaurant_id)
-    end = today
-    start = today - timedelta(days=days - 1)
+    end = last_complete_day(restaurant_id, today)
+    start = end - timedelta(days=days - 1)
+    asked_start, asked_end = start, end
+    tol = edge_tolerance(days)
 
     restaurant = get_restaurant(restaurant_id)
     # The one target read (thresholds.target_for, re-audit #10): the
@@ -586,8 +860,11 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
     target = _tgt["pct"] if _tgt else None
     owners_target = bool(_tgt and _tgt["alerts_allowed"])
 
-    bo = _backoffice_components(restaurant_id, today, days, db_path)
+    bo = _backoffice_components(restaurant_id, end, days, db_path)
     unmeasured_line = None
+    theoretical = None
+    counted = False
+    net_sales = None
     if bo is not None:
         # A kitchen on Back Office (no deliveries logged here, Back Office
         # food on file): count to count from its submitted inventories, its
@@ -597,35 +874,58 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         opening, opening_day = bo["opening"], bo["opening_day"]
         closing, closing_day = bo["closing"], bo["closing_day"]
         purchases, n_receipts = bo["purchases"], bo["n_receipts"]
-        net_sales, last_delivery = bo["food_sales"], None
+        food_sales, last_delivery = bo["food_sales"], None
+        sales_basis, sales_note = "food_sales", bo.get("sales_note")
         missing, basis, unmeasured_line = bo["missing"], bo["basis"], bo["unmeasured_line"]
-        from time_utils import mdy as _mdy
+        covers_asked = bool(bo.get("covers_asked"))
+        counted = True
     else:
         missing = []
         # Only the snapshots that can be the opening or closing count are read:
-        # within SNAPSHOT_TOLERANCE_DAYS of the window's edges (MOD-FC-18).
+        # within the edge tolerance of the window (MOD-FC-18). A snapshot
+        # written the morning after the closing day still dates its count
+        # to that day, so one day past the end is read too.
         weeks, _total = load_waste_history(
             restaurant_id, None, db_path=db_path,
-            since=start - timedelta(days=SNAPSHOT_TOLERANCE_DAYS),
-            until=end + timedelta(days=SNAPSHOT_TOLERANCE_DAYS), include_unmeasured=True)
+            since=start - timedelta(days=tol + 1),
+            until=end + timedelta(days=1), include_unmeasured=True, snapshots=True)
+        # Each snapshot is dated by its count day (`counted_on`) when it is a
+        # count, and none dated after the window's last complete day can
+        # close it — a closing count today would carry deliveries and usage
+        # of a day whose sales are not in yet (FC-CALC-15).
+        anchored = []
+        for w in weeks or []:
+            day = str(w.get("counted_on") or w.get("week_end") or "")[:10]
+            if day and day <= end.isoformat():
+                anchored.append(dict(w, week_end=day))
+        full = [w for w in anchored if is_counted(w)]
+
+        def _near(ws, day):
+            return inventory_value_near([w for w in ws if _within(w.get("week_end"), day, tol)], day)
+
+        # Opening is the stock at the close of the day before the window,
+        # closing at the close of its last day (FC-CALC-22). Only a full
+        # count anchors the measured figure (FC-CALC-02); the ledger's own
+        # figure between counts is the recipes' theoretical stock.
+        opening, opening_day = _near(full, start - timedelta(days=1))
+        closing, closing_day = _near(full, end)
+        counted = opening is not None and closing is not None and opening_day != closing_day
+        if not counted:
+            o2, od2 = (opening, opening_day) if opening is not None else _near(anchored, start - timedelta(days=1))
+            c2, cd2 = (closing, closing_day) if closing is not None else _near(anchored, end)
+            open_counted, close_counted = opening is not None, closing is not None
+            opening, opening_day, closing, closing_day = o2, od2, c2, cd2
+        else:
+            open_counted = close_counted = True
 
         # Owner-facing reasons (they reach Track warnings and the Food Cost
         # tab): dates M/D/YY (re-audit A34).
-        from time_utils import mdy as _mdy
-        opening, opening_day = inventory_value_near(weeks, start)
         if opening is None:
-            missing.append({
-                "component": "opening inventory",
-                "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(start)}",
-            })
-
-        closing, closing_day = inventory_value_near(weeks, end)
+            missing.append({"component": "opening inventory",
+                            "why": f"no counted inventory value within {tol} days of {_mdy(start)}"})
         if closing is None:
-            missing.append({
-                "component": "closing inventory",
-                "why": f"no counted inventory value within {SNAPSHOT_TOLERANCE_DAYS} days of {_mdy(end)}",
-            })
-
+            missing.append({"component": "closing inventory",
+                            "why": f"no counted inventory value within {tol} days of {_mdy(end)}"})
         # Two snapshots that are actually the same count can't bracket a period.
         if opening_day and closing_day and opening_day == closing_day:
             missing.append({
@@ -633,6 +933,26 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
                 "why": "opening and closing resolve to the same count, so nothing brackets the window",
             })
             closing = None
+        uncounted_edges = [w for w, ok_ in (("opening", open_counted), ("closing", close_counted))
+                           if not ok_ and (opening if w == "opening" else closing) is not None]
+        for edge in uncounted_edges:
+            day = opening_day if edge == "opening" else closing_day
+            missing.append({
+                "component": f"a counted {edge} inventory",
+                "why": (f"no full count within {tol} days of {_mdy(start if edge == 'opening' else end)} — the "
+                        f"stock on {_mdy(day)} is the last count plus deliveries minus what the recipes say was "
+                        "used, the recipes' theoretical figure, not a count")})
+
+        # Purchases and sales run over the counted period itself, the day
+        # after the opening count through the closing count (FC-CALC-22,
+        # POS-15): purchases in the days between the window's edge and a
+        # count nine days inside it were on the opening shelf AND in
+        # purchases.
+        if opening_day and closing_day and opening_day < closing_day:
+            start = date.fromisoformat(opening_day) + timedelta(days=1)
+            end = date.fromisoformat(closing_day)
+            days = (end - start).days + 1
+        covers_asked = abs((start - asked_start).days) <= tol and abs((end - asked_end).days) <= tol
 
         # COGS rests on the deliveries logged in the window: with none, food
         # cost % would read opening − closing alone and look excellent exactly
@@ -652,12 +972,39 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
             })
 
         net_sales, sales_why = net_sales_in_window(restaurant_id, start, end)
+        sales_note = sales_why if net_sales is not None else None
+        food_sales, sales_basis = None, None
         if net_sales is None:
             missing.append({"component": "net sales", "why": sales_why or "unavailable"})
+        else:
+            # Food cost is food COGS over FOOD sales on every path
+            # (FC-CALC-11): the ledger's COGS holds no alcohol (is_bar_item),
+            # so dividing by net sales read a 40%-bar restaurant's true 32%
+            # as 19.2% "On target" while the same kitchen on Back Office
+            # read 32%.
+            try:
+                bev, bev_why = _beverage_window(restaurant_id, start, end, db_path=db_path)
+            except Exception as e:
+                _degraded(e, "beverage_window", restaurant_id)
+                bev, bev_why = None, None
+            if bev is not None and bev < net_sales:
+                food_sales, sales_basis = round(net_sales - bev, 2), "net_less_beverage"
+            elif bev_why:
+                missing.append({"component": "food sales", "why": bev_why})
+            else:
+                food_sales, sales_basis = net_sales, "net_sales"
 
-        basis = (f"COGS = opening inventory + purchases − closing inventory, over "
-                 f"{_mdy(start)} to {_mdy(end)}, divided by POS net sales for the same days.")
+        what = ("food sales (POS net sales less the nightly report's drink sales)"
+                if sales_basis == "net_less_beverage" else
+                "POS net sales — drink sales aren't separated on file, so a restaurant that sells drinks reads low")
+        basis = ((f"COGS = counted opening inventory ({_mdy(opening_day)}) + purchases − counted closing "
+                  f"inventory ({_mdy(closing_day)}), over {_mdy(start)} to {_mdy(end)}, divided by {what} "
+                  "for the same days.") if counted and opening_day and closing_day else
+                 (f"COGS = opening inventory + purchases − closing inventory, over {_mdy(start)} to {_mdy(end)}, "
+                  f"divided by {what} for the same days."))
 
+    if sales_note:
+        basis += f" Sales: {sales_note}."
     payload = {
         "ok": False,
         "pct": None,
@@ -667,6 +1014,12 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "purchases": purchases if n_receipts else None,
         "purchase_events": n_receipts,
         "last_delivery": last_delivery,
+        # The one denominator (FC-CALC-11): food sales, and how they were
+        # measured. net_sales is the POS's net over the same days, kept
+        # beside it on the inventory path; a Back Office kitchen has none.
+        "food_sales": food_sales,
+        "sales_basis": sales_basis,
+        "sales_estimate": sales_note,
         "net_sales": net_sales,
         "target": target,
         # Whose target it is — the label both apps render (re-audit #10).
@@ -674,18 +1027,35 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         "food_cost_target_source": _tgt["source"] if _tgt else None,
         "window_days": days,
         "start": start.isoformat(), "end": end.isoformat(),
+        "asked_start": asked_start.isoformat(), "asked_end": asked_end.isoformat(),
+        "covers_asked": covers_asked,
+        "counted": counted,
         "missing": missing,
         "basis": basis,
         "label": None, "tone": None, "variance_pts": None,
         # What the owner reads in place of the figure, when a source can say
         # exactly what it waits on ("Comes with your second count…").
         "unmeasured_line": unmeasured_line,
+        "theoretical": None,
         "source": "back_office" if bo is not None else "inventory",
     }
-    if missing:
+    only_uncounted = bool(missing) and all(m["component"].startswith("a counted ") for m in missing)
+    if missing and not only_uncounted:
         return payload
 
     cogs = round(opening + purchases - closing, 2)
+    if only_uncounted:
+        # The recipes' theoretical cost, labelled so and never `ok`: no
+        # caller adds it to labor, and no screen calls it COGS (FC-CALC-02).
+        if cogs >= 0 and food_sales:
+            theoretical = {"cogs": cogs, "pct": round(cogs / food_sales * 100, 1),
+                           "label": "by recipe (theoretical)",
+                           "basis": ("By recipe (theoretical): the ledger's stock between counts is the last count "
+                                     "plus deliveries minus what the recipes say was used, so this is recipe "
+                                     "depletion plus logged waste — over-portioning, theft and dishes with no "
+                                     "recipe don't show until a full count lands inside the window.")}
+        payload["theoretical"] = theoretical
+        return payload
     payload["cogs"] = cogs
     if cogs < 0:
         # Physically possible only if a count is wrong or deliveries went
@@ -697,7 +1067,7 @@ def build_food_cost_pct(restaurant_id, days=DEFAULT_WINDOW_DAYS, db_path=None, t
         }]
         return payload
 
-    pct = round(cogs / net_sales * 100, 1)
+    pct = round(cogs / food_sales * 100, 1)
     if pct > MAX_MEASURABLE_PCT:
         # More food cost than sales is not a kitchen, it is a count, a
         # delivery or a sales window that is wrong. Refused as not

@@ -90,7 +90,6 @@ def _price(item, invoices):
 
 # ── FC-CALC: food cost calculations ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-01: Back Office food cost returns another period's COGS for the window asked")
 def test_fc_calc_01_back_office_food_cost_stays_inside_the_window_it_is_asked_for(db):
     """Monthly counts 8/31 and 9/30. October month to date (16 days to
     10/16) must not come back as September's 9/1-9/30 COGS."""
@@ -247,7 +246,6 @@ def test_ing_06_a_sku_shared_across_vendors_prices_each_from_its_own(db):
     assert abs(got["per_base"] - 4.80) < 0.01, got.get("per_base")
 
 
-@pytest.mark.xfail(strict=True, reason="FC-CALC-12: a snapshot with no measured waste is charted as a $0 week")
 def test_fc_calc_12_a_week_with_no_waste_measured_is_not_zero_waste():
     """A stored snapshot whose waste figure is null (nothing logged) reads
     waste None in the trend, never a measured $0."""

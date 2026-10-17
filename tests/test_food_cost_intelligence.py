@@ -539,7 +539,7 @@ def test_the_projection_is_labelled_a_forecast(db_path, monkeypatch):
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (60000.0, None))
     monkeypatch.setattr(cogs, "build_food_cost_pct",
                         lambda r, days=28, db_path=None, today=None: {
-                            "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0})
+                            "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0, "window_days": days, "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     # A current labor period: prime cost now refuses an undated or stale
     # one (DH1-3), so the fixture carries the period the analysis covers.
     _end = (date.today() - timedelta(days=1)).isoformat()
@@ -806,7 +806,7 @@ def test_the_projection_says_the_labor_share_came_from_another_period(db_path, m
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (60000.0, None))
     monkeypatch.setattr(cogs, "build_food_cost_pct",
                         lambda r, days=28, db_path=None, today=None: {
-                            "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0})
+                            "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0, "window_days": days, "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant",
                         lambda r: {"is_live": True, "total_sales": 60000.0,
                                    "overall_labor_pct": 30.0,

@@ -1212,19 +1212,25 @@ def labor_read_evidence(rid, analysis=None) -> dict:
 
 
 def food_read_evidence(rid, is_live=True) -> dict:
-    """The Food read's Evidence Strength input: the ISO weeks of inventory
-    counts on file in the last eight (waste_trend.load_waste_history — the
-    series every food figure here is read from; N_FULL "weeks"). A sample
+    """The Food read's Evidence Strength input: the ISO weeks of the last
+    eight that hold a REAL inventory count (waste_trend.count_weeks, AI-06
+    — a full ledger count or a submitted Back Office count; N_FULL
+    "weeks"). It counted weeks of daily snapshots, so one count eight weeks
+    ago read "8 weeks of inventory counts" at full strength. A sample
     pantry scores 0."""
     if not is_live:
         return {"sample": True, "basis": "a sample pantry"}
     try:
-        from waste_trend import load_waste_history
-        weeks, _total = load_waste_history(rid, 8)
-        n = len(weeks or [])
-        return {"n": n, "kind": "weeks", "basis": f"{n} week{'s' if n != 1 else ''} of inventory counts"}
+        from waste_trend import count_weeks
+        n = count_weeks(rid, 8)
+        return {"n": n, "kind": "weeks",
+                "basis": f"{n} week{'s' if n != 1 else ''} with an inventory count in the last 8"}
     except Exception as e:
-        print(f"[food] read evidence unavailable rid={rid}: {e}")
+        try:
+            import ops
+            ops.capture(e, job="food_read_evidence", context=f"restaurant_id={rid}")
+        except Exception:
+            pass
         return {"n": None, "basis": "the counts could not be read"}
 
 
@@ -1249,8 +1255,25 @@ def marketing_read_evidence(rid) -> dict:
         return {"n": None, "basis": "the posts could not be read"}
 
 
+def _line_driver(text, drivers):
+    """The ranked cost driver a read line names — its item (an ingredient
+    or a dish) as a whole word in the line, the longest name first so
+    "Brisket Sammy" wins over "Brisket" — or None (AI-13)."""
+    import re as _re_ld
+    low = " ".join(str(text or "").lower().split())
+    best, best_len = None, 0
+    for d in drivers or ():
+        if not isinstance(d, dict):
+            continue
+        for name in {d.get("item"), d.get("dish")} - {None, ""}:
+            n = " ".join(str(name).lower().split())
+            if len(n) > best_len and _re_ld.search(r"(?<![a-z0-9])" + _re_ld.escape(n) + r"(?![a-z0-9])", low):
+                best, best_len = d, len(n)
+    return best
+
+
 def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=True, evidence=None,
-                      sources=None):
+                      sources=None, drivers=None):
     """The numbered recommendations of a model read, each with a stable
     rec_ledger key ("<prefix>:<hash of the line>") — audit #21.
 
@@ -1293,8 +1316,31 @@ def insight_rec_items(rid, text, prefix, module, surface, user_id=None, promote=
     except Exception:
         _ctx = None
     srcs = tuple(sources) if sources is not None else ()
+    # A food line is as strong as the driver it restates (AI-13): a
+    # menu-price line resting on a 1-of-6-reviewed draft recipe showed the
+    # same % as a waste line with eight weeks behind it, both scored on the
+    # read's weeks of counts. Each line binds to the ranked driver it names
+    # and takes that driver's own measured evidence; the read's evidence
+    # only when it names none.
+    drivers = list(drivers or ())
+    if module == "food" and not drivers:
+        try:
+            import food_cost_intelligence as _fci_lines
+            drivers = _fci_lines.ranked_drivers_on_file(rid)
+        except Exception as e:
+            print(f"[insight] food drivers unavailable rid={rid}: {e}")
+            drivers = []
     for it in items:
-        it["confidence"] = read_line_confidence(rid, it["key"], evidence, srcs, promote=promote, ctx=_ctx)
+        bound = _line_driver(it["text"], drivers) if drivers else None
+        ev = evidence
+        if bound is not None:
+            try:
+                import food_cost_intelligence as _fci_ev
+                ev = dict(bound.get("evidence_input") or _fci_ev.driver_evidence(bound))
+            except Exception:
+                ev = evidence
+            it["bound_driver"] = bound.get("label") or bound.get("item")
+        it["confidence"] = read_line_confidence(rid, it["key"], ev, srcs, promote=promote, ctx=_ctx)
         try:
             it["advice_signature"] = insight_store.advice_signature(it["key"], it["text"])
         except Exception:

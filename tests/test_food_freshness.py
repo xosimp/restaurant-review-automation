@@ -139,7 +139,9 @@ def test_the_snapshot_and_the_prompt_carry_the_logged_week(db_path):
     conn = models.get_conn(db_path)
     row = conn.execute("SELECT waste_json, items_json FROM inventory_history WHERE restaurant_id=?", (rid,)).fetchone()
     conn.close()
-    assert json.loads(row["waste_json"])["total_waste_cost"] == 0.0
+    # Nothing logged this week: the week's waste is unmeasured, never a $0
+    # week on the trend (FC-CALC-12).
+    assert json.loads(row["waste_json"])["total_waste_cost"] is None
     assert json.loads(row["items_json"])[0]["waste_last_week"] == 0.0
     src = open("inventory.py", encoding="utf-8").read()
     assert "- Waste this week:" not in src and "- Waste logged {analysis.get('week_start'" in src
@@ -283,7 +285,7 @@ def _prime_inputs(monkeypatch, end):
     monkeypatch.setattr(fci, "MIN_DAYS_FOR_PROJECTION", 1)
     monkeypatch.setattr(cogs, "net_sales_in_window", lambda r, s, e: (60000.0, None))
     monkeypatch.setattr(cogs, "build_food_cost_pct", lambda r, days=28, db_path=None, today=None: {
-        "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0})
+        "ok": True, "cogs": 18000.0, "pct": 30.0, "target": 28.0, "window_days": days, "start": (today - timedelta(days=days - 1)).isoformat(), "end": today.isoformat()})
     monkeypatch.setattr("labor.analyse_shifts_for_restaurant", lambda r: {
         "is_live": True, "total_sales": 60000.0, "overall_labor_pct": 30.0,
         "date_range": {"start": (date.fromisoformat(end) - timedelta(days=27)).isoformat(), "end": end,
@@ -343,7 +345,9 @@ def test_day_boundaries_are_the_restaurants_local_date(db_path, monkeypatch):
     monkeypatch.setattr(time_utils, "restaurant_now_by_id",
                         lambda r, naive=False: datetime(local.year, local.month, local.day, 22, 0,
                                                         tzinfo=timezone.utc))
-    assert cogs.build_food_cost_pct(rid, db_path=db_path)["end"] == local.isoformat()
+    # The window ends on the restaurant's last COMPLETE day, its own
+    # yesterday — purchases, closing and sales on one end (FC-CALC-15).
+    assert cogs.build_food_cost_pct(rid, db_path=db_path)["end"] == (local - timedelta(days=1)).isoformat()
     assert demand.forecast_day(rid, db_path=db_path)["day"] == local.isoformat()
     assert il.local_today(rid) == local
     assert fci._local_today(rid) == local

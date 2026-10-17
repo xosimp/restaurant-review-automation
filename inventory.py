@@ -1331,7 +1331,9 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # is not a level (forecast_log.waste_next_week).
             import forecast_log as _flog
             forecast_next_week = _flog.waste_next_week(
-                [w.get("waste") for w in (_bwt_payload.get("weeks") or [])], _anoms)
+                # Complete weeks only: the partial newest one overlaps the
+                # last (AI-07), and double-weighted those days.
+                [w.get("waste") for w in (_bwt_payload.get("weeks") or []) if not w.get("partial")], _anoms)
             if forecast_next_week is not None:
                 forecast_monthly = round(forecast_next_week * WEEKS_PER_MONTH, 2)
         except Exception as _we:
@@ -1380,10 +1382,11 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # DDL on the render path is exactly the cost waste_trend removed
             # with its own _SCHEMA_ENSURED guard.
             import json as _json_inv2
-            snapshot = {
-                "total_waste_cost": analysis['total_waste_cost_week'],
-                "top_items": [x["item"] for x in analysis["waste_items"][:4]]
-            }
+            # The one waste_json shape both writers use (FC-CALC-12: a week
+            # with nothing logged is null, never a render's $0).
+            import food_cost_intelligence as _fci_snap
+            from datetime import date as _date_snap
+            snapshot = _fci_snap.snapshot_payload(items, analysis, _date_snap.fromisoformat(_week_end_str))
             _items_json_str = _json_inv2.dumps(items) if items else None
             existing = _conn_inv.execute(
                 "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
@@ -1700,7 +1703,7 @@ Dollar figures the data supports (opportunities and per-order differences — no
 Write a food cost analysis. Rules that apply to everything:
 - Every dollar amount, percentage and quantity you write must appear verbatim somewhere above. Do not add, average, extrapolate or otherwise derive a number of your own — not even a rounded one.
 - Never state a cause that is not in the ROOT-CAUSE READ above. If there is none, describe what the figures show and stop.
-- The drivers above are ALREADY RANKED by dollars (weighted by how that kind of fix has measured here), then confidence, then ease. Follow that order. Do not re-rank them yourself.
+- The drivers above are ALREADY RANKED by dollars (weighted by the owner's answers and the measured results of that kind of fix here), then confidence, then ease. Follow that order. Do not re-rank them yourself.
 - Read "HOW FAR THESE FIGURES CAN BE TRUSTED" before you commit to anything. Low recipe coverage or a high inferred-waste share means the usage figures underneath are soft, and you must say so rather than writing past it.
 - Where a figure is marked as not computable, do not estimate it. "We cannot measure your food cost percentage until a second count is in" is a correct and useful sentence.
 - If the data does not support a genuine, specific opportunity, say so plainly in one sentence and write no recommendations at all. An honest "nothing worth changing this week" is a correct answer.
@@ -2022,7 +2025,9 @@ def root_cause_block(restaurant_id):
     import food_cost_intelligence as _fci2
     import rec_trust as _rt_fr
     _dg = _fci2.get_diagnosis(restaurant_id, include_stale=True)
-    strength = _rt_fr.diagnosis_anchor_strength(_dg)
+    # Its own capped band counts too (AI-14): a low-confidence read is a
+    # hypothesis, served as an association, never "Most likely".
+    strength = _rt_fr.diagnosis_anchor_strength(_dg, by_band=True)
     if _dg and _dg.get("cause") and strength == "likely":
         # No confidence word in the prompt (R9, B5 #9): the stored band is
         # the model's own, capped — the owner's figure is the computed one
@@ -2041,6 +2046,13 @@ def root_cause_block(restaurant_id):
             + "\nUse this for the WHY sentence. Do not substitute a cause of your own.")
         return block, [_dg.get("cause")], [_dg.get("alternative_cause")]
     if _dg and _dg.get("cause") and strength == "association":
+        if not _dg.get("stale"):
+            block = ("\n\nROOT-CAUSE READ (stored"
+                     + (f", read of {_dg['as_of']}" if _dg.get("as_of") else "")
+                     + ", a low-confidence read):\n- A possible cause: " + _dg["cause"]
+                     + "\nIt is a hypothesis, not an established cause. Do NOT call it the cause or the likely "
+                       "cause; you may say only that the figures may be consistent with it, or leave it out.")
+            return block, [], [_dg.get("cause"), _dg.get("alternative_cause")]
         block = ("\n\nROOT-CAUSE READ (an earlier read"
                  + (f" of {_dg['as_of']}" if _dg.get("as_of") else "")
                  + ", older than its refresh window):\n- An earlier read suggested: " + _dg["cause"]

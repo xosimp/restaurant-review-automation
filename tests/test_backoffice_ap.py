@@ -154,6 +154,10 @@ def test_alcohol_outside_fintech_reaches_the_bar_and_a_fintech_invoice_never_twi
 def test_the_bar_counts_them_in_bought_vs_sold_but_not_in_prices_products_or_gaps(db):
     rid = _rid(db)
     _fintech(db, rid)
+    # A recent Fintech delivery: the window ends on Fintech's last day
+    # (BAR-CALC-13), and Binny's entries are 6 days old.
+    _invoice(db, rid, "Southern Glazer's of IL", "SG1", (TODAY - timedelta(days=2)).isoformat(),
+             [("S1", "JAMESON 1L", "CA", 1, 300.0)])
     for d in range(1, 45):
         _sales(db, rid, (TODAY - timedelta(days=d)).isoformat(), beer=400, liquor=900, wine=300)
     before = bar_cost.build(rid, db_path=db, today=TODAY)
