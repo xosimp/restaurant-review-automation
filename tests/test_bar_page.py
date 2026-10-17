@@ -981,7 +981,11 @@ def test_the_board_ranks_by_dollars_and_fills_its_grid(full):
     lines = out.strip().split("\n")
     sig = json.loads(lines[-2])
     usd = [u for _, u in sig]
-    assert sig[0][0] == "br-unm"
+    # Unmatched drinks are work, never dollars at stake: their $10,744 of
+    # sales no longer leads the board (FC/Bar audit 10/16/26 UI-13).
+    assert dict(sig)["br-unm"] == 0 and sig[0][0] != "br-unm"
+    # Every money tile on one period, a month: 90 days of ladder savings / 3.
+    assert round(dict(sig)["br-lads"], 2) == 28.0
     paid = [u for u in usd if u]
     assert paid == sorted(paid, reverse=True) and usd == paid + [0] * (len(usd) - len(paid))   # dollars first, largest first
     assert {"br-lads", "br-split"} <= {g for g, _ in sig}
