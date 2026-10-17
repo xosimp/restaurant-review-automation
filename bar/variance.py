@@ -1006,10 +1006,12 @@ def _r(v, n=1):
 def product_names(restaurant_id=None, db_path=None, lines=None) -> dict:
     """{product_key: the product's readable name} from the purchase lines —
     what a recipe card names as "Poured from" (10/15/26: a key the page's
-    product list didn't carry read as "euclid beverage north aurora|3101756")."""
+    product list didn't carry read as "euclid beverage north aurora|3101756").
+    Without `lines`, read from the distinct products on file
+    (bar.purchases.product_catalog, SCALE-09), never every invoice line."""
     if lines is None:
-        from bar.purchases import _lines
-        lines = _lines(restaurant_id, db_path)
+        from bar.purchases import product_catalog
+        return {k: v["name"] for k, v in product_catalog(restaurant_id, db_path, kinds=("item", "charge")).items()}
     out = {}
     for l in lines or []:
         if l.get("product_key") and l.get("description"):

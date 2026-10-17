@@ -3,9 +3,51 @@ bar/purchases.py — the restaurant's Fintech invoice lines, each sorted into a
 category (the owner's correction first), with its net cost (a keg's deposit
 taken out).
 """
+import re
+from collections import defaultdict
+
 from bar.classify import classify, is_mixer, is_rebate, product_key
 from bar.common import get_conn
 from bar.ledger import Lines
+
+# A negative invoice-level line that is a discount on what the invoice
+# bought (an INVOICE DISCOUNT, an early-pay or cash discount, a negative
+# summary-level adjustment): it lowers what the invoice's products cost,
+# pro rata (BAR-CALC-18, 10/16/26) — it was "Fees & taxes", outside pour
+# cost, so liquor read high by every discount.
+_INVOICE_DISCOUNT_RE = re.compile(r"\b(DISCOUNT|DISC|EARLY\s*PAY\w*|PROMPT\s*PAY\w*|CASH|ALLOWANCE|REBATE|"
+                                  r"SUMMARY\s*LEVEL|ADJUST\w*)\b", re.I)
+_NOT_PRODUCT = ("fee", "deposit")
+
+
+def _allocate_invoice_discounts(rows) -> None:
+    """Spread each invoice's negative invoice-level discount over its
+    product lines by their cost (module note at _INVOICE_DISCOUNT_RE):
+    each product line's `net` falls by its share (`invoice_discount`), and
+    the discount line keeps its `cost` but no `net` of its own
+    (`allocated`), so it is counted once. A discount on an invoice with no
+    product line stays a fee. Mutates `rows`."""
+    by_inv = defaultdict(list)
+    for r in rows:
+        by_inv[r.get("invoice_id")].append(r)
+    for rs in by_inv.values():
+        disc = [r for r in rs if r["category"] == "fee" and float(r.get("cost") or 0) < 0
+                and (r.get("kind") == "adjustment" or _INVOICE_DISCOUNT_RE.search(str(r.get("description") or "")))]
+        if not disc:
+            continue
+        items = [r for r in rs if r.get("kind") in ("item", "charge") and r["category"] not in _NOT_PRODUCT
+                 and not r.get("rebate") and r["net"] > 0]
+        base = sum(r["net"] for r in items)
+        if base <= 0:
+            continue
+        amount = sum(float(r["cost"] or 0) for r in disc)
+        for r in items:
+            share = amount * r["net"] / base
+            r["invoice_discount"] = round(share, 4)
+            r["net"] += share
+        for r in disc:
+            r["allocated"] = True
+            r["net"] = 0.0
 
 
 def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
@@ -91,6 +133,7 @@ def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
                  balanced=None if r["balanced"] is None else bool(r["balanced"]),
                  uom_inferred=bool(r["uom_inferred"]))
         out.append(r)
+    _allocate_invoice_discounts(out)
     # Alcohol paid through Back Office that no Fintech invoice carries (a
     # wine house paid by check, a liquor-store run; backoffice_ap, 10/15/26):
     # purchase lines of kind 'backoffice' - counted in bought vs sold, never
@@ -109,4 +152,41 @@ def _lines(restaurant_id, db_path=None, backoffice=True) -> list:
         merged = sorted(list(out) + extra, key=lambda l: str(l["invoice_date"])[:10])
         out = Lines()
         out.extend(merged)
+    return out
+
+
+def product_catalog(restaurant_id, db_path=None, kinds=("item",)) -> dict:
+    """{product_key: {name, category, description}} — every product the
+    restaurant's invoices carry, sorted exactly as _lines sorts them (the
+    owner's correction first, a cocktail mixer as liquor only when the owner
+    counts mixers), read from its DISTINCT product lines rather than every
+    invoice line (SCALE-09, 10/16/26: the waste log and drink-spec routes
+    read ~45k lines per request). The newest description names a product."""
+    from bar.common import display_name
+    from bar.products import settings
+    conn = get_conn(db_path)
+    try:
+        marks = ",".join("?" * len(kinds))
+        rows = conn.execute(
+            "SELECT i.distributor, l.item_code, l.description, l.uom, l.kind, MAX(i.invoice_date) AS last "
+            "FROM fintech_invoice_lines l JOIN fintech_invoices i ON i.id=l.invoice_id "
+            f"WHERE i.restaurant_id=? AND i.invoice_date IS NOT NULL AND l.kind IN ({marks}) "
+            "GROUP BY i.distributor, l.item_code, l.description, l.uom, l.kind",
+            (int(restaurant_id),) + tuple(kinds)).fetchall()
+        overrides = {r["product_key"]: r["category"] for r in conn.execute(
+            "SELECT product_key, category FROM bar_product_categories WHERE restaurant_id=?", (int(restaurant_id),))}
+    finally:
+        conn.close()
+    count_mixers = settings(restaurant_id, db_path)["count_mixers"]
+    out, newest = {}, {}
+    for r in sorted((dict(x) for x in rows), key=lambda x: str(x["last"] or "")):
+        key = product_key(r["distributor"], r["item_code"], r["description"])
+        cat, _sure = classify(r["distributor"], r["description"], r["uom"], r["kind"])
+        if key in overrides and r["uom"] != "DS":
+            cat = overrides[key]
+        elif cat == "na" and count_mixers and is_mixer(r["description"]):
+            cat = "liquor"
+        if str(r["last"] or "") >= newest.get(key, ""):
+            newest[key] = str(r["last"] or "")
+            out[key] = {"name": display_name(r["description"]), "category": cat, "description": r["description"]}
     return out
