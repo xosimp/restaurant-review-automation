@@ -372,8 +372,10 @@ struct BenchScreen: View {
                             .disabled(store.busy != nil)
                     }
                 }
-                Text("A yes is kept with the time and the exact terms. If someone doesn\u{2019}t show, the person on call is offered the shift at once.")
-                    .cavnarText(.caption)
+                CavnarEvidenceSection(label: "See how it works") {
+                    Text("A yes is kept with the time and the exact terms. If someone doesn\u{2019}t show, the person on call is offered the shift at once.")
+                        .cavnarText(.caption)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .cavnarCard()

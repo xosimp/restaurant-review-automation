@@ -584,7 +584,7 @@ struct StaffRequestsView: View {
             }
             if items.isEmpty, pendingUndo == nil, offs != nil, shifts != nil {
                 CavnarEmptyHearth(title: "No requests yet",
-                                  message: "Can\u{2019}t make a shift? Open it on Today and choose Give up shift or Swap shift. Days away go in a time-off request.")
+                                  message: "Can\u{2019}t make a shift? Open it on Today to give it up or swap it.")
             }
         }
     }

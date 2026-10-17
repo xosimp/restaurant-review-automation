@@ -33,10 +33,16 @@ struct RoleFamiliesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("The job codes your POS uses, grouped into roles. A floor, a closer, a leader rule or a staffing rule set on a role holds on every one of its codes \u{2014} the lunch code and the dinner code are halves of one role.")
+                    Text("Your POS job codes, grouped into roles.")
                         .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
+                        .foregroundStyle(Color.cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
+                    CavnarEvidenceSection(label: "See how it works") {
+                        Text("A floor, a closer, a leader rule or a staffing rule set on a role holds on every one of its codes \u{2014} the lunch code and the dinner code are halves of one role.")
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if store.isLoadingFamilies && families == nil {
                         CavnarSkeletonBar(height: 3)

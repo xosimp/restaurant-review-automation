@@ -45,7 +45,7 @@ struct StaffInboxView: View {
                     case .loaded(let payload):
                         if payload.announcements.isEmpty {
                             CavnarEmptyHearth(title: "Nothing from your manager yet",
-                                              message: "Announcements for the team land here. Tap Got it so your manager knows you read one.")
+                                              message: "Team announcements land here.")
                         } else {
                             ForEach(payload.announcements) { announcementRow($0).id($0.id) }
                         }
@@ -298,7 +298,7 @@ struct StaffMessageThreadView: View {
                         case .loaded(let t):
                             if t.messages.isEmpty {
                                 CavnarEmptyHearth(title: "No messages yet",
-                                                  message: "Write to your managers here. Whoever is on reads it and answers in this thread.")
+                                                  message: "Write to your managers. Whoever is on answers here.")
                             } else {
                                 ForEach(t.messages) { bubble($0, seen: $0.id == t.lastSeenMineId) }
                             }

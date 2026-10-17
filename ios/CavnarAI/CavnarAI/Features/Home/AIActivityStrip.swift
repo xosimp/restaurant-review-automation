@@ -221,12 +221,12 @@ struct AIActivityFeedSheet: View {
                                 ForEach(m) { line in row(line.text, tone: .cavnarInk3, breathing: false, ago: nil) }
                             }
                         }
-                        Text("Every line is something that actually ran, with its time. Nothing here is generated to fill space.")
+                        Text("Only what actually ran, with its time.")
                             .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Nothing to show yet. Once data is flowing, everything Cavnar AI does for this restaurant is listed here as it happens.")
+                        Text("Nothing yet \u{2014} what Cavnar AI does here is listed as it happens.")
                             .font(.cavnar(.body))
                             .foregroundStyle(Color.cavnarInk3)
                     }

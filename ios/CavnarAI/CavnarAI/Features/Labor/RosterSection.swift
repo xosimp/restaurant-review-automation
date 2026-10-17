@@ -56,7 +56,7 @@ struct RosterSection: View {
                 } else if let error = viewModel.rosterError, viewModel.roster.isEmpty {
                     Text(error).font(.cavnar(.secondary)).foregroundStyle(Color.cavnarRedText)
                 } else if viewModel.roster.isEmpty {
-                    Text("The roster fills from your shift history \u{2014} upload a shifts CSV on the web (Labor \u{2192} Schedule Studio) or connect your POS, and everyone appears here. Add someone new by hand below.")
+                    Text("Connect your POS or upload shifts on the web and everyone appears here.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -416,7 +416,7 @@ extension RosterSection {
             Text("Suggested pairs")
                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            Text("Two people whose shared dayparts ran clean. Nothing is applied until you add it.")
+            Text("Shared shifts that ran clean. Nothing changes until you add one.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -437,7 +437,7 @@ extension RosterSection {
             Text("Learned from your edits")
                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            Text("Moves you keep making become the draft's defaults. Stop one here and the next draft ignores it.")
+            Text("Moves you keep making become the draft's defaults.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -559,7 +559,7 @@ extension RosterSection {
             Text("Standing patterns")
                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            Text("What the draft keeps doing because your edits taught it. Two reversals retire one; a rule makes it the person\u{2019}s own availability.")
+            Text("What your edits taught the draft. Two reversals retire one.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -638,7 +638,7 @@ extension RosterSection {
                     // A cut stays a habit: Cavnar AI holds minimums, not
                     // maximums (L-33's refusal, said before anyone asks).
                     if pattern.kind == "headcount_cut", !retired {
-                        Text("A cut can\u{2019}t be a rule \u{2014} Cavnar AI holds staffing minimums, not maximums. The draft keeps it as a habit.")
+                        Text("A cut stays a habit \u{2014} rules hold minimums, not maximums.")
                             .font(.cavnar(.caption))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
@@ -965,7 +965,7 @@ struct RosterDetailSheet: View {
     private var certificationsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Certifications")
-            Text("What they hold. A role that needs one is only given to somebody who has it.")
+            Text("A role that needs one goes only to somebody who has it.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1059,7 +1059,7 @@ struct RosterDetailSheet: View {
         if let roles = viewModel.intel?.couldHold?[name], !roles.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 AccountKicker(text: "Trained up")
-                Text("Roles the record says they could hold — enough shifts beside a rated colleague.")
+                Text("Roles they could hold from their shifts beside a rated colleague.")
                     .font(.cavnar(.caption))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

@@ -2423,7 +2423,7 @@ struct HomeProposedGoals: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HomeMixedText.make(goal.summary, size: CavnarType.body, weight: 700, color: .cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
-                        HomeMixedText.make(goal.byLine + " \u{00B7} once confirmed, every module judges against it",
+                        HomeMixedText.make(goal.byLine,
                                            size: CavnarType.caption, weight: 500, color: .cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)
                         if viewModel.canConfirmGoals {

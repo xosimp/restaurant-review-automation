@@ -38,7 +38,7 @@ struct OpenShiftPostSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Somebody's shift on the published week, or an extra one. The team picks it up in the Cavnar AI app \u{2014} or only the person you offer it to.")
+                    Text("The team picks it up in the Cavnar AI app \u{2014} or only the person you offer it to.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -191,7 +191,7 @@ struct AddTeamMemberSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Someone new, before their first shift is in the POS. Cavnar AI can schedule them from now on; once they have shift history, that record takes over.")
+                    Text("For someone not in the POS yet. Their shift history takes over once it exists.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -364,10 +364,12 @@ struct CoversTile: View {
             } else if let saved = model.saved {
                 HomeMixedText.make(saved, size: CavnarType.caption, weight: 600, color: .cavnarGreen)
             }
-            Text("The one figure that tells a lean day from a short one \u{2014} read by the labor analysis.")
-                .font(.cavnar(.caption))
-                .foregroundStyle(Color.cavnarInk3)
-                .fixedSize(horizontal: false, vertical: true)
+            CavnarEvidenceSection(label: "See why it matters") {
+                Text("The one figure that tells a lean day from a short one \u{2014} read by the labor analysis.")
+                    .font(.cavnar(.caption))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .cavnarCard()
         .toolbar {

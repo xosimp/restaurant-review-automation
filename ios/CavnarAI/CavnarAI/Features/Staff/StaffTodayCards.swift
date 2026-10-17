@@ -438,7 +438,7 @@ struct StaffRunningLateSheet: View {
                 VStack(alignment: .leading, spacing: CavnarSpace.m) {
                     CavnarMixedText("For your \(StaffTime.label(leg.shiftStart ?? "")) shift today", role: .lead)
                     if let existing {
-                        CavnarMixedText("You already said about \(existing.etaMinutes) min. Sending again updates it; your manager isn\u{2019}t paged twice.",
+                        CavnarMixedText("You said about \(existing.etaMinutes) min. Sending again updates it.",
                                         role: .secondary)
                     }
                     CavnarKicker("About how late?")
@@ -479,7 +479,7 @@ struct StaffRunningLateSheet: View {
                             .cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("Running much later than 45 minutes? Call your manager, or ask to give the shift up.")
+                    Text("Over 45 minutes late? Call your manager.")
                         .cavnarText(.caption, color: .cavnarInk2)
                         .fixedSize(horizontal: false, vertical: true)
                 }

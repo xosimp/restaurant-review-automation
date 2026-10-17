@@ -79,7 +79,7 @@ struct ScheduleRulesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Rules Cavnar AI will not break, and what it flags for you. A blank field keeps the default shown. Everything saves with the button at the bottom.")
+                    Text("A blank keeps the default. Save at the bottom.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -320,7 +320,7 @@ struct ScheduleRulesSheet: View {
                 Text("Always").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk3)
             }
             AccountSwitchRow(label: "A closer until close",
-                             detail: "Somebody marked to close stays until close every open day, the last of their role to leave.",
+                             detail: "Stays until close every open day, the last of their role out.",
                              isOn: $keyholderUntilClose, showsDivider: false)
         }
     }
@@ -333,7 +333,7 @@ struct ScheduleRulesSheet: View {
     private var arrivalsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Arrivals")
-            Text("How many minutes before their own shift starts each role clocks in. More than 10 minutes past that counts as late. Blank means at the start.")
+            Text("Minutes before their own shift each role clocks in; over 10 past counts as late. Blank means at the start.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -377,7 +377,7 @@ struct ScheduleRulesSheet: View {
     private var crossTrainingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Cross-training")
-            Text("The share of each role on a shift that should be able to cover a second station. Blank uses the default shown; 0 means not expected.")
+            Text("Share of each role that can cover a second station. Blank uses the default; 0 means not expected.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -514,7 +514,7 @@ struct ScheduleRulesSheet: View {
     private var budgetSection: some View {
         AccountSection(kicker: "Budget") {
             AccountSwitchRow(label: "Trim to budget",
-                             detail: "Remove the least-needed shifts until the week fits the hours budget. Each trim is listed with its reason.",
+                             detail: "Trims the least-needed shifts to fit the hours budget, each with its reason.",
                              isOn: $trimToBudget, showsDivider: false)
         }
     }
@@ -597,7 +597,7 @@ struct ScheduleRulesSheet: View {
     /// marked full-time, or only what their week aims at (B, LOGIC-29).
     private var fullTimeRow: some View {
         AccountSwitchRow(label: "Full-time line is a minimum",
-                         detail: "On: anyone full-time with no minimum of their own gets at least the full-time hours. Off: their week only aims at it.",
+                         detail: "On: full-timers with no minimum of their own get at least full-time hours. Off: it is only aimed at.",
                          isOn: $fullTimeMinConfirmed, disabled: !viewModel.canEditRules, showsDivider: false)
     }
 
@@ -629,7 +629,7 @@ struct ScheduleRulesSheet: View {
                         .disabled(!viewModel.canEditRules)
                 }
             }
-            Text("A shift that covers neither lunch nor dinner service counts as lunch if it starts before this, dinner from it.")
+            Text("A shift outside both services counts as lunch if it starts before this.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -700,7 +700,7 @@ struct ScheduleRulesSheet: View {
     private var floorsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: "Role floors")
-            Text("At least this many in a role on a morning and on a night. Open a role for a different number on one day.")
+            Text("At least this many per role, morning and night. Open a role to change one day.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -774,7 +774,7 @@ struct ScheduleRulesSheet: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Never cut a role below").font(.cavnar(.body)).foregroundStyle(Color.cavnarInk3)
-                    Text("Used for any role without its own floor. Cavnar AI never suggests sending someone home if it would leave fewer than this on.")
+                    Text("For any role without its own floor. No cut is suggested below this.")
                         .font(.cavnar(.caption))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                         .fixedSize(horizontal: false, vertical: true)

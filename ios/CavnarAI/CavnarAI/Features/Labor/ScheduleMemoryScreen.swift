@@ -94,10 +94,12 @@ struct ScheduleMemoryScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Habits, teams and patterns the draft keeps, each with how sure Cavnar AI is and when a hand last confirmed it. Keep one, let it go, or make it a rule every draft must keep.")
-                        .font(.cavnar(.secondary))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarEvidenceSection(label: "See how it works") {
+                        Text("Habits, teams and patterns the draft keeps, each with how sure Cavnar AI is and when a hand last confirmed it. Keep one, let it go, or make it a rule every draft must keep.")
+                            .font(.cavnar(.secondary))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if viewModel.isLoading {
                         CavnarSkeletonLines(widths: [1.0, 0.8, 0.6, 0.9, 0.5])
                     } else if let error = viewModel.error {
@@ -105,7 +107,7 @@ struct ScheduleMemoryScreen: View {
                         Button("Try again") { Task { await viewModel.load() } }
                             .buttonStyle(CavnarSecondaryButtonStyle())
                     } else if viewModel.groups.isEmpty {
-                        Text("Nothing learned yet. As drafts are edited and published, what your managers keep doing shows up here.")
+                        Text("Nothing learned yet \u{2014} it fills in as drafts are edited and published.")
                             .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)

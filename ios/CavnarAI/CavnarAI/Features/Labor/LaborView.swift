@@ -263,11 +263,11 @@ struct LaborView: View {
                                 // only) — H2-1, H2-3; configuration around
                                 // the draft, so beside setup (L3).
                                 learningRow("What the schedule has learned",
-                                            detail: "Habits and teams the draft keeps \u{2014} keep, let go or make a rule",
+                                            detail: "Habits and teams the draft keeps",
                                             symbol: "brain") { showingMemory = true }
                                 if sessionStore.currentUser?.isOwner == true {
                                     learningRow("Measured ratings",
-                                                detail: "What each server sells a guest, to confirm as a rating",
+                                                detail: "What each server sells a guest",
                                                 symbol: "chart.bar.xaxis") { showingMeasuredRatings = true }
                                 }
                             } else if viewModel.isLoading {
@@ -376,7 +376,7 @@ struct LaborView: View {
                 // list just gets a taller panel, which is the right
                 // tradeoff over guaranteed dead space in the common case.
                 if events.isEmpty {
-                    Text("Nothing dining-relevant coming up in the next 3 weeks — no holiday or seasonal push to plan extra coverage around right now.")
+                    Text("Nothing coming up in the next 3 weeks.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk2)
                         .lineSpacing(3)
@@ -803,7 +803,7 @@ struct LaborView: View {
                                          : (viewModel.generateWeek == .next ? "Building next week's schedule"
                                             : "Building the schedule for \(viewModel.generateWeek.label)")))
                     if viewModel.joinedRunningGeneration {
-                        Text("Someone else started this week moments ago, on the web or another phone. You'll get the same week when it lands.")
+                        Text("Someone else started this week. You'll get the same week when it lands.")
                             .cavnarText(.caption, color: .cavnarInk2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -951,7 +951,7 @@ struct LaborView: View {
             VStack(alignment: .leading, spacing: CavnarSpace.xxs) {
                 Text("Sample data")
                     .cavnarText(.label, color: .cavnarAmber)
-                Text("Example figures, not yours. Connect your POS or upload shifts on the web to see your own.")
+                Text("Not your figures \u{2014} connect your POS to see yours.")
                     .cavnarText(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2212,7 +2212,7 @@ struct LaborView: View {
                     .tracking(1)
                     .foregroundStyle(Color.cavnarAmber)
             }
-            Text("These rows didn't come back with a normal weekday — double-check them before publishing.")
+            Text("No normal weekday \u{2014} check these before publishing.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
             VStack(spacing: 6) {
@@ -2328,7 +2328,7 @@ struct LaborView: View {
             }
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
                 if notWritten {
-                    Text("This day wasn\u{2019}t written. Tick Redo and redo it, or add its shifts by hand.")
+                    Text("This day wasn\u{2019}t written. Redo it, or add its shifts by hand.")
                         .cavnarText(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

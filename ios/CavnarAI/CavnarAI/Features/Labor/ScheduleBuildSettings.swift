@@ -548,7 +548,7 @@ struct GenerateScheduleSheet: View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
             CavnarKicker("Before Cavnar AI drafts")
             Text("Is this what you meant?").cavnarText(.headline)
-            Text("Tick each one to hold it as a rule for this week. Anything you leave unticked, the draft only aims for.")
+            Text("Ticked holds as a rule this week; unticked is only aimed for.")
                 .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(items) { item in
@@ -663,7 +663,7 @@ struct ScheduleNotesSheet: View {
                                 .cavnarTextFieldStyle()
                                 .lineLimit(3...10)
                                 .disabled(!editable)
-                            Text("These are about the whole restaurant, and every draft reads them. A rule about one person \u{2014} \u{201C}no Tuesdays\u{201D}, \u{201C}out 12/20\u{2013}12/28\u{201D} \u{2014} belongs in that person\u{2019}s scheduling notes in Scheduling setup.")
+                            Text("For the whole restaurant. A rule about one person goes in their scheduling notes.")
                                 .font(.cavnar(.caption))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -728,7 +728,7 @@ struct ScheduleNotesSheet: View {
         let sentences = payload?.sentences ?? []
         let earlier = payload?.earlierRules ?? []
         if sentences.isEmpty && earlier.isEmpty {
-            Text("Write a note above and Cavnar AI shows here how it reads each one \u{2014} a minimum it can hold, like \u{201C}keep two cooks on Friday lunch\u{201D}, becomes a rule the draft is checked against.")
+            Text("Write a note above to see how Cavnar AI reads it.")
                 .font(.cavnar(.secondary))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)

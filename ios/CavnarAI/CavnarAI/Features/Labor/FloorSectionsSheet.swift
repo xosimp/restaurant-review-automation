@@ -156,7 +156,7 @@ struct FloorSectionsSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("The sections a server\u{2019}s shift can be put in \u{2014} Patio, Bar, Section 3. The staff app shows each server theirs beside the shift.")
+                    Text("Where a server works \u{2014} Patio, Bar, Section 3. Servers see theirs beside the shift.")
                         .font(.cavnar(.secondary))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

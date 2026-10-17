@@ -843,10 +843,12 @@ struct ScheduleSummarySheet: View {
                             .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                     }
-                    Text("Optimize again makes legal changes that raise the score and lists each one. Publish shows who it reaches and what to read before anything goes out.")
-                        .font(.cavnar(.caption))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CavnarEvidenceSection(label: "See what each does") {
+                        Text("Optimize again makes legal changes that raise the score and lists each one. Publish shows who it reaches and what to read before anything goes out.")
+                            .font(.cavnar(.caption))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(20)
             }

@@ -1768,7 +1768,7 @@ struct PublishScheduleSheet: View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             CavnarKicker("Queued", icon: "clock")
             CavnarMixedText(viewModel.queuedLine(result), role: .lead)
-            Text("Nothing has reached staff yet. Undo stops it; when the window ends, everyone it reaches gets their shifts.")
+            Text("Nothing has reached staff yet. Undo stops it.")
                 .cavnarText(.secondary, color: .cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1923,7 +1923,7 @@ private struct StaffContactSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("Where should \(contact.employeeName)'s schedule go? They'll get a private link to their own shifts — no login needed.")
+                    Text("Where should \(contact.employeeName)'s schedule go? A private link, no login needed.")
                         .font(.cavnar(.body))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)

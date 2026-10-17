@@ -404,7 +404,7 @@ struct ShiftQualityPanel: View {
     /// with the same five-number control the Operational Score list uses.
     private func ratePrompt(_ viewModel: LaborViewModel) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Most of this week has no Operational Score, so the number is provisional. Rate the people carrying the most hours:")
+            Text("Mostly unrated, so the score is provisional. Rate the people with the most hours:")
                 .font(.cavnarBody(CavnarType.secondary, weight: 600))
                 .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -747,7 +747,7 @@ struct ShiftQualityPanel: View {
             // Anything true of the whole week was hoisted into the summary,
             // so a shift with nothing left simply ran like the rest of it.
             if shift.nothingSpecific == true {
-                Text("Nothing specific to this shift — it ran like the rest of the week. See \"Why this schedule?\" below.")
+                Text("Nothing specific to this shift \u{2014} it ran like the rest of the week.")
                     .font(.cavnar(.secondary))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)

@@ -270,7 +270,7 @@ struct ManagerQuestionCard: View {
             Text(question)
                 .cavnarText(.headline)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Cavnar AI plans managers first, so every minute on the floor has one. With no usual days on file, this week is an even split \u{2014} set their real days and every draft keeps them.")
+            Text("No usual days on file, so this week is an even split. Set their real days and every draft keeps them.")
                 .cavnarText(.body)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(names, id: \.self) { name in
@@ -1069,7 +1069,7 @@ struct PublishLikelyToChangeCard: View {
                 .font(.cavnarBody(CavnarType.secondary, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
-            Text("From your own past edits \u{2014} rows you usually change. Worth a look before staff are told.")
+            Text("Rows you usually change, from your past edits.")
                 .font(.cavnar(.caption))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)

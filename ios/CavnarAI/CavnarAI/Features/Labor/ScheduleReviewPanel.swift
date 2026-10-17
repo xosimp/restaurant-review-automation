@@ -468,7 +468,7 @@ struct ScheduleReviewPanel: View {
                     }
                 }
             }
-            Text("Nobody legal was free for these. Tap \u{22EF} on the shift in the week to pick someone yourself.")
+            Text("Nobody legal was free. Pick someone with \u{22EF} on the shift.")
                 .cavnarText(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

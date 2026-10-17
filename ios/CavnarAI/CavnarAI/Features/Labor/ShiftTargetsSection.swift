@@ -68,10 +68,16 @@ struct ShiftTargetsSection: View {
             // A target is judged per person against the largest crew of
             // the role (schedule audit 10/3/26 SQ-3/SQ-4): a lunch with one
             // bartender is asked for a 4, not for the whole 8.
-            Text("Set each role\u{2019}s total for its biggest crew on a shift. Cavnar AI judges it per person: 8 across your largest bartender crew of 2 is about 4 a person, so a lunch with one bartender asks for a 4, not an 8. Leave a role blank to set no target.")
+            Text("Each role\u{2019}s total for its biggest crew on a shift. Blank sets no target.")
                 .font(.cavnar(.secondary))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
                 .fixedSize(horizontal: false, vertical: true)
+            CavnarEvidenceSection(label: "See how it works") {
+                Text("Cavnar AI judges it per person: 8 across your largest bartender crew of 2 is about 4 a person, so a lunch with one bartender asks for a 4, not an 8.")
+                    .font(.cavnar(.secondary))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             ForEach(viewModel.teamRoles, id: \.self) { role in
                 VStack(alignment: .leading, spacing: 3) {

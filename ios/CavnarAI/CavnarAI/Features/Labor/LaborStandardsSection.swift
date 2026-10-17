@@ -36,10 +36,14 @@ struct LaborStandardsSection: View {
             onExpand: { Task { await store.loadStandards() } }
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("How much work one person does in an hour here \u{2014} guests per server-hour, bar tickets per bartender-hour, tickets per cook-hour. Measured from your punches and tickets. Set your own and the draft sizes that role by it and the day\u{2019}s demand.")
-                    .font(.cavnar(.secondary))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Text cut 10/17/26: the definition and how it is used are
+                // one tap away.
+                CavnarEvidenceSection(label: "See how it works") {
+                    Text("How much work one person does in an hour here \u{2014} guests per server-hour, bar tickets per bartender-hour, tickets per cook-hour. Measured from your punches and tickets. Set your own and the draft sizes that role by it and the day\u{2019}s demand.")
+                        .font(.cavnar(.secondary))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if store.isLoadingStandards && payload == nil {
                     CavnarSkeletonBar(height: 3)
@@ -50,7 +54,7 @@ struct LaborStandardsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else if payload != nil {
                     if shown.isEmpty {
-                        Text("Nothing measured yet \u{2014} it needs six shifts of a role with tickets on file. You can still set your own below.")
+                        Text("Nothing measured yet \u{2014} it needs six shifts of a role with tickets.")
                             .font(.cavnar(.secondary))
                             .foregroundStyle(Color.cavnarInk3)
                             .fixedSize(horizontal: false, vertical: true)

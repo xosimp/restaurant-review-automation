@@ -2,12 +2,12 @@ import SwiftUI
 
 /// "Today's focus" — Home's one pick, on the iPhone answer card
 /// (CavnarAnswerCard, iOS readability round 10/8/26, #6): the headline,
-/// one sentence of why, the top cause (labelled a hypothesis when no
-/// measured signal backs it), "Could also be" as ONE visible line, the one
-/// dollar figure with what it covers, the confidence %, and ONE full-width
-/// primary. Everything else — the modules it joins, what it rests on, what
-/// would confirm it, the notes on the figure, advice it pulls against and
-/// Done / Pass — is behind "See the evidence".
+/// one sentence of why, the one dollar figure with what it covers, the
+/// confidence %, and ONE full-width primary. Everything else — the top
+/// cause (labelled a hypothesis when no measured signal backs it), "Could
+/// also be", the modules it joins, what it rests on, what would confirm it,
+/// the notes on the figure, advice it pulls against and Done / Pass — is
+/// behind "See the evidence" (text cut 10/17/26: one finding, why, action).
 ///
 /// What leads is the web's `renderFocus` order (parity audit #1,
 /// `HomeFocusLead.pick`): the cross-module finding
@@ -127,7 +127,6 @@ struct HomeOneThingCard: View {
             kicker: Self.kicker,
             headline: rec.title,
             summary: rec.why,
-            alternativeCause: rec.alternative,
             confidence: rec.confidence.map {
                 ConfidenceLine(confidence: $0, recKey: rec.key, surface: "home", module: rec.module ?? "home",
                                compact: true)
@@ -191,6 +190,9 @@ struct HomeOneThingCard: View {
             }
         } detail: {
             VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                if let alt = rec.alternative, !alt.isEmpty {
+                    Self.alsoLine(alt)
+                }
                 if rec.modelWritten == true {
                     Text("Written by Cavnar AI from your numbers").cavnarText(.caption)
                 }
@@ -218,9 +220,6 @@ struct HomeOneThingCard: View {
                 kicker: Self.kicker,
                 headline: what,
                 summary: why,
-                cause: ff.evidence?.first,
-                isHypothesis: Self.isHypothesis(ff.claimKind),
-                alternativeCause: ff.alternative,
                 confidence: ff.confidence.map {
                     ConfidenceLine(confidence: $0, recKey: ff.answerKey, surface: "home", module: "home", compact: true)
                 },
@@ -241,6 +240,27 @@ struct HomeOneThingCard: View {
         }
     }
 
+    /// "Could also be: …" — the answer card's own line, drawn inside the
+    /// evidence now that the face holds one finding, its why and the action
+    /// (text cut 10/17/26).
+    static func alsoLine(_ alt: String) -> some View {
+        (Text("Could also be: ").font(.cavnar(.secondary)).foregroundStyle(Color.cavnarInk2)
+            + HomeMixedText.make(alt, role: .secondary))
+            .lineSpacing(CavnarText.secondary.lineSpacing)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The top cause, labelled "Hypothesis" in amber when no measured
+    /// signal backs it — the answer card's cause line, inside the evidence.
+    static func causeLine(_ cause: String, hypothesis: Bool) -> some View {
+        (Text(hypothesis ? "Hypothesis \u{00B7} " : "Why: ")
+            .font(.cavnarBody(CavnarType.secondary, weight: 700))
+            .foregroundStyle(hypothesis ? Color.cavnarAmber : Color.cavnarInk2)
+            + HomeMixedText.make(cause, role: .secondary))
+            .lineSpacing(CavnarText.secondary.lineSpacing)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     /// A cause no measured signal backs reads "Hypothesis".
     static func isHypothesis(_ claimKind: String?) -> Bool {
         switch claimKind?.lowercased() {
@@ -259,6 +279,12 @@ extension HomeOneThingCard {
     @ViewBuilder
     fileprivate func findingDetails(_ ff: HomeFollowThroughViewModel.CrossModule.FixFirst, what: String) -> some View {
         VStack(alignment: .leading, spacing: CavnarSpace.s) {
+            if let cause = ff.evidence?.first?.trimmingCharacters(in: .whitespacesAndNewlines), !cause.isEmpty {
+                Self.causeLine(cause, hypothesis: Self.isHypothesis(ff.claimKind))
+            }
+            if let alt = ff.alternative, !alt.isEmpty {
+                Self.alsoLine(alt)
+            }
             if let modules = ff.modules, modules.count > 1 {
                 HStack(spacing: CavnarSpace.xs) {
                     ForEach(Array(modules.enumerated()), id: \.offset) { index, module in
