@@ -196,9 +196,9 @@
       <div class="or">or</div>
       {# Always says how to get the app (C1 / UX-08): the App Store link once
          it is listed, else the TestFlight invite, still naming the app. #}
-      {% if app_url %}<a class="cbtn cbtn-secondary cbtn-lg cbtn-block" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty">The Cavnar AI app is on iPhone, in testing through Apple&rsquo;s TestFlight. Ask your manager for the invite &mdash; it comes by email.</div>{% endif %}
+      {% if app_url %}<a class="cbtn cbtn-secondary cbtn-lg cbtn-block" href="{{ app_url }}">Get the Cavnar AI app</a>{% else %}<div class="empty">The Cavnar AI app is in TestFlight testing on iPhone. Ask your manager for the invite.</div>{% endif %}
     </div>
-    <p class="noiphone"><b>No iPhone?</b> Everything in the app &mdash; your week, swaps, time off, tasks and messages &mdash; opens in any browser, Android included. Sign in with your restaurant code and your PIN.</p>
+    <p class="noiphone"><b>No iPhone?</b> Everything in the app opens in any browser, Android included. Sign in with your restaurant code and PIN.</p>
   {% endif %}
 
   <div class="newhere">
@@ -220,7 +220,7 @@
 
    <div class="sustep on" id="fp-phone">
      <h1>Reset your PIN</h1>
-     <p class="hint">We&rsquo;ll text a code to the mobile number on file for you &mdash; the one you signed up with, or the one your manager has.</p>
+     <p class="hint">We&rsquo;ll text a code to the mobile number on file for you.</p>
      <div id="fp-code-wrap" hidden>
        <input id="fp-join-in" class="fld code" maxlength="40" autocapitalize="characters" autocomplete="off" placeholder="ABC123" aria-label="Restaurant code">
      </div>

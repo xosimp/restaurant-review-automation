@@ -2262,8 +2262,10 @@ revealing the personality of the restaurant"). Data: `GET /api/dna` →
   it). It no longer sits at the foot of Results. iOS: the same card on Home
   opens the DNA screen full-screen.
 - **Order on the page.** (1) The read: the first sentence as a Clash
-  headline revealed word by word, figures in ember2; the rest of the read
-  in a 18px paragraph with "Watch:" in amber; the owner-set identity chips
+  headline revealed word by word, figures in ember2; under it only the
+  read's "Watch:" sentence (amber), in a 18px paragraph — the middle
+  sentence restated the trait cards' figures (text reduction round,
+  10/17/26) and the lede the stat cards; the owner-set identity chips
   then the earned trait chips; four counted stats (nights watched, traits
   measured, still learning, % filled). Beside it the **strand**: a canvas
   double helix, one rung per dimension — lit ember when measured, dashed
@@ -2285,6 +2287,13 @@ revealing the personality of the restaurant"). Data: `GET /api/dna` →
   measures it ("19 of 20 analysed reviews"), "Almost there" from 75%.
   (6) **Every measurement**: one disclosure per family (dots lit per
   measured dimension), every figure with its basis, trend and spark line.
+  Each section is its kicker and Clash heading only; how it is read sits
+  in a `.cav-it` info tip beside the heading (shape, traits, what moves
+  together, still learning), the closest six still-learning cards show and
+  the rest sit under `details.co-more` "N more", and the page's basis is
+  the closed `details.co-more` "How your DNA is read" at the foot. A trait
+  card carries no "Trait" tag (only a watch trait's "Watch"); its sentence
+  is the comparison or the meaning, never the figure again.
 - **The rules it keeps.** A trait only from a measured figure against the
   rule shown with it; nothing unmeasured is named, scored or drawn as 0;
   the read is composed from earned traits (no model call, no dollars).

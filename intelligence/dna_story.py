@@ -82,14 +82,13 @@ def _t_weekend(d):
     if v >= 0.55:
         return {"key": "weekend_driven", "name": "Weekend Driven", "icon": "calendar", "family": "sales",
                 "figure": _pct(v), "figure_label": "of sales Friday to Sunday",
-                "sentence": f"{_pct(v)} of your sales land Friday to Sunday. The stated benchmark is about 45%.",
+                "sentence": "The stated benchmark is about 45%.",
                 "rule": "55% or more of sales Friday to Sunday", "dims": ["weekend_share"],
                 "strength": _strength(_z("weekend_share", v)), "split": round(float(v), 3)}
     if v <= 0.38:
         return {"key": "weekday_business", "name": "Weekday Business", "icon": "calendar", "family": "sales",
                 "figure": _pct(1 - v), "figure_label": "of sales Monday to Thursday",
-                "sentence": f"{_pct(1 - v)} of your sales come Monday to Thursday — a weekday rhythm most "
-                            "restaurants don't have.",
+                "sentence": "A weekday rhythm most restaurants don't have.",
                 "rule": "38% or less of sales Friday to Sunday", "dims": ["weekend_share"],
                 "strength": _strength(-_z("weekend_share", v)), "split": round(float(v), 3)}
     return None
@@ -102,12 +101,12 @@ def _t_daypart(d):
     if v >= 0.5:
         return {"key": "daytime_driven", "name": "Daytime Driven", "icon": "sun", "family": "sales",
                 "figure": _pct(v), "figure_label": "of sales before 4pm",
-                "sentence": f"{_pct(v)} of your sales ring before 4pm.", "rule": "half or more of sales before 4pm",
+                "sentence": "Daytime carries the business.", "rule": "half or more of sales before 4pm",
                 "dims": ["daypart_mix"], "strength": _strength(_z("daypart_mix", v))}
     if v <= 0.25:
         return {"key": "evening_driven", "name": "Evening Driven", "icon": "moon", "family": "sales",
                 "figure": _pct(1 - v), "figure_label": "of sales after 4pm",
-                "sentence": f"{_pct(1 - v)} of your sales ring after 4pm.", "rule": "a quarter or less before 4pm",
+                "sentence": "Evenings carry the business.", "rule": "a quarter or less before 4pm",
                 "dims": ["daypart_mix"], "strength": _strength(-_z("daypart_mix", v))}
     return None
 
@@ -119,7 +118,7 @@ def _t_steadiness(d):
     if v <= 0.15:
         return {"key": "steady_demand", "name": "Steady Demand", "icon": "wave", "family": "sales",
                 "figure": _pct(v), "figure_label": "day-to-day swing",
-                "sentence": f"Once the weekday pattern is taken out, your sales swing only {_pct(v)} day to day.",
+                "sentence": "Nights follow the weekday pattern closely.",
                 "rule": "15% or less day-to-day swing after the weekday pattern", "dims": ["sales_volatility"],
                 "strength": _strength(-_z("sales_volatility", v))}
     if v >= 0.30:
@@ -138,7 +137,7 @@ def _t_predictable(d):
         return None
     return {"key": "highly_predictable", "name": "Highly Predictable", "icon": "target", "family": "sales",
             "figure": _pct(v), "figure_label": "better than a naive guess",
-            "sentence": f"Weekly forecasts here beat a naive guess by {_pct(v)} — your demand follows its patterns.",
+            "sentence": "Your demand follows its patterns.",
             "rule": "forecasts 30% or more better than a naive guess", "dims": ["demand_predictability"],
             "strength": _strength(_z("demand_predictability", v))}
 
@@ -149,7 +148,7 @@ def _t_seasonal(d):
         return None
     return {"key": "highly_seasonal", "name": "Highly Seasonal", "icon": "leaf", "family": "sales",
             "figure": f"{float(v):.1f}×", "figure_label": "busiest month vs quietest",
-            "sentence": f"Your busiest month runs {float(v):.1f}× your quietest.",
+            "sentence": "The year has a strong season.",
             "rule": "busiest month 1.6× the quietest or more", "dims": ["seasonality"],
             "strength": _strength(_z("seasonality", v))}
 
@@ -161,7 +160,7 @@ def _t_growth(d):
     if v >= 1.0:
         return {"key": "growing", "name": "Growing", "icon": "trend_up", "family": "sales",
                 "figure": f"+{float(v):.1f}%", "figure_label": "a week, 13-week trend",
-                "sentence": f"Weekly sales have been climbing about {float(v):.1f}% a week for 13 weeks.",
+                "sentence": "Weekly sales have climbed for 13 weeks.",
                 "rule": "13-week trend of +1% a week or more", "dims": ["growth"], "strength": _strength(_z("growth", v))}
     if v <= -1.0:
         return {"key": "softening", "name": "Softening", "icon": "trend_down", "family": "sales", "tone": "watch",
@@ -178,7 +177,7 @@ def _t_hours(d):
         return None
     return {"key": "long_hours", "name": "Open Long Hours", "icon": "clock", "family": "sales",
             "figure": f"{float(v):.0f}h", "figure_label": "open a week",
-            "sentence": f"You're open {float(v):.0f} hours a week — most restaurants are open about 70.",
+            "sentence": "Most restaurants are open about 70.",
             "rule": "85 or more hours open a week", "dims": ["open_hours"], "strength": _strength(_z("open_hours", v))}
 
 
@@ -188,7 +187,7 @@ def _t_labor(d):
         return None
     return {"key": "labor_efficient", "name": "Labor Efficient", "icon": "people", "family": "labor",
             "figure": f"{float(v):.1f}%", "figure_label": "labor %",
-            "sentence": f"Labor runs {float(v):.1f}% of sales — under the stated 30% benchmark.",
+            "sentence": "Under the stated 30% benchmark.",
             "rule": "labor 28% of sales or less", "dims": ["labor_pct"], "strength": _strength(-_z("labor_pct", v))}
 
 
@@ -198,7 +197,7 @@ def _t_overtime(d):
         return None
     return {"key": "overtime_controlled", "name": "Overtime Under Control", "icon": "shield", "family": "labor",
             "figure": _pct(v), "figure_label": "of hours are overtime",
-            "sentence": f"Only {_pct(v)} of hours are overtime — the schedule keeps people under 40.",
+            "sentence": "The schedule keeps people under 40 hours.",
             "rule": "2% of hours or less are overtime", "dims": ["overtime_intensity"],
             "strength": _strength(-_z("overtime_intensity", v))}
 
@@ -210,7 +209,7 @@ def _t_flex(d):
     if v >= 0.7:
         return {"key": "staffs_to_demand", "name": "Staffs to Demand", "icon": "flex", "family": "labor",
                 "figure": f"{float(v):.2f}", "figure_label": "hours follow sales",
-                "sentence": f"When sales rise 10%, hours rise about {float(v) * 10:.0f}% — staffing tracks the night.",
+                "sentence": f"When sales rise 10%, hours rise about {float(v) * 10:.0f}%.",
                 "rule": "hours move 0.7 or more with sales", "dims": ["labor_flex"],
                 "strength": _strength(_z("labor_flex", v))}
     return None
@@ -234,8 +233,7 @@ def _t_rating(d):
     fav = float(v) >= 4.7
     return {"key": "guest_favorite" if fav else "well_rated", "name": "Guest Favorite" if fav else "Well Rated",
             "icon": "star", "family": "guests", "figure": f"{float(v):.2f}★", "figure_label": "average, 30 days",
-            "sentence": f"Guests rate you {float(v):.2f}★ over the last 30 days"
-                        + (" — top-tier." if fav else ", above the 4.3 most restaurants hold."),
+            "sentence": "Top-tier." if fav else "Above the 4.3 most restaurants hold.",
             "rule": "4.7★ or more" if fav else "4.4★ or more over 30 days", "dims": ["rating_level"],
             "strength": _strength(_z("rating_level", v))}
 
@@ -246,7 +244,7 @@ def _t_replies(d):
         return None
     return {"key": "answers_reviews", "name": "Answers Its Reviews", "icon": "reply", "family": "guests",
             "figure": _pct(v), "figure_label": "of reviews answered",
-            "sentence": f"You answer {_pct(v)} of your reviews — guests see someone is listening.",
+            "sentence": "Guests see someone is listening.",
             "rule": "70% or more of reviews answered", "dims": ["reply_rate"], "strength": _strength(_z("reply_rate", v))}
 
 
@@ -257,7 +255,7 @@ def _t_register(d):
     zs = [z for z in (_z("comp_rate", c), _z("void_rate", v)) if z is not None]
     return {"key": "tight_register", "name": "Tight Register", "icon": "register", "family": "food",
             "figure": f"{float(c):.1f}% · {float(v):.1f}%", "figure_label": "comps · voids of sales",
-            "sentence": f"Comps are {float(c):.1f}% of sales and voids {float(v):.1f}% — little leaks out the register.",
+            "sentence": "Little leaks out the register.",
             "rule": "comps 1% of sales or less and voids 0.8% or less", "dims": ["comp_rate", "void_rate"],
             "strength": _strength(-sum(zs) / len(zs)) if zs else None}
 
@@ -268,7 +266,7 @@ def _t_advice(d):
         return None
     return {"key": "open_to_advice", "name": "Open to Advice", "icon": "spark", "family": "loop",
             "figure": _pct(v), "figure_label": "of recommendations taken",
-            "sentence": f"You've said yes to {_pct(v)} of the recommendations Cavnar AI made.",
+            "sentence": "You act on what Cavnar AI suggests.",
             "rule": "60% or more of recommendations taken", "dims": ["rec_uptake"], "strength": _strength(_z("rec_uptake", v))}
 
 
@@ -308,7 +306,7 @@ LEARNING = (
 
 # Guest loyalty has no dimension yet: it needs guests attached to checks.
 LOYALTY = {"key": "guest_loyalty", "name": "Guest Loyalty", "icon": "heart", "family": "guests", "need": None,
-           "needs": "guests attached to checks in your POS (a phone number or a loyalty account on the ticket)"}
+           "needs": "guests attached to checks in your POS"}
 
 
 # ── the shape ────────────────────────────────────────────────────────────────
@@ -364,11 +362,9 @@ def _connections(d):
                       "dim": "labor_swing"})
         pct = float(flex) * 10
         if float(flex) < 0.7:
-            s = (f"When sales rise 10%, hours rise about {pct:.0f}%. Hours move less than sales, so quiet days "
-                 f"carry heavier labor and labor % swings {float(swing):.1f} points day to day.")
+            s = f"When sales rise 10%, hours rise about {pct:.0f}% — so quiet days carry heavier labor."
         else:
-            s = (f"When sales rise 10%, hours rise about {pct:.0f}% — staffing follows the night, and labor % "
-                 f"swings {float(swing):.1f} points day to day.")
+            s = f"When sales rise 10%, hours rise about {pct:.0f}% — staffing follows the night."
         out.append({"key": "labor_chain", "title": "How your staffing follows your sales", "nodes": nodes, "sentence": s})
     rr, rd, rl = _raw(d, "reply_rate"), _raw(d, "reply_within_day"), _raw(d, "rating_level")
     if rr is not None and rd is not None:
@@ -377,9 +373,8 @@ def _connections(d):
             nodes.append({"label": "Rating", "figure": f"{float(rl):.2f}★", "note": "30 days", "dim": "rating_level"})
         nodes += [{"label": "Reviews answered", "figure": _pct(rr), "note": "30 days", "dim": "reply_rate"},
                   {"label": "Within a day", "figure": _pct(rd), "note": "of replies", "dim": "reply_within_day"}]
-        s = f"You answer {_pct(rr)} of reviews"
-        s += (f", and {_pct(rd)} of those replies go out within a day." if float(rd) >= 0.5 else
-              f", but only {_pct(rd)} within a day — the guest has usually moved on by then.")
+        s = ("Most replies go out within a day." if float(rd) >= 0.5 else
+             "Most replies come after a day — the guest has usually moved on.")
         out.append({"key": "review_chain", "title": "How you answer your guests", "nodes": nodes, "sentence": s})
     up, ft, im = _raw(d, "rec_uptake"), _raw(d, "follow_through"), _raw(d, "improvement_rate")
     if up is not None and ft is not None:
@@ -389,9 +384,8 @@ def _connections(d):
             nodes.append({"label": "Results improved", "figure": _pct(im), "note": "measured", "dim": "improvement_rate"})
         else:
             nodes.append({"label": "Results improved", "figure": None, "note": "measuring", "dim": "improvement_rate"})
-        s = f"You said yes to {_pct(up)} of recommendations; {_pct(ft)} of the changes you accepted were made"
-        s += (f", and {_pct(im)} of measured results improved." if im is not None else
-              ". Whether they worked is measured once five results are in.")
+        s = (f"{_pct(im)} of measured results improved." if im is not None else
+             "Whether they worked is measured once five results are in.")
         out.append({"key": "advice_chain", "title": "From advice to results", "nodes": nodes, "sentence": s})
     return out
 
@@ -531,6 +525,5 @@ def story(restaurant_id, profile, name=None, db_path=DB_PATH) -> dict:
     return {"headline": _headline(name, identity, traits, d), "lede": lede, "identity": identity,
             "traits": traits, "learning": learning, "axes": _axes(d), "connections": _connections(d),
             "observed": observed, "recent": fresh[:4],
-            "basis": ("Traits are named only from a measured figure against the rule shown with it. "
-                      "On the shape, 50 is Cavnar AI's stated benchmark — "
-                      "never another restaurant's figures.")}
+            "basis": ("A trait is named only from a measured figure against its rule. "
+                      "On the shape, 50 is Cavnar AI's stated benchmark, never another restaurant's figures.")}

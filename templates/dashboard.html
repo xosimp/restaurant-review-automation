@@ -3811,6 +3811,22 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .dn-row .b.good{color:var(--hb-good)}.dn-row .b.bad{color:var(--hb-bad)}
 .dn-row.off .l,.dn-row.off .v{color:var(--ink3)}
 .dn-foot{margin-top:56px;font-size:14.5px;color:var(--ink3);line-height:1.6;max-width:84ch}
+.dn-foot p{margin:10px 0 0}
+.dn-ln-more{margin-top:16px}.dn-ln-more .dn-learn{margin-top:14px}
+.dn-h2 .cav-it{top:-3px}
+/* The info tip's rules (.cav-it, DESIGN_SYSTEM 12), ungated: Food Cost's copy
+   sits inside the mod_inventory block, so a restaurant without that module
+   drew the DNA page's, Recommendations' and Account's tips unstyled
+   (text reduction round, 10/17/26). Identical rules; either may go once the
+   other is global. */
+.cav-it{position:relative;display:inline-flex;vertical-align:middle;margin-left:12px}
+.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
+.cbtn.cav-ib:hover,.cbtn.cav-ib[aria-expanded="true"]{color:var(--ink);border-color:var(--ember2);background:color-mix(in srgb,var(--ember) 10%,transparent)}
+.cbtn.cav-ib:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
+.cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;word-spacing:normal;text-wrap:pretty;text-transform:none;white-space:normal;text-align:left}
+.cav-itp[hidden]{display:none}
+.cav-itp b{color:var(--ink);font-weight:600}
+@media (max-width:640px){.cav-itp{left:auto;right:-8px}}
 .dn-empty{margin-top:24px;padding:28px;border-radius:22px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
 /* Home: the DNA card, under Before service */
 .dn-home{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:24px;align-items:center;margin-top:34px;padding:22px 26px;border-radius:24px;position:relative;overflow:hidden;color:var(--ink);text-decoration:none;background:linear-gradient(115deg,rgba(212,88,58,.14),rgba(255,255,255,.02) 58%);border:1px solid rgba(212,88,58,.3);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);transition:transform .3s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .3s}
@@ -9788,6 +9804,8 @@ svg:hover .hb-xh{opacity:1}
 .rh-more{display:flex;justify-content:center;margin-top:18px}
 .rh-err{font-size:13.5px;color:var(--red);margin-top:10px}
 #panel-recs .hb-sh{margin-bottom:16px}
+.rh-res .co-more,.rh-worked .co-more{margin-top:8px}
+.rh-res .co-more .x:first-of-type{margin-top:8px}
 .rh-strip{margin-top:20px}
 @media (max-width:860px){.rh-wrap{padding:18px 16px 56px}.rh-mod{grid-template-columns:1fr auto}.rh-mod .bar{grid-column:1/3;grid-row:2}.rh-mod .c{grid-column:1/3}}
 @media (prefers-reduced-motion:reduce){.rh-mod .bar i{animation:none}}
@@ -9803,8 +9821,7 @@ svg:hover .hb-xh{opacity:1}
   </div>
   <div class="rh-head">
     <div class="hb-kicker">Your record</div>
-    <h1 class="hb-h1">Recommendations</h1>
-    <div class="rh-sub">What Cavnar AI suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</div>
+    <h1 class="hb-h1">Recommendations<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="rh-tip" aria-expanded="false" aria-controls="rh-tip" aria-label="How this record is kept">i</button><span class="cav-itp" id="rh-tip" role="tooltip" hidden>What Cavnar AI suggested, what you did with it, and what was measured afterwards. Anything left unanswered counts as not acted on.</span></span></h1>
   </div>
   <div id="rh-body" aria-live="polite"></div>
 </div>
@@ -9920,22 +9937,24 @@ svg:hover .hb-xh{opacity:1}
   function strip(s){
     var t=s&&s.totals;if(!t)return '';
     var took=t.taken_enough?('<span class="hb-num">'+t.taken+'</span><small>of '+t.settled+'</small>'):'—';
-    var tookS=t.taken_enough?('of the '+t.settled+' answered or left, in '+s.days+' days'):(t.settled+' of '+(s.min_settled||10)+' settled — not enough yet');
+    var tookS=t.taken_enough?('answered or left, '+s.days+' days'):(t.settled+' of '+(s.min_settled||10)+' settled — not enough yet');
     var bet=t.measured_enough?('<span class="hb-num">'+t.improved+'</span><small>of '+t.measured+'</small>'):'—';
-    var betS=t.measured_enough?'measured results that improved':(t.measured+' of '+(s.min_measured||5)+' measured — not enough yet');
+    var betS=t.measured_enough?'results improved':(t.measured+' of '+(s.min_measured||5)+' measured — not enough yet');
     return '<div class="hb-stats rh-strip" role="group" aria-label="Your record in three figures">'
       +'<div class="hb-stat"><div class="k">Acted on</div><div class="v">'+took+'</div><div class="s">'+esc(tookS)+'</div></div>'
       +'<div class="hb-stat'+(t.measured_enough&&t.improved*2>=t.measured?' good':'')+'"><div class="k">Measured better</div><div class="v">'+bet+'</div><div class="s">'+esc(betS)+'</div></div>'
-      +'<div class="hb-stat"><div class="k">Open now</div><div class="v"><span class="hb-num">'+(t.open||0)+'</span></div><div class="s">shown, not yet answered</div></div>'
+      +'<div class="hb-stat"><div class="k">Open now</div><div class="v"><span class="hb-num">'+(t.open||0)+'</span></div><div class="s">not yet answered</div></div>'
       +'</div>';
   }
   function worked(w){
     if(!w||!w.ok)return '';
     var ss=w.sentences||[],f=w.facts||{},mn=f.minimums||{};
-    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div><div class="hb-empty">Not enough yet. Cavnar AI shows what was measured alongside your changes once '+(mn.settled_for_rate||10)+' recommendations in one area have been answered or left, or '+(mn.results_per_metric||2)+' measured results land on one number — and never estimates to fill the gap.</div></section>';
+    if(!w.enough||!ss.length)return '<section class="hb-card quiet rh-worked" aria-label="Measured alongside your changes"><div class="hb-h3"><span>Measured alongside your changes</span><span class="cnt">'+num(f.window||'')+'</span></div><div class="hb-empty">Not enough yet — shows once '+(mn.settled_for_rate||10)+' recommendations in one area are answered, or '+(mn.results_per_metric||2)+' results land on one number. Never estimated.</div></section>';
     var h='<section class="hb-card hero hb-focus rh-worked" aria-label="Measured alongside your changes"><div class="hb-kicker">Measured alongside your changes</div><div class="lead">'+prose(ss[0])+'</div>';
-    if(ss.length>1){h+='<div class="more">';for(var i=1;i<ss.length;i++)h+='<div class="why">'+prose(ss[i])+'</div>';h+='</div>';}
     h+='<div class="why" style="opacity:.75">'+esc(f.caveat||'Measured before and after, not proven cause.')+'</div>';
+    // The lead and its caveat show; the other sentences sit behind More
+    // (text reduction round, 10/17/26).
+    if(ss.length>1){h+='<details class="co-more"><summary>'+(ss.length-1)+' more</summary><div class="more">';for(var i=1;i<ss.length;i++)h+='<div class="why">'+prose(ss[i])+'</div>';h+='</div></details>';}
     return h+'</section>';
   }
   function followed(s){
@@ -9981,22 +10000,26 @@ svg:hover .hb-xh{opacity:1}
       h+='<div class="k">Measuring</div><div class="r">'+esc(label)+' until '+md(o.evaluate_on)+'</div>';
       var iv=o.interim;
       if(iv&&isNum(iv.value))h+='<div class="rh-int"><span class="rh-pill partial">Partial</span><span><span class="hb-num">'+(iv.days_in||iv.days||0)+'</span> days in: '+esc(lower(label))+' <span class="hb-num">'+fmt(iv.value,o.unit)+'</span> against <span class="hb-num">'+fmt(isNum(iv.baseline)?iv.baseline:o.baseline_value,o.unit)+'</span> before'+(iv.as_of?', to '+md(iv.as_of):'')+'. A hint, not a result.</span></div>';
-      else h+='<div class="x">No reading yet — the first partial read shows after a full day of data.</div>';
-      h+='<div class="ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="stop" data-id="'+esc(o.id)+'">Stop measuring</button><span class="x" style="margin:0">If you reversed the change or it no longer applies.</span></div>';
+      else h+='<div class="x">No reading yet — the first shows after a full day.</div>';
+      h+='<div class="ft"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-rh="stop" data-id="'+esc(o.id)+'" title="If you reversed the change or it no longer applies">Stop measuring</button></div>';
     }else if(o.status==='evaluated'){
       h+='<div class="k">Measured'+(o.evaluate_on?' '+md(o.evaluate_on):'')+'</div><div class="r">'+prose(o.result_line||o.summary||'')+'</div>';
       if(o.attribution_label)h+='<div class="l">'+esc(o.attribution_label)+'</div>';
       // What it was compared with and how wide "normal" was, from the
-      // tracker itself (outcomes: baseline_kind, noise band, CA2 #1/#3).
+      // tracker itself (outcomes: baseline_kind, noise band, CA2 #1/#3) -
+      // with what else changed, behind "How it was measured" (text
+      // reduction round, 10/17/26): the result and its attribution show.
+      var how='';
       var bph=BASELINE_PHRASE[o.baseline_kind||'prior window'];
       var bx=[];if(bph)bx.push('Compared with '+esc(bph));
       // band_basis (metrics.noise_band) already states the false-alarm
       // rate in words; the bare rate is the fallback.
       if(o.band_basis)bx.push('normal variation is '+prose(o.band_basis));
       else if(isNum(o.false_alarm_rate)&&o.false_alarm_rate>0)bx.push('a change that did nothing still reads as moved about <span class="hb-num">'+Math.round(o.false_alarm_rate*100)+'%</span> of the time');
-      if(bx.length)h+='<div class="x">'+bx.join('; ')+'.</div>';
+      if(bx.length)how+='<div class="x">'+bx.join('; ')+'.</div>';
       var cc=o.concurrent||[],cn=[];for(var i=0;i<cc.length&&i<4;i++)cn.push(esc(cc[i].label||cc[i].kind)+(cc[i].date?' ('+md(cc[i].date)+')':''));
-      if(cn.length)h+='<div class="x">Also changed in those weeks: '+cn.join(', ')+(cc.length>4?' and '+(cc.length-4)+' more':'')+'.</div>';
+      if(cn.length)how+='<div class="x">Also changed in those weeks: '+cn.join(', ')+(cc.length>4?' and '+(cc.length-4)+' more':'')+'.</div>';
+      if(how)h+='<details class="co-more rh-how"><summary>How it was measured</summary>'+how+'</details>';
       var ft=[];
       if(o.validated)ft.push('<span class="rh-pill valid">Validated</span>');
       // Measured only against the weeks that prompted it: shown, never
@@ -10009,7 +10032,7 @@ svg:hover .hb-xh{opacity:1}
       var ck=o.owner_checkin;if(ck&&DID[ck.did_it])ft.push('<span class="rh-pill you">'+esc(DID[ck.did_it])+(ck.conditions_changed?' · something else changed':'')+'</span>');
       if(ft.length)h+='<div class="ft">'+ft.join('')+'</div>';
     }else if(o.status==='abandoned'){
-      h+='<div class="k">Stopped measuring</div><div class="x">'+esc(label)+' was being measured; the tracker was stopped before its window closed, so there is no result.</div>';
+      h+='<div class="k">Stopped measuring</div><div class="x">'+esc(label)+' — stopped before its window closed, so no result.</div>';
     }else return '';
     return h+'</div>';
   }
@@ -10022,7 +10045,7 @@ svg:hover .hb-xh{opacity:1}
   }
   function renderTimeline(){
     var box=el('rh-tl');if(!box)return;
-    if(!st.items.length){box.innerHTML=ecEmptyCore(64)+'<div class="hb-empty" style="text-align:center">Nothing yet. Every recommendation Cavnar AI shows you — on Home, in the brief, in a module — lands here with what you did with it.</div>';return;}
+    if(!st.items.length){box.innerHTML=ecEmptyCore(64)+'<div class="hb-empty" style="text-align:center">Nothing yet. Every recommendation Cavnar AI shows you lands here.</div>';return;}
     var h='<div class="rh-tl">';for(var i=0;i<st.items.length;i++)h+=item(st.items[i]);h+='</div>';
     if(st.next)h+='<div class="rh-more"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-rh="more">Show older</button></div>';
     else if(st.caveat)h+='<div class="hb-empty" style="font-size:12px;margin-top:10px">'+esc(st.caveat)+'</div>';
@@ -10607,7 +10630,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
 <div id="ask-cavnar-panel" class="ask-panel" style="display:none">
   <div class="ask-head">
     <canvas id="ask-cavnar-header-orb" width="40" height="40" aria-hidden="true"></canvas>
-    <div class="ask-ttl"><b>Ask Cavnar AI</b><span>Your restaurant intelligence consultant</span></div>
+    <div class="ask-ttl"><b>Ask Cavnar AI</b></div>
     <div class="ask-chips">
       <button class="ask-chip" onclick="askToggleHistory()" title="Chat history" aria-label="Chat history"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg></button>
       <button class="ask-chip ask-wide-btn" id="ask-cavnar-wide" onclick="askToggleWide()" title="Expand" aria-label="Expand to a side sheet" aria-pressed="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
@@ -16199,7 +16222,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
        and each status group is one row - its label left, its items across. #}
     <div class="ac-health" aria-labelledby="ac-health-h">
       <div class="ac-health-hd">
-        <div class="ac-card-h" style="margin-bottom:0"><div><h3 id="ac-health-h">Account health</h3><p id="ac-health-sub">What&rsquo;s configured, and what would make Cavnar AI work harder for you.</p></div></div>
+        <div class="ac-card-h" style="margin-bottom:0"><div><h3 id="ac-health-h">Account health</h3></div></div>
         <div class="ac-ring" id="ac-health-ringbox" role="img" aria-label="Account setup score">
           <svg viewBox="0 0 118 118" aria-hidden="true"><circle class="tr" cx="59" cy="59" r="50"/><circle class="ar" id="ac-health-ring" cx="59" cy="59" r="50"/></svg>
           <div class="n"><b id="ac-health-score">&hellip;</b><span>set up</span></div>
@@ -16232,18 +16255,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <a href="#account/security" data-go="security"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z"/><path d="M5.5 8l2 2 3-3.5"/></svg>Security</a>
       <a href="#account/data" data-go="data"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>Data &amp; privacy</a>
       <a href="#account/support" data-go="support"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 013.7.5c0 1.2-1.9 1.4-1.9 2.6"/><circle cx="8" cy="11.6" r=".6" fill="currentColor"/></svg>Support</a>
-      <div class="hint">Everything here is also in the iPhone app under Account.</div>
     </nav>
 
     <div>
 
     <!-- ══════════════ RESTAURANT ══════════════ -->
     <section class="ac-section" id="acct-restaurant" data-nav="account/restaurant" aria-labelledby="acct-restaurant-h">
-      <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2><p>Who you are, how to reach you, and the facts the AI writes from.</p></div>
+      <div class="ac-h"><div><h2 id="acct-restaurant-h">Restaurant</h2></div>
         <button onclick="toggleProfileEdit()" id="profile-edit-btn" class="cbtn cbtn-secondary cbtn-sm">Edit profile</button></div>
 
       <div id="profile-edit" class="ac-card accent" style="display:none;margin-bottom:14px">
-        <div class="ac-card-h"><div><h3>Edit profile</h3><p>Contact details and how the AI sounds when it writes for you. Saved together.</p></div></div>
+        <div class="ac-card-h"><div><h3>Edit profile</h3></div></div>
         <div class="ac-form">
           <div class="ac-field"><label for="pe-owner-name">Owner / GM name</label><input class="ac-input" id="pe-owner-name" value="{{restaurant.owner_name or ''}}"{% if is_principal is defined and not is_principal %} readonly title="Only an owner can change the brand voice"{% endif %}></div>
           <div class="ac-field"><label for="pe-phone">Phone</label><input class="ac-input" id="pe-phone" type="tel" autocomplete="tel" value="{{ restaurant.owner_phone|format_phone }}"{% if is_principal is defined and not is_principal %} readonly title="Only an owner can change the owner's phone"{% endif %}></div>
@@ -16284,7 +16306,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           </dl>
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Sign-in</h3><p>Your login to this dashboard.</p></div></div>
+          <div class="ac-card-h"><div><h3>Sign-in</h3></div></div>
           <dl class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Username</dt><dd>{{ current_user.username }}</dd></div>
             <div><dt>Account email</dt><dd id="acct-email-display">{{ restaurant.owner_email }}</dd></div>
@@ -16298,7 +16320,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
 
       <div class="ac-card" style="margin-top:14px">
-        <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Used when generating schedules and when the AI mentions your hours. Leave a day blank if it varies.</p></div>
+        <div class="ac-card-h"><div><h3>Hours &amp; closures</h3><p>Leave a day blank if it varies.</p></div>
           <div class="r"><span class="ac-status" id="as-hours-status"></span><button class="cbtn cbtn-secondary cbtn-sm" onclick="saveAccountHours()">Save hours</button></div></div>
         {# Prefill (friction audit U2-19): Google's listed hours, and Monday's
            times copied to every day. Neither saves on its own - Save hours does. #}
@@ -16317,7 +16339,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            restaurant with. A comparison with other restaurants is only ever
            built from the profile confirmed here, never from a guess. -->
       <div class="ac-card" id="as-rp-card" style="margin-top:14px">
-        <div class="ac-card-h"><div><h3>Restaurant profile</h3><p>Who Cavnar AI compares you with. Other restaurants are only ever compared with you through the profile you confirm here &mdash; never a guess from your name.</p></div>
+        <div class="ac-card-h"><div><h3>Restaurant profile</h3><p>Who you&rsquo;re compared with &mdash; only through the profile you confirm here, never a guess.</p></div>
           <div class="r"><span class="ac-status" id="as-rp-status"></span></div></div>
         <div class="ac-card accent" id="as-rp-suggest" hidden style="margin-bottom:12px">
           <div class="ac-row" style="border-top:0"><div class="l"><b id="as-rp-suggest-text"></b><span id="as-rp-suggest-why"></span></div>
@@ -16344,7 +16366,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            and every schedule's budget rest on, set by the owner here. Each
            control saves on change; Cavnar's admin stays an override. -->
       <div class="ac-card" id="as-tg-card" style="margin-top:14px" hidden>
-        <div class="ac-card-h"><div><h3>Targets &amp; pay rates</h3><p>What labor and food cost are judged against, and what each hour costs. Every labor figure and every drafted week&rsquo;s budget uses these.</p></div>
+        <div class="ac-card-h"><div><h3>Targets &amp; pay rates</h3><p>Every labor figure and drafted budget uses these.</p></div>
           <div class="r"><span class="ac-status" id="as-tg-status"></span></div></div>
         {# The targets in four closed groups, each summary saying what is set (owner, 10/15/26: "theres so many of them now"). #}
         <details class="co-more tg-pay tg-grp" id="as-tg-g-cost"><summary>Labor &amp; food <small id="as-tg-g-cost-sum"></small></summary>
@@ -16418,9 +16440,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          the same scroll as the owner's phone number. Shown once
          /api/dsr/settings says this login can edit it (loadDsrSettings). -->
     <section class="ac-section" id="acct-report" data-nav="account/report" aria-labelledby="acct-report-h" hidden>
-      <div class="ac-h"><div><h2 id="acct-report-h">Daily report</h2><p>How the nightly report is built and sent. Owner only.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-report-h">Daily report</h2><p>Owner only.</p></div></div>
       <div class="ac-card" id="as-dsr-card" hidden>
-        <div class="ac-card-h"><div><h3>Nightly report and weekly grid</h3><p>Your week, your periods, and where each POS department counts.</p></div>
+        <div class="ac-card-h"><div><h3>Nightly report and weekly grid</h3></div>
           <div class="r"><span class="ac-status" id="as-dsr-status"></span></div></div>
         <div class="ac-rows">
           <div class="ac-row"><div class="l"><b>Build the daily report every night</b><span>After close, from the POS. Owner logins get the owner report; manager logins get the manager report.</span></div>
@@ -16451,7 +16473,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
               <div id="as-dsr-years" class="as-dsr-ylist"></div></div>
             <div class="c ac-inline"><input class="ac-input" type="date" id="as-dsr-ystart" aria-label="That year starts" style="width:160px"><input class="ac-input" type="text" id="as-dsr-ylen" inputmode="numeric" maxlength="60" placeholder="4,4,5,4,4,5,4,4,5,4,5,5" aria-label="That year's period lengths" style="width:200px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="dsrAddYear()">Add year</button></div></div>
         </div>
-        <div class="ac-card-h" style="margin-top:20px"><div><h3>POS departments</h3><p>Nothing is guessed: a department you haven&rsquo;t placed shows as Unmapped, with its dollars, until you do. A change counts from the next report on.</p></div></div>
+        <div class="ac-card-h" style="margin-top:20px"><div><h3>POS departments</h3><p>An unplaced department shows as Unmapped, with its dollars. Changes count from the next report.</p></div></div>
         <div class="ac-rows" id="as-dsr-cats"><div class="ac-note"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div></div>
       </div>
     </section>
@@ -16459,11 +16481,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
     <!-- ══════════════ PEOPLE ══════════════ -->
     <section class="ac-section" id="acct-people" data-nav="account/people" aria-labelledby="acct-people-h">
-      <div class="ac-h"><div><h2 id="acct-people-h">People</h2><p>Two kinds of access. Teammates sign in to this dashboard; employees sign in to the staff portal with a PIN and see only their own shifts and tasks.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-people-h">People</h2><p>Teammates sign in here. Employees use a PIN and see only their own shifts and tasks.</p></div></div>
 
       <div class="ac-grid">
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Dashboard logins</h3><p>Each teammate gets their own login. The owner can remove access any time.</p></div><div class="r"><span class="ac-chip sm">Team</span></div></div>
+          <div class="ac-card-h"><div><h3>Dashboard logins</h3><p>One each. The owner can remove access any time.</p></div><div class="r"><span class="ac-chip sm">Team</span></div></div>
           <div id="acct-team-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
           {% if current_user.is_admin or current_user.role in ('client', 'owner') %}
           <div class="ac-inline" style="margin-top:14px">
@@ -16483,7 +16505,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
         {% if _is_owner %}
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Staff join code</h3><p>Post it in the back of house. A new hire downloads Cavnar AI, taps <b>Create your account</b>, types it, picks their name off your roster and sets their own PIN. You don&rsquo;t have to do anything.</p></div>
+          <div class="ac-card-h"><div><h3>Staff join code</h3><p>Post it in the back. New hires enter it in the Cavnar AI app, pick their name and set a PIN.</p></div>
             <div class="r"><button onclick="rotateStaffLink(this)" class="cbtn cbtn-secondary cbtn-sm">New code</button></div></div>
           <div class="ac-code" id="staff-join-code" aria-label="Staff join code">&mdash;</div>
           <div class="ac-inline" style="margin-top:14px">
@@ -16498,7 +16520,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
       {% if _is_owner %}
       <div class="ac-card" style="margin-top:14px" id="staff-accounts-card">
-        <div class="ac-card-h"><div><h3>Staff accounts</h3><p>Who has signed up, from which number, and who on your roster hasn&rsquo;t yet.</p></div><div class="r"><span class="ac-chip sm">Employees</span></div></div>
+        <div class="ac-card-h"><div><h3>Staff accounts</h3><p>Who has signed up, and who hasn&rsquo;t.</p></div><div class="r"><span class="ac-chip sm">Employees</span></div></div>
         <div id="staff-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
         <div id="staff-unclaimed" style="margin-top:8px"></div>
 
@@ -16530,17 +16552,17 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          people; no model writes a how-to. staff_knowledge_routes. #}
       <div class="ac-grid" style="margin-top:14px">
         <div class="ac-card span" id="sk-rules-card" hidden>
-          <div class="ac-card-h"><div><h3>House rules</h3><p>Your rules in your words. Staff read them in the app, and its answers to their questions come only from these lines, your docs and their task sheets &mdash; never about pay, other people or discipline.</p></div>
+          <div class="ac-card-h"><div><h3>House rules</h3><p>Staff read these in the app. Its answers come only from these, your docs and task sheets &mdash; never about pay, other people or discipline.</p></div>
             <div class="r"><span class="ac-status" id="sk-rules-status" role="status"></span></div></div>
           <div id="sk-rules-body"></div>
         </div>
         <div class="ac-card span" id="sk-docs-card" hidden>
-          <div class="ac-card-h"><div><h3>Staff docs</h3><p>Menu specs, allergens and how you do things, read-only in the app. Pick the jobs a doc is for, or leave it for everyone.</p></div>
+          <div class="ac-card-h"><div><h3>Staff docs</h3><p>Read-only in the app. Pick the jobs each is for, or leave it for everyone.</p></div>
             <div class="r"><span class="ac-status" id="sk-docs-status" role="status"></span></div></div>
           <div id="sk-docs-body"></div>
         </div>
         <div class="ac-card span" id="sk-certs-card" hidden>
-          <div class="ac-card-h"><div><h3>Certifications</h3><p id="sk-certs-sub">Who holds which certificate until when. The holder and you are told before one expires.</p></div>
+          <div class="ac-card-h"><div><h3>Certifications</h3><p id="sk-certs-sub">The holder and you are told before one expires.</p></div>
             <div class="r"><span class="ac-status" id="sk-certs-status" role="status"></span></div></div>
           <div id="sk-certs-body"></div>
         </div>
@@ -16549,9 +16571,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
     <!-- ══════════════ BILLING ══════════════ -->
     <section class="ac-section" id="acct-billing" data-nav="account/billing" aria-labelledby="acct-billing-h">
-      <div class="ac-h"><div><h2 id="acct-billing-h">Billing &amp; subscription</h2><p>Your plan, what&rsquo;s included, and what happens next.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-billing-h">Billing &amp; subscription</h2></div></div>
       <div class="ac-card" id="acct-pause-card" hidden>
-        <div class="ac-card-h"><div><h3>Need a break?</h3><p>Pause billing and the daily briefs for a while. Your data keeps flowing, so the day you come back the brief is current.</p></div></div>
+        <div class="ac-card-h"><div><h3>Need a break?</h3><p>Pause billing and the briefs. Your data keeps flowing.</p></div></div>
         <div id="acct-pause-body">
           <div class="ac-row"><div class="l"><b>Pause the subscription</b><span>Stripe stops collecting, nothing is invoiced, and it resumes on its own on the date you pick.</span></div>
             <div class="c" style="display:flex;gap:8px;align-items:center"><select class="ac-select" id="acct-pause-days" aria-label="Pause length"><option value="14">2 weeks</option><option value="30" selected>30 days</option><option value="60">60 days</option></select><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="acctPause(this)">Pause</button></div></div>
@@ -16598,20 +16620,20 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         </div>
         {% endif %}
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Feature access</h3><p>Modules on this account. Tabs you don&rsquo;t have are hidden, and their data is never fetched.</p></div></div>
+          <div class="ac-card-h"><div><h3>Feature access</h3><p>Tabs you don&rsquo;t have are hidden, and their data is never fetched.</p></div></div>
           <div class="ac-rows">
             {% for m in [('Reviews', mod_reviews, 'AI-drafted replies, urgent flags, response tracking'), ('Labor', mod_labor, 'Schedules, labor %, operational scores'), ('Food Cost', mod_inventory, 'Ingredient spend, waste, menu margins'), ('Marketing', mod_marketing, 'Guest outreach, social posts, campaigns'), ('Intel', is_full_tier, 'Competitor tracking &amp; AI visibility &mdash; included with the full plan')] %}
             <div class="ac-row"><div class="l"><b>{{ m[0] }}</b><span>{{ m[2]|safe }}</span></div><div class="c"><span class="ac-chip sm {{ 'good' if m[1] else '' }}"><i></i>{{ 'Active' if m[1] else 'Not on plan' }}</span></div></div>
             {% endfor %}
           </div>
-          <div class="ac-note">Want to add a module? <a href="mailto:will@cavnar.ai?subject=Add a module to {{restaurant.name}}">Ask Will</a> &mdash; pricing is per module, no contract change needed.</div>
+          <div class="ac-note">Want another module? <a href="mailto:will@cavnar.ai?subject=Add a module to {{restaurant.name}}">Ask Will</a> &mdash; no contract change needed.</div>
         </div>
       </div>
     </section>
 
     <!-- ══════════════ NOTIFICATIONS ══════════════ -->
     <section class="ac-section" id="acct-notifications" data-nav="account/notifications" aria-labelledby="acct-notifications-h">
-      <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2><p>What reaches you, how, and when.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-notifications-h">Notifications</h2></div></div>
       {# The one dial that fixes "too much" or "too little" leads the section
          (density audit #38); it sat folded under the morning brief. Shown
          with the brief's own settings (owner-only: loadOpsSettings). #}
@@ -16627,13 +16649,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
       <div class="ac-grid">
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Alerts</h3><p>Who gets texted or emailed, and for what.</p></div>
+          <div class="ac-card-h"><div><h3>Alerts</h3></div>
             {% if _principal %}<div class="r"><button class="cbtn cbtn-secondary cbtn-sm" onclick="openAlertsModal()">Manage alerts</button></div>{% endif %}</div>
           <div class="ac-kv" style="grid-template-columns:1fr">
             <div><dt>Contacts</dt><dd id="alerts-contacts-summary" class="muted"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></dd></div>
             <div><dt>Triggers</dt><dd id="alerts-types-summary" class="muted"></dd></div>
           </div>
-          {% if _principal %}<div class="ac-note">Quiet hours, daily caps and the weekly digest day are all inside <b>Manage alerts</b>.</div>{% else %}<div class="ac-note">Only the account owner can change alerts.</div>{% endif %}
+          {% if _principal %}<div class="ac-note">Quiet hours, caps and the digest day are in <b>Manage alerts</b>.</div>{% else %}<div class="ac-note">Only the account owner can change alerts.</div>{% endif %}
         </div>
         {# This login's own notifications (GET /api/account/preferences
            `mine`, POST /mine - memory round 9/29/26, owner_layers): push on
@@ -16642,7 +16664,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            takes alerts away from this login; the restaurant's settings above
            still apply to everyone. Each control saves on its own. #}
         <div class="ac-card" id="as-mine-card" hidden>
-          <div class="ac-card-h"><div><h3>Just for me</h3><p>Your own phone and your own brief. It only ever quiets things for you &mdash; the alert settings above still apply to everyone else.</p></div>
+          <div class="ac-card-h"><div><h3>Just for me</h3><p>Quiets things for you only &mdash; everyone else keeps the alert settings above.</p></div>
             <div class="r"><span class="ac-status" id="as-mine-status"></span></div></div>
           <div class="al-nudge" id="as-mine-nudge" style="margin-bottom:10px" hidden></div>
           <div class="ac-rows">
@@ -16665,12 +16687,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            location" for a group owner (can_apply_to_all, POST
            /api/account/preferences/apply-to-all {keys}). Only for a group. #}
         <div class="ac-card span" id="as-org-card" hidden>
-          <div class="ac-card-h"><div><h3>This location, or every location</h3><p>Where each setting comes from. The owner of every location can make this location&rsquo;s setting all of them.</p></div>
+          <div class="ac-card-h"><div><h3>This location, or every location</h3><p>The owner of every location can apply a setting to all of them.</p></div>
             <div class="r"><span class="ac-status" id="as-org-status"></span></div></div>
           <div class="ac-rows" id="as-org-rows"></div>
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Email preferences</h3><p>Security email &mdash; sign-in codes, password changes, alerts &mdash; always sends regardless.</p></div></div>
+          <div class="ac-card-h"><div><h3>Email preferences</h3><p>Security email &mdash; sign-in codes, password changes, alerts &mdash; always sends.</p></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Email about new sign-ins</b><span>Each person on the account hears about their own sign-ins, never everyone&rsquo;s &mdash; with a one-tap &ldquo;this wasn&rsquo;t me&rdquo;.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" aria-label="Email about new sign-ins"{% if not _principal %} disabled{% endif %}><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
@@ -16683,7 +16705,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           <div class="ac-status" id="as-data-status" style="margin-top:8px"></div>
         </div>
         <div class="ac-card" id="as-ops-card" hidden>
-          <div class="ac-card-h"><div><h3>Morning brief &amp; issues</h3><p>What reaches you before service, and who a problem goes to.</p></div>
+          <div class="ac-card-h"><div><h3>Morning brief &amp; issues</h3></div>
             <div class="r"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm ac-fold-btn" aria-expanded="false" aria-controls="as-ops-body" onclick="acctFold(this,'as-ops-body')"><span class="lbl">Show</span> <span class="chev" aria-hidden="true">&#9662;</span></button></div></div>
           <div class="ac-fold" id="as-ops-body" hidden>
           <div class="ac-rows">
@@ -16724,12 +16746,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
            focus item and this line, never why it was suggested.
            /api/staff-brief (staff_knowledge_routes). #}
         <div class="ac-card span" id="sb-card" hidden>
-          <div class="ac-card-h"><div><h3>Tonight&rsquo;s lineup brief</h3><p>What your team reads in the app before service. Nothing the AI writes reaches them until you approve it.</p></div>
+          <div class="ac-card-h"><div><h3>Tonight&rsquo;s lineup brief</h3><p>Nothing the AI writes reaches your team until you approve it.</p></div>
             <div class="r"><span class="ac-status" id="sb-status" role="status"></span></div></div>
           <div id="sb-body"></div>
         </div>
         <div class="ac-card span" id="email-history-card">
-          <div class="ac-card-h"><div><h3>Email history</h3><p>Everything Cavnar AI has sent for you, and whether it landed.</p></div>
+          <div class="ac-card-h"><div><h3>Email history</h3></div>
             <div class="r"><button onclick="sendTestDigest(this)" class="cbtn cbtn-soft cbtn-sm">Send me a preview digest</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm ac-fold-btn" aria-expanded="false" aria-controls="eh-fold" onclick="acctFold(this,'eh-fold')"><span class="lbl">Show</span> <span class="chev" aria-hidden="true">&#9662;</span></button></div></div>
           <div class="ac-fold" id="eh-fold" hidden><div id="eh-body" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div></div>
         </div>
@@ -16738,13 +16760,13 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
     <!-- ══════════════ AUTOMATION & AI ══════════════ -->
     <section class="ac-section" id="acct-automation" data-nav="account/automation" aria-labelledby="acct-automation-h">
-      <div class="ac-h"><div><h2 id="acct-automation-h">Automation, AI &amp; memory</h2><p>What the AI may do on its own, how it sounds, and what it remembers.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-automation-h">Automation, AI &amp; memory</h2></div></div>
       <div class="ac-grid" id="account-settings-card">
         <!-- The work Cavnar does on its own (Friction #27): moved out of
              Notifications, where it hid under the morning brief. The
              Schedule header and the order card carry the same switches. -->
         <div class="ac-card" id="as-auto-ops-card">
-          <div class="ac-card-h"><div><h3>Work Cavnar AI does for you</h3><p>Drafting the schedule, sending it, ordering from suppliers you trust &mdash; each one off until you turn it on, and each one undoable.</p></div>
+          <div class="ac-card-h"><div><h3>Work Cavnar AI does for you</h3><p>Each one off until you turn it on, and each one undoable.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-ops-status"></span></div></div>
           <div class="ac-rows">
             <div class="ac-row" id="as-autodraft-row" hidden><div class="l"><b>Draft next week&rsquo;s schedule for me</b><span>Every <span class="as-draftday-name">Thursday</span>, if you haven&rsquo;t built one. A draft only &mdash; nothing goes to staff until you publish. On by default with a paid Labor plan; switch it off any time.</span></div>
@@ -16767,7 +16789,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           </div>
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p></div>
+          <div class="ac-card-h"><div><h3>Auto-approve 5-star replies</h3><p>Approved and posted automatically when Google Business is connected. Capped per day, with a pause switch.</p></div>
             <div class="r"><span class="ac-status" id="as-auto-status"></span><button class="cbtn cbtn-secondary cbtn-sm" id="as-auto-save" onclick="saveAutoApprove()">Save rule</button></div></div>
           <div class="ac-rows">
             <div class="ac-row"><div class="l"><b>Turn on auto-approve</b><span>Only 5-star reviews. Everything else still waits for you.</span></div>
@@ -16801,7 +16823,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          full each kind is; what left on its own (a full lane, a date passed,
          a used-again answer) is listed with a way back. #}
       <div class="ac-card" id="acct-memory-card" style="margin-top:16px">
-        <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>Facts the assistant was told to keep &mdash; they shape every answer. Anyone on this account can add one; you can remove any of them.</p></div></div>
+        <div class="ac-card-h"><div><h3>What Cavnar AI remembers</h3><p>These shape every answer. Anyone here can add one; you can remove any.</p></div></div>
         <div id="acct-memory-lanes" class="ac-mem-lanes" aria-label="How full each kind of memory is" hidden></div>
         <div id="acct-memory-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
         <div class="ac-inline" style="margin-top:10px">
@@ -16830,26 +16852,26 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          goals, proposed[], can_confirm) - a teammate's goal is a proposal
          until an account holder confirms it (memory round 9/29/26). #}
       <div class="ac-card" id="acct-goals-card" style="margin-top:16px" hidden>
-        <div class="ac-card-h"><div><h3>Goals</h3><p>A goal is the target every module judges its number against while it holds. A teammate&rsquo;s goal waits here for an owner to confirm it.</p></div></div>
+        <div class="ac-card-h"><div><h3>Goals</h3><p>Every module judges its number against an active goal. A teammate&rsquo;s goal waits for an owner to confirm it.</p></div></div>
         <div id="acct-goals-list" class="ac-rows"></div>
       </div>
       {# "What you've decided" left settings (owner, 9/27/26): Home's Your
          recommendations already shows every recommendation and what came of
          it. /api/decisions stays - Ask and the phone read it. #}
       <div class="ac-card" id="acct-trust-card">
-        <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your own record earns it. This is that record.</p></div></div>
+        <div class="ac-card-h"><div><h3>Why Cavnar AI stopped asking</h3><p>Nothing runs on its own until your record earns it.</p></div></div>
         <div id="acct-trust-list" class="ac-status"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
       </div>
     </section>
 
     <!-- ══════════════ INTEGRATIONS ══════════════ -->
     <section class="ac-section" id="acct-integrations" data-nav="account/integrations" aria-labelledby="acct-integrations-h">
-      <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2><p>What Cavnar AI reads from and posts to.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-integrations-h">Integrations</h2></div></div>
       {# Data health leads (density audit #36): the same score as Home's
          drawer (GET /api/data-health), so "is my data live?" has its answer
          here, and the health grid's Integrations item reads it too. #}
       <div class="ac-card" id="acct-dh-card" style="margin-bottom:16px">
-        <div class="ac-card-h"><div><h3>Data health</h3><p>How current the data behind your recommendations is.</p></div>
+        <div class="ac-card-h"><div><h3>Data health</h3></div>
           <div class="r"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-dh-open="1">Details</button></div></div>
         <div class="ac-dh-row"><span class="pct" id="acct-dh-pct">&hellip;</span><span class="bar" aria-hidden="true"><i id="acct-dh-bar"></i></span></div>
         <div class="ac-dh-why" id="acct-dh-why"></div>
@@ -16907,12 +16929,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
 
       <div class="ac-card wa-card" id="wa-card" hidden style="margin-top:14px">
-        <div class="ac-card-h"><div><h3>Website analytics</h3><p>Cavnar AI reads your website&rsquo;s Google Analytics and Search Console every morning &mdash; read-only &mdash; and lines them up with your sales, games, posts and reviews.</p></div></div>
+        <div class="ac-card-h"><div><h3>Website analytics</h3><p>Google Analytics and Search Console, read-only, each morning &mdash; lined up with your sales, posts and reviews.</p></div></div>
         <div id="wa-body" aria-live="polite"><div class="dr-pulse wide" role="status" aria-label="Loading"><i></i></div></div>
       </div>
 
       <div class="ac-card" style="margin-top:14px">
-        <div class="ac-card-h"><div><h3>Outbound webhook</h3><p>A POST to your URL whenever a review comes in, an alert fires, or a reply is approved. Works with Zapier, Slack, or your own tools.</p></div></div>
+        <div class="ac-card-h"><div><h3>Outbound webhook</h3><p>A POST to your URL when a review comes in, an alert fires, or a reply is approved.</p></div></div>
         <div id="webhook-config" style="display:none">
           <div id="wh-disabled-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:9px;padding:10px 12px;margin-bottom:12px;font-size:13.5px;color:var(--red)">
             <div style="font-weight:600;margin-bottom:4px" id="wh-disabled-reason"></div>
@@ -16969,10 +16991,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
     <!-- ══════════════ SECURITY ══════════════ -->
     <section class="ac-section" id="acct-security" data-nav="account/security" aria-labelledby="acct-security-h">
-      <div class="ac-h"><div><h2 id="acct-security-h">Security</h2><p>How this account is protected, and what&rsquo;s been happening on it.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-security-h">Security</h2></div></div>
       <div class="ac-grid">
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Security checkup</h3><p>Six things that keep this account yours.</p></div>
+          <div class="ac-card-h"><div><h3>Security checkup</h3></div>
             <div class="r"><span class="ac-big" style="font-size:24px"><span id="sec-score">&hellip;</span><span style="color:var(--ink3);font-weight:400;font-size:14px"> / 100</span></span></div></div>
           <div class="ac-meter" aria-hidden="true"><i id="sec-bar"></i></div>
           <div id="sec-items" style="display:grid;grid-template-columns:1fr;gap:6px;font-size:14px;color:var(--ink3);margin-top:12px"></div>
@@ -17012,7 +17034,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           {% endif %}
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Active sessions</h3><p>Everywhere this account is signed in right now.</p></div>
+          <div class="ac-card-h"><div><h3>Active sessions</h3></div>
             <div class="r"><button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="cbtn cbtn-secondary cbtn-sm">Sign out other devices</button></div></div>
           <div id="sessions-list" class="ac-list"><span class="dr-pulse" role="status" aria-label="Loading"><i></i></span></div>
           {% if restaurant.two_fa_enabled %}
@@ -17022,7 +17044,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
           {% endif %}
         </div>
         <div class="ac-card">
-          <div class="ac-card-h"><div><h3>Activity</h3><p>Sign-ins and account changes, newest first.</p></div></div>
+          <div class="ac-card-h"><div><h3>Activity</h3><p>Sign-ins and account changes.</p></div></div>
           <div class="ac-disc" style="border-top:none;padding-top:0;margin-top:0">
             <button class="cbtn cbtn-text cbtn-inline cbtn-sm" type="button" aria-haspopup="dialog" onclick="acctLogOpen('login-history','Sign-in history')">Sign-in history &rarr;</button>
             <div id="login-history" class="ac-disc-body"></div>
@@ -17045,7 +17067,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
     <!-- ══════════════ DATA & PRIVACY ══════════════ -->
     <section class="ac-section" id="acct-data" data-nav="account/data" aria-labelledby="acct-data-h">
-      <div class="ac-h"><div><h2 id="acct-data-h">Data &amp; privacy</h2><p>Your data is yours. Take a copy, decide how long we keep it, or close the account.</p></div></div>
+      <div class="ac-h"><div><h2 id="acct-data-h">Data &amp; privacy</h2><p>Your data is yours.</p></div></div>
       <div class="ac-grid">
         <div class="ac-card">
           <div class="ac-card-h"><div><h3>Export my data</h3><p>Emailed to you as CSV attachments, plus a JSON of your settings.</p></div></div>
@@ -17247,9 +17269,9 @@ window._askEmptyHtml = function() {
     html += '</div>';
   } else {
     html += ASK_CORE + '<h3>Ask me anything</h3>'
-         + '<p>Your numbers, or general advice on running the place — I\'ll pull in your real data whenever it\'s relevant.</p>';
+         + '<p>Your numbers, or advice on running the place.</p>';
   }
-  html += '<div class="lbl" style="width:100%;text-align:left">Start here</div><div class="ask-sugg">'
+  html += '<div class="ask-sugg">'
        + qs.map(function(q){ return '<button type="button" onclick="askSuggest(this)">' + ASK_SPARK + '<span>' + _askEsc(q) + '</span></button>'; }).join('')
        + '</div></div>';
   return html;
@@ -44371,7 +44393,7 @@ document.addEventListener('click', function (e) {
       if (!card || !body) return;
       card.hidden = false;
       var sub = document.getElementById('sk-certs-sub');
-      if (sub) sub.textContent = 'Who holds which certificate until when. The holder and you are told ' + d.remind_days + ' days before one expires.';
+      if (sub) sub.textContent = 'The holder and you are told ' + d.remind_days + ' days before one expires.';
       var h = '<div class="ac-list">', i, c;
       if (!d.certs.length) h += '<div class="ac-note" style="margin:0">No certificates on file yet.</div>';
       for (i = 0; i < d.certs.length; i++) {
@@ -45472,6 +45494,13 @@ function sfw2RuleCheck(chk) {
     heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>'
   };
   function icon(k) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (IC[k] || IC.spark) + '</svg>'; }
+  // An info tip (.cav-it, DESIGN_SYSTEM 12) beside a heading: the sentence
+  // about how a section is read, one tap away rather than under every title
+  // (text reduction round, 10/17/26).
+  function itip(id, label, text) {
+    return '<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="' + id + '" aria-expanded="false" aria-controls="' + id + '" aria-label="' + esc(label) + '">i</button>'
+      + '<span class="cav-itp" id="' + id + '" role="tooltip" hidden>' + esc(text) + '</span></span>';
+  }
   function chip(t) { return '<span class="dn-chip t' + (t.tone === 'watch' ? ' watch' : '') + '">' + icon(t.icon) + esc(t.name) + '</span>'; }
   // ── small charts ──
   function ring(frac, size, big, small) {
@@ -45495,7 +45524,7 @@ function sfw2RuleCheck(chk) {
   function split(share) {
     var b = Math.round(share * 100), a = 100 - b;
     return '<div class="dn-split"><div class="a" style="flex-basis:50%" data-fb="' + a + '">Mon–Thu ' + a + '%</div><div class="b" style="flex-basis:50%" data-fb="' + b + '">Fri–Sun ' + b + '%</div>'
-      + '<u style="left:55%"></u></div><div class="dn-cap"><span>Monday to Thursday</span><span>typical weekend 45%</span><span>Friday to Sunday</span></div>';
+      + '<u style="left:55%"></u></div><div class="dn-cap"><span></span><span>typical weekend 45%</span><span></span></div>';
   }
   function stars(v) {
     var h = '<div class="dn-stars" role="img" aria-label="' + esc(v.toFixed(2)) + ' of 5 stars">', i;
@@ -45681,20 +45710,20 @@ function sfw2RuleCheck(chk) {
     function v(k) { var x = dm[k]; return x && x.measured ? +x.value : null; }
     var k = t.key, x;
     if ((k === 'weekend_driven' || k === 'weekday_business') && (x = v('weekend_share')) != null) return split(x);
-    if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>' + Math.round(x) + ' of the 168 hours in a week. The stated benchmark is about 70.</span></div>';
-    if (k === 'overtime_controlled' && (x = v('overtime_intensity')) != null) return gauge(0, 0.1, x, 0.03, pctf, 'Overtime share of hours', false);
-    if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of the last 30 days’ reviews. The stated benchmark is about 60%.</span></div>';
-    if (k === 'open_to_advice' && (x = v('rec_uptake')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Of recommendations answered or expired in 90 days.</span></div>';
+    if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>of 168 hours a week</span></div>';
+    if (k === 'overtime_controlled' && (x = v('overtime_intensity')) != null) return gauge(0, 0.1, x, 0.03, pctf, '', false);
+    if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>last 30 days · benchmark about 60%</span></div>';
+    if (k === 'open_to_advice' && (x = v('rec_uptake')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>last 90 days</span></div>';
     if ((k === 'well_rated' || k === 'guest_favorite') && (x = v('rating_level')) != null) return stars(x);
     if (k === 'tight_register') {
       var c = v('comp_rate'), vd = v('void_rate'), f = function (y) { return (+y).toFixed(1) + '%'; };
       return (c != null ? gauge(0, 3, c, 1.5, f, 'Comps', false) : '') + (vd != null ? gauge(0, 2, vd, 1, f, 'Voids', false) : '');
     }
-    if (k === 'uneven_labor_days' && (x = v('labor_swing')) != null) return gauge(0, 15, x, 5, function (y) { return (+y).toFixed(1) + ' pts'; }, 'Day-to-day labor % swing', true);
-    if (k === 'labor_efficient' && (x = v('labor_pct')) != null) return gauge(20, 40, x, 30, function (y) { return (+y).toFixed(1) + '%'; }, 'Labor % of sales', false);
-    if (k === 'staffs_to_demand' && (x = v('labor_flex')) != null) return gauge(0, 1.2, x, 0.5, function (y) { return (+y).toFixed(2); }, 'Hours per 1% of sales', false);
-    if ((k === 'steady_demand' || k === 'swingy_demand') && (x = v('sales_volatility')) != null) return gauge(0, 0.5, x, 0.2, pctf, 'Day-to-day swing', k === 'swingy_demand');
-    if (k === 'highly_predictable' && (x = v('demand_predictability')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>Better than a naive guess, over scored weekly forecasts.</span></div>';
+    if (k === 'uneven_labor_days' && (x = v('labor_swing')) != null) return gauge(0, 15, x, 5, function (y) { return (+y).toFixed(1) + ' pts'; }, '', true);
+    if (k === 'labor_efficient' && (x = v('labor_pct')) != null) return gauge(20, 40, x, 30, function (y) { return (+y).toFixed(1) + '%'; }, '', false);
+    if (k === 'staffs_to_demand' && (x = v('labor_flex')) != null) return gauge(0, 1.2, x, 0.5, function (y) { return (+y).toFixed(2); }, '', false);
+    if ((k === 'steady_demand' || k === 'swingy_demand') && (x = v('sales_volatility')) != null) return gauge(0, 0.5, x, 0.2, pctf, '', k === 'swingy_demand');
+    if (k === 'highly_predictable' && (x = v('demand_predictability')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>scored weekly forecasts</span></div>';
     return '';
   }
   function evidence(t, dm) {
@@ -45708,8 +45737,11 @@ function sfw2RuleCheck(chk) {
   }
   // ── the page ──
   function hero(p, s, all) {
-    // The first sentence is the headline; the rest of the read sits under it.
+    // The first sentence is the headline. Under it only the Watch sentence:
+    // the read's middle sentence restated figures the trait cards show
+    // (text reduction round, 10/17/26); the full read stays in the payload.
     var full = String(s.headline || ''), cut = full.indexOf('. '), head = cut > 0 ? full.slice(0, cut + 1) : full, rest = cut > 0 ? full.slice(cut + 2) : '';
+    var wat = rest.indexOf('Watch:'); rest = wat >= 0 ? rest.slice(wat) : '';
     var words = head.split(' '), read = '', i;
     for (i = 0; i < words.length; i++) read += '<span class="w" style="animation-delay:' + (120 + i * 26) + 'ms">' + figs(words[i]) + '</span> ';
     var chips = '', ids = s.identity || [], tr = s.traits || [];
@@ -45717,17 +45749,16 @@ function sfw2RuleCheck(chk) {
     for (i = 0; i < tr.length; i++) chips += chip(tr[i]);
     var o = s.observed || {}, st = '';
     function stat(n, label) { return '<div class="dn-stat"><b>' + countHtml(String(n)) + '</b><span>' + esc(label) + '</span></div>'; }
-    if (o.nights) st += stat(o.nights, 'nights of sales watched' + (o.since ? ' since ' + o.since : ''));
-    st += stat(o.measured || 0, 'of ' + (o.of || 0) + ' traits measured');
+    if (o.nights) st += stat(o.nights, 'nights watched' + (o.since ? ' since ' + o.since : ''));
+    st += stat(o.measured || 0, 'of ' + (o.of || 0) + ' measured');
     st += stat(o.learning || 0, 'still learning');
-    st += stat(o.coverage_pct || 0, '% of the profile filled in');
+    st += stat(o.coverage_pct || 0, '% filled in');
     var measured = 0; for (i = 0; i < all.length; i++) if (all[i].measured) measured++;
-    return '<section class="dn-hero"><div class="dn-k">Restaurant DNA' + (p.as_of ? ' · as of ' + esc(p.as_of) : '') + '</div><div class="dn-hero-l">'
+    return '<section class="dn-hero"><div class="dn-k">Restaurant DNA</div><div class="dn-hero-l">'
       + '<h1 class="dn-read">' + read + '</h1>' + (rest ? '<p class="dn-read2 dn-fadein">' + figs(rest).replace('Watch:', '<span class="wt">Watch:</span>') + '</p>' : '')
-      + (s.lede ? '<p class="dn-lede">' + esc(s.lede) + '</p>' : '')
       + '<div class="dn-chips">' + chips + '</div><div class="dn-stats dn-rv">' + st + '</div></div>'
       + '<div class="dn-helix-box" id="dn-helix"><canvas aria-label="Every trait Cavnar AI measures, as a strand: ' + measured + ' measured, ' + (all.length - measured) + ' still learning" role="img"></canvas><div class="dn-tip"></div>'
-      + '<div class="dn-helix-cap"><span><i></i>' + measured + ' measured</span><span><i class="off"></i>' + (all.length - measured) + ' still learning</span></div></div></section>';
+      + '<div class="dn-helix-cap"><span><i></i>measured</span><span><i class="off"></i>still learning</span></div></div></section>';
   }
   function shape(s) {
     var ax = s.axes || [], h = '', i; if (ax.length < 3) return '';
@@ -45736,26 +45767,25 @@ function sfw2RuleCheck(chk) {
       h += '<div class="dn-ax' + (l ? ' learn' : '') + '" data-ax="' + i + '"><div class="n">' + esc(a.label) + '<small>' + (l ? 'still learning' : (a.measured + ' of ' + a.of + ' measured')) + '</small></div>'
         + '<div class="bar">' + (l ? '' : '<i data-w="' + a.score + '"></i>') + '<u></u></div><div class="s">' + (l ? '—' : countHtml(String(a.score))) + '</div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up</h2>'
-      + '<p class="dn-sub">Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI’s stated benchmark. Dashed spokes are still learning.</p>'
+    return '<section class="dn-sec"><div class="dn-k">The shape</div><h2 class="dn-h2">How it measures up' + itip('dn-tip-shape', 'How the shape is read', 'Each axis runs 0 to 100, and the dashed ring at 50 is Cavnar AI’s stated benchmark. Dashed spokes are still learning.') + '</h2>'
       + '<div class="dn-shape dn-rv">' + radar(ax, 360, false) + '<div class="dn-axes">' + h + '</div></div></section>';
   }
   function traits(s, dm) {
     var tr = (s.traits || []).slice(), h = '', i, big = -1;
     tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
     for (i = 0; i < tr.length; i++) if (tr[i].tone !== 'watch') { big = i; break; }
-    if (!tr.length) return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">No traits earned yet</h2><div class="dn-empty">A trait is named only when a measured figure clears its rule. As more of your data comes in, they appear here.</div></section>';
+    if (!tr.length) return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">No traits earned yet</h2><div class="dn-empty">A trait appears once a measured figure clears its rule.</div></section>';
     for (i = 0; i < tr.length; i++) {
       var t = tr[i], w = t.tone === 'watch';
       h += '<article class="dn-tr dn-rv' + (w ? ' watch' : '') + (i === big && tr.length > 2 ? ' big' : '') + '" style="transition-delay:' + Math.min(i, 6) * 60 + 'ms">'
-        + '<div class="top"><div class="ic">' + icon(t.icon) + '</div><span class="tag">' + (w ? 'Watch' : 'Trait') + '</span></div>'
+        + '<div class="top"><div class="ic">' + icon(t.icon) + '</div>' + (w ? '<span class="tag">Watch</span>' : '') + '</div>'
         + '<div class="nm">' + esc(t.name) + '</div><div class="fig">' + countHtml(t.figure) + '</div><div class="fl">' + esc(t.figure_label) + '</div>'
         + '<div class="viz">' + vizFor(t, dm) + '</div><div class="sen">' + figs(t.sentence) + '</div>'
         + (t.strength != null ? '<div class="dn-meter"><span>' + (w ? 'How strongly' : 'Strength') + '</span><div class="bar"><i data-w="' + t.strength + '"></i></div><b>' + t.strength + '</b></div>' : '')
         + evidence(t, dm) + '</article>';
     }
-    return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">What it’s become</h2>'
-      + '<p class="dn-sub">Each trait is earned by a measured figure against the rule shown under it. Open one to see the evidence.</p><div class="dn-traits">' + h + '</div></section>';
+    return '<section class="dn-sec"><div class="dn-k">Traits</div><h2 class="dn-h2">What it’s become' + itip('dn-tip-traits', 'How a trait is earned', 'Each trait is earned by a measured figure against the rule under “How it was measured”.') + '</h2>'
+      + '<div class="dn-traits">' + h + '</div></section>';
   }
   function chains(s) {
     var cs = s.connections || [], h = '', i, j; if (!cs.length) return '';
@@ -45768,19 +45798,20 @@ function sfw2RuleCheck(chk) {
       }
       h += '<div class="dn-chain dn-rv"><div class="t">' + esc(c.title) + '</div><div class="dn-nodes">' + nodes + '</div><p class="sen">' + figs(c.sentence) + '</p></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">How it connects</div><h2 class="dn-h2">What moves together</h2>'
-      + '<p class="dn-sub">Measured figures read side by side. Where one drives another, the measurement says how much.</p>' + h + '</section>';
+    return '<section class="dn-sec"><div class="dn-k">How it connects</div><h2 class="dn-h2">What moves together' + itip('dn-tip-chains', 'How these are read', 'Measured figures read side by side. Where one drives another, the measurement says how much.') + '</h2>' + h + '</section>';
   }
   function learning(s) {
-    var ls = s.learning || [], h = '', i; if (!ls.length) return '';
+    var ls = s.learning || [], h = '', i, SHOWN = 6; if (!ls.length) return '';
     for (i = 0; i < ls.length; i++) {
+      // The closest six show; the rest sit behind one disclosure.
+      if (i === SHOWN) h += '</div><details class="co-more dn-ln-more"><summary>' + (ls.length - SHOWN) + ' more</summary><div class="dn-learn">';
       var l = ls[i], pr = l.progress, near = pr && pr.pct >= 75;
       h += '<div class="dn-ln dn-rv' + (near ? ' near' : '') + '">' + (pr ? ring(pr.pct / 100, 46, pr.pct + '%', '') : '<div class="ic">' + icon(l.icon) + '</div>')
         + '<div><div class="nm">' + esc(l.name) + (near ? '<span>Almost there</span>' : '') + '</div><div class="t">'
         + (pr ? figs(pr.have + ' of ' + pr.need + ' ' + pr.unit) : (l.dormant ? 'Not measurable on Cavnar AI yet — needs ' : 'Needs ') + esc(l.needs)) + '</div></div></div>';
     }
-    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits are still taking shape</h2>'
-      + '<p class="dn-sub">Nothing here is guessed. Each fills in once its data clears the floor, closest first.</p><div class="dn-learn">' + h + '</div></section>';
+    return '<section class="dn-sec"><div class="dn-k">Still learning</div><h2 class="dn-h2">' + ls.length + ' traits still taking shape' + itip('dn-tip-learn', 'How these fill in', 'Nothing here is guessed. Each fills in once its data clears the floor, closest first.') + '</h2>'
+      + '<div class="dn-learn">' + h + '</div>' + (ls.length > SHOWN ? '</details>' : '') + '</section>';
   }
   function evidenceAll(p) {
     var fs = p.families || [], h = '', i, j;
@@ -45798,14 +45829,14 @@ function sfw2RuleCheck(chk) {
       h += '<details class="dn-fam"><summary><span class="nm">' + esc(f.label) + '</span><span class="c">' + on + ' of ' + ds.length + '</span><span class="dn-dots" aria-hidden="true">' + dots + '</span></summary>' + rows + '</details>';
     }
     return '<section class="dn-sec"><div class="dn-k">The evidence</div><h2 class="dn-h2">Every measurement</h2>'
-      + '<p class="dn-sub">All ' + (p.of || '') + ' dimensions, each with the figure, how it was measured and its weeks so far, or what would measure it.</p><div class="dn-fams">' + h + '</div></section>';
+      + '<div class="dn-fams">' + h + '</div></section>';
   }
   function page(d) {
     var p = d && d.profile, s = (d && d.story) || {};
     if (!p || !p.available) return '<div class="dn-k">Restaurant DNA</div><h1 class="dn-read" style="font-size:32px">Your DNA is still forming.</h1><div class="dn-empty">' + esc((p && p.why_not) || 'Your profile builds with the nightly pass — check back tomorrow.') + '</div>';
     var all = dimsOf(p);
     return hero(p, s, all.list) + shape(s) + traits(s, all.map) + chains(s) + learning(s) + evidenceAll(p)
-      + '<p class="dn-foot">' + esc(s.basis || '') + ' ' + esc(p.note || '') + '</p>';
+      + '<details class="co-more dn-foot"><summary>How your DNA is read</summary><p>' + esc(s.basis || '') + ' ' + esc(p.note || '') + '</p></details>';
   }
   // ── open, close, the address ──
   function shell() {
@@ -45817,7 +45848,8 @@ function sfw2RuleCheck(chk) {
       + '<span class="dn-bar-t">Restaurant DNA</span><span class="dn-bar-r" id="dn-asof"></span></div><div class="dn-scroll" id="dn-scroll"><div class="dn-wrap" id="dn-body"></div></div>';
     document.body.appendChild(el);
     document.getElementById('dn-close').addEventListener('click', function () { dnaClose(); });
-    el.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); dnaClose(); } });
+    // Escape closes an open info tip first (the document's own handler), then the page.
+    el.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !el.querySelector('.cav-itp:not([hidden])')) { e.preventDefault(); dnaClose(); } });
     return el;
   }
   function paint() {
