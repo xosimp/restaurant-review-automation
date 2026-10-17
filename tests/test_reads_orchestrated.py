@@ -316,6 +316,9 @@ def test_the_review_read_is_one_sonnet_run(monkeypatch, db_path):
 
 def test_the_marketing_brief_starts_on_haiku_and_climbs_on_a_refused_brief(monkeypatch):
     import client_api
+    import marketing_opportunities
+    # No holiday card leads the brief, whatever today is (10/17/26: Halloween's did).
+    monkeypatch.setattr(marketing_opportunities, "holidays", lambda *a, **k: [])
     rid = create_restaurant(Restaurant(name="Orchestrated Marketing Co", owner_email="m@x.test", module_marketing=1))
     calls = []
     monkeypatch.setattr(ai_utils, "create_with_retry", _scripted(

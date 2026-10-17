@@ -70,7 +70,10 @@ LADDER_TIERS = ("T1", "T2", "T3", "T4")
 # right, and every restaurant moves. An AI_TIER_<n>_MODEL set explicitly is
 # the operator's own choice and is never canaried.
 TIER_CANARY_ENV = "AI_TIER_CANARY"
-TIER_CANARY_DEFAULT = "T1"
+# Empty since 10/17/26: T1's Haiku 5.5 serves every restaurant (owner: "move
+# the haiku ones to haiku 5.5"); it was held to the canary restaurants since
+# 10/10/26. AI_TIER_CANARY=T1 puts the hold back.
+TIER_CANARY_DEFAULT = ""
 
 
 def tier_canaried(tier) -> bool:
@@ -103,7 +106,7 @@ def _tier_table(restaurant_id=None):
             t1 = _previous_tier_models()["T1"]
     return {
         "T1": {"model": t1, "effort": None},
-        "T2": {"model": os.getenv("AI_TIER_T2_MODEL", _ai.SONNET), "effort": None},
+        "T2": {"model": os.getenv("AI_TIER_T2_MODEL", _ai.SONNET_55), "effort": None},
         "T3": {"model": os.getenv("AI_TIER_T3_MODEL", _ai.SONNET_55),
                "effort": os.getenv("AI_TIER_T3_EFFORT", "medium")},
         "T4": {"model": os.getenv("AI_TIER_T4_MODEL", _ai.OPUS_55),

@@ -3781,11 +3781,17 @@ def _queued_lines(proposals) -> str:
 
 def _prerun_allowed(model) -> bool:
     """Whether the pre-read may be handed to `model` as a call it made: only
-    when its call runs with thinking off (ai_utils.default_thinking), since a
-    thinking model expects its own thinking block ahead of a tool_use."""
+    when its call runs with no up-front thinking (ai_utils.default_thinking:
+    "disabled", or Sonnet 5.5's lowest setting "between_tools"), since a
+    thinking model expects its own thinking block ahead of a tool_use.
+    Checked against the API 10/17/26: claude-sonnet-5-5 with between_tools
+    answers a code-built tool_use/tool_result pair (Ask moved to it that day,
+    and its pre-read and replayed reads would otherwise have stopped)."""
     try:
         import ai_utils
-        return ai_utils.accepts_disabled_thinking(model)
+        if ai_utils.accepts_disabled_thinking(model):
+            return True
+        return (ai_utils.default_thinking(model) or {}).get("type") == "between_tools"
     except Exception:
         return False
 

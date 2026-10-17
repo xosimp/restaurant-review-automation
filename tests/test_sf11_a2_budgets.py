@@ -123,8 +123,9 @@ def test_the_global_ceiling_grows_with_paying_restaurants():
 # ── AI-26: the schedule's small calls honour the T1 canary ────────────────
 
 def test_the_schedule_small_calls_reach_haiku55_only_on_the_canary(monkeypatch):
-    for k in ("SCHEDULE_RULES_MODEL", "SCHEDULE_NOTE_MODEL", "AI_TIER_CANARY", "AI_TIER_T1_PREVIOUS_MODEL"):
+    for k in ("SCHEDULE_RULES_MODEL", "SCHEDULE_NOTE_MODEL", "AI_TIER_T1_PREVIOUS_MODEL"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AI_TIER_CANARY", "T1")      # the hold, when the operator puts it back (off since 10/17/26)
     monkeypatch.setenv("AI_CANARY_RESTAURANTS", "4")
     assert ai_utils.model_for_run("schedule_rules", 4) == ai_utils.HAIKU_55
     assert ai_utils.model_for_run("schedule_rules", 5) == ai_utils.HAIKU
