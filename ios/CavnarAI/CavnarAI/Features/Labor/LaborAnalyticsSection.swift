@@ -85,8 +85,7 @@ struct LaborAnalyticsSection: View {
                                    subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "),
                                    positiveAllowed: Self.positiveAllowed(stats))
                     if let roleBreakdown { roleBreakdown }
-                    // How you compare — the Benchmark Engine's card (#23).
-                    HowYouCompareCard(module: "labor")
+                    // How you compare left Labor on the web and here (owner, 10/16–10/17/26).
                 }
                 .transition(.opacity)
             }

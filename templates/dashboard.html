@@ -1003,14 +1003,16 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
    space"): one card per row across the full width - what was found on the
    left, the confidence, the answer and Draft it in a column on the right. */
 .hb-recs.mkt-opps-list{grid-template-columns:minmax(0,1fr);gap:12px}
-.hb-rec.mkt-opp{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:32px;row-gap:0;align-items:start;min-height:0;padding:20px 24px}
-.hb-rec.mkt-opp>*{grid-column:1}
+/* The actions sit quietly along the card's foot (owner, 10/17/26): the confidence on the left, Done | Pass and
+   Draft it on the right - not a column centred on the card's right side. */
+.hb-rec.mkt-opp{display:flex;flex-direction:column;align-items:stretch;min-height:0;padding:20px 24px}
 .hb-rec.mkt-opp>*+*{margin-top:8px}
-.hb-rec.mkt-opp>.ft{grid-column:2;grid-row:1 / span 6;align-self:center;flex-direction:column;align-items:flex-end;justify-content:center;gap:10px;margin:0;padding:0;max-width:300px}
-.mkt-opp>.ft .mkt-opp-go{margin-left:0}
-.mkt-opp>.ft .rec-ans{display:flex;gap:4px}
+.hb-rec.mkt-opp>.ft{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 16px;margin:14px 0 0;padding:0}
+.mkt-opp>.ft .rec-ans{display:flex;align-items:center;gap:4px;margin-left:auto}
+.mkt-opp>.ft .rec-ans~.mkt-opp-go,.mkt-opp>.ft .mkt-opp-go{margin-left:0}
+.mkt-opp>.ft>.mkt-opp-go:only-child,.mkt-opp>.ft>.mkt-opp-go:first-child{margin-left:auto}
 .mkt-opp .why{max-width:820px}
-@media (max-width:760px){.hb-rec.mkt-opp{grid-template-columns:minmax(0,1fr);padding:18px}.hb-rec.mkt-opp>.ft{grid-column:1;grid-row:auto;flex-direction:row;flex-wrap:wrap;align-items:center;max-width:none;padding-top:6px}.mkt-opp>.ft .mkt-opp-go{margin-left:auto}}
+@media (max-width:760px){.hb-rec.mkt-opp{padding:18px}}
 .mkt-opps .mkt-opps-load{margin:18px 0 6px}
 .mkt-opps-foot .mkt-opps-note{font-size:12.5px;color:var(--ink3)}
 .mkt-opps-foot .cv-warn{width:16px;height:16px}
@@ -3463,9 +3465,9 @@ html:not([data-theme="dark"]) .hb-chip:hover{box-shadow:inset 0 1px 0 #fff,inset
 .rec-cf-q{font-size:12.5px;font-weight:600;color:var(--ink2);margin-top:10px}
 .rec-cf-opts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 0;margin-top:8px}
 .rec-cf-opts .cbtn{white-space:normal;text-align:left;line-height:1.3;height:auto;min-height:30px}
-.rec-cf-opts .vs{position:relative;display:inline-flex;align-items:center;justify-content:center;width:52px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);text-shadow:0 0 8px var(--ember2)}
+.rec-cf-opts .vs{position:relative;display:inline-flex;align-items:center;justify-content:center;width:64px;margin:0 6px;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ember2);text-shadow:0 0 8px var(--ember2)}
 .rec-cf-opts .vs:before,.rec-cf-opts .vs:after{content:'';position:absolute;top:50%;width:11px;height:1px;background:var(--ember2);opacity:.75}
-.rec-cf-opts .vs:before{left:3px}.rec-cf-opts .vs:after{right:3px}
+.rec-cf-opts .vs:before{left:6px}.rec-cf-opts .vs:after{right:6px}
 .rec-cf.done{border-left-color:var(--hb-good)}
 .rec-cf.done .rec-cf-k{color:var(--hb-good)}
 .rec-cf.done .rec-ans-done{display:block;margin-top:6px}
@@ -11375,8 +11377,17 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-stage[data-stage="setup"] .ss-setup{margin:auto;width:100%;box-sizing:border-box;padding:12px 24px 14px}
 .ss-stage[data-stage="setup"] h1{font-size:clamp(26px,2.3vw,32px);margin:4px 0 4px}
 .ss-stage[data-stage="setup"] .ss-hero p{font-size:15.5px;margin:0 0 12px}
-#ss-settings-setup #ss-settings{position:static;max-height:none;padding:6px 26px 0;border-radius:20px;box-shadow:var(--elev-hero)}
-#ss-settings-setup .ss-tabs{padding:8px 0 2px}
+#ss-settings-setup #ss-settings{position:static;max-height:none;padding:18px 26px 4px;border-radius:20px;box-shadow:var(--elev-hero)}
+/* Setup (owner, 10/17/26): the heading and the card share one centre line with room between them; the tabs are
+   one rounded recessed strip with each label centred in its segment; nothing on the card is a sticky flat-filled
+   bar (on the lit card a sticky --surface fill read as a squared box behind the tabs and a faint orange box behind
+   "This week's draft was built"). */
+.ss-stage[data-stage="setup"] .ss-hero{text-align:center;margin:0 0 22px}
+.ss-stage[data-stage="setup"] .ss-hero h1{margin:6px 0 0}
+#ss-settings-setup{max-width:640px;margin:0 auto}
+#ss-settings-setup #ss-settings .ss-tabs{position:static;display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:4px;margin:0 0 6px;padding:5px;border-radius:14px;background:var(--sf-recess);box-shadow:inset 0 0 0 1px var(--hb-line2)}
+#ss-settings-setup #ss-settings .ss-tabs button{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 10px;border-radius:10px;line-height:1;white-space:nowrap}
+#ss-settings-setup .sw-gen{position:static;background:none}
 #ss-settings-setup .sw-sec{padding:10px 0 4px;min-height:120px}
 /* Basic: the week and the labor target on one row (owner, 10/15/26: Setup
    needed a scroll to reach Generate); they wrap on a narrow window. */
@@ -13755,6 +13766,15 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
+/* Every tip in the app's text face and size, whatever it sits inside (10/17/26: one inside a Space Grotesk figure
+   took the figure's face). Figures inside it stay Space Grotesk through .hb-num. */
+.cav-it .cav-itp,.cav-it .cav-itp *:not(.hb-num){font-family:'Apfel Grotezk',sans-serif}
+.cav-it .cav-itp{font-size:14px;line-height:1.5;font-weight:400;letter-spacing:0;text-transform:none;font-style:normal}
+.cav-itp .hb-num{font-family:'Space Grotesk',sans-serif;background:none;border:0;padding:0;font-size:inherit;color:var(--ink)}
+.cav-itp .cav-tl-lead{display:block;margin-bottom:6px}
+.cav-itp .cav-tl{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.cav-itp .cav-tl li{position:relative;padding-left:14px}
+.cav-itp .cav-tl li:before{content:"";position:absolute;left:2px;top:.62em;width:5px;height:5px;border-radius:50%;background:var(--ember2)}
 /* On a phone the tip opens from its "i" and is kept on screen by cavItipSet's clamp (UI-12): pinned right, an "i"
    mid-line pushed it off the left edge. */
 @media (max-width:640px){.cav-itp{left:0;right:auto}}
@@ -14175,17 +14195,27 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .fc2-pl-fig span{font-size:15px;color:var(--ink2)}
 .fc2-pl-list{display:flex;flex-direction:column}
 .fc2-pl-row{border-top:1px solid var(--hb-line2)}
-.fc2-pl-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;align-items:baseline;padding:9px 0;font-size:14px;color:var(--ink2)}
+/* One set of column widths for the heading row and every dish row, each figure centred under its heading
+   (owner, 10/17/26: two auto-sized grids drifted apart). */
+.fc2-pl{--pl-cols:minmax(0,1fr) 82px 96px 112px 88px}
+.fc2-pl-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:var(--pl-cols);gap:12px;align-items:baseline;padding:9px 0;font-size:14px;color:var(--ink2)}
 .fc2-pl-row>summary::-webkit-details-marker{display:none}
 .fc2-pl-row>summary .d{color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .fc2-pl-row>summary .d small{display:block;font-size:12.5px;color:var(--ink3)}
-.fc2-pl-row>summary .n{text-align:right;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
+.fc2-pl-row>summary .n{text-align:center;font-family:'Space Grotesk',sans-serif;color:var(--ink)}
 .fc2-pl-row>summary .n.p{color:var(--ink2)}
-.fc2-pl-head{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,minmax(56px,auto));gap:12px;font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-top:6px;padding-bottom:3px}
-.fc2-pl-head span+span{text-align:right}
+.fc2-pl-head{display:grid;grid-template-columns:var(--pl-cols);gap:12px;font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-top:6px;padding-bottom:3px}
+.fc2-pl-head span+span{text-align:center;display:flex;justify-content:center}
+/* The sort arrow hangs to the label's right, so the label itself sits on the column's centre. */
+.fc2-pl-head span+span .csort-btn{position:relative;flex-direction:row}
+.fc2-pl-head span+span .csort-ic{position:absolute;left:100%;top:50%;margin:-4px 0 0 4px}
+.fc2-pl-sub{margin-top:26px}
+.fc2-pl-sub .k{font-size:12.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.fc2-pl-sub .s{font-size:13px;color:var(--ink3);margin-top:3px}
+@media (max-width:640px){.fc2-pl{--pl-cols:minmax(0,1fr) 62px 70px 70px 66px}.fc2-pl-head{font-size:11px;letter-spacing:.04em}}
 /* The headings sort (owner, 10/16/26): the sortable-table button and chevron, right-aligned over figures. */
 .fc2-pl-head .csort-btn{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:none;border:0;box-shadow:none;height:auto;min-height:0;padding:0;margin:0;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
-.fc2-pl-head span+span .csort-btn{flex-direction:row-reverse}
+
 .fc2-pl-head .csort-btn:hover{color:var(--ink)}
 .fc2-pl-head .csort-btn:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 .fc2-pl-head .csort-ic{display:inline-block;width:8px;height:8px;opacity:.35;color:var(--ink3);transition:transform .15s ease,opacity .15s ease}
@@ -14405,7 +14435,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   {# Plate costs from the restaurant's Back Office recipes (backoffice_recipes,
      10/15/26): each dish's recipe at today's supplier prices beside what the
      POS took for it. Filled by /api/food-cost/plates; hidden without recipes. #}
-  <div id="fc2-pl" class="fc2-cfo" data-nav="inventory/plates" hidden></div>
+  <div id="fc2-pl" class="fc2-cfo fc2-pl" data-nav="inventory/plates" hidden></div>
   <section class="lb2-hero fc2-wt-shell" aria-label="Waste trend" data-nav="inventory/waste-trend">
     {# The waste-trend card. Drawn entirely from /api/food-cost/waste-trend
        (waste_trend.py) — the series, every derived figure and the
@@ -15018,7 +15048,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <div class="tag">Cavnar AI&rsquo;s marketing brief</div>
     <div class="insight-text insight-loading" id="mkt-insight"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
   </section>
-  <section class="hb-card bm-card" data-bm-module="marketing" hidden aria-label="How you compare" style="margin-top:18px"></section>
+  {# How you compare left Marketing (owner, 10/17/26), as it left Food Cost and Labor. #}
 
   <div class="hb-sh"><div><div class="k">Write</div><h2>A post in {{ restaurant.name }}'s voice</h2></div>
     <button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="openBrandVoice()">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -29688,7 +29718,11 @@ function fc2PlRender(){
   var pr=d.prices||{},mt=d.margin_target;
   /* How the plates are priced, and what green means, behind the "i" by the
      heading - it was a paragraph under the list (text round 10/17/26). */
-  var tip=(mt?'Margins in green are at or above <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span> of the price ('+fc2BoEsc(mt.source==='set'?'your plate margin target':'100 minus the food cost target')+'; set it in Account → Targets). ':'')+'Ingredients priced from invoices: <span class="hb-num">'+(pr.invoice||0)+'</span> · from '+fc2BoEsc(fc2FeedLabel(d))+': <span class="hb-num">'+(pr.back_office||0)+'</span> · can’t be priced yet: <span class="hb-num">'+(pr.unpriced||0)+'</span>. '+fc2BoEsc(d.note||'');
+  var notes=[],ni,nl=(d.note&&typeof d.note==='object')?d.note:(d.note?[d.note]:[]);
+  for(ni=0;ni<nl.length;ni++)notes.push(fc2BoEsc(nl[ni]));
+  var tip=cavTipList((mt?['Green margin: <span class="hb-num">'+fc2BoEsc(mt.pct)+'%</span>+ of the price · Account → Targets']:[])
+    .concat(['Priced: <span class="hb-num">'+(pr.invoice||0)+'</span> from invoices · <span class="hb-num">'+(pr.back_office||0)+'</span> from '+fc2BoEsc(fc2FeedLabel(d))+((pr.unpriced||0)?' · <span class="hb-num">'+pr.unpriced+'</span> not yet':'')])
+    .concat(notes));
   h+='<div class="fc2-cfo-hd"><span class="t">Plate costs</span><span class="m">from '+fc2BoEsc(fc2FeedLabel(d))+' recipes · sold <span class="hb-num">'+fc2BoEsc(w.from_mdy)+'</span> – <span class="hb-num">'+fc2BoEsc(w.to_mdy)+'</span></span>'+fc2Tip('fc2-pl-tip','How plate costs are priced',tip)+'</div><div class="fc2-cfo-bd">';
   if(s.cost_pct!=null)h+='<div class="fc2-pl-fig"><b>'+fc2BoEsc(s.cost_pct)+'%</b><span>recipe cost of what sold, at today’s prices · <span class="hb-num">'+fc2Money(s.covered_sales)+'</span> of <span class="hb-num">'+fc2Money(s.mapped_sales)+'</span> in sales fully priced</span></div>';
   h+=fc2SentenceLines(fc2Sentences(d.coverage));
@@ -29700,6 +29734,15 @@ function fc2PlRender(){
   for(i=0;i<ps.length;i++){if(i<FC2_PL_SHOW)rows+=fc2PlRow(ps[i]);else rest+=fc2PlRow(ps[i]);}
   h+=rows+'</div>';
   if(rest)h+='<details class="fc2-pl-more"'+(_fc2Pl.more?' open':'')+'><summary>All '+ps.length+' dishes</summary><div class="fc2-pl-list">'+rest+'</div></details>';
+  /* Add-ons and sauces apart from the dishes (owner, 10/17/26): what RPOWER rings under Food Add-Ons and
+     Back Office files under MODS. In the figure above, never in the dish list. */
+  var ao=d.add_ons||[],ah='';
+  if(ao.length){
+    for(i=0;i<ao.length;i++)ah+=fc2PlRow(ao[i]);
+    h+='<div class="fc2-pl-sub"><div class="k">Add-ons &amp; sauces</div><div class="s">Rung on a dish’s ticket · in the figure above, not in the dishes</div></div>'
+      +'<div class="fc2-pl-head" role="row" aria-hidden="true"><span>Add-on</span><span>Price</span><span>Plate cost</span><span>Plate cost %</span><span>Margin</span></div>'
+      +'<div class="fc2-pl-list">'+ah+'</div>';
+  }
   h+='</div>';
   host.innerHTML=h;host.hidden=false;
 }
@@ -30278,6 +30321,13 @@ function fc2TileError(host,k,d){
   host.hidden=false;
 }
 /* Info tips (.cav-it): one open at a time; a click outside or Esc closes them. */
+/* A tip in points (owner, 10/17/26: "only the necessary info - a long one formatted so it reads at a glance").
+   lines: HTML strings, already escaped; lead: an optional bold first line. */
+function cavTipList(lines,lead){
+  var h=lead?'<b class="cav-tl-lead">'+lead+'</b>':'',i,li='';
+  for(i=0;i<(lines||[]).length;i++)if(lines[i])li+='<li>'+lines[i]+'</li>';
+  return h+(li?'<ul class="cav-tl">'+li+'</ul>':'');
+}
 function cavItipSet(id,on){var p=document.getElementById(id),b=document.querySelector('[data-itip="'+id+'"]');if(p){p.hidden=!on;p.style.marginLeft='';}if(b)b.setAttribute('aria-expanded',on?'true':'false');
   /* Kept on screen (UI-12): shifted left by what runs past the right edge, never past the left one. */
   if(p&&on&&p.getBoundingClientRect){var r=p.getBoundingClientRect(),vw=window.innerWidth||document.documentElement.clientWidth,dx=0;
@@ -34650,9 +34700,9 @@ function mktOppCard(o, i) {
   if (o.stake && o.stake.amount) meta.push('<span class="usd"><span class="hb-num">$' + Math.round(o.stake.amount).toLocaleString('en-US') + '</span> ' + esc(o.stake.label || '') + '</span>');
   for (f = 0; f < (o.facts || []).length; f++) meta.push('<span>' + num(o.facts[f]) + '</span>');
   var conf = (o.confidence && window.cavConfLine) ? cavConfLine(o.confidence, {key: o.key, surface: 'marketing', module: 'marketing', cls: 'hb-conf', pill: 1}) : '';
-  var when = mktOppWhen(o);
   return '<div class="hb-card hb-rec hb-rise mkt-opp" style="--i:' + i + '" data-opp-key="' + esc(o.key) + '">'
-    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>' + (when ? '<span class="when">' + esc(when) + '</span>' : '')
+    /* No "In 14 days" over the card (owner, 10/17/26): the title names its day. */
+    + '<div class="top"><span class="kd">' + esc(MKT_OPP_KIND[o.kind] || 'Opportunity') + '</span>'
     // Moved up or down by what this restaurant's own results measured
     // (M6 mkt_results: learned_weight).
     + (o.learned_weight != null && +o.learned_weight !== 1 ? ' <span class="ck-tag" title="' + esc((+o.learned_weight > 1 ? 'Ranked higher' : 'Ranked lower') + ' because of how this kind of move measured here') + '">Ranked by your results</span>' : '') + '</div>'
@@ -46370,7 +46420,11 @@ function sfw2RuleCheck(chk) {
 .br-bchip svg{color:var(--ember2);flex:none}
 .br-bchip.counted{background:linear-gradient(90deg,color-mix(in srgb,var(--br-range) 18%,transparent),color-mix(in srgb,var(--br-range) 5%,transparent));border-color:color-mix(in srgb,var(--br-range) 45%,transparent)}
 .br-bchip.counted svg{color:var(--br-range)}
-.br-why{margin-top:12px;padding:16px 18px;border-radius:16px;background:var(--sf-recess);border:1px solid var(--hb-line2);font-size:14.5px;line-height:1.6;color:var(--ink2);max-width:62ch}
+.br-why{font-size:14.5px;line-height:1.6;color:var(--ink2)}
+.br-why-card{width:560px;max-height:calc(100vh - 64px);overflow:auto;padding:26px 28px 22px}
+.br-why-hd{display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin-bottom:14px}
+.br-why-hd h3{margin:0;font:500 22px/1.2 'Clash Display',sans-serif;color:var(--ink)}
+.br-why-ft{display:flex;justify-content:flex-end;margin-top:18px}
 .br-why b{color:var(--ink)}
 .br-why[hidden]{display:none}
 .br-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;font-size:14.5px;color:var(--ink);background:color-mix(in srgb,var(--c,var(--ink3)) 13%,transparent);border:1px solid color-mix(in srgb,var(--c,var(--ink3)) 34%,transparent)}
@@ -47341,11 +47395,16 @@ function sfw2RuleCheck(chk) {
       + '<div class="br-figs"><div class="br-fig"><div class="v">' + (t.purchases == null ? '—' : cnt(t.purchases, 0, '$')) + '</div><div class="l">' + (counted ? 'used · opening + bought − closing' : 'bought from distributors') + '</div></div>'
       + '<div class="br-fig"><div class="v">' + (t.sales == null ? '—' : cnt(t.sales, 0, '$')) + '</div><div class="l">beer, liquor &amp; wine sold</div></div>'
       + (c13 && c13.total != null ? '<div class="br-fig"><div class="v">' + cnt(c13.total, 1, '', '%') + '</div><div class="l">bought vs sold, 13 weeks</div></div>' : '') + '</div>'
-      + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-expanded="' + (ST.why ? 'true' : 'false') + '" aria-controls="br-why">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
-      + '<div class="br-why" id="br-why" data-br-explain="1"' + (ST.why ? '' : ' hidden') + '>'
-      + '<div>' + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
+      + '<div class="br-basis"><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-br-why="1" aria-haspopup="dialog" aria-controls="br-why-modal">' + (counted ? 'How it’s worked out' : 'What this measures') + '</button></div>'
+      /* A centred dialog over the dimmed page (owner, 10/17/26: it opened inside the card and pushed it down).
+         Inside #bar, which keeps the rest of the app inert while open. */
+      + '<div class="cmodal so-modal br-why-modal" id="br-why-modal" role="dialog" aria-modal="true" aria-labelledby="br-why-t" style="display:' + (ST.why ? 'flex' : 'none') + '">'
+      + '<div class="so-card br-why-card"><div class="br-why-hd"><h3 id="br-why-t">' + (counted ? 'How it’s worked out' : 'What this measures') + '</h3>'
+      + (counted ? '<span class="br-bchip counted">' + ICON_CHECK + 'Counted · ' + hn(from) + ' – ' + hn(to) + '</span>' : '<span class="br-bchip">' + ICON_TRUCK + 'Purchase-based · not a shelf count</span>') + '</div>'
+      + '<div class="br-why" id="br-why" data-br-explain="1">'
       + (pc.sub ? '<div class="br-ctx">' + esc2(cap0(pc.sub)) + '.</div>' : '') + whyText(d, pc, counted) + (rng ? meterLegend(v.c, counted ? null : t.prev_pct, t.target, ctxRange) : '') + bandNote + sales
-      + (d.basis ? '<div class="br-sb">' + numify(d.basis) + '</div>' : '') + '</div></div>'
+      + (d.basis ? '<div class="br-sb">' + numify(d.basis) + '</div>' : '') + '</div>'
+      + '<div class="br-why-ft"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-whyclose="1">Close</button></div></div></div></div>'
       + '<div class="br-hr">' + right + '</div></section>';
   }
   /* Why a trend can't draw yet (V45): measured readings, not points. */
@@ -47615,11 +47674,12 @@ function sfw2RuleCheck(chk) {
     var gap = x.gap_units || 0;
     return '<div class="br-card br-li"><div class="n"><b>' + esc2(x.product) + '</b><span>' + esc2(LABELS[x.category] || x.category || '') + ' · sold as ' + esc2((x.drinks || []).join(', ')) + (basis.length ? ' · at ' + esc2(basis.join(', ')) : '') + '</span>'
       + (x.incomplete ? '<span class="br-tagx q">Invoices missing in the span</span>' : '') + (x.confidence && x.confidence !== 'high' ? '<span class="br-tagx q">' + esc2(x.confidence) + ' confidence</span>' : '') + '</div>'
-      + '<div class="m">Bought ' + units(x.bought_units, w) + ' · sold ' + units(x.rung_units, w)
+      + '<div class="m">' + (x.not_bought_in_span ? 'Last bought ' + hn(x.last_bought_mdy) : 'Bought ' + units(x.bought_units, w)) + ' · sold ' + units(x.rung_units, w)
       + (x.comped_units ? ' · ' + units(x.comped_units, w) + ' poured, not paid' : '')
       + (x.waste_units ? ' · ' + units(x.waste_units, w) + ' logged as waste' : '')
       + '</div>'
-      + '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>';
+      + (x.not_bought_in_span ? '<div class="r">—<span>poured from stock bought before this span</span></div></div>'
+        : '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>');
   }
   function varUnmapped(u) {
     var sg = u.suggest || null;
@@ -48174,14 +48234,18 @@ function sfw2RuleCheck(chk) {
   function insights2(list) {
     if (!list || !list.length) return '';
     var label = {good: 'Going well', warn: 'Worth a look', bad: 'Needs attention', info: 'Good to know'},
-        col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--ember2)'}, lead = list[0], rest = '', i;
+        /* Good to know reads green like Going well (owner, 10/17/26: "make them all green accents, not
+           orange"); each card's lit corner follows its tone. */
+        col = {good: 'var(--hb-good)', warn: 'var(--hb-warn)', bad: 'var(--hb-bad)', info: 'var(--hb-good)'},
+        lit = {good: 'green', info: 'green', warn: 'amber', bad: 'red'}, lead = list[0], rest = '', i;
+    var litOf = function (t) { return ';--br-lit:url(/static/img/glow/lit-' + (lit[t] || 'green') + '-v1.png) 0 0/100% 100% no-repeat'; };
     var conf = function (x) { var cf = x.confidence || {}; return (cf.evidence_pct != null || cf.freshness_pct != null) ? '<div class="br-cfl">Evidence ' + (cf.evidence_pct != null ? hn(cf.evidence_pct + '%') : '—') + (cf.freshness_pct != null ? ' · Freshness ' + hn(cf.freshness_pct + '%') : '') + '</div>' : ''; };
-    var lh = '<article class="br-feat br-rise" style="--c:' + (col[lead.tone] || 'var(--ember2)') + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
+    var lh = '<article class="br-feat br-rise" style="--c:' + (col[lead.tone] || 'var(--hb-good)') + litOf(lead.tone) + (lead.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + '">'
       + '<div class="fl"><div class="t"><i></i>' + esc2(label[lead.tone] || 'Good to know') + '</div><div class="h">' + numify(lead.headline) + '</div></div>'
       + '<div class="fr"><div class="m">' + numify(lead.metric) + '</div>' + conf(lead) + '<div class="a">' + numify(lead.action) + '</div></div></article>';
     for (i = 1; i < list.length; i++) {
       var x = list[i];
-      rest += '<article class="br-insr br-rise" style="--c:' + (col[x.tone] || 'var(--ember2)') + (x.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + ';animation-delay:' + (0.05 * i) + 's">'
+      rest += '<article class="br-insr br-rise" style="--c:' + (col[x.tone] || 'var(--hb-good)') + litOf(x.tone) + (x.tone === 'bad' ? ';--ct:var(--br-red-text)' : '') + ';animation-delay:' + (0.05 * i) + 's">'
         + '<div class="t"><i></i>' + esc2(label[x.tone] || 'Good to know') + '</div><div class="h">' + numify(x.headline) + '</div><div class="m">' + numify(x.metric) + '</div>' + conf(x)
         + '<div class="a">' + numify(x.action) + '</div></article>';
     }
@@ -48210,14 +48274,16 @@ function sfw2RuleCheck(chk) {
     var w = x.unit_word || (x.unit === 'oz' ? 'oz' : 'unit'), gap = x.gap_units || 0, basis = [], j;
     var id = 'br-vr-' + String(x.product_key || i).replace(/[^a-z0-9]+/gi, '-');
     for (j = 0; j < (x.theoretical_basis || []).length; j++) basis.push(THEO[x.theoretical_basis[j]] || x.theoretical_basis[j]);
-    var facts = fact('Bought', units(x.bought_units, w)) + fact('Sold', units(x.rung_units, w))
+    var facts = (x.not_bought_in_span ? fact('Last bought', hn(x.last_bought_mdy)) : fact('Bought', units(x.bought_units, w))) + fact('Sold', units(x.rung_units, w))
       + (x.comped_units ? fact('Poured, not paid', units(x.comped_units, w)) : '') + (x.waste_units ? fact('Logged as waste', units(x.waste_units, w)) : '')
       + (basis.length ? fact('Counted at', esc2(basis.join(', '))) : '');
     return '<details class="br-vr" id="' + id + '"' + (ST.det[id] ? ' open' : '') + '><summary>'
       + '<span class="n"><b>' + esc2(x.product) + '</b><span><i class="br-swt" style="--s:' + seriesOf(x.category).css + '"></i>' + esc2(LABELS[x.category] || x.category || '')
       + (x.incomplete ? ' · <em>invoices missing</em>' : '') + '</span></span>'
-      + '<span class="br-vcmp">' + varBar(x) + '<span class="lg"><span>Bought ' + units(x.bought_units, w) + '</span><span>Sold ' + units(x.rung_units, w) + '</span></span></span>'
-      + '<span class="g' + (gap < 0 ? ' neg' : '') + '"><b>' + hn(money(Math.abs(x.gap_usd || 0))) + '</b><span>' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + ' ' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + '</span></span>'
+      + '<span class="br-vcmp">' + varBar(x) + '<span class="lg"><span>' + (x.not_bought_in_span ? 'Last bought ' + hn(x.last_bought_mdy) : 'Bought ' + units(x.bought_units, w)) + '</span><span>Sold ' + units(x.rung_units, w) + '</span></span></span>'
+      + (x.not_bought_in_span
+        ? '<span class="g"><b>—</b><span>poured from stock bought before this span</span></span>'
+        : '<span class="g' + (gap < 0 ? ' neg' : '') + '"><b>' + hn(money(Math.abs(x.gap_usd || 0))) + '</b><span>' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + ' ' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + '</span></span>')
       + CHEVRON + '</summary><div class="br-vrb"><div class="br-facts">' + facts + '</div>' + soldAs(x.drinks, id)
       + ((x.assumes || []).length ? '<p class="br-note">' + numify(x.assumes.join(' · ')) + '</p>' : '') + '</div></details>';
   }
@@ -48538,6 +48604,8 @@ function sfw2RuleCheck(chk) {
       + panel('cost', costPanel(d)) + panel('buying', buyPanel(d)) + panel('match', matchPanel(d)) + panel('stock', stockPanel(d));
     return h;
   }
+  /* The What-this-measures dialog's close (cModal calls it by name: Close, the scrim, Escape). */
+  window.barWhyClose = function () { ST.why = false; var m = $id('br-why-modal'); if (m) m.style.display = 'none'; };
   function skeleton() {
     return '<div class="dn-k">Bar</div><div class="br-sk" role="status" aria-label="Loading" style="height:300px;margin-top:14px"></div>'
       + '<div class="br-cats"><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div><div class="br-sk" style="height:250px"></div></div>'
@@ -48832,7 +48900,12 @@ function sfw2RuleCheck(chk) {
         setTab(TABS[ti].k, true);
         return;
       }
-      if (e.key === 'Escape') { e.preventDefault(); window.barClose(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        /* The dialog closes first; the Bar on the next Escape. */
+        if (window.cModal && cModal.isOpen('br-why-modal')) { cModal.close('br-why-modal'); return; }
+        window.barClose();
+      }
     });
     el.addEventListener('focusout', function (e) { if (e.target && e.target.getAttribute && e.target.getAttribute('data-br-trend')) trendHide(el); });
     el.addEventListener('toggle', function (e) {
@@ -48870,7 +48943,7 @@ function sfw2RuleCheck(chk) {
       else if (t.getAttribute && t.getAttribute('data-br-cnt')) ST.cnt[t.getAttribute('data-br-cnt')] = t.value;
     });
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-br-row],[data-br-dir],[data-br-series],[data-br-more],[data-br-why],[data-br-whyclose],[data-br-go],[data-br-targets],[data-br-stop],[data-br-unstop],[data-br-clear],[data-br-cdel],[data-br-mapconfirm],[data-br-pack],[data-br-link],[data-br-unlink],[data-br-exp],[data-br-dm],[data-br-ladall],[data-br-credall],[data-br-pmore],[data-br-wlog],[data-br-wdel],[data-br-vmap],[data-br-unaside],[data-br-entry],[data-br-spec],[data-br-specall],[data-br-tab]') : null;
       if (!t) return;
       var a = function (n) { return t.getAttribute(n); };
       if (a('data-br-tab') != null) { setTab(a('data-br-tab')); return; }
@@ -48900,7 +48973,9 @@ function sfw2RuleCheck(chk) {
         if (wantRemote()) fetchPrices(mv === 'next' && !!ST.pq, before);
         redrawList(before);
       } else if (a('data-br-why') != null) {
-        ST.why = !ST.why; var w = $id('br-why'); if (w) w.hidden = !ST.why; t.setAttribute('aria-expanded', ST.why ? 'true' : 'false');
+        ST.why = true; if (window.cModal) cModal.open('br-why-modal', {close: 'barWhyClose'});
+      } else if (a('data-br-whyclose') != null) {
+        if (window.cModal) cModal.close('br-why-modal'); else window.barWhyClose();
       } else if (a('data-br-go') != null) goTo(a('data-br-go'));
       else if (a('data-br-targets') != null) {
         window.barClose();

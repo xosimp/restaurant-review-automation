@@ -93,8 +93,7 @@ struct MarketingAnalyticsSection: View {
                     CavnarWebLinkRow(title: "What posts did to sales",
                                      path: "marketing/attribution", actionLabel: "Open on the web")
                 }
-                // How you compare — the Benchmark Engine's card (#23).
-                HowYouCompareCard(module: "marketing")
+                // How you compare left Marketing on the web and here (owner, 10/16–10/17/26).
             }
         }
     }

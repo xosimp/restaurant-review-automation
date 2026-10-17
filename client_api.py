@@ -1526,7 +1526,12 @@ def format_insight_html(text, rec_items=None, surface=None, module=None):
     html = ''
     if intro:
         html += '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>'
-    html += '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
+    # The heading only over a line still open: once the owner has answered
+    # every one, "Recommendations" stood alone under the lead and the brief
+    # read as cut off (EJ's Marketing, 10/17/26).
+    if any(not (by_index.get(_i) or {}).get("answered") for _i in range(len(recs))):
+        html += ('<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
+                 'color:#c84b2f;margin-bottom:8px">Recommendations</div>')
     num = 1
     for _i, clean in enumerate(recs):
         _it = by_index.get(_i)

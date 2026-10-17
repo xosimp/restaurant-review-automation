@@ -637,7 +637,9 @@ def _rows(db, rid):
     return rows
 
 
-def test_only_cards_on_screen_are_logged_and_with_the_confidence_shown(db):
+def test_only_cards_on_screen_are_logged_and_with_the_confidence_shown(db, monkeypatch):
+    # No holiday inside the 14 days, whatever today is (10/17/26: Halloween was).
+    monkeypatch.setattr(mo, "holidays", lambda *a, **k: [])
     rid = _rid(db)
     _labor(db, rid)
     _contacts(db, rid, 30, email=12)
@@ -656,7 +658,8 @@ def test_only_cards_on_screen_are_logged_and_with_the_confidence_shown(db):
     assert set(_rows(db, rid)) == set(keys)
 
 
-def test_the_feed_drops_answered_cards(db):
+def test_the_feed_drops_answered_cards(db, monkeypatch):
+    monkeypatch.setattr(mo, "holidays", lambda *a, **k: [])        # whatever today is
     rid = _rid(db)
     _labor(db, rid)
     assert [i["key"] for i in mo.feed(rid, db_path=db)["items"]] == [f"slow_day:{SLOW}"]
@@ -666,6 +669,7 @@ def test_the_feed_drops_answered_cards(db):
 
 
 def test_every_source_says_checked_no_data_or_failed(db, monkeypatch):
+    monkeypatch.setattr(mo, "holidays", lambda *a, **k: [])        # whatever today is
     rid = _rid(db)
     _labor(db, rid)
     captured, puts = [], []
