@@ -11826,25 +11826,47 @@ body.ss-open #ai-strip,body.ss-open #ai-feed{display:none!important}
 .ss-crew-empty{padding:28px;border-radius:18px;border:1px dashed var(--hb-line);color:var(--ink2);font-size:15px;line-height:1.55}
 /* Bench (studio_bench, scheduler audit 10/10/26): one card per capability,
    each loading on its own, each saying what it rests on. */
-.ss-bn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:14px}
-.ss-bn{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:18px 18px 14px;box-shadow:var(--elev-card);min-width:0}
-.ss-bn h2{font-family:'Clash Display',sans-serif;font-weight:500;font-size:19px;color:var(--ink);margin:4px 0 6px}
-.ss-bn .lede{font-size:14px;line-height:1.5;color:var(--ink3);margin:0 0 12px}
-.ss-bn .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}
-.ss-bn .line{font-size:14.5px;line-height:1.5;color:var(--ink2);margin:6px 0}
-.ss-bn .line b{color:var(--ink)}
-.ss-bn .basis{font-size:12.5px;line-height:1.45;color:var(--ink3);margin-top:10px}
-.ss-bn .item{border-top:1px solid var(--hb-line);padding:10px 0}
-.ss-bn .item:first-of-type{border-top:0}
-.ss-bn .big{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:22px;color:var(--ink)}
-.ss-bn .tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:1px 8px}
-.ss-bn .tag.critical{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
-.ss-bn .tag.fragile,.ss-bn .tag.watch,.ss-bn .tag.tentative{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}
+/* Bench (owner, 10/19/26: "way too wordy ... small text everywhere"): a card is its kicker and an info
+   tip (what it is and what it rests on), then figures, short rows and one action. Cards size to what they
+   hold; Bench strength spans the row. Text 15px, secondary 13.5px; controls 44px, selects branded. */
+.ss-bn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,460px),1fr));gap:16px;align-items:start;margin-top:24px}
+.ss-bn{background:var(--surface);border:1px solid var(--hb-line);border-radius:18px;padding:20px 22px;box-shadow:var(--elev-card);min-width:0}
+.ss-bn.wide{grid-column:1/-1}
+.ss-bn-h{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.ss-bn-in{font-size:15px;line-height:1.5;color:var(--ink2)}
+.ss-bn-empty{font-size:15px;line-height:1.5;color:var(--ink3)}
+.ss-bn .ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ss-bn .ac-select,.ss-bn .ac-input{width:auto;height:44px;min-height:44px;box-sizing:border-box;margin:0;padding:0 13px;font-size:15px;border-radius:10px}
+.ss-bn .ac-select{-webkit-appearance:none;appearance:none;padding-right:36px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;background-size:12px 8px}
+.ss-bn .ac-input.n{width:84px;text-align:right}
+.ss-bn .ctl .cbtn{height:44px}
+.ss-bn .ctl .u{font-size:15px;color:var(--ink3)}
+.ss-bn-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;margin-top:18px}
+.ss-bn-stat .v{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;line-height:1.1;color:var(--ink)}
+.ss-bn-stat .v small{font-size:14px;font-weight:500;color:var(--ink3);margin-left:3px}
+.ss-bn-stat .k{font-size:13.5px;color:var(--ink3);margin-top:4px}
+.ss-bn-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hb-line2)}
+.ss-bn-row:first-child{border-top:0;padding-top:2px}
+.ss-bn-row .nm{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--ink)}
+.ss-bn-row .nm small{display:block;font-size:13.5px;font-weight:400;color:var(--ink3);margin-top:2px}
+.ss-bn-row .r{font-family:'Space Grotesk',sans-serif;font-size:15px;color:var(--ink);white-space:nowrap}
+.ss-bn-sub{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin:0 0 6px}
+.ss-bn-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px 48px}
+@media (max-width:760px){.ss-bn-cols{grid-template-columns:minmax(0,1fr)}}
+.ss-bn-cols>.full{grid-column:1/-1}
+.ss-bn-2{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));column-gap:40px}
+.ss-bn-2>.ss-bn-row:nth-child(-n+2){border-top:0;padding-top:2px}
+.ss-bn-meter{flex:0 0 120px;height:6px;border-radius:99px;background:color-mix(in srgb,var(--ink3) 20%,transparent);overflow:hidden}
+.ss-bn-meter i{display:block;height:100%;border-radius:inherit;background:var(--amber)}
+.ss-bn-meter.bad i{background:var(--red)}
+.ss-bn .tag{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:3px 9px;white-space:nowrap}
+.ss-bn .tag.critical,.ss-bn .tag.high,.ss-bn .tag.now{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
+.ss-bn .tag.fragile,.ss-bn .tag.watch,.ss-bn .tag.tentative,.ss-bn .tag.soon{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}
 .ss-bn .tag.ok,.ss-bn .tag.firm,.ss-bn .tag.accepted{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
-.ss-bn .tag.high{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
 .ss-bn .tag.likely,.ss-bn .tag.offered,.ss-bn .tag.none{color:var(--ink2);background:color-mix(in srgb,var(--ink3) 18%,transparent)}
-.ss-bn select,.ss-bn input[type=number]{min-height:36px}
-.ss-bn-empty{padding:12px 0;color:var(--ink2);font-size:14.5px;line-height:1.5}
+.ss-bn .co-more{margin-top:10px}
+.ss-bn .co-more summary{font-size:14px}
+.ss-bn .act{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
 /* History */
 .ss-hist-list{display:flex;flex-direction:column;gap:10px;margin-top:22px}
 .ss-hweek{background:var(--surface);border:1px solid var(--hb-line);border-radius:16px;box-shadow:var(--elev-card);padding:4px 20px}
@@ -13357,7 +13379,6 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="ss-crew">
         <div class="ss-kick">Bench</div>
         <h1>What could go wrong, priced before it does</h1>
-        <p class="ss-crew-lede">Every figure is from your own nights; where there aren't enough yet, it says so.</p>
         <div id="ss-bench-body" class="ss-bn-grid"></div>
       </div>
     </section>
@@ -28648,29 +28669,37 @@ var SS_CREW_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sat
 // ── Bench (studio_bench) ────────────────────────────────────────────────
 // One card per capability; each is fetched on its own from
 // /api/labor/bench?part=... so a slow one never holds the others.
+// [part, kicker, what the card is (its info tip), wide]
 var SS_BENCH_PARTS = [
-  ['what_if', 'What a cut costs the guest', 'Your last four of a weekday, replayed with one more or one fewer.'],
-  ['standby', 'Stand-by for no-shows', 'The nights most likely to lose someone, and who could be on call.'],
-  ['events', 'Events that changed after you published', 'A game added, moved or cancelled since the week went out, priced.'],
-  ['ladder', 'How firm each shift is', 'Firm, likely or tentative, and how often each person’s shifts changed.'],
-  ['strength', 'Bench strength', 'Where one absence leaves a gap, who to train next, and when to hire.'],
+  ['strength', 'Bench strength', 'Where one absence leaves a gap, who to train next, and when to hire.', true],
+  ['what_if', 'Crew change replay', 'Your last four of a weekday, replayed with one more or one fewer.'],
+  ['standby', 'Stand-by', 'Nights likely to lose someone this week, and who could be on call.'],
+  ['events', 'Event changes', 'Games added, moved or cancelled since the week went out, priced.'],
+  ['ladder', 'Shift firmness', 'Firm, likely or tentative, and how often each person’s published shifts held.'],
   ['tips', 'Tip opportunity', 'The shifts worth the most in tips. Only you see this.'],
   ['retention', 'People to keep', 'Warning signs on the schedule side. Only you see this; nobody is told.'],
-  ['org', 'Your other locations', 'Staff there who opted in to pick up shifts here.'],
-  ['outcomes', 'Cavnar AI weeks against yours', 'How Cavnar AI’s weeks ran against the ones built without it.']
+  ['org', 'Other locations', 'Staff at your other locations who opted in to pick up shifts here.'],
+  ['outcomes', 'Cavnar AI vs your weeks', 'How weeks built by Cavnar AI ran against the ones built without it.']
 ];
 var _ssBench = {};
 function ssBenchHid() { return (typeof _schedHistoryId !== 'undefined' && _schedHistoryId) ? _schedHistoryId : ''; }
+function ssBnPart(part) { for (var i = 0; i < SS_BENCH_PARTS.length; i++) if (SS_BENCH_PARTS[i][0] === part) return SS_BENCH_PARTS[i]; return null; }
+function ssBnTip(part, extra) {
+  var p = ssBnPart(part), t = [p ? p[2] : '', extra || ''].join(' ').replace(/\s+/g, ' ').trim(), id = 'ss-bn-tip-' + part;
+  return '<span class="cav-it"><button type="button" class="cbtn cav-ib" data-itip="' + id + '" aria-expanded="false" aria-controls="' + id
+    + '" aria-label="What this card shows">i</button><span class="cav-itp" id="' + id + '" role="tooltip" hidden>' + _escHtml(t) + '</span></span>';
+}
+function ssBnHead(part, extra) { var c = document.getElementById('ss-bn-' + part), h = c ? c.querySelector('.ss-bn-h') : null; if (h) h.innerHTML = '<div class="ss-kick">' + _escHtml(ssBnPart(part)[1]) + '</div>' + ssBnTip(part, extra); }
 function ssRenderBench() {
   var body = document.getElementById('ss-bench-body'); if (!body) return;
   var h = '', i;
   for (i = 0; i < SS_BENCH_PARTS.length; i++) {
     var p = SS_BENCH_PARTS[i];
-    h += '<article class="ss-bn" id="ss-bn-' + p[0] + '"><div class="ss-kick">' + _escHtml(p[1]) + '</div><p class="lede">' + _escHtml(p[2]) + '</p>'
+    h += '<article class="ss-bn' + (p[3] ? ' wide' : '') + '" id="ss-bn-' + p[0] + '"><div class="ss-bn-h"></div>'
       + '<div class="ss-bn-in"><div class="dr-pulse" role="status" aria-label="Loading"><i></i></div></div></article>';
   }
   body.innerHTML = h;
-  for (i = 0; i < SS_BENCH_PARTS.length; i++) ssBenchLoad(SS_BENCH_PARTS[i][0]);
+  for (i = 0; i < SS_BENCH_PARTS.length; i++) { ssBnHead(SS_BENCH_PARTS[i][0]); ssBenchLoad(SS_BENCH_PARTS[i][0]); }
 }
 function ssBenchLoad(part, extra) {
   var url = '/api/labor/bench?part=' + part + (ssBenchHid() ? '&history_id=' + encodeURIComponent(ssBenchHid()) : '') + (extra || '');
@@ -28681,129 +28710,160 @@ function ssBenchLoad(part, extra) {
 function ssBenchIn(part) { var c = document.getElementById('ss-bn-' + part); return c ? c.querySelector('.ss-bn-in') : null; }
 function ssBnEmpty(t) { return '<div class="ss-bn-empty">' + _escHtml(t) + '</div>'; }
 function ssBnMoney(v) { return v == null ? '—' : '$' + Math.round(+v).toLocaleString('en-US'); }
+function ssBnNum(v) { return '<span class="hb-num">' + _escHtml(String(v)) + '</span>'; }
+function ssBnShift(part) { return part === 'morning' ? 'lunch' : 'dinner'; }
+function ssBnCap(t) { t = String(t || ''); return t.charAt(0).toUpperCase() + t.slice(1); }
+// A role as the owner reads it: "Manager FOH", never "manager foh".
+function ssBnRole(t) { return ssBnCap(String(t || '').replace(/\b(foh|boh)\b/gi, function (m) { return m.toUpperCase(); })); }
+function ssBnStat(v, unit, k) { return '<div class="ss-bn-stat"><div class="v">' + v + (unit ? '<small>' + _escHtml(unit) + '</small>' : '') + '</div><div class="k">' + _escHtml(k) + '</div></div>'; }
+function ssBnRow(nm, sub, right) { return '<div class="ss-bn-row"><div class="nm">' + nm + (sub ? '<small>' + sub + '</small>' : '') + '</div>' + (right || '') + '</div>'; }
+// A list shows its first n; the rest wait under one More.
+function ssBnList(rows, n, noun) {
+  if (rows.length <= n) return rows.join('');
+  return rows.slice(0, n).join('') + '<details class="co-more"><summary>' + (rows.length - n) + ' more ' + _escHtml(noun) + '</summary>' + rows.slice(n).join('') + '</details>';
+}
+function ssBnSigned(v) { v = +v || 0; return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(Math.round(v)); }
 function ssBenchDraw(part, d) {
   var el = ssBenchIn(part); if (!el) return;
   if (!d || (!d.ok && !d.form)) {
     if (d && d.http_status === 403) { var card = document.getElementById('ss-bn-' + part); if (card) card.hidden = true; return; }
     el.innerHTML = ssBnEmpty((d && d.error) || 'This couldn’t be read just now.'); return;
   }
-  var h = '', i, j;
+  var h = '', i, rows = [], tip = d.basis || '';
   if (part === 'what_if') {
     var days = (typeof _schedWeekDates !== 'undefined' && _schedWeekDates && _schedWeekDates.length === 7)
       ? _schedWeekDates.map(function (x) { return _schedDayOf(x); })
       : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    h += '<div class="row"><select id="ss-wi-day" aria-label="Weekday">';
-    for (i = 0; i < days.length; i++) h += '<option' + (days[i] === 'Saturday' ? ' selected' : '') + '>' + days[i] + '</option>';
-    h += '</select><select id="ss-wi-role" aria-label="Role"><option value="server">Servers</option><option value="line_cook">Cooks</option></select>'
-      + '<select id="ss-wi-change" aria-label="Change"><option value="-1">1 fewer</option><option value="-2">2 fewer</option><option value="1">1 more</option></select>'
-      + '<button type="button" class="cbtn cbtn-primary cbtn-sm" data-bn-act="whatif">Replay</button></div>';
+    var keep = {day: 'Saturday', role: 'server', change: '-1'};
+    ['day', 'role', 'change'].forEach(function (k) { var x = document.getElementById('ss-wi-' + k); if (x && x.value) keep[k] = x.value; });
+    var opt = function (v, t, cur) { return '<option value="' + _escHtml(v) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + _escHtml(t) + '</option>'; };
+    h += '<div class="ctl"><select class="ac-select" id="ss-wi-day" aria-label="Weekday">';
+    for (i = 0; i < days.length; i++) h += opt(days[i], days[i], keep.day);
+    h += '</select><select class="ac-select" id="ss-wi-role" aria-label="Role">' + opt('server', 'Servers', keep.role) + opt('line_cook', 'Cooks', keep.role) + '</select>'
+      + '<select class="ac-select" id="ss-wi-change" aria-label="Change">' + opt('-1', '1 fewer', keep.change) + opt('-2', '2 fewer', keep.change) + opt('1', '1 more', keep.change) + '</select>'
+      + '<button type="button" class="cbtn cbtn-primary" data-bn-act="whatif">Replay</button></div>';
     if (!d.form) {
-      if (!d.available) h += ssBnEmpty(d.reason || 'Not enough timed tickets yet.');
+      if (!d.available) h += '<div class="ss-bn-empty" style="margin-top:14px">' + _escHtml(d.reason || 'Not enough timed tickets yet.') + '</div>';
       else {
-        h += '<div class="line"><b>' + _escHtml(d.sentence || 'No change the model can measure.') + '</b></div>';
-        var st = d.stages || {};
-        for (var k in st) if (st.hasOwnProperty(k) && st[k].available) {
-          h += '<div class="line">' + (k === 'kitchen' ? 'Ticket time' : 'Table time') + ': <span class="hb-num">' + st[k].as_run + '</span> min as run → <span class="hb-num">' + st[k].predicted + '</span> min'
-            + (st[k].turns_pct != null ? ' · turns <span class="hb-num">' + (st[k].turns_pct > 0 ? '+' : '') + st[k].turns_pct + '%</span> at a full room' : '') + '</div>';
-        }
-        if (d.comps) h += '<div class="line">Comps: <span class="hb-num">' + d.comps.as_run + '</span> → <span class="hb-num">' + d.comps.predicted + '</span> a night</div>';
-        h += '<div class="basis">Nights: ' + _escHtml((d.nights || []).join(', ')) + '. ' + _escHtml(d.basis || '') + '</div>';
+        var st = d.stages || {}, stats = '';
+        if (st.floor && st.floor.available) stats += ssBnStat(ssBnNum(ssBnSigned(st.floor.moved)), 'min', 'Table time (' + ssBnSigned(st.floor.moved_lo) + ' to ' + ssBnSigned(st.floor.moved_hi) + ')');
+        if (st.kitchen && st.kitchen.available) stats += ssBnStat(ssBnNum(ssBnSigned(st.kitchen.moved)), 'min', 'Ticket time (' + ssBnSigned(st.kitchen.moved_lo) + ' to ' + ssBnSigned(st.kitchen.moved_hi) + ')');
+        var strand = (st.floor && st.floor.stranded) || (st.kitchen && st.kitchen.stranded) || 0;
+        if (strand) stats += ssBnStat(ssBnNum(strand), '', 'Tickets nobody takes');
+        if (d.comps) stats += ssBnStat(ssBnNum(d.comps.predicted), '', 'Comps a night (now ' + d.comps.as_run + ')');
+        h += stats ? '<div class="ss-bn-stats">' + stats + '</div>' : '<div class="ss-bn-empty" style="margin-top:14px">No change the model can measure.</div>';
+        tip = (d.sentence || '') + ' Nights: ' + (d.nights || []).join(', ') + '. ' + (d.basis || '');
       }
     }
   } else if (part === 'standby') {
     var sug = d.suggestions || [], slots = d.slots || [], pol = d.policy || {};
-    if (!sug.length && !slots.length) h += ssBnEmpty(ssBenchHid() ? 'No night in this week looks likely to lose someone.' : 'Open a week to see its stand-by nights.');
+    if (!sug.length && !slots.length) h += ssBnEmpty(ssBenchHid() ? 'No risky nights this week.' : 'Open a week to see its risky nights.');
     for (i = 0; i < sug.length; i++) {
       var s = sug[i], who = s.standby || {}, pr = s.price || {};
-      h += '<div class="item"><div class="line"><b>' + _escHtml(s.day + ' ' + mdy(s.date)) + '</b> · <span class="hb-num">' + Math.round((s.chance_of_a_no_show || 0) * 100) + '%</span> chance someone doesn’t show</div>';
-      if (who.employee) {
-        h += '<div class="line">' + _escHtml(who.employee) + ' (' + _escHtml(who.role || '') + ') is off and could be on call · ' + ssBnMoney(pr.standby_pay) + ' standby pay'
-          + (pr.expected_short_cost != null ? ' · a short night here costs about ' + ssBnMoney(pr.expected_short_cost) + ' in expected sales' : '') + '</div>';
-        if (pr.verdict) h += '<div class="basis">' + _escHtml(pr.verdict) + '</div>';
-        else if (pr.short_night && pr.short_night.sales_note) h += '<div class="basis">' + _escHtml(pr.short_night.sales_note) + '</div>';
-        var taken = (s.slots || []).length;
-        if (!taken) h += '<div class="row"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-bn-act="sb-offer" data-date="' + _escHtml(s.date) + '" data-role="' + _escHtml(who.role || '')
-          + '" data-emp="' + _escHtml(who.employee) + '" data-start="' + _escHtml(who.shift_start || '') + '" data-end="' + _escHtml(who.shift_end || '') + '">Offer ' + _escHtml(who.employee) + ' on call</button></div>';
-      }
-      h += '</div>';
+      var right = (who.employee && !(s.slots || []).length) ? '<button type="button" class="cbtn cbtn-secondary" data-bn-act="sb-offer" data-date="' + _escHtml(s.date) + '" data-role="' + _escHtml(who.role || '')
+        + '" data-emp="' + _escHtml(who.employee) + '" data-start="' + _escHtml(who.shift_start || '') + '" data-end="' + _escHtml(who.shift_end || '') + '">Offer ' + _escHtml(String(who.employee).split(' ')[0]) + '</button>' : '';
+      rows.push(ssBnRow(_escHtml(s.day) + ' ' + ssBnNum(mdy(s.date)) + ' · ' + ssBnNum(Math.round((s.chance_of_a_no_show || 0) * 100) + '%') + ' no-show risk',
+        who.employee ? _escHtml(who.employee) + ' · ' + ssBnNum(ssBnMoney(pr.standby_pay)) + ' standby' + (pr.expected_short_cost != null ? ' · ' + ssBnNum(ssBnMoney(pr.expected_short_cost)) + ' at risk' : '') : '', right));
     }
     for (i = 0; i < slots.length; i++) {
       var x = slots[i];
-      h += '<div class="item"><div class="line"><span class="tag ' + _escHtml(x.status) + '">' + _escHtml(x.called_in ? 'called in' : x.status) + '</span> ' + _escHtml(x.employee_name) + ' · '
-        + _escHtml(mdy(x.date)) + ' ' + _escHtml(x.shift_start + '–' + x.shift_end) + (x.consent_at ? ' · agreed ' + _escHtml(mdy(String(x.consent_at).slice(0, 10))) : '')
-        + (x.pay_owed ? ' · ' + ssBnMoney(x.pay_owed) + ' owed' : '') + '</div>'
-        + ((x.status === 'offered' || x.status === 'accepted') ? '<div class="row"><button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="sb-withdraw" data-id="' + x.id + '">Withdraw</button></div>' : '') + '</div>';
+      rows.push(ssBnRow(_escHtml(x.employee_name) + ' · ' + ssBnNum(mdy(x.date)),
+        ssBnNum(_escHtml(x.shift_start + '–' + x.shift_end)) + (x.pay_owed ? ' · ' + ssBnNum(ssBnMoney(x.pay_owed)) + ' owed' : ''),
+        '<span class="tag ' + _escHtml(x.status) + '">' + _escHtml(x.called_in ? 'called in' : x.status) + '</span>'
+        + ((x.status === 'offered' || x.status === 'accepted') ? '<button type="button" class="cbtn cbtn-text" data-bn-act="sb-withdraw" data-id="' + x.id + '">Withdraw</button>' : '')));
     }
-    h += '<div class="row"><span class="basis" style="margin:0">Standby pay: ' + (pol.flat_pay != null ? ssBnMoney(pol.flat_pay) + ' a night' : (pol.pay_hours || 2) + ' hours at their rate') + (pol.stated ? '' : ' (the default)') + '</span>'
-      + '<input type="number" id="ss-sb-hours" min="0" max="12" step="0.5" aria-label="Hours of standby pay" placeholder="hours" style="width:80px">'
-      + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="sb-policy">Set</button></div>';
-    h += '<div class="basis">A person’s yes is kept with the time and the exact terms they agreed to. If someone doesn’t show, the person on call is offered the shift the moment it’s noticed.</div>';
+    h += rows.join('');
+    var payNow = pol.flat_pay != null ? ssBnMoney(pol.flat_pay) + ' a night' : (pol.pay_hours || 2) + ' hours at their rate';
+    h += '<details class="co-more"><summary>Standby pay <small>' + _escHtml(payNow) + '</small></summary><div class="ctl" style="margin-top:10px">'
+      + '<input type="number" class="ac-input n" id="ss-sb-hours" min="0" max="12" step="0.5" inputmode="decimal" aria-label="Hours of standby pay" value="' + _escHtml(pol.flat_pay != null ? '' : String(pol.pay_hours || 2)) + '">'
+      + '<span class="u">hours at their rate</span><button type="button" class="cbtn cbtn-secondary" data-bn-act="sb-policy">Save</button></div></details>';
+    tip = 'A person’s yes is kept with the exact terms they agreed to. If someone doesn’t show, the person on call is offered the shift.';
   } else if (part === 'events') {
     var ps = d.proposals || [];
-    if (!ps.length) h += ssBnEmpty('No event has changed on a published week.');
+    if (!ps.length) h += ssBnEmpty('No changes since you published.');
     for (i = 0; i < ps.length && i < 8; i++) {
-      var p = ps[i], c = p.cost || {};
-      h += '<div class="item"><div class="line"><b>' + _escHtml(mdy(p.date)) + '</b> · ' + _escHtml(p.summary) + '</div>';
-      if (c.predictability_text) h += '<div class="basis">' + _escHtml(c.predictability_text) + '</div>';
-      if (p.status === 'open') h += '<div class="row"><button type="button" class="cbtn cbtn-primary cbtn-sm" data-bn-act="ev-approve" data-id="' + p.id + '">Make the change</button>'
-        + '<button type="button" class="cbtn cbtn-text cbtn-sm" data-bn-act="ev-dismiss" data-id="' + p.id + '">Keep the week</button></div>';
-      else h += '<div class="basis">' + _escHtml(p.status === 'applied' ? 'Done' + ((p.result || []).some(function (r) { return r.studio; }) ? ' — remove the named shift in Schedule and send it' : '') : (p.status === 'noted' ? 'Nothing to change' : 'Kept as it was')) + '</div>';
-      h += '</div>';
+      var p = ps[i], c = p.cost || {}, act = '';
+      if (p.status === 'open') act = '<div class="act"><button type="button" class="cbtn cbtn-primary" data-bn-act="ev-approve" data-id="' + p.id + '">Make the change</button>'
+        + '<button type="button" class="cbtn cbtn-secondary" data-bn-act="ev-dismiss" data-id="' + p.id + '">Keep the week</button></div>';
+      var done = p.status === 'applied' ? 'Done' : (p.status === 'noted' ? 'Nothing to change' : (p.status === 'open' ? '' : 'Kept'));
+      rows.push('<div class="ss-bn-row" style="display:block"><div class="nm">' + ssBnNum(mdy(p.date)) + ' · ' + _escHtml(p.summary)
+        + (c.predictability_text ? '<small>' + _escHtml(c.predictability_text) + '</small>' : '') + (done ? '<small>' + _escHtml(done) + '</small>' : '') + '</div>' + act + '</div>');
     }
+    h += rows.join('');
   } else if (part === 'ladder') {
-    var wk = d.week || [], ppl = d.people || [];
-    if (wk.length) {
-      h += '<div class="line">';
-      for (i = 0; i < wk.length; i++) h += '<span style="display:inline-block;margin-right:14px">' + _escHtml(wk[i].label) + ': <span class="tag firm">' + wk[i].firm + ' firm</span> <span class="tag likely">' + wk[i].likely + '</span> <span class="tag tentative">' + wk[i].tentative + '</span></span>';
-      h += '</div>';
-    } else h += ssBnEmpty('Publish a week and each shift is marked firm, likely or tentative for the person who works it.');
-    for (i = 0; i < ppl.length && i < 8; i++) {
-      if (ppl[i].kept_share == null || ppl[i].kept_share >= 1) continue;
-      h += '<div class="line">' + _escHtml(ppl[i].name) + ': <span class="hb-num">' + Math.round(ppl[i].kept_share * 100) + '%</span> of <span class="hb-num">' + ppl[i].committed + '</span> published shifts kept</div>';
+    var wk = d.week || [], ppl = (d.people || []).filter(function (x) { return x.kept_share != null && x.kept_share < 1; });
+    if (!wk.length) h += ssBnEmpty('Shows once a week is published.');
+    for (i = 0; i < wk.length; i++) rows.push(ssBnRow(_escHtml(wk[i].label), '',
+      '<span class="tag firm">' + wk[i].firm + ' firm</span> <span class="tag likely">' + wk[i].likely + ' likely</span> <span class="tag tentative">' + wk[i].tentative + ' tentative</span>'));
+    h += rows.join('');
+    if (ppl.length) {
+      var pr2 = [];
+      for (i = 0; i < ppl.length; i++) pr2.push(ssBnRow(_escHtml(ppl[i].name), '', '<span class="r">' + ssBnNum(Math.round(ppl[i].kept_share * 100) + '%') + ' of ' + ssBnNum(ppl[i].committed) + ' kept</span>'));
+      h += '<div class="ss-bn-sub" style="margin-top:16px">Shifts that held</div>' + ssBnList(pr2, 5, 'people');
     }
-    h += '<div class="basis">' + _escHtml(d.basis || '') + '</div>';
   } else if (part === 'strength') {
     var pools = (d.pools || []).filter(function (x) { return x.status !== 'ok'; });
-    if (!d.available) h += ssBnEmpty('Bench strength fills in once a few weeks of shifts are on file.');
-    else if (!pools.length) h += ssBnEmpty('No role and shift is one absence from a gap.');
-    for (i = 0; i < pools.length; i++) h += '<div class="line"><span class="tag ' + pools[i].status + '">' + pools[i].status + '</span> ' + _escHtml(pools[i].family) + ' ' + (pools[i].daypart === 'morning' ? 'lunch' : 'dinner') + ' — ' + _escHtml(pools[i].why || '') + '</div>';
-    for (i = 0; i < (d.cross_train || []).length; i++) h += '<div class="line">' + _escHtml(d.cross_train[i].text) + '</div>';
-    for (i = 0; i < (d.hiring || []).length; i++) if (d.hiring[i].text) h += '<div class="line"><b>' + _escHtml(d.hiring[i].text) + '</b></div>';
-    h += '<div class="basis">' + _escHtml(d.basis || '') + '</div>';
+    var hires = (d.hiring || []).filter(function (x) { return x.text; });
+    var gap = [], train = [], hire = [];
+    for (i = 0; i < hires.length; i++) {
+      var hr = hires[i], pct = hr.used_pct;
+      hire.push(ssBnRow(_escHtml(ssBnRole(hr.family)), pct != null ? ssBnNum(pct + '%') + ' of capacity' : '',
+        (pct != null ? '<span class="ss-bn-meter' + (hr.hire_now ? ' bad' : '') + '" aria-hidden="true"><i style="width:' + Math.min(100, pct) + '%"></i></span>' : '')
+        + '<span class="tag ' + (hr.hire_now ? 'now' : 'soon') + '">' + (hr.hire_now ? 'Hire now' : 'By ' + _escHtml(hr.hire_by_label || '')) + '</span>'));
+    }
+    for (i = 0; i < pools.length; i++) gap.push(ssBnRow(_escHtml(ssBnRole(pools[i].family)) + ' ' + ssBnShift(pools[i].daypart), _escHtml(pools[i].why || ''),
+      '<span class="tag ' + _escHtml(pools[i].status) + '">' + (pools[i].status === 'critical' ? 'gap' : 'thin') + '</span>'));
+    for (i = 0; i < (d.cross_train || []).length; i++) {
+      var ct = d.cross_train[i];
+      train.push(ssBnRow(_escHtml(ct.who || ''), _escHtml(ssBnRole(ct.what || '')) + (ct.because ? ' · ' + _escHtml(ct.because) : '')));
+    }
+    if (!d.available && !hire.length) h += ssBnEmpty('Fills in once a few weeks of shifts are on file.');
+    else {
+      h += '<div class="ss-bn-cols">'
+        + '<div><div class="ss-bn-sub">Hire</div>' + (hire.length ? ssBnList(hire, 5, 'roles') : ssBnEmpty('No role near capacity.')) + '</div>'
+        + '<div><div class="ss-bn-sub">One absence from a gap</div>' + (gap.length ? ssBnList(gap, 5, 'shifts') : ssBnEmpty('Every shift has cover.')) + '</div>'
+        + '<div class="full"><div class="ss-bn-sub">Train next</div>' + (train.length ? '<div class="ss-bn-2">' + train.slice(0, 6).join('') + '</div>'
+          + (train.length > 6 ? '<details class="co-more"><summary>' + (train.length - 6) + ' more people</summary><div class="ss-bn-2">' + train.slice(6).join('') + '</div></details>' : '')
+          : ssBnEmpty('Nobody to train yet.')) + '</div>'
+        + '</div>';
+    }
   } else if (part === 'tips') {
     if (!d.available) h += ssBnEmpty(d.reason || 'Not enough tipped shifts yet.');
     for (i = 0; i < (d.families || []).length; i++) {
-      var f = d.families[i];
-      h += '<div class="item"><div class="line"><b>' + _escHtml(f.family) + '</b> · ' + f.slots.slice(0, 3).map(function (sl) { return _escHtml(sl.day + ' ' + (sl.part === 'morning' ? 'lunch' : 'dinner')) + ' ' + ssBnMoney(sl.mean); }).join(' · ') + '</div>';
-      for (j = 0; j < (f.lines || []).length; j++) h += '<div class="line">' + _escHtml(f.lines[j]) + '</div>';
-      h += '</div>';
+      var f = d.families[i], best = (f.slots || []).filter(function (sl) { return (+sl.mean || 0) >= 5; }).slice(0, 3);
+      if (!best.length) continue;
+      rows.push(ssBnRow(_escHtml(ssBnRole(f.family)), best.map(function (sl) { return _escHtml(String(sl.day).slice(0, 3) + ' ' + ssBnShift(sl.part)) + ' ' + ssBnNum(ssBnMoney(sl.mean)); }).join(' · ')));
     }
-    if (d.basis) h += '<div class="basis">' + _escHtml(d.basis) + '</div>';
+    h += ssBnList(rows, 5, 'roles');
+    tip = (d.basis || '') + ' ' + (d.note || '');
   } else if (part === 'retention') {
     var rp = (d.people || []).filter(function (x) { return x.level !== 'none'; });
-    if (!rp.length) h += ssBnEmpty('No warning signs on the schedule side.');
+    if (!rp.length) h += ssBnEmpty('No warning signs.');
     for (i = 0; i < rp.length && i < 10; i++) {
       var r = rp[i];
-      h += '<div class="item"><div class="line"><span class="tag ' + r.level + '">' + r.level + '</span> <b>' + _escHtml(r.name) + '</b>' + (r.risk != null ? ' · <span class="hb-num">' + Math.round(r.risk * 100) + '%</span>' : '') + (r.valued ? ' · ' + _escHtml(r.valued_because || '') : '') + '</div>'
-        + '<div class="basis">' + _escHtml((r.reasons || []).join('; ')) + '</div>'
-        + '<div class="row"><button type="button" class="cbtn ' + (r.protect ? 'cbtn-secondary' : 'cbtn-text') + ' cbtn-sm" data-bn-act="ret-protect" data-name="' + _escHtml(r.name) + '" data-on="' + (r.protect ? '0' : '1') + '">'
-        + (r.protect ? 'Protecting their hours · stop' : 'Protect their hours') + '</button></div></div>';
+      rows.push(ssBnRow('<span class="tag ' + r.level + '">' + r.level + '</span> ' + _escHtml(r.name) + (r.risk != null ? ' · ' + ssBnNum(Math.round(r.risk * 100) + '%') : ''),
+        _escHtml((r.reasons || []).join(' · ')),
+        '<button type="button" class="cbtn ' + (r.protect ? 'cbtn-secondary' : 'cbtn-primary') + '" data-bn-act="ret-protect" data-name="' + _escHtml(r.name) + '" data-on="' + (r.protect ? '0' : '1') + '">'
+        + (r.protect ? 'Stop protecting' : 'Protect hours') + '</button>'));
     }
-    h += '<div class="basis">' + _escHtml(d.basis || '') + ' ' + _escHtml(d.note || '') + '</div>';
+    h += rows.join('');
+    tip = (d.basis || '') + ' ' + (d.note || '');
   } else if (part === 'org') {
-    if (!(d.siblings || []).length) h += ssBnEmpty('You have no other locations in Cavnar AI.');
+    if (!(d.siblings || []).length) h += ssBnEmpty('No other locations.');
     else {
-      h += '<div class="row"><button type="button" class="cbtn ' + (d.enabled ? 'cbtn-secondary' : 'cbtn-primary') + ' cbtn-sm" data-bn-act="org-site" data-on="' + (d.enabled ? '0' : '1') + '">' + (d.enabled ? 'Bench on here · turn off' : 'Turn on the bench here') + '</button></div>';
-      h += '<div class="line">' + (d.siblings || []).map(function (sb) { return _escHtml(sb.name) + (sb.enabled ? ' (on)' : ' (off)'); }).join(' · ') + '</div>';
-      h += '<div class="line"><span class="hb-num">' + (d.members || []).length + '</span> of your staff opted in to work at your other locations.</div>';
+      h += ssBnRow((d.siblings || []).map(function (sb) { return _escHtml(sb.name) + (sb.enabled ? ' (on)' : ' (off)'); }).join(' · '),
+        ssBnNum((d.members || []).length) + ' opted in to work here',
+        '<button type="button" class="cbtn ' + (d.enabled ? 'cbtn-secondary' : 'cbtn-primary') + '" data-bn-act="org-site" data-on="' + (d.enabled ? '0' : '1') + '">' + (d.enabled ? 'Turn off' : 'Turn on') + '</button>');
     }
-    h += '<div class="basis">' + _escHtml(d.external || '') + '</div>';
+    tip = d.external || '';
   } else if (part === 'outcomes') {
-    if (!d.available) h += ssBnEmpty(d.floor || 'Not enough weeks on both sides yet.');
-    for (i = 0; i < (d.lines || []).length; i++) h += '<div class="line">' + _escHtml(d.lines[i]) + '</div>';
-    h += '<div class="basis">' + _escHtml(d.caveat || '') + '</div>';
+    if (!d.available) h += ssBnEmpty('Not enough Cavnar AI weeks yet.');
+    for (i = 0; i < (d.lines || []).length; i++) rows.push(ssBnRow(_escHtml(d.lines[i]), ''));
+    h += rows.join('');
+    tip = (d.available ? '' : (d.floor || '') + ' ') + (d.caveat || '');
   }
   el.innerHTML = h;
+  ssBnHead(part, tip);
 }
 function ssBenchPost(payload, part, btn) {
   if (btn) btn.disabled = true;
@@ -36581,6 +36641,11 @@ document.addEventListener('click', function(e) {
   var _tmLoaded = false;
   var _tmOpenWith = null;   // {id, username} of the thread currently shown
   var _tmAnimate = false;
+  // The inbox last drawn, and what it was drawn from: opening the panel draws
+  // it at once (animated once), and the fresh read redraws only if something
+  // changed (owner, 10/19/26: opening Messages re-rendered and blinked - the
+  // list drawn at page load was replaced by the same rows, animated again).
+  var _tmLast = null, _tmSig = null;
 
   function _tmAgo(iso) { return window.hpAgo ? window.hpAgo(iso) : ''; }
   // Up to two initials; the avatar is a quiet disc, the same for everyone.
@@ -36599,6 +36664,9 @@ document.addEventListener('click', function(e) {
 
   function tmRenderInbox(teammates) {
     var list = document.getElementById('tm-inbox-list');
+    var sig = JSON.stringify(teammates);
+    if (!_tmAnimate && sig === _tmSig && list.getAttribute('data-drawn') === '1') return;
+    _tmSig = sig; _tmLast = teammates; list.setAttribute('data-drawn', '1');
     if (!teammates.length) {
       list.innerHTML = '<div class="hp-calm"><span>No teammates yet</span><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="document.getElementById(\'team-msg-panel\').style.display=\'none\';window._hdrPopExpanded(\'team-msg-panel\',false);if(window.cavNav)cavNav(\'account/people\')">Invite one</button></div>';
       return;
@@ -36628,14 +36696,14 @@ document.addEventListener('click', function(e) {
     fetch('/api/team/inbox').then(apiJson).then(function(d) {
       _tmLoaded = true;
       if (!d.ok) {
-        document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages');
+        document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages'); document.getElementById('tm-inbox-list').removeAttribute('data-drawn');
         return;
       }
       tmRenderInbox(d.teammates || []);
       tmSetBadge(d.unread_total || 0);
     }).catch(function() {
       _tmLoaded = true;
-      document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages');
+      document.getElementById('tm-inbox-list').innerHTML = _tmCalm('Couldn’t load messages'); document.getElementById('tm-inbox-list').removeAttribute('data-drawn');
     });
   }
 
@@ -36718,6 +36786,12 @@ document.addEventListener('click', function(e) {
     if (open) { panel.style.display = 'none'; window._hdrPopExpanded('team-msg-panel', false); return; }
     window._openHdrPanel(panel);
     _tmAnimate = true;
+    if (_tmLast) {
+      _tmOpenWith = null;
+      document.getElementById('tm-thread-view').style.display = 'none';
+      document.getElementById('tm-inbox-view').style.display = 'block';
+      tmRenderInbox(_tmLast);
+    }
     tmBackToInbox();
   };
 

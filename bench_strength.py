@@ -126,9 +126,20 @@ def _inputs(restaurant_id, today, db_path=None) -> dict:
     return out
 
 
+# A role that is not a staffing need: a Training shift is someone learning,
+# never a pool to cover, a role to hire for or one to cross-train into
+# (owner, 10/19/26: "Train Kailey Gordon on training lunch").
+NOT_STAFFED = frozenset(("training", "trainee"))
+
+
 def _family(role, fams):
     from shift_quality import role_family
-    return role_family(role or "", fams)
+    fam = role_family(role or "", fams)
+    return None if str(fam or "").strip().lower() in NOT_STAFFED else fam
+
+
+def _shift_word(part) -> str:
+    return "lunch" if part == "morning" else "dinner"
 
 
 def strength(restaurant_id, today=None, db_path=None, data=None) -> dict:
@@ -167,10 +178,9 @@ def strength(restaurant_id, today=None, db_path=None, data=None) -> dict:
                 "nights": round(nights_per_week, 1), "need": need, "needed": needed, "slack": slack}
         status, why = "ok", None
         if len(members) <= 1 and needed >= 1:
-            status, why = "critical", (f"only {names[0] if names else 'nobody'} works {fam} "
-                                       f"{'lunch' if part == 'morning' else 'dinner'}")
+            status, why = "critical", (f"only {names[0]}" if names else "nobody covers it")
         elif slack < 0:
-            status, why = "critical", f"{len(members)} people for {needed} needed"
+            status, why = "critical", f"{len(members)} people, {needed} needed"
         elif slack == 0 and needed:
             status, why = "fragile", "one absence from a gap"
         closers = data["closers"].get(fam)
@@ -180,8 +190,8 @@ def strength(restaurant_id, today=None, db_path=None, data=None) -> dict:
             pool.update({"closers": len(cl), "closer_names": [(roster or {}).get(k, k) for k in cl],
                          "closers_needed": need_cl})
             if len(cl) <= 1:
-                status, why = "critical", (f"only {pool['closer_names'][0]} can close {fam}" if cl
-                                           else f"nobody is chosen to close {fam}")
+                status, why = "critical", (f"only {pool['closer_names'][0]} can close" if cl
+                                           else "no closer chosen")
             elif len(cl) <= need_cl and status == "ok":
                 status, why = "fragile", f"{len(cl)} closers for {pool['nights']:g} nights a week"
         pool["status"], pool["why"] = status, why
@@ -232,16 +242,15 @@ def cross_train(restaurant_id, today=None, db_path=None, data=None, pools=None) 
         for beside, sc, worked, name in cands[:2]:
             bits = []
             if beside:
-                bits.append(f"{beside} shift{'s' if beside != 1 else ''} beside a closer in it")
+                bits.append(f"{beside} beside a closer")
             if worked:
-                bits.append(f"{worked} {fam} shift{'s' if worked != 1 else ''} in {WEEKS} weeks")
+                bits.append(f"{worked} shift{'s' if worked != 1 else ''} in it")
             if sc:
                 bits.append(f"rated {sc:g}")
+            what = f"close {fam}" if closing else f"{fam} {_shift_word(p['daypart'])}"
             out.append({"family": fam, "daypart": p["daypart"], "kind": "close" if closing else "cover",
-                        "who": name, "because": ", ".join(bits),
-                        "text": (f"Train {name} to close {fam}" if closing else f"Train {name} on {fam} "
-                                 f"{'lunch' if p['daypart'] == 'morning' else 'dinner'}")
-                        + (f" — {', '.join(bits)}" if bits else "")})
+                        "who": name, "what": what, "because": " · ".join(bits),
+                        "text": f"Train {name} {'to' if closing else 'on'} {what}" + (f" · {' · '.join(bits)}" if bits else "")})
     return out
 
 
@@ -296,15 +305,23 @@ def hiring(restaurant_id, today=None, db_path=None, data=None) -> list:
         if fams:
             f = max(fams.items(), key=lambda kv: kv[1])[0]
             left_by_fam[f] = left_by_fam.get(f, 0) + 1
+    # The trend is read from the first week with any shift on file: the
+    # weeks before a restaurant's history begins are not weeks of zero
+    # hours (owner, 10/19/26: Simple EJ's shifts start 8/25/26, four empty
+    # weeks read as hours climbing 24 a week and every role said "hire by"
+    # today).
+    first = min((i for series in fam_week.values() for i, v in enumerate(series) if v > 0), default=0)
+    span = WEEKS - first
     out = []
     for fam, series in sorted(fam_week.items()):
         weeks_with = [i for i, v in enumerate(series) if v > 0]
-        if len(weeks_with) < MIN_TREND_WEEKS:
+        if len(weeks_with) < MIN_TREND_WEEKS or span < MIN_TREND_WEEKS:
             continue
-        xs = list(range(WEEKS))
-        mx, my = sum(xs) / WEEKS, sum(series) / WEEKS
+        xs = list(range(first, WEEKS))
+        ys = series[first:]
+        mx, my = sum(xs) / span, sum(ys) / span
         vx = sum((x - mx) ** 2 for x in xs)
-        slope = sum((x - mx) * (y - my) for x, y in zip(xs, series)) / vx if vx else 0.0
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / vx if vx else 0.0
         level = my + slope * (WEEKS - 1 - mx)
         people = [k for (k, f) in person_week if f == fam and (roster is None or k in roster)]
         cap, assumed = 0.0, 0
@@ -312,7 +329,7 @@ def hiring(restaurant_id, today=None, db_path=None, data=None) -> list:
             c, was_assumed = _capacity(data, k, person_week[(k, fam)])
             cap += c
             assumed += 1 if was_assumed else 0
-        avg_person = (sum(sum(person_week[(k, fam)]) for k in people) / WEEKS / len(people)) if people else 0.0
+        avg_person = (sum(sum(person_week[(k, fam)][first:]) for k in people) / span / len(people)) if people else 0.0
         loss_per_week = left_by_fam.get(fam, 0) / 52.0 * avg_person
         weeks_left, hire_by = None, None
         for w in range(0, HORIZON_WEEKS + 1):
@@ -323,19 +340,19 @@ def hiring(restaurant_id, today=None, db_path=None, data=None) -> list:
                 break
         if weeks_left is not None:
             hire_by = today + timedelta(weeks=max(0, weeks_left - HIRE_LEAD_WEEKS))
+        used_pct = int(round(level / cap * 100)) if cap else None
         text = None
         if weeks_left is not None:
-            text = (f"{fam.capitalize()}: the hours worked ({level:,.0f} a week, {slope:+.1f} a week) reach "
-                    f"{int(CAPACITY_SHARE * 100)}% of what your {len(people)} {fam}s can work"
-                    + (f" ({assumed} of them assumed from their busiest week — set their maximum hours to sharpen it)"
-                       if assumed else "")
-                    + (f" in about {weeks_left} weeks" if weeks_left else " now")
-                    + (f", with departures taking about {loss_per_week * 4:,.0f} hours a month" if loss_per_week else "")
-                    + f" — hire by {mdy(hire_by.isoformat())}.")
+            when = "hire now" if hire_by <= today else f"hire by {mdy(hire_by.isoformat())}"
+            text = (f"{fam.capitalize()}: {when} · "
+                    + (f"{used_pct}% of capacity" if used_pct is not None else "no capacity on file")
+                    + (f", 90% in about {weeks_left} week{'s' if weeks_left != 1 else ''}" if weeks_left else ""))
         out.append({"family": fam, "weekly_hours": [round(v, 1) for v in series], "level": round(level, 1),
                     "trend_per_week": round(slope, 2), "capacity": round(cap, 1), "people": len(people),
                     "departures_year": left_by_fam.get(fam, 0), "attrition_hours_week": round(loss_per_week, 2),
-                    "weeks_left": weeks_left, "capacity_assumed": assumed, "hire_by": hire_by.isoformat() if hire_by else None,
+                    "weeks_left": weeks_left, "capacity_assumed": assumed, "used_pct": used_pct,
+                    "hire_now": bool(hire_by and hire_by <= today),
+                    "hire_by": hire_by.isoformat() if hire_by else None,
                     "hire_by_label": mdy(hire_by.isoformat()) if hire_by else None, "text": text})
     out.sort(key=lambda h: (h["weeks_left"] is None, h["weeks_left"] or 0, h["family"]))
     return out
@@ -348,8 +365,6 @@ def owner_view(restaurant_id, today=None, db_path=None) -> dict:
     return {"ok": True, "available": bool(st["pools"]), "pools": st["pools"],
             "cross_train": cross_train(restaurant_id, today, db_path, data, st["pools"]),
             "hiring": hiring(restaurant_id, today, db_path, data), "weeks": WEEKS,
-            "basis": (f"From the last {WEEKS} weeks of worked shifts: who covers each role and shift, the closers you "
-                      f"chose, who has worked beside a closer, and the roster's departures. Nobody is counted for "
-                      f"more than {NIGHTS_PER_PERSON:g} nights a week; capacity is each person's stated maximum hours, "
-                      f"else full-time 40 / part-time 29, else their busiest week here plus 20% (said as assumed), "
-                      f"capped at {MAX_WEEK_HOURS:g}.")}
+            "basis": (f"The last {WEEKS} weeks of shifts, up to {NIGHTS_PER_PERSON:g} nights a person. Capacity is each "
+                      f"person's stated maximum, else {MAX_WEEK_HOURS:g} full-time or 29 part-time, else their busiest "
+                      f"week +20% (assumed).")}

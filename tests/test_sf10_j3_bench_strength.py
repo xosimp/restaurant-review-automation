@@ -48,7 +48,7 @@ def _data(grow=0.0):
 def test_one_closer_for_the_bar_is_a_single_point_of_failure():
     st = bs.strength(1, today=TODAY, data=_data())
     bar = next(p for p in st["pools"] if p["family"] == "bartender" and p["daypart"] == "night")
-    assert bar["status"] == "critical" and bar["why"] == "only Bea can close bartender"
+    assert bar["status"] == "critical" and bar["why"] == "only Bea can close"
     assert bar["closers"] == 1 and bar["nights"] == 5.0 and bar["need"] == 1
     srv = next(p for p in st["pools"] if p["family"] == "server")
     assert srv["status"] == "ok" and srv["slack"] > 0
@@ -71,7 +71,7 @@ def test_the_hiring_forecast_crosses_capacity_when_the_hours_keep_growing():
     grow = bs.hiring(1, today=TODAY, data=_data(grow=0.6))
     bar = next(h for h in grow if h["family"] == "bartender")
     assert bar["trend_per_week"] > 0 and bar["weeks_left"] is not None
-    assert bar["hire_by_label"] and "/" in bar["hire_by_label"] and "hire by" in bar["text"]
+    assert bar["hire_by_label"] and "/" in bar["hire_by_label"] and ("hire by" in bar["text"] or "hire now" in bar["text"])
 
 
 def test_a_restaurant_with_no_history_has_nothing_to_say():
