@@ -2281,9 +2281,19 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     except Exception:
         return out
     # An urgent problem pages hourly. Only warnings: once a day for the same
-    # set, sooner when a new kind joins it (the key names the set).
+    # set, sooner when a new kind joins it (the key names the set). Jobs
+    # overdue, and nothing worse: once per the shortest overdue job's own
+    # interval, between an hour and a day, keyed on the set - a weekly job
+    # that missed its Sunday texted, emailed and pushed every hour (owner,
+    # 10/19/26); a new job joining the set pages at once.
     urgent = _has_urgent(out, state, write_ok=out["write_ok"])
-    if urgent:
+    core = _has_urgent(dict(out, jobs_overdue=[]), state, write_ok=out["write_ok"])
+    if urgent and not core:
+        overdue = out["jobs_overdue"]
+        cd = int(max(60, min(24 * 60, min(float(j.get("max_hours") or 1) for j in overdue) * 60)))
+        res = page_operator("platform_sla_overdue:" + ",".join(sorted(str(j["job"]) for j in overdue)),
+                            "Cavnar AI: the platform needs you", problems, cooldown_minutes=cd)
+    elif urgent:
         res = page_operator("platform_sla_alert", "Cavnar AI: the platform needs you", problems)
     else:
         res = page_operator("platform_sla_warn:" + ",".join(sorted(warn_kinds)),

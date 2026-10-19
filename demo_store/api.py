@@ -49,6 +49,9 @@ def _days(start, end):
 
 # ── one day, cut at the clock ──────────────────────────────────────────────
 
+_ST_NAME = {mid: name for name, mid in w.ST.items()}
+
+
 def _cut(day: date, now: datetime) -> dict:
     """The day's records as RPOWER holds them at `now`."""
     if day > business_today(now):
@@ -58,14 +61,28 @@ def _cut(day: date, now: datetime) -> dict:
     if day < business_today(now) and (full["closed_at"] is None or full["closed_at"] <= now):
         return dict(full, closed=True)
     stamp = D._stamp(now)
+    lines = [l for l in full["lines"] if l["_at"] <= now]
+    # An open ticket's totals are what has been rung on it so far, as RPOWER holds them - not the night's
+    # final check (owner, 10/19/26: the archive read at midnight saw full-night totals over half-rung lines,
+    # and the nightly reconcile paged a gap that was the simulation's).
+    rung = {}
+    for l in lines:
+        st = _ST_NAME.get(str(l.get("slstype_mid")))
+        if st:
+            k = rung.setdefault(l["ticket_rid"], {})
+            k[st] = round(k.get(st, 0.0) + float(l.get("sales") or 0), 2)
     tickets = []
     for t in full["tickets"]:
         if t["_open"] > now:
             continue
         if t["_close"] > now:
-            t = dict(t, close_dttm=NEVER, tip=0)
+            r = rung.get(t["rid"], {})
+            sale, disc, comp = r.get("Sale", 0.0), r.get("Discount", 0.0), r.get("Comp", 0.0)
+            t = dict(t, close_dttm=NEVER, tip=0, items=round(sale, 2), discount=round(disc, 2),
+                     type_sale=round(sale, 2), type_discnt=round(disc, 2), type_comp=round(comp, 2),
+                     type_error=round(r.get("Error Correct", 0.0), 2),
+                     tax=round(max(0.0, sale + disc) * w.TAX_RATE, 2))
         tickets.append(t)
-    lines = [l for l in full["lines"] if l["_at"] <= now]
     items = [i for i in full["items"] if i["_at"] <= now]
     payments = [p for p in full["payments"] if p["_at"] <= now]
     payouts = [p for p in full["payouts"] if p["_at"] <= now]

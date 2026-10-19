@@ -1390,14 +1390,12 @@ def quality_calibration_one(restaurant_id, db_path=DB_PATH, cohort=None) -> dict
 
 
 def quality_calibration_pass():
-    """What scheduler_loop runs for quality_calibration: with the job queue
-    on, the platform's cohort once (kept for the week) and one `learner` row
-    per Labor restaurant (blind re-audit 10/11/26 — a fleet sweep is queue
-    work); else the bounded inline sweep."""
-    import job_queue
-    if not job_queue.enabled():
-        return run_quality_calibration
-
+    """What scheduler_loop runs for quality_calibration: the platform's cohort
+    once (kept for the week) and one `learner` row per Labor restaurant (blind
+    re-audit 10/11/26 — a fleet sweep is queue work). The queue is the one
+    path since 10/11/26: this still asked job_queue.enabled(), which went with
+    JOB_QUEUE=0, so every Sunday's run raised before it started and the
+    platform paged "no successful run" hourly (owner, 10/19/26)."""
     def _fan():
         import ops as _ops_cal
         import schedule_calibration as _scal

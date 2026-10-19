@@ -2353,11 +2353,33 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     live = [t for t in raw_tickets if _biz_date(t.get("date")) == iso and t.get("rid") and not t.get("is_cancelled")]
     flags = set(by_flag) | {"type_sale", *DISCOUNT_FLAGS}
     theirs = {f: round(sum(_num(t.get(f)) for t in live), 2) for f in sorted(flags)}
+    # RPOWER's "Cash Discount" item (a cash-payment discount rung as a menu item, often posted after close)
+    # is only partly - or not at all - in its own ticket's type totals, while the ticket's lines carry it
+    # whole: at EJ's a -$14.50 one on a ticket of its own (10/8/26) and -$3.99 of a -$7.98 one (10/17/26).
+    # Our net keeps the line (it is money not taken); the shortfall it explains on a ticket is counted on
+    # its own (cash_discount_unreflected), not as an unexplained gap (owner, 10/19/26: the reconcile paged it
+    # every re-read).
+    cash = {}
+    for ln in lines:
+        if ln["kind"] in ("sale", "discount") and ln["ticket_id"] and _CASH_DISCOUNT.search(ln.get("item_name") or ""):
+            cash[ln["ticket_id"]] = round(cash.get(ln["ticket_id"], 0.0) + ln["sales"], 2)
+    explained = 0.0
+    for t in live:
+        tid = _id(t.get("rid"))
+        c = cash.get(tid, 0.0)
+        if c < 0:
+            d = round(net_by_ticket.get(tid, 0.0) - sum(_num(t.get(f)) for f in flags), 2)
+            if c - 0.005 <= d < 0:
+                explained = round(explained + d, 2)
     checks.update(lines_by_type=dict(sorted(by_flag.items())), tickets_by_type=theirs,
-                  gap=round(sum(by_flag.values()) - sum(theirs.values()), 2), tickets=len(live))
+                  gap=round(sum(by_flag.values()) - sum(theirs.values()) - explained, 2), tickets=len(live),
+                  cash_discount_unreflected=explained)
     return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None),
             "links_ok": links_ok, "checks": checks}
+
+
+_CASH_DISCOUNT = re.compile(r"\bcash\s*discount\b", re.I)
 
 
 def _type_flag(st):

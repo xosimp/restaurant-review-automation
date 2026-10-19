@@ -221,6 +221,10 @@ def _reconcile(restaurant_id, iso, checks):
     if abs(gap) > RECONCILE_TOLERANCE or abs(unknown) > 0.005 or int(checks.get("unknown_type_lines") or 0):
         try:
             import ops
+            # Once per night and finding: a restated night is archived again, and the same gap was captured
+            # on every re-read - four times for 10/17/26 (owner, 10/19/26).
+            if not ops.claim_period(f"pos_reconcile:{restaurant_id}:{iso}", f"{gap:.2f}|{unknown:.2f}"):
+                return gap, unknown
             ops.capture(RuntimeError(
                 f"POS reconcile {iso}: our revenue lines ${sum((checks.get('lines_by_type') or {}).values()):,.2f} "
                 f"vs the POS's ticket totals ${sum((checks.get('tickets_by_type') or {}).values()):,.2f} "

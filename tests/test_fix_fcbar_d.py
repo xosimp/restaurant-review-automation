@@ -542,3 +542,36 @@ def test_scale_06_a_login_without_food_cost_never_computes_its_cards():
     out = subprocess.run([sys.executable, "-c", SCRIPT, vol], cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert out.returncode == 0, out.stdout[-1500:] + "\n" + out.stderr[-2500:]
     assert "HOME 200 CALLED []" in out.stdout, out.stdout[-500:]
+
+
+def test_rpowers_cash_discount_item_left_out_of_its_ticket_totals_is_explained_not_a_gap(db_path, monkeypatch):
+    # Owner, 10/19/26: EJ's "Cash Discount" item (-$7.98, of which RPOWER's ticket total took in -$3.99; a
+    # -$14.50 one on a ticket of its own) paged as a reconcile gap on every re-read. Our net keeps the line;
+    # the shortfall it explains is counted on its own, and an unexplained gap still raises once a night.
+    import ops
+    rid = _rid(db_path)
+    seen = []
+    monkeypatch.setattr(ops, "capture", lambda e, job="", **k: seen.append(job))
+    routes = _routes(ISO)
+    routes["menuitem/getbycg"] = routes["menuitem/getbycg"] + [{"mid": "CD", "name": "Cash Discount", "slscat_mid": "K1"}]
+    d = f"{ISO}T00:00:00"
+    lines = [{"rid": "L1", "atom": 1, "ticket_rid": "T1", "date": d, "menuitem_mid": "M1", "slstype_mid": "S",
+              "qty": 1, "sales": 457.63},
+             {"rid": "L2", "atom": 2, "ticket_rid": "T1", "date": d, "menuitem_mid": "CD", "slstype_mid": "S",
+              "qty": 2, "sales": -7.98}]
+    routes.update(_routes(ISO, lines=lines, tickets=[{"rid": "T1", "date": d, "type_sale": 453.64}]))
+    routes["menuitem/getbycg"] = routes["menuitem/getbycg"] + [{"mid": "CD", "name": "Cash Discount", "slscat_mid": "K1"}]
+    _stub(monkeypatch, routes)
+    out = pos_archive.archive_day(rid, DAY)
+    assert out["recon_gap"] == 0.0 and "pos_reconcile" not in seen
+
+
+def test_a_reconcile_finding_is_raised_once_per_night_not_on_every_re_read(db_path, monkeypatch):
+    import ops
+    rid = _rid(db_path)
+    seen = []
+    monkeypatch.setattr(ops, "capture", lambda e, job="", **k: seen.append(job))
+    checks = {"gap": -12.0, "unknown_type_sales": 0.0, "unknown_type_lines": 0, "lines_by_type": {}, "tickets_by_type": {}}
+    for _ in range(3):
+        pos_archive._reconcile(rid, ISO, checks)
+    assert seen.count("pos_reconcile") == 1

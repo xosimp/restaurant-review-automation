@@ -448,6 +448,11 @@ def run_daily_fetch(restaurant_ids=None):
             "WHERE (reviews_live=1 OR gmb_refresh_token IS NOT NULL) AND " + in_service_sql()
         ).fetchall()
         conn.close()
+        # The showcase demo's reviews are written by its own nightly refresh (demo_store); it is never
+        # fetched from Google - with a Place ID set (its Intel, 10/17/26) every fetch failed into the
+        # ops digest (owner, 10/19/26).
+        import demo_store as _demo_store
+        live = [r for r in live if not _demo_store.is_simulated(r["id"])]
         quiet_skipped = 0
         if restaurant_ids is not None:
             wanted = {int(x) for x in restaurant_ids}
