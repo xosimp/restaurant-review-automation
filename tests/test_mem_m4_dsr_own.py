@@ -69,7 +69,7 @@ def test_the_prediction_review_leaves_out_the_budget_and_counts_what_held(rest, 
     own = narrative.own_record(_ctx(rest, db_path, DAY), strong_night())
     assert own["predictions"][0] == "- Sales between $15,000 and $21,000 — came true"
     assert not any("budget" in line for line in own["predictions"]), "the budget is owner-only"
-    assert own["predictions"][-1] == "- Over the last 30 days: 1 of 1 predictions came true (too few to call a rate)"
+    assert own["predictions"][-1] == "- Over the last 90 days: 1 of 1 predictions came true (too few to call a rate)"
 
 
 def test_both_sections_reach_the_model_fenced_with_the_rule_that_governs_them(monkeypatch, rest, db_path):

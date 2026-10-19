@@ -7613,6 +7613,7 @@ svg:hover .hb-xh{opacity:1}
 .dr-conf{margin-top:14px}.dr-conf .v,.dr-acc .v{font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--ink);line-height:1.1}
 .dr-conf .v small,.dr-acc .v small{font-size:15px;color:var(--ink3)}.dr-conf .sub,.dr-acc .sub{font-size:12.5px;color:var(--ink2);margin-top:4px}
 .dr-acc{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--hb-line2)}
+.dr-acc .dr-acc-d{flex-basis:100%;margin-top:0;color:var(--ink3)}
 /* Today's score (dsr.scorecard, 9/25/26): "did we win today?" in one glance */
 .dr-score{margin-top:22px}
 .dr-score .top{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
@@ -9337,7 +9338,8 @@ svg:hover .hb-xh{opacity:1}
         +(x.actual_text?'<small>'+prose(x.actual_text)+'</small>':'')+'</span><span class="m">'+(o==='correct'?'Correct':(o==='incorrect'?'Incorrect':'Not graded'))+'</span></div>';}
     h+='<div class="dr-acc"><span class="k">Prediction accuracy</span>'
       +(isNum(ac.pct)?'<span class="v">'+hn(ac.pct)+'<small>%</small></span><span class="sub">'+hn(ac.correct)+' of '+hn(ac.graded)+' right, last '+hn(ac.window_days)+' days</span>'
-        :'<span class="sub">'+hn(ac.correct||0)+' of '+hn(ac.graded||0)+' right so far</span>'+itip('When the accuracy shows','A percentage shows once '+hn(ac.min_graded||5)+' predictions are graded.'))+'</div>';
+        :'<span class="sub">'+hn(ac.correct||0)+' of '+hn(ac.graded||0)+' right so far</span>'+itip('When the accuracy shows','A percentage shows once '+hn(ac.min_graded||5)+' predictions are graded.'))
+      +(ac.detail?'<span class="sub dr-acc-d">'+prose(ac.detail)+'</span>':'')+'</div>';
     return h+'</section>';
   }
   function items(list,cls){var h='';for(var i=0;i<list.length;i++){var t=typeof list[i]==='string'?list[i]:(list[i]&&list[i].text);if(t)h+=row(prose(t),cls);}return h;}

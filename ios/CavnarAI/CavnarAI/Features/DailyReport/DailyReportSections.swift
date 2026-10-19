@@ -269,8 +269,11 @@ struct DSRYesterday: Decodable, Hashable {
         let graded: Int
         let windowDays: Int
         let minGraded: Int?
+        /// "Ranges held 14 of 17 · calls 9 of 11 · said 78%, came true 81% ·
+        /// forecast off 9% on an average night (40 nights)" — composed server-side.
+        let detail: String?
         enum CodingKeys: String, CodingKey {
-            case pct, correct, graded
+            case pct, correct, graded, detail
             case windowDays = "window_days"
             case minGraded = "min_graded"
         }
@@ -703,6 +706,10 @@ struct DSRYesterdayCard: View {
                                    : "\(a.correct) of \(a.graded) right so far — a percentage after \(a.minGraded ?? 5) graded",
                                    role: .secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let d = a.detail, !d.isEmpty {
+                    HomeMixedText.make(d, role: .caption, color: .cavnarInk2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -169,6 +169,12 @@ def init_dsr(db_path=DB_PATH):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(dsr_category_map)")}
         if "held_json" not in cols:
             conn.execute("ALTER TABLE dsr_category_map ADD COLUMN held_json TEXT")
+        # How likely the report said a prediction was (0-1, 10/19/26): what
+        # predictions.accuracy calibrates against ("said 78%, came true 81%").
+        # NULL on older rows and on a call whose forecast had no spread yet.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(dsr_predictions)")}
+        if "prob" not in cols:
+            conn.execute("ALTER TABLE dsr_predictions ADD COLUMN prob REAL")
         conn.commit()
     finally:
         conn.close()

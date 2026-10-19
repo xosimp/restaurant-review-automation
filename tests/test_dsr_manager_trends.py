@@ -182,9 +182,11 @@ def test_predictions_are_written_once_and_graded_by_what_was_measured(db):
     assert rows == {"sales_range": "correct", "sales_budget": "correct", "rain": "incorrect"}
     y = access.render(store.get_report(r.id, SAT), {"role": "owner"}, r)["yesterday"]
     assert [i["outcome"] for i in y["items"]] == ["correct", "correct", "incorrect"]
-    assert y["items"][0]["text"] == "Sales between $8,200 and $9,800" and y["items"][0]["actual_text"] == "Net sales $9,400"
+    assert y["items"][0]["text"] == "Sales between $8,200 and $9,800 · 80% likely" and y["items"][0]["actual_text"] == "Net sales $9,400"
     # Three graded is under the floor: the count shows, the % does not.
-    assert y["accuracy"] == {"pct": None, "correct": 2, "graded": 3, "window_days": 30, "min_graded": 5}
+    acc = {k: y["accuracy"][k] for k in ("pct", "correct", "graded", "window_days", "min_graded")}
+    assert acc == {"pct": None, "correct": 2, "graded": 3, "window_days": 90, "min_graded": 5}
+    assert y["accuracy"]["by_kind"] == {"range": {"correct": 1, "graded": 1}, "calls": {"correct": 1, "graded": 2}}
 
 
 def test_a_night_with_no_sales_leaves_its_predictions_ungraded(db):

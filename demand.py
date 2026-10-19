@@ -207,6 +207,7 @@ def _forecast_from(dated, day, weekday, noun="with sales on file"):
     """The forecast dict from [(ISO date, sales)] of `weekday`, oldest first
     (forecast_day's rules: MIN_SAMPLES, the stale newest night, the 80%
     prediction range from RANGE_MIN_SAMPLES)."""
+    import math
     from time_utils import mdy as _mdy
     hist = [v for _d, v in dated]
     if len(hist) < MIN_SAMPLES:
@@ -227,6 +228,14 @@ def _forecast_from(dated, day, weekday, noun="with sales on file"):
            "typical_sales": round(_median(hist), 2), "samples": len(hist),
            "newest_sample": newest,
            "claim_kind": "forecast", "low": None, "high": None, "range_note": None}
+    # The spread of these nights on the log scale (sales are multiplicative):
+    # what dsr.predictions turns into "how likely" for a call against a line.
+    # Effects and calibration scale the level, never the spread.
+    pos = [math.log(float(v)) for v in hist if v is not None and float(v) > 0]
+    if len(pos) >= 3:
+        m = sum(pos) / len(pos)
+        out["log_sd"] = round((sum((x - m) ** 2 for x in pos) / (len(pos) - 1)) ** 0.5, 5)
+        out["sd_n"] = len(pos)
     rng = prediction_range(hist) if len(hist) >= RANGE_MIN_SAMPLES else None
     if rng is not None:
         out.update({"low": round(rng[0], 2), "high": round(rng[1], 2),
