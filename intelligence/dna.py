@@ -86,7 +86,7 @@ STRUCTURAL_WEIGHTS = {
     "weekend_share": 0.15,         # S2
     "daypart_mix": 0.10,           # S3 (POS hourly totals, else the DSR's hourly split)
     "seasonality": 0.05,           # S4 (12 months of sales)
-    "beverage_share": 0.05,        # S5 (dormant: a mapped daily sales report)
+    "beverage_share": 0.05,        # S5 (the Bar module's drink sales over the nightly reports' net)
     "service_type": 0.12,          # S6 (the CONFIRMED service model only)
     "concept": 0.08,               # S7 (the confirmed concept, its own dimension)
     "ticket_band": 0.12,           # S8
@@ -131,13 +131,13 @@ DIMENSIONS = {
                       "needs": "14 days of sales in the last 4 weeks"},
     "daypart_mix": {"code": "S3", "family": "sales", "label": "Share of sales before 4pm", "unit": "share",
                     "anchor": (0.35, 0.10), "module": "labor", "structural": True,
-                    "needs": "28 days of hourly sales (POS or daily sales report) in the last 8 weeks"},
+                    "needs": "28 days of hourly sales (POS, its ticket archive or daily sales report) in the last 8 weeks"},
     "seasonality": {"code": "S4", "family": "sales", "label": "Busiest month vs quietest", "unit": "ratio",
                     "transform": "log10", "anchor": (0.12, 0.08), "module": "labor", "structural": True,
                     "needs": "12 months of sales"},
     "beverage_share": {"code": "S5", "family": "sales", "label": "Bar and beverage share of sales", "unit": "share",
-                       "anchor": (0.25, 0.10), "module": "labor", "structural": True, "buildable": False,
-                       "needs": "a daily sales report with its departments mapped"},
+                       "anchor": (0.25, 0.10), "module": "labor", "structural": True,
+                       "needs": "28 nightly reports with the bar's drinks mapped, in the last 8 weeks"},
     "service_type": {"code": "S6", "family": "sales", "label": "Service model", "unit": "type",
                      "kind": "categorical", "module": None, "structural": True,
                      "needs": "your service model confirmed under Account"},
@@ -319,6 +319,7 @@ def _weekend_share(days, today):
 
 
 DAYPART_SPLIT_HOUR = 16           # "before 4pm"
+BEVERAGE_MIN_NIGHTS = 28
 
 
 def _dsr_hourly(conn, rid, since, until=None):
@@ -361,12 +362,47 @@ def _dsr_hourly(conn, rid, since, until=None):
     return out
 
 
+def _ticket_hourly(conn, rid, since, until):
+    """{business_date: (before 4pm, all)} from the POS ticket archive
+    (pos_tickets: each ticket's net at its own open time) — the measurement
+    the Daily Sales Report's hourly split is built from, for the nights
+    archived before the report began (Simple EJ's: tickets from 8/25/26,
+    reports from 9/27/26 — the trait waited on 22 nights with 55 on file,
+    10/19/26). Only nights pos_archive_days says were archived with tickets;
+    an open time of 2000-01-01 is RPOWER's no-value."""
+    from time_utils import BUSINESS_DAY_START_HOUR
+    try:
+        rows = conn.execute(
+            "SELECT t.business_date, t.opened_at, t.net_sales FROM pos_tickets t WHERE t.restaurant_id=? "
+            "AND t.business_date >= ? AND t.business_date <= ? AND t.net_sales > 0 AND t.opened_at IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM pos_archive_days a WHERE a.restaurant_id=t.restaurant_id "
+            "AND a.provider=t.provider AND a.business_date=t.business_date AND a.tickets > 0)",
+            (rid, since.isoformat(), until.isoformat())).fetchall()
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        stamp = str(r["opened_at"] or "")
+        if stamp.startswith("2000-01-01") or len(stamp) < 13:
+            continue
+        try:
+            hour, net = int(stamp[11:13]), float(r["net_sales"])
+        except (TypeError, ValueError):
+            continue
+        e, t = out.get(_d(r["business_date"]), (0.0, 0.0))
+        out[_d(r["business_date"])] = (e + (net if BUSINESS_DAY_START_HOUR <= hour < DAYPART_SPLIT_HOUR else 0.0),
+                                       t + net)
+    return {d: v for d, v in out.items() if v[1] > 0}
+
+
 def _daypart_mix(conn, rid, days, today):
     """Share of the day's net sales rung before 16:00. Per day, from the
     POS's hourly running total (pos_intraday) against the day's final sales
     where the POS can be asked during the day (Toast); otherwise from the
     Daily Sales Report's hourly split of that night (RPOWER), so a non-Toast
-    restaurant can fill S3 (R4-16). The schedule_outcomes split is NOT used:
+    restaurant can fill S3 (R4-16); then the POS ticket archive's open
+    times for the nights before the report began (_ticket_hourly, 10/19/26).
+    The schedule_outcomes split is NOT used:
     it divides the day by a morning share that falls back to a stated 0.4 —
     not a measurement."""
     since = today - timedelta(days=56)
@@ -391,7 +427,7 @@ def _daypart_mix(conn, rid, days, today):
         n += 1
         n_pos += 1
         seen.add(day)
-    n_dsr = 0
+    n_dsr = n_tix = 0
     if n < 28:
         for day, (e, t) in _dsr_hourly(conn, rid, since, until=today).items():
             if day in seen:
@@ -400,11 +436,53 @@ def _daypart_mix(conn, rid, days, today):
             tot += t
             n += 1
             n_dsr += 1
+            seen.add(day)
+    if n < 28:
+        for day, (e, t) in _ticket_hourly(conn, rid, since, today).items():
+            if day in seen:
+                continue
+            early += e
+            tot += t
+            n += 1
+            n_tix += 1
     if n < 28 or not tot:
         return _need(n, f"{n} days of hourly sales in the last 8 weeks")
-    src = ("POS hourly totals" if not n_dsr else "the daily sales report's hourly split" if not n_pos
-           else "POS hourly totals and the daily sales report's hourly split")
+    names = [x for x, k in (("POS hourly totals", n_pos), ("the daily sales report's hourly split", n_dsr),
+                            ("the POS ticket archive's open times", n_tix)) if k]
+    src = " and ".join(names) if len(names) < 3 else f"{names[0]}, {names[1]} and {names[2]}"
     return _m(round(early / tot, 3), n, f"sales rung before 4pm over {n} days ({src})")
+
+
+def _beverage_share(rid, today, db_path):
+    """Beer, liquor and wine's share of net sales over the last 8 weeks:
+    the Bar module's own drink sales (bar.sales — the figure its page
+    shows, under the owner's mapping) over the nightly reports' net, the
+    same nights on both sides. Withheld while more than the Bar's hold of
+    drink sales is unmapped (bar.judge.UNMAPPED_HOLD_PCT) — a share with
+    the beer missing is not the restaurant's. Was dormant until 10/19/26
+    while Simple EJ's had a mapped report every night."""
+    since, until = today - timedelta(days=56), today - timedelta(days=1)
+    try:
+        from bar import sales as _bar_sales
+        from bar.common import POUR_CATEGORIES
+        detail = _bar_sales.bar_sales(rid, db_path=db_path, since=since.isoformat(), until=until.isoformat())
+        basis = _bar_sales.window_basis(detail, since.isoformat(), until.isoformat())
+    except Exception:
+        return _need(0, "no nightly report with the bar's drinks mapped")
+    drinks = total = 0.0
+    n = 0
+    for _d0, night in (detail.get("nights") or {}).items():
+        net = night.get("net")
+        if night.get("gap") or not net or float(net) <= 0:
+            continue
+        drinks += sum(float(((night.get("drinks") or {}).get(k) or {}).get("net") or 0) for k in POUR_CATEGORIES)
+        total += float(net)
+        n += 1
+    if n < BEVERAGE_MIN_NIGHTS or total <= 0:
+        return _need(n, f"{n} nightly reports with the bar's drinks mapped in the last 8 weeks")
+    if basis.get("unmapped_hold"):
+        return _need(n, f"{basis.get('unmapped_pct')}% of drink sales not yet mapped in Bar")
+    return _m(round(drinks / total, 3), n, f"beer, liquor and wine net over all net sales, {n} nights")
 
 
 def _seasonality(days, today):
@@ -884,7 +962,7 @@ def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restauran
             "weekend_share": lambda: _weekend_share(days, today),
             "daypart_mix": lambda: _daypart_mix(conn, restaurant_id, days, today),
             "seasonality": lambda: _seasonality(days, today),
-            "beverage_share": lambda: _need(0, "no mapped daily sales report"),
+            "beverage_share": lambda: _beverage_share(restaurant_id, today, db_path),
             "service_type": lambda: _service_type(restaurant),
             "concept": lambda: _concept(restaurant),
             "ticket_band": lambda: _structural_feature(f, "ticket_band", "band of 0–4 on stated edges, sales ÷ covers "

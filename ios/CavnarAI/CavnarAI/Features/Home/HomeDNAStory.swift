@@ -737,6 +737,8 @@ struct DNATraitCard: View {
         switch trait.key {
         case "weekend_driven", "weekday_business":
             if let x = v("weekend_share") { DNASplitBar(weekendShare: x) }
+        case "bar_led":
+            if let x = v("beverage_share") { DNAGauge(lo: 0, hi: 0.6, value: x, typical: 0.25, format: Self.pct, label: "Beer, liquor and wine share of sales") }
         case "long_hours":
             if let x = v("open_hours") { ringRow(x / 168, "\(Int(x))h", "Of 168 hours a week \u{00B7} benchmark about 70") }
         case "overtime_controlled":

@@ -104,7 +104,8 @@ def test_learning_progress_is_the_dimensions_own_count_capped_at_its_floor(db_pa
     assert got["trend"]["progress"]["have"] == 13                                    # capped at the floor
     pcts = [l["progress"]["pct"] for l in s["learning"] if l.get("progress")]
     assert pcts == sorted(pcts, reverse=True)                                       # closest first
-    assert got["beverage"]["dormant"] is True and "progress" not in got["beverage"]
+    # Bar-Led measures from the Bar module since 10/19/26: no longer dormant, a count like the others.
+    assert got["beverage"]["dormant"] is False
     assert "guest_loyalty" in got                                                    # no dimension yet: says what would measure it
 
 

@@ -46247,6 +46247,7 @@ function sfw2RuleCheck(chk) {
     function v(k) { var x = dm[k]; return x && x.measured ? +x.value : null; }
     var k = t.key, x;
     if ((k === 'weekend_driven' || k === 'weekday_business') && (x = v('weekend_share')) != null) return split(x);
+    if (k === 'bar_led' && (x = v('beverage_share')) != null) return gauge(0, 0.6, x, 0.25, pctf, '', false);
     if (k === 'long_hours' && (x = v('open_hours')) != null) return '<div class="dn-ringv">' + ring(x / 168, 64, Math.round(x) + 'h', '') + '<span>of 168 hours a week</span></div>';
     if (k === 'overtime_controlled' && (x = v('overtime_intensity')) != null) return gauge(0, 0.1, x, 0.03, pctf, '', false);
     if (k === 'answers_reviews' && (x = v('reply_rate')) != null) return '<div class="dn-ringv">' + ring(x, 64, pctf(x), '') + '<span>last 30 days · benchmark about 60%</span></div>';

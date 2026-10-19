@@ -111,6 +111,17 @@ def _t_daypart(d):
     return None
 
 
+def _t_bar(d):
+    v = _raw(d, "beverage_share")
+    if v is None or float(v) < 0.35:
+        return None
+    return {"key": "bar_led", "name": "Bar-Led", "icon": "glass", "family": "sales",
+            "figure": _pct(v), "figure_label": "of sales from beer, liquor and wine",
+            "sentence": "The stated benchmark is about 25%.",
+            "rule": "35% or more of sales from beer, liquor and wine", "dims": ["beverage_share"],
+            "strength": _strength(_z("beverage_share", v))}
+
+
 def _t_steadiness(d):
     v = _raw(d, "sales_volatility")
     if v is None:
@@ -270,7 +281,7 @@ def _t_advice(d):
             "rule": "60% or more of recommendations taken", "dims": ["rec_uptake"], "strength": _strength(_z("rec_uptake", v))}
 
 
-TRAIT_RULES = (_t_weekend, _t_daypart, _t_hours, _t_steadiness, _t_predictable, _t_seasonal, _t_growth,
+TRAIT_RULES = (_t_weekend, _t_daypart, _t_bar, _t_hours, _t_steadiness, _t_predictable, _t_seasonal, _t_growth,
                _t_labor, _t_overtime, _t_flex, _t_labor_swing, _t_rating, _t_replies, _t_register, _t_advice)
 
 # The traits still being learned: what each would read and what measures it.
@@ -285,7 +296,8 @@ LEARNING = (
      "unit": "complete weeks of sales"},
     {"key": "seasonality", "name": "Seasonality", "icon": "leaf", "family": "sales", "dims": ["seasonality"],
      "need": 12, "unit": "complete months of sales"},
-    {"key": "beverage", "name": "Bar-Led", "icon": "glass", "family": "sales", "dims": ["beverage_share"], "need": None},
+    {"key": "beverage", "name": "Bar-Led", "icon": "glass", "family": "sales", "dims": ["beverage_share"], "need": 28,
+     "unit": "nightly reports with the bar's drinks mapped"},
     {"key": "team_reliability", "name": "Team Reliability", "icon": "people", "family": "labor",
      "dims": ["staffing_issues"], "need": 8, "unit": "watched nights of published schedules"},
     {"key": "schedule_habit", "name": "Schedule Habit", "icon": "calendar", "family": "labor",

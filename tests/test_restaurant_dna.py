@@ -234,6 +234,34 @@ def test_daypart_fills_from_the_daily_sales_reports_hourly_split(db_path):
     assert d["raw"] == 0.4 and d["n"] == 30 and "daily sales report" in d["basis"]   # 400 of 1,000
 
 
+def test_daypart_fills_from_the_ticket_archive_before_the_reports_began(db_path):
+    """10/19/26: Simple EJ's had 55 nights of RPOWER tickets on file and 22
+    nightly reports, and the trait waited on the 22. The tickets' own open
+    times are the same measurement; a night the archive never filled, and
+    RPOWER's 2000-01-01 no-value open time, are not read."""
+    rid = _rid(db_path, "Ticket House")
+    _sales(db_path, rid, days=40)
+    conn = get_conn(db_path)
+    for k in range(30):
+        day = (date.today() - timedelta(days=k + 1)).isoformat()
+        conn.execute("INSERT INTO pos_archive_days (restaurant_id, provider, business_date, tickets) VALUES (?,?,?,4)",
+                     (rid, "rpower", day))
+        for i, (hh, net) in enumerate((("11", 300.0), ("15", 100.0), ("19", 500.0), ("01", 100.0))):
+            stamp = (day if hh != "01" else (date.fromisoformat(day) + timedelta(days=1)).isoformat()) + f"T{hh}:10:00"
+            conn.execute("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, "
+                         "net_sales) VALUES (?,?,?,?,?,?)", (rid, "rpower", f"{day}-{i}", day, stamp, net))
+        conn.execute("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, net_sales) "
+                     "VALUES (?,?,?,?,?,?)", (rid, "rpower", f"{day}-x", day, "2000-01-01T00:00:00", 9999.0))
+    # A night with tickets but no archive record is not read.
+    day = (date.today() - timedelta(days=35)).isoformat()
+    conn.execute("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, opened_at, net_sales) "
+                 "VALUES (?,?,?,?,?,?)", (rid, "rpower", "orphan", day, day + "T12:00:00", 5000.0))
+    conn.commit()
+    conn.close()
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["daypart_mix"]
+    assert d["raw"] == 0.4 and d["n"] == 30 and "ticket archive" in d["basis"]   # 400 of 1,000
+
+
 def test_the_non_sales_structural_coordinates_enter_the_dna(db_path):
     rid = _rid(db_path, "Coordinates")
     d = dna.compute(rid, db_path=db_path, features={"ticket_band": 3, "weekly_open_hours": 77.0,
@@ -935,3 +963,36 @@ def test_the_profile_carries_its_own_weekly_series_for_the_dna_screen(db_path):
     assert items["service_type"]["history"] == []          # categorical: no chart
     assert items["volume_band"]["history"] == []           # unmeasured: no series, never zeros
     privacy.assert_anonymous({k: [s["value"] for s in v["history"]] for k, v in items.items()})
+
+
+def _bar_nights(monkeypatch, nights, unmapped_hold=False):
+    from bar import sales as bar_sales
+    detail = {"nights": {f"2026-09-{i + 1:02d}": {"net": 1000.0, "gap": None, "drinks": {
+        "beer": {"net": 200.0}, "liquor": {"net": 150.0}, "wine": {"net": 50.0}, "na": {"net": 30.0}}}
+        for i in range(nights)}}
+    monkeypatch.setattr(bar_sales, "bar_sales", lambda *a, **k: detail)
+    monkeypatch.setattr(bar_sales, "window_basis",
+                        lambda *a, **k: {"unmapped_hold": unmapped_hold, "unmapped_pct": 4.0 if unmapped_hold else 0.0})
+
+
+def test_beverage_share_is_the_bars_own_drink_sales_over_the_nights_net(db_path, monkeypatch):
+    """10/19/26: S5 was hard-wired dormant ("no mapped daily sales report")
+    while Simple EJ's had a mapped report every night. Beer, liquor and wine
+    over net, the same nights; non-alcoholic drinks are not the bar's."""
+    rid = _rid(db_path, "Taproom")
+    _bar_nights(monkeypatch, 30)
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["beverage_share"]
+    assert d["raw"] == 0.4 and d["n"] == 30
+    from intelligence import dna_story
+    t = dna_story._t_bar({"beverage_share": {"value": 0.4, "measured": True, "raw": 0.4}})
+    assert t["key"] == "bar_led" and t["figure"] == "40%" and t["strength"] > 50
+    assert dna_story._t_bar({"beverage_share": {"value": 0.3, "measured": True}}) is None
+
+
+def test_beverage_share_waits_on_enough_nights_and_on_the_mapping(db_path, monkeypatch):
+    rid = _rid(db_path, "Thin Taproom")
+    _bar_nights(monkeypatch, 20)
+    assert dna.compute(rid, db_path=db_path, features={})["dims"]["beverage_share"]["raw"] is None
+    _bar_nights(monkeypatch, 30, unmapped_hold=True)
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["beverage_share"]
+    assert d["raw"] is None and "not yet mapped" in (d.get("needs") or d.get("basis") or "")
