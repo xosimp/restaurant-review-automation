@@ -160,8 +160,8 @@ DIMENSIONS = {
                "anchor": (0.0, 1.0), "module": "labor", "needs": "13 complete weeks of sales"},
     "demand_predictability": {"code": "B3", "family": "sales", "label": "Forecast skill vs a naive guess",
                               "unit": "skill", "anchor": (0.0, 0.3), "module": "labor",
-                              "needs": "6 scored weekly sales forecasts"},
-    "labor_pct": {"code": "B4", "family": "labor", "label": "Labor %", "unit": "pct",
+                              "needs": "28 scored nightly forecasts, or 6 scored weekly ones"},
+    "labor_pct": {"code": "B4", "family": "labor", "label": "Labor % (with salaries)", "unit": "pct",
                   "anchor": (30.0, 3.0), "module": "labor", "better": "lower",
                   "needs": "your pay rates and 14 costed days in the last 4 weeks"},
     "labor_hours_per_1k": {"code": "B4", "family": "labor", "label": "Labor hours per $1k of sales", "unit": "h",
@@ -187,7 +187,7 @@ DIMENSIONS = {
                   "needs": "180 days of shift history and 10 names with a last-seen date"},
     "tenure_depth": {"code": "B11", "family": "labor", "label": "Median days on the team", "unit": "days",
                      "transform": "log10", "anchor": (2.56, 0.30), "module": "labor",
-                     "needs": "10 people seen in the last 45 days"},
+                     "needs": "a year of shift history and 10 people seen in the last 45 days"},
     "rating_level": {"code": "B12", "family": "guests", "label": "Average rating (30 days)", "unit": "stars",
                      "anchor": (4.3, 0.3), "module": "reviews", "better": "higher",
                      "needs": "5 reviews in the last 30 days"},
@@ -590,7 +590,41 @@ def _growth(days, today):
     return _m(round((math.exp(slope) - 1) * 100, 2), len(pts), "13-week trend of weekly sales, % per week")
 
 
-def _predictability(conn, rid):
+# Nightly forecasts scored (demand.demand_accuracy) that measure B3 while
+# the weekly record is short.
+PREDICT_MIN_NIGHTS = 28
+
+
+def _predictability_nightly(rid, today, db_path):
+    """B3 from the nightly report's own forecasts, scored out of sample
+    against the same night a week before (demand_accuracy skill_vs_last_pct:
+    1 - mean forecast error / that naive guess's). The weekly record
+    (forecast_log revenue_week) is frozen only when a schedule is published
+    in Cavnar AI, so a restaurant that schedules elsewhere never filled B3
+    while its report forecast every night (Simple EJ's, 10/19/26)."""
+    try:
+        import demand
+        kw = {"db_path": db_path} if db_path and db_path != DB_PATH else {}
+        a = demand.demand_accuracy(rid, today=today, **kw)
+    except Exception:
+        return None
+    sk, n = a.get("skill_vs_last_pct"), int(a.get("n_skill") or 0)
+    if sk is None or n < PREDICT_MIN_NIGHTS:
+        return _need(n, f"{n} scored nightly forecasts") if n else None
+    return _m(round(float(sk) / 100.0, 3), n,
+              f"1 − nightly forecast error ÷ the same night last week's, {n} scored nights")
+
+
+def _predictability(conn, rid, today=None, db_path=None):
+    weekly = _predictability_weekly(conn, rid)
+    if weekly.get("raw") is not None or today is None:
+        return weekly
+    # The nightly reading, or its progress toward its own floor (the
+    # Still-learning count is of nightly forecasts).
+    return _predictability_nightly(rid, today, db_path) or weekly
+
+
+def _predictability_weekly(conn, rid):
     try:
         rows = conn.execute("SELECT error_pct, naive_last, actual FROM forecast_log WHERE restaurant_id=? "
                             "AND kind='revenue_week' AND actual IS NOT NULL AND error_pct IS NOT NULL "
@@ -729,8 +763,21 @@ def _retention(staff, today):
     return _m(round(gone / float(len(base)), 3), len(base), f"{gone} of {len(base)} not seen in 45 days")
 
 
+# Shift history a tenure reading needs: a median of days since first shift
+# can't be longer than the history itself (Simple EJ's shifts begin
+# 8/7/26 - everyone read as new, a median of 53 days, 10/19/26).
+TENURE_MIN_HISTORY_DAYS = 365
+
+
 def _tenure(staff, today):
     cut = (today - timedelta(days=45)).isoformat()
+    firsts = [_d(s.get("first_seen")) for s in staff if s.get("first_seen")]
+    try:
+        span = (today - date.fromisoformat(min(firsts))).days if firsts else 0
+    except ValueError:
+        span = 0
+    if span < TENURE_MIN_HISTORY_DAYS:
+        return _need(span, f"{span} days of shift history (a first shift before then isn't on file)")
     days = []
     for s in staff:
         seen = _d(s.get("last_seen") or s.get("updated_at"))
@@ -863,16 +910,30 @@ def _rec_uptake(conn, rid, today):
 
 
 def _follow_through(conn, rid, today):
+    """Accepted changes made: seen made (implemented_at) or marked Done by
+    the restaurant's own people. Done counted as not made until 10/19/26
+    (Simple EJ's read 3 of 52 with 34 marked Done). An answer given from
+    the admin console (authority 'admin' - Will's view-as) is not the
+    restaurant's: an episode only an admin said yes to is left out."""
     try:
-        rows = conn.execute("SELECT status, implemented_at FROM rec_instances WHERE restaurant_id=? AND created_at >= ? "
-                            "AND (status IN ('accepted','completed','implemented') OR implemented_at IS NOT NULL)",
-                            (rid, (today - timedelta(days=180)).isoformat())).fetchall()
+        rows = conn.execute(
+            "SELECT r.status, r.implemented_at, "
+            "(SELECT COUNT(*) FROM rec_events e WHERE e.rec_id = r.rec_id AND e.event IN ('accepted', 'completed') "
+            " AND COALESCE(e.authority, '') <> 'admin') AS own_yes, "
+            "(SELECT COUNT(*) FROM rec_events e WHERE e.rec_id = r.rec_id AND e.event = 'completed' "
+            " AND COALESCE(e.authority, '') <> 'admin') AS own_done "
+            "FROM rec_instances r WHERE r.restaurant_id=? AND r.created_at >= ? "
+            "AND (r.status IN ('accepted','completed','implemented') OR r.implemented_at IS NOT NULL)",
+            (rid, (today - timedelta(days=180)).isoformat())).fetchall()
     except Exception:
         rows = []
+    rows = [r for r in rows if r["implemented_at"] or int(r["own_yes"] or 0)]
     if len(rows) < 5:
         return _need(len(rows), f"{len(rows)} accepted recommendations in 180 days")
-    made = sum(1 for r in rows if r["implemented_at"])
-    return _m(round(made / float(len(rows)), 3), len(rows), f"{made} of {len(rows)} accepted changes seen made")
+    seen = sum(1 for r in rows if r["implemented_at"])
+    done = sum(1 for r in rows if not r["implemented_at"] and int(r["own_done"] or 0))
+    return _m(round((seen + done) / float(len(rows)), 3), len(rows),
+              f"{seen + done} of {len(rows)} accepted changes made ({seen} seen made, {done} marked done)")
 
 
 def _data_hygiene(conn, rid, f, today):
@@ -909,6 +970,49 @@ def _from_feature(f, key, dim, n=None):
     if v is None:
         return _need(0, "")
     return _m(v, n, FEATURE_BASIS.get(key) or "this week's reading")
+
+
+def _labor_all_in(conn, rid, restaurant, today, f):
+    """B4 labor %: the owner's labor % - hourly wages plus salaries over
+    sales, the last 28 costed days - the figure Home and the Labor page
+    show the owner and the one the stated anchor means (an industry labor %
+    counts management). It used to be the hourly-only feature, so Simple
+    EJ's read 27.75% against "the stated 30% benchmark" and earned Labor
+    Efficient while its labor with salaries ran over target (owner,
+    10/19/26). `hourly` rides along: a login that may not see salaries
+    reads it instead (profile(salaries=False)). With nobody salaried the
+    two are the same figure."""
+    hourly = _labor_cost(f, "labor_pct_28d", "labor_pct", restaurant)
+    if hourly.get("raw") is None:
+        return hourly
+    try:
+        import models as _mm
+        share = _mm.salaried_day_share(restaurant) if restaurant is not None else None
+    except Exception:
+        share = None
+    if not share:
+        return dict(hourly, hourly=hourly["raw"])
+    since, until = (today - timedelta(days=28)).isoformat(), (today - timedelta(days=1)).isoformat()
+    try:
+        rows = conn.execute("SELECT date, sales, labor_pct FROM labor_daily_history WHERE restaurant_id=? AND date >= ? "
+                            "AND date <= ? AND COALESCE(final, 1) = 1 AND sales > 0 AND labor_pct IS NOT NULL",
+                            (rid, since, until)).fetchall()
+    except Exception:
+        rows = []
+    days, sales, cost = set(), 0.0, 0.0
+    for r in rows:
+        d = _d(r["date"])
+        if d in days:
+            continue
+        days.add(d)
+        sales += float(r["sales"])
+        cost += float(r["labor_pct"]) * float(r["sales"]) / 100.0
+    if len(days) < 14 or sales <= 0:
+        return dict(hourly, hourly=hourly["raw"])
+    all_in = (cost + float(share) * len(days)) / sales * 100.0
+    out = _m(round(all_in, 2), len(days), f"labor with salaries ÷ sales over {len(days)} days, on your pay rates")
+    out["hourly"] = round(cost / sales * 100.0, 2)
+    return out
 
 
 def _labor_cost(f, key, dim, restaurant):
@@ -973,8 +1077,8 @@ def measure(restaurant_id, today=None, db_path=DB_PATH, features=None, restauran
                                                                              "competitors (0 rural – 2 urban)"),
             "sales_volatility": lambda: _volatility(days, today),
             "growth": lambda: _growth(days, today),
-            "demand_predictability": lambda: _predictability(conn, restaurant_id),
-            "labor_pct": lambda: _labor_cost(f, "labor_pct_28d", "labor_pct", restaurant),
+            "demand_predictability": lambda: _predictability(conn, restaurant_id, today, db_path),
+            "labor_pct": lambda: _labor_all_in(conn, restaurant_id, restaurant, today, f),
             "labor_hours_per_1k": lambda: _from_feature(f, "labor_hours_per_1k_28d", "labor_hours_per_1k"),
             "labor_flex": lambda: _labor_flex(days, today),
             "labor_swing": lambda: _labor_cost(f, "labor_pct_sd_28d", "labor_swing", restaurant),
@@ -1372,6 +1476,16 @@ def _history(restaurant_id, weeks, db_path):
         for dim, e in dims.items():
             meta = DIMENSIONS.get(dim) or {}
             raw = (e or {}).get("raw") if isinstance(e, dict) else None
+            # Labor % with salaries since 10/19/26; its hourly figure rides
+            # along (`hourly`). A week stored before then held the hourly
+            # figure as raw: it is that week's hourly reading, never a
+            # with-salaries one.
+            if dim == "labor_pct" and isinstance(e, dict):
+                hr = e.get("hourly", raw)
+                if hr is not None:
+                    out.setdefault("labor_pct:hourly", []).append({"week": r["week"], "value": float(hr)})
+                if "hourly" in e and raw is not None:
+                    out.setdefault("labor_pct:all_in", []).append({"week": r["week"], "value": float(raw)})
             if meta.get("kind", "numeric") != "numeric" or raw is None:
                 continue
             try:
@@ -1381,13 +1495,17 @@ def _history(restaurant_id, weeks, db_path):
     return out
 
 
-def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
+def profile(restaurant_id, db_path=DB_PATH, modules=None, salaries=True) -> dict:
     """The restaurant's OWN profile: every dimension with its label, value,
     change against TREND_WEEKS ago, how it was measured, and for an
     unmeasured one what would measure it. `modules` (a set of permission-
     module keys, or None for no restriction) leaves out the dimensions of a
     module this login can't view. Never another restaurant's figure, never
-    a z-score, never a trait (dna_story names those, from these figures)."""
+    a z-score, never a trait (dna_story names those, from these figures).
+    `salaries` False (a login that may not see pay, models.
+    viewer_sees_salaries): labor % is the hourly figure, its trend and
+    weeks too - labor with salaries beside the hourly one gives the
+    salaries away."""
     row = latest(restaurant_id, db_path=db_path)
     if not row:
         return {"available": False, "why_not": "Your profile builds with the nightly pass — check back tomorrow.",
@@ -1405,6 +1523,19 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
                 continue
             e = row["dims"].get(dim) or {}
             p = (prev["dims"].get(dim) or {})
+            hist = series.get(dim, [])
+            if dim == "labor_pct":
+                if not salaries:
+                    e = dict(e, raw=e.get("hourly", e.get("raw")),
+                             basis=str(e.get("basis") or "").replace("labor with salaries", "hourly labor"))
+                    p = dict(p, raw=p.get("hourly", p.get("raw")))
+                    hist = series.get("labor_pct:hourly", [])
+                elif e.get("hourly") is not None and e.get("hourly") != e.get("raw"):
+                    # Salaries on file: a week stored hourly-only is no trend and
+                    # no point on the line for labor with salaries.
+                    if "hourly" not in p:
+                        p = {}
+                    hist = series.get("labor_pct:all_in", [])
             raw = e.get("raw")
             item = {"key": dim, "code": meta["code"], "label": meta["label"], "value": raw,
                     "display": display(dim, raw), "unit": meta["unit"], "better": meta.get("better"),
@@ -1430,7 +1561,7 @@ def profile(restaurant_id, db_path=DB_PATH, modules=None) -> dict:
             # The weeks behind the figure, for the DNA screen's per-dimension
             # chart (parity audit #98): a measured numeric dimension only —
             # an unmeasured one has no series, never a line of zeros.
-            item["history"] = series.get(dim, []) if (raw is not None and meta["kind"] == "numeric") else []
+            item["history"] = hist if (raw is not None and meta["kind"] == "numeric") else []
             if meta["buildable"]:
                 total += 1
                 measured += 1 if raw is not None else 0
@@ -1453,7 +1584,12 @@ def payload_for(user, db_path=DB_PATH) -> dict:
     if not rid:
         return {"ok": False, "error": "No restaurant on this login."}
     from .engine import _visible_modules
-    p = profile(rid, db_path=db_path, modules=_visible_modules(user))
+    try:
+        from models import viewer_sees_salaries
+        sal = viewer_sees_salaries()
+    except Exception:
+        sal = False
+    p = profile(rid, db_path=db_path, modules=_visible_modules(user), salaries=sal)
     # The told DNA (intelligence.dna_story, owner 10/8/26): earned traits,
     # the shape, the connections and what is still learning — read from
     # this same projected profile, so a login never sees a trait from a

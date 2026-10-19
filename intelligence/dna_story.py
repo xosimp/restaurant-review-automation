@@ -291,7 +291,7 @@ LEARNING = (
     {"key": "daypart", "name": "Daytime or Evening", "icon": "sun", "family": "sales", "dims": ["daypart_mix"],
      "need": 28, "unit": "nights of hourly sales"},
     {"key": "predictability", "name": "Predictability", "icon": "target", "family": "sales",
-     "dims": ["demand_predictability"], "need": 6, "unit": "scored weekly forecasts"},
+     "dims": ["demand_predictability"], "need": 28, "unit": "scored nightly forecasts"},
     {"key": "trend", "name": "Growth", "icon": "trend_up", "family": "sales", "dims": ["growth"], "need": 13,
      "unit": "complete weeks of sales"},
     {"key": "seasonality", "name": "Seasonality", "icon": "leaf", "family": "sales", "dims": ["seasonality"],

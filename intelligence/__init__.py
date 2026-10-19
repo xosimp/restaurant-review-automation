@@ -297,7 +297,12 @@ def benchmark_prompt_lines(comparisons):
 
 def dna_profile(restaurant_id, db_path=DB_PATH, modules=None):
     from . import dna
-    return dna.profile(restaurant_id, db_path=db_path, modules=modules)
+    try:
+        from models import viewer_sees_salaries
+        sal = viewer_sees_salaries()
+    except Exception:
+        sal = False
+    return dna.profile(restaurant_id, db_path=db_path, modules=modules, salaries=sal)
 
 
 def dna_payload(user, db_path=DB_PATH):

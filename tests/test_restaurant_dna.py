@@ -996,3 +996,64 @@ def test_beverage_share_waits_on_enough_nights_and_on_the_mapping(db_path, monke
     _bar_nights(monkeypatch, 30, unmapped_hold=True)
     d = dna.compute(rid, db_path=db_path, features={})["dims"]["beverage_share"]
     assert d["raw"] is None and "not yet mapped" in (d.get("needs") or d.get("basis") or "")
+
+
+def test_labor_pct_is_with_salaries_and_a_non_owner_reads_the_hourly_figure(db_path, monkeypatch):
+    """10/19/26: B4 was the hourly-only feature read against an all-in
+    benchmark - Simple EJ's 27.75% earned Labor Efficient while its labor
+    with salaries ran over target."""
+    import thresholds
+    monkeypatch.setattr(thresholds, "labor_cost_basis", lambda r: "stated")
+    rid = _rid(db_path, "Salary House")
+    _sales(db_path, rid, days=40, base=3000.0, weekend=1.0)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE labor_daily_history SET labor_pct=25.0 WHERE restaurant_id=?", (rid,))
+    conn.commit()
+    conn.close()
+    r = models.get_restaurant(rid, db_path=db_path)
+    r.salaried_staff_json = json.dumps([{"name": "GM", "annual": 52 * 7 * 300.0}])   # $300 a trading day
+    monkeypatch.setattr(models, "open_days_per_week", lambda *a, **k: 7, raising=False)
+    e = dna.measure(rid, db_path=db_path, features={"labor_pct_28d": 25.0}, restaurant=r)["labor_pct"]
+    assert e["hourly"] == 25.0 and abs(e["raw"] - 35.0) < 0.5          # 25% + $300 on ~$3,000 a day
+    dna.store(rid, {"week": "2026-W43", "dims": {"labor_pct": e}, "coverage": 0.1, "version": 1}, db_path=db_path)
+    owner = {i["key"]: i for f in dna.profile(rid, db_path=db_path)["families"] for i in f["dimensions"]}
+    staff = {i["key"]: i for f in dna.profile(rid, db_path=db_path, salaries=False)["families"] for i in f["dimensions"]}
+    assert owner["labor_pct"]["value"] == e["raw"] and staff["labor_pct"]["value"] == 25.0
+    assert "salaries" not in staff["labor_pct"]["basis"]
+
+
+def test_follow_through_counts_done_but_not_an_admins_answer(db_path):
+    rid = _rid(db_path, "Done Diner")
+    import rec_ledger
+    rec_ledger.init_rec_ledger(db_path) if hasattr(rec_ledger, "init_rec_ledger") else None
+    conn = get_conn(db_path)
+    now = date.today().isoformat()
+    for i, (status, impl, auth) in enumerate([("completed", None, "principal")] * 4 + [("implemented", now, None)]
+                                             + [("accepted", None, "principal")] * 2 + [("completed", None, "admin")]):
+        conn.execute("INSERT INTO rec_instances (rec_id, restaurant_id, key, status, created_at, implemented_at) "
+                     "VALUES (?,?,?,?,?,?)", (f"r{i}", rid, f"k{i}", status, now, impl))
+        if status in ("completed", "accepted"):
+            conn.execute("INSERT INTO rec_events (rec_id, restaurant_id, key, event, dedupe, authority) VALUES (?,?,?,?,?,?)",
+                         (f"r{i}", rid, f"k{i}", status, f"d{i}", auth))
+    conn.commit()
+    conn.close()
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["follow_through"]
+    assert d["n"] == 7 and d["raw"] == round(5 / 7, 3) and "4 marked done" in d["basis"]
+
+
+def test_tenure_waits_on_a_year_of_shift_history():
+    today = date(2026, 10, 19)
+    staff = [{"first_seen": "2026-08-07", "last_seen": "2026-10-18"}] * 12
+    assert dna._tenure(staff, today)["raw"] is None
+    staff = [{"first_seen": "2025-06-01", "last_seen": "2026-10-18"}] * 12
+    assert dna._tenure(staff, today)["raw"] is not None
+
+
+def test_predictability_reads_the_nightly_forecasts_while_the_weekly_record_is_short(db_path, monkeypatch):
+    import demand
+    rid = _rid(db_path, "Nightly Co")
+    monkeypatch.setattr(demand, "demand_accuracy", lambda *a, **k: {"skill_vs_last_pct": 22, "n_skill": 40})
+    d = dna.compute(rid, db_path=db_path, features={})["dims"]["demand_predictability"]
+    assert d["raw"] == 0.22 and d["n"] == 40 and "nightly" in d["basis"]
+    monkeypatch.setattr(demand, "demand_accuracy", lambda *a, **k: {"skill_vs_last_pct": 22, "n_skill": 10})
+    assert dna.compute(rid, db_path=db_path, features={})["dims"]["demand_predictability"]["raw"] is None
