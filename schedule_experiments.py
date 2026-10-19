@@ -182,7 +182,11 @@ EXPERIMENTS = (
                  "shaped in code and solved?",
      "control": "code_shaped",
      "until_powered": "code_shaped",
-     "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 1, "flags": {"draft_source": "model"}},
+     # The model's draft is off the hash too (weight 0, scale audit 10/19/26
+     # A5-F1): at weight 1 it took half of every restaurant's weeks the
+     # moment five restaurants had generated in the window - $0.29-0.57 and
+     # 2-5 minutes a call, against "a pin or the env var reaches it" above.
+     "arms": ({"key": "model_draft", "label": "The model's draft", "weight": 0, "flags": {"draft_source": "model"}},
               # Off the hash (weight 0, 10/14/26): the schedule benchmark
               # shows the carried week leaves people with no hours where the
               # solver starves nobody — not a week to give a restaurant on a

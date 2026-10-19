@@ -66,6 +66,13 @@ def test_draft_v1_keeps_the_solver_until_it_can_conclude_and_the_model_is_an_arm
     # F (AI-8) added the deterministic+critic arm, off the hash
     assert {a["key"] for a in exp["arms"]} == {"model_draft", "carried", "code_shaped", "code_critic"}
     assert next(a for a in exp["arms"] if a["key"] == "code_critic")["weight"] == 0
+    # Scale audit 10/19/26 A5-F1: powered or not, the hash never hands a week to the model's draft.
+    assert next(a for a in exp["arms"] if a["key"] == "model_draft")["weight"] == 0
+    monkeypatch.setattr(sx, "_power_or_pin", lambda db: {"powered": True})
+    rid0 = create_restaurant(Restaurant(name="Powered", owner_email="pw@x.com"), db_path=db_path)
+    for wk in WEEK:
+        got0 = next(a for a in sx.arms_for(rid0, wk, db_path=db_path) if a["experiment"] == "draft_v1")
+        assert got0["arm"] == "code_shaped", got0
     assert sx.DEFAULT_FLAGS["draft_source"] == "solver"
     monkeypatch.setattr(sx, "_power_or_pin", lambda db: {"powered": False})
     rid = create_restaurant(Restaurant(name="Pin", owner_email="pin@x.com"), db_path=db_path)
