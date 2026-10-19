@@ -78,3 +78,37 @@ def test_a_restaurant_with_no_history_has_nothing_to_say():
     rid = create_restaurant(Restaurant(name="New Co", owner_email="n@x.test", module_labor=1))
     v = bs.owner_view(rid, today=TODAY)
     assert v["ok"] and v["available"] is False and v["pools"] == [] and v["hiring"] == []
+
+
+def test_salaried_managers_cover_manager_shifts_and_are_never_people_to_train():
+    """Simple EJ's (owner, 10/19/26): five salaried people run the floor
+    without punching every shift - Manager FOH lunch read "nobody covers
+    it", and Erik (the owner) and Anthony (the GM) were each listed twice
+    as people to train on it."""
+    data = _data()
+    start = TODAY - dt.timedelta(weeks=12)
+    for w in range(12):
+        for i in range(5):
+            d = start + dt.timedelta(weeks=w, days=i)
+            data["rows"].append(_row(d, "Max", "Manager FOH"))
+            data["rows"].append(_row(d, "Max", "Manager FOH", start="11:00am", end="4:00pm", hours=5))
+    data["rows"].append(_row(start, "Erik", "Manager FOH", start="11:00am", end="4:00pm", hours=5))
+    data["roster"].update({"max": "Max", "erik": "Erik", "ann": "Ann"})
+    data["salaried"] = {"erik", "ann"}
+    data["mentored"]["erik"] = {"Manager FOH": 3}
+    pools = {(p["family"], p["daypart"]): p for p in bs.strength(1, TODAY, data=data)["pools"]}
+    for part in ("morning", "night"):
+        mgr = pools[("manager foh", part)]
+        assert mgr["status"] == "ok" and {"Erik", "Ann", "Max"} <= set(mgr["names"])
+    lines = bs.cross_train(1, TODAY, data=data)
+    assert not any(l["who"] in ("Erik", "Ann") for l in lines)
+    assert not any(h["family"] == "manager foh" for h in bs.hiring(1, TODAY, data=data))
+
+
+def test_one_person_trained_on_a_roles_lunch_and_dinner_is_one_line():
+    data = _data()
+    pools = [{"family": "busser", "daypart": "morning", "status": "critical", "names": ["Sal"]},
+             {"family": "busser", "daypart": "night", "status": "critical", "names": ["Sal"]}]
+    data["mentored"]["sue"] = {"Busser": 4}
+    lines = [l for l in bs.cross_train(1, TODAY, data=data, pools=pools) if l["who"] == "Sue"]
+    assert len(lines) == 1 and lines[0]["what"] == "busser lunch & dinner"

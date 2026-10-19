@@ -80,7 +80,7 @@ def _q(vals, q):
 
 def _inputs(restaurant_id, today, db_path=None) -> dict:
     out = {"rows": [], "roster": None, "closers": {}, "leaders": set(), "mentored": {}, "scores": {}, "left": [],
-           "families": {}}
+           "families": {}, "salaried": set()}
     try:
         import shift_facts
         out["rows"] = shift_facts.person_rows(restaurant_id, since=(today - timedelta(weeks=WEEKS)).isoformat(),
@@ -100,6 +100,10 @@ def _inputs(restaurant_id, today, db_path=None) -> dict:
         out["closers"] = {f: {_key(k) for k in v} for f, v in (schedule_rules.chosen_closers(restaurant_id, restaurant=r) or {}).items()}
         out["leaders"] = {_key(n) for n, v in (models.get_leader_flags(restaurant_id, db_path or _models_db()) or {}).items() if v}
         out["scores"] = {_key(n): v for n, v in (models.get_operational_scores(restaurant_id, db_path or _models_db()) or {}).items()}
+        # Salaried people (the owner, a GM): they run the floor without
+        # punching every shift (owner, 10/19/26: Erik and Anthony read as
+        # people to train on Manager FOH, and its lunch as "nobody covers it").
+        out["salaried"] = {_key(s["name"]) for s in models.salaried_staff(r) or []}
     except Exception as e:
         log.warning("bench: rules unreadable rid=%s: %s", restaurant_id, e)
     try:
@@ -138,6 +142,10 @@ def _family(role, fams):
     return None if str(fam or "").strip().lower() in NOT_STAFFED else fam
 
 
+def _is_manager(fam) -> bool:
+    return "manager" in str(fam or "").lower()
+
+
 def _shift_word(part) -> str:
     return "lunch" if part == "morning" else "dinner"
 
@@ -165,8 +173,13 @@ def strength(restaurant_id, today=None, db_path=None, data=None) -> dict:
         e["people"][k] = e["people"].get(k, 0) + 1
         e["nights"].setdefault(str(r.get("date"))[:10], set()).add(k)
     pools = []
+    salaried = data.get("salaried") or set()
     for (fam, part), e in sorted(by.items()):
         members = [k for k, n in e["people"].items() if n >= MIN_SHIFTS]
+        # A salaried manager covers every manager shift whether or not they
+        # clock in for it (the manager-on-the-floor rule counts owners too).
+        if _is_manager(fam):
+            members += [k for k in sorted(salaried) if k not in members and (roster is None or k in roster)]
         if not e["nights"]:
             continue
         nights_per_week = len(e["nights"]) / float(WEEKS)
@@ -224,8 +237,8 @@ def cross_train(restaurant_id, today=None, db_path=None, data=None, pools=None) 
         have = {_key(n) for n in (p.get("closer_names") if closing else p.get("names")) or []}
         cands = []
         for k, name in roster.items():
-            if k in have:
-                continue
+            if k in have or k in (data.get("salaried") or set()):
+                continue                   # a salaried manager is never someone to train
             beside = sum(n for role, n in (data["mentored"].get(k) or {}).items() if _family(role, data["families"]) == fam)
             worked = (shifts_in.get(k) or {}).get(fam, 0)
             if closing and not worked:
@@ -251,7 +264,21 @@ def cross_train(restaurant_id, today=None, db_path=None, data=None, pools=None) 
             out.append({"family": fam, "daypart": p["daypart"], "kind": "close" if closing else "cover",
                         "who": name, "what": what, "because": " · ".join(bits),
                         "text": f"Train {name} {'to' if closing else 'on'} {what}" + (f" · {' · '.join(bits)}" if bits else "")})
-    return out
+    # One line per person and role: training someone on a role's lunch and
+    # its dinner is one thing to do ("Manager FOH lunch & dinner").
+    merged, order = {}, []
+    for o in out:
+        k = (o["who"], o["family"], o["kind"])
+        if k in merged:
+            m = merged[k]
+            if o["kind"] == "cover" and o["daypart"] != m["daypart"]:
+                m["daypart"] = "both"
+                m["what"] = f"{o['family']} lunch & dinner"
+                m["text"] = f"Train {o['who']} on {m['what']}" + (f" · {m['because']}" if m["because"] else "")
+            continue
+        merged[k] = dict(o)
+        order.append(k)
+    return [merged[k] for k in order]
 
 
 HEADROOM = 1.2          # with nothing stated, a person is assumed able to work 20% past their busiest week
@@ -314,6 +341,8 @@ def hiring(restaurant_id, today=None, db_path=None, data=None) -> list:
     span = WEEKS - first
     out = []
     for fam, series in sorted(fam_week.items()):
+        if _is_manager(fam) and data.get("salaried"):
+            continue                       # salaried managers' hours aren't on the clock to measure
         weeks_with = [i for i, v in enumerate(series) if v > 0]
         if len(weeks_with) < MIN_TREND_WEEKS or span < MIN_TREND_WEEKS:
             continue
