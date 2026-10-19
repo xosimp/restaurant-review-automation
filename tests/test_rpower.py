@@ -952,3 +952,15 @@ def test_two_employees_with_one_name_are_told_apart():
     assert out["3000"] == "Katie Royer"
     assert out["4001"] == "Ana Diaz (AAA111)" and out["4002"] == "Ana Diaz (BBB222)"
     assert len(set(out.values())) == len(out)
+
+
+def test_a_shared_cash_drawer_login_is_a_station_not_a_person():
+    """Simple EJ's "Office Drawer" (10/19/26): never paid, clocked in as
+    Manager BOH and Host PM, and read as the Bench's only BOH dinner
+    manager. A real person whose name only shares a word stays a person."""
+    assert rpower.is_station_name("Office Drawer")
+    assert rpower.is_station_name("Cash Till")
+    assert not rpower.is_station_name("Cash Johnson")
+    people = {"station_names": {"m1": "Office Drawer"}}
+    assert rpower.station_logins([{"emp_mid": "m1", "reg_rate": 0, "reg_pay": 0}], people) == {"m1": "Office Drawer"}
+    assert rpower.station_logins([{"emp_mid": "m1", "reg_rate": 15.0}], people) == {}

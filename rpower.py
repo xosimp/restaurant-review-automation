@@ -1452,7 +1452,11 @@ _STATION_WORDS = frozenset((
     "upstairs downstairs main front back floor foh boh kitchen expo line prep "
     "server servers busser bussers barback bartender cashier counter register "
     "station shared house tips tip pool training trainee manager mgr test "
-    "generic staff team service system admin rpower").split())
+    "generic staff team service system admin rpower "
+    # A shared cash drawer: Simple EJ's "Office Drawer" (never paid, clocked
+    # in as Manager BOH and Host PM) was on the roster as a person - the
+    # Bench's only BOH dinner manager (owner, 10/19/26).
+    "office drawer cash till").split())
 
 
 def _name_words(name) -> list:
