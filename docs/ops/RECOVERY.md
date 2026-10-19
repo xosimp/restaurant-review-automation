@@ -161,6 +161,19 @@ and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
 
 ## Database recovery
 
+**Production has run on Postgres since 10/19/26** (the Railway service
+`Postgres`, private URL `postgres.railway.internal`, through the web
+service's `DATABASE_URL=${{Postgres.DATABASE_URL}}`; docs/ops/POSTGRES_CUTOVER.md).
+The volume's `reviews.db` is the SQLite database as it stood at the switch
+(18:45 CT) — the instant rollback (`DB_BACKEND=sqlite`, losing what Postgres
+took since) is in the cutover runbook's *Rollback*. The steps below are the
+SQLite ones; on Postgres the nightly snapshot is an export to SQLite
+(`pg_copy.export_to_sqlite`), so a restore is that file through
+`RESTORE_FROM` with `DB_BACKEND=sqlite`, or `scripts/run_pg_copy.py` back
+into an empty Postgres. Point-in-time recovery: Railway's own backups on the
+Postgres service are off unless turned on there (Backups tab); until then
+the nightly export is the only copy (RPO 24 h).
+
 `/health` returns 500 with a database error code, or SQLite reports corruption.
 
 ### 1. Confirm it is really the database

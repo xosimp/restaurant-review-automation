@@ -819,3 +819,32 @@ def test_the_partition_job_is_a_no_op_on_sqlite(monkeypatch):
     import pg_partitions
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert pg_partitions.run() == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False}
+
+
+@live
+def test_health_probes_writes_on_postgres(scratch_db, tmp_path, monkeypatch):
+    # After the 10/19/26 cutover /health read write "unknown" on every poll: its reads had opened a
+    # Postgres transaction and the probe refuses to run inside one.
+    import contextlib
+    import io
+    import pg_copy
+    import psycopg
+    import status_manager
+    db_path = str(tmp_path / "source.db")
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+        models.ensure_columns(db_path)
+    models.checkpoint(db_path)
+    dst = psycopg.connect(scratch_db, autocommit=False)
+    try:
+        assert pg_copy.copy_database(db_path, dst, today=date(2026, 10, 14))["verify"]["ok"]
+    finally:
+        dst.close()
+    c = db_dialect.connect(scratch_db)
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: c)
+    monkeypatch.setattr(status_manager, "platform_emptied", lambda *a, **k: False)
+    monkeypatch.setattr(status_manager, "_schema_gaps_cached", lambda *a, **k: [])
+    body, code = status_manager.health_snapshot(db_path)
+    assert code == 200, body
+    assert body["database"]["write"] == "ok" and body["database"]["backend"] == "postgres"
+    assert body["database"]["size_mb"] > 0

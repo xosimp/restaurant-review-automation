@@ -1,5 +1,12 @@
 # Postgres cutover — the runbook
 
+**Switched 10/19/26** (scale audit): rehearsed inside Railway (410 tables
+verified, 2.3-minute copy, boot 12.7 s), then frozen at 18:43 CT, copied and
+verified in 120 s, switched at 18:47 CT (`DATABASE_URL=${{Postgres.DATABASE_URL}}`,
+`MAINTENANCE_READ_ONLY=0`). The volume's `reviews.db` and `cutover.db` are
+the SQLite database as it stood at the switch. On the Hobby plan the Postgres
+volume is capped at 5 GB — move to Pro before the RPOWER rollout.
+
 Built 10/10/26 (scheduler audit, workstream H2: RM-13, RM-14, SCALE-20,
 SCALE-21, ARCH-34). Everything up to the switch is in the code; **the switch
 itself is Will's step** — it provisions a paid service and moves the
