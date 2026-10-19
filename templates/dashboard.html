@@ -3960,13 +3960,13 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
 .co-more .co-grid{margin-top:12px}
 .hb-card.quiet:after{display:none}
 /* warm secondaries */
-.hb-rec .no{background:linear-gradient(135deg,var(--ember2),var(--ember) 70%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hb-rec .no{color:var(--ember)}
 .hb-rec:hover{border-color:var(--hb-copper)}
 .hb-stat.good .v{color:var(--hb-good2)}
 /* Every check on Home is one disc (owner, 9/26/26): a softer green with a dark-green tick. */
 .hb-clear .ok{background:radial-gradient(circle at 35% 30%,var(--hb-pop2),var(--hb-pop) 72%);color:var(--hb-pop-ink);box-shadow:0 0 0 4px var(--hb-pop-ring),0 4px 14px -3px var(--hb-pop-glow)}
 /* A gap still open is a warning, amber - never the ember, which is not status (B4 L7). */
-.hb-stat.warn .v{background:linear-gradient(135deg,var(--hb-amber),var(--hb-warn));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hb-stat.warn .v{color:var(--hb-warn)}
 .hb-focus .ev>span{transition:border-color .18s ease,transform .18s ease,background-color .18s ease}
 .hb-focus .ev>span:hover{border-color:var(--hb-copper);transform:translateY(-1px)}
 .hb-rcpt .it{border-color:transparent;transition:background-color .18s ease}
@@ -49740,7 +49740,6 @@ function sfw2RuleCheck(chk) {
   --vx-obsidian:#0d0b0a;--vx-graphite:#181513;
   --vx-heat:linear-gradient(90deg,#2fbf85 0%,#9fd356 16%,#ffc845 28%,#ff8a3d 44%,#ff4d5a 68%,#ff2e63 100%);
   --vx-yield:linear-gradient(90deg,#ff4d5a 0%,#ff8a3d 32%,#ffc845 56%,#f5d76e 70%,#7fe0a8 82%,#34d399 100%);
-  --vx-molten:linear-gradient(180deg,#fff0e6 0%,#ffc2a0 34%,#ff8a55 72%,#f0602f 100%);
   --vx-silver:linear-gradient(180deg,#ffffff 0%,#f0e9e1 45%,#c9bfb4 100%);
   --vx-whitehot:linear-gradient(180deg,#ffffff 0%,#fff6ef 46%,#ffcfb4 100%);
   --vx-hatch:repeating-linear-gradient(-45deg,rgba(255,138,90,.62) 0 1.5px,transparent 1.5px 5px);
@@ -49847,7 +49846,8 @@ function sfw2RuleCheck(chk) {
 
 /* Figures as metal, by role - one look per role, never per module:
    white-hot  the page's hero figure (a soft warm foot, a glow under it)
-   molten     money at stake (the ledger's lead)
+   ember      money at stake (the ledger's lead): solid orange, never a
+              gradient (owner, 10/19/26)
    silver     a supporting figure
    A figure that already wears a status colour (.good/.warn/.bad/.up/
    .down) keeps it: the metal is for figures that say no verdict. */
@@ -49858,7 +49858,7 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] :is(.kx-card .kx-val,.dr-kpi .v,#bar .br-hero .v,#bar .br-cfigs .fg>b,#bar .br-st .v:not(.up):not(.down),.lb2-op .v:not(.warn):not(.good):not(.ember),.hb-stat:not(.good):not(.warn):not(.bad) .v:not(.txt)) .hb-num{
   background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
 /* (.fg.fg: above the silver list, whose :is() carries its strongest selector.) */
-[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b,[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b .hb-num{background-image:var(--vx-molten)}
+[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b,[data-theme="dark"] #bar .br-cfigs .fg.fg:first-child>b .hb-num{background:none;color:var(--ember);-webkit-text-fill-color:var(--ember)}
 /* An info tip inside a metal figure (Home's $/month) keeps its ink: -webkit-text-fill-color inherits, and
    the "i" went invisible (owner, 10/17/26). */
 [data-theme="dark"] :is(.kx-hero .kx-val,.kx-card .kx-val,.dr-score .net,.hb-focus .money,.dr-kpi .v,.lb2-op .v,.hb-stat .v,#bar .br-big,#bar .br-cfigs .fg>b,.hb-rec .no,.dr-fc,.fc2-drv .n) :is(.cav-it,.cav-it *){-webkit-text-fill-color:currentColor;background-clip:border-box;-webkit-background-clip:border-box}
@@ -49880,7 +49880,7 @@ function sfw2RuleCheck(chk) {
     var(--vx-face-ledger) padding-box,var(--vx-rim-ledger) border-box;
   box-shadow:inset 0 1px 0 rgba(255,226,196,.09),0 1px 0 rgba(0,0,0,.6),0 3px 8px -2px rgba(0,0,0,.5),0 26px 44px -26px rgba(0,0,0,.9)}
 [data-theme="dark"] #panel-dsr .dr-tmr .dr-fc,[data-theme="dark"] #panel-dsr .dr-tmr .dr-fc .hb-num{
-  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  background:none;color:var(--ember);-webkit-text-fill-color:var(--ember)}
 /* Ember glass: what Cavnar AI wrote - the report's executive summary. */
 [data-theme="dark"] #panel-dsr .hb-card.dr-read{
   border-color:transparent;
@@ -49940,14 +49940,14 @@ function sfw2RuleCheck(chk) {
 [data-theme="dark"] .hb-card.hb-rec::before{content:"";position:absolute;left:16px;right:16px;top:6px;height:5px;pointer-events:none;
   background:radial-gradient(circle,var(--bg-base) 1.6px,rgba(255,236,214,.13) 2.1px,transparent 2.6px) 0 50%/11px 5px repeat-x}
 [data-theme="dark"] .hb-rec .no,[data-theme="dark"] .hb-rec .no *{
-  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  background:none;color:var(--ember);-webkit-text-fill-color:var(--ember)}
 [data-theme="dark"] .hb-rec .meta .usd{color:var(--vx-ember-light);border-color:color-mix(in srgb,var(--vx-ember-hot) 40%,transparent);background:color-mix(in srgb,var(--vx-ember-hot) 10%,transparent)}
 
 /* Food Cost. Where the money is going stays Slate (it holds the supplier picks, not a figure strip -
    owner 10/17/26); its driver's dollars are molten.
    Register: plate costs' heading row in the kicker's orange, a row lighting under the pointer. */
 [data-theme="dark"] #panel-inventory .fc2-drv .n,[data-theme="dark"] #panel-inventory .fc2-drv .n .hb-num{
-  background:var(--vx-molten);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+  background:none;color:var(--ember);-webkit-text-fill-color:var(--ember)}
 [data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b),[data-theme="dark"] :is(.fc2-wt-kpi .v:not(.good):not(.bad),.fc2-pl-fig b) .hb-num{
   background:var(--vx-silver);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
 [data-theme="dark"] .fc2-pl-head{color:var(--ember2);border-bottom:1px solid color-mix(in srgb,var(--ember2) 24%,transparent);padding-bottom:8px}

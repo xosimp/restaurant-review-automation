@@ -493,7 +493,7 @@ matches what it holds:
 | **Ember glass** (Cavnar AI speaking) | §4 materials | `.lb2-ai` and the rest, plus the report's executive summary (`.dr-read`) and Home's last-night card (`.dr-home`) |
 | **Register** (a table) | A graphite face; the **head in the kicker's orange** (`--ember2`) over one ruled line — a filled band only where the head is flush with a clipped container's top (the Bar's `.br-tw`), never a black box inside a padded card (owner, 10/17/26); a warm zebra; a row lighting an ember rail on its first cell | `.br-tw`, `.fc2-mt`, `.hb-tbl`, `.dr-tbl`, `.dr-stbl`, `.ts-tbl`, `.rst-tbl`, `.int-tbl`, `.fc2-bo-tbl`, `.fc2-table`, `.ss-crew-t`, the report's servers / voids / tenders / edits cards, Plate costs' rows. A long list inside a card shows three and folds the rest (`.dr-loss-more`); cards side by side whose folds open keep their own heights (`.dr-two-top`) |
 | **Signal** (an alert) | §4 materials, in the vivid tones | Plus the report's wins (green) and risks (amber) |
-| **Docket** (a recommendation) | A row of **punched holes under its top edge** — a kitchen ticket's tear-off — and its number molten | Every `.hb-card.hb-rec` (Home, the report's priorities, Marketing's openings) |
+| **Docket** (a recommendation) | A row of **punched holes under its top edge** — a kitchen ticket's tear-off — and its number solid orange (`var(--ember)`, never a gradient — owner, 10/19/26) | Every `.hb-card.hb-rec` (Home, the report's priorities, Marketing's openings) |
 | **KPI tile** (a series' figure) | Its own hue (`--s`) entering at the top-left corner through `mask-corner-tl-v1.png` and running in along the top as a 1px filament; the figure metal tinted toward the hue | The Bar's category cards (`.br-cat`) — gold, blue, plum, never three ember outlines |
 
 The materials' sheen (`sheen-v1.png`) is a fixed 120px catch along the top lip, never stretched to the card's height — on an opened section it ran down behind the tiles and read as a grey panel (owner, 10/17/26). Pedestal stays the page's one hero. The report's score card loses its full
@@ -503,8 +503,9 @@ quarter of the rim, like every other pedestal.
 *Figures as metal, by role* (`background-clip:text`, a status colour always
 wins): **white-hot** the page's hero figure (`.br-big`, `.kx-hero .kx-val`,
 `.dr-score .net`, `.hb-focus .money`) — no glow filter on any figure (re-drawn every frame of a count-up, it made the counts stutter, owner 10/17/26);
-**molten** money at stake (a Ledger's lead, a driver's dollars, the day
-after's forecast, a Docket's number); **silver** a supporting figure (KPI
+money at stake (a Ledger's lead, a driver's dollars, the day after's
+forecast, a Docket's number) is **solid orange** (`var(--ember)`) — never an
+orange gradient (owner, 10/19/26: the molten gradient is gone); **silver** a supporting figure (KPI
 tiles, the hero's sub-figures, neutral `.hb-stat` / `.lb2-op` / `.dr-kpi`
 values, Labor's header). A small unit after a figure stays ink.
 
