@@ -253,7 +253,10 @@ def test_the_time_limit_is_respected_on_a_big_week():
     took = time.process_time() - t0
     assert len(rows) == 210 and took < 1.0 + 0.75, took
     assert res["wall_capped"] is True                 # the emergency cap ended it, and says so
-    small = ss.solve(rows, cons(names), signals=sig, max_seconds=0.05)
+    # The work budget alone ends this one: a generous wall cap, since CI's shared runners under -n auto can
+    # spend more than the default 4 x 0.05 s of wall time before the work runs out (it failed there every run
+    # on 10/19/26 while the work stayed far under budget).
+    small = ss.solve(rows, cons(names), signals=sig, max_seconds=0.05, wall_cap=30.0)
     assert small["work"] < 2 * 0.05 * ss.SOLVER_WORK_PER_SECOND + 10 ** 5 and small["wall_capped"] is False
     # How far a one-second search gets depends on the machine: it may not
     # reach a first complete legal week, and says so (no_solution_in_time)

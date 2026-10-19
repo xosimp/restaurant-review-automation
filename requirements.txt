@@ -21,6 +21,7 @@
 # existing pin held.
 # 10/10/26: psycopg[binary] 3.2.3 added (with psycopg-binary) for the Postgres
 # readiness work (db_dialect, scripts/run_pg_copy.py); every existing pin held.
+# 10/19/26: werkzeug 3.1.8 -> 3.1.9 (pip-audit PYSEC-2026-4312); every other pin held.
 absl-py==2.5.1
     # via ortools
 annotated-types==0.8.0
@@ -183,7 +184,7 @@ urllib3==2.8.0
     #   sentry-sdk
 webauthn==3.0.1
     # via -r requirements.in
-werkzeug==3.1.8
+werkzeug==3.1.9
     # via
     #   -r requirements.in
     #   flask

@@ -2041,13 +2041,16 @@ function cavCount(el, target, o) {
   }
   el.style.fontVariantNumeric = 'tabular-nums';
   el.textContent = fmt(0);
-  var t = 0, last = null, shown = null;
+  var t = 0, last = null, shown = null, avg = 16;
   function step(ts) {
     if (el._cavCount !== token) return;
     if (last === null) last = ts;
-    // Real time through a slow frame (capped at 120ms only so a stalled tab doesn't jump): capped at 34ms,
-    // a page busy painting counted in slow motion and in bursts (owner, 10/17/26).
-    t += Math.min(ts - last, 120);
+    // Real time when frames are steadily slow, never a jump on one stall: a frame advances at most
+    // 1.5x the recent frame time (and at least 34ms). A fixed 34ms cap counted a busy page in slow
+    // motion and in bursts (owner, 10/17/26); a fixed 120ms one jumped on a single stall.
+    var d = ts - last;
+    t += Math.min(d, Math.max(34, avg * 1.5));
+    avg = avg * 0.7 + Math.min(d, 250) * 0.3;
     last = ts;
     var p = Math.min(t / dur, 1), v = target * Math.sin(p * Math.PI / 2), txt = p < 1 ? fmt(v) : final;
     if (txt !== shown) { el.textContent = txt; shown = txt; }
