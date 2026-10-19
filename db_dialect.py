@@ -81,7 +81,8 @@ class TranslationError(ValueError):
 # Month-partitioned fact tables on Postgres (scale.md data model): table ->
 # (partition column, extra key columns an upsert's conflict target gains).
 # scripts/run_pg_copy.py creates them PARTITION BY RANGE on that column, one
-# partition a month; retention drops whole partitions (pg_partitions).
+# partition a month; pg_partitions keeps the next months made (retention
+# still deletes in chunks: dropping whole partitions is not built).
 PARTITIONED = {
     "shift_facts": "business_date",
     "attendance_events": "business_date",
@@ -2186,7 +2187,20 @@ def _driver_connect(url):
     import psycopg
     # UTC, as SQLite's datetime('now') is: a stamp with no offset is read
     # as UTC (cavnar_ts), and now() / CURRENT_DATE agree with the app.
-    raw = psycopg.connect(url, autocommit=False, connect_timeout=10, options="-c timezone=UTC")
+    # Timeouts (scale audit 10/19/26 DB-06): SQLite gave up on a lock after
+    # its 30 s busy_timeout; Postgres would wait forever, and one stuck
+    # transaction holding WRITE_LOCK_KEY stopped every BEGIN IMMEDIATE in
+    # every process. 0 turns one off.
+    opts = ["-c timezone=UTC",
+            f"-c lock_timeout={_env_int(os.getenv('PG_LOCK_TIMEOUT_MS'), 30000)}",
+            f"-c statement_timeout={_env_int(os.getenv('PG_STATEMENT_TIMEOUT_MS'), 300000)}",
+            f"-c idle_in_transaction_session_timeout={_env_int(os.getenv('PG_IDLE_TX_TIMEOUT_MS'), 300000)}"]
+    raw = psycopg.connect(url, autocommit=False, connect_timeout=10, options=" ".join(opts))
+    # Behind PgBouncer in transaction mode (before 1.21) a server-side
+    # prepared statement may not exist on the next backend (DB-07):
+    # PG_PREPARE_THRESHOLD=off never prepares.
+    if (os.getenv("PG_PREPARE_THRESHOLD") or "").strip().lower() in ("off", "none", "0"):
+        raw.prepare_threshold = None
     raw.adapters.register_loader("numeric", _numeric_loader())
     return raw
 

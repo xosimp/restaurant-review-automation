@@ -196,6 +196,10 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `PG_POOL_IDLE` | `5` | Idle Postgres connections a process keeps for reuse. | db_dialect.py |
 | `PG_POOL_MAX_LIFETIME` | `1800` | Seconds a Postgres connection lives before it is retired at its next return. | db_dialect.py |
 | `PG_POOL_IDLE_SECONDS` | `300` | Seconds an idle Postgres connection is kept. | db_dialect.py |
+| `PG_LOCK_TIMEOUT_MS` | `30000` | On Postgres: a lock wait gives up after this (SQLite's 30 s busy_timeout); `0` = never (scale audit 10/19/26 DB-06). | db_dialect.py |
+| `PG_STATEMENT_TIMEOUT_MS` | `300000` | On Postgres: a statement is cancelled after this; `0` = never. | db_dialect.py |
+| `PG_IDLE_TX_TIMEOUT_MS` | `300000` | On Postgres: a session idle inside a transaction is ended after this; `0` = never. | db_dialect.py |
+| `PG_PREPARE_THRESHOLD` | unset | `off` never prepares statements server-side — set it behind PgBouncer in transaction mode older than 1.21 (DB-07). | db_dialect.py |
 | `PG_POOL_TIMEOUT` | `30` | Seconds a checkout waits for a free connection before it fails, said ("database connection pool exhausted"). | db_dialect.py |
 | `CAVNAR_TEST_PG_URL` | — | Tests only: a SCRATCH Postgres server (never production's). The suite's database runs there — every test's database its own, from a template (tests/conftest.py); `tests/test_q2_postgres.py`'s live half runs. CI's `postgres` job sets it. | tests/conftest.py, tests/test_q2_postgres.py |
 | `QUEUE_WAIT_ALERT_SECONDS` | `"120"` | The platform check warns when owners' generations wait longer than this to start (the queue's interactive p95 over the last hour, five samples at least). | ops.py |

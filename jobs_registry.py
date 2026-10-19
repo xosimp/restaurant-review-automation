@@ -586,6 +586,13 @@ JOBS = {
         label="Blob offload",
         description="Move old inline model-call and quality blobs to object storage, leaving a pointer",
         target=("blob_store", "offload"), max_minutes=10),
+    "pg_partitions": dict(
+        # Scale audit 10/19/26 DB-04: nothing on SQLite.
+        cadence="daily 2am CT on Postgres", sla_minutes=None, sends=False, runnable=True,
+        label="Postgres partitions",
+        description="Keep three months of monthly partitions ahead on the partitioned fact tables; "
+                    "report dated rows that fell into a DEFAULT partition",
+        target=("pg_partitions", "run"), max_minutes=5),
     "pg_shadow": dict(
         # Scheduler audit 10/10/26 RM-13: off unless PG_SHADOW_WRITE=1.
         cadence="every 10 minutes while PG_SHADOW_WRITE is on", sla_minutes=None, sends=False, runnable=True,

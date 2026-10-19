@@ -5480,6 +5480,13 @@ def scheduler_loop():
             if _bstore.active() != "db" and _due(now, 2) and _ops.claim_period("blob_offload", str(today)):
                 _ops.run_job("blob_offload", _bstore.offload)
 
+            # Daily at 2am on Postgres (scale audit 10/19/26 DB-04): the next
+            # months' partitions exist before their rows arrive.
+            import db_dialect as _dbd
+            if _dbd.backend() == "postgres" and _due(now, 2) and _ops.claim_period("pg_partitions", str(today)):
+                import pg_partitions as _pgp
+                _ops.run_job("pg_partitions", _pgp.run)
+
             import pg_shadow as _pgs
             if _pgs.enabled() and _ops.claim_period("pg_shadow", f"{today}-{now.hour}-{now.minute // 10}"):
                 _ops.run_job("pg_shadow", _pgs.run_shadow_pass)

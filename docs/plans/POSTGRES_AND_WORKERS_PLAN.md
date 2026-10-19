@@ -217,7 +217,7 @@ which was 30-50x too late:
 | Step | Before | Why | Trigger to watch |
 |---|---|---|---|
 | Queue consumed by `worker.py` (`QUEUE_WORKER=1`) | **~150 restaurants** | owner presses queue past the 15-minute client wait at ~150-300 (2 slots, 5-30 minutes a week); the generation CPU holds the web process's GIL | `job_queue.stats()` `wait_p95_seconds` for the interactive class over 120 s (the target: p95 under two minutes to start) |
-| Postgres shadow on, then the cutover | **~300 restaurants** | the 5 GB volume and the backup's 2-3x free space hold tens to ~100 restaurant-years of schedules; the Studio cache, the AI caps and press latency all fail by ~300 | the volume over 60% (`/health` disk, Railway's volume metric); a backup whose off-site copy took parts (multipart) means the snapshot passed 512 MiB |
+| Postgres shadow on, then the cutover | **before the RPOWER rollout (~15-25 POS stores; scale audit 10/19/26 DB-01 — the ~300 below predates the ticket archive)** | the 5 GB volume and the backup's 2-3x free space hold tens to ~100 restaurant-years of schedules; the Studio cache, the AI caps and press latency all fail by ~300 | the volume over 60% (`/health` disk, Railway's volume metric); a backup whose off-site copy took parts (multipart) means the snapshot passed 512 MiB |
 | Services + autoscaled workers | ~1,000-2,500 | the GIL-bound CPU (~262 CPU-hours a week at 9,000), auto-draft throughput (~900-1,200 opted in) | generation queue depth at the auto-draft's deadline; saturated minutes on `/admin` → Engineering |
 | Warehouse + change data capture (Stage 4) | a few thousand | learners scanning the fleet nightly | learner rows still queued at 8am |
 

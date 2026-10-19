@@ -13003,10 +13003,10 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         rates_key = labor_rates_key(restaurant_id, db_path=db_path)
     except Exception:
         rates_key = None
-    conn = get_conn(db_path)
     prov = provenance or {}
     win = prov.get("window") or None
     ct = prov.get("complete_through")
+    rows = []
     for date_str, day_data in by_day.items():
         in_win = bool(prov) and bool(win) and win[0] <= date_str <= win[1]
         p_src = prov.get("source") if in_win else None
@@ -13032,7 +13032,13 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
             dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except Exception:
             dow = None
-        conn.execute("""
+        rows.append((restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
+                     p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
+    # One executemany, not an execute a day (scale audit 10/19/26 DB-05): on
+    # Postgres every execute inside a transaction is its own savepoint, and a
+    # whole history (up to 1,095 days) overflowed the subtransaction cache.
+    conn = get_conn(db_path)
+    conn.executemany("""
             INSERT INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
                  source, provider, synced_at, final, basis)
@@ -13058,8 +13064,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                     ELSE NULL END,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
-        """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
-              p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
+        """, rows)
     conn.commit()
     conn.close()
 

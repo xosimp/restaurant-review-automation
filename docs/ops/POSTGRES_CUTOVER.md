@@ -3,8 +3,12 @@
 Built 10/10/26 (scheduler audit, workstream H2: RM-13, RM-14, SCALE-20,
 SCALE-21, ARCH-34). Everything up to the switch is in the code; **the switch
 itself is Will's step** — it provisions a paid service and moves the
-production database. Do it before ~300 restaurants, or sooner when the
-volume passes 60% (docs/plans/POSTGRES_AND_WORKERS_PLAN.md, *When*).
+production database. Do it before the RPOWER rollout: the ticket archive
+(~0.3 GB a POS store-year, ~60 MB backfill per new store) fills the 5 GB
+volume at roughly 15-25 POS stores — the "~300 restaurants" this once said
+predates the archive (scale audit 10/19/26, DB-01). Railway's Hobby plan caps
+every volume at 5,000 MB, the Postgres service's too: past a few dozen POS
+stores the database needs the Pro plan (50 GB, self-serve to 1 TB).
 
 What exists:
 
@@ -62,7 +66,21 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   `PG_POOL_OVERFLOW` 20 for nested connections, 5 idle, 30-minute
   lifetime); the web process plus `worker.py` stay under Railway's 100.
   PgBouncer in transaction mode works too (the locks are transaction
-  scoped) — not needed at these numbers.
+  scoped) once statements are not prepared server-side: PgBouncer 1.21+
+  with `max_prepared_statements`, or `PG_PREPARE_THRESHOLD=off` (scale audit
+  10/19/26 DB-07) — not needed at these numbers.
+- **Timeouts:** every connection sets `lock_timeout` 30 s (SQLite's
+  busy_timeout), `statement_timeout` 5 min and
+  `idle_in_transaction_session_timeout` 5 min (`PG_*_MS`, ENVIRONMENT.md;
+  DB-06) — without them one stuck holder of the one-writer advisory lock
+  stopped every process.
+- **Partitions:** the copy makes them to 3 months ahead; the daily
+  `pg_partitions` job keeps them 3 months ahead and fails when a dated row
+  sits in a DEFAULT partition (DB-04).
+- **Savepoints:** every statement inside a transaction is its own savepoint;
+  a write loop of more than 64 `execute()` calls in one transaction
+  overflows Postgres's subtransaction cache — write loops use `executemany`
+  (one savepoint) instead (DB-05; `save_labor_daily_history` since 10/19/26).
 - **Locks:** `BEGIN IMMEDIATE` is one advisory lock (SQLite's one writer)
   except on the hot paths, which lock only what they serialise
   (`db_dialect.begin_write`): a job group's claim, one kind's enqueues, one

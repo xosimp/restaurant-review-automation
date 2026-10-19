@@ -770,3 +770,52 @@ def test_a_facts_restaurants_shift_file_is_kept_compressed(db_path, monkeypatch)
     got = models.get_client_data(rid, db_path=db_path)
     assert got["shifts_csv"] == text and "shifts_csv_z" not in got and got["has_shifts"]
     assert models.get_client_data(rid, db_path=db_path, with_shifts=False)["has_shifts"]
+
+
+@live
+def test_the_partition_job_keeps_months_ahead_and_reports_rows_in_default(scratch_db, tmp_path):
+    # Scale audit 10/19/26 DB-04: the copy made partitions to 3 months past the
+    # copy and nothing after; the job keeps them ahead, idempotently.
+    import contextlib
+    import io
+    import pg_copy
+    import pg_partitions
+    import psycopg
+    db_path = str(tmp_path / "source.db")
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+        models.ensure_columns(db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Parts", owner_email="pp@x.com"), db_path=db_path)
+    models.checkpoint(db_path)
+    dst = psycopg.connect(scratch_db, autocommit=False)
+    try:
+        assert pg_copy.copy_database(db_path, dst, today=date(2026, 10, 14))["verify"]["ok"]
+    finally:
+        dst.close()
+    c = db_dialect.connect(scratch_db)
+    try:
+        first = pg_partitions.ensure(c, today=date(2027, 3, 2))
+        assert first["tables"] == len(db_dialect.PARTITIONED) and first["created"] > 0
+        names = {r[0] for r in c.execute_native(
+            "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+            "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = 'pos_ticket_lines'").fetchall()}
+        assert {"pos_ticket_lines_p202703", "pos_ticket_lines_p202706"} <= names
+        assert pg_partitions.ensure(c, today=date(2027, 3, 2))["created"] == 0          # idempotent
+        assert first["default_rows"] == {}
+        # A dated row in a month with no partition lands in DEFAULT: reported.
+        c.execute("INSERT INTO shift_facts (restaurant_id, business_date, employee_name, employee_key, source) "
+                  "VALUES (?, '2031-01-05', 'Ana', 'ana', 'pos')", (rid,))
+        c.commit()
+        assert pg_partitions.ensure(c, today=date(2027, 3, 2))["default_rows"] == {"shift_facts": 1}
+        # The connection carries the timeouts SQLite's busy_timeout stood for (DB-06).
+        lt = c.execute_native("SHOW lock_timeout").fetchone()[0]
+        st = c.execute_native("SHOW statement_timeout").fetchone()[0]
+        assert lt == "30s" and st == "5min"
+    finally:
+        c.close()
+
+
+def test_the_partition_job_is_a_no_op_on_sqlite(monkeypatch):
+    import pg_partitions
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert pg_partitions.run() == {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False}
