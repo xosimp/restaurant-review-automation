@@ -100,7 +100,7 @@ jobs:
           tests/test_rec_ledger.py tests/test_recommendation_trust.py tests/test_outcomes_roi.py tests/test_value_delivered.py
           tests/test_guest_marketing.py tests/test_mkt_fix_a_consent.py tests/test_inventory_ledger.py
           tests/test_alert_amplification.py tests/test_duplicate_delivery.py tests/test_webhook_delivery.py
-          tests/test_admin_ops_next.py
+          tests/test_admin_ops_next.py tests/test_fix_c_billing.py
 
   audit:
     # Known-vulnerability scan of the locked dependencies. Non-blocking for

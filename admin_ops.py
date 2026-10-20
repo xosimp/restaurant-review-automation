@@ -3414,7 +3414,8 @@ def budget_watch(conn=None):
                    SUM(CASE WHEN {_ai._PLACES_ROW_SQL.replace('vendor', 'a.vendor').replace('model', 'a.model')}
                             THEN a.cost_usd ELSE 0 END) AS places_month
             FROM ai_usage a JOIN restaurants r ON r.id = a.restaurant_id
-            WHERE a.created_at >= ? GROUP BY a.restaurant_id""", (today, today, month))
+            WHERE a.created_at >= ? GROUP BY a.restaurant_id, r.name, r.billing_status, r.is_demo""",
+            (today, today, month))
     finally:
         if own:
             conn.close()
