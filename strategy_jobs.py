@@ -463,7 +463,12 @@ def run_queued_pos_archive(job):
         return {"skipped": "no POS that can archive"}
     out = pos_archive.run_for(rid)
     if not out.get("ok"):
-        raise RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        err = RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        # The POS asked us to wait (an open breaker, a long Retry-After):
+        # the row is tried again then, not on the fixed backoff (A3-10).
+        if out.get("retry_after"):
+            err.retry_after = float(out["retry_after"])
+        raise err
     return {"archived": len(out.get("archived") or []), "restated": out.get("restated") or 0,
             "backfill_left": out.get("backfill_left")}
 
