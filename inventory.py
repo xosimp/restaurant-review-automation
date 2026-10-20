@@ -2254,7 +2254,10 @@ def load_inventory_for_restaurant(restaurant_id: int, client_data=_UNREAD):
         return items, True
     # A caller that already holds the client_data row passes it (Home reads
     # it once for Labor and Food Cost together — MOD-HOME-2).
-    data = get_client_data(restaurant_id) if client_data is _UNREAD else client_data
+    # The inventory file only: never the shift history (scale audit
+    # 10/19/26 DB-12 - with it, a stale shift export was rebuilt and
+    # written on this read, on every dashboard render).
+    data = get_client_data(restaurant_id, with_shifts=False) if client_data is _UNREAD else client_data
     if data and data.get("inventory_csv"):
         return load_inventory(csv_string=data["inventory_csv"]), True
     return load_inventory(), False  # fallback to sample

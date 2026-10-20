@@ -7408,7 +7408,8 @@ def food_cost_tracker_data(rid):
     from models import get_client_data as _gcd_fc
     data = None
     try:
-        _fc_raw = _gcd_fc(rid)
+        # food_cost_json only, never the shift history (DB-12).
+        _fc_raw = _gcd_fc(rid, with_shifts=False)
         if _fc_raw and _fc_raw.get("food_cost_json"):
             data = _json_fc.loads(_fc_raw["food_cost_json"])
     except Exception:

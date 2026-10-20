@@ -1125,7 +1125,7 @@ def import_csv_to_ingredients(restaurant_id: int) -> dict:
     from inventory import load_inventory
     from models import get_client_data, db_conn
 
-    data = get_client_data(restaurant_id)
+    data = get_client_data(restaurant_id, with_shifts=False)
     if not data or not data.get("inventory_csv"):
         return {"imported": 0, "skipped_existing": 0, "error": "No inventory_csv found for this restaurant"}
 

@@ -498,6 +498,24 @@ def history_rows(restaurant_id, since=None, until=None, db_path=None) -> list:
     return out
 
 
+def latest_date(restaurant_id, until=None, db_path=None):
+    """The newest business_date on file (no later than `until`), or None —
+    one indexed read, so a reader of the current window reads the window
+    (labor's current-window analysis; scale audit 10/19/26 FE-03 / DB-12)
+    instead of every shift ever recorded."""
+    sql = "SELECT MAX(business_date) AS d FROM shift_facts WHERE restaurant_id=?"
+    args = [restaurant_id]
+    if until:
+        sql += " AND business_date <= ?"
+        args.append(str(until)[:10])
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(sql, args).fetchone()
+    finally:
+        conn.close()
+    return (str(row["d"])[:10] if row and row["d"] else None)
+
+
 def export_csv(restaurant_id, db_path=None) -> str:
     """The whole history as the stored file (date, day, employee, role, …),
     built from shift_facts on demand — what models.get_client_data hands a

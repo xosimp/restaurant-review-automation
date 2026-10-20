@@ -689,6 +689,32 @@ def full_history_by_day(restaurant_id: int) -> dict:
     return _analyse_for_restaurant(restaurant_id, _UNREAD, None, with_salaries=False).get("by_day", {}) or {}
 
 
+def _window_rows(restaurant_id, client_data, window_days, today):
+    """The current window's shifts read BY WINDOW from shift_facts, or None
+    when this read cannot be bounded (the stored file is the record, no
+    window, no local date, nothing on file) and the caller reads as before.
+
+    current_window keeps the `window_days` ending on the newest shift dated
+    no later than today + FUTURE_SHIFT_DAYS; that date is one indexed read
+    (shift_facts.latest_date), so the rows read are the window's — the same
+    rows current_window keeps — not every shift ever recorded, decoded on
+    every dashboard render and every Labor read (scale audit 10/19/26 FE-03,
+    DB-12: the read grew with tenure)."""
+    if not (window_days and today and client_data and client_data.get("shifts_store") == "facts"):
+        return None
+    try:
+        import shift_facts as _sf_w
+        hi = _latest_shift_date(today)
+        latest = _sf_w.latest_date(restaurant_id, until=hi)
+        if not latest:
+            return None
+        since = (date.fromisoformat(latest) - timedelta(days=window_days - 1)).isoformat()
+        return _sf_w.history_rows(restaurant_id, since=since, until=hi) or None
+    except Exception as _sx:
+        _degraded(f"windowed shift read failed — read the history instead: {_sx!r}", _sx)
+        return None
+
+
 def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salaries=False):
     if client_data is _UNREAD:
         from models import get_client_data
@@ -710,8 +736,10 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
         except Exception as _sx:
             _degraded(f"date failed — went on without it: {_sx!r}", _sx)
             _today = None
-    shifts = current_window(load_shifts_for_restaurant(restaurant_id, allow_sample=True,
-                                                       client_data=client_data), window_days, today=_today)
+    rows = _window_rows(restaurant_id, client_data, window_days, _today)
+    if rows is None:
+        rows = load_shifts_for_restaurant(restaurant_id, allow_sample=True, client_data=client_data)
+    shifts = current_window(rows, window_days, today=_today)
     # A salaried person's pay is their salary (salaried_summary), not their
     # punches: costed by the hour too, Erik's own 2.1h on Manager FOH was $55
     # of "labor" at the $26 default on top of the salary (owner, 9/28/26).
