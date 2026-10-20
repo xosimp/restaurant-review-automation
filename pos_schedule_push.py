@@ -502,9 +502,16 @@ def run_push(push_id, now_local=None, db_path=None) -> dict:
     else:
         status = "failed"
     auth = "refused the schedule push" in str(res.get("error") or "")
-    _finish(push_id, status, out_shifts, error=res.get("error"), payload=h if n_sent else None,
-            people=people if n_sent else None, retry=(status == "failed" and not auth), attempts=attempts,
-            db_path=db_path)
+    # The baseline the next push is compared with is what the POS HOLDS: the
+    # shifts that went, never ones that failed or the POS skipped (blind
+    # re-audit 10/20/26 R5-04). A partial push stored the hash of every
+    # sendable shift, so "Push again" after the owner fixed a job mapping
+    # answered "unchanged" and the failed shifts never reached the clock.
+    went = [s for s in out_shifts if s["status"] == "sent"]
+    _finish(push_id, status, out_shifts, error=res.get("error"),
+            payload=payload_hash(went) if n_sent else None,
+            people={s["employee"] for s in went} if n_sent else None,
+            retry=(status == "failed" and not auth), attempts=attempts, db_path=db_path)
     if status in ("failed", "partial"):
         _tell_failure(rid, row, res.get("error") or f"{n_failed} shift(s) didn't go through", db_path)
     try:

@@ -304,12 +304,35 @@ def survival(origins, base_rows, published_rows) -> dict:
     return out
 
 
+# The learning ablation is research data: it is shed while the bulk queue
+# holds this many queued rows (blind re-audit 10/20/26 R5-07 — one per
+# generation beside every restaurant's learners and the time-sensitive bulk
+# rows on the group's two slots). 0: never shed.
+ABLATION_SHED_QUEUED = int(os.getenv("SCHEDULE_ABLATION_SHED_QUEUED", "25") or 0)
+
+
+def _bulk_backlog(limit) -> int:
+    """Queued bulk rows, counted up to `limit` (0 when unreadable)."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM (SELECT 1 FROM jobs WHERE grp='bulk' AND state='queued' "
+                                    "LIMIT ?) q", (int(limit),)).fetchone()[0] or 0)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
 def ablation_wanted(learned, clock=None) -> bool:
     """Whether the generation queues the learning ablation: something learned
-    binds this week and the switch is not off (`clock`, when given, must
-    have room — the ablation now runs off the owner's wait, so the
-    job passes none)."""
+    binds this week, the switch is not off, and the bulk queue is not backed
+    up (ABLATION_SHED_QUEUED) — `clock`, when given, must have room (the
+    ablation now runs off the owner's wait, so the job passes none)."""
     if not learned or (os.environ.get(ABLATION_ENV) or "1").strip() in ("0", "off", "false"):
+        return False
+    if ABLATION_SHED_QUEUED > 0 and _bulk_backlog(ABLATION_SHED_QUEUED) >= ABLATION_SHED_QUEUED:
         return False
     try:
         return clock is None or clock.seconds_left() > ABLATION_MIN_CLOCK_SECONDS

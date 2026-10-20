@@ -4658,6 +4658,51 @@ def run_auto_publish_schedules(enqueue=False, only=None):
             "hit_bound": bool(ran_out), "due": len(due), "reached": int(_done)}
 
 
+def on_auto_publish_expired(job):
+    """job_queue's EXPIRE_HOOKS for `auto_publish`: the check never ran
+    before the window closed, so nothing was queued to staff. The owner —
+    who turned auto-publish on and expects the week to go — is told, when
+    the coming week still has an unsent draft (blind re-audit 10/20/26
+    R5-07: the row expired silently and only the console's missed-window
+    record knew). Never raises."""
+    rid = (job.payload or {}).get("restaurant_id") if hasattr(job, "payload") else \
+        ((job or {}).get("payload") or {}).get("restaurant_id")
+    if rid is None:
+        return False
+    try:
+        from models import get_restaurant, get_conn, week_draft, week_ever_sent, DB_PATH
+        from time_utils import restaurant_now
+        r = get_restaurant(int(rid))
+        if r is None or not getattr(r, "auto_publish_schedule", 0):
+            return False
+        local = restaurant_now(r, naive=True)
+        conn = get_conn()
+        try:
+            nxt = conn.execute(
+                "SELECT MIN(h.week_start) AS w FROM schedule_history h WHERE h.restaurant_id=? AND h.week_start > ? "
+                "AND NOT EXISTS (SELECT 1 FROM schedule_history p WHERE p.restaurant_id=h.restaurant_id "
+                "  AND p.week_start=h.week_start AND (p.published_at IS NOT NULL "
+                "  OR EXISTS (SELECT 1 FROM schedule_shares s WHERE s.schedule_id=p.id)))",
+                (r.id, local.date().isoformat())).fetchone()
+            draft = week_draft(conn, r.id, nxt["w"]) if nxt and nxt["w"] else None
+            unsent = draft is not None and not week_ever_sent(conn, r.id, nxt["w"])
+        finally:
+            conn.close()
+        if not unsent:
+            return False
+        from strategy_jobs import _reach
+        _reach(r.id, "schedule_publish_held",
+               "Next week's schedule didn't go out automatically",
+               "The week of " + mdy(draft["week_start"]) + " wasn't sent to staff today — Cavnar AI couldn't run "
+               "its check before the publishing window closed. Review it on the Labor tab and send it yourself.",
+               {"schedule_id": draft["id"]}, DB_PATH,
+               subject=f"Next week's schedule is waiting on you — {r.name}")
+        return True
+    except Exception as e:
+        _ops.capture(e, job="auto_publish_schedule_expired", context=f"restaurant_id={rid}")
+        return False
+
+
 def run_queued_auto_publish(job):
     """job_queue's handler for `auto_publish`: one restaurant's auto-publish
     check, claimed for its local day when it runs (local_due) — a row that

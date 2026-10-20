@@ -90,11 +90,13 @@ def test_generation_slots_follow_the_cores_and_the_memory_not_a_fixed_two(monkey
     monkeypatch.setattr(se, "SCHEDULE_GEN_WORKERS", 0)
     monkeypatch.setattr(job_queue, "cpu_cores", lambda: 32)
     monkeypatch.setattr(job_queue, "memory_limit_mb", lambda: None)
-    assert job_queue.group_concurrency("generation") == 8          # 32 cores / 4 threads: no fixed 2
+    # 32 cores / 2 a generation (measured, blind re-audit 10/20/26 R5-08 — it
+    # was the solve's 4 threads): no fixed 2
+    assert job_queue.group_concurrency("generation") == 16
     monkeypatch.setattr(job_queue, "memory_limit_mb", lambda: 8192.0)
     # (8192 - 1536) // 1400 = 4: the memory carries four generations
     assert job_queue.group_concurrency("generation") == 4
-    monkeypatch.setattr(job_queue, "cpu_cores", lambda: 8)
+    monkeypatch.setattr(job_queue, "cpu_cores", lambda: 4)
     assert job_queue.group_concurrency("generation") == 2          # the cores bind first
     monkeypatch.setattr(job_queue, "memory_limit_mb", lambda: 1024.0)
     assert job_queue.group_concurrency("generation") == 1          # always at least one
@@ -115,10 +117,10 @@ def test_the_capacity_says_when_the_solver_threads_outnumber_the_cores(monkeypat
     monkeypatch.setattr(job_queue, "cpu_cores", lambda: 8)
     monkeypatch.delenv("QUEUE_GENERATION_CONCURRENCY", raising=False)
     cap = job_queue.generation_capacity()
-    assert cap["slots"] == 2 and not cap["oversubscribed"]
-    monkeypatch.setenv("QUEUE_GENERATION_CONCURRENCY", "4")
+    assert cap["slots"] == 4 and not cap["oversubscribed"]          # 8 cores / 2 a generation (R5-08)
+    monkeypatch.setenv("QUEUE_GENERATION_CONCURRENCY", "5")
     cap = job_queue.generation_capacity()
-    assert cap["slots"] == 4 and cap["oversubscribed"]              # 16 solver threads on 8 cores
+    assert cap["slots"] == 5 and cap["oversubscribed"]              # 10 cores' worth on 8 cores
 
 
 # ── A5-F4: the auto-draft's spread, deadline and the drafts' reserved slot ──

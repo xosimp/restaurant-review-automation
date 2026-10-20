@@ -4117,6 +4117,26 @@ def _thin_drafts(conn, deadline):
         conn.commit()
         if n:
             out["schedule_history_thinned"] = n
+        # The shift projection of a thinned draft (superseded, never sent or
+        # shared or used, its week over) goes too: its text stays on the row,
+        # and every reader falls back to it (schedule_shifts.rows_by_week).
+        # It was kept until the draft itself was pruned a year on — ~0.46 MB a
+        # restaurant-week (blind re-audit 10/20/26 R5-10). Drafts thinned
+        # before this are swept the same way, a chunk a pass.
+        if {"schedule_shifts", "schedule_shift_weeks"} <= have and time.monotonic() < deadline:
+            gone = 0
+            for (hid,) in conn.execute(
+                    "SELECT h.id FROM schedule_history h WHERE h.detail_thinned_at IS NOT NULL "
+                    "AND h.superseded_by IS NOT NULL AND h.published_at IS NULL "
+                    "AND EXISTS (SELECT 1 FROM schedule_shift_weeks w WHERE w.history_id = h.id) "
+                    f"{shared} {used} LIMIT ?", (int(RETENTION_CHUNK_ROWS),)).fetchall():
+                if time.monotonic() > deadline:
+                    break
+                gone += max(0, conn.execute("DELETE FROM schedule_shifts WHERE history_id=?", (hid,)).rowcount or 0)
+                conn.execute("DELETE FROM schedule_shift_weeks WHERE history_id=?", (hid,))
+                conn.commit()
+            if gone:
+                out["schedule_shifts_of_thinned_drafts"] = gone
     version_days = retention_days("version_detail")
     vcols = {r[1] for r in conn.execute("PRAGMA table_info(schedule_versions)")}
     if version_days and time.monotonic() < deadline and "quality_json" in vcols:

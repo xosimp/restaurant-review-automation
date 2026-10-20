@@ -74,7 +74,12 @@ def _env_float(name, default):
 # solve does not wait on an interpreter's start-up. A solver process that
 # dies or outlives its wall clock plus ISOLATE_GRACE_SECONDS is killed and
 # the solve is run in this process on the same budget — recorded
-# (`sp_info["fallback"]`), never a failed generation.
+# (`sp_info["fallback"]`), never a failed generation. Except a process the
+# operating system KILLED (a signal — the kernel's out-of-memory killer, as
+# a rule): the allocation that killed it would happen again here, inside the
+# process running every other generation, so that solve answers nothing
+# (UNKNOWN, `memory_capped`) and its caller falls back to the code draft
+# (blind re-audit 10/20/26 R5-06).
 DET_PER_KVAR = _env_float("SCHEDULE_CPSAT_DET_PER_KVAR", 0.6)
 
 
@@ -255,6 +260,11 @@ def run(s, model, isolate=True):
         got = _run_in_process(s, model)
         if got is not None:
             return got
+        if (getattr(s, "sp_info", None) or {}).get("killed"):
+            # Killed by the system (R5-06): never repeated in this process.
+            s._CpSolver__response = _answer(_cp.UNKNOWN, None)._CpSolver__response
+            s.sp_info = dict(s.sp_info, memory_capped=True, fallback=False)
+            return _cp.UNKNOWN
     note = (getattr(s, "sp_info", None) or {}).get("note")
     limit = int(_rss_mb() + SOLVE_MEMORY_MB)
     s.parameters.max_memory_in_mb = limit
@@ -327,8 +337,13 @@ def _run_in_process(s, model):
         return None
     head, _sep, text = (out or b"").partition(b"\n")
     if proc.returncode != 0 or not text:
-        why = "was killed (out of memory?)" if (proc.returncode or 0) < 0 else f"exited {proc.returncode}"
-        s.sp_info = {"isolated": False, "note": f"the solver process {why} without an answer; solved here"}
+        if (proc.returncode or 0) < 0:
+            s.sp_info = {"isolated": True, "killed": True, "limit_mb": limit,
+                         "note": f"the solver process was killed (signal {-int(proc.returncode)}, out of memory?) "
+                                 "without an answer; not solved again here"}
+            return None
+        s.sp_info = {"isolated": False, "note": f"the solver process exited {proc.returncode} without an answer; "
+                                                "solved here"}
         return None
     try:
         resp = _cmh.CpSolverResponse()

@@ -445,7 +445,12 @@ def backfill(db_path=None, max_seconds: float = BACKFILL_SECONDS, max_weeks: int
     try:
         try:
             below = _cursor(conn)
+            # A thinned draft (superseded, never sent, its detail and its
+            # projection pruned — ops._thin_drafts, blind re-audit 10/20/26
+            # R5-10) is read from its text: never projected again.
             q = ("SELECT h.id, h.restaurant_id, h.schedule_csv, h.published_csv, h.published_at, "
+                 "CASE WHEN h.detail_thinned_at IS NOT NULL AND h.superseded_by IS NOT NULL "
+                 "AND h.published_at IS NULL THEN 1 ELSE 0 END AS thinned, "
                  "w.source_sig, w.fmt FROM schedule_history h LEFT JOIN schedule_shift_weeks w "
                  "ON w.history_id=h.id" + (" WHERE h.id<?" if below is not None else "") +
                  " ORDER BY h.id DESC LIMIT ?")
@@ -461,7 +466,7 @@ def backfill(db_path=None, max_seconds: float = BACKFILL_SECONDS, max_weeks: int
                 break
             out["examined"] += 1
             last = m["id"]
-            if not _needs(m):
+            if m["thinned"] or not _needs(m):
                 continue
             try:
                 conn.execute("BEGIN IMMEDIATE")
