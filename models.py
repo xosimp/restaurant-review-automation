@@ -4461,6 +4461,7 @@ def init_db(db_path: str = DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_pos_lines_bdate ON pos_ticket_lines(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_bdate ON pos_punches(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_archive_days_bdate ON pos_archive_days(business_date)",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_bdate ON pos_item_daily(business_date)",
         # The POS's own menu prices, one row per item and price level, as of
         # the last nightly read (pos_archive.sync_prices, High ROI #7): the
         # baseline a change is found against. Replaced in place; no growth.
