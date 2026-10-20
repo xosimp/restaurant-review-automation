@@ -303,7 +303,7 @@ def test_the_cooldown_holds_in_memory_when_the_database_cannot_be_written(db_pat
 def test_disk_and_a_refused_write_are_platform_problems(db_path, monkeypatch):
     import scheduler
     monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
-    monkeypatch.setattr(status_manager, "disk_state", lambda p=None: {"state": "critical", "free_mb": 20, "pct_free": 1})
+    monkeypatch.setattr(status_manager, "disk_state", lambda p=None, **_kw: {"state": "critical", "free_mb": 20, "pct_free": 1})
     monkeypatch.setattr(ops, "write_probe", lambda *a, **k: (False, "database is locked"))
     _beat(db_path, 1)
     sent = []

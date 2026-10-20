@@ -259,7 +259,7 @@ def test_health_500s_only_on_an_unreadable_database(monkeypatch, db_path):
     problem on top of it."""
     import status_manager
     monkeypatch.setattr(status_manager, "disk_state",
-                        lambda p=None: {"state": "critical", "free_mb": 3, "pct_free": 0.1})
+                        lambda p=None, **_kw: {"state": "critical", "free_mb": 3, "pct_free": 0.1})
     payload, status = status_manager.health_snapshot(db_path)
     assert status == 200
     assert payload["status"] == "degraded"

@@ -277,14 +277,16 @@ def test_the_app_volume_is_judged_against_the_live_database_on_postgres(db):
 def test_a_missing_dsr_pages_only_above_a_share_of_the_dsr_fleet(db):
     missing = [{"restaurant_id": 9001, "restaurant": "Lone"}]
     assert ops._dsr_missing_pages(missing, db) is True, "one store of one: still a page"
+    rids = [models.create_restaurant(models.Restaurant(name=f"DSR {i}", owner_email=f"d{i}@x.test"), db_path=db)
+            for i in range(100)]
     c = sqlite3.connect(db)
-    for rid in range(1, 101):
+    for rid in rids:
         c.execute("INSERT INTO dsr_reports (restaurant_id, business_date, status) VALUES (?, ?, 'final')",
                   (rid, (datetime.utcnow().date() - timedelta(days=1)).isoformat()))
     c.commit()
     c.close()
     assert ops._dsr_missing_pages(missing, db) is False, "one store of 101: the console's list, not a page"
-    assert ops._dsr_missing_pages([{"restaurant_id": i} for i in range(1, 9)], db) is True
+    assert ops._dsr_missing_pages([{"restaurant_id": i} for i in rids[:8]], db) is True
 
 
 def test_an_alert_storm_is_one_fleet_page(db, monkeypatch):

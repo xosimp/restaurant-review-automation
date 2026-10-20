@@ -37,7 +37,7 @@ def _body(payload):
 
 
 def _ok_disk(monkeypatch):
-    monkeypatch.setattr(sm, "disk_state", lambda p=None: {"state": "ok", "free_mb": 9000, "pct_free": 80.0})
+    monkeypatch.setattr(sm, "disk_state", lambda p=None, **_kw: {"state": "ok", "free_mb": 9000, "pct_free": 80.0})
 
 
 # ── read-only (#94, RELIABILITY-4) ───────────────────────────────────────────
@@ -77,7 +77,7 @@ def test_the_monitor_keyword_appears_exactly_when_the_platform_is_ok(db, schedul
     body = _body(payload)
     assert body.count('"status":"ok"') == 1
 
-    monkeypatch.setattr(sm, "disk_state", lambda p=None: {"state": "low", "free_mb": 120, "pct_free": 4.0})
+    monkeypatch.setattr(sm, "disk_state", lambda p=None, **_kw: {"state": "low", "free_mb": 120, "pct_free": 4.0})
     payload, status = sm.health_snapshot(db)
     assert status == 200, "degraded stays a 200: the deploy check must not fail on it"
     assert payload["status"] == "degraded" and "disk_low" in payload["problems"]
@@ -221,6 +221,7 @@ def test_a_database_not_in_wal_mode_is_degraded(db, scheduler_heartbeat, monkeyp
 
 # ── disk against the database's size (#28) ──────────────────────────────────
 
+@pytest.mark.sqlite_only  # the SQLite file's size sets the thresholds; on Postgres /health reads pg_database_size
 def test_disk_thresholds_scale_with_the_database(db, monkeypatch):
     import shutil
     from collections import namedtuple
