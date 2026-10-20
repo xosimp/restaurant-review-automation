@@ -605,11 +605,15 @@ def test_health_and_the_console_are_never_cached_by_a_browser():
 def test_paging_texts_will_phone_and_emails_at_most_hourly_on_railway():
     import ops
     src = inspect.getsource(ops.alert_will)
-    assert "will_phone()" in src and 'use_case="alert"' in src and "_send_branded" in src
+    assert "oncall_phones()" in src and 'use_case="alert"' in src and "_send_branded" in src
+    # WILL_PHONE first, then the second responders (OPS-4, 10/19/26).
+    assert "will_phone()" in inspect.getsource(ops.oncall_phones)
+    assert "send_to_pager(" in src and "oncall_emails()" in src
     assert ops.PLATFORM_ALERT_COOLDOWN_MINUTES == 60
     sla = inspect.getsource(ops.check_platform_sla)
     assert "scheduling_allowed()" in sla and "page_operator(" in sla
-    _says(RECOVERY, "a text to `will_phone`", "at most once an hour per problem")
+    _says(RECOVERY, "a text to `will_phone`", "at most once an hour per problem", "`ops_oncall_phones`",
+          "`ops_pager_kind`")
 
 
 def test_the_sla_check_runs_on_the_supervisor_every_five_minutes():

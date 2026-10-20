@@ -68,9 +68,14 @@ and the request id, never the raw path.
 Three things page, and they fail independently:
 
 1. **The operator page** (`ops.page_operator` → `ops.alert_will`): a text to
-   `WILL_PHONE` (the channel that survives a Resend or APNs outage), an
-   email, and a push to the admin logins (a push proves nothing, so it does
-   not count as delivered). Sent by the web process's supervisor thread
+   `WILL_PHONE` and every `OPS_ONCALL_PHONES` number (the channel that
+   survives a Resend or APNs outage), an email to `WILL_EMAIL` and every
+   `OPS_ONCALL_EMAILS` address, an event to the paging service when one is
+   configured (`OPS_PAGER_KIND` / `OPS_PAGER_ROUTING_KEY` /
+   `OPS_PAGER_WEBHOOK_URL` — PagerDuty or any incoming webhook, deduplicated
+   on the page's key; acknowledgement and phone escalation live there,
+   scale audit 10/19/26 OPS-4), and a push to the admin logins (a push
+   proves nothing, so it does not count as delivered). Sent by the web process's supervisor thread
    every five minutes when something needs a person — a stale heartbeat, a
    wedged job or stalled loop, an overdue job, low or critical disk, a
    refused write, a stale / failed / off-site-less backup, a DSR night
@@ -684,6 +689,11 @@ quarter restore one into a scratch environment from the Backups tab and load
 - **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
   the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
 - **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
-- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row emails `will@cavnar.ai` once (Resend,
-  the Worker's own `RESEND_API_KEY` secret), and once more when it recovers. State is in the Worker's KV namespace.
+- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row alerts once, and once more when it
+  recovers: an email to every `ALERT_TO` address (comma-separated; Resend, the Worker's own `RESEND_API_KEY` secret),
+  and — so a Resend outage cannot silence the one monitor outside Railway (OPS-4) — each channel whose secrets are set:
+  `PAGERDUTY_ROUTING_KEY` (a PagerDuty trigger, resolved on recovery), `PAGER_WEBHOOK_URL` (any paging service's
+  webhook), and `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` + `ALERT_SMS_TO` (a text to each on-call
+  phone). The alert counts as sent when any channel took it. State is in the Worker's KV namespace. A change to
+  `worker.js` goes live only with `npx wrangler deploy` from `workers/watchdog/`.
 - To rotate the token: `npx wrangler secret put PING_TOKEN`, then update `HEALTHCHECK_PING_URL` on Railway.

@@ -72,6 +72,11 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `SUPPORT_EMAIL` | — | The support address in guest marketing messages; falls back to `WILL_EMAIL`. | guest_marketing.py |
 | `CAVNAR_POSTAL_ADDRESS` | `""` | The postal address in marketing email footers (CAN-SPAM). Empty leaves it out. | emails.py |
 | `WILL_PHONE` | — | Operator paging by text (`ops.py`). | ops.py |
+| `OPS_ONCALL_PHONES` | `""` | More phones a platform page is texted to, comma-separated, beside `WILL_PHONE` — a second responder (scale audit 10/19/26 OPS-4; `ops.oncall_phones`). | ops.py |
+| `OPS_ONCALL_EMAILS` | `""` | More addresses a platform page is emailed to, comma-separated, beside `WILL_EMAIL` (`ops.oncall_emails`). | ops.py |
+| `OPS_PAGER_KIND` | `""` | `pagerduty` sends every platform page to PagerDuty Events v2 (needs `OPS_PAGER_ROUTING_KEY`), deduplicated on the page's key; anything else with `OPS_PAGER_WEBHOOK_URL` set POSTs `{key, subject, lines, source}` there. Off until set (OPS-4: acknowledgement, phone escalation and a second on-call belong to a paging service). | ops.py |
+| `OPS_PAGER_ROUTING_KEY` | `""` | The PagerDuty Events v2 integration (routing) key. A secret. | ops.py |
+| `OPS_PAGER_WEBHOOK_URL` | `""` | A paging service's incoming-webhook URL (Better Stack, Opsgenie, ...). A secret. | ops.py |
 | `TWILIO_ACCOUNT_SID` | `""` | Twilio account (SMS). | notify.py, provider_health.py |
 | `TWILIO_AUTH_TOKEN` | `""` | Twilio auth token. | notify.py, provider_health.py |
 | `TWILIO_FROM_NUMBER` | `""` | Fallback sending number for owner texts. | notify.py |
