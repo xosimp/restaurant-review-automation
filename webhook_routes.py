@@ -1550,7 +1550,8 @@ def twilio_inbound_sms():
         # (guest_consent_events), so a confirmation can be tied to Twilio's
         # own record of the inbound text.
         reply = handle_inbound_sms(from_phone, body,
-                                   message_sid=(params.get("MessageSid") or params.get("SmsSid") or None))
+                                   message_sid=(params.get("MessageSid") or params.get("SmsSid") or None),
+                                   to_phone=(params.get("To") or "").strip() or None)
     except Exception as e:
         try:
             import ops
@@ -1563,6 +1564,27 @@ def twilio_inbound_sms():
         safe = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return Response(f"<Response><Message>{safe}</Message></Response>", mimetype="text/xml")
     return Response("<Response></Response>", mimetype="text/xml")
+
+
+# ── Tock (docs/integrations/TOCK_WEBHOOKS.md) ──────────────────────────────
+# The three URLs registered with Tock on 10/13/26 - never rename them. Auth
+# is the X-Cavnar-Webhook-Token header Tock sends, checked constant-time
+# against TOCK_WEBHOOK_TOKENS (guest_hub.receive_tock); each event is stored
+# once and applied, a payload this build can't read is kept for reprocessing
+# rather than refused, so Tock never retries it forever.
+
+@webhook_bp.route("/webhooks/tock/<hook>", methods=["POST"])
+def tock_webhook(hook):
+    import guest_hub
+    if hook not in guest_hub.TOCK_HOOKS:
+        return jsonify(ok=False, error="unknown webhook"), 404
+    token = request.headers.get("X-Cavnar-Webhook-Token", "")
+    body, status = guest_hub.receive_tock(hook, token, request.get_data(cache=False))
+    if status == 401:
+        _refused_inbound("tock", "X-Cavnar-Webhook-Token did not match")
+    elif status == 200:
+        _verified_inbound("tock", hook)
+    return jsonify(body), status
 
 
 # ── Twilio delivery status (#14) ────────────────────────────────────────────

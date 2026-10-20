@@ -1845,6 +1845,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_tickets", "type_discnt", "REAL NOT NULL DEFAULT 0"),
         ("pos_tickets", "type_promo", "REAL NOT NULL DEFAULT 0"),
         ("pos_tickets", "type_comp", "REAL NOT NULL DEFAULT 0"),
+        # The customer RPOWER attached to the check (guest_hub, 10/20/26).
+        ("pos_tickets", "customer_id", "TEXT"),
         # Archive layout 4 (bar fix round 10/15/26, F5): each line's
         # department and sales category as RPOWER filed it, RPOWER's cost /
         # discounted / aqu_count / fraction, and the modifier links read from

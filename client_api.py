@@ -5523,6 +5523,41 @@ def guest_optin_invites_api(current_user):
     return _m("mobile_guest_optin_invites")(current_user)
 
 
+@client_bp.route("/api/guests", methods=["GET"])
+@login_required
+def guests_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests."""
+    return _m("mobile_guests")(current_user)
+
+
+@client_bp.route("/api/guests/host-add", methods=["POST"])
+@login_required
+def guests_host_add_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_host_add."""
+    return _m("mobile_guests_host_add")(current_user)
+
+
+@client_bp.route("/api/guests/import", methods=["POST"])
+@login_required
+def guests_import_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_import."""
+    return _m("mobile_guests_import")(current_user)
+
+
+@client_bp.route("/api/guests/followup", methods=["GET", "POST"])
+@login_required
+def guests_followup_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_followup."""
+    return _m("mobile_guests_followup")(current_user)
+
+
+@client_bp.route("/api/guests/inbox", methods=["GET", "POST"])
+@login_required
+def guests_inbox_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_inbox."""
+    return _m("mobile_guests_inbox")(current_user)
+
+
 @client_bp.route("/api/guest-campaigns")
 @login_required
 def guest_campaigns_api(current_user):

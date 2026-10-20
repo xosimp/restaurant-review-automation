@@ -357,6 +357,10 @@ def init_guest_marketing(db_path=DB_PATH):
     except Exception as e:
         print(f"[guest_marketing] consent-scope backfill skipped: {e}")
     conn.close()
+    # The guest list's own tables: Tock, the next-day thank-you, the inbox,
+    # each restaurant's own guest number (guest_hub, 10/20/26).
+    import guest_hub
+    guest_hub.init_guest_hub(db_path)
 
 
 def _backfill_consent_scopes(conn):
@@ -863,7 +867,8 @@ def confirmation_text(restaurant_name) -> str:
     return name[:room].rstrip() + _CONFIRM_TAIL
 
 
-def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=None, db_path=DB_PATH) -> dict:
+def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=None, db_path=DB_PATH,
+                         source="join_form", detail=None) -> dict:
     """The public join form's submission: a PENDING opt-in and one
     confirmation text. Consent is set only when that phone replies Y within
     JOIN_CONFIRM_HOURS (handle_inbound_sms). Anyone with the link could
@@ -927,9 +932,12 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
         conn.close()
     if status != "pending":
         return {"ok": True, "pending": True, "contact_id": contact_id}
-    record_consent_event(restaurant_id, "requested", "join_form", phone=phone, ip=ip, user_agent=user_agent,
+    # `source`: the join page, or the host stand (guest_hub.host_add: the
+    # guest asked for texts there and the host sent this on their behalf -
+    # still nothing until the guest's own Y).
+    record_consent_event(restaurant_id, "requested", source, phone=phone, ip=ip, user_agent=user_agent,
                          disclosure_version=JOIN_DISCLOSURE_VERSION, disclosure_hash=join_disclosure_hash(),
-                         detail=f"join request {request_id}", db_path=db_path)
+                         detail=f"join request {request_id}" + (f"; {detail}" if detail else ""), db_path=db_path)
     try:
         import notify as _notify_ctx
         with _notify_ctx.sms_context(restaurant_id):
@@ -1312,7 +1320,7 @@ def _stop_everywhere(phone, message_sid=None, db_path=DB_PATH):
         record_consent_event(rid, "opted_out", "sms_reply", phone=phone, message_sid=message_sid, db_path=db_path)
 
 
-def handle_inbound_sms(from_phone, body, db_path=DB_PATH, message_sid=None):
+def handle_inbound_sms(from_phone, body, db_path=DB_PATH, message_sid=None, to_phone=None):
     """Process one inbound guest text. Returns a reply string to send back
     (or None to stay silent). `message_sid` is Twilio's MessageSid for the
     inbound text, kept on the consent evidence it produces.
@@ -1375,6 +1383,19 @@ def handle_inbound_sms(from_phone, body, db_path=DB_PATH, message_sid=None):
     picked = _named_answer(phone, norm, pending, db_path=db_path)
     if picked:
         return _apply_yes(phone, picked, message_sid=message_sid, db_path=db_path)
+    # Anything else, sent to a restaurant's OWN guest number, is a guest
+    # talking to that restaurant: kept for the owner to answer
+    # (guest_hub.guest_inbox). On the shared number the restaurant can't be
+    # known, so it stays unanswered as before.
+    if to_phone:
+        try:
+            import guest_hub
+            rid = guest_hub.restaurant_for_number(to_phone, db_path=db_path)
+            if rid:
+                guest_hub.log_inbound(rid, phone, body, message_sid=message_sid, db_path=db_path)
+        except Exception as e:
+            import ops
+            ops.capture(e, job="guest_inbox", context=f"to={str(to_phone)[-4:]}")
     return None
 
 

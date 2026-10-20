@@ -5658,6 +5658,18 @@ def scheduler_loop():
                 from strategy_jobs import run_pos_archive
                 _ops.run_job("pos_archive", run_pos_archive)
 
+            # 5am daily — yesterday's RPOWER checks that carry a customer
+            # become guest visits (guest_hub phase 3). Sends nothing.
+            if _due(now, 5) and _ops.claim_period("guest_pos_match", str(today)):
+                from guest_hub import run_pos_guest_match
+                _ops.run_job("guest_pos_match", run_pos_guest_match)
+
+            # 11am daily — the next-day thank-you to yesterday's opted-in
+            # guests (guest_hub.run_followups; each guest claimed once).
+            if _due(now, 11) and _ops.claim_period("guest_followups", str(today)):
+                from guest_hub import run_followups
+                _ops.run_job("guest_followups", run_followups)
+
             # 6am daily — Halsted & Rye, the showcase demo: the night's
             # invoices, reviews, kitchen count and schedule (demo_store.build
             # .run_refresh; the POS side is the jobs above). Sends nothing.

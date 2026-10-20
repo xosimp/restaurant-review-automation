@@ -5461,8 +5461,10 @@ _MODULE_PREFIXES = (
     ("/api/post-to-instagram",      "marketing"),
     ("/api/gbp-listing",            "marketing"),
     ("/api/guest-",                 "marketing"),
+    ("/api/guests",                 "marketing"),       # the guest list (guest_hub, 10/20/26)
     ("/mobile/api/marketing",       "marketing"),
     ("/mobile/api/guest-",          "marketing"),
+    ("/mobile/api/guests",          "marketing"),
     # Intel (derived: full tier + a connected listing)
     ("/api/intel/",                 "intel"),
     ("/api/ai-visibility",          "intel"),

@@ -1,6 +1,8 @@
 # Tock webhooks — what we committed to
 
-**Status: requested, not built.** On 10/13/26 Will replied to Resy | Tock support (Pualani Tapia, Manager of Support)
+**Status: BUILT 10/20/26 (`guest_hub.receive_tock`, `webhook_routes.tock_webhook`); waiting on Tock to switch the webhooks on and confirm the payload format. Set `TOCK_WEBHOOK_TOKENS` (`5:<token>`) in Railway first.** Events are kept raw in `tock_events` and read tolerantly; once the real format is known, adjust the readers and run `guest_hub.reprocess_tock(5)`. Tock's own marketing opt-in is stored and shown (`guest_contacts.tock_marketing_optin`), never treated as texting consent.
+
+Original status: requested, not built. On 10/13/26 Will replied to Resy | Tock support (Pualani Tapia, Manager of Support)
 on the thread "Support Help Request". Cc'd: Danny Wurst and Erik Baylis (ebaylis@baylishospitality.com).
 
 The reply asked for read-only webhook access for Simple EJ's Kitchen & Tap (prod rid 5). Tock will register these exact

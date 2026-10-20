@@ -142,6 +142,23 @@ JOBS = {
                                                   "invoices, reviews, kitchen count, posts, next week's schedule "
                                                   "and month-end bar count; sends nothing",
         target=("demo_store.build", "run_refresh"), max_minutes=20),
+    "guest_followups": dict(
+        # The next-day thank-you (guest_hub, 10/20/26): yesterday's guests who
+        # hold marketing consent, at restaurants that turned it on. Each guest
+        # is claimed before the send, so a retry never texts twice.
+        cadence="11am CT daily", sla_minutes=_D, sends=True, runnable=True,
+        label="Guest thank-you texts",
+        description="Text yesterday's opted-in guests the restaurant's thank-you, once each, inside the guest "
+                    "sending hours (bounded, resumable)",
+        target=("guest_hub", "run_followups"), max_minutes=10, retry=True),
+    "guest_pos_match": dict(
+        # After the POS archive (4am): RPOWER checks with a customer attached
+        # become guest visits and the guest's usual (guest_hub phase 3).
+        cadence="5am CT daily", sla_minutes=_D, sends=False, runnable=True,
+        label="Guests from POS checks",
+        description="Match yesterday's RPOWER checks that carry a customer to guests: a visit and what they "
+                    "ordered; sends nothing",
+        target=("guest_hub", "run_pos_guest_match"), max_minutes=10, retry=True),
     "pos_archive": dict(
         cadence="4am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="POS archive", description="Queue one archive row per restaurant whose POS can archive (job_queue "

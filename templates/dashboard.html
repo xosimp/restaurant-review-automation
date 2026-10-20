@@ -1046,6 +1046,56 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .cp-h .k{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
 .cp-h h2{margin:8px 0 0;font-family:'Clash Display',sans-serif;font-weight:500;font-size:32px;letter-spacing:-.01em;color:var(--ink);text-wrap:balance}
 .cp-hrow{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+/* ── Guests (guest_hub, 10/20/26): Campaign Studio's cards and headings; a
+   form row is one 44px height (DESIGN_SYSTEM 7). */
+.gx{gap:56px}
+.cp-kpis.gx-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+.cp-kpis.gx-kpis>*,.cp-kpis.gx-kpis>:nth-child(n+4),.cp-kpis.gx-kpis>:last-child{grid-column:auto}
+@media (max-width:760px){.cp-kpis.gx-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.gx-host,.gx-imp,.gx-side{padding:20px 22px;display:flex;flex-direction:column;gap:14px}
+.gx-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.gx-f{display:flex;flex-direction:column;gap:6px;font-size:13.5px;font-weight:600;color:var(--ink2)}
+.gx-f.w{flex:1 1 200px;min-width:0}.gx-f.n{flex:0 0 96px}
+.gx .ac-input,.gx .ac-select,.gx-row .cbtn{height:44px;min-height:44px;box-sizing:border-box;margin:0;font-size:15px;border-radius:10px}
+.gx .ac-select{-webkit-appearance:none;appearance:none;padding-right:34px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8279' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 8px}
+.gx .ac-textarea{font-size:15px;border-radius:10px}
+.gx-ask{display:flex;align-items:flex-start;gap:10px;font-size:15px;color:var(--ink2);cursor:pointer}
+.gx-ask input{width:18px;height:18px;margin-top:2px;accent-color:var(--ember);flex:none}
+.gx-msg{font-size:14px;color:var(--ink2);min-height:20px}
+.gx-msg.bad{color:var(--red)}.gx-msg.good{color:var(--green)}
+.gx-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.gx-seg{display:flex;gap:6px;flex-wrap:wrap}
+.gx-seg .cbtn.on{border-color:var(--ember);color:var(--ember);background:var(--cp-tint)}
+.gx .gx-q{width:220px;flex:none}
+.gx-listcard{padding:6px 0}
+.gx-scroll{overflow-x:auto}
+.gx-t{width:100%;border-collapse:collapse;font-size:15px}
+.gx-t th{text-align:left;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);padding:12px 18px;border-bottom:1px solid var(--cp-line);white-space:nowrap}
+.gx-t td{padding:13px 18px;border-top:1px solid var(--cp-line);color:var(--ink2);vertical-align:middle}
+.gx-t tbody tr:first-child td{border-top:0}
+.gx-t td.r,.gx-t th.r{text-align:right}
+.gx-t .nm b{display:block;color:var(--ink);font-weight:600}
+.gx-t .nm small,.gx-t .u{font-size:13.5px;color:var(--ink3)}
+.gx-pill{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:3px 9px;white-space:nowrap;color:var(--ink2);background:var(--cp-soft)}
+.gx-pill.joined{color:var(--green);background:color-mix(in srgb,var(--green) 14%,transparent)}
+.gx-pill.waiting{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}
+.gx-pill.stopped{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent)}
+.gx-empty{padding:22px;font-size:15px;color:var(--ink3)}
+.gx-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:start}
+.gx-sh{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.gx-sh .k{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
+.gx-sub{margin:0;font-size:14px;color:var(--ink3);line-height:1.5}
+.gx-sms{align-self:flex-start;max-width:100%;padding:10px 14px;border-radius:16px 16px 16px 4px;background:var(--cp-soft);font-size:14.5px;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.gx-acts{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.gx-trow{display:flex;align-items:center;gap:12px;width:100%;padding:12px 0;border-top:1px solid var(--cp-line);text-align:left;justify-content:flex-start;height:auto;white-space:normal}
+.gx-trow:first-child{border-top:0}
+.gx-trow .tx{flex:1;min-width:0}.gx-trow .tx b{display:block;color:var(--ink);font-size:15px}
+.gx-trow .tx small{display:block;color:var(--ink3);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gx-th{font-family:'Clash Display',sans-serif;font-size:19px;color:var(--ink)}
+.gx-msgs{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto}
+.gx-bub{max-width:85%;padding:9px 13px;border-radius:16px;font-size:14.5px;line-height:1.4;white-space:pre-wrap;word-break:break-word;background:var(--cp-soft);color:var(--ink);align-self:flex-start}
+.gx-bub.out{align-self:flex-end;background:var(--cp-tint)}
+.gx-bub small{display:block;font-size:12px;color:var(--ink3);margin-top:3px}
 .cp-prompt{position:relative;display:flex;align-items:center;gap:16px;margin:0;padding:12px 12px 12px 20px;border-radius:24px;background:radial-gradient(120% 170% at 0% 0%,var(--cp-tint),transparent 58%),var(--surface);border:1px solid var(--cp-ring);box-shadow:0 0 0 6px color-mix(in srgb,var(--ember) 5%,transparent),0 40px 90px -50px color-mix(in srgb,var(--ember) 55%,transparent);transition:box-shadow .25s ease}
 .cp-prompt:focus-within{box-shadow:0 0 0 6px color-mix(in srgb,var(--ember) 12%,transparent),0 40px 90px -46px color-mix(in srgb,var(--ember) 65%,transparent)}
 .cp-orb{width:38px;height:38px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,var(--ember2),var(--ember) 72%);animation:cpBreathe 3.4s ease-in-out infinite}
@@ -15047,6 +15097,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
   <nav class="ss-steps mkt-steps" role="tablist" aria-label="Marketing sections">
     <button type="button" role="tab" aria-selected="true" aria-controls="mkt-tab-content" id="mkt-tab-content-btn" onclick="switchMktTab('content')" class="on">Content</button>
     <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-campaigns" id="mkt-tab-campaigns-btn" onclick="switchMktTab('campaigns')">Campaigns</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-guests" id="mkt-tab-guests-btn" onclick="switchMktTab('guests')">Guests</button>
     <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-queue" id="mkt-tab-queue-btn" onclick="switchMktTab('queue')">Scheduled</button>
     <button type="button" role="tab" aria-selected="false" aria-controls="mkt-tab-analytics" id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')">Analytics</button>
   </nav>
@@ -15426,6 +15477,83 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 
   <!-- Scheduled sub-tab: the queue. Everything this module did was
        generate-now/post-now, and an owner does admin at 11pm. -->
+  {# Guests (guest_hub, owner 10/19/26: Danny at Simple EJ's retyped the host
+     stand's guests into a spreadsheet and texted each one the next day to ask
+     for consent). The list from Tock, the host stand and an import; consent
+     only from the guest's own Y; the next-day thank-you; replies to the
+     restaurant's own number. DESIGN_SYSTEM.md -> Guests. #}
+  <div id="mkt-tab-guests" role="tabpanel" aria-labelledby="mkt-tab-guests-btn" style="display:none">
+  <div class="cp gx" data-nav="marketing/guest-list">
+    <div class="cp-kpis gx-kpis" aria-label="Your guests">
+      <div class="cp-card cp-kpi"><div class="l">Came in yesterday</div><div class="v hb-num" id="gx-k-yday">&mdash;</div></div>
+      <div class="cp-card cp-kpi"><div class="l">Joined texts</div><div class="v hb-num" id="gx-k-joined">&mdash;</div></div>
+      <div class="cp-card cp-kpi"><div class="l">Waiting for their Y</div><div class="v hb-num" id="gx-k-waiting">&mdash;</div></div>
+      <div class="cp-card cp-kpi"><div class="l">All guests</div><div class="v hb-num" id="gx-k-total">&mdash;</div></div>
+    </div>
+
+    <section class="cp-sec" aria-labelledby="gx-host-h">
+      <div class="cp-h"><div class="k">Host stand</div><h2 id="gx-host-h">Add a guest</h2></div>
+      <form class="cp-card gx-host" id="gx-host" onsubmit="event.preventDefault();gxAdd()">
+        <div class="gx-row">
+          <label class="gx-f w"><span>Name</span><input class="ac-input" id="gx-name" maxlength="80" autocomplete="off"></label>
+          <label class="gx-f w"><span>Phone</span><input class="ac-input" id="gx-phone" type="tel" inputmode="tel" maxlength="20" autocomplete="off"></label>
+          <label class="gx-f n"><span>Party</span><select class="ac-select" id="gx-party"><option value="">&mdash;</option></select></label>
+          <button type="submit" class="cbtn cbtn-primary" id="gx-add-btn">Add guest</button>
+        </div>
+        <label class="gx-ask"><input type="checkbox" id="gx-invite"><span><b>The guest asked for texts.</b> Send the invite now; they reply Y to join.</span></label>
+        <div class="gx-msg" id="gx-host-msg" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+
+    <section class="cp-sec" aria-labelledby="gx-list-h">
+      <div class="cp-h cp-hrow"><div><div class="k">Guests</div><h2 id="gx-list-h">Everyone who came in</h2></div>
+        <div class="gx-tools">
+          <div class="gx-seg" role="group" aria-label="Show">
+            <button type="button" class="cbtn cbtn-secondary on" data-gx-view="all">All</button>
+            <button type="button" class="cbtn cbtn-secondary" data-gx-view="yesterday">Yesterday</button>
+            <button type="button" class="cbtn cbtn-secondary" data-gx-view="joined">Joined</button>
+            <button type="button" class="cbtn cbtn-secondary" data-gx-view="waiting">Waiting</button>
+          </div>
+          <input class="ac-input gx-q" id="gx-q" type="search" placeholder="Search" aria-label="Search guests" autocomplete="off">
+        </div>
+      </div>
+      <div class="cp-card gx-listcard"><div class="gx-scroll"><div id="gx-list"></div></div></div>
+    </section>
+
+    <section class="cp-sec gx-two" aria-label="Thank-you text and replies">
+      <div class="cp-card gx-side" id="gx-follow">
+        <div class="gx-sh"><div class="k">Next-day thank-you</div><label class="ac-switch"><input type="checkbox" id="gx-f-on" aria-label="Send the next-day thank-you"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div>
+        <p class="gx-sub" id="gx-f-when">At 11am, to guests who came in yesterday and joined texts.</p>
+        <textarea class="ac-textarea" id="gx-f-msg" rows="3" maxlength="300" aria-label="Thank-you message" oninput="gxFollowPreview()"></textarea>
+        <label class="gx-ask" id="gx-f-rev-row"><input type="checkbox" id="gx-f-rev" onchange="gxFollowPreview()"><span>Add the Google review link</span></label>
+        <div class="gx-sms" id="gx-f-prev" aria-label="What guests get"></div>
+        <div class="gx-acts"><button type="button" class="cbtn cbtn-primary" id="gx-f-save" onclick="gxFollowSave()">Save</button><span class="gx-msg" id="gx-f-msg-s" role="status" aria-live="polite"></span></div>
+        <p class="gx-sub" id="gx-texting"></p>
+      </div>
+      <div class="cp-card gx-side" id="gx-inbox">
+        <div class="gx-sh"><div class="k">Replies</div><span class="cp-chip warn" id="gx-unread" hidden></span></div>
+        <div id="gx-threads"></div>
+        <div id="gx-thread" hidden>
+          <button type="button" class="cbtn cbtn-text" onclick="gxThreads()">&larr; All replies</button>
+          <div class="gx-th" id="gx-th-name"></div>
+          <div class="gx-msgs" id="gx-th-msgs"></div>
+          <form class="gx-row" onsubmit="event.preventDefault();gxReply()"><input class="ac-input" id="gx-th-reply" maxlength="320" autocomplete="off" aria-label="Your reply"><button type="submit" class="cbtn cbtn-primary">Send</button></form>
+        </div>
+      </div>
+    </section>
+
+    <section class="cp-sec" aria-labelledby="gx-imp-h">
+      <div class="cp-h"><div class="k">Bring in</div><h2 id="gx-imp-h">Your guest spreadsheet</h2></div>
+      <div class="cp-card gx-imp">
+        <div class="gx-row"><input type="file" id="gx-file" accept=".csv,text/csv" class="ac-input" aria-label="Spreadsheet saved as CSV"><button type="button" class="cbtn cbtn-secondary" onclick="gxImport(false)">Preview</button></div>
+        <p class="gx-sub">Save the sheet as CSV. Phone is required; name, email, visit date and a &ldquo;replied yes&rdquo; column are read if present.</p>
+        <div id="gx-imp-res"></div>
+      </div>
+      <p class="gx-sub" id="gx-tock"></p>
+    </section>
+  </div>
+  </div><!-- /mkt-tab-guests -->
+
   <div id="mkt-tab-queue" role="tabpanel" aria-labelledby="mkt-tab-queue-btn" style="display:none">
     <div class="hb-sh" style="border-top:none;padding-top:0"><div><div class="k">Scheduled</div><h2>What's going out, and when</h2></div></div>
     <div id="mkt-queue-list" aria-live="polite"><div class="hb-load mkt-load" role="status"><canvas class="hb-orb" data-orb-state="working" width="48" height="48" style="width:48px;height:48px"></canvas><span>Loading what’s scheduled…</span></div></div>
@@ -19577,8 +19705,8 @@ window.switchIntelTab = function(tab) {
 // Three panels now, not two — the queue is its own place because "what is
 // going out and when" is a different question from "what should I write".
 window.switchMktTab = function(tab) {
-  var panels = {content: 'mkt-tab-content', campaigns: 'mkt-tab-campaigns', queue: 'mkt-tab-queue', analytics: 'mkt-tab-analytics'};
-  var buttons = {content: 'mkt-tab-content-btn', campaigns: 'mkt-tab-campaigns-btn', queue: 'mkt-tab-queue-btn', analytics: 'mkt-tab-analytics-btn'};
+  var panels = {content: 'mkt-tab-content', campaigns: 'mkt-tab-campaigns', guests: 'mkt-tab-guests', queue: 'mkt-tab-queue', analytics: 'mkt-tab-analytics'};
+  var buttons = {content: 'mkt-tab-content-btn', campaigns: 'mkt-tab-campaigns-btn', guests: 'mkt-tab-guests-btn', queue: 'mkt-tab-queue-btn', analytics: 'mkt-tab-analytics-btn'};
   for (var key in panels) {
     var panel = document.getElementById(panels[key]);
     if (panel) panel.style.display = (key === tab) ? '' : 'none';
@@ -19592,7 +19720,183 @@ window.switchMktTab = function(tab) {
   if (tab === 'analytics') { loadMktWindow(); loadMktAttribution(); loadMktWebsite(); }
   if (tab === 'queue') loadMktQueue();
   if (tab === 'campaigns') { loadGuestOverview(); if (window.cpPaint) cpPaint(); }
+  if (tab === 'guests' && window.gxLoad) gxLoad();
 };
+
+// ── Guests (guest_hub, 10/20/26) ─────────────────────────────────────────
+// Danny's list: the host stand's add (the reply-Y invite only when the guest
+// asked), everyone who came in with their texts state, the next-day
+// thank-you, guests' replies and the spreadsheet import. One body with the
+// phone (/api/guests...).
+var _gx = {view: 'all', q: '', data: null, phone: null, imp: null};
+(function () {
+  var sel = document.getElementById('gx-party');
+  if (sel) for (var i = 1; i <= 20; i++) { var o = document.createElement('option'); o.value = i; o.textContent = i; sel.appendChild(o); }
+})();
+var GX_TEXTS = {joined: 'Joined', waiting: 'Waiting for Y', not_invited: 'Not invited', stopped: 'Stopped'};
+function gxNum(id, v) { var el = document.getElementById(id); if (el) el.textContent = (v == null ? '—' : String(v)); }
+function gxLoad() {
+  var list = document.getElementById('gx-list');
+  if (list && !_gx.data) list.innerHTML = mktLoading('Reading your guests\u2026');
+  var url = '/api/guests?view=' + encodeURIComponent(_gx.view) + '&q=' + encodeURIComponent(_gx.q || '');
+  fetch(url, {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { document.getElementById('gx-list').innerHTML = '<div class="gx-empty">' + _escHtml((d && d.error) || 'The guest list couldn’t be read just now.') + '</div>'; return; }
+    _gx.data = d;
+    var c = d.counts || {};
+    gxNum('gx-k-yday', c.yesterday); gxNum('gx-k-joined', c.joined); gxNum('gx-k-waiting', c.waiting); gxNum('gx-k-total', c.total);
+    gxList(d); gxFollowFill(d.followup || {}, d.can_publish); gxTexting(d.texting || {}, d.tock || {});
+    var un = document.getElementById('gx-unread');
+    if (un) { un.hidden = !c.unread; un.textContent = c.unread + ' new'; }
+    if (!_gx.phone) gxThreads();
+  }).catch(function () { document.getElementById('gx-list').innerHTML = '<div class="gx-empty">The guest list couldn’t be read just now. Check your connection.</div>'; });
+}
+function gxList(d) {
+  var g = d.guests || [], i, h;
+  if (!g.length) {
+    document.getElementById('gx-list').innerHTML = '<div class="gx-empty">' + (_gx.view === 'all' && !_gx.q ? 'No guests yet. Add one at the host stand, or bring in your spreadsheet below.' : 'No guests match.') + '</div>';
+    return;
+  }
+  h = '<table class="gx-t"><thead><tr><th>Guest</th><th>Last visit</th><th class="r">Visits</th><th class="r">Party</th><th>Texts</th><th>From</th></tr></thead><tbody>';
+  for (i = 0; i < g.length; i++) {
+    var x = g[i];
+    h += '<tr><td class="nm"><b>' + _escHtml(x.name || 'Guest') + '</b><small class="hb-num">' + _escHtml(x.phone) + '</small>'
+      + ((x.usual || []).length ? '<small>Usual: ' + _escHtml(x.usual.join(', ')) + '</small>' : '') + '</td>'
+      + '<td class="hb-num">' + _escHtml(x.last_visit || '—') + '</td><td class="r hb-num">' + (x.visits || 0) + '</td>'
+      + '<td class="r hb-num">' + (x.party || '—') + '</td>'
+      + '<td><span class="gx-pill ' + _escHtml(x.texts) + '">' + _escHtml(GX_TEXTS[x.texts] || x.texts) + '</span></td>'
+      + '<td class="u">' + _escHtml(x.source) + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  if (d.more) h += '<div class="gx-empty">' + d.more + ' more. Search to find a guest.</div>';
+  document.getElementById('gx-list').innerHTML = h;
+}
+function gxMsg(id, text, tone) { var el = document.getElementById(id); if (!el) return; el.textContent = text || ''; el.className = 'gx-msg' + (tone ? ' ' + tone : ''); }
+function gxPost(url, body) {
+  return fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(apiJson);
+}
+function gxAdd() {
+  var btn = document.getElementById('gx-add-btn'), inv = document.getElementById('gx-invite').checked;
+  var body = {name: document.getElementById('gx-name').value, phone: document.getElementById('gx-phone').value,
+    party: document.getElementById('gx-party').value, invite: inv, asked: inv};
+  if (!String(body.phone || '').replace(/\D/g, '')) { gxMsg('gx-host-msg', 'Enter the guest’s phone number.', 'bad'); return; }
+  btn.disabled = true;
+  gxPost('/api/guests/host-add', body).then(function (d) {
+    btn.disabled = false;
+    if (!d || !d.ok) { gxMsg('gx-host-msg', (d && d.error) || 'That guest wasn’t saved. Try again.', 'bad'); return; }
+    var who = body.name ? body.name.split(' ')[0] : 'The guest';
+    gxMsg('gx-host-msg', d.invited ? who + ' is added. The invite went out; they reply Y to join.' : (inv ? who + ' is added. The invite didn’t send: ' + (d.invite_error || 'try again later') : who + ' is added.'), d.invited || !inv ? 'good' : 'bad');
+    document.getElementById('gx-name').value = ''; document.getElementById('gx-phone').value = '';
+    document.getElementById('gx-party').value = ''; document.getElementById('gx-invite').checked = false;
+    document.getElementById('gx-name').focus();
+    gxLoad();
+  }).catch(function () { btn.disabled = false; gxMsg('gx-host-msg', 'That guest wasn’t saved. Check your connection.', 'bad'); });
+}
+function gxFollowFill(f, canPublish) {
+  var on = document.getElementById('gx-f-on'), msg = document.getElementById('gx-f-msg'), rev = document.getElementById('gx-f-rev');
+  if (!on) return;
+  on.checked = !!f.enabled;
+  if (document.activeElement !== msg) msg.value = f.message || '';
+  rev.checked = !!f.review_link;
+  document.getElementById('gx-f-rev-row').hidden = !f.can_review_link;
+  _gx.follow = f;
+  var lock = !canPublish;
+  on.disabled = lock; msg.disabled = lock; rev.disabled = lock; document.getElementById('gx-f-save').hidden = lock;
+  gxFollowPreview();
+}
+function gxFollowPreview() {
+  var el = document.getElementById('gx-f-prev'); if (!el || !_gx.data) return;
+  var msg = (document.getElementById('gx-f-msg').value || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+  var txt = ((_gx.follow && _gx.follow.prefix) || '') + msg;
+  if (document.getElementById('gx-f-rev').checked && _gx.follow && _gx.follow.can_review_link) txt += '\nReview us: (your Google review link)';
+  el.textContent = txt + '\n\nReply STOP to unsubscribe.';
+}
+function gxFollowSave() {
+  var btn = document.getElementById('gx-f-save'); btn.disabled = true;
+  gxPost('/api/guests/followup', {enabled: document.getElementById('gx-f-on').checked, message: document.getElementById('gx-f-msg').value,
+    review_link: document.getElementById('gx-f-rev').checked}).then(function (d) {
+    btn.disabled = false;
+    if (!d || !d.ok) { gxMsg('gx-f-msg-s', (d && d.error) || 'Not saved. Try again.', 'bad'); return; }
+    gxMsg('gx-f-msg-s', d.enabled ? 'Saved. It goes out at 11am.' : 'Saved. It’s off.', 'good');
+    gxFollowFill(d, true);
+  }).catch(function () { btn.disabled = false; gxMsg('gx-f-msg-s', 'Not saved. Check your connection.', 'bad'); });
+}
+function gxTexting(t, k) {
+  var el = document.getElementById('gx-texting');
+  if (el) el.textContent = t.own_number ? 'Texts come from ' + t.number + ', and guests’ replies come back here.' : 'Texts come from the Cavnar AI number until your own number is approved.';
+  var tk = document.getElementById('gx-tock');
+  if (tk) tk.textContent = k.connected ? ('Tock is connected' + (k.events ? ': ' + k.events + ' updates, the last on ' + k.last_event + '.' : '. Nothing has arrived yet.')) : 'Tock isn’t connected yet. Once it is, reservations and walk-ins add guests here on their own.';
+}
+function gxThreads() {
+  _gx.phone = null;
+  document.getElementById('gx-thread').hidden = true;
+  var box = document.getElementById('gx-threads'); box.hidden = false;
+  fetch('/api/guests/inbox', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    var t = (d && d.threads) || [], h = '', i;
+    if (!t.length) { box.innerHTML = '<p class="gx-sub">Guests’ replies to your number show up here.</p>'; return; }
+    for (i = 0; i < t.length; i++) h += '<button type="button" class="cbtn cbtn-text gx-trow" data-gx-phone="' + _escHtml(t[i].phone) + '" data-gx-name="' + _escHtml(t[i].name || t[i].display) + '">'
+      + '<span class="tx"><b>' + _escHtml(t[i].name || t[i].display) + '</b><small>' + _escHtml(t[i].last) + '</small></span>'
+      + (t[i].unread ? '<span class="cp-chip warn">' + t[i].unread + '</span>' : '') + '</button>';
+    box.innerHTML = h;
+  }).catch(function () { box.innerHTML = '<p class="gx-sub">Replies couldn’t be read just now.</p>'; });
+}
+function gxOpen(phone, name) {
+  _gx.phone = phone;
+  document.getElementById('gx-threads').hidden = true;
+  document.getElementById('gx-thread').hidden = false;
+  document.getElementById('gx-th-name').textContent = name || phone;
+  var box = document.getElementById('gx-th-msgs'); box.innerHTML = mktLoading('', 32);
+  fetch('/api/guests/inbox?phone=' + encodeURIComponent(phone), {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    var m = (d && d.messages) || [], h = '', i;
+    for (i = 0; i < m.length; i++) h += '<div class="gx-bub' + (m[i].direction === 'out' ? ' out' : '') + '">' + _escHtml(m[i].body) + '<small class="hb-num">' + _escHtml(mdy(String(m[i].at || '').slice(0, 10))) + '</small></div>';
+    box.innerHTML = h || '<p class="gx-sub">No messages.</p>';
+    box.scrollTop = box.scrollHeight;
+  });
+}
+function gxReply() {
+  var inp = document.getElementById('gx-th-reply'), body = inp.value;
+  if (!_gx.phone || !body.replace(/\s/g, '')) return;
+  gxPost('/api/guests/inbox', {phone: _gx.phone, body: body}).then(function (d) {
+    if (!d || !d.ok) { toast((d && d.error) || 'That reply didn’t send.', 'error'); return; }
+    inp.value = ''; gxOpen(_gx.phone, document.getElementById('gx-th-name').textContent);
+  }).catch(function () { toast('That reply didn’t send. Check your connection.', 'error'); });
+}
+function gxImport(commit) {
+  var res = document.getElementById('gx-imp-res'), f = document.getElementById('gx-file').files[0];
+  if (!commit && !f) { res.innerHTML = '<p class="gx-msg bad">Pick the spreadsheet first (saved as CSV).</p>'; return; }
+  function send(text) {
+    var att = document.getElementById('gx-imp-att');
+    gxPost('/api/guests/import', {csv: text, commit: !!commit, attest: !!(att && att.checked)}).then(function (d) {
+      if (!d || !d.ok) { res.innerHTML = '<p class="gx-msg bad">' + _escHtml((d && d.error) || 'That file couldn’t be read.') + '</p>'; return; }
+      if (commit) {
+        res.innerHTML = '<p class="gx-msg good">Brought in ' + d.imported + ' guests' + (d.visits ? ', ' + d.visits + ' visits' : '') + (d.consented ? ', ' + d.consented + ' already joined texts' : '') + '.</p>';
+        _gx.imp = null; document.getElementById('gx-file').value = ''; gxLoad(); return;
+      }
+      var h = '<p class="gx-sub"><b class="hb-num">' + d.rows + '</b> guests found' + (d.skipped ? ', ' + d.skipped + ' rows without a usable phone skipped' : '') + '.</p>';
+      if (d.said_yes) h += '<label class="gx-ask"><input type="checkbox" id="gx-imp-att"><span><b>' + d.said_yes + ' are marked as having said yes.</b> I confirm each of them replied yes to our texts before. Leave this unticked and they come in as guests who haven’t joined.</span></label>';
+      h += '<div class="gx-acts"><button type="button" class="cbtn cbtn-primary" onclick="gxImport(true)">Bring in ' + d.rows + ' guests</button></div>';
+      res.innerHTML = h;
+    }).catch(function () { res.innerHTML = '<p class="gx-msg bad">That file couldn’t be sent. Check your connection.</p>'; });
+  }
+  if (commit && _gx.imp != null) { send(_gx.imp); return; }
+  var r = new FileReader();
+  r.onload = function () { _gx.imp = String(r.result || ''); send(_gx.imp); };
+  r.readAsText(f);
+}
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-gx-view],[data-gx-phone]') : null; if (!t) return;
+  if (t.hasAttribute('data-gx-view')) {
+    _gx.view = t.getAttribute('data-gx-view');
+    var bs = document.querySelectorAll('[data-gx-view]');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.toggle('on', bs[i] === t);
+    gxLoad(); return;
+  }
+  gxOpen(t.getAttribute('data-gx-phone'), t.getAttribute('data-gx-name'));
+});
+(function () {
+  var q = document.getElementById('gx-q'), timer = null;
+  if (q) q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { _gx.q = q.value; gxLoad(); }, 250); });
+})();
+window.gxLoad = gxLoad;
 
 function loadSentimentTrend(){
   if(sentimentTrendLoaded)return;

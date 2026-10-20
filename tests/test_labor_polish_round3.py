@@ -130,7 +130,11 @@ console.log(JSON.stringify({seen:seen, frames:frames}));
     vals = [int(v.rstrip("%")) for v in got["seen"][2:]]      # after the width reservation
     assert vals[-1] == 100 and got["seen"][-1] == "100%"
     assert all(b >= a for a, b in zip(vals, vals[1:]))         # never backwards
-    assert max(b - a for a, b in zip(vals, vals[1:])) <= 4       # a 600ms stall is not a jump
+    # A 600ms stall is not a jump: since 09e2c835 (owner, 10/17/26: a busy page
+    # counted in slow motion and in bursts) one frame advances the clock at
+    # most 120ms - about 12 points at the curve's steepest - never the ~35 a
+    # whole 600ms would be.
+    assert max(b - a for a, b in zip(vals, vals[1:])) <= 12
     assert got["frames"] >= 80                                   # long enough to be seen (~1.5s+)
 
 

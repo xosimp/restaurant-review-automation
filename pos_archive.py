@@ -76,7 +76,7 @@ _TICKET_COLS = ("ticket_id", "business_date", "ticket_no", "opened_at", "closed_
                 "need_at", "server_id", "server_name", "table_id", "table_name", "room_name", "is_bar",
                 "guest_count", "entree_count", "bev_count", "net_sales", "discount", "tip", "grat", "tax",
                 "mealtime", "profit_center", "cancelled", "source_stamp", "type_sale", "type_discnt", "type_promo",
-                "type_comp")
+                "type_comp", "customer_id")
 _LINE_COLS = ("line_id", "ticket_id", "business_date", "item_id", "item_name", "item_kind", "kind", "qty",
               "sales", "price", "regular_price", "loss_amount", "reason", "approver_id", "item_at", "mealtime",
               "profit_center", "price_level_id", "source_stamp", "sales_type_id", "voided", "mgr_id",

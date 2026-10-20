@@ -5955,6 +5955,114 @@ def mobile_guest_optin_invites(current_user):
     return jsonify(can_change=can_change, **res), (200 if res.get("ok") else 400)
 
 
+# ── Guests: the host stand to the next-day text (guest_hub, 10/20/26) ──────
+# Danny's list at Simple EJ's. Reading it and adding at the host stand need
+# marketing view (a host may run the stand); importing, the thank-you text
+# and replying to a guest publish under the restaurant's name, so they need
+# marketing approve (may_publish).
+
+def _guests_gate(current_user, publish=False):
+    from permissions import MARKETING_VIEW, has_permission
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return rid, (jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403)
+    if not has_permission(current_user, MARKETING_VIEW):
+        return rid, (jsonify(ok=False, error="Your login can't see the guest list."), 403)
+    if publish:
+        from marketing_drafts import may_publish, CANNOT_PUBLISH
+        if not may_publish(current_user):
+            return rid, (jsonify(ok=False, error=CANNOT_PUBLISH), 403)
+    return rid, None
+
+
+@mobile_bp.route("/guests", methods=["GET"])
+@mobile_login_required
+def mobile_guests(current_user):
+    """The guest list with its counts, the thank-you's settings, where texts
+    come from and whether Tock is connected. ?view=all|yesterday|joined|
+    waiting, ?q= a name, number or email."""
+    import guest_hub
+    rid, refused = _guests_gate(current_user)
+    if refused:
+        return refused
+    out = guest_hub.guest_list(rid, view=(request.args.get("view") or "all").strip().lower(),
+                               q=request.args.get("q") or "")
+    from marketing_drafts import may_publish
+    out.update(followup=guest_hub.followup_settings(rid), texting=guest_hub.texting_status(rid),
+               tock=guest_hub.tock_status(rid), can_publish=may_publish(current_user))
+    return jsonify(out)
+
+
+@mobile_bp.route("/guests/host-add", methods=["POST"])
+@mobile_login_required
+def mobile_guests_host_add(current_user):
+    """The host stand's add: {name, phone, party, email, invite, asked}. The
+    invite goes only when `asked` - the guest asked for texts there."""
+    import guest_hub
+    rid, refused = _guests_gate(current_user)
+    if refused:
+        return refused
+    d = request.get_json(silent=True) or {}
+    res = guest_hub.host_add(rid, d.get("name"), d.get("phone"), party=d.get("party"), email=d.get("email"),
+                             invite=bool(d.get("invite")), asked=bool(d.get("asked")),
+                             user_id=current_user.get("id"))
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@mobile_bp.route("/guests/import", methods=["POST"])
+@mobile_login_required
+def mobile_guests_import(current_user):
+    """A spreadsheet of guests: {csv, commit, attest}. Without commit it
+    previews; consent comes in only with the owner's attestation."""
+    import guest_hub
+    rid, refused = _guests_gate(current_user, publish=True)
+    if refused:
+        return refused
+    d = request.get_json(silent=True) or {}
+    text = str(d.get("csv") or "")
+    if len(text) > 2_000_000:
+        return jsonify(ok=False, error="That file is too big. Split it into files under 2 MB."), 400
+    res = guest_hub.import_guests(rid, text, commit=bool(d.get("commit")), attest_consent=bool(d.get("attest")),
+                                  user_id=current_user.get("id"))
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@mobile_bp.route("/guests/followup", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guests_followup(current_user):
+    """The next-day thank-you: GET its settings; POST {enabled, message,
+    review_link}."""
+    import guest_hub
+    rid, refused = _guests_gate(current_user, publish=request.method == "POST")
+    if refused:
+        return refused
+    if request.method == "GET":
+        return jsonify(ok=True, **guest_hub.followup_settings(rid))
+    d = request.get_json(silent=True) or {}
+    res = guest_hub.set_followup(rid, bool(d.get("enabled")), d.get("message"), bool(d.get("review_link")),
+                                 user_id=current_user.get("id"))
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@mobile_bp.route("/guests/inbox", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guests_inbox(current_user):
+    """Guests' replies to the restaurant's own number: GET the threads (or
+    ?phone= one thread, marked read); POST {phone, body} answers it."""
+    import guest_hub
+    rid, refused = _guests_gate(current_user, publish=request.method == "POST")
+    if refused:
+        return refused
+    if request.method == "GET":
+        phone = request.args.get("phone")
+        if phone:
+            return jsonify(ok=True, messages=guest_hub.thread(rid, phone))
+        return jsonify(ok=True, threads=guest_hub.inbox_threads(rid))
+    d = request.get_json(silent=True) or {}
+    res = guest_hub.reply(rid, d.get("phone"), d.get("body"), user_id=current_user.get("id"))
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
 # ── Newsletter ────────────────────────────────────────────────────────────
 
 @mobile_bp.route("/guest-newsletter", methods=["GET", "POST"])

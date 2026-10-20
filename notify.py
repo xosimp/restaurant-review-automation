@@ -400,6 +400,19 @@ def textable(phone, restaurant_id=None, purpose="alert", db_path: str = DB_PATH)
     return sms_block_reason(phone, restaurant_id, purpose, db_path) is None
 
 
+def _own_guest_service(restaurant_id):
+    """The Messaging Service SID of this restaurant's own guest texting, or
+    None (guest_hub.sender_for). Never raises: a send never fails on it."""
+    if not restaurant_id:
+        return None
+    try:
+        import guest_hub
+        s = guest_hub.sender_for(int(restaurant_id))
+        return (s or {}).get("service_sid") or None
+    except Exception:
+        return None
+
+
 def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
                     restaurant_id: int = None, db_path: str = None) -> SmsResult:
     """Send one SMS via Twilio and return what happened (SmsResult), with an
@@ -477,6 +490,11 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             return _done(SmsResult(False, status="not_configured",
                                    error="TWILIO_STAFF_MESSAGING_SERVICE_SID is not set", log_id=log_id))
         service_sid = TWILIO_STAFF_MESSAGING_SERVICE_SID
+    elif use_case == "guest" and _own_guest_service(rid):
+        # The restaurant's own registered brand, campaign and number
+        # (guest_hub.guest_sms_senders): Twilio's ISV rules give each client
+        # its own, and replies to it reach that restaurant's inbox.
+        service_sid = _own_guest_service(rid)
     elif use_case == "guest" and TWILIO_GUEST_MESSAGING_SERVICE_SID:
         service_sid = TWILIO_GUEST_MESSAGING_SERVICE_SID
     else:

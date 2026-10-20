@@ -2852,6 +2852,9 @@ _RETENTION_DAYS = {
     "value_figures_daily": int(os.getenv("RETAIN_VALUE_FIGURES_DAYS", "120")),
     "admin_issue_resolution_history": int(os.getenv("RETAIN_RESOLUTION_HISTORY_DAYS", "400")),
     "sms_log":            int(os.getenv("RETAIN_SMS_LOG_DAYS", "90")),
+    # Tock's webhook deliveries kept raw (guest_hub): reprocessed once the
+    # payload format is confirmed; the bookings they made are kept apart.
+    "tock_events":        int(os.getenv("RETAIN_TOCK_EVENTS_DAYS", "90")),
     "push_outbox":        int(os.getenv("RETAIN_PUSH_OUTBOX_DAYS", "30")),
     # The schedule publish outbox (schedule_publish): who each Send told and
     # how; the share-status list reads a week's own rows.
@@ -3068,6 +3071,7 @@ _RETENTION_COLUMN = {
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
     "value_figures_daily": "date", "admin_issue_resolution_history": "created_at", "sms_log": "created_at",
+    "tock_events": "received_at",
     "push_outbox": "created_at", "webhook_outbox": "created_at", "morning_brief_deliveries": "created_at",
     "schedule_notices": "created_at",
     "places_details_cache": "created_at",
@@ -3186,6 +3190,7 @@ _RETENTION_FLOOR_DAYS = {
     # The Places Details cache is read for its own day only (#13).
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
+    "tock_events": 30,
     # A sent week's delivery list (schedule_publish.notice_status) is read
     # while the week is current — a few weeks, never more than two months.
     "schedule_notices": 60,

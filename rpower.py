@@ -1565,6 +1565,22 @@ def fetch_people(restaurant_id: int) -> dict:
     return {"jobs": jobs, "employees": emps, "station_names": stations}
 
 
+def fetch_customers(restaurant_id: int) -> dict:
+    """{customer mid: {name, phone, email, company}} - RPOWER's customer
+    file for this store's consolidation group (customer access granted for
+    Simple EJ's 10/8/26). A record with a company is a house account or a
+    delivery service, never a guest (guest_hub.match_pos_visits)."""
+    token, base = _ctx(restaurant_id)
+    out = {}
+    for c in _paged(token, "customer/getbycg", {"cg": base["cg"]}):
+        mid = str(c.get("mid") or "").strip()
+        if mid:
+            out[mid] = {"name": _tidy_name(c.get("name")) or None, "phone": str(c.get("phone") or "").strip() or None,
+                        "email": str(c.get("email") or "").strip() or None,
+                        "company": str(c.get("company") or "").strip() or None}
+    return out
+
+
 # ── during service (the live view) ───────────────────────────────────────
 #
 # RPOWER's above-store database is fed while the store trades. Read-only
@@ -2278,6 +2294,9 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "table_id": _id(t.get("table_mid")), "table_name": _tidy_name(table.get("name")) or None,
             "room_name": _tidy_name(room.get("name")) or None,
             "is_bar": 1 if room.get("is_bar") else 0,
+            # The customer RPOWER attached to the check (cust_mid; 1 is its
+            # no-customer placeholder) - guest_hub matches a real one to a guest.
+            "customer_id": _id(t.get("cust_mid")),
             "guest_count": int(_num(t.get("guest_count"))), "entree_count": int(_num(t.get("entree_count"))),
             "bev_count": int(_num(t.get("bev_count"))), "net_sales": net_by_ticket.get(tid, 0.0),
             "discount": round(_num(t.get("discount")), 2), "tip": round(_num(t.get("tip")), 2),
