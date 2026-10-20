@@ -441,6 +441,10 @@ final class HomeDayViewModel {
         }
         let ok: Bool
         let brief: Brief?
+        /// Not built for today yet — the server queued it (blind re-audit
+        /// 10/20/26 R6-F4) — or rebuilt after a change (`stale`): read again.
+        var preparing: Bool? = nil
+        var stale: Bool? = nil
     }
     private struct IssuesResponse: Decodable { let ok: Bool; let issues: [Issue] }
 
@@ -451,22 +455,62 @@ final class HomeDayViewModel {
     /// "Ana has been asked", per issue, after a cover request.
     var coverNote: [Int: String] = [:]
     var isLoading = false
+    /// Today's brief is still being built on the server (blind re-audit
+    /// 10/20/26 R6-F4): Home says so and reads it again shortly.
+    var briefPreparing = false
+    /// The brief or the open issues could not be read (R6-F13): Home says
+    /// so — a failed read must never look like a quiet day.
+    var briefFailed = false
+    var issuesFailed = false
+    private var briefRetry: Task<Void, Never>?
     private let client: APIClient
     init(client: APIClient = .shared) { self.client = client }
 
     func load() async {
         isLoading = true
         defer { isLoading = false }
-        async let b: BriefResponse? = try? client.send("/mobile/api/morning-brief", query: ["view": "home"], hapticOnError: false)
-        async let i: IssuesResponse? = try? client.send("/mobile/api/issues", query: ["status": "unresolved"], hapticOnError: false)
+        async let b: HomeRead<BriefResponse> = homeRead(client, "/mobile/api/morning-brief", query: ["view": "home"])
+        async let i: HomeRead<IssuesResponse> = homeRead(client, "/mobile/api/issues", query: ["status": "unresolved"])
         let (brief, iss) = await (b, i)
+        applyBrief(brief)
+        issues = iss.value?.issues ?? []
+        issuesFailed = iss.failed
+        scheduleBriefRetry(after: brief.value, attempt: 1)
+    }
+
+    private func applyBrief(_ read: HomeRead<BriefResponse>) {
+        let brief = read.value
+        briefPreparing = brief?.preparing == true
+        briefFailed = read.failed
+        // A brief still being prepared keeps what Home already shows.
+        guard !briefPreparing else { return }
         // The focus and money lines have their own cards on Home; an
         // all-clear alone is not a brief.
         demandAccuracy = brief?.brief?.demandAccuracy
         // Every line; HomeDayCard filters what the page already says
         // (HomeBriefFilter) against what Home knows at draw time.
         lines = brief?.brief?.lines ?? []
-        issues = iss?.issues ?? []
+    }
+
+    /// A brief the server is still building (or rebuilding after a change)
+    /// is read again — 4, 8, 12, 16 then 20 seconds on — and one still not ready
+    /// after that is said to have failed, with pull-to-refresh to try again.
+    private func scheduleBriefRetry(after brief: BriefResponse?, attempt: Int) {
+        briefRetry?.cancel()
+        guard brief?.preparing == true || brief?.stale == true else { return }
+        guard attempt <= 5 else {
+            if briefPreparing { briefPreparing = false; briefFailed = true }
+            return
+        }
+        briefRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(4 * attempt) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let read: HomeRead<BriefResponse> = await homeRead(self.client, "/mobile/api/morning-brief",
+                                                               query: ["view": "home"])
+            guard !Task.isCancelled else { return }
+            self.applyBrief(read)
+            self.scheduleBriefRetry(after: read.value, attempt: attempt + 1)
+        }
     }
 
     private struct CoverBody: Encodable { let name: String }

@@ -236,6 +236,7 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `SCHEDULE_GEN_SLOT_MB` | `1400` | The memory one generation holds at its peak (parent growth plus its CP-SAT solve process, measured 1.0-1.4 GB at 60-250 people): the default generation slots are the container's memory limit (cgroup `memory.max`) less `SCHEDULE_GEN_MEMORY_RESERVE_MB`, over this. No limit read: the cores alone. | job_queue.py |
 | `SCHEDULE_GEN_MEMORY_RESERVE_MB` | `1536` | What the container holds before any generation (the web process, the queue worker's baseline), kept out of the memory the generation slots are sized from. | job_queue.py |
 | `QUEUE_BULK_CONCURRENCY` | `"2"` | Learner rows running at once across every process. | job_queue.py |
+| `QUEUE_HOME_CONCURRENCY`, `QUEUE_HOME_MAX_RUNNING` | `"2"`, 2× | The `home` group (Home's kept blocks — `home_snapshots`, blind re-audit 10/20/26 R6-F4/F5): builds doing work at once across every process, and in flight. A cold Home open queues its blocks at the interactive class; age refreshes and the 5am precompute are bulk. | job_queue.py |
 | `QUEUE_POS_IO_CONCURRENCY`, `QUEUE_POS_IO_MAX_RUNNING` | `"4"`, 2× | The `pos_io` group (the nightly POS archive rows — network-bound, scale audit 10/19/26 INF-6): rows doing work at once across every process, and in flight. RPOWER's own budget is its per-token bucket. | job_queue.py |
 | `QUEUE_BULK_DEADLINE_HOURS` | `"22"` | A nightly queue row (archive, learner, food cost diagnosis) still unstarted this long after it became runnable expires instead of running, so a backlog never stacks under the next night's rows (INF-6). | strategy_jobs.py |
 | `QUEUE_WORKER_ALERT_SECONDS` | `"300"` | The platform check warns when the queue worker the master supervises has not beaten its heartbeat for this long — the web process has the whole queue (INF-4). | ops.py |
@@ -403,8 +404,15 @@ Changed or added by the AI cost audit (10/7/26):
 Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 
 - `HOME_SNAPSHOTS` — **1**: Home's four slow reads (the morning brief, good news, the monthly review, the cross-module links; web and phone) are kept per restaurant, business day and viewer scope in `home_snapshots` and served from the row. `0` builds every read on the request, as before.
-- `HOME_SNAPSHOT_REFRESH_SECONDS` — **900**: a kept answer older than this is rebuilt off the request on its next read even when no stamped input moved (a moved input rebuilds it at once). The stale answer is served meanwhile.
-- `HOME_SNAPSHOT_WORKERS` (**2**) and `HOME_SNAPSHOT_MAX_PENDING` (**200**): the background rebuild pool, and how many rebuilds may wait for it before a stale read is served without starting one. Per process, like the other pools (CLAUDE.md, gunicorn `--workers`).
+- `HOME_SNAPSHOT_REFRESH_SECONDS` — **900**: a kept answer older than this is rebuilt in the queue worker (a bulk `home_snapshot` row) on its next read even when no stamped input moved; a moved input (the owner's own write) queues it at the interactive class and the answer says `stale`. The kept answer is served meanwhile.
+- ~~`HOME_SNAPSHOT_WORKERS`, `HOME_SNAPSHOT_MAX_PENDING`~~ — gone (blind re-audit 10/20/26 R6-F5): the in-process rebuild pool is replaced by the job queue's `home` group (`QUEUE_HOME_CONCURRENCY`, below). Remove them from Railway if set; nothing reads them.
+
+Changed by the blind re-audit fix round (10/20/26, R6-F4/F5/F10 — `home_snapshots.py`):
+
+- `HOME_SNAPSHOT_COLD` — **queue**: what a request does when a Home block is not kept for today. `queue` queues its build for the queue worker (kind `home_snapshot`, interactive class) and the route answers `preparing: true` with `retry_after`; Home's combined read names it in `missing`. Nothing is built on a request thread. `request` is the rollback: the block is built on the request as before (the test suite runs this way — `tests/conftest.py`).
+- `HOME_SNAPSHOT_RETRY_AFTER` — **4**: the seconds a `preparing` or `stale` answer tells the client to wait before it reads again.
+- `HOME_PRECOMPUTE_HOUR` — **5**: the local hour from which the hourly `home_precompute` job queues each restaurant's Home blocks (once a business day, until three hours later), after the 3am POS chain and before the owner wakes. Only scopes opened in the last `HOME_PRECOMPUTE_ACTIVE_DAYS` (**14**) are built — the owner's and each manager's brief and links, each good-news view, the monthly review, the group view's location rows; one not opened for 45 days is forgotten.
+- `QUEUE_HOME_CONCURRENCY` — **2** (and `QUEUE_HOME_MAX_RUNNING`, 2×): the job queue's `home` group — Home block builds doing work at once across every process, in the queue worker, never on the web process's request threads.
 - `ACTIVITY_TTL_SECONDS` — **300** (was a fixed 45): how long one restaurant's activity feed (`activity.feed`, `/api/activity`) is kept per process. The web polls it every 2 minutes (was 1), so a viewer reads a kept build on most ticks (FE-05).
 - `SILENT_PUSH_JITTER_SECONDS` — **600**: the window a restaurant's `dsr` widget wake (`push.fire_silent`) is spread over — each restaurant at its own fixed offset (a hash of its id), sent by the job queue (kind `silent_push`) instead of every owner phone at once when held reports are released (FE-12). `0` sends at once, as before.
 
@@ -533,8 +541,10 @@ Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 | `SILENT_PUSH_JITTER_SECONDS` | `"600"` | push.py |
 | `HOME_SNAPSHOTS` | `"1"` | home_snapshots.py |
 | `HOME_SNAPSHOT_REFRESH_SECONDS` | `"900"` | home_snapshots.py |
-| `HOME_SNAPSHOT_WORKERS` | `"2"` | home_snapshots.py |
-| `HOME_SNAPSHOT_MAX_PENDING` | `"200"` | home_snapshots.py |
+| `HOME_SNAPSHOT_COLD` | `"queue"` | home_snapshots.py |
+| `HOME_SNAPSHOT_RETRY_AFTER` | `"4"` | home_snapshots.py |
+| `HOME_PRECOMPUTE_HOUR` | `"5"` | home_snapshots.py |
+| `HOME_PRECOMPUTE_ACTIVE_DAYS` | `"14"` | home_snapshots.py |
 | `PUSH_OUTBOX_MAX_AGE_MINUTES` | `"120"` | push.py |
 | `RETENTION_CHUNK_ROWS` | `"5000"` | ops.py |
 | `RETENTION_MAX_SECONDS` | `str(10 * 60` | ops.py |

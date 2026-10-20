@@ -105,8 +105,9 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # generations, CPU), "bulk" (the learners and other CPU work), "pos_io"
 # (network-bound POS reads — scale audit 10/19/26 INF-6: the nightly archive
 # rows held one of bulk's two CPU slots while they waited on RPOWER, so the
-# learners queued behind them).
-GROUPS = ("generation", "bulk", "pos_io")
+# learners queued behind them), "home" (Home's kept blocks — home_snapshots:
+# built here, never on a request thread; blind re-audit 10/20/26 R6-F4/F5).
+GROUPS = ("generation", "bulk", "pos_io", "home")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -144,6 +145,11 @@ KINDS = {
     # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
     # scheduler.run_auto_publish_schedules fans out).
     "auto_publish": ("bulk", "bulk", 2),
+    # One Home block's (re)build for one scope, or a restaurant's morning
+    # precompute (home_snapshots.run_queued; blind re-audit 10/20/26
+    # R6-F4/F5): a cold open queues it interactive, a stale row's age refresh
+    # and the precompute bulk.
+    "home_snapshot": ("home", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -160,6 +166,7 @@ HANDLERS = {
     "silent_push": "push:run_queued_silent",
     "schedule_notices": "schedule_publish:run_queued_notices",
     "auto_publish": "scheduler:run_queued_auto_publish",
+    "home_snapshot": "home_snapshots:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -238,6 +245,11 @@ def group_concurrency(grp) -> int:
         # Network-bound rows: their slots are not cores. RPOWER's own budget
         # is its per-token bucket (rpower), not this count.
         return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
+    if grp == "home":
+        # Home's kept blocks (home_snapshots): deterministic reads over one
+        # restaurant's data, CPU in the queue worker's process — never the
+        # web process's four request threads (R6-F4/F5).
+        return _int_env("QUEUE_HOME_CONCURRENCY", 2)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
@@ -1672,6 +1684,9 @@ def run_worker(groups=GROUPS, stop=None, threads=None, db_path=None, max_jobs=No
             if recycle.is_set():
                 return
             recycle.set()
+        # The idle consumers stop at once rather than at their next poll: with
+        # a thread a slot in four groups, a recycle waited out every one.
+        _wake.set()
         if on_recycle is not None:
             try:
                 on_recycle()

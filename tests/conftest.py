@@ -53,6 +53,13 @@ os.environ.setdefault("SCHEDULE_DRAFT_SOURCE", "model")
 # re-audit 10/11/26 ARCH-5): in the suite an undeclared key — a misspelling, or
 # a key no stage writes — raises instead of reading None.
 os.environ.setdefault("SCHEDULE_STATE_STRICT", "1")
+# Home's kept blocks are never built on a request in production: a missing
+# one is queued for the queue worker and the route answers `preparing`
+# (home_snapshots, blind re-audit 10/20/26 R6-F4). The suite's route tests
+# read a block once and check what it says, so the suite builds a missing
+# block on the request (the rollback mode); tests/test_g6_home_offthread.py
+# runs the production path with monkeypatch.setenv.
+os.environ.setdefault("HOME_SNAPSHOT_COLD", "request")
 # Cavnar AI's own marketing is not sent without a CAN-SPAM postal address
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.

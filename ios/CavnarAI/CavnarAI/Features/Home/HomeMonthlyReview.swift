@@ -79,6 +79,10 @@ struct HomeMonthlyReview: Decodable {
     /// clause, or "" — the server only writes one when last year could be
     /// measured and the move clears the noise band.
     let yoy: [String: String]?
+    /// Not built for today yet (the server queued it — blind re-audit
+    /// 10/20/26 R6-F4), or rebuilt after a change: read again shortly.
+    var preparing: Bool? = nil
+    var stale: Bool? = nil
 
     var measured: [Metric] { (review?.metrics ?? []).filter { $0.value != nil } }
     var hasAnything: Bool { !measured.isEmpty || !(review?.results ?? []).isEmpty }

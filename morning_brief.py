@@ -1774,16 +1774,16 @@ def _email_brief(restaurant_id, u, brief, name, today, db_path=DB_PATH):
 def _keep_for_home(restaurant_id, u, brief_date, full, restaurant, db_path=DB_PATH):
     """The brief as GET /morning-brief builds it for `u` (before the send's
     dedupe), kept as their Home snapshot for the day (scale audit 10/19/26
-    FE-01). Never raises past _safe."""
-    # The account holder's only: off a request every build reads as the
-    # owner's (models.viewer_sees_salaries), so a manager's brief built
-    # here could carry what their own Home read would not.
-    from permissions import is_principal
-    if not is_principal(u):
-        return
+    FE-01). Never raises past _safe.
+
+    Every recipient's, managers' too (blind re-audit 10/20/26 R6-F4): each
+    build runs in that recipient's own salary view (deliver, R6-F3b), so a
+    manager's kept brief carries what their own Home read would — it used
+    to be the account holder's only, and a manager's first open built it on
+    a request thread."""
     import home_snapshots
     home_snapshots.keep("morning_brief", restaurant_id, home_snapshots.viewer_scope(u), brief_date, full,
-                        restaurant=restaurant, db_path=None if db_path == DB_PATH else db_path)
+                        restaurant=restaurant, db_path=None if db_path == DB_PATH else db_path, viewer=u)
 
 
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):

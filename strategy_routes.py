@@ -5969,11 +5969,18 @@ def _do_cross_module(u):
     # Kept per login for the business day (home_snapshots, scale audit
     # 10/19/26 FE-01): a 3 s build on every Home open. Links answered since
     # the build are left out below by their presentation.
+    # Never built on the request (blind re-audit 10/20/26 R6-F4): a block
+    # not kept yet answers `preparing` and the client reads it again.
     import home_snapshots
-    brief = home_snapshots.serve(
-        "cross_module", _rid(u), home_snapshots.viewer_scope(u), _local_today(u),
-        lambda: bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank),
-        restaurant=r)
+    try:
+        brief = home_snapshots.serve(
+            "cross_module", _rid(u), home_snapshots.viewer_scope(u), _local_today(u),
+            lambda: bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank),
+            restaurant=r, viewer=u)
+    except home_snapshots.SnapshotPreparing:
+        return {"ok": True, "links": [], "fix_first": None, "modules_consulted": [], "modules_off": [],
+                "unanswered": [], **home_snapshots.flags("cross_module")}, 200
+    _kept_flags = home_snapshots.flags("cross_module")
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
@@ -5985,7 +5992,8 @@ def _do_cross_module(u):
             "fix_first": fix_first,
             "modules_consulted": brief.get("modules_consulted") or [],
             "modules_off": brief.get("modules_off") or [],
-            "unanswered": brief.get("unanswered") or []}, 200
+            "unanswered": brief.get("unanswered") or [],
+            **_kept_flags}, 200
 
 
 def _present_cross_module(u, fix_first, links, ctx=None):
@@ -6125,14 +6133,18 @@ def _do_good_news(u):
     denied = set(getattr(view, "_ask_denied", frozenset()))
     # Kept per denied-module set for the business day (home_snapshots,
     # FE-01): an 11 s build on every Home open.
+    # Never built on the request (R6-F4): `preparing` until it is kept.
     import home_snapshots
     today = _local_today(u)
-    items = home_snapshots.serve(
-        "good_news", _rid(u), home_snapshots.denied_scope(denied), today,
-        lambda: good_news.all_good_news(_rid(u), today=today, restaurant=view, denied_modules=denied),
-        restaurant=view)
+    try:
+        items = home_snapshots.serve(
+            "good_news", _rid(u), home_snapshots.denied_scope(denied), today,
+            lambda: good_news.all_good_news(_rid(u), today=today, restaurant=view, denied_modules=denied),
+            restaurant=view, viewer=u)
+    except home_snapshots.SnapshotPreparing:
+        return {"ok": True, "items": [], "caveat": good_news.CAVEAT, **home_snapshots.flags("good_news")}, 200
     items = [dict(i, ask=f"What's behind this: {i.get('headline', '')}") for i in items]
-    return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
+    return {"ok": True, "items": items, "caveat": good_news.CAVEAT, **home_snapshots.flags("good_news")}, 200
 
 
 # ── self-serve pause ──────────────────────────────────────────────────────────
@@ -6378,10 +6390,17 @@ def _do_monthly_review(u):
     rid = _rid(u)
     # The build is the same for every login (the filters below are per
     # login), kept for the business day (home_snapshots, FE-01).
+    # Never built on the request (R6-F4): `preparing` until it is kept.
     import home_snapshots
     r, today = get_restaurant(rid), _local_today(u)
-    review = home_snapshots.serve("monthly_review", rid, home_snapshots.shared_scope(), today,
-                                  lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r)
+    try:
+        review = home_snapshots.serve("monthly_review", rid, home_snapshots.shared_scope(), today,
+                                      lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r,
+                                      viewer=u)
+    except home_snapshots.SnapshotPreparing:
+        return {"ok": True, "review": None, "headline": None, "ask": None, "yoy": {},
+                **home_snapshots.flags("monthly_review")}, 200
+    _kept_flags = home_snapshots.flags("monthly_review")
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
     review["goals"] = [g for g in (review.get("goals") or []) if _metric_visible(u, g.get("metric"))]
@@ -6398,7 +6417,7 @@ def _do_monthly_review(u):
         m["ask"] = f"What moved my {m['label'].lower()} in {review['month']}?"
     return {"ok": True, "review": review, "headline": monthly_review.headline(review),
             "ask": f"Walk me through {review['month']}",
-            "yoy": {m["key"]: monthly_review.yoy_clause(m) for m in review["metrics"]}}, 200
+            "yoy": {m["key"]: monthly_review.yoy_clause(m) for m in review["metrics"]}, **_kept_flags}, 200
 
 
 def _do_milestones(u):
@@ -6447,19 +6466,27 @@ def _do_morning_brief(u):
     # Kept per login for the business day (home_snapshots, FE-01): a 13 s
     # build on every Home open. A line an answer has silenced since the
     # build is dropped at serve time, as the build itself drops them.
+    # Never built on the request (blind re-audit 10/20/26 R6-F4): until it
+    # is kept the answer is `preparing` (brief null; the settings below are
+    # the restaurant's and always answer) and the client reads it again.
     import home_snapshots
     today = _local_today(u)
-    brief = home_snapshots.serve(
-        "morning_brief", _rid(u), home_snapshots.viewer_scope(u), today,
-        lambda: morning_brief.build(_rid(u), restaurant=r, today=today, viewer=u), restaurant=r)
-    brief["lines"] = morning_brief._drop_answered(_rid(u), brief.get("lines") or [], viewer=u)
-    # K6: Home's "Before service" card renders these lines, so a load that
-    # names itself a Home view (?view=home, web and iOS Home) records them on
-    # "home" — once a day per key. Every other reader (the settings screens)
-    # records nothing: they show no lines.
-    if request.args.get("view") == "home":
-        morning_brief.present_on_home(_rid(u), brief, user_id=u.get("id"))
+    try:
+        brief = home_snapshots.serve(
+            "morning_brief", _rid(u), home_snapshots.viewer_scope(u), today,
+            lambda: morning_brief.build(_rid(u), restaurant=r, today=today, viewer=u), restaurant=r, viewer=u)
+    except home_snapshots.SnapshotPreparing:
+        brief = None
+    if brief is not None:
+        brief["lines"] = morning_brief._drop_answered(_rid(u), brief.get("lines") or [], viewer=u)
+        # K6: Home's "Before service" card renders these lines, so a load that
+        # names itself a Home view (?view=home, web and iOS Home) records them
+        # on "home" — once a day per key. Every other reader (the settings
+        # screens) records nothing: they show no lines.
+        if request.args.get("view") == "home":
+            morning_brief.present_on_home(_rid(u), brief, user_id=u.get("id"))
     return {"ok": True,
+            **home_snapshots.flags("morning_brief"),
             "brief": brief,
             "settings": {"enabled": bool(getattr(r, "morning_brief_enabled", 1)),
                          "hour": int(getattr(r, "morning_brief_hour", 7) or 7),
@@ -7954,24 +7981,49 @@ class _QueryAs:
 
 
 def _do_home_follow(u):
+    """The blocks in one read. A kept block not built for today yet is never
+    built here: its build is queued (home_snapshots, R6-F4) and its key is
+    in `missing`; the client reads `?only=<those keys>` again after
+    `retry_after` seconds — never each block's own route (R6-F8). A kept
+    block whose inputs moved since its build is served and named in `stale`
+    (it is being rebuilt; R6-F6). A block whose read failed is in `failed`
+    (R6-F13): the client says so instead of drawing an empty week."""
     import auth
     import home_snapshots
-    blocks, missing = {}, []
+    import contextlib
+    only = {k.strip() for k in (request.args.get("only") or "").split(",") if k.strip()}
+    # HOME_SNAPSHOT_COLD=request (the rollback): the re-read by name builds
+    # what was missing, on the request, as the FE-01 client's own reads did.
+    kept = home_snapshots.cold_mode() == "queue" or not only
+    blocks, missing, stale, failed = {}, [], [], []
     for key, path, args, body_name in _HOME_FOLLOW:
+        if only and key not in only:
+            continue
         if auth._module_blocked(u, path=path) or auth._module_permission_denied(u, path=path):
             blocks[key] = None
             continue
         try:
-            with _QueryAs(args), home_snapshots.kept_only():
+            with _QueryAs(args), (home_snapshots.kept_only() if kept else contextlib.nullcontext()):
                 payload, status = globals()[body_name](u)
             blocks[key] = payload if status == 200 and isinstance(payload, dict) and payload.get("ok") else None
+            if status >= 500:
+                failed.append(key)
+            elif blocks[key] is not None and blocks[key].get("preparing"):
+                blocks.pop(key)
+                missing.append(key)
+            elif blocks[key] is not None and blocks[key].get("stale"):
+                stale.append(key)
         except home_snapshots.SnapshotMiss:
             missing.append(key)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("home-follow %s failed rid=%s: %s", key, _rid(u), e)
             blocks[key] = None
-    return {"ok": True, "blocks": blocks, "missing": missing}, 200
+            failed.append(key)
+    out = {"ok": True, "blocks": blocks, "missing": missing, "stale": stale, "failed": failed}
+    if missing or stale:
+        out["retry_after"] = home_snapshots.RETRY_AFTER_SECONDS
+    return out, 200
 
 
 _ROUTES = [

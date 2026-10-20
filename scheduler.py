@@ -6308,6 +6308,15 @@ def scheduler_loop():
             if _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
                 _ops.run_job("auto_publish_schedule", run_auto_publish_schedules, enqueue=True)
 
+            # Hourly: Home's kept blocks for each restaurant whose local
+            # clock reached HOME_PRECOMPUTE_HOUR (5am) — one queue row per
+            # restaurant, built in the queue worker before anyone opens Home,
+            # for every scope opened lately (home_snapshots; blind re-audit
+            # 10/20/26 R6-F4).
+            if _ops.claim_period("home_precompute", f"{today}-{now.hour}"):
+                import home_snapshots as _home_snap
+                _ops.run_job("home_precompute", _home_snap.run_precompute)
+
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
                 _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
