@@ -5089,7 +5089,8 @@ def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PA
         if u and not on_team:
             from permissions import normalize_role as _nr
             # The same logins morning_brief.recipients adds at a sibling.
-            on_team = _nr(u["role"]) == "owner" and _still_in_group(conn, u["restaurant_id"], restaurant_id)
+            on_team = _nr(u["role"]) == "owner" and _still_in_group(conn, u["restaurant_id"], restaurant_id,
+                                                                       db_path=db_path)
         if not on_team:
             raise TeamAccessError("that login isn't on this restaurant's team")
         from permissions import CONSOLE_ROLES, normalize_role
@@ -5139,7 +5140,7 @@ def _note_session_touch_failure(e):
         pass
 
 
-def _still_in_group(conn, base_id, active_id) -> bool:
+def _still_in_group(conn, base_id, active_id, db_path: str = DB_PATH) -> bool:
     """Whether `active_id` is still in the location group of `base_id`, by
     the same rule get_location_group applies: the same organization, or the
     same group name under the same owner email."""
@@ -5152,12 +5153,20 @@ def _still_in_group(conn, base_id, active_id) -> bool:
     b, a = rows.get(base_id), rows.get(active_id)
     if not a or not b or not (b["location_group"] or "").strip():
         return False
-    if b["organization_id"] and a["organization_id"] and a["organization_id"] != b["organization_id"]:
+    # ONE rule for "in my group" (scale audit 10/19/26, SEC-13): the switch
+    # validates with models.get_location_group and this revalidation used a
+    # stricter one of its own (name AND owner email even inside one
+    # organization), so a move the switcher allowed was silently undone on
+    # the next request. Both now ask get_location_group. A location an admin
+    # moves to another owner changes its (group, owner) pair, and
+    # update_restaurant re-points its organization to match
+    # (models._sync_restaurant_organization), so it leaves the group here too.
+    try:
+        import models as _m_grp
+        group = _m_grp.get_location_group(b["location_group"], db_path=db_path, owner_email=b["owner_email"])
+    except Exception:
         return False
-    # The name and owner must still agree even inside one organization: an
-    # admin moving a location to another owner edits these two fields.
-    return ((a["location_group"] or "").strip() == (b["location_group"] or "").strip()
-            and (a["owner_email"] or "").strip().lower() == (b["owner_email"] or "").strip().lower())
+    return any(int(r["id"]) == int(active_id) for r in group)
 
 
 def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = False) -> Optional[dict]:
@@ -5288,7 +5297,8 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     # An active membership at the location is itself authorization there.
     if owner_switched and user["active_restaurant_id"] != user.get("restaurant_id") \
             and not (joined and row["_m_id"] is not None) \
-            and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"]):
+            and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"],
+                                    db_path=db_path):
         try:
             conn.execute("UPDATE sessions SET active_restaurant_id=NULL WHERE token=?", (hash_session_token(token),))
             conn.commit()

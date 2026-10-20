@@ -277,6 +277,32 @@ def test_sec12_the_tenant_sees_support_access_and_why(db_path, monkeypatch):
     assert "view_as_reason(" in src and "tell_tenant_support_access(" in src and ", 400" in src
 
 
+def test_sec13_the_switch_and_its_revalidation_use_one_rule(db_path):
+    """An organization whose second location carries its GM's email: the
+    switch (get_location_group, by organization) allowed the move and the
+    per-request revalidation (name AND owner email) undid it."""
+    import auth
+    import models
+    from models import Restaurant, create_restaurant
+    a = create_restaurant(Restaurant(name="Org A", owner_email="erik@x.test", location_group="EJs"), db_path=db_path)
+    b = create_restaurant(Restaurant(name="Org B", owner_email="gm@x.test", location_group="EJs"), db_path=db_path)
+    stranger = create_restaurant(Restaurant(name="Other", owner_email="o@x.test", location_group="EJs"),
+                                 db_path=db_path)
+    conn = models.get_conn(db_path)
+    org = conn.execute("SELECT organization_id FROM restaurants WHERE id=?", (a,)).fetchone()[0]
+    conn.close()
+    assert org
+    models.set_restaurant_organization(b, org, db_path=db_path)
+    ids = {r["id"] for r in models.get_location_group("EJs", db_path=db_path, owner_email="erik@x.test")}
+    assert b in ids and stranger not in ids
+    conn = models.get_conn(db_path)
+    try:
+        assert auth._still_in_group(conn, a, b, db_path=db_path), "what the switch allowed, the next request keeps"
+        assert not auth._still_in_group(conn, a, stranger, db_path=db_path)
+    finally:
+        conn.close()
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api
