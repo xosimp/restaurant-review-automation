@@ -18579,13 +18579,74 @@ window.sendAskCavnar = function() {
   // chat (the chat is created by the first question, never by the button),
   // and the screen. No client history either way - the server replays the
   // chat's own stored turns, as the stream does.
+  // poll asks the stream route for a polled turn (scale audit 10/19/26
+  // A4-01); the JSON fallback ignores it.
   var askBody = JSON.stringify({question: question, conversation_id: window._askNewChat ? null : (window._askConversationId || null),
-                                new_conversation: !!window._askNewChat, screen: askScreen()});
+                                new_conversation: !!window._askNewChat, screen: askScreen(), poll: true});
+  // One event, from the stream or a poll: the same shapes either way.
+  function _askDispatch(evt) {
+    if (!evt || _askDone) return;
+    if (evt.type === 'progress') {
+      _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
+    } else if (evt.type === 'sentence') {
+      _askPreviewShow(evt.text);
+    } else if (evt.type === 'sentence_reset') {
+      _askPreviewClear();
+    } else if (evt.type === 'answer') {
+      // Every field the server sends is carried through, not a hand-
+      // picked list: a field-by-field rebuild dropped the evidence strip
+      // once and then confidence_detail (the % and its Why?) on this, the
+      // normal path, while the JSON fallback drew both.
+      var _ans = {ok: true};
+      for (var _k in evt) { if (evt.hasOwnProperty(_k) && _k !== 'type') _ans[_k] = evt[_k]; }
+      _ans.ok = true;
+      _finish(_ans);
+    } else if (evt.type === 'error') {
+      _finish({ok: false, error: evt.error});
+    }
+  }
+  // The polled turn (scale audit 10/19/26 A4-01): the answer is written off
+  // the server's request threads and read back here a few times a second.
+  var _askPollMisses = 0;
+  function _askPollTurn(tid, after) {
+    fetch('/api/ask-cavnar/turn/' + encodeURIComponent(tid) + '?after=' + after).then(function(r) {
+      return r.json();
+    }).then(function(d) {
+      if (_askDone) return;
+      _askPollMisses = 0;
+      if (!d || !d.ok) { _finish({ok: false, error: (d && d.error) || 'Network error — try again.'}); return; }
+      (d.events || []).forEach(_askDispatch);
+      if (_askDone) return;
+      if (d.done) {
+        _finish({ok: false, error: 'The connection dropped before the answer finished. Ask again to see it — nothing it suggested was done.'});
+        return;
+      }
+      setTimeout(function() { _askPollTurn(tid, d.next || after); }, d.poll_after_ms || 600);
+    }).catch(function() {
+      if (_askDone) return;
+      _askPollMisses += 1;
+      if (_askPollMisses > 5) {
+        _finish({ok: false, error: 'The connection dropped before the answer finished. Ask again to see it — nothing it suggested was done.'});
+        return;
+      }
+      setTimeout(function() { _askPollTurn(tid, after); }, 1500);
+    });
+  }
   fetch('/api/ask-cavnar/stream', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: askBody
   }).then(function(resp) {
+    var ctype = (resp.headers && resp.headers.get('Content-Type')) || '';
+    if (ctype.indexOf('application/json') === 0) {
+      // A polled turn: its id, or why none was started (busy) - said as
+      // it is, never retried down the slower synchronous path.
+      _askStarted = true;
+      return resp.json().then(function(d) {
+        if (d && d.ok && d.turn_id) { _askPollTurn(d.turn_id, 0); return; }
+        _finish({ok: false, error: (d && d.error) || 'Network error — try again.'});
+      });
+    }
     if (!resp.ok || !resp.body) throw new Error('stream unavailable');
     _askStarted = true;
     var reader = resp.body.getReader();
@@ -18613,24 +18674,7 @@ window.sendAskCavnar = function() {
       if (!line) return;
       var evt;
       try { evt = JSON.parse(line); } catch (e) { return; }
-      if (evt.type === 'progress') {
-        _setAskCavnarLoadingState(loadingBubble, evt.label, evt.state);
-      } else if (evt.type === 'sentence') {
-        _askPreviewShow(evt.text);
-      } else if (evt.type === 'sentence_reset') {
-        _askPreviewClear();
-      } else if (evt.type === 'answer') {
-        // Every field the server streams is carried through, not a hand-
-        // picked list: a field-by-field rebuild dropped the evidence strip
-        // once and then confidence_detail (the % and its Why?) on this, the
-        // normal path, while the JSON fallback drew both.
-        var _ans = {ok: true};
-        for (var _k in evt) { if (evt.hasOwnProperty(_k) && _k !== 'type') _ans[_k] = evt[_k]; }
-        _ans.ok = true;
-        _finish(_ans);
-      } else if (evt.type === 'error') {
-        _finish({ok: false, error: evt.error});
-      }
+      _askDispatch(evt);
     }
     return pump();
   }).catch(function() {
@@ -29626,18 +29670,23 @@ function loadInvInsight(){
       return;
     }
   }catch(e){}
-  fetch('/api/inv-insight').then(apiJson).then(function(d){
+  /* Stale-while-refresh, as Labor, Reviews and Marketing (scale audit
+     10/19/26 FE-08): a read not yet written for these figures is written
+     off the server's request threads; the last read (with its age) shows
+     meanwhile, and only the final answer is cached. */
+  insightSwr('/api/inv-insight', function(d, interim){
     var elInvInsight=document.getElementById('inv-insight');
     if(elInvInsight){
-      cavSet('inv_insight',JSON.stringify(d||{}));cavSet('inv_insight_at',String(Date.now()));
-      invRenderInsight(elInvInsight,d||{},true);
+      if(!interim){cavSet('inv_insight',JSON.stringify(d||{}));cavSet('inv_insight_at',String(Date.now()));}
+      invRenderInsight(elInvInsight,d||{},!interim);
     }
     // The insight run can write this week's inventory_history snapshot,
     // so the trend fetched above may predate it - pulled again only when
     // the history's stamp moved past the one the trend was drawn from
     // (UI-11). A server with no stamp keeps the old refetch.
-    wtStampCheck(d&&d.history_stamp);
-  }).catch(function(){
+    if(!interim)wtStampCheck(d&&d.history_stamp);
+  }, function(d, kept){
+    if(kept)return;
     var elInvErr=document.getElementById('inv-insight');
     if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });

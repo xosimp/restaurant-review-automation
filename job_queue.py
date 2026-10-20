@@ -198,9 +198,11 @@ def group_concurrency(grp) -> int:
     process (a count of claimed rows, never a per-process pool) — its CPU
     slots. A row waiting on a model answer gives its slot back while it
     waits (model_wait — blind re-audit 10/11/26 SCALE-1) and counts only
-    against max_running. The generation group is also held to what the
-    organisation's token budget can carry (model_gateway.
-    max_concurrent_generations — no cap when the budget is not configured)."""
+    against max_running. The organisation's token budget caps the rows
+    STREAMING a model answer (model_gateway.max_concurrent_generations,
+    held in model_gateway.admit), never these CPU slots: folded in here it
+    throttled code-only generations that stream nothing (scale audit
+    10/19/26 A5-F8)."""
     if grp == "generation":
         import schedule_engine
         # Sized to the cores by default (blind re-audit 10/11/26 SCALE-16):
@@ -208,12 +210,8 @@ def group_concurrency(grp) -> int:
         # more of them at once than the cores can carry end on the wall
         # clock instead of their work budget. An explicit
         # QUEUE_GENERATION_CONCURRENCY is the operator's and is kept.
-        n = _int_env("QUEUE_GENERATION_CONCURRENCY",
-                     min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
-        cap = _gateway_streams()
-        if cap:
-            n = max(1, min(n, int(cap)))
-        return n
+        return _int_env("QUEUE_GENERATION_CONCURRENCY",
+                        min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
     if grp == "pos_io":
         # Network-bound rows: their slots are not cores. RPOWER's own budget
         # is its per-token bucket (rpower), not this count.
@@ -267,6 +265,19 @@ def _gateway_streams():
         return model_gateway.max_concurrent_generations()
     except Exception:
         return None
+
+
+def rows_in_phase(grp, phase, exclude_id=None, db_path=None) -> int:
+    """Rows of `grp` running with a live lease in `phase` ('model': waiting
+    on a model answer) — what model_gateway's stream cap counts (A5-F8)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE grp=? AND state='running' AND lease_until>? "
+                           "AND phase=? AND id<>?", (grp, time.time(), phase,
+                                                     int(exclude_id) if exclude_id is not None else -1)).fetchone()
+        return int(row["n"] or 0)
+    finally:
+        conn.close()
 
 
 def max_running(grp) -> int:

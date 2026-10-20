@@ -73,6 +73,12 @@ MAX_CSV_ROWS = 25_000
 # slot the turn already holds. Always Ask slot first, then the interactive
 # one, so the two can never be taken in opposite orders.
 ASK_MAX_CONCURRENT = min(int(os.getenv("ASK_MAX_CONCURRENT", "2")), 3)
+# Of those, how many one restaurant may hold (scale audit 10/19/26 SEC-06:
+# one restaurant's two open Ask tabs held both and every other owner was
+# told "busy"). 0: no per-restaurant ceiling. Only the streamed path counts
+# here; a polled turn runs on the interactive lane (ai_lane), which has its
+# own fair share per restaurant and holds no request thread.
+ASK_MAX_PER_TENANT = max(0, int(os.getenv("ASK_MAX_PER_TENANT", "1") or 0))
 
 
 # The chat's rolling summary (a Haiku call, up to ~10s) runs on its own
@@ -104,7 +110,8 @@ def _summarize_later(restaurant_id, conversation_id, user_id=None, correlation_i
         _SUMMARY_POOL.submit(ai_utils.attributed(_run))
     except Exception as e:
         print(f"[ask] conversation summary not queued rid={restaurant_id}: {e}")
-_ASK_SLOTS = threading.BoundedSemaphore(ASK_MAX_CONCURRENT)
+from ai_utils import FairSlots as _FairSlots
+_ASK_SLOTS = _FairSlots(ASK_MAX_CONCURRENT, ASK_MAX_PER_TENANT)
 
 def _cache_get(key):
     entry = _insight_cache.get(key)
@@ -3582,8 +3589,13 @@ def ask_cavnar_api(current_user):
 
 
 def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False, brief=False,
-                                user=None, screen=None, surface=None):
+                                user=None, screen=None, surface=None, poll=False):
     """Server-sent events: progress while tools run, then the answer —
+    or, when the client asks to `poll` (scale audit 10/19/26 A4-01), the
+    same events from the interactive lane (ai_lane): the turn runs off the
+    request threads, this answers {ok, turn_id, poll_after_ms} at once and
+    GET /api/ask-cavnar/turn/<id>?after=n reads the events (_do_ask_turn_events).
+    A busy lane answers {ok: false, error} with 503 — never a slower path.
     with the answer's validated sentences streamed ahead of it as a preview
     (`sentence` / `sentence_reset`, AI cost audit 10/7/26 #68; the `answer`
     event stays authoritative and a client that ignores the new events
@@ -3616,7 +3628,9 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
         payload, status = err
         return jsonify(**payload), status
 
-    events = queue.Queue()
+    import ai_lane as _lane_mod
+    use_lane = bool(poll) and _lane_mod.enabled()
+    events = _lane_mod.Sink() if use_lane else queue.Queue()
     # The worker thread has no request: a chat it has to start is marked
     # support's own from here (PEOPLE-7).
     from permissions import acting_via as _acting_via
@@ -3681,7 +3695,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             events.put({"type": "error", "error": msg})
         finally:
             _release_interactive()
-            _ASK_SLOTS.release()
+            _release_ask()
             events.put(None)
 
     # Bounded. Every Ask request used to spawn an unbounded daemon thread;
@@ -3691,12 +3705,33 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
     # against a model API with its own rate limits. The semaphore makes the
     # ceiling explicit and releases in the worker's finally.
     import ai_utils as _ai_slots
-    _slot = {"held": False}
+    _slot = {"held": False, "ask": False}
 
     def _release_interactive():
         if _slot["held"]:
             _slot["held"] = False
-            _ai_slots.release_interactive_slot()
+            _ai_slots.release_interactive_slot(rid)
+
+    def _release_ask():
+        if _slot["ask"]:
+            _slot["ask"] = False
+            _ASK_SLOTS.release(tenant=rid)
+
+    if use_lane:
+        # The interactive lane (A4-01): no Ask slot, no interactive slot —
+        # neither bounds anything here, since no request thread waits; the
+        # lane's own fair pool does.
+        def lane_work(turn):
+            events.bind(turn)
+            work()
+        from ai_utils import attributed as _ai_attributed
+        try:
+            turn = _lane_mod.start(rid, uid, _ai_attributed(lane_work))
+        except _lane_mod.LaneBusy as _lb:
+            _ai_slots.log_blocked(rid, "ask_cavnar", None, "busy", detail=f"interactive lane: {_lb}",
+                                  vendor="anthropic")
+            return jsonify(ok=False, error=_lane_mod.BUSY_MESSAGE), 503
+        return jsonify(ok=True, turn_id=turn.id, poll_after_ms=_lane_mod.POLL_AFTER_MS), 200
 
     def _busy():
         events.put({"type": "error", "error": (
@@ -3704,18 +3739,19 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             "try again in a moment.")})
         events.put(None)
 
-    if not _ASK_SLOTS.acquire(blocking=False):
+    if not _ASK_SLOTS.acquire(blocking=False, tenant=rid):
         threading.Thread(target=_busy, daemon=True).start()
-    elif not _ai_slots.acquire_interactive_slot():
+    elif not _ai_slots.acquire_interactive_slot(tenant=rid):
         # Every interactive slot is held (#4) — by other answers or insight
         # panels. The Ask slot goes straight back; nothing was started.
-        _ASK_SLOTS.release()
+        _ASK_SLOTS.release(tenant=rid)
         _ai_slots.log_blocked(rid, "ask_cavnar", None, "busy",
                               detail=f"all {_ai_slots.INTERACTIVE_AI_SLOTS} interactive slots were in use",
                               vendor="anthropic")
         threading.Thread(target=_busy, daemon=True).start()
     else:
         _slot["held"] = True
+        _slot["ask"] = True
         try:
             # The asker is the actor on the stream's model calls (#148): the
             # worker thread has no request to read it from.
@@ -3726,7 +3762,7 @@ def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_co
             # semaphore exists for, and it is the one path where the slot is
             # held by a worker that will never reach its finally.
             _release_interactive()
-            _ASK_SLOTS.release()
+            _release_ask()
             import ops
             ops.capture(_te, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
 
@@ -3755,7 +3791,37 @@ def ask_cavnar_stream(current_user):
         current_user["restaurant_id"], _ask_uid(current_user), data.get("question"),
         conversation_id=_parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")),
-        brief=(data.get("surface") == "home"), user=current_user, screen=data.get("screen"))
+        brief=(data.get("surface") == "home"), user=current_user, screen=data.get("screen"),
+        poll=_truthy(data.get("poll")))
+
+
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on") if v is not None else False
+
+
+def _do_ask_turn_events(restaurant_id, user_id, turn_id, after):
+    """A polled Ask turn's events after `after` (ai_lane, A4-01): exactly
+    the events the stream sends, in order. 404 for a turn this login did
+    not start, or one long gone."""
+    import ai_lane
+    try:
+        after = max(0, int(after or 0))
+    except (TypeError, ValueError):
+        after = 0
+    got = ai_lane.read(turn_id, restaurant_id, user_id, after)
+    if got is None:
+        return {"ok": False, "error": "That answer isn't here any more — ask again."}, 404
+    events, nxt, done = got
+    return {"ok": True, "events": events, "next": nxt, "done": done,
+            "poll_after_ms": ai_lane.POLL_AFTER_MS}, 200
+
+
+@client_bp.route("/api/ask-cavnar/turn/<turn_id>")
+@login_required
+def ask_cavnar_turn_events(current_user, turn_id):
+    payload, status = _do_ask_turn_events(current_user["restaurant_id"], _ask_uid(current_user), turn_id,
+                                          request.args.get("after"))
+    return jsonify(**payload), status
 
 
 @client_bp.route("/api/ask-cavnar/history")
@@ -5137,9 +5203,46 @@ def labor_insight_api(current_user):
 @client_bp.route("/api/inv-insight")
 @login_required
 def inv_insight_api(current_user):
+    """The Food Cost read. With `async` (scale audit 10/19/26 FE-08), as the
+    Labor, Reviews and Marketing reads (insight_refresh): a read not stored
+    for these figures is written on the owner AI pool while the last stored
+    one, with its age, or `pending` answers — no model call on a request
+    thread. Without it, the synchronous read as before (iOS builds)."""
+    rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    import insight_refresh
+    render = lambda: _inv_insight_web(rid, uid)
+    if not insight_refresh.wants_background():
+        payload, status = render()
+        return jsonify(**payload), status
+
+    def _stale(note):
+        import insight_store
+        text, at = insight_store.latest(rid, "food")
+        if not text or not isinstance(text, str):
+            return None
+        from ai_guard import freshness as _fresh_food
+        out = {"insight": format_insight_html(text, rec_items=[], surface="food", module="food"),
+               "is_live": True, "source": "live", "recs": [], "validation": None,
+               "history_stamp": waste_history_stamp(rid)}
+        out.update(_fresh_food(str(at).replace(" ", "T")[:19], stale_after_days=0))
+        out["stale"] = True
+        out["stale_note"] = note(out.get("as_of"))
+        return out, 200
+
+    payload, status = insight_refresh.serve(
+        "food", rid, render=render, refresh=render, stale=_stale,
+        pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": [], "is_live": True,
+                              "source": "live"}, 200),
+        failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
+        refresh_job=insight_refresh.refresh_job_arg())
+    return jsonify(**payload), status
+
+
+def _inv_insight_web(rid, uid):
+    """The web Food Cost read's (payload, status) — the synchronous answer."""
     try:
-        from inventory import analysis_for, get_claude_insights
-        rid = current_user["restaurant_id"]
+        from inventory import analysis_for
         restaurant = get_restaurant(rid)
         items, is_live, analysis = analysis_for(rid)
         # Keyed on the figures, not just the restaurant. The mobile twin has
@@ -5151,7 +5254,7 @@ def inv_insight_api(current_user):
         # figures that have already moved.
         insight = food_insight_text(rid, restaurant, items, is_live, analysis)
         import data_freshness as _df_food
-        recs = (insight_rec_items(rid, insight, "insight_food", "food", "food", user_id=current_user.get("id"),
+        recs = (insight_rec_items(rid, insight, "insight_food", "food", "food", user_id=uid,
                                   promote="UNVERIFIED:" not in insight,
                                   evidence=food_read_evidence(rid, is_live), sources=_df_food.sources_for(["food"]))
                 if is_live else [])
@@ -5161,21 +5264,21 @@ def inv_insight_api(current_user):
         _bo_read = food_read_backoffice(rid, restaurant) if not is_live else None
         if _bo_read:
             from backoffice_read import food_read_html
-            return jsonify(insight=food_read_html(_bo_read), is_live=False, source="back_office", recs=[],
-                           validation=None, history_stamp=waste_history_stamp(rid))
-        return jsonify(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
-                       is_live=bool(is_live),
-                       # Read from a back-office system's real figures, not the
-                       # sample pantry: the page shows no "example data" caveat.
-                       source="live" if is_live else "sample",
-                       recs=flat_recs(recs),
-                       # The Response Validation verdict the read carries
-                       # (workstream A); None until the text is a Validated str.
-                       validation=_rv_food.validation_of(insight),
-                       # The waste history's stamp after this read wrote
-                       # its week: the page refetches the trend only when it
-                       # moved (UI-11).
-                       history_stamp=waste_history_stamp(rid))
+            return dict(insight=food_read_html(_bo_read), is_live=False, source="back_office", recs=[],
+                        validation=None, history_stamp=waste_history_stamp(rid)), 200
+        return dict(insight=format_insight_html(insight, rec_items=recs, surface="food", module="food"),
+                    is_live=bool(is_live),
+                    # Read from a back-office system's real figures, not the
+                    # sample pantry: the page shows no "example data" caveat.
+                    source="live" if is_live else "sample",
+                    recs=flat_recs(recs),
+                    # The Response Validation verdict the read carries
+                    # (workstream A); None until the text is a Validated str.
+                    validation=_rv_food.validation_of(insight),
+                    # The waste history's stamp after this read wrote
+                    # its week: the page refetches the trend only when it
+                    # moved (UI-11).
+                    history_stamp=waste_history_stamp(rid)), 200
     except Exception as _inv_e:
         import traceback
         print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
@@ -5183,7 +5286,7 @@ def inv_insight_api(current_user):
         # calling and a Places URL carries key=.
         from ai_utils import insight_error as _insight_err_inv
         _msg_inv, _status_inv = _insight_err_inv(_inv_e)
-        return jsonify(insight=_msg_inv, error=_msg_inv), _status_inv
+        return dict(insight=_msg_inv, error=_msg_inv), _status_inv
 
 
 def waste_trend_analysis(rid):

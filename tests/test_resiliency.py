@@ -185,16 +185,33 @@ def test_ask_concurrency_is_bounded():
     slots = client_api._ASK_SLOTS
     taken = []
     try:
-        while slots.acquire(blocking=False):
-            taken.append(1)
+        # One restaurant each (scale audit 10/19/26 SEC-06: one restaurant
+        # holds at most ASK_MAX_PER_TENANT of them).
+        while slots.acquire(blocking=False, tenant=1000 + len(taken)):
+            taken.append(1000 + len(taken))
             if len(taken) > client_api.ASK_MAX_CONCURRENT:
                 break
         assert len(taken) == client_api.ASK_MAX_CONCURRENT
         # One more must be refused rather than queued forever.
-        assert slots.acquire(blocking=False) is False
+        assert slots.acquire(blocking=False, tenant=999) is False
     finally:
-        for _ in taken:
-            slots.release()
+        for t in taken:
+            slots.release(tenant=t)
+
+
+def test_one_restaurant_cannot_hold_every_ask_stream():
+    """SEC-06: one restaurant's open Ask tabs held both streams and every
+    other owner was told "busy"."""
+    import client_api
+    assert client_api.ASK_MAX_PER_TENANT == 1
+    slots = client_api._ASK_SLOTS
+    assert slots.acquire(blocking=False, tenant=7)
+    try:
+        assert slots.acquire(blocking=False, tenant=7) is False
+        assert slots.acquire(blocking=False, tenant=8)
+        slots.release(tenant=8)
+    finally:
+        slots.release(tenant=7)
 
 
 # ── a budget stop reaches the owner ─────────────────────────────────────────

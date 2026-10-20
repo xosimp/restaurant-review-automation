@@ -101,7 +101,11 @@ def test_generation_concurrency_follows_the_token_budget(db, monkeypatch):
     monkeypatch.setenv("GATEWAY_ORG_OTPM", "72000")
     # (0.5 + 0.3) x 72,000 / 7,200 a stream = 8 at once.
     assert mg.max_concurrent_generations() == 8
-    assert job_queue.group_concurrency("generation") == 8
+    # The cap holds the rows STREAMING, never the CPU slots a code-only
+    # generation needs (scale audit 10/19/26 A5-F8): the slots stay the
+    # operator's 50, and the rows in flight are those plus the 8 streams.
+    assert job_queue.group_concurrency("generation") == 50
+    assert job_queue.max_running("generation") == 58
 
 
 def test_a_calls_class_is_its_jobs_or_who_asked(db):

@@ -1476,6 +1476,12 @@ DEPLETION_CATCHUP_MAX_DAYS = 14
 LABOR_PREWARM_LOOKBACK_DAYS = 7
 LABOR_PREWARM_MAX_SECONDS = int(os.getenv("LABOR_PREWARM_MAX_SECONDS", str(20 * 60)))
 LABOR_PREWARM_CURSOR_KEY = "labor_prewarm_cursor"
+# Restaurants pre-warmed at once (scale audit 10/19/26 A4-09: two workers x
+# 20 minutes at ~5 s a read covered ~480 restaurants a night, and past that
+# the cursor rotated and the Labor read was paid on page open). Four by
+# default — each read is a model wait, bounded by the gateway's tokens a
+# minute and each restaurant's budgets, not by these threads.
+LABOR_PREWARM_WORKERS = max(1, int(os.getenv("LABOR_PREWARM_WORKERS", "4")))
 
 
 def labor_prewarm_restaurants(db_path=None) -> list:
@@ -1547,7 +1553,7 @@ def run_labor_prewarm(now=None):
             _ops.capture(e, job="labor_prewarm", context=f"restaurant_id={rid}")
 
     _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(), _one,
-                                     LABOR_PREWARM_MAX_SECONDS, workers=2, job="labor_prewarm")
+                                     LABOR_PREWARM_MAX_SECONDS, workers=LABOR_PREWARM_WORKERS, job="labor_prewarm")
     c["hit_bound"] = bool(ran_out)
     return c
 
@@ -3352,6 +3358,10 @@ def _competitor_batch_open(restaurant_id) -> bool:
 
 _COMPETITOR_DAILY_CURSOR_KEY = "competitor_daily_cursor"
 COMPETITOR_DAILY_MAX_SECONDS = 20 * 60
+# Restaurants checked at once (A4-09: one worker covered ~460 a day). Each
+# is Places Details only, on the shared per-day details cache; a restaurant
+# is one worker's, so its own Places ceiling is never raced.
+COMPETITOR_DAILY_WORKERS = max(1, int(os.getenv("COMPETITOR_DAILY_WORKERS", "3")))
 
 
 def run_daily_competitor_ratings():
@@ -3382,18 +3392,29 @@ def run_daily_competitor_ratings():
             continue
         eligible.append(r.id)
 
+    import threading as _thr_cd
+    _lock = _thr_cd.Lock()
+
+    def _count(key, n=1):
+        with _lock:
+            counts[key] += n
+
     def _one(rid):
-        counts["attempted"] += 1
         res = competitor.check_ratings(rid)
         if not res.get("ok"):
             if res.get("reason") == "no competitor read to refresh yet":
-                counts["skipped"] += 1
-                counts["attempted"] -= 1
+                _count("skipped")
                 return
-            counts["failed"] += 1
+            _count("attempted")
+            _count("failed")
             _record(rid, "competitor", False, error=res.get("reason") or "ratings check failed", provider="places")
             return
-        counts["ok"] += 1
+        if res.get("not_due"):
+            # Checked within COMPETITOR_CHECK_EVERY_DAYS (A4-13).
+            _count("skipped")
+            return
+        _count("attempted")
+        _count("ok")
         if res.get("reanalyse"):
             full = competitor.run_competitor_analysis(rid) or {}
             if full.get("batched"):
@@ -3401,9 +3422,9 @@ def run_daily_competitor_ratings():
                 # batch) records the outcome when it lands — as the weekly
                 # pass treats it. Recording success here counted a read that
                 # had not happened, and one that later failed (re-audit P3).
-                counts["batched"] += 1
+                _count("batched")
             elif full.get("ok") is not False:
-                counts["reanalysed"] += 1
+                _count("reanalysed")
                 _record(rid, "competitor", True, provider="places")
             else:
                 _record(rid, "competitor", False, error=full.get("error") or "competitor analysis failed",
@@ -3411,7 +3432,8 @@ def run_daily_competitor_ratings():
 
     if eligible:
         _done, hit = resumable_sweep(_COMPETITOR_DAILY_CURSOR_KEY, sorted(eligible), _one,
-                                     COMPETITOR_DAILY_MAX_SECONDS, workers=1, job="competitor_daily")
+                                     COMPETITOR_DAILY_MAX_SECONDS, workers=COMPETITOR_DAILY_WORKERS,
+                                     job="competitor_daily")
         counts["hit_bound"] = bool(hit)
     return counts
 
@@ -3447,6 +3469,24 @@ def run_daily_web_analytics():
                                      workers=1, job="web_analytics")
         counts["hit_bound"] = bool(hit)
     return counts
+
+
+# The weekly visibility checks spread over this many days from Monday by
+# restaurant id (scale audit 10/19/26 A4-15): one Perplexity rate limit and
+# one worker meet ~1,350 restaurants a pass. 1 (the default): every
+# restaurant from Monday, as before. The daily retry pass reaches each
+# restaurant's own day; a missed day is caught up on the next.
+AI_VISIBILITY_SPREAD_DAYS = max(1, min(7, int(os.getenv("AI_VISIBILITY_SPREAD_DAYS", "1") or 1)))
+
+
+def _visibility_due_today(restaurant_id, now=None) -> bool:
+    if AI_VISIBILITY_SPREAD_DAYS <= 1:
+        return True
+    try:
+        day = (now or _chi_now()).weekday()
+        return int(restaurant_id) % AI_VISIBILITY_SPREAD_DAYS <= day
+    except Exception:
+        return True
 
 
 def run_weekly_ai_visibility(retry_only=False):
@@ -3498,7 +3538,8 @@ def run_weekly_ai_visibility(retry_only=False):
     eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
     # Every pass skips a restaurant already checked this week (#137).
     before = len(eligible)
-    eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
+    eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)
+                and _visibility_due_today(r.id)]
     _n, hit_bound = _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
     counts.update(attempted=counts["checked"] + counts["failed"] + counts.get("partial", 0), ok=counts["checked"],
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))

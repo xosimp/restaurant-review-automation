@@ -4299,10 +4299,33 @@ def _run_cap_reached(rows, costs=None, contract=None, heads=0, inflight_usd=0.0,
         return None
     calls = int(n or 0) + int(inflight_calls or 0)
     usd = float(cost or 0) + float(inflight_usd or 0)
-    if calls + 1 > int(caps.calls) or usd + nxt > float(caps.usd):
+    cap_usd = run_cap_usd(caps)
+    if calls + 1 > int(caps.calls) or usd + nxt > cap_usd:
         return {"calls": calls, "usd": round(usd, 4), "next_usd": round(nxt, 4), "cap_calls": int(caps.calls),
-                "cap_usd": float(caps.usd)}
+                "cap_usd": cap_usd}
     return None
+
+
+# The dollars a run may spend while it is still on the T3 (Sonnet) rung
+# (scale audit 10/19/26 A5-F9): a measured T3 week is $0.29-0.41, so its
+# retries and splits stop at this and the code fallback writes the week,
+# instead of running on toward the policy's $6 — which stays the run's cap
+# once the gate escalates it to T4 (Opus, $0.57+ a call). 0: the policy's cap.
+SCHEDULE_T3_RUN_CAP_USD = float(os.getenv("SCHEDULE_T3_RUN_CAP_USD", "1.5") or 0)
+
+
+def run_cap_usd(caps=None) -> float:
+    """The run's dollar cap for the rung it is on now: the policy's, or
+    SCHEDULE_T3_RUN_CAP_USD while the run is on T3 (A5-F9)."""
+    import ai_workflows as _wf
+    caps = caps or _wf.policy(WORKFLOW).caps
+    cap = float(caps.usd)
+    try:
+        if SCHEDULE_T3_RUN_CAP_USD > 0 and getattr(schedule_route(), "tier", None) == "T3":
+            cap = min(cap, SCHEDULE_T3_RUN_CAP_USD)
+    except Exception:
+        pass
+    return cap
 
 
 def _note_capped(capped) -> None:

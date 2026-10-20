@@ -739,3 +739,68 @@ def test_the_night_and_the_morning_build_the_same_prompt_and_the_send_reads_the_
     assert len(bases) == 2 and bases[0] == bases[1], "the night's prompt and the morning's differ"
     assert f"Period: {morning.period_start} to {morning.period_end}" in bases[1]
     assert morning.period_end == time_utils.mdy(day - timedelta(days=1))
+
+
+# ── scale audit 10/19/26 A4-07: cancel the batch before the fallback ────────
+
+def test_a_batch_whose_every_item_is_late_is_cancelled_and_its_answers_used(db, batches, monkeypatch):
+    """Every item still out in the batch is past its cutoff: the batch is
+    cancelled at Anthropic and nothing falls back yet; when it ends, the
+    answer already written is USED (never billed twice) and only the
+    cancelled request falls back."""
+    SEEN.clear()
+    rid = _rid(db)
+    late = datetime.utcnow() - timedelta(minutes=1)
+    ai_batches.submit("competitor_insight", [_item("a1", rid, cutoff_at=late), _item("a2", rid, cutoff_at=late)])
+    res = ai_batches.run_collector()
+    assert res.get("cancelled_batches") == 1 and res["cut_off"] == 0 and SEEN == []
+    assert batches.cancelled == ["msgbatch_1"]
+    c = ai_batches._conn()
+    try:
+        job = dict(c.execute("SELECT status, cancel_requested_at FROM ai_batch_jobs").fetchone())
+    finally:
+        c.close()
+    assert job["status"] == "canceling" and job["cancel_requested_at"]
+    assert ai_batches.item("competitor_insight", "a1")["status"] == ai_batches.SUBMITTED
+    # A second pass inside the grace waits too (no second cancel).
+    ai_batches.run_collector()
+    assert SEEN == [] and batches.cancelled == ["msgbatch_1"]
+    # The batch ends: a1 had been answered, a2 was cancelled.
+    monkeypatch.setattr(batches, "retrieve", lambda bid: NS(id=bid, processing_status="ended", ended_at=None,
+                                                            request_counts=None))
+    monkeypatch.setattr(batches, "results", lambda bid: iter([
+        NS(custom_id="a1", result=NS(type="succeeded", message=_msg("read"))),
+        NS(custom_id="a2", result=NS(type="canceled"))]))
+    ai_batches.run_collector()
+    by = {s["item"]["custom_id"]: s for s in SEEN}
+    assert by["a1"]["message"] is not None and by["a1"]["error"] is None
+    assert isinstance(by["a2"]["error"], ai_batches.BatchItemFailed) and by["a2"]["error"].kind == "canceled"
+
+
+def test_a_cancelled_batch_that_never_ends_falls_back_after_the_grace(db, batches, monkeypatch):
+    SEEN.clear()
+    rid = _rid(db)
+    ai_batches.submit("competitor_insight", [_item("g1", rid, cutoff_at=datetime.utcnow() - timedelta(minutes=1))])
+    ai_batches.run_collector()
+    assert SEEN == []
+    c = ai_batches._conn()
+    try:
+        c.execute("UPDATE ai_batch_jobs SET cancel_requested_at=?", (
+            (datetime.utcnow() - timedelta(seconds=ai_batches.CANCEL_GRACE_SECONDS + 60)).strftime(
+                "%Y-%m-%d %H:%M:%S"),))
+        c.commit()
+    finally:
+        c.close()
+    res = ai_batches.run_collector()
+    assert res["cut_off"] == 1 and [s["item"]["custom_id"] for s in SEEN] == ["g1"]
+    assert SEEN[0]["error"].kind == "cutoff"
+
+
+def test_batch_use_is_measurable(db, batches):
+    rid = _rid(db)
+    ai_utils.log_ai_usage(rid, "competitor_insight", "claude-sonnet-5-5", 100, 10, batch=True)
+    ai_utils.log_ai_usage(rid, "competitor_insight", "claude-sonnet-5-5", 100, 10)
+    rep = ai_batches.usage_report(7)
+    row = rep["by_action"]["competitor_insight"]
+    assert row["batch_calls"] == 1 and row["sync_calls"] == 1
+    assert 0 < rep["batch_share"] < 1 and rep["billed_and_discarded"] == 0

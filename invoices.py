@@ -56,9 +56,16 @@ def _captured(exc, job, restaurant_id=None):
         pass
 
 # Reading prices off a photo is the one place in this product where a misread
-# digit goes straight into every plate cost, so this uses the most capable
-# model rather than the house default; invoices are a weekly, low-volume call.
+# digit goes straight into every plate cost, so this uses the Opus tier
+# rather than the house default; invoices are a weekly, low-volume call.
+# Claude Opus 5.5 by default since 10/19/26 (scale audit A4-11). MODEL is
+# the model at import, for scripts/invoice_model_eval.py; a scan reads
+# INVOICE_MODEL when it runs (current_model), so a change needs no restart.
 MODEL = model_for("invoices")
+
+
+def current_model() -> str:
+    return model_for("invoices")
 
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 PDF_TYPE = "application/pdf"
@@ -173,7 +180,7 @@ def extract(restaurant_id, data, media_type, client=None):
         # Rests on no data source: invoice OCR the owner confirms line by line.
         readiness=data_health.NOT_APPLICABLE, timeout=EXTRACT_TIMEOUT_SECONDS, retries=EXTRACT_RETRIES,
         **route.apply(dict(
-            model=MODEL, max_tokens=8000,
+            model=current_model(), max_tokens=8000,
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
             messages=[{"role": "user", "content": [_content_block(data, media_type),
                                                    {"type": "text", "text": _PROMPT + _notes_text(notes)}]}]))),

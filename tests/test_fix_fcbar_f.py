@@ -363,7 +363,9 @@ def test_ui11_one_count_sheet_read_a_stamped_trend_and_lazy_sections(db, monkeyp
     payload, status = client_api._do_waste_trend(rid, "8w")
     assert status == 200 and payload["history_stamp"] == "2026-10-12 09:00:00"
     import inspect
-    assert inspect.getsource(client_api.inv_insight_api).count("history_stamp=waste_history_stamp(rid)") == 2
+    # The read's body moved to _inv_insight_web (scale audit 10/19/26 FE-08:
+    # the route serves it stale-while-refresh with `async`).
+    assert inspect.getsource(client_api._inv_insight_web).count("history_stamp=waste_history_stamp(rid)") == 2
     check = _between("function wtStampCheck(stamp){", "\n}\n")
     assert "if(stamp===undefined){loadWasteTrend(true);return;}" in check
     assert "_wt.data.history_stamp!==stamp" in check
