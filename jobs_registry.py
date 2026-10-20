@@ -501,6 +501,13 @@ JOBS = {
         cadence="hourly (9am local, the day after the draft)", sla_minutes=_H, sends=True, runnable=True,
         label="Auto-publish", description="Queue the unedited draft to publish with a two-hour undo",
         target=("scheduler", "run_auto_publish_schedules"), max_minutes=20),
+    "home_precompute": dict(
+        # Queues only (one home_snapshot row per restaurant due); the queue
+        # worker builds. Sends nothing.
+        cadence="hourly (5am-8am local, once a business day)", sla_minutes=_H, sends=False, runnable=True,
+        label="Home precompute",
+        description="Queue each restaurant's Home blocks to be built before anyone opens Home",
+        target=("home_snapshots", "run_precompute"), max_minutes=10),
     "digest_precompute": dict(
         # Submits only where Message Batches may (ai_batches.enabled: the
         # production scheduler, weekly_digest listed). Sends nothing: the

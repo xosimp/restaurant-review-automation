@@ -454,13 +454,16 @@ def test_the_web_renders_cross_module_links():
     # The What connects card was removed (9/25/26): the lead link is the one
     # thing and every other link is a Needs-attention row (hbLinkRows).
     assert "function hbLinkRows(" in src and "function renderConnections(" not in src
-    assert "/api/cross-module" in src
+    # Read through Home's combined read (/api/home/follow's "cross" block,
+    # strategy_routes._HOME_FOLLOW -> /api/cross-module).
+    assert "'cross'" in src.split("var HB_FOLLOW_KEYS=", 1)[1][:400]
 
 
 def test_the_web_renders_good_news():
     src = _dashboard()
     assert "function renderGoodNews(" in src
-    assert "/api/good-news" in src
+    # Read through Home's combined read (the "news" block -> /api/good-news).
+    assert "'news'" in src.split("var HB_FOLLOW_KEYS=", 1)[1][:400]
 
 
 def test_no_home_button_builds_a_js_string_literal_from_server_text():

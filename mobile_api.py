@@ -1625,9 +1625,13 @@ def _freshness_unavailable():
 
 
 def _home_local_now(restaurant):
+    """The restaurant's clock to the hour — what the phone reads from it
+    (the day, the hour: after 8pm, Monday, quiet hours). To the microsecond
+    it made every Home body unique, so its ETag never matched (blind
+    re-audit 10/20/26 R6-F11)."""
     try:
         from time_utils import restaurant_now
-        return restaurant_now(restaurant).isoformat()
+        return restaurant_now(restaurant).replace(minute=0, second=0, microsecond=0).isoformat()
     except Exception:
         return None
 

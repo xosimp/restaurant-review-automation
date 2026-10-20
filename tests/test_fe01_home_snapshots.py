@@ -100,44 +100,44 @@ def test_an_old_row_is_refreshed_even_when_no_stamp_moved(db_path, monkeypatch):
     assert build.calls == 1 and len(started) == 1
 
 
-def test_the_background_rebuild_writes_the_new_answer(db_path):
+def test_the_background_rebuild_writes_the_new_answer(db_path, monkeypatch):
+    """A stale row's rebuild is a home_snapshot queue row (R6-F5): the
+    worker's handler builds the block and keeps the new answer."""
     rid = _rid(db_path)
     build = _Counter({"x": 1})
-    today = date(2026, 10, 19)
-    home_snapshots.serve("good_news", rid, "d:-", today, build)
-    key = (rid, "good_news", "d:-", None)
-    home_snapshots._refreshing.add(key)
-    home_snapshots._refresh(key, rid, "good_news", "d:-", str(today), "s2", build, None)
-    assert key not in home_snapshots._refreshing
-    assert home_snapshots.serve("good_news", rid, "d:-", today, build)["n"] == 2
+    today = home_snapshots._business_today(rid)
+    home_snapshots.serve("good_news", rid, "d:-:s1", today, build)
+    monkeypatch.setattr(home_snapshots, "build_block", lambda block, r, viewer, as_of, ctx=None: build())
+    out = home_snapshots.run_queued({"restaurant_id": rid, "payload": {
+        "block": "good_news", "scope_key": "d:-:s1", "as_of": today, "viewer": {"id": 5}}})
+    assert out == {"result": "skipped"}          # nothing moved: the row is current
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ops_issues (restaurant_id, kind, title) VALUES (?,?,?)", (rid, "other", "Walk-in"))
+    conn.commit()
+    conn.close()
+    out = home_snapshots.run_queued({"restaurant_id": rid, "payload": {
+        "block": "good_news", "scope_key": "d:-:s1", "as_of": today, "viewer": {"id": 5}}})
+    assert out == {"result": "built"}
+    assert home_snapshots.serve("good_news", rid, "d:-:s1", today, build)["n"] == 2
 
 
-def test_a_rebuild_off_the_request_reads_as_the_request_did(db_path, monkeypatch):
-    """The pool thread has no request: without one, models.viewer_sees_salaries
-    says yes (a job reporting to the owner) and rpower may wait on the POS.
-    The rebuild runs in a request context made like the one that started it,
-    with its flask.g, so a manager's kept answer never carries the salaries."""
+def test_a_rebuild_off_the_request_reads_as_the_viewer_would(db_path, monkeypatch):
+    """The queue worker has no request: without a view, models.
+    viewer_sees_salaries says yes (a job reporting to the owner). Each
+    rebuild runs in the salary view its scope was kept for — written into a
+    shared scope's key, else the login's own — so a manager's kept answer
+    never carries the salaries."""
     import models as _m
     rid = _rid(db_path)
     seen = []
-
-    def build():
-        from flask import has_request_context
-        seen.append((has_request_context(), _m.viewer_sees_salaries()))
-        return {"x": 1}
-    app = Flask(__name__)
-    with app.test_request_context("/api/good-news?x=1"):
-        from flask import g
-        g.cavnar_current_user = {"id": 6, "restaurant_id": rid, "role": "manager", "is_admin": 0}
-        state = home_snapshots._request_state()
-        assert home_snapshots.salary_scope() == "s0"
-    key = (rid, "good_news", "d:-:s0", None)
-    errors = []
-    import ops
-    import traceback; monkeypatch.setattr(ops, "capture", lambda e, **k: errors.append("".join(traceback.format_exception(e))))
-    home_snapshots._refreshing.add(key)
-    home_snapshots._refresh(key, rid, "good_news", "d:-:s0", "2026-10-19", "s", build, None, state)
-    assert errors == [] and seen == [(True, False)]
+    monkeypatch.setattr(home_snapshots, "build_block",
+                        lambda block, r, viewer, as_of, ctx=None: seen.append(_m.viewer_sees_salaries()) or {"x": 1})
+    today = home_snapshots._business_today(rid)
+    home_snapshots.rebuild(rid, "good_news", "d:-:s0", today, viewer={"id": 6, "role": "manager"})
+    home_snapshots.rebuild(rid, "monthly_review", "all:s1", today, viewer={"id": 5, "role": "owner"})
+    home_snapshots.rebuild(rid, "morning_brief", "v:m", today, viewer={"id": 6, "role": "manager"})
+    home_snapshots.rebuild(rid, "morning_brief", "v:o", today, viewer={"id": 5, "role": "owner"})
+    assert seen == [False, True, False, True]
 
 
 def test_shared_answers_are_kept_apart_by_whether_the_viewer_sees_salaries():
@@ -273,9 +273,11 @@ def test_the_morning_send_keeps_each_recipients_home_brief(db_path, monkeypatch,
     assert calls == [5]                          # read, not built
 
 
-def test_the_morning_send_never_keeps_a_managers_brief(db_path, monkeypatch, client):
-    """Off a request every build reads as the owner's (the salaries), so only
-    an account holder's send-time build is kept for Home."""
+def test_the_morning_send_keeps_a_managers_brief_in_their_salary_view(db_path, monkeypatch, client):
+    """Each recipient's brief is built in their own salary view (R6-F3b), so
+    a manager's is kept for their Home too (R6-F4): their first open reads
+    it instead of building it on a request thread."""
+    import models as _m
     import morning_brief
     rid = _rid(db_path)
     auth.init_auth(db_path)
@@ -284,14 +286,17 @@ def test_the_morning_send_never_keeps_a_managers_brief(db_path, monkeypatch, cli
                  "VALUES (6, ?, 'm', 'm@x.com', 'x', 'manager')", (rid,))
     conn.commit()
     conn.close()
-    monkeypatch.setattr(morning_brief, "build", lambda *a, viewer=None, **k: {
-        "lines": [{"key": "all_clear", "tone": "good", "text": "All clear"}]})
+    views = []
+    monkeypatch.setattr(morning_brief, "build", lambda *a, viewer=None, **k: views.append(
+        _m.viewer_sees_salaries()) or {"lines": [{"key": "all_clear", "tone": "good", "text": "All clear"}]})
     monkeypatch.setattr(morning_brief, "_email_brief", lambda *a, **k: type("R", (), {"ok": True})())
     morning_brief.deliver(rid, db_path=db_path)
     conn = get_conn(db_path)
-    kept = conn.execute("SELECT COUNT(*) FROM home_snapshots WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    rows = conn.execute("SELECT scope_key, viewer_json FROM home_snapshots WHERE restaurant_id=?", (rid,)).fetchall()
     conn.close()
-    assert kept == 0
+    assert views == [False] and len(rows) == 1
+    assert rows[0]["scope_key"] == home_snapshots.viewer_scope({"id": 6, "role": "manager", "is_admin": 0})
+    assert "m@x.com" not in (rows[0]["viewer_json"] or "")    # the login, never its email
 
 
 # ── one read for Home's follow-through ──────────────────────────────────────
@@ -348,9 +353,11 @@ def test_the_web_home_makes_one_follow_read_plus_the_report_row():
     src = _dashboard()
     body = src.split("function hbFollow(){", 1)[1].split("\n  }\n", 1)[0]
     assert "fetch('/api/home/follow'" in body
-    assert "get('dsr','/api/dsr?limit=1')" in body
-    # The fallback reads each block from its own route.
-    assert "each();" in body and "d.missing" in body
+    assert "fetch('/api/dsr?limit=1'" in body
+    # A block not built yet is read again BY NAME through the combined read;
+    # a failed read never fans out to each block's own route (R6-F8).
+    assert "d.missing" in body and "'?only='" in body
+    assert "each()" not in body and "HB_FAILED" in body
 
 
 def test_home_loads_only_when_home_is_on_screen():

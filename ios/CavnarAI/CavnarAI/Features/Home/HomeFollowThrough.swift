@@ -390,6 +390,9 @@ final class HomeFollowThroughViewModel {
     var lossFlags: [LossSignals.Flag] = []
     var lossWeek: [String] = []
     var lossNote: String?
+    /// The comps & voids read failed (R6-F13): Home says so rather than
+    /// showing a week with nothing flagged.
+    var lossFailed = false
     /// Last month against the month before (and last year), the same build
     /// the email on the 1st sends. Web-only until the retention re-audit.
     var month: HomeMonthlyReview?
@@ -871,8 +874,12 @@ final class HomeFollowThroughViewModel {
         let ok: Bool
         let links: [Link]?
         let fixFirst: FixFirst?
+        /// Not built for today yet (the server queued it — blind re-audit
+        /// 10/20/26 R6-F4), or rebuilt after a change: read again shortly.
+        let preparing: Bool?
+        let stale: Bool?
         enum CodingKeys: String, CodingKey {
-            case ok, links
+            case ok, links, preparing, stale
             case fixFirst = "fix_first"
         }
         init(from decoder: Decoder) throws {
@@ -880,6 +887,8 @@ final class HomeFollowThroughViewModel {
             ok = (try? c.decode(Bool.self, forKey: .ok)) ?? false
             links = try? c.decodeIfPresent([Link].self, forKey: .links)
             fixFirst = try? c.decodeIfPresent(FixFirst.self, forKey: .fixFirst)
+            preparing = (try? c.decodeIfPresent(Bool.self, forKey: .preparing)) ?? nil
+            stale = (try? c.decodeIfPresent(Bool.self, forKey: .stale)) ?? nil
         }
     }
 
@@ -898,6 +907,9 @@ final class HomeFollowThroughViewModel {
         let ok: Bool
         let items: [Item]?
         let caveat: String?
+        /// Still being built, or rebuilt after a change (R6-F4/F6).
+        var preparing: Bool? = nil
+        var stale: Bool? = nil
     }
 
     /// GET /mobile/api/loss-signals — comps, voids and refunds against
@@ -967,9 +979,9 @@ final class HomeFollowThroughViewModel {
         async let g: GoalsResponse? = try? client.send("/mobile/api/goals", hapticOnError: false)
         async let o: RecOutcomesResponse? = try? client.send("/mobile/api/outcomes", hapticOnError: false)
         async let c: CloseOutResponse? = try? client.send("/mobile/api/closeout", hapticOnError: false)
-        async let x: CrossModule? = try? client.send("/mobile/api/cross-module", hapticOnError: false)
+        async let x: HomeRead<CrossModule> = homeRead(client, "/mobile/api/cross-module")
         async let ms: Milestones? = try? client.send("/mobile/api/milestones", hapticOnError: false)
-        async let ls: LossSignals? = try? client.send("/mobile/api/loss-signals", hapticOnError: false)
+        async let ls: HomeRead<LossSignals> = homeRead(client, "/mobile/api/loss-signals")
         // Once Results has been read, a reload keeps it current too.
         async let lazy: Void = refreshResultsIfLoaded()
         let actionsRead = await a
@@ -990,20 +1002,47 @@ final class HomeFollowThroughViewModel {
         closeOutDate = close?.businessDate
         closeOutStaffPulse = close?.staffPulse
         let cross = await x
+        applyCross(cross.value)
+        // Only ever offer one, and only one that has not been shown on any
+        // device — the server's UNIQUE row is what makes that true.
+        pendingMilestone = (await ms)?.unseen?.first
+        let loss = await ls
+        lossFailed = loss.failed
+        lossFlags = (loss.value?.available == true) ? (loss.value?.flagged ?? []) : []
+        lossWeek = loss.value?.week ?? []
+        lossNote = loss.value?.note
+        _ = await lazy
+        scheduleCrossRetry(after: cross.value, attempt: 1)
+    }
+
+    private func applyCross(_ cross: CrossModule?) {
+        // Still being built on the server (R6-F4): keep what Home shows and
+        // promote nothing yet — the read comes again shortly.
+        if cross?.preparing == true { return }
         fixFirst = cross?.fixFirst.flatMap { ($0.what ?? "").isEmpty ? nil : $0 }
         // The one thing owns a link it leads with — the same finding is
         // never on the page twice (the web's renderConnections rule).
         let owned = fixFirst.flatMap { $0.linkHeadline ?? $0.what }
         links = (cross?.links ?? []).filter { $0.headline != owned }
         crossLoaded = true
-        // Only ever offer one, and only one that has not been shown on any
-        // device — the server's UNIQUE row is what makes that true.
-        pendingMilestone = (await ms)?.unseen?.first
-        let loss = await ls
-        lossFlags = (loss?.available == true) ? (loss?.flagged ?? []) : []
-        lossWeek = loss?.week ?? []
-        lossNote = loss?.note
-        _ = await lazy
+    }
+
+    /// The cross-module links still being built (or rebuilt after a change)
+    /// are read again — 4, 8, 12, 16, then 20 seconds on; after that Home stops
+    /// waiting on them (the one thing falls back to the attention list).
+    private var crossRetry: Task<Void, Never>?
+    private func scheduleCrossRetry(after cross: CrossModule?, attempt: Int) {
+        crossRetry?.cancel()
+        guard cross?.preparing == true || cross?.stale == true else { return }
+        guard attempt <= 5 else { crossLoaded = true; return }
+        crossRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(4 * attempt) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let read: HomeRead<CrossModule> = await homeRead(self.client, "/mobile/api/cross-module")
+            guard !Task.isCancelled else { return }
+            self.applyCross(read.value)
+            self.scheduleCrossRetry(after: read.value, attempt: attempt + 1)
+        }
     }
 
     /// True once the Results blocks have been read (and are then kept
@@ -1032,10 +1071,49 @@ final class HomeFollowThroughViewModel {
         whatWorked = await ww
         value = await v
         let news = await n
+        applyNews(news)
+        let review = await mr
+        applyMonth(review)
+        resultsLoaded = true
+        scheduleResultsRetry(news: news, month: review, attempt: 1)
+    }
+
+    // Good news and last month still being built on the server (blind
+    // re-audit 10/20/26 R6-F4), or rebuilt after a change: kept as shown and
+    // read again shortly.
+    private func applyNews(_ news: GoodNews?) {
+        guard news?.preparing != true else { return }
         goodNews = news?.items ?? []
         goodNewsCaveat = news?.caveat
-        month = await mr
-        resultsLoaded = true
+    }
+
+    private func applyMonth(_ review: HomeMonthlyReview?) {
+        guard review?.preparing != true else { return }
+        month = review
+    }
+
+    private var resultsRetry: Task<Void, Never>?
+    private func scheduleResultsRetry(news: GoodNews?, month review: HomeMonthlyReview?, attempt: Int) {
+        resultsRetry?.cancel()
+        let newsAgain = news?.preparing == true || news?.stale == true
+        let monthAgain = review?.preparing == true || review?.stale == true
+        guard (newsAgain || monthAgain), attempt <= 5 else { return }
+        resultsRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(4 * attempt) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            var nextNews: GoodNews?
+            var nextMonth: HomeMonthlyReview?
+            if newsAgain {
+                nextNews = try? await self.client.send("/mobile/api/good-news", hapticOnError: false)
+                self.applyNews(nextNews)
+            }
+            if monthAgain {
+                nextMonth = try? await self.client.send("/mobile/api/monthly-review", hapticOnError: false)
+                self.applyMonth(nextMonth)
+            }
+            guard !Task.isCancelled else { return }
+            self.scheduleResultsRetry(news: nextNews, month: nextMonth, attempt: attempt + 1)
+        }
     }
 
     /// Renew a missed goal for another month (the same target, a new date)
@@ -2563,5 +2641,35 @@ struct HomeMissedGoals: View {
         } message: { goal in
             Text("\u{201C}\(goal.summary)\u{201D} stops being a target. You can set a new goal any time.")
         }
+    }
+}
+
+// MARK: - A Home read that knows a failure from a refusal
+
+/// One Home read's answer, and whether it FAILED (blind re-audit 10/20/26
+/// R6-F13). A refusal — a login without the permission, a module the plan
+/// lacks (a 4xx) — is "nothing to show", as before; a timeout, a dropped
+/// connection or a server error is a failure, which Home says instead of
+/// drawing a quiet day.
+struct HomeRead<T> {
+    var value: T?
+    var failed: Bool
+}
+
+@MainActor
+func homeRead<T: Decodable>(_ client: APIClient, _ path: String,
+                            query: [String: String] = [:]) async -> HomeRead<T> {
+    do {
+        let value: T = try await client.send(path, query: query, hapticOnError: false)
+        return HomeRead(value: value, failed: false)
+    } catch is CancellationError {
+        return HomeRead(value: nil, failed: false)
+    } catch let error as APIClient.APIError {
+        if let status = error.status, (400..<500).contains(status), status != 408, status != 429 {
+            return HomeRead(value: nil, failed: false)
+        }
+        return HomeRead(value: nil, failed: true)
+    } catch {
+        return HomeRead(value: nil, failed: true)
     }
 }

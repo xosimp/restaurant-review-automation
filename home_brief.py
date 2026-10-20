@@ -3077,15 +3077,44 @@ def _location_record(conn, r, now):
             "last_active": last_active, "last_fetched_at": r.get("last_fetched_at")}
 
 
-def _location_record_kept(r, fresh=False):
+def build_location_record(rid):
+    """One location's group-view row, built from its restaurants row — what
+    home_snapshots keeps as `location_record` (the queue worker's builder)."""
+    c = get_conn()
+    try:
+        row = c.execute("SELECT * FROM restaurants WHERE id=?", (int(rid),)).fetchone()
+        if row is None:
+            raise ValueError(f"no restaurant {rid}")
+        return _location_record(c, dict(row), datetime.now(timezone.utc))
+    finally:
+        c.close()
+
+
+def _location_preparing(r):
+    """A location whose row is not kept for today yet (blind re-audit
+    10/20/26 R6-F10): its build is queued, never run on the request — the
+    row says so, with nothing measured in it, until a read finds it kept."""
+    return {"id": r["id"], "name": r.get("location_name") or r.get("name"), "restaurant_name": r.get("name"),
+            "health": "preparing", "preparing": True, "issues": [], "attention": 0, "open_issues": None,
+            "reviews": {"total": 0, "rating_30d": None, "reviews_30d": 0, "rating_prev": None,
+                        "response_rate": None, "urgent": 0, "awaiting": 0, "low_7d": 0},
+            "labor": None, "inventory": None,
+            "google_connected": bool(r.get("gmb_refresh_token") or r.get("reviews_live")),
+            "last_active": None, "last_fetched_at": r.get("last_fetched_at")}
+
+
+def _location_record_kept(r, fresh=False, viewer=None):
     """One location's row, kept for its business day (home_snapshots, scale
     audit 10/19/26 FE-09): the group view ran every location's labor and
     inventory analyses serially on one request thread, for every owner
     opening it, every 60 seconds of cache. The row is the same for every
-    viewer, so a group of N locations now reads N kept rows; a row is built
-    on the request only the first time a business day asks for it, and is
-    rebuilt off the request when that location's data stamp moves or it
-    is older than HOME_SNAPSHOT_REFRESH_SECONDS."""
+    viewer, so a group of N locations reads N kept rows. Since the blind
+    re-audit 10/20/26 (R6-F10) a row is never built on the request: the
+    morning precompute builds the day's rows, a missing one is queued and
+    drawn as preparing (_location_preparing), and a stale one is rebuilt in
+    the queue worker — one job per location, under the group's fairness
+    tenant, so a 40-location group cannot push other restaurants' rebuilds
+    out."""
     import home_snapshots
     rid = r["id"]
     loc = get_restaurant(rid)
@@ -3101,8 +3130,11 @@ def _location_record_kept(r, fresh=False):
             return _location_record(c, r, datetime.now(timezone.utc))
         finally:
             c.close()
-    return home_snapshots.serve("location_record", rid, home_snapshots.shared_scope(), today, build,
-                                restaurant=loc, fresh=fresh)
+    try:
+        return home_snapshots.serve("location_record", rid, home_snapshots.shared_scope(), today, build,
+                                    restaurant=loc, fresh=fresh, viewer=viewer)
+    except home_snapshots.SnapshotPreparing:
+        return _location_preparing(r)
 
 
 def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
@@ -3202,6 +3234,11 @@ def group_summary_line(locs):
     return line + "."
 
 
+def home_snapshots_retry():
+    import home_snapshots
+    return home_snapshots.RETRY_AFTER_SECONDS
+
+
 def build_group_brief(current_user, fresh=False):
     """The consolidated view for an owner with several locations: one row per
     location, the attention list across all of them, and the portfolio
@@ -3220,8 +3257,9 @@ def build_group_brief(current_user, fresh=False):
     if not base or not base.location_group:
         return {"ok": False, "error": "No location group on this account"}, 400
     now = datetime.now(timezone.utc)
-    locs = [_location_record_kept(r, fresh=fresh)
+    locs = [_location_record_kept(r, fresh=fresh, viewer=current_user)
             for r in get_location_group(base.location_group, owner_email=base.owner_email)]
+    preparing = [l["id"] for l in locs if l.get("preparing")]
     for l in locs:
         l["active"] = l["id"] == current_user["restaurant_id"]
         # Each location's last night (density fix #19): the same row its own
@@ -3264,6 +3302,9 @@ def build_group_brief(current_user, fresh=False):
         headline = f"{_plural(critical, 'critical item')} across {_plural(len(set(a['location'] for a in attention if a['severity']=='critical')), 'location')}"; tone = "bad"
     elif needing:
         headline = f"{_plural(len(needing), 'location')} need{'s' if len(needing) == 1 else ''} a look"; tone = "warn"
+    elif preparing:
+        # Never "healthy" for a location nothing has been measured at yet.
+        headline = f"Still checking {_plural(len(preparing), 'location')}"; tone = "neutral"
     else:
         headline = "All locations healthy"; tone = "good"
     payload = {
@@ -3280,6 +3321,10 @@ def build_group_brief(current_user, fresh=False):
                       "biggest_issue": ({"location": attention[0]["location"], "id": attention[0]["restaurant_id"], "issue": attention[0]["text"]} if attention else None),
                       "last_night": group_last_night(locs)},
         "summary_line": group_summary_line(locs),
+        # Locations whose row is still being built (R6-F10): the client reads
+        # the group again in `retry_after` seconds.
+        "preparing": preparing,
+        "retry_after": home_snapshots_retry() if preparing else None,
         # The policy notice follows the owner to the group Home (per login).
         "policy_notice": _policy_notice(current_user, restaurant=base),
     }
@@ -3291,5 +3336,6 @@ def build_group_brief(current_user, fresh=False):
     except Exception as e:
         print(f"[group] location comparison failed: {e}")
         payload["location_compare"] = None
-    _cache_put(key, payload)
+    if not preparing:                    # a re-read in retry_after seconds must reach the new rows
+        _cache_put(key, payload)
     return payload, 200

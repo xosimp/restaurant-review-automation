@@ -5063,7 +5063,7 @@ svg:hover .hb-xh{opacity:1}
       t.setAttribute('aria-expanded',open?'true':'false');
       t.textContent=open?'Show fewer':'+'+t.getAttribute('data-attn-more')+' more';
     }
-    else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);}
+    else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);hbMilestone.closed=1;}
   });
   // The reason picker (recReasonPicker) under a Home answer: below a card's
   // footer, below a Needs-attention row, below the focus card's footer.
@@ -6007,9 +6007,13 @@ svg:hover .hb-xh{opacity:1}
   }
   // The open issues land after the first render: into the same card, with
   // the count and the all-clear line kept honest.
-  function hbAttnSetIssues(iss){
+  function hbAttnSetIssues(iss,failed){
     _hbIssues=iss||[];
     var box=document.getElementById('hb-attn-issues');if(!box)return;
+    // The open issues could not be read (R6-F13): said, with a retry, and no
+    // "All clear" under it - a failed read is not a quiet day.
+    if(failed){box.innerHTML=hbFailedLine('open issues');
+      var fclr=document.getElementById('hb-attn-clear');if(fclr&&fclr.parentNode)fclr.parentNode.removeChild(fclr);return;}
     var shown=hbIssuesNotShown(_hbIssues,_hbAttnItems);
     box.innerHTML=hbIssueRows(shown);
     var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+shown.length;
@@ -6180,31 +6184,67 @@ svg:hover .hb-xh{opacity:1}
     return r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch');
   }
   var RESULTTONE={improved:'good',worsened:'critical'};
-  // Each read's own address: the fallback, and where a block the combined
-  // read has not kept yet is read on its own.
-  var HB_FOLLOW_URL={brief:'/api/morning-brief?view=home',issues:'/api/issues?status=unresolved',goals:'/api/goals',outcomes:'/api/outcomes',
-    actions:'/api/actions',closeout:'/api/closeout',value:'/api/value',cross:'/api/cross-module',news:'/api/good-news',miles:'/api/milestones',
-    loss:'/api/loss-signals',month:'/api/monthly-review',
-    // The record behind the check-in (which result belongs to which
-    // recommendation) and "What worked for you" (rec-ROI #21, #28).
-    timeline:'/api/recs/timeline?limit=40',worked:'/api/recs/what-worked?days=180'};
+  // The blocks GET /api/home/follow answers in one read (scale audit
+  // 10/19/26 FE-01): the morning brief, open issues, goals, results, actions,
+  // the close-out, the value figures, the cross-module links, good news,
+  // milestones, comps & voids, last month, the record and what worked.
+  var HB_FOLLOW_KEYS=['brief','issues','goals','outcomes','actions','closeout','value','cross','news','miles',
+    'loss','month','timeline','worked'];
+  // A block that could not be read (R6-F13): drawn as "Couldn't load",
+  // never as a week with nothing in it.
+  var HB_FAILED={failed:true};
+  // How many times a block still being built (or rebuilt after a change) is
+  // read again before it is said to have failed.
+  var HB_FOLLOW_TRIES=5;
   function hbFollow(){
-    var got={},left=15,k;
-    // The status line under the greeting draws the moment the report row
-    // lands, not after all fifteen reads (density fix #1).
-    function done(k,v){got[k]=v;left--;if(k==='dsr')hbStatus(v);if(!left)renderFollow(got);}
-    function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
-    function each(){for(var key in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(key))get(key,HB_FOLLOW_URL[key]);}}
-    get('dsr','/api/dsr?limit=1');
-    // The other fourteen in one read (scale audit 10/19/26 FE-01). A block
-    // not kept for today yet comes back in 'missing' and is read on its own.
-    fetch('/api/home/follow',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
-      if(!d||!d.ok||!d.blocks){each();return;}
-      var miss=d.missing||[],i;
-      for(k in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(k)&&miss.indexOf(k)<0)done(k,d.blocks[k]||null);}
-      for(i=0;i<miss.length;i++){if(HB_FOLLOW_URL[miss[i]])get(miss[i],HB_FOLLOW_URL[miss[i]]);}
-    }).catch(function(){each();});
+    var got={},pend={dsr:1},shown=false,tries=0,waited=false,i;
+    for(i=0;i<HB_FOLLOW_KEYS.length;i++)pend[HB_FOLLOW_KEYS[i]]=1;
+    // Home renders once every block has landed; a block that lands later
+    // (built, or rebuilt after the owner's own change) redraws it.
+    function land(map){
+      for(var k in map){if(!map.hasOwnProperty(k))continue;got[k]=map[k];delete pend[k];
+        // The status line under the greeting draws the moment the report row
+        // lands, not after all fifteen reads (density fix #1).
+        if(k==='dsr')hbStatus(map[k]);}
+      if(shown){renderFollow(got);return;}
+      for(var p in pend){if(pend.hasOwnProperty(p))return;}
+      shown=true;renderFollow(got);
+    }
+    function all(keys,v){var m={};for(var j=0;j<keys.length;j++)m[keys[j]]=v;return m;}
+    fetch('/api/dsr?limit=1',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){land({dsr:d&&d.ok?d:null});}).catch(function(){land({dsr:null});});
+    // The other fourteen in one read. A block not built for today yet is in
+    // 'missing' (its build is queued on the server, never run on a request
+    // thread) and one rebuilt after a change in 'stale': both are read again
+    // by name after retry_after. A failed read is never answered with the
+    // fourteen reads one by one (R6-F8): under load that turned one refused
+    // request into fourteen. A 429 waits out its Retry-After once.
+    function follow(only){
+      var want=only||HB_FOLLOW_KEYS;
+      fetch('/api/home/follow'+(only?'?only='+only.join(','):''),{credentials:'same-origin'}).then(function(r){
+        if(r.status===429&&!waited){waited=true;var ra=parseInt(r.headers.get('Retry-After'),10);
+          setTimeout(function(){follow(only);},Math.min(Math.max(ra||5,1),30)*1000);return 'wait';}
+        return r.ok?r.json():null;
+      }).then(function(d){
+        if(d==='wait')return;
+        if(!d||!d.ok||!d.blocks){land(all(want,HB_FAILED));return;}
+        var miss=d.missing||[],stale=d.stale||[],fail=d.failed||[],m={},again=[],j,key;
+        for(j=0;j<want.length;j++){key=want[j];
+          if(miss.indexOf(key)>=0)m[key]=(got[key]&&!got[key].failed&&!got[key].preparing)?got[key]:{preparing:true};
+          else if(fail.indexOf(key)>=0)m[key]=HB_FAILED;
+          else m[key]=d.blocks[key]||null;}
+        again=miss.concat(stale);
+        if(again.length&&tries<HB_FOLLOW_TRIES){tries++;
+          setTimeout(function(){follow(again);},Math.min((+d.retry_after||4)*tries,20)*1000);}
+        else for(j=0;j<miss.length;j++){if(!m[miss[j]]||m[miss[j]].preparing)m[miss[j]]=HB_FAILED;}
+        land(m);
+      }).catch(function(){land(all(want,HB_FAILED));});
+    }
+    follow(null);
   }
+  // "Retry" on a block that could not be read reads Home's blocks again.
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-hb-retry]'):null;if(!t)return;
+    e.preventDefault();if(window.cbtnBusy)cbtnBusy(t);hbFollow();});
   // ── last month, in the app ────────────────────────────────────────────────
   // The monthly review only ever went out as an email on the 1st. An owner
   // who wants to show a partner "how did August go" had to find it in an
@@ -6242,7 +6282,13 @@ svg:hover .hb-xh{opacity:1}
   // innocent explanation for every signal - rendering the headline without
   // its alternative reading would turn a question into an accusation about a
   // named person.
+  // A Home block that could not be read, with a way to read it again
+  // (R6-F13): a failed read must not look like a clean week.
+  function hbFailedLine(what){
+    return '<div class="hb-empty">Couldn’t load '+esc(what)+'. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-hb-retry="1">Retry</button></div>';
+  }
   function renderLoss(l){
+    if(l&&l.failed)return '<section class="hb-card rail hb-rise" style="margin-top:16px" aria-label="Worth reviewing"><div class="hb-h3"><span>Worth reviewing</span><span class="cnt">comps, voids and refunds</span></div>'+hbFailedLine('comps, voids and refunds')+'</section>';
     if(!l||!l.available)return '';
     var flags=l.flagged||[];
     if(!flags.length)return '';
@@ -6286,8 +6332,13 @@ svg:hover .hb-xh{opacity:1}
   // before, so it still happens once on every device.
   function hbMilestone(m){
     if(!m)return '';
-    fetch('/api/milestones/seen',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({key:m.key})}).catch(function(){});
+    // Home redraws when a late block lands (R6-F4): the milestone is marked
+    // seen once a page load, and one dismissed stays dismissed.
+    if(hbMilestone.closed)return '';
+    hbMilestone.sent=hbMilestone.sent||{};
+    if(!hbMilestone.sent[m.key]){hbMilestone.sent[m.key]=1;
+      fetch('/api/milestones/seen',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:m.key})}).catch(function(){});}
     return '<section class="hb-card rail good hb-rise hb-mile" id="hb-mile" aria-label="A milestone"><div class="hb-h3"><span>'+esc(MILESTONE_KICKER[m.kind]||'A milestone')+'</span><button type="button" class="hb-x" aria-label="Dismiss" data-mile-close="1">✕</button></div>'
       +'<div class="lead">'+esc(m.title||'')+'</div>'+(m.body?'<div class="why">'+num(m.body)+'</div>':'')
       // The research line belongs to the response-rate milestone only.
@@ -6711,12 +6762,17 @@ svg:hover .hb-xh{opacity:1}
     if(evening)day+=renderCloseout();
     var h='<div class="hb-sh first"><div><div class="k">Today</div><h2>'+esc(weekdayName(d.local_now))+' <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
     h+=renderLastNight(g.dsr);
-    hbAttnSetIssues(iss);
+    hbAttnSetIssues(iss,!!(g.issues&&g.issues.failed));
     h+='<div class="hb-grid" style="margin-top:14px">';
     // The brief as a timeline - a rail with a tone dot per line - rather
     // than a list: it is read top to bottom once, before service.
     h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt n">'+lines.length+'</span>':'')+'</div>';
-    if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
+    // Still being built on the server (R6-F4), or not readable (R6-F13):
+    // said as such, never "fills in as your numbers come in".
+    var bst=g.brief||{};
+    if(bst.preparing)h+='<div class="dr-pulse" role="status" aria-label="Preparing today’s brief"><i></i></div><div class="hb-empty">Preparing today’s brief</div>';
+    else if(bst.failed)h+=hbFailedLine('today’s brief');
+    else if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
     // A keyed line the owner can answer carries Done / Not for us (re-audit
     // K6): the server records these lines as shown on Home, so the answer
     // belongs beside them. Not Track - a brief line names a move, not a
@@ -7200,7 +7256,9 @@ svg:hover .hb-xh{opacity:1}
     h+='<div style="overflow-x:auto"><table class="hb-tbl" data-sortable="group-locations"><thead><tr><th>Location</th><th class="r">Last night</th><th class="r">Labor</th><th class="r">Reviews · 30d</th><th class="r hide-m">Food cost</th><th class="r hide-m" data-sort-type="text">Last active</th><th></th></tr></thead><tbody>';
     for(var j=0;j<g.locations.length;j++){var r=g.locations[j];var rv=r.reviews||{};
       h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+(+r.id)+')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+(+r.id)+')">';
-      h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
+      // A location whose row is still being built (R6-F10): a pulse, never
+      // the empty row of a healthy location.
+      h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.preparing?'<div class="iss"><span class="dr-pulse" role="status" aria-label="Checking this location"><i></i></span></div>':'')+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
       h+='<td class="r hb-num">'+hbNightCell(r.last_night)+'</td>';
       h+='<td class="r hb-num">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':(r.labor.over<=0&&r.labor.pct>0&&!r.labor.stale&&!r.labor.partial)?' <i class="cv-ok" aria-hidden="true"></i>':''):'<span class="dim">—</span>')+'</td>';
       var rvb=[];
@@ -7219,7 +7277,12 @@ svg:hover .hb-xh{opacity:1}
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
     hbReveal();
     hbSwitcherFill(g);
+    // Rows still being built are read again (R6-F10), a few times, backing off.
+    if((g.preparing||[]).length&&_hbGroupTries<4){_hbGroupTries++;
+      setTimeout(function(){if(_hbScope==='group')hbLoad(false);},Math.min((+g.retry_after||4)*_hbGroupTries,20)*1000);}
+    else if(!(g.preparing||[]).length)_hbGroupTries=0;
   }
+  var _hbGroupTries=0;
   // The header's location switcher, one row per location with its status
   // dot, how many things need you there and last night's net (density fix
   // #19), from the group read (cached server-side), fetched the first time
@@ -26250,7 +26313,19 @@ function _schedRecheckSettled(ok) {
   if (!ok && typeof _schedRenderTable === 'function') _schedRenderTable();
   if (window.psLabel) psLabel();
 }
+// One recheck in flight at a time; edits made while it runs are checked by
+// ONE trailing recheck carrying the rows on screen when it starts (blind
+// re-audit 10/20/26 R6-F7: six quick edits started six multi-second checks,
+// and one manager editing could hold every request thread of the platform).
+var _schedRecheckBusy = 0, _schedRecheckAgain = false;
+function _schedRecheckDone() {
+  _schedRecheckBusy = 0;
+  if (_schedRecheckAgain) { _schedRecheckAgain = false; _schedRecheck(); }
+}
 function _schedRecheck() {
+  // (A recheck unanswered after a minute no longer holds the next one.)
+  if (_schedRecheckBusy && new Date().getTime() - _schedRecheckBusy < 60000) { _schedRecheckAgain = true; return; }
+  _schedRecheckBusy = new Date().getTime();
   var base = [];
   try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
   var sent = _swRowsSig(_schedRows);
@@ -26258,6 +26333,10 @@ function _schedRecheck() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, baseline_rows: base, history_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
+    // A newer recheck is waiting: this answer is for rows since edited, so
+    // it settles nothing and starts no review - the trailing one will.
+    if (_schedRecheckAgain && sent !== _swRowsSig(_schedRows)) { _schedRecheckDone(); return; }
+    _schedRecheckDone();
     if (!(d && d.ok)) { _schedRecheckSettled(false); _schedRenderCost(null); return; }
     // Only an answer for the rows still on screen settles them; a late one
     // for rows since edited waits for the next recheck.
@@ -26271,7 +26350,11 @@ function _schedRecheck() {
     // edited (or another week's) waits for the next recheck.
     if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); if (typeof swRenderGrid === 'function') swRenderGrid(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
-  }).catch(function () { _schedRecheckSettled(false); _schedRenderCost(null); });
+  }).catch(function () {
+    var newer = _schedRecheckAgain;
+    _schedRecheckDone();
+    if (!newer) { _schedRecheckSettled(false); _schedRenderCost(null); }
+  });
 }
 
 // "+6h · +$90 · 2h overtime" — what the edits on screen move against the
@@ -42970,7 +43053,7 @@ window.cavPalette = cavPalette;
    a check that failed (TRUST-19). */
 (function () {
   var S = {hid: null, data: null, busy: false, err: null, overrides: {}, answers: {}, dismissed: {}, form: null,
-           timer: null, seq: 0, stale: false, fallback: false};
+           timer: null, seq: 0, stale: false, fallback: false, inflight: null, again: false, waiting: []};
   window._prState = S;
   var POST_PATHS = {'labor/crew-matrix': 1, 'labor/standby/ask': 1, 'labor/rules': 1};
   function $id(id) { return document.getElementById(id); }
@@ -43039,10 +43122,27 @@ window.cavPalette = cavPalette;
     for (k = 0; k < keys.length; k++) if (d[keys[k]] !== undefined) cur[keys[k]] = d[keys[k]];
     cur.explain_pending = false;
   }
+  // One review of a week in flight at a time (blind re-audit 10/20/26
+  // R6-F7): a call while one runs is folded into ONE trailing review of the
+  // rows on screen when it starts, and its callback answered by that one.
+  function settle(hid) {
+    if (S.inflight !== hid) return;
+    S.inflight = null;
+    if (!S.again) return;
+    S.again = false;
+    var w = S.waiting;
+    S.waiting = [];
+    window.prRefresh(w.length ? function (d) { for (var i = 0; i < w.length; i++) w[i](d); } : null);
+  }
   window.prRefresh = function (cb) {
     if (!_schedHistoryId) return;
+    // (A review unanswered after a minute no longer holds the next one.)
+    if (S.inflight && S.inflight === _schedHistoryId && new Date().getTime() - S.inflightAt < 60000) {
+      S.again = true; if (cb) S.waiting.push(cb); return;
+    }
     var hid = _schedHistoryId, seq = ++S.seq;
     if (hid !== S.hid) reset(hid);
+    S.inflight = hid; S.inflightAt = new Date().getTime();
     S.busy = true; prRender();
     var after = function () {
       prRender();
@@ -43051,24 +43151,28 @@ window.cavPalette = cavPalette;
       if (_ssOpen && _ssStage === 'summary' && window.ssRenderSummary) ssRenderSummary();
     };
     var done = function (d) {
-      if (seq !== S.seq || _schedHistoryId !== hid) return;
+      if (seq !== S.seq || _schedHistoryId !== hid) { settle(hid); return; }
       S.busy = false; S.stale = false;
       if (!d || !d.ok) { fallback(d); return; }
       if (d.schedule_id) { S.err = null; S.fallback = false; S.data = d; prune(d); window._psCheck = compat(d); }
       after();
-      if (d.explain_pending) explain(seq, hid);
+      // The explanations are for these rows; with a trailing review coming
+      // they would be for rows no longer on screen.
+      if (d.explain_pending && !S.again) explain(seq, hid);
       if (cb) cb(d);
+      settle(hid);
     };
     // The review failed (an error, a timeout on a big week): the gate's own
     // list stands in and Send stays possible - the phone already did this.
     var fallback = function (d) {
       S.err = (d && d.error) || 'The full check couldn’t run just now.';
       fetch('/api/labor/publish-check?schedule_id=' + hid, {credentials: 'same-origin'}).then(apiJson).then(function (c) {
-        if (seq !== S.seq || _schedHistoryId !== hid) return;
+        if (seq !== S.seq || _schedHistoryId !== hid) { settle(hid); return; }
         if (c && c.ok && c.schedule_id) { var fd = fromCheck(c); S.fallback = true; S.data = fd; prune(fd); window._psCheck = compat(fd); }
         after();
         if (cb) cb(d);
-      }).catch(function () { after(); if (cb) cb(d); });
+        settle(hid);
+      }).catch(function () { after(); if (cb) cb(d); settle(hid); });
     };
     var fail = function () { done({ok: false, error: 'The check couldn’t run - check your connection.'}); };
     if (_schedDirty) {

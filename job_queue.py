@@ -121,7 +121,9 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # "studio" (blind re-audit 10/20/26 R5-03): the Schedule Studio's heavy reads
 # (studio_offload) off the web process's request threads, never behind a
 # generation or a learner.
-GROUPS = ("generation", "bulk", "pos_io", "notify", "maintenance", "studio")
+# "home" (Home's kept blocks — home_snapshots: built here, never on a request
+# thread; blind re-audit 10/20/26 R6-F4/F5).
+GROUPS = ("generation", "bulk", "pos_io", "notify", "maintenance", "studio", "home")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -177,6 +179,11 @@ KINDS = {
     # a failed or expired row is run by the poll itself. The bulk class's
     # per-tenant fairness, never the presses' interactive bucket.
     "studio_compute": ("studio", "bulk", 1),
+    # One Home block's (re)build for one scope, or a restaurant's morning
+    # precompute (home_snapshots.run_queued; blind re-audit 10/20/26
+    # R6-F4/F5): a cold open queues it interactive, a stale row's age refresh
+    # and the precompute bulk.
+    "home_snapshot": ("home", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -196,6 +203,7 @@ HANDLERS = {
     "auto_publish": "scheduler:run_queued_auto_publish",
     "scheduled_job": "scheduler:run_queued_scheduled_job",
     "studio_compute": "studio_offload:run_queued",
+    "home_snapshot": "home_snapshots:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -292,6 +300,11 @@ def group_concurrency(grp) -> int:
     if grp == "studio":
         # Seconds-long Studio reads (studio_offload): CPU, short.
         return _int_env("QUEUE_STUDIO_CONCURRENCY", 2)
+    if grp == "home":
+        # Home's kept blocks (home_snapshots): deterministic reads over one
+        # restaurant's data, CPU in the queue worker's process — never the
+        # web process's four request threads (R6-F4/F5).
+        return _int_env("QUEUE_HOME_CONCURRENCY", 2)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
@@ -2010,8 +2023,9 @@ def run_worker(groups=GROUPS, stop=None, threads=None, db_path=None, max_jobs=No
             if recycle.is_set():
                 return
             recycle.set()
-        _wake.set()                 # idle consumers notice the recycle now, not after their poll
-
+        # The idle consumers stop at once rather than at their next poll: with
+        # a thread a slot in four groups, a recycle waited out every one.
+        _wake.set()
         if on_recycle is not None:
             try:
                 on_recycle()

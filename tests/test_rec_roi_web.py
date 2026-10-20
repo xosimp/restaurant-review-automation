@@ -105,11 +105,15 @@ def test_the_value_tile_nets_worse_results_and_shows_cumulative_only_when_measur
 # ── #28 on Home, #13/#20/#35 the record page, #21 the check-in ───────────────
 
 def test_home_reads_what_worked_and_the_timeline_for_the_check_in():
-    # One combined read since the scale audit (10/19/26 FE-01, /api/home/follow);
-    # each block's own address is the fallback the map names.
-    assert "worked:'/api/recs/what-worked?days=180'" in SRC
-    assert "timeline:'/api/recs/timeline?limit=40'" in SRC
-    assert "HB_FOLLOW_URL[key]" in SRC
+    # One combined read since the scale audit (10/19/26 FE-01, /api/home/follow),
+    # with no per-block fallback since the blind re-audit (10/20/26 R6-F8):
+    # the server answers each block with its own route's query.
+    keys = SRC.split("var HB_FOLLOW_KEYS=", 1)[1][:400]
+    assert "'worked'" in keys and "'timeline'" in keys
+    import strategy_routes
+    follow = {k: (path, args) for k, path, args, _b in strategy_routes._HOME_FOLLOW}
+    assert follow["worked"] == ("/api/recs/what-worked", {"days": "180"})
+    assert follow["timeline"] == ("/api/recs/timeline", {"limit": "40"})
     worked = _fn("renderWorked")
     assert "w.sentences" in worked and "Not enough yet" in worked
 

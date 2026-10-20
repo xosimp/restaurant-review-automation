@@ -221,9 +221,13 @@ struct LocationGroupBrief: Decodable {
     let attention: [Attention]
     let portfolio: Portfolio?
     var groupName: String? = nil
+    /// Locations whose row the server is still building (blind re-audit
+    /// 10/20/26 R6-F10): their rows say "preparing" and the group is read
+    /// again shortly.
+    var preparing: [Int] = []
 
     enum CodingKeys: String, CodingKey {
-        case ok, headline, tone, locations, attention, portfolio
+        case ok, headline, tone, locations, attention, portfolio, preparing
         case summaryLine = "summary_line"
         case groupName = "group_name"
     }
@@ -238,6 +242,7 @@ struct LocationGroupBrief: Decodable {
         attention = ((try? c.decodeIfPresent(HomeLenientListDecodable<Attention>.self, forKey: .attention)) ?? nil)?.items ?? []
         portfolio = (try? c.decodeIfPresent(Portfolio.self, forKey: .portfolio)) ?? nil
         groupName = (try? c.decodeIfPresent(String.self, forKey: .groupName)) ?? nil
+        preparing = ((try? c.decodeIfPresent([Int].self, forKey: .preparing)) ?? nil) ?? []
     }
 }
 

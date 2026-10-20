@@ -3566,7 +3566,25 @@ final class LaborViewModel {
 
     /// "+6h · +$90 · 2h overtime" for the rows on screen against the
     /// baseline. Read-only; nothing is stored. Silent on failure.
+    ///
+    /// One check in flight at a time (blind re-audit 10/20/26 R6-F7): edits
+    /// made while it runs are checked by ONE trailing check of the rows on
+    /// screen when it starts — six quick edits used to send six multi-second
+    /// checks at once, and one manager editing could hold every request
+    /// thread of the platform.
+    private var editCostInFlight = false
+    private var editCostAgain = false
     func refreshEditCost() async {
+        if editCostInFlight { editCostAgain = true; return }
+        editCostInFlight = true
+        defer { editCostInFlight = false }
+        repeat {
+            editCostAgain = false
+            await refreshEditCostOnce()
+        } while editCostAgain
+    }
+
+    private func refreshEditCostOnce() async {
         guard let rows = scheduleResult?.previewRows, let base = baselineRows, !rows.isEmpty else {
             editCost = nil
             return
