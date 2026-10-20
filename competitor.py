@@ -2664,7 +2664,13 @@ REVIEW_BURST = 15             # new reviews since the last check
 LOW_STAR = 2                  # a new review at or below this asks for a new read
 NEWER_TURNOVER = 5            # newer reviews on one competitor that replace all it shows
 REANALYSE_MIN_DAYS = 3        # at most one review-triggered re-read per restaurant per this many days
-DAILY_CHECK_MAX = 15          # competitors re-read per restaurant per day
+DAILY_CHECK_MAX = int(os.getenv("COMPETITOR_DAILY_CHECK_MAX", "15") or 15)  # competitors re-read per check
+# Days between a restaurant's rating checks (scale audit 10/19/26 A4-13):
+# a full set is 15 Details + Atmosphere reads, ~$0.33 a check — ~$8.6 a
+# restaurant a month read daily, the largest single vendor line, for
+# ratings that move slowly. 1 (the default) checks every morning as before;
+# 3 is about twice a week beside the Monday read.
+COMPETITOR_CHECK_EVERY_DAYS = max(1, int(os.getenv("COMPETITOR_CHECK_EVERY_DAYS", "1") or 1))
 
 
 def _own_rating_fresh(restaurant, hours=OWN_RATING_FRESH_HOURS) -> bool:
@@ -2681,6 +2687,26 @@ def reanalyse_held(restaurant, now=None) -> bool:
     stored inside the last REANALYSE_MIN_DAYS. A closure is never held."""
     age = _stamp_age_hours(getattr(restaurant, "competitor_updated_at", None))
     return age is not None and age < REANALYSE_MIN_DAYS * 24
+
+
+def _check_due(restaurant, blob) -> bool:
+    """Whether the rating check is due (A4-13): COMPETITOR_CHECK_EVERY_DAYS
+    since the last check or the last full read, whichever is newer, in the
+    restaurant's own days."""
+    from datetime import date
+    try:
+        from time_utils import restaurant_now
+        today = restaurant_now(restaurant, naive=True).date()
+    except Exception:
+        return True
+    last = None
+    for stamp in (blob.get("ratings_checked_at"), getattr(restaurant, "competitor_updated_at", None)):
+        try:
+            d = date.fromisoformat(str(stamp or "")[:10])
+        except ValueError:
+            continue
+        last = d if last is None or d > last else last
+    return last is None or (today - last).days >= COMPETITOR_CHECK_EVERY_DAYS
 
 
 def check_ratings(restaurant_id: int) -> dict:
@@ -2703,6 +2729,9 @@ def check_ratings(restaurant_id: int) -> dict:
         blob = json.loads(raw) if raw else None
         if not blob or not blob.get("competitors"):
             return {"ok": False, "reason": "no competitor read to refresh yet"}
+        if COMPETITOR_CHECK_EVERY_DAYS > 1 and not _check_due(r, blob):
+            return {"ok": True, "checked": 0, "moved": [], "reanalyse": False, "triggers": [], "held": False,
+                    "not_due": True}
         moved, triggers, closures, checked = [], [], [], 0
         for c in blob["competitors"][:DAILY_CHECK_MAX]:
             pid = c.get("place_id")

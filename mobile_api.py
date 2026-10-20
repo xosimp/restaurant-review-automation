@@ -2221,7 +2221,17 @@ def mobile_ask_cavnar_stream(current_user):
         current_user["restaurant_id"], _capi._ask_uid(current_user), data.get("question"),
         conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
         new_conversation=bool(data.get("new_conversation")), user=current_user,
-        screen=data.get("screen"), surface="ios")
+        screen=data.get("screen"), surface="ios", poll=_capi._truthy(data.get("poll")))
+
+
+@mobile_bp.route("/ask-cavnar/turn/<turn_id>")
+@mobile_login_required
+def mobile_ask_cavnar_turn_events(current_user, turn_id):
+    """Twin of client_api's polled Ask turn (scale audit 10/19/26 A4-01):
+    a stream request with `poll` answers a turn id; this reads its events."""
+    payload, status = _capi._do_ask_turn_events(current_user["restaurant_id"], _capi._ask_uid(current_user),
+                                                turn_id, request.args.get("after"))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/ask-cavnar/history")

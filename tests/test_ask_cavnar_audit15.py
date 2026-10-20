@@ -294,14 +294,20 @@ def test_the_system_prompt_is_split_for_caching(db_path, monkeypatch):
     system = captured["system"]
     assert isinstance(system, list)
     assert system[0]["cache_control"] == {"type": "ephemeral"}
-    # The snapshot is cached too since the AI cost audit of 10/7/26 (#30):
-    # it is held five minutes and nothing in it changes by the minute any
-    # more — the local time and DATA STATE are per-turn blocks after it,
-    # uncached.
-    assert system[1]["cache_control"] == {"type": "ephemeral"}
+    # The snapshot is cacheable too since the AI cost audit of 10/7/26
+    # (#30): it is held five minutes and nothing in it changes by the minute
+    # any more — the local time and DATA STATE are per-turn blocks after it,
+    # uncached. Since the scale audit of 10/19/26 (A4-08) its breakpoint is
+    # sent only where a read is likely: a cold one-round question writes no
+    # cache for it ...
+    assert "cache_control" not in system[1]
     assert "SNAPSHOT MARKER" in system[1]["text"]
     assert system[2]["text"].startswith("NOW\n- Local time:") and "cache_control" not in system[2]
     assert all("cache_control" not in b for b in system[2:])
+    # ... and the next question inside the cache's five minutes reads it.
+    monkeypatch.setattr(ask_cavnar, "_snapshot_recently_cached", lambda rid, snapshot: rid == r.id)
+    ask_cavnar.ask_with_tools(r, "and food cost?")
+    assert captured["system"][1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_no_restaurant_data_leaks_into_the_cacheable_block(db_path, monkeypatch):

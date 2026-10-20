@@ -6518,6 +6518,42 @@ def admin_api_ai_health(current_user):
     return jsonify(ok=True, **ai_utils.ai_health())
 
 
+@admin_bp.route("/admin/api/ai/capacity")
+@admin_required
+def admin_api_ai_capacity(current_user):
+    """The AI capacity view (scale audit 10/19/26 A4-01/02/07), read on
+    demand: this minute's gateway tokens by model family and class, the
+    interactive lane and the interactive slots (who holds them), and the
+    Message Batches share and billed-and-discarded items over `days`
+    (default 7, at most 30)."""
+    import ai_utils
+    import ai_lane
+    import ai_batches
+    import model_gateway
+    try:
+        days = max(1, min(30, int(request.args.get("days") or 7)))
+    except ValueError:
+        days = 7
+    slots = ai_utils._INTERACTIVE_SLOTS
+    # Calls refused by a provider's rate limit, per vendor (A4-02 / A4-15:
+    # the Perplexity account's limit is unknown — this is how it shows).
+    from models import get_conn as _gc_cap
+    conn = _gc_cap()
+    try:
+        limited = {r["vendor"]: int(r["n"] or 0) for r in conn.execute(
+            "SELECT COALESCE(vendor,'anthropic') AS vendor, COUNT(*) AS n FROM ai_usage WHERE reason='rate_limit' "
+            "AND created_at >= datetime('now', ?) GROUP BY COALESCE(vendor,'anthropic')",
+            (f"-{days} days",)).fetchall()}
+    finally:
+        conn.close()
+    return jsonify(ok=True, gateway=model_gateway.usage_now(), lane=ai_lane.stats(), rate_limited=limited,
+                   interactive_slots={"total": ai_utils.INTERACTIVE_AI_SLOTS,
+                                      "free": ai_utils.interactive_slots_free(),
+                                      "held_by": {str(k): v for k, v in (slots.held_by() if hasattr(
+                                          slots, "held_by") else {}).items()}},
+                   batches=ai_batches.usage_report(days))
+
+
 @admin_bp.route("/admin/api/ai/reset-breaker", methods=["POST"])
 @admin_required
 def admin_api_ai_reset_breaker(current_user):

@@ -233,12 +233,12 @@ def test_the_default_leaves_two_of_four_request_threads_free():
 def test_both_ask_routes_count_a_turn_once():
     import client_api
     stream = inspect.getsource(client_api._ask_cavnar_stream_response)
-    ask_slot = stream.index("_ASK_SLOTS.acquire(blocking=False)")
-    ai_slot = stream.index("_ai_slots.acquire_interactive_slot()")
+    ask_slot = stream.index("_ASK_SLOTS.acquire(blocking=False, tenant=rid)")
+    ai_slot = stream.index("_ai_slots.acquire_interactive_slot(tenant=rid)")
     assert ask_slot < ai_slot, "always the Ask slot first, then the interactive one"
     assert "with interactive_slot_held():" in stream
     finally_block = stream[stream.index("finally:\n            _release_interactive()"):]
-    assert finally_block.index("_release_interactive()") < finally_block.index("_ASK_SLOTS.release()")
+    assert finally_block.index("_release_interactive()") < finally_block.index("_release_ask()")
     plain = inspect.getsource(client_api._do_ask_cavnar)
     assert "with interactive_slot():" in plain and "AIBusy" in plain
 
@@ -254,6 +254,9 @@ def _places_spend(db_path, rid, dollars):
 
 def test_the_platform_places_ceiling_binds_every_request(db_path, monkeypatch):
     monkeypatch.setattr(ai_utils, "AI_PLACES_GLOBAL_MONTHLY_USD", 2.0)
+    # The floor alone (scale audit 10/19/26 A4-04 grows the pool by every
+    # paying and trial restaurant — these two are trials).
+    monkeypatch.setattr(ai_utils, "AI_PLACES_GLOBAL_PER_CLIENT_USD", 0.0)
     a = create_restaurant(Restaurant(name="Places A", owner_email="a@x.test"), db_path=db_path)
     b = create_restaurant(Restaurant(name="Places B", owner_email="b@x.test"), db_path=db_path)
     _places_spend(db_path, a, 1.5)

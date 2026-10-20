@@ -241,7 +241,18 @@ _DDL = (
 # (naive UTC) past which an item still out is cancelled and its callback
 # told BatchItemFailed("cutoff"), so its caller writes it synchronously.
 _ITEM_COLUMNS = (("cutoff_at", "TEXT"),)
+# Scale audit 10/19/26 (A4-07): when a batch was asked to cancel because
+# every item still out in it was past its cutoff (naive UTC) — its items are
+# then collected as the batch ends (answered ones used, cancelled ones fall
+# back) instead of each falling back at once and its answer, billed anyway,
+# being thrown away.
+_JOB_COLUMNS = (("cancel_requested_at", "TEXT"),)
 _INDEXES_AFTER = ("CREATE INDEX IF NOT EXISTS idx_ai_batch_items_cutoff ON ai_batch_items(status, cutoff_at)",)
+# How long a batch cancelled for its cutoffs is given to end before its items
+# fall back one by one anyway (the collector runs every ~5 minutes; a
+# cancel usually ends a batch within a minute or two). 0 switches the
+# cancel-first path off: every late item falls back at once, as before.
+CANCEL_GRACE_SECONDS = int(os.getenv("AI_BATCH_CANCEL_GRACE_SECONDS", "600") or 0)
 
 
 def init_ai_batches(db_path=None):
@@ -254,6 +265,10 @@ def init_ai_batches(db_path=None):
         for col, decl in _ITEM_COLUMNS:
             if col not in have:
                 conn.execute(f"ALTER TABLE ai_batch_items ADD COLUMN {col} {decl}")
+        have_jobs = {r[1] for r in conn.execute("PRAGMA table_info(ai_batch_jobs)").fetchall()}
+        for col, decl in _JOB_COLUMNS:
+            if col not in have_jobs:
+                conn.execute(f"ALTER TABLE ai_batch_jobs ADD COLUMN {col} {decl}")
         for sql in _INDEXES_AFTER:
             conn.execute(sql)
         conn.commit()
@@ -969,26 +984,132 @@ def _sweep_cutoffs(client, started, out, handed):
     BatchItemFailed("cutoff") on the pool, so its caller writes it
     synchronously — off the loop thread (platform re-audit 10/7/26 #1).
     Oldest cutoff first, at most CUTOFF_MAX_ITEMS a pass and inside the
-    collector's time bound."""
+    collector's time bound.
+
+    CANCEL BEFORE THE FALLBACK (scale audit 10/19/26 A4-07). A batch can
+    only be cancelled whole, and a cut-off item's answer, when it landed
+    anyway, was billed at half price AND paid again at full price by its
+    fallback (1.5x list). So when every item still out in a submitted
+    batch is past its cutoff, the batch is cancelled at Anthropic first
+    (_cancel_for_cutoffs) and its items are left for the collector: the
+    answers already written come back as `succeeded` and are used as usual,
+    the rest come back `canceled` and fall back (BatchItemFailed). Only if
+    the batch has not ended CANCEL_GRACE_SECONDS later do its items fall
+    back one by one as before; a batch that still holds items inside their
+    cutoff cannot be cancelled, and its late items fall back at once."""
     conn = _conn()
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT workflow, custom_id FROM ai_batch_items WHERE status IN (?,?) AND cutoff_at IS NOT NULL "
-            "AND cutoff_at <= ? ORDER BY cutoff_at LIMIT ?", (*OPEN, _now(), CUTOFF_MAX_ITEMS + 1)).fetchall()]
+            "SELECT workflow, custom_id, batch_id, status FROM ai_batch_items WHERE status IN (?,?) "
+            "AND cutoff_at IS NOT NULL AND cutoff_at <= ? ORDER BY cutoff_at LIMIT ?",
+            (*OPEN, _now(), CUTOFF_MAX_ITEMS + 1)).fetchall()]
     finally:
         conn.close()
     if len(rows) > CUTOFF_MAX_ITEMS:
         rows, out["hit_bound"] = rows[:CUTOFF_MAX_ITEMS], True
+    waiting = {}
     for r in rows:
         if time.monotonic() - started > COLLECT_MAX_SECONDS or _callbacks_pending() >= CALLBACK_MAX_PENDING:
             out["hit_bound"] = True
             break
         wf_, cid = r["workflow"], str(r["custom_id"])
+        bid = r.get("batch_id")
+        if bid and r.get("status") == SUBMITTED:
+            if bid not in waiting:
+                waiting[bid] = _cancel_for_cutoffs(bid, client, out)
+            if waiting[bid]:
+                continue                   # collected when the cancelled batch ends
         if not _stop_waiting(wf_, cid, client, CUT_OFF, "past its cutoff"):
             continue                       # the collector took it a moment ago
         if _dispatch(wf_, cid, _told(wf_, cid, BatchItemFailed("cutoff", "not answered by its cutoff"), CUT_OFF)):
             handed.append((wf_, cid))
         out["cut_off"] = out.get("cut_off", 0) + 1
+
+
+def _cancel_for_cutoffs(batch_id, client, out) -> bool:
+    """Whether a submitted batch's late items should wait for the batch to
+    end rather than fall back now (A4-07): True when every item still out
+    in it is past its cutoff and the batch was (or now is) cancelled at
+    Anthropic less than CANCEL_GRACE_SECONDS ago."""
+    from datetime import datetime
+    if CANCEL_GRACE_SECONDS <= 0:
+        return False                         # switched off: every late item falls back at once
+    conn = _conn()
+    try:
+        job = conn.execute("SELECT status, cancel_requested_at FROM ai_batch_jobs WHERE batch_id=?",
+                           (batch_id,)).fetchone()
+        if job is None:
+            return False
+        asked = job["cancel_requested_at"]
+        if asked:
+            try:
+                age = (datetime.utcnow() - datetime.strptime(str(asked)[:19].replace("T", " "),
+                                                             "%Y-%m-%d %H:%M:%S")).total_seconds()
+            except ValueError:
+                return False
+            return age < CANCEL_GRACE_SECONDS
+        wanted = conn.execute("SELECT COUNT(*) FROM ai_batch_items WHERE batch_id=? AND status IN (?,?) AND "
+                              "(cutoff_at IS NULL OR cutoff_at > ?)", (batch_id, *OPEN, _now())).fetchone()[0]
+    finally:
+        conn.close()
+    if wanted or not _scheduling_allowed():
+        return False
+    try:
+        (client or _client()).messages.batches.cancel(batch_id)
+    except Exception as e:
+        log.warning("ai_batches: cancelling batch %s for its cutoffs failed: %s", batch_id, e)
+        return False
+    c = _conn()
+    try:
+        c.execute("UPDATE ai_batch_jobs SET status=CASE WHEN status='in_progress' THEN 'canceling' ELSE status END, "
+                  "cancel_requested_at=? WHERE batch_id=?", (_now(), batch_id))
+        c.commit()
+    finally:
+        c.close()
+    out["cancelled_batches"] = out.get("cancelled_batches", 0) + 1
+    return True
+
+
+def usage_report(days=30) -> dict:
+    """How much of the AI bill went through Batches (A4-07: "batches barely
+    used" was only inferable from per-row prices), from the ledger and the
+    queue: per action, the calls and dollars at the batch rate and at list,
+    and per workflow the items by status — `cut_off` / `discarded` items are
+    ones whose answer was billed and thrown away (a fallback paid again).
+    The console's Operations → AI reads it; `batch_share` is the batched
+    share of the dollars of the actions that may batch."""
+    import ai_utils
+    days = max(1, int(days or 30))
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            "SELECT action, batched, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS usd FROM ("
+            "SELECT action, CASE WHEN COALESCE(price_version,'') LIKE ? THEN 1 ELSE 0 END AS batched, cost_usd "
+            "FROM ai_usage WHERE created_at >= datetime('now', ?) AND COALESCE(vendor,'anthropic')='anthropic'"
+            ") t GROUP BY action, batched",
+            ("%+batch", f"-{days} days")).fetchall()
+        items = conn.execute(
+            "SELECT workflow, status, COUNT(*) AS n FROM ai_batch_items WHERE created_at >= datetime('now', ?) "
+            "GROUP BY workflow, status", (f"-{days} days",)).fetchall()
+    finally:
+        conn.close()
+    by_action = {}
+    for r in rows:
+        a = by_action.setdefault(r["action"] or "unspecified", {"batch_calls": 0, "batch_usd": 0.0,
+                                                                 "sync_calls": 0, "sync_usd": 0.0})
+        k = "batch" if int(r["batched"] or 0) else "sync"
+        a[f"{k}_calls"] += int(r["n"] or 0)
+        a[f"{k}_usd"] = round(a[f"{k}_usd"] + float(r["usd"] or 0), 4)
+    by_workflow = {}
+    for r in items:
+        by_workflow.setdefault(r["workflow"], {})[r["status"]] = int(r["n"] or 0)
+    batchable = set(workflows()) | {"review_diagnosis", "food_cost_diagnosis", "dsr_narrative"}
+    b_usd = sum(v["batch_usd"] for k, v in by_action.items() if k in batchable)
+    all_usd = sum(v["batch_usd"] + v["sync_usd"] for k, v in by_action.items() if k in batchable)
+    wasted = sum(n for st in by_workflow.values() for s, n in st.items() if s in (CUT_OFF, DISCARDED))
+    return {"days": days, "by_action": by_action, "items": by_workflow,
+            "batch_share": round(b_usd / all_usd, 4) if all_usd else None, "billed_and_discarded": wasted,
+            "price_version": ai_utils.BATCH_PRICE_VERSION}
 
 
 def _told(workflow, custom_id, error, status):
