@@ -8229,7 +8229,21 @@ def _wrap(body, decorator):
 import floor_api as _floor_api  # noqa: E402
 _ROUTES += _floor_api.ROUTES
 
+# The Studio's heavy reads run in the queue worker when the client can poll
+# and the restaurant's calls are slow (studio_offload — blind re-audit
+# 10/20/26 R5-03); the poll is answered by labor/offload/<ticket>.
+import studio_offload as _studio_offload  # noqa: E402
+
+
+def _do_offload_result(u, ticket):
+    return _studio_offload.result(ticket, u, _rid(u), path=request.path)
+
+
+_ROUTES.append(("/labor/offload/<int:ticket>", ["GET"], _do_offload_result, "studio_offload_result"))
+
 for _path, _methods, _body_fn, _ep in _ROUTES:
+    if _ep in _studio_offload.ENDPOINTS:
+        _body_fn = _studio_offload.offloadable(_ep)(_body_fn)
     strategy_bp.add_url_rule("/api" + _path, endpoint=_ep, methods=_methods,
                              view_func=_wrap(_body_fn, login_required))
     strategy_mobile_bp.add_url_rule(_path, endpoint=_ep, methods=_methods,

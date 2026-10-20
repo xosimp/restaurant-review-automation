@@ -282,10 +282,17 @@ actor APIClient {
         let grant = isLongCall ? await BackgroundGrant.begin(path) : nil
         defer { if let grant { Task { await grant.end() } } }
 
-        let data: Data
-        let response: URLResponse
+        var data: Data
+        var response: URLResponse
         do {
             (data, response) = try await Self.perform(request, on: transport, mayRetry: mayRetry)
+            // A Studio read the server ran off its request threads
+            // (studio_offload, blind re-audit 10/20/26 R5-03): a 202 with a
+            // ticket is polled until the route's own answer comes back.
+            if let http = response as? HTTPURLResponse, http.statusCode == 202,
+               http.value(forHTTPHeaderField: Self.offloadTicketHeader) != nil {
+                (data, response) = try await settleOffloaded(data, transport: transport)
+            }
         } catch {
             // A request cancelled because its view went away (a `.task`
             // torn down by tapping Back, or by leaving a module screen
@@ -906,7 +913,51 @@ actor APIClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder.cavnar.encode(body)
         }
+        // This client can wait for a Studio read run off the server's request
+        // threads (studio_offload, R5-03): it polls the ticket a 202 carries.
+        request.setValue("1", forHTTPHeaderField: Self.offloadHeader)
         return request
+    }
+
+    static let offloadHeader = "X-Cavnar-Offload"
+    static let offloadTicketHeader = "X-Cavnar-Ticket"
+
+    /// A 202 ticket's body: where to poll and how soon.
+    private struct OffloadTicket: Decodable {
+        let poll: String?
+        let retryAfterMs: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case poll
+            case retryAfterMs = "retry_after_ms"
+        }
+    }
+
+    /// Polls an offloaded read's ticket until the route's own answer — its
+    /// body and status code — comes back (at most 150 s).
+    private func settleOffloaded(_ first: Data, transport: URLSession) async throws -> (Data, URLResponse) {
+        var body = first
+        let limit = Date().addingTimeInterval(150)
+        while true {
+            guard let ticket = try? JSONDecoder.cavnar.decode(OffloadTicket.self, from: body),
+                  let poll = ticket.poll, !poll.isEmpty else {
+                throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
+            }
+            let wait = min(max(ticket.retryAfterMs ?? 1000, 250), 5000)
+            try await Task.sleep(for: .milliseconds(wait))
+            let request = try buildRequest(path: poll, method: HTTPMethod.get.rawValue, body: nil, query: [:])
+            let (polled, response) = try await Self.perform(request, on: transport, mayRetry: true)
+            if let http = response as? HTTPURLResponse, http.statusCode == 202,
+               http.value(forHTTPHeaderField: Self.offloadTicketHeader) != nil {
+                if Date() > limit {
+                    throw APIError(kind: .timedOut,
+                                   message: "That check is taking longer than it should. Try again in a moment.")
+                }
+                body = polled
+                continue
+            }
+            return (polled, response)
+        }
     }
 
     /// A call made before any session exists — the staff portal's roster,

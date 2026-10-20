@@ -2169,6 +2169,54 @@ function aiJobAwait(d, opts){
   });
 }
 window.aiJobAwait = aiJobAwait;
+/* The Schedule Studio's heavy reads may run off the web server's request
+   threads (studio_offload, blind re-audit 10/20/26 R5-03): every /api/ call
+   says this page can wait for one (X-Cavnar-Offload), and an answer of 202
+   with a ticket is polled here until the route's own answer - its body and
+   status code - comes back, so every caller reads it as before. */
+(function () {
+  var nativeFetch = window.fetch;
+  if (!nativeFetch || window.__cavOffload) return;
+  window.__cavOffload = true;
+  function apiPath(input) {
+    var u = typeof input === 'string' ? input : (input && input.url) || '';
+    if (u.indexOf(location.origin) === 0) u = u.slice(location.origin.length);
+    return u.indexOf('/api/') === 0;
+  }
+  function settle(first, init) {
+    var limit = Date.now() + 150000;
+    function next(d) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, Math.max(250, Math.min(+d.retry_after_ms || 1000, 5000)));
+      }).then(function () {
+        return nativeFetch.call(window, d.poll, {credentials: (init && init.credentials) || 'same-origin', headers: {'X-Cavnar-Offload': '1'}});
+      }).then(function (r) {
+        if (r.status !== 202 || !r.headers.get('X-Cavnar-Ticket')) return r;
+        if (Date.now() > limit) {
+          return new Response(JSON.stringify({ok: false, error: 'That check is taking longer than it should. Try again in a moment.'}),
+                              {status: 504, headers: {'Content-Type': 'application/json'}});
+        }
+        return r.json().then(next);
+      });
+    }
+    return first.clone().json().then(function (d) {
+      return (d && d.poll) ? next(d) : first;
+    }, function () { return first; });
+  }
+  window.fetch = function (input, init) {
+    if (!apiPath(input)) return nativeFetch.call(window, input, init);
+    init = init || {};
+    var h = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+    h.set('X-Cavnar-Offload', '1');
+    var opts = {};
+    for (var k in init) { if (Object.prototype.hasOwnProperty.call(init, k)) opts[k] = init[k]; }
+    opts.headers = h;
+    return nativeFetch.call(window, input, opts).then(function (r) {
+      if (r.status === 202 && r.headers.get('X-Cavnar-Ticket')) return settle(r, opts);
+      return r;
+    });
+  };
+})();
 /* The poll cadence for work running off the request thread: 1.5 s, then
    3 s, then every 5 s. */
 var AI_POLL_STEPS = [1500, 3000, 5000];
@@ -25597,8 +25645,11 @@ function generateSchedule(btn, opts) {
       // One poll at a time: the next is asked 2 s after this one answers
       // (scale audit 10/19/26 A5-F5 - a 2 s interval stacked polls on a slow
       // server). _schedPollInterval holds the waiting timer; null is stopped.
-      var _schedNext = function() {
-        if (_schedPollInterval !== null) _schedPollInterval = setTimeout(_schedPoll, 2000);
+      // The server says when to ask again: longer the more presses are queued
+      // ahead (blind re-audit 10/20/26 R5-03 - a backlog's 2 s polls were
+      // their own load).
+      var _schedNext = function(after) {
+        if (_schedPollInterval !== null) _schedPollInterval = setTimeout(_schedPoll, (+after > 0) ? Math.min(+after, 15000) : 2000);
       };
       var _schedPoll = function() {
         fetch('/api/schedule-status/' + jobId)
@@ -25615,7 +25666,7 @@ function generateSchedule(btn, opts) {
               // The days the draft has finished so far, counted from the
               // answer as it streams (AI cost audit 10/7/26 #36).
               _schedProgress = pollData.progress || null;
-              _schedNext();
+              _schedNext(pollData.retry_after_ms);
               return;
             }
             clearTimeout(_hardTimeout);

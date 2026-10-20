@@ -111,7 +111,10 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # drill — one row at a time, in the queue worker process: off the
 # scheduler loop and out of the web process (it ran inline on the loop, in
 # the web process, for an hour at ~40 GB).
-GROUPS = ("generation", "bulk", "pos_io", "maintenance")
+# "studio" (blind re-audit 10/20/26 R5-03): the Schedule Studio's heavy reads
+# (studio_offload) off the web process's request threads, never behind a
+# generation or a learner.
+GROUPS = ("generation", "bulk", "pos_io", "maintenance", "studio")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -153,6 +156,10 @@ KINDS = {
     # `queue`; scheduler.queue_scheduled_job — scale re-audit 10/20/26
     # R8-03): run there through ops.run_job under its own name.
     "scheduled_job": ("maintenance", "scheduled", 2),
+    # A Studio read the client polls for (studio_offload, R5-03): one try —
+    # a failed or expired row is run by the poll itself. The bulk class's
+    # per-tenant fairness, never the presses' interactive bucket.
+    "studio_compute": ("studio", "bulk", 1),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -170,12 +177,17 @@ HANDLERS = {
     "schedule_notices": "schedule_publish:run_queued_notices",
     "auto_publish": "scheduler:run_queued_auto_publish",
     "scheduled_job": "scheduler:run_queued_scheduled_job",
+    "studio_compute": "studio_offload:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
 EXPIRE_HOOKS = {
     "auto_draft": "strategy_jobs:on_auto_draft_expired",
     "schedule_generate": "schedule_engine:on_queued_generation_expired",
+    # An auto-publish check no slot took before the window closed: the
+    # owner who turned auto-publish on is told the week did not go (blind
+    # re-audit 10/20/26 R5-07 — it expired silently).
+    "auto_publish": "scheduler:on_auto_publish_expired",
 }
 
 LEASE_SECONDS = int(os.getenv("QUEUE_LEASE_SECONDS", "120"))
@@ -252,13 +264,82 @@ def group_concurrency(grp) -> int:
         # One at a time, always: the backup and the drill share the volume's
         # free space and must never run side by side (R8-03).
         return 1
+    if grp == "studio":
+        # Seconds-long Studio reads (studio_offload): CPU, short.
+        return _int_env("QUEUE_STUDIO_CONCURRENCY", 2)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
 # What one generation holds at its peak on top of the container's baseline
 # (scale audit 10/19/26 A5-F7, MEASURED-LOCAL): the parent's growth plus its
-# CP-SAT solve process — about 1.0-1.4 GB at 60-250 people.
+# CP-SAT solve process — about 1.0-1.4 GB at 60-250 people. The figure for a
+# row whose roster size is unknown, and the static clamp on the slot count;
+# a row that carries its roster's estimate (`mem_mb`) is admitted by it.
 GEN_SLOT_MB = float(os.getenv("SCHEDULE_GEN_SLOT_MB", "") or 1400)
+# What one generation holds at its peak by roster size (blind re-audit
+# 10/20/26 R5-06, MEASURED-LOCAL with scripts/run_schedule_benchmark.py on
+# the solver arm: parent RSS + solve-process RSS): 60 people 844 MB, 120
+# 1,044, 250 1,350, 500 3,798. A flat 1,400 MB admitted six 500-person
+# generations into 22.8 GB that hold 3.8 GB each.
+GEN_MEMORY_BY_ROSTER = ((0, 800.0), (60, 844.0), (120, 1044.0), (250, 1350.0), (500, 3798.0))
+GEN_MEMORY_MARGIN = 1.15
+# Cores one generation keeps busy on average (R5-08, MEASURED-LOCAL: CPU /
+# wall 1.9 at 60 people, 1.7 at 120, 1.5 at 250, 1.1 at 500 — most of a
+# generation is single-threaded Python around short CP-SAT solves). The
+# slots were the cores over each solve's 4 threads, so half the container
+# idled while a burst of big rosters queued; the memory admission above is
+# the real bound, and the platform check names solves the wall clock cut.
+GEN_CORES_PER_SLOT = float(os.getenv("SCHEDULE_GEN_CORES_PER_SLOT", "") or 2)
+
+
+def generation_memory_mb(roster) -> float:
+    """The peak MB one generation of a `roster`-person restaurant holds
+    (GEN_MEMORY_BY_ROSTER, interpolated, extrapolated past its last point
+    on the last segment's slope, times GEN_MEMORY_MARGIN); GEN_SLOT_MB when
+    the roster is unknown."""
+    try:
+        n = float(roster)
+    except (TypeError, ValueError):
+        return GEN_SLOT_MB
+    if n < 0:
+        return GEN_SLOT_MB
+    pts = GEN_MEMORY_BY_ROSTER
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if n <= x1:
+            mb = y0 + (y1 - y0) * (n - x0) / float(x1 - x0)
+            break
+    else:
+        (x0, y0), (x1, y1) = pts[-2], pts[-1]
+        mb = y1 + (y1 - y0) * (n - x1) / float(x1 - x0)
+    return round(mb * GEN_MEMORY_MARGIN, 1)
+
+
+def _row_memory_mb(row) -> float:
+    """A generation row's estimate (its payload's `mem_mb`), else GEN_SLOT_MB."""
+    raw = row.get("payload_json") if isinstance(row, dict) else None
+    try:
+        mb = float((json.loads(raw) if raw else {}).get("mem_mb") or 0)
+    except (TypeError, ValueError, AttributeError):
+        mb = 0.0
+    return mb if mb > 0 else GEN_SLOT_MB
+
+
+def _memory_admits(conn, grp, chosen, now) -> bool:
+    """Whether `chosen` fits the container's memory beside the generation
+    rows running now (R5-06): their estimates plus its own within the limit
+    less GEN_MEMORY_RESERVE_MB. Always when nothing runs (one at least), when
+    the container has no limit, and for any group but generation."""
+    if grp != "generation":
+        return True
+    lim = memory_limit_mb()
+    if lim is None:
+        return True
+    rows = conn.execute("SELECT id, payload_json FROM jobs WHERE grp=? AND state='running' AND lease_until>? "
+                        "AND id<>?", (grp, now, int(chosen["id"]))).fetchall()
+    if not rows:
+        return True
+    held = sum(_row_memory_mb(dict(r)) for r in rows)
+    return held + _row_memory_mb(chosen) <= lim - GEN_MEMORY_RESERVE_MB
 # What the container holds before any generation runs: the web process and
 # the queue worker's own baseline.
 GEN_MEMORY_RESERVE_MB = float(os.getenv("SCHEDULE_GEN_MEMORY_RESERVE_MB", "") or 1536)
@@ -337,7 +418,8 @@ def generation_capacity() -> dict:
     mem = memory_limit_mb()
     return {"cores": cores, "memory_mb": int(mem) if mem else None, "cpu_slots": cpu_generation_slots(),
             "memory_slots": memory_generation_slots(), "slots": slots, "solve_threads": per,
-            "oversubscribed": slots * per > cores}
+            "cores_per_slot": GEN_CORES_PER_SLOT,
+            "oversubscribed": slots * GEN_CORES_PER_SLOT > cores}
 
 
 _CAPACITY_LOGGED = []
@@ -351,11 +433,12 @@ def _log_capacity_once(slots) -> None:
         return
     _CAPACITY_LOGGED.append(slots)
     try:
-        per, cores, mem = _solve_threads(), cpu_cores(), memory_limit_mb()
-        line = (f"generation slots {slots}: {cores} cores / {per} solver threads, memory "
-                f"{int(mem) if mem else 'unlimited'} MB / {int(GEN_SLOT_MB)} MB a generation")
-        if slots * per > cores:
-            log.warning(line + " — more solver threads than cores: solves will end on the wall clock")
+        cores, mem = cpu_cores(), memory_limit_mb()
+        line = (f"generation slots {slots}: {cores} cores / {GEN_CORES_PER_SLOT:g} a generation, memory "
+                f"{int(mem) if mem else 'unlimited'} MB (each generation admitted by its roster's estimate, "
+                f"{int(GEN_SLOT_MB)} MB when unknown)")
+        if slots * GEN_CORES_PER_SLOT > cores:
+            log.warning(line + " — more generations than the cores carry: solves will end on the wall clock")
         else:
             log.info(line)
     except Exception:
@@ -392,14 +475,10 @@ def cpu_cores() -> int:
 
 
 def cpu_generation_slots() -> int:
-    """Generations whose solves the cores carry at once: the cores over
-    each solve's threads (schedule_cpsat.WORKERS), at least one."""
-    try:
-        import schedule_cpsat
-        per = max(1, int(schedule_cpsat.WORKERS))
-    except Exception:
-        per = 4
-    return max(1, cpu_cores() // per)
+    """Generations the cores carry at once: the cores over what one
+    generation keeps busy (GEN_CORES_PER_SLOT, measured — R5-08; it was each
+    solve's 4 threads), at least one."""
+    return max(1, int(cpu_cores() // max(0.5, GEN_CORES_PER_SLOT)))
 
 
 def _gateway_streams():
@@ -782,12 +861,28 @@ def enqueue_many(kind, items, priority_class=None, wake=True, db_path=None) -> i
 # other class's reservation (_admits). With nothing claimable the claim
 # returns after a plain read, never taking the write lock (SCALE-32).
 
+# The classes whose token bucket is the RESTAURANT's, never its
+# organization's: the auto-drafts (SCALE-3) and owners' presses (blind
+# re-audit 10/20/26 R5-05 — a 40-location group's managers shared one
+# 6-an-hour bucket, so its 7th press of an hour ranked behind every single
+# restaurant's). The organization stays the fairness tenant (virtual time).
+PER_LOCATION_BUCKETS = ("scheduled", "interactive")
+
+
 def _bucket_key(row, klass):
-    """Whose token bucket a row spends: the restaurant's for the scheduled
-    class (per location, SCALE-3), else its fairness tenant's."""
-    if klass == "scheduled" and row.get("restaurant_id") is not None:
+    """Whose token bucket a row spends: the restaurant's for the classes in
+    PER_LOCATION_BUCKETS, else its fairness tenant's."""
+    if klass in PER_LOCATION_BUCKETS and row.get("restaurant_id") is not None:
         return f"r:{int(row['restaurant_id'])}"
     return row.get("tenant_key") or "platform"
+
+
+def _bucket_sql(klass) -> str:
+    """_bucket_key as SQL over a jobs row (no alias), for _fair_head."""
+    if klass in PER_LOCATION_BUCKETS:
+        return ("CASE WHEN restaurant_id IS NULL THEN COALESCE(tenant_key, 'platform') "
+                "ELSE 'r:' || CAST(restaurant_id AS TEXT) END")
+    return "COALESCE(tenant_key, 'platform')"
 
 
 def _bucket(conn, key, klass, now):
@@ -887,14 +982,20 @@ def _fair_head(conn, grp, klass, now, busy):
     _burst, per_hour = BUCKETS.get(klass, BUCKETS["bulk"])
     system = _system_vtime(conn, klass)
     excl, ids = _busy_clause(busy)
+    # Each BUCKET's oldest row (a restaurant's for a per-location class, so
+    # every location of an organization is a candidate with its own tokens),
+    # its tokens read from its bucket (b) and its virtual time from its
+    # fairness tenant (t) — the organization's, shared by its locations.
+    bk = _bucket_sql(klass)
     row = conn.execute(
-        "SELECT j.* FROM (SELECT tenant_key AS tk, MIN(id) AS head FROM jobs "
+        "SELECT j.* FROM (SELECT " + bk + " AS bk, MIN(id) AS head FROM jobs "
         "WHERE grp=? AND priority_class=? AND state='queued' AND +not_before<=?" + excl +
-        " GROUP BY tenant_key) h JOIN jobs j ON j.id = h.head "
-        "LEFT JOIN job_tenants t ON t.tenant_key = h.tk AND t.klass = ? "
-        "ORDER BY CASE WHEN t.tenant_key IS NULL OR t.tokens + (? - t.refilled_at) * ? / 3600.0 >= 1 "
+        " GROUP BY " + bk + ") h JOIN jobs j ON j.id = h.head "
+        "LEFT JOIN job_tenants b ON b.tenant_key = h.bk AND b.klass = ? "
+        "LEFT JOIN job_tenants t ON t.tenant_key = COALESCE(j.tenant_key, 'platform') AND t.klass = ? "
+        "ORDER BY CASE WHEN b.tenant_key IS NULL OR b.tokens + (? - b.refilled_at) * ? / 3600.0 >= 1 "
         "THEN 0 ELSE 1 END, CASE WHEN t.vtime IS NULL OR t.vtime < ? THEN ? ELSE t.vtime END, j.id LIMIT 1",
-        (grp, klass, now, *ids, klass, now, float(per_hour), system, system)).fetchone()
+        (grp, klass, now, *ids, klass, klass, now, float(per_hour), system, system)).fetchone()
     return dict(row) if row else None
 
 
@@ -1019,9 +1120,17 @@ def _dead_rows(conn, grp, now, expired) -> list:
     """Running rows whose lease ran out (their process died): a row on its
     last try is failed (said); the rest are resumable, oldest first."""
     out = []
+    # A row THIS process is still running is never "dead" to it (R5-12):
+    # after a stall past the lease another thread of the same process (the
+    # same worker id, so the lease keeper's renewals kept succeeding) took it
+    # and ran it beside the original.
+    with _held_lock:
+        mine = set(_held)
     for r in conn.execute("SELECT * FROM jobs WHERE grp=? AND state='running' AND lease_until<=? ORDER BY id LIMIT ?",
                           (grp, now, CANDIDATES)).fetchall():
         r = dict(r)
+        if int(r["id"]) in mine:
+            continue
         if int(r["attempts"] or 0) >= int(r["max_attempts"] or 1):
             conn.execute("UPDATE jobs SET state='failed', finished_at=?, error=COALESCE(error, ?), "
                          "lease_owner=NULL, phase=NULL WHERE id=?",
@@ -1087,6 +1196,10 @@ def claim(worker_id, groups=GROUPS, db_path=None):
                     chosen = _edf_head(conn, grp, now, busy) if klass == "scheduled" else \
                         _fair_head(conn, grp, klass, now, busy)
                 if chosen is None:
+                    continue
+                if not _memory_admits(conn, grp, chosen, now):
+                    # Its roster's footprint does not fit beside what runs
+                    # (R5-06): it waits for one to finish.
                     continue
                 n = conn.execute(
                     "UPDATE jobs SET state='running', attempts=attempts+1, lease_owner=?, lease_until=?, phase=NULL, "
@@ -1443,6 +1556,40 @@ def row_for(external_id, db_path=None):
         conn.close()
 
 
+def queue_position(external_id, db_path=None):
+    """(state, rows ahead) of the newest row for an async job id: rows ahead
+    are the group's rows queued before it in its class or a better one (at
+    most 1,000 counted; 0 once it runs) — what a pending poll says and how
+    long it waits (blind re-audit 10/20/26 R5-03/R5-08). (None, None) when
+    the queue does not run it."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT id, grp, state, priority_class FROM jobs WHERE external_id=? ORDER BY id DESC "
+                           "LIMIT 1", (str(external_id),)).fetchone()
+        if row is None:
+            return None, None
+        if row["state"] != "queued":
+            return row["state"], 0
+        better = [c for c in CLASSES if _CLASS_RANK[c] <= _CLASS_RANK.get(row["priority_class"], 2)]
+        n = conn.execute("SELECT COUNT(*) FROM (SELECT 1 FROM jobs WHERE grp=? AND state='queued' AND id<? "
+                         "AND priority_class IN (" + ",".join("?" * len(better)) + ") LIMIT 1000) q",
+                         (row["grp"], int(row["id"]), *better)).fetchone()[0]
+        return "queued", int(n or 0)
+    except Exception as e:
+        log.warning("queue position unread for %s: %s", external_id, e)
+        return None, None
+    finally:
+        conn.close()
+
+
+def poll_after_ms(state, ahead) -> int:
+    """How long a pending poll waits before asking again: 2 s while it runs,
+    longer the more rows are ahead of it (at most 15 s)."""
+    if state != "queued" or not ahead:
+        return 2000
+    return int(min(15000, 2000 + 100 * int(ahead)))
+
+
 def resumable_external_ids(db_path=None) -> list:
     """The async job ids whose queue row will still run (queued, or running
     with tries left): the boot sweep leaves those pending (ops.sweep_stale_jobs)."""
@@ -1483,6 +1630,26 @@ def _settle_local(job_id, result=None, error=None):
             fut.set_result(result)
 
 
+class LeaseLost(BaseException):
+    """The running row's lease was taken by another consumer (a database
+    stall outlasted the lease and the row was resumed elsewhere): this try
+    stops at its next stage boundary and settles nothing — the row is the
+    other consumer's now (blind re-audit 10/20/26 R5-12). A BaseException,
+    so a handler's `except Exception` never turns it into a failed job."""
+
+
+def lease_lost() -> bool:
+    """Whether the row this thread runs lost its lease (False outside one)."""
+    j = _CURRENT.get()
+    return bool(j is not None and j.get("lease_lost"))
+
+
+def raise_if_lease_lost() -> None:
+    if lease_lost():
+        j = _CURRENT.get()
+        raise LeaseLost(f"job {j.get('id')} lost its lease")
+
+
 class _LeaseKeeper(threading.Thread):
     def __init__(self, job):
         super().__init__(daemon=True, name=f"job-lease-{job['id']}")
@@ -1494,6 +1661,10 @@ class _LeaseKeeper(threading.Thread):
             try:
                 if not renew(self.job["id"], self.job["worker_id"]):
                     self.lost = True
+                    # Read by the handler at its next boundary
+                    # (raise_if_lease_lost), never ignored (R5-12).
+                    self.job["lease_lost"] = True
+                    log.warning("job %s lost its lease — it stops at its next boundary", self.job["id"])
                     return
             except Exception as e:
                 log.warning("lease renewal failed for job %s: %s", self.job["id"], e)
@@ -1525,6 +1696,11 @@ def run_one(job):
     except BaseException as e:
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
+        if isinstance(e, LeaseLost) or keeper.lost:
+            # Another consumer holds the row now: nothing here settles it.
+            log.warning("job %s ended after losing its lease: %r", job.get("id"), e)
+            _settle_local(job["id"], error=e)
+            return None
         try:
             import ops
             ops.capture(e, job=f"queue:{job.get('kind')}",

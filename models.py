@@ -12361,6 +12361,13 @@ class DraftChanged(Exception):
         self.current_csv = current_csv
 
 
+class WeekAlreadyDrafted(Exception):
+    """An auto-draft's save found the week already has a draft in force or
+    went out (blind re-audit 10/20/26 R5-01): the owner drafted, edited or
+    sent it while the queued auto-draft waited or ran, so nothing is
+    written over it."""
+
+
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
@@ -12368,7 +12375,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           job_id: str = None, in_transaction=None, week_copy: tuple = None) -> int:
+                           job_id: str = None, in_transaction=None, week_copy: tuple = None,
+                           empty_week_only: bool = False) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -12412,6 +12420,9 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     working copy is another row, or its text moved, since — a manager's
     Studio save while it ran — nothing is written and DraftChanged is
     raised (scale audit 10/19/26 A5-F16; it was superseded unconditionally).
+    `empty_week_only` (the auto-draft, R5-01): written only while the week
+    has no draft in force and never went out, checked inside the write —
+    else WeekAlreadyDrafted and nothing is written.
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -12453,6 +12464,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                     raise DraftChanged(int(base[0]), None if now is None else (now["schedule_csv"] or ""))
                 prior_text = now["schedule_csv"] or ""
             elif week_start:
+                if empty_week_only and conn.execute(
+                        "SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                        "AND (superseded_by IS NULL OR published_at IS NOT NULL) LIMIT 1",
+                        (restaurant_id, week_start)).fetchone() is not None:
+                    raise WeekAlreadyDrafted(f"restaurant {restaurant_id} week {week_start} already has a schedule")
                 cur_copy = week_draft(conn, restaurant_id, week_start)
                 if week_copy is not None:
                     now_copy = ((int(cur_copy["id"]), cur_copy["schedule_csv"] or "") if cur_copy is not None

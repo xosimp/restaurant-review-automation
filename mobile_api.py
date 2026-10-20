@@ -49,6 +49,9 @@ from emails import html_document as _html_doc  # one definition; emails reads it
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
+# The reopened week runs in the queue worker when it is slow and the client
+# polls (blind re-audit 10/20/26 R5-03).
+import studio_offload as _studio_offload
 _json_object_guard(mobile_bp)
 
 # Exception text handed to a client, with credentials stripped — a
@@ -4810,6 +4813,14 @@ def mobile_stop_generation(current_user):
         return jsonify(ok=True, stopped=False, status=job.get("status"),
                        error="It had already finished — check the draft or Schedule History."), 200
     verdict = _ops.stop_async_job(job_id, {"ok": False, "stopped": True, "error": _se.STOPPED_MESSAGE})
+    if verdict == "stopped":
+        # Its queue row, while still queued, is cancelled too (blind re-audit
+        # 10/20/26 R5-12): it was claimed later only to exit at once.
+        try:
+            import job_queue as _jq_stop
+            _jq_stop.cancel(external_id=job_id, reason="stopped by the owner")
+        except Exception as _cx:
+            _ops.capture(_cx, job="schedule_stop_cancel", context=f"restaurant_id={rid} job={job_id}")
     if verdict == "finished":
         return jsonify(ok=True, stopped=False, status="done",
                        error="It had already finished — check the draft or Schedule History."), 200
@@ -4830,8 +4841,14 @@ def mobile_schedule_status(job_id, current_user):
         # How long the job can still run, when it set its deadline (schedule
         # audit 10/3/26 P-22), and the days drafted so far (AI cost audit
         # 10/7/26 #36) — the web twin says the same.
+        # Where it stands in the queue and when to ask again (blind re-audit
+        # 10/20/26 R5-03/R5-08): every waiting owner asked every 2 s, so a
+        # backlog of presses was its own load on the request threads.
+        import job_queue as _jq_pos
+        _qstate, _ahead = _jq_pos.queue_position(job_id)
         return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"),
-                       progress=job.get("progress"))
+                       progress=job.get("progress"), queue_ahead=_ahead,
+                       retry_after_ms=_jq_pos.poll_after_ms(_qstate, _ahead))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -4859,6 +4876,7 @@ def mobile_schedule_history(current_user):
 
 @mobile_bp.route("/labor/schedule-history/<int:history_id>")
 @mobile_login_required
+@_studio_offload.offloadable("schedule_history_detail")
 def mobile_schedule_history_detail(history_id, current_user):
     """Full record for one past generation, including the CSV parsed into
     preview_rows the same shape the Labor tab's own schedule result uses
@@ -9747,8 +9765,9 @@ def mobile_score_schedule(current_user):
         prepared = studio_prepared(rid, rows, daily_target_hours=targets, history_id=hid_key,
                                    fresh=bool(data.get("save")))
         inputs = prepared["inputs"]
+        _sweep = {}
         quality, what_if = _score_schedule_quality(rid, rows, inputs, what_if=bool(data.get("what_if")),
-                                                   prepared=prepared)
+                                                   prepared=prepared, sweep_out=_sweep)
         # The same rule sweep generation runs, so an edit that breaks a rule
         # is named on screen before it is saved or sent — the kept sweep's,
         # exactly schedule_rules.violations of these rows.
@@ -9757,7 +9776,8 @@ def mobile_score_schedule(current_user):
             import schedule_rules as _sr
             c = inputs.get("constraints")
             if c is not None:
-                violations = prepared.get("violations")
+                # This call's own sweep (R9-17), never the shared entry's.
+                violations = _sweep.get("violations")
                 if violations is None:
                     violations = _sr.violations(rows, c)
                 review = _sr.summarize(violations)

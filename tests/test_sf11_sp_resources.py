@@ -291,14 +291,16 @@ def test_the_local_scorer_counts_the_rows_it_reads():
 
 # ── SCALE-16: generation slots sized to the cores ────────────────────────────
 
-def test_generation_slots_are_the_cores_over_each_solves_threads(monkeypatch):
+def test_generation_slots_are_the_cores_over_what_one_generation_uses(monkeypatch):
+    # The cores over GEN_CORES_PER_SLOT (2, measured — blind re-audit
+    # 10/20/26 R5-08); it was the cores over each solve's 4 threads.
     monkeypatch.delenv("QUEUE_GENERATION_CONCURRENCY", raising=False)
     monkeypatch.setattr(job_queue, "_gateway_streams", lambda: None)
     monkeypatch.setattr(job_queue, "memory_limit_mb", lambda: None)
     monkeypatch.setattr(cps, "WORKERS", 4)
     monkeypatch.setattr(job_queue, "cpu_cores", lambda: 8)
-    monkeypatch.setattr(se, "SCHEDULE_GEN_WORKERS", 4)
-    assert job_queue.group_concurrency("generation") == 2
+    monkeypatch.setattr(se, "SCHEDULE_GEN_WORKERS", 0)
+    assert job_queue.group_concurrency("generation") == 4
     monkeypatch.setattr(job_queue, "cpu_cores", lambda: 3)
     assert job_queue.group_concurrency("generation") == 1
     monkeypatch.setenv("QUEUE_GENERATION_CONCURRENCY", "3")            # the operator's own word stands

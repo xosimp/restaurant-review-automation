@@ -1782,6 +1782,21 @@ def _release_auto_draft_attempt(restaurant_id, target, attempt):
         ops.release_period(f"auto_draft_attempt:{restaurant_id}", f"{target}#{attempt}")
 
 
+def _week_taken(restaurant_id, week_start) -> bool:
+    """Whether the week now has a schedule of its own (_week_has_schedule),
+    read fresh; False when it cannot be told."""
+    if not week_start:
+        return False
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            return _week_has_schedule(conn, restaurant_id, week_start)
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, batch=True):
     """One restaurant's auto-draft and, when it saved, the owner's nudge.
 
@@ -1857,12 +1872,21 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
         # (on_auto_draft_expired). The week it claimed was resolved before
         # it ran: across midnight it built the week after (BUGSGEN-11).
         with generation_scope(job_id, restaurant_id=r.id):
-            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
+            # Saved only over a week that is still empty (R5-01): a draft the
+            # owner made, edited or sent while this ran is never replaced.
+            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"], empty_week_only=True)
         # _run_schedule_job reports its own failures into the job row rather
         # than raising, so the push below must wait on that verdict — telling
         # an owner a draft is waiting when none was saved is worse than silence.
         state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
         if state.get("status") != "done":
+            if _week_taken(r.id, _request.get("week_start")):
+                # The owner's own draft (or a sent week) is the week's
+                # schedule now (R5-01): nothing to retry, nobody to tell.
+                if target:
+                    ops.claim_period(f"auto_draft_done:{r.id}", target)
+                _bump("skipped")
+                return
             # Ended without a draft (SCALE-3): the day is handed back so a
             # later pass — today, or the fallback day — tries again while
             # the week's attempts last; the last one tells the owner.
@@ -2110,6 +2134,13 @@ def _enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, a
                "batch": bool(batch), "answer": answer, "answers_job": answers_job,
                "attribution": {"trigger": "scheduler", "actor_user_id": None,
                                "correlation_id": f"auto_draft:{r.id}:{target}"}}
+    try:
+        # Its footprint by roster (blind re-audit 10/20/26 R5-06): admitted
+        # by it against the container's memory.
+        import schedule_engine as _se_mem
+        payload["mem_mb"] = _se_mem.generation_memory_mb(r.id)
+    except Exception:
+        pass
     key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if (answer is not None or answers_job) else
                                                       ":sync" if not batch else "")
     # The pass's own row (the first half) starts at the restaurant's place in
@@ -2140,7 +2171,16 @@ def run_queued_auto_draft(job):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return {"skipped": "not opted in"}
     target = p.get("target")
-    if target and (p.get("answer") is not None or p.get("answers_job")):
+    # Every row re-checks the week when it RUNS, not only a batched answer
+    # (blind re-audit 10/20/26 R5-01): it was checked when the pass queued it,
+    # up to hours earlier, and an owner who drafted, edited or sent the week
+    # meanwhile had it superseded by a fresh generation (or, on a sent week, a
+    # new working copy). The save itself re-checks inside its write
+    # (empty_week_only) for a draft that appears while this one runs.
+    if target:
+        import ops as _ops_ad
+        if _ops_ad.period_claimed(f"auto_draft_done:{r.id}", target):
+            return {"skipped": "week already drafted"}
         conn = get_conn(DB_PATH)
         try:
             if _week_has_schedule(conn, r.id, target):

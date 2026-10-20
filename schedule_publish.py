@@ -30,6 +30,7 @@ working.
 """
 import json
 import logging
+import os
 import time as _time
 import uuid as _uuid
 from datetime import datetime as _dt, timedelta as _td
@@ -44,8 +45,10 @@ from schedule_context import degraded as _degraded  # noqa: E402  (the one degra
 
 # A Send delivers inline for at most this long, so a publish to a large
 # staff on email or text never holds a request thread for minutes; the rest
-# go out from the outbox job within the minute.
-INLINE_SECONDS = 8.0
+# go out from the outbox job within the minute. 3 s (it was 8 — blind
+# re-audit 10/20/26 R5-03: on one web worker's four threads a Sunday of Sends
+# each held a thread for its gate plus 8 s of email and text).
+INLINE_SECONDS = float(os.getenv("SCHEDULE_SEND_INLINE_SECONDS", "") or 3.0)
 # A failed notice is tried again after these minutes, then left failed (the
 # owner's "Send again" re-queues it).
 NOTICE_RETRY_MINUTES = (5, 30, 120)
@@ -561,6 +564,10 @@ def publish_review(restaurant_id, schedule_id=None, unattended=False, today=None
                 k = f"rule:{v['kind']}:{v.get('date')}:{v.get('gap_start') or v.get('floor_role') or ''}"
                 if cls == MANAGER:
                     meta["cover_candidates"] = cover_candidates(c, rows, v.get("date"))
+                    if v.get("gap_start") is not None and v.get("gap_end") is not None:
+                        # The stretch itself: an override naming a cover puts
+                        # that person on it (cover_specs, R5-09).
+                        meta["gap"] = [int(v["gap_start"]), int(v["gap_end"])]
                 add(k, _sr.breach_text(v), tier=tier, rank=rank, date=v.get("date"), **meta)
                 breaches.setdefault(k, v)
                 continue
@@ -1470,14 +1477,17 @@ def stale_payload(restaurant_id, schedule_id, version):
                      "sent. Look at their changes, then send."}
 
 
-def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, version=None, db_path=None):
+def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, version=None, db_path=None,
+           covers=None):
     """Publish (mode "publish") or send the changes to (mode "changes")
     one week, in ONE write transaction: re-read under the lock, refuse
     when the copy was replaced or its rows moved since the gate read them
     (or since `version`, the rows the sender reviewed), set the published
     copy from exactly those rows, retire the week's older published copy,
     append the `published` version and queue the notices. Returns {version,
-    batch, queued, week_start, rows}; raises _Refused."""
+    batch, queued, week_start, rows}; raises _Refused. `covers`
+    (cover_specs): the managers named over a manager gap, put on the week —
+    working and published copy alike — in the same transaction (R5-09)."""
     import schedule_rows as _srows
     import schedule_versions as _sv
     conn = get_conn(db_path)
@@ -1508,6 +1518,8 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         # shifts).
         import schedule_shifts as _ss_st
         rows = _ss_st.rows_of(schedule_id, "working", conn=conn)
+        added = _cover_rows(rows, covers) if covers else []
+        rows = rows + added
         if mode == "publish":
             live = _models_mod.live_week_row(conn, restaurant_id, row["week_start"])
             old_live = _ss_st.rows_of(live["id"], "live", conn=conn) if (live and live["id"] != schedule_id
@@ -1542,7 +1554,9 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
                          "AND id<>? AND published_at IS NOT NULL AND superseded_by IS NULL",
                          (schedule_id, restaurant_id, row["week_start"], schedule_id))
         else:
-            _sv.store_week(conn, restaurant_id, schedule_id, published=text,
+            # A cover added at this Send is on the working copy too, so the
+            # two copies never disagree about it.
+            _sv.store_week(conn, restaurant_id, schedule_id, published=text, working=text if added else None,
                            sets=("republished_at=datetime('now')",), allow_overlaps=True)
             # A shift the Studio moved to someone else keeps its floor
             # section now that staff have the change.
@@ -1938,7 +1952,8 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     regates = 0
     while True:
         try:
-            stamped = _stamp(rid, schedule_id, "publish", actor_name, authority, gate_sig, version=version)
+            stamped = _stamp(rid, schedule_id, "publish", actor_name, authority, gate_sig, version=version,
+                             covers=cover_specs(review, override_reasons))
             break
         except _Refused as r:
             if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
@@ -2062,7 +2077,8 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
     try:
         while True:
             try:
-                stamped = _stamp(rid, row["id"], "changes", who, _sv.authority_of(actor), gate_sig, version=version)
+                stamped = _stamp(rid, row["id"], "changes", who, _sv.authority_of(actor), gate_sig, version=version,
+                                 covers=cover_specs(review, override_reasons))
                 break
             except _Refused as r:
                 if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
@@ -2405,6 +2421,68 @@ def edited_since(restaurant_id, schedule_id, version=None, since=None, db_path=N
 # The names the publish path had in client_api; re-exported there.
 _publish_schedule = publish
 send_schedule_changes = send_changes
+
+
+def cover_specs(review, override_reasons) -> list:
+    """[{date, start, end, name}] — each manager gap sent past by naming a
+    manager on the roster (an override's `covered_by` that is one of the
+    blocker's `cover_candidates`): the named person is put on the week
+    across the gap as it goes out (blind re-audit 10/20/26 R5-09), so the
+    copy staff read has a manager in charge for that stretch and the cover
+    is told like any changed shift. The account owner covering it
+    themselves ("owner", "me") is not a roster person: no row is added."""
+    out = []
+    reasons = override_reasons or {}
+    for b in (review or {}).get("blockers") or []:
+        gap = b.get("gap")
+        o = reasons.get(b.get("key"))
+        if not gap or not isinstance(o, dict) or override_needs(b.get("key")) != "covered_by":
+            continue
+        named = " ".join(str(o.get("covered_by") or "").split())
+        match = next((n for n in (b.get("cover_candidates") or [])
+                      if " ".join(str(n).split()).casefold() == named.casefold()), None)
+        if match and b.get("date"):
+            out.append({"date": str(b["date"])[:10], "start": int(gap[0]), "end": int(gap[1]), "name": match})
+    return out
+
+
+COVER_NOTE = "Running the floor (manager gap covered at Send)"
+
+
+def _cover_rows(rows, covers) -> list:
+    """The rows `covers` (cover_specs) add to `rows`: the named person on
+    the gap's date from its start to its end, in their own manager role of
+    the week when they have one. None added where they are already on
+    across the whole gap."""
+    import uuid as _uuid_c
+    import schedule_time as _stime_c
+    import schedule_rules as _sr_c
+    from datetime import date as _date_c
+    out = []
+    for cv in covers or []:
+        key = " ".join(cv["name"].split()).casefold()
+        mine = [r for r in rows if " ".join(str(r.get("employee") or "").split()).casefold() == key]
+        covered = False
+        for r in mine:
+            if str(r.get("date") or "")[:10] != cv["date"]:
+                continue
+            sp = _stime_c.span(r)
+            if sp and sp[0] <= cv["start"] and sp[1] >= cv["end"]:
+                covered = True
+        if covered:
+            continue
+        role = next((r.get("role") for r in mine if _sr_c.manager_role_kind(r.get("role")) in ("manager", "owner")), None) or \
+            next((r.get("role") for r in mine if r.get("role")), None) or "Manager"
+        try:
+            day = _date_c.fromisoformat(cv["date"]).strftime("%A")
+        except ValueError:
+            day = ""
+        out.append({"date": cv["date"], "day": day, "employee": cv["name"], "role": role,
+                    "shift_start": _stime_c.fmt_minutes(cv["start"] % (24 * 60)),
+                    "shift_end": _stime_c.fmt_minutes(cv["end"] % (24 * 60)),
+                    "scheduled_hours": str(round((cv["end"] - cv["start"]) / 60.0, 2)),
+                    "notes": COVER_NOTE, "shift_id": _uuid_c.uuid4().hex})
+    return out
 
 
 def override_policy(b) -> dict:
