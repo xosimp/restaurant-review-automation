@@ -309,6 +309,7 @@ Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 - `HOME_SNAPSHOTS` — **1**: Home's four slow reads (the morning brief, good news, the monthly review, the cross-module links; web and phone) are kept per restaurant, business day and viewer scope in `home_snapshots` and served from the row. `0` builds every read on the request, as before.
 - `HOME_SNAPSHOT_REFRESH_SECONDS` — **900**: a kept answer older than this is rebuilt off the request on its next read even when no stamped input moved (a moved input rebuilds it at once). The stale answer is served meanwhile.
 - `HOME_SNAPSHOT_WORKERS` (**2**) and `HOME_SNAPSHOT_MAX_PENDING` (**200**): the background rebuild pool, and how many rebuilds may wait for it before a stale read is served without starting one. Per process, like the other pools (CLAUDE.md, gunicorn `--workers`).
+- `ACTIVITY_TTL_SECONDS` — **300** (was a fixed 45): how long one restaurant's activity feed (`activity.feed`, `/api/activity`) is kept per process. The web polls it every 2 minutes (was 1), so a viewer reads a kept build on most ticks (FE-05).
 
 | Variable | Default | Read in |
 |---|---|---|
@@ -428,6 +429,7 @@ Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 | `PUSH_MAX_QUEUED` | `"500"` | push.py |
 | `PUSH_MAX_WORKERS` | `"4"` | push.py |
 | `OWNER_AI_JOB_WORKERS` | `"3"` | ai_async.py |
+| `ACTIVITY_TTL_SECONDS` | `"300"` | activity.py |
 | `HOME_SNAPSHOTS` | `"1"` | home_snapshots.py |
 | `HOME_SNAPSHOT_REFRESH_SECONDS` | `"900"` | home_snapshots.py |
 | `HOME_SNAPSHOT_WORKERS` | `"2"` | home_snapshots.py |

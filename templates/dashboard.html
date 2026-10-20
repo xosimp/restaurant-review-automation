@@ -18020,7 +18020,11 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
   load();
-  pollTimer = setInterval(load, 60000);
+  // Every two minutes (scale audit 10/19/26 FE-05): the feed changes as
+  // fast as the jobs that write it, and the server keeps each build for
+  // activity.ACTIVITY_TTL - a 60-second poll against a 45-second cache was
+  // a fresh ~20-query build on every tick for every open dashboard.
+  pollTimer = setInterval(load, 120000);
 })();
 
 function _appendAskCavnarEvidence(d) {
@@ -21421,14 +21425,17 @@ function cvReplyRate(cb){
   }).catch(function(){ window._cvRatesFailed = true; var ws = _cvRateWaiters || []; _cvRateWaiters = null; for(var i = 0; i < ws.length; i++) ws[i](null); });
 }
 
-// ── Auto-poll every 15 seconds when on reviews tab ────────
+// ── Auto-poll every minute when on reviews tab ────────
+// Once a minute, not every 15 seconds (scale audit 10/19/26 FE-06): reviews
+// arrive with the fetch sweeps, hours apart, and an approve or a reply
+// refreshes the counts itself.
 setInterval(function(){
   if(document.hidden) return;   // nobody is looking; the next tick after they are catches up (CLIENT-37)
   var reviewPanel = document.getElementById('panel-reviews');
   if(reviewPanel && reviewPanel.classList.contains('active')){
     updateReviewStats();
   }
-}, 15000);
+}, 60000);
 
 // ── Review request sender ──────────────────────────────────
 function rrToggleConsent(){

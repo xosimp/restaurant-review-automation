@@ -163,7 +163,7 @@ def _review_stats_tick(text):
 
 POLLERS = {
     # name: (the interval's tick, the function that fetches)
-    "activity feed, 60s": (lambda s: _function(s, "load", containing="/api/activity"),
+    "activity feed, 120s": (lambda s: _function(s, "load", containing="/api/activity"),
                            lambda s: _function(s, "load", containing="/api/activity")),
     "review stats, 15s": (_review_stats_tick, lambda s: _function(s, "updateReviewStats")),
     "status dot, 120s": (lambda s: _function(s, "checkStatus"),
@@ -172,8 +172,11 @@ POLLERS = {
 
 
 def test_the_audited_pollers_are_still_on_intervals(src):
-    assert "pollTimer = setInterval(load, 60000)" in src
-    assert "}, 15000);" in src[src.index("var reviewPanel = document.getElementById('panel-reviews')"):][:200]
+    # Two minutes and one minute since the scale audit (10/19/26 FE-05/06):
+    # the activity feed's server cache outlives the poll, and review counts
+    # change with the fetch sweeps, hours apart.
+    assert "pollTimer = setInterval(load, 120000)" in src
+    assert "}, 60000);" in src[src.index("var reviewPanel = document.getElementById('panel-reviews')"):][:200]
     assert "setInterval(checkStatus, 120000)" in src
     # The Marketing metrics poller is gone on purpose (MB-17, 9/28/26): it
     # called Meta every 60s on a request thread. The tab reads the stored
