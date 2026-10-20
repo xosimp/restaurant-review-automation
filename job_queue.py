@@ -106,7 +106,10 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # (network-bound POS reads — scale audit 10/19/26 INF-6: the nightly archive
 # rows held one of bulk's two CPU slots while they waited on RPOWER, so the
 # learners queued behind them).
-GROUPS = ("generation", "bulk", "pos_io")
+# "studio" (blind re-audit 10/20/26 R5-03): the Schedule Studio's heavy reads
+# (studio_offload) off the web process's request threads, never behind a
+# generation or a learner.
+GROUPS = ("generation", "bulk", "pos_io", "studio")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -144,6 +147,10 @@ KINDS = {
     # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
     # scheduler.run_auto_publish_schedules fans out).
     "auto_publish": ("bulk", "bulk", 2),
+    # A Studio read the client polls for (studio_offload, R5-03): one try —
+    # a failed or expired row is run by the poll itself. The bulk class's
+    # per-tenant fairness, never the presses' interactive bucket.
+    "studio_compute": ("studio", "bulk", 1),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -160,6 +167,7 @@ HANDLERS = {
     "silent_push": "push:run_queued_silent",
     "schedule_notices": "schedule_publish:run_queued_notices",
     "auto_publish": "scheduler:run_queued_auto_publish",
+    "studio_compute": "studio_offload:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -242,6 +250,9 @@ def group_concurrency(grp) -> int:
         # Network-bound rows: their slots are not cores. RPOWER's own budget
         # is its per-token bucket (rpower), not this count.
         return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
+    if grp == "studio":
+        # Seconds-long Studio reads (studio_offload): CPU, short.
+        return _int_env("QUEUE_STUDIO_CONCURRENCY", 2)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
@@ -1504,6 +1515,40 @@ def row_for(external_id, db_path=None):
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+def queue_position(external_id, db_path=None):
+    """(state, rows ahead) of the newest row for an async job id: rows ahead
+    are the group's rows queued before it in its class or a better one (at
+    most 1,000 counted; 0 once it runs) — what a pending poll says and how
+    long it waits (blind re-audit 10/20/26 R5-03/R5-08). (None, None) when
+    the queue does not run it."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT id, grp, state, priority_class FROM jobs WHERE external_id=? ORDER BY id DESC "
+                           "LIMIT 1", (str(external_id),)).fetchone()
+        if row is None:
+            return None, None
+        if row["state"] != "queued":
+            return row["state"], 0
+        better = [c for c in CLASSES if _CLASS_RANK[c] <= _CLASS_RANK.get(row["priority_class"], 2)]
+        n = conn.execute("SELECT COUNT(*) FROM (SELECT 1 FROM jobs WHERE grp=? AND state='queued' AND id<? "
+                         "AND priority_class IN (" + ",".join("?" * len(better)) + ") LIMIT 1000) q",
+                         (row["grp"], int(row["id"]), *better)).fetchone()[0]
+        return "queued", int(n or 0)
+    except Exception as e:
+        log.warning("queue position unread for %s: %s", external_id, e)
+        return None, None
+    finally:
+        conn.close()
+
+
+def poll_after_ms(state, ahead) -> int:
+    """How long a pending poll waits before asking again: 2 s while it runs,
+    longer the more rows are ahead of it (at most 15 s)."""
+    if state != "queued" or not ahead:
+        return 2000
+    return int(min(15000, 2000 + 100 * int(ahead)))
 
 
 def resumable_external_ids(db_path=None) -> list:

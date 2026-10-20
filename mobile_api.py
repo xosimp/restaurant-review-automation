@@ -49,6 +49,9 @@ from emails import html_document as _html_doc  # one definition; emails reads it
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
+# The reopened week runs in the queue worker when it is slow and the client
+# polls (blind re-audit 10/20/26 R5-03).
+import studio_offload as _studio_offload
 _json_object_guard(mobile_bp)
 
 # Exception text handed to a client, with credentials stripped — a
@@ -4838,8 +4841,14 @@ def mobile_schedule_status(job_id, current_user):
         # How long the job can still run, when it set its deadline (schedule
         # audit 10/3/26 P-22), and the days drafted so far (AI cost audit
         # 10/7/26 #36) — the web twin says the same.
+        # Where it stands in the queue and when to ask again (blind re-audit
+        # 10/20/26 R5-03/R5-08): every waiting owner asked every 2 s, so a
+        # backlog of presses was its own load on the request threads.
+        import job_queue as _jq_pos
+        _qstate, _ahead = _jq_pos.queue_position(job_id)
         return jsonify(ok=True, status="pending", seconds_left=job.get("seconds_left"),
-                       progress=job.get("progress"))
+                       progress=job.get("progress"), queue_ahead=_ahead,
+                       retry_after_ms=_jq_pos.poll_after_ms(_qstate, _ahead))
     try:
         result = dict(job["result"])
         result["status"] = job["status"]
@@ -4867,6 +4876,7 @@ def mobile_schedule_history(current_user):
 
 @mobile_bp.route("/labor/schedule-history/<int:history_id>")
 @mobile_login_required
+@_studio_offload.offloadable("schedule_history_detail")
 def mobile_schedule_history_detail(history_id, current_user):
     """Full record for one past generation, including the CSV parsed into
     preview_rows the same shape the Labor tab's own schedule result uses

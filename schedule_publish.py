@@ -30,6 +30,7 @@ working.
 """
 import json
 import logging
+import os
 import time as _time
 import uuid as _uuid
 from datetime import datetime as _dt, timedelta as _td
@@ -44,8 +45,10 @@ from schedule_context import degraded as _degraded  # noqa: E402  (the one degra
 
 # A Send delivers inline for at most this long, so a publish to a large
 # staff on email or text never holds a request thread for minutes; the rest
-# go out from the outbox job within the minute.
-INLINE_SECONDS = 8.0
+# go out from the outbox job within the minute. 3 s (it was 8 — blind
+# re-audit 10/20/26 R5-03: on one web worker's four threads a Sunday of Sends
+# each held a thread for its gate plus 8 s of email and text).
+INLINE_SECONDS = float(os.getenv("SCHEDULE_SEND_INLINE_SECONDS", "") or 3.0)
 # A failed notice is tried again after these minutes, then left failed (the
 # owner's "Send again" re-queues it).
 NOTICE_RETRY_MINUTES = (5, 30, 120)
