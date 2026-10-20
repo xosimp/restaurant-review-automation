@@ -645,8 +645,8 @@ def test_dsr_is_registered_everywhere_a_notification_type_must_be():
     assert client_api._NOTIFICATION_LABELS["dsr"] == "Daily report ready"
     assert admin_ops.RUNNABLE_JOBS["dsr_delivery"]["target"] == ("dsr.deliver", "release_held")
     assert admin_ops.RUNNABLE_JOBS["dsr_delivery"]["sends"] is True
-    src = inspect.getsource(scheduler)
-    assert 'run_job("dsr_delivery", release_held)' in src
+    src = inspect.getsource(scheduler._submit_minute_jobs)        # the "minute" lane (R1-02)
+    assert '"dsr_delivery"' in src and "release_held)" in src
 
 
 def test_the_deliveries_table_is_created_at_boot(db_path):

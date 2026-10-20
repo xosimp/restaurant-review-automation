@@ -14,6 +14,9 @@ resumable over restaurants (strategy_jobs._BoundedWalk) — pushes:
   * "Due in 15 min: <line>" for each CRITICAL line on that person's open
     task sheet, on the first pass with it due within 20 minutes, unless it
     is already ticked.
+A pass that came late catches up (blind re-audit 10/20/26 R1-02): a shift
+still to start, and an unticked line up to 30 minutes overdue ("Overdue:
+<line>"), are reminded by the next pass rather than never.
 
 Each reminder is claimed first — one `staff_notices` row per person, shift
 or line, and kind (`claim_key` UNIQUE) — so two passes, a restart or a
@@ -77,6 +80,14 @@ CREATE INDEX IF NOT EXISTS idx_staff_notices_created ON staff_notices(created_at
 
 SHIFT_WINDOW_MINUTES = (15, 65)     # start in (now+15, now+65]: ~60 min ahead on a 10-min tick
 TASK_WINDOW_MINUTES = (0, 20)       # due in (now, now+20]: ~15 min ahead
+# Catch-up (blind re-audit 10/20/26 R1-02): a pass that came late — the
+# loop held behind long work, a deploy — reached a shift or a critical line
+# only after its window, and with no catch-up it was never reminded, which
+# nobody saw. A shift still to start and a line up to TASK_CATCHUP_MINUTES
+# overdue (and unticked) are reminded once by the next pass instead; the
+# claim keeps it to once whatever the window.
+SHIFT_CATCHUP_MINUTES = 15          # a shift starting in (now, now+15] not yet reminded
+TASK_CATCHUP_MINUTES = 30           # a critical line due in (now-30, now] not yet reminded
 JOB_MAX_SECONDS = 4 * 60
 RELEASE_MAX_ROWS = 200
 RELEASE_MAX_SECONDS = 2 * 60
@@ -254,11 +265,14 @@ def release_held(now_utc=None, db_path=None) -> dict:
 def _due_reminders(restaurant_id, now_local, db_path):
     """[(kind, employee_name, claim_key, title, body, nav, shift_date)] due
     now: shifts starting in SHIFT_WINDOW_MINUTES, critical task lines due in
-    TASK_WINDOW_MINUTES and not ticked."""
+    TASK_WINDOW_MINUTES and not ticked — each window widened back by its
+    catch-up (SHIFT_CATCHUP_MINUTES, TASK_CATCHUP_MINUTES) for a pass that
+    came late."""
     import staff_settings
     import task_sheets
     out = []
     lo, hi = SHIFT_WINDOW_MINUTES
+    lo = max(0, lo - SHIFT_CATCHUP_MINUTES)
     days = sorted({now_local.date(), (now_local + timedelta(minutes=hi)).date()})
     for day in days:
         try:
@@ -285,6 +299,7 @@ def _due_reminders(restaurant_id, now_local, db_path):
                          "shift_start": start.strftime("%H:%M")},
                         start.date().isoformat()))
     lo, hi = TASK_WINDOW_MINUTES
+    lo -= TASK_CATCHUP_MINUTES
     conn = get_conn(db_path)
     try:
         rows = conn.execute("SELECT * FROM task_assignments WHERE restaurant_id=? AND status='open' AND task_date >= ?",
@@ -309,11 +324,13 @@ def _due_reminders(restaurant_id, now_local, db_path):
             if not (lo < mins <= hi) or task_sheets._line_state(latest, a["id"], l["line_id"]):
                 continue
             label = str(l.get("label") or "a task").strip()
+            late = mins <= 0                      # reached by a pass that came late (catch-up)
             for name in names:
                 out.append(("task_reminder", name,
                             f"task:{restaurant_id}:{a['id']}:{l['line_id']}:{staff_settings.name_key(name)}",
-                            f"Due in {max(1, int(round(mins)))} min: {label}"[:120],
-                            f"{a['title'] or a['job_code']} — due at {_clock(due)}. Tick it off in Tasks.",
+                            (f"Overdue: {label}" if late else f"Due in {max(1, int(round(mins)))} min: {label}")[:120],
+                            f"{a['title'] or a['job_code']} — {'was ' if late else ''}due at {_clock(due)}. "
+                            "Tick it off in Tasks.",
                             {"tab": "tasks", "assignment_id": a["id"], "line_id": l["line_id"], "event": "task_due"},
                             a["task_date"]))
     return out

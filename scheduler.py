@@ -3928,7 +3928,10 @@ def food_cost_diagnoses_pass(day=None):
             "SELECT id FROM restaurants WHERE module_inventory=1 AND " + _served_client_sql()).fetchall()]
     finally:
         conn.close()
-    return strategy_jobs.fan_out("food_cost_diagnosis", ids, day or _chi_now().date())
+    # The scheduled class (blind re-audit 10/20/26 R1-03): a morning brief
+    # waits on its own restaurant's row, so these go ahead of the nightly
+    # bulk learners instead of behind thousands of them.
+    return strategy_jobs.fan_out("food_cost_diagnosis", ids, day or _chi_now().date(), priority_class="scheduled")
 
 
 def run_food_cost_diagnoses():
@@ -5128,13 +5131,22 @@ class _PulsedOps:
         """Newly the lease holder: its record of completed ticks starts again,
         so ticks from before a stand-by do not count for or against it; and a
         job a dead holder was inside is no longer "running" — it would read
-        as wedged until this runner's first job replaced it."""
+        as wedged until this runner's first job replaced it. The retries a
+        previous runner had pending come back from the database (R1-10:
+        they lived in its memory and died with it)."""
         self._ticks = 0
         self._completed_at = None
         try:
             record_running_job(None)
         except Exception:
             pass
+        try:
+            now_m, now_w = time.monotonic(), time.time()
+            with self._retry_lock:
+                for claim, period, attempt, at in _ops.pending_retries():
+                    self._retries[(claim, period)] = {"attempt": attempt, "at": now_m + max(0.0, at - now_w)}
+        except Exception as e:
+            log.warning(f"pending retries not restored: {e}")
 
     def begin_tick(self):
         self._claimed = {}
@@ -5221,6 +5233,22 @@ class _PulsedOps:
                     _submit_dsr_sweep(self, _chi_now())
                 except Exception as e:
                     log.error(f"DSR sweep not submitted from the pulse: {e}")
+                # So do the minute jobs and the briefs (blind re-audit
+                # 10/20/26 R1-02, R1-11): their lanes are started from here
+                # too, so a long inline job never holds a reminder or a
+                # brief.
+                try:
+                    _submit_minute_jobs(self, _chi_now())
+                except Exception as e:
+                    log.error(f"minute jobs not submitted from the pulse: {e}")
+                try:
+                    _submit_intraday(self, _chi_now())
+                except Exception as e:
+                    log.error(f"intraday slot not submitted from the pulse: {e}")
+                try:
+                    _submit_briefs(self, _chi_now())
+                except Exception as e:
+                    log.error(f"morning briefs not submitted from the pulse: {e}")
             # Outside the duties' lock: a slow monitor never holds them up.
             if within and self._keeping_up():
                 _ops.ping_healthcheck()
@@ -5280,7 +5308,9 @@ class _PulsedOps:
             self._after(name, claim, period, spec, outcome)
 
     def _after(self, name, claim, period, spec, outcome):
-        """A failed retryable job gives its period back after a backoff."""
+        """A failed retryable job gives its period back after a backoff —
+        kept in the database too (ops.record_retry), so a deploy before the
+        retry no longer loses it (R1-10)."""
         if period is None:
             return
         key = (claim, period)
@@ -5288,7 +5318,8 @@ class _PulsedOps:
             "result" in outcome and _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED)
         with self._retry_lock:
             if not failed:
-                self._retries.pop(key, None)
+                if self._retries.pop(key, None) is not None:
+                    _ops.clear_retry(claim, period)
                 return
             if not spec.get("retry") or spec.get("sends") or len(jobs_registry.jobs_for_claim(claim)) > 1:
                 return
@@ -5297,8 +5328,10 @@ class _PulsedOps:
             if attempt >= len(backoff):
                 log.error(f"{name} failed for {period} after {attempt} retries — the period stays spent")
                 self._retries.pop(key, None)
+                _ops.clear_retry(claim, period)
                 return
             self._retries[key] = {"attempt": attempt + 1, "at": time.monotonic() + backoff[attempt] * 60}
+            _ops.record_retry(claim, period, attempt + 1, time.time() + backoff[attempt] * 60)
         log.warning(f"{name} failed for {period}; retry {attempt + 1} in {backoff[attempt]} minutes")
 
     def run_in_lane(self, lane, name, fn, *args, **kwargs):
@@ -5357,31 +5390,79 @@ class _Lane:
     this process holds the scheduler lease, through ops.run_job (recorded,
     captured, pulse-stamped), with a pulse that renews the lease while it
     runs. It never stamps the loop's heartbeat: a live lane must not make a
-    dead loop look alive."""
+    dead loop look alive.
+
+    A lane may also run a CHAIN — several short jobs one after another, each
+    its own ops.run_job (submit_chain: the minute jobs, R1-02).
+
+    Its lease renewal follows the lease keeper's rule (blind re-audit
+    10/20/26 R1-12): only while the loop is healthy (_LeaseKeeper._healthy)
+    and this lane's own job is inside twice its bound — a lane renewing
+    every pulse kept a wedged runner's lease forever. A lane stuck past its
+    bound is told and, past three times it, replaced (watch_lanes)."""
 
     def __init__(self, name):
         self.name = name
         self._lock = threading.Lock()
         self._thread = None
-        self._job = None            # the job submitted, until its thread ends
+        self._job = None            # the job (or chain of jobs) submitted, until its thread ends
+        self._current = None        # (job name, time.monotonic() it started) while one runs
+        self.stuck_told = False
 
     def busy(self):
         return self._thread is not None and self._thread.is_alive()
 
     def holds(self, job_name):
         """Whether `job_name` is this lane's job right now (submitted or
-        running)."""
-        return self.busy() and self._job == job_name
+        running) — or one link of its chain."""
+        if not self.busy():
+            return False
+        return job_name in self._job if isinstance(self._job, tuple) else self._job == job_name
+
+    def current(self):
+        """(job name, seconds it has run) of the job this lane runs now, or
+        (None, None)."""
+        cur = self._current
+        if not self.busy() or cur is None:
+            return None, None
+        return cur[0], time.monotonic() - cur[1]
+
+    def _within(self, factor):
+        name, ran = self.current()
+        return name is None or ran <= factor * jobs_registry.max_minutes(name) * 60.0
 
     def submit(self, job_name, fn, *args, _on_done=None, **kwargs):
         with self._lock:
             if self.busy():
                 return False
-            self._job = job_name
+            self._job, self._current, self.stuck_told = job_name, None, False
             self._thread = threading.Thread(target=self._run, args=(job_name, fn, args, kwargs, _on_done),
                                             daemon=True, name=f"scheduler-lane-{self.name}")
             self._thread.start()
             return True
+
+    def submit_chain(self, items, _on_done=None):
+        """Run `items` [(job name, fn, kwargs)] one after another on this
+        lane, each recorded as its own run. False when the lane is busy."""
+        items = list(items or ())
+        if not items:
+            return False
+        with self._lock:
+            if self.busy():
+                return False
+            self._job, self._current, self.stuck_told = tuple(n for n, _f, _k in items), None, False
+            self._thread = threading.Thread(target=self._run_chain, args=(items, _on_done),
+                                            daemon=True, name=f"scheduler-lane-{self.name}")
+            self._thread.start()
+            return True
+
+    def _run_chain(self, items, on_done=None):
+        try:
+            for name, fn, kwargs in items:
+                self._run_job(name, fn, (), dict(kwargs or {}))
+        finally:
+            if on_done is not None:
+                on_done()
 
     def _run(self, job_name, fn, args, kwargs, on_done=None):
         try:
@@ -5399,11 +5480,15 @@ class _Lane:
             log.error(f"lane {self.name}: {job_name} not started — this process no longer holds the lease")
             return
         stop = threading.Event()
+        self._current = (job_name, time.monotonic())
 
         def _renew():
             while not stop.wait(_pulse_interval()):
                 try:
-                    _ops.acquire_scheduler_lease()
+                    # The keeper's rule (R1-12): a wedged loop, or this lane
+                    # stuck past twice its job's bound, lets the lease go.
+                    if self._within(2) and _LEASE_KEEPER._healthy():
+                        _ops.acquire_scheduler_lease()
                 except Exception:
                     pass
         keeper = threading.Thread(target=_renew, daemon=True, name=f"scheduler-lane-{self.name}-lease")
@@ -5414,6 +5499,7 @@ class _Lane:
             log.error(f"lane {self.name}: {job_name} crashed outside run_job: {e}")
         finally:
             stop.set()
+            self._current = None
 
     def join(self, timeout=None):
         t = self._thread
@@ -5455,8 +5541,152 @@ class _Lane:
 # "fetch" (INF-9): the review fetch, four times a day, up to its three-hour
 # bound; its 8pm slot overlapped the East Coast closes and held live labor
 # and the staff reminders.
+#
+# "minute" and "live" (blind re-audit 10/20/26 R1-02): the jobs that owe
+# people minutes — the batch collector, the DSR delivery and the staff
+# reminders ("minute"); live labor and the POS schedule push, both POS-bound
+# ("live") — ran at the top of a tick on the loop thread, so at scale an
+# hour's first tick (the hourly per-restaurant walks, the intraday slot, the
+# briefs) held them 20-50 minutes and a critical task line's reminder was
+# never sent. Each lane runs its due jobs as a chain, submitted by the tick
+# AND by the pulse of whatever inline job holds the loop
+# (_submit_minute_jobs). "intraday" (R1-02): the 20-minute service slot's
+# nine jobs (capture, pre-dinner pulse, coverage, task sheets, …) as one
+# chain (_submit_intraday) — inline they took up to ~40 minutes at scale.
+#
+# "brief" (R1-11): the morning brief pass, BRIEF_WORKERS restaurants at
+# once, each held only while ITS OWN inputs are unsettled (_brief_hold,
+# R1-03) — inline, one 4-minute pass a tick held everything after it.
 _LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep"), "dsr": _Lane("dsr"),
-          "pos": _Lane("pos"), "fetch": _Lane("fetch")}
+          "pos": _Lane("pos"), "fetch": _Lane("fetch"), "minute": _Lane("minute"), "live": _Lane("live"),
+          "intraday": _Lane("intraday"), "brief": _Lane("brief")}
+
+
+def _minute_chain(ops_, chain, lane, name, period, fn):
+    """Add `name` (its `period` already claimed) to `lane`'s chain — unless a
+    run of it is still going (a Run now, a lane a previous pass left
+    running), when its period goes back."""
+    if ops_._already_running(name, None) or _LANES[lane].holds(name):
+        ops_.release_period(name, period)
+        return
+    chain.setdefault(lane, []).append((name, period, fn))
+
+
+def _submit_minute_jobs(ops_, now):
+    """Claim the due slot of each job that owes people minutes and start
+    them on their lanes, one chain a lane (R1-02). A lane still running its
+    last chain claims nothing: the next pulse or tick does. Called by the
+    loop's tick and by the pulse of an inline job (_PulsedOps._pulse).
+    Returns how many jobs were started."""
+    today = now.date()
+    chain = {}
+    if not _LANES["minute"].busy():
+        # Every tick, claimed per 5-minute slot — the Message Batches
+        # collector (ai_batches.run_collector, AI cost audit 10/7/26 #19):
+        # ended batches' answers ledgered at the batch rate and handed to
+        # their callbacks. First in its chain, ahead of the DSR delivery.
+        if ops_.claim_period("ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}"):
+            from ai_batches import run_collector as _run_batch_collector
+            _minute_chain(ops_, chain, "minute", "ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}",
+                          _run_batch_collector)
+        # Every 10-minute slot — DSR pushes held through a restaurant's quiet
+        # hours go out once they end (dsr.deliver.release_held). Bounded;
+        # the held rows are the queue, each taken before it is sent.
+        if ops_.claim_period("dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}"):
+            from dsr.deliver import release_held
+            _minute_chain(ops_, chain, "minute", "dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}",
+                          release_held)
+        # Every 10-minute slot — staff reminders: a push about an hour before
+        # each published shift and ~15 minutes before a critical task line
+        # is due (with catch-up for a pass that came late), each claimed once
+        # per person; then the staff texts held through the night.
+        if ops_.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
+            from staff_reminders import run_job as _run_staff_reminders
+            _minute_chain(ops_, chain, "minute", "staff_reminders", f"{today}-{now.hour}-{now.minute // 10}",
+                          _run_staff_reminders)
+    if not _LANES["live"].busy():
+        # Every 10 minutes — published weeks to the POS time clock where the
+        # owner turned the push on (pos_schedule_push). Every 15 — live labor
+        # to date and the one legal, priced move (labor_live; each
+        # restaurant claimed per quarter hour inside).
+        if ops_.claim_period("pos_schedule_push", f"{today}-{now.hour}-{now.minute // 10}"):
+            from pos_schedule_push import run_queue as _run_pos_push
+            _minute_chain(ops_, chain, "live", "pos_schedule_push", f"{today}-{now.hour}-{now.minute // 10}",
+                          _run_pos_push)
+        if ops_.claim_period("live_labor", f"{today}-{now.hour}-{now.minute // 15}"):
+            from labor_live import run_live_labor as _run_live_labor
+            _minute_chain(ops_, chain, "live", "live_labor", f"{today}-{now.hour}-{now.minute // 15}",
+                          _run_live_labor)
+    started = 0
+    for lane, items in chain.items():
+        if _LANES[lane].submit_chain([(name, fn, {}) for name, _period, fn in items]):
+            started += len(items)
+        else:
+            for name, period, _fn in items:
+                ops_.release_period(name, period)
+    return started
+
+
+def _intraday_item(name, fn, slot):
+    """One link of the intraday chain: `name` run over the slot's
+    restaurants under the one "intraday" claim."""
+    return (name, fn, {"restaurants": slot, "claim": "intraday"})
+
+
+def _submit_intraday(ops_, now):
+    """During service — the only part of the product that can see a day
+    while it is happening (Toast and RPOWER both post during service).
+    Claimed per 20-minute slot and run as one chain on the "intraday" lane
+    (blind re-audit 10/20/26 R1-02), submitted by the tick and by an inline
+    job's pulse. The restaurants are read ONCE per slot and handed to every
+    job; each is a bounded, resumable sweep with its own cursor
+    (strategy_jobs._slot_sweep, DH5-9). Returns whether the chain started."""
+    lane = _LANES["intraday"]
+    if lane.busy():
+        return False
+    today = now.date()
+    slot_key = f"{today}-{now.hour}-{now.minute // 20}"
+    if not ops_.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
+        return False
+    try:
+        items = _intraday_items()
+    except Exception:
+        ops_.release_period("intraday", slot_key)
+        raise
+    # One check covers the nine: each runs under the "intraday" claim.
+    if ops_._already_running("intraday", None) or not lane.submit_chain(items):
+        ops_.release_period("intraday", slot_key)
+        return False
+    return True
+
+
+def _intraday_items():
+    """The intraday chain, in order, over the slot's restaurants."""
+    from strategy_jobs import (run_intraday_capture, run_pre_dinner_pulse, run_coverage_check, run_preshift_nudge,
+                               run_closing_summary, run_demand_opportunity, slot_restaurants)
+    from staff_knowledge import run_cert_reminders
+    import task_sheets as _task_sheets
+    from event_intel.gameday import run_event_push
+    _slot = slot_restaurants()
+    return [
+        _intraday_item("intraday_capture", run_intraday_capture, _slot),
+        _intraday_item("pre_dinner_pulse", run_pre_dinner_pulse, _slot),
+        _intraday_item("coverage_check", run_coverage_check, _slot),
+        _intraday_item("preshift_nudge", run_preshift_nudge, _slot),
+        # A certificate about to expire, told to its holder and the owner
+        # once (10am local; staff_knowledge, employee audit V9).
+        _intraday_item("cert_reminders", run_cert_reminders, _slot),
+        # How tonight went, once the doors are shut.
+        _intraday_item("closing_summary", run_closing_summary, _slot),
+        # Task sheets: today's issued from the published schedule, a
+        # critical line past due texts the manager, an ended shift closes.
+        _intraday_item("task_sheets", _task_sheets.run_job, _slot),
+        # A quiet night two days out, once a week.
+        _intraday_item("demand_opportunity", run_demand_opportunity, _slot),
+        # The afternoon before a game measured big here, one push per game
+        # (Event Intelligence phase 3).
+        _intraday_item("event_push", run_event_push, _slot),
+    ]
 
 
 def _submit_dsr_sweep(ops_, now):
@@ -5497,26 +5727,33 @@ _SWEEP_DONE = threading.Event()
 SWEEP_FOLLOW_SECONDS = 5
 
 
-def _tick_pause():
-    """The pause between ticks: SCHEDULER_TICK_SECONDS, or until the sweep
-    lane's running job ends (then SWEEP_FOLLOW_SECONDS more), or only
+def _tick_pause(tick_began=None):
+    """The pause between ticks: what is left of SCHEDULER_TICK_SECONDS since
+    the tick began (`tick_began`, time.monotonic()) — a tick that took 40
+    minutes is followed by the next one at once, not five minutes later
+    (blind re-audit 10/20/26 R1-02: the period was the tick's own length
+    plus five minutes) — never less than SWEEP_FOLLOW_SECONDS; or until the
+    sweep lane's running job ends (then SWEEP_FOLLOW_SECONDS more), or only
     SWEEP_FOLLOW_SECONDS when one ended during the tick. Always exactly one
     time.sleep, so a test's stand-in for the sleep still ends each tick."""
     if _SWEEP_DONE.is_set():
         _SWEEP_DONE.clear()
         time.sleep(SWEEP_FOLLOW_SECONDS)
         return
+    left = float(SCHEDULER_TICK_SECONDS)
+    if tick_began is not None:
+        left = max(float(SWEEP_FOLLOW_SECONDS), left - (time.monotonic() - tick_began))
     lane = _LANES["sweep"]
     if lane.busy():
         began = time.monotonic()
-        lane.join(SCHEDULER_TICK_SECONDS)
+        lane.join(left)
         if not lane.busy():
             _SWEEP_DONE.clear()
             time.sleep(SWEEP_FOLLOW_SECONDS)
             return
-        time.sleep(max(0.0, SCHEDULER_TICK_SECONDS - (time.monotonic() - began)))
+        time.sleep(max(0.0, left - (time.monotonic() - began)))
         return
-    time.sleep(SCHEDULER_TICK_SECONDS)
+    time.sleep(left)
 
 
 # Inputs whose work the job fans out onto the queue (SCALE-07): settled only
@@ -5541,6 +5778,142 @@ def _morning_input_pending(ops, now, inputs=BRIEF_INPUTS):
                     return job
             except Exception as e:
                 log.warning(f"queued input {job} not read: {e}")
+    return None
+
+
+# How long past a restaurant's OWN brief hour its brief waits for inputs
+# that are not settled (blind re-audit 10/20/26 R1-03), never past
+# BRIEF_INPUT_WAIT_UNTIL_HOUR Chicago, which no restaurant waits beyond.
+BRIEF_INPUT_GRACE_MINUTES = int(os.getenv("BRIEF_INPUT_GRACE_MINUTES", "60"))
+
+
+class _BriefHold:
+    """Whether one restaurant's brief waits this pass (R1-03). The gate was
+    one for the whole fleet: while any 5-6am input was unsettled for ANY
+    restaurant, no brief went anywhere until 8am Chicago — an East Coast
+    7am brief at 9am ET. Now a brief waits only while a fleet sweep it reads
+    is unsettled or ITS OWN queued row (the food cost diagnosis) is open,
+    and only until its own brief hour plus BRIEF_INPUT_GRACE_MINUTES."""
+
+    def __init__(self, fleet_input, own_open, db_path=None):
+        self.fleet_input, self.own_open = fleet_input, set(own_open or ())
+        self.db_path = db_path
+        self._info = None
+
+    def _restaurants(self):
+        if self._info is None:
+            from models import get_conn
+            conn = get_conn(self.db_path) if self.db_path else get_conn()
+            try:
+                self._info = {int(r["id"]): (r["timezone"] or None, int(r["morning_brief_hour"] or 7))
+                              for r in conn.execute("SELECT id, timezone, morning_brief_hour FROM restaurants")}
+            finally:
+                conn.close()
+        return self._info
+
+    def __call__(self, restaurant_id) -> bool:
+        if self.fleet_input is None and int(restaurant_id) not in self.own_open:
+            return False
+        try:
+            from time_utils import restaurant_now
+            tz, hour = self._restaurants().get(int(restaurant_id), (None, 7))
+            local = restaurant_now(tz, naive=True)
+            opens = local.replace(hour=max(0, min(23, int(hour))), minute=0, second=0, microsecond=0)
+            return local < opens + timedelta(minutes=BRIEF_INPUT_GRACE_MINUTES)
+        except Exception as e:
+            log.warning(f"brief hold for restaurant {restaurant_id} not read: {e}")
+            return False
+
+
+def _brief_hold(ops_, now):
+    """The hold the brief pass applies (a _BriefHold), or None when nothing
+    it reads is pending — always None from BRIEF_INPUT_WAIT_UNTIL_HOUR
+    (Chicago) on. A fleet sweep unsettled holds every restaurant (each to
+    its own grace); a queued input holds only the restaurants whose own
+    rows are open (strategy_jobs.open_restaurants)."""
+    if now.hour >= BRIEF_INPUT_WAIT_UNTIL_HOUR:
+        return None
+    day = str(now.date())
+    own = set()
+    for job, hour in BRIEF_INPUTS:
+        if now.hour < hour:
+            continue
+        if not ops_.settled(job, day):
+            return _BriefHold(job, ())
+        if job in QUEUED_INPUTS:
+            try:
+                import strategy_jobs
+                own |= strategy_jobs.open_restaurants(QUEUED_INPUTS[job], day)
+            except Exception as e:
+                log.warning(f"queued input {job} not read: {e}")
+    return _BriefHold(None, own) if own else None
+
+
+def _submit_briefs(ops_, now):
+    """Start the morning brief pass on the "brief" lane (R1-11), each
+    restaurant held only by its own inputs (_brief_hold, R1-03). Called by
+    the tick (at its top and its end) and by the pulse of an inline job; a
+    busy lane is left to finish. Returns whether a pass was started."""
+    if _LANES["brief"].busy():
+        return False
+    import morning_brief as _mb
+    return bool(ops_.run_in_lane("brief", "morning_brief", _mb.run_due, hold=_brief_hold(ops_, now)))
+
+
+# A lane whose job has run past this many times its bound is told once; past
+# LANE_REPLACE_FACTOR it is replaced (R1-12).
+LANE_STUCK_FACTOR = 2
+LANE_REPLACE_FACTOR = 3
+
+
+def watch_lanes():
+    """The lane watchdog (blind re-audit 10/20/26 R1-12), from the platform
+    supervisor's tick: nothing restarted a lane whose thread was alive but
+    stuck, and its own lease renewals hid a wedged runner. A lane job past
+    LANE_STUCK_FACTOR x its bound is captured and paged once; past
+    LANE_REPLACE_FACTOR x the lane is swapped for a fresh one — the stuck
+    daemon thread is abandoned (the job's claims and per-restaurant claims
+    keep its work from running twice) so the lane's next job can start.
+    Returns {lane: "stuck" | "replaced"}."""
+    out = {}
+    with _LANE_WATCH_LOCK:
+        for name, lane in list(_LANES.items()):
+            got = _watch_lane(name, lane)
+            if got:
+                out[name] = got
+    return out
+
+
+_LANE_WATCH_LOCK = threading.Lock()
+
+
+def _watch_lane(name, lane):
+    """One lane's watchdog step: "stuck", "replaced" or None."""
+    job, ran = lane.current()
+    if not job or _LANES.get(name) is not lane:
+        return None
+    bound = jobs_registry.max_minutes(job) * 60.0
+    if ran > LANE_REPLACE_FACTOR * bound:
+        _LANES[name] = _Lane(name)
+        log.error(f"lane {name}: {job} has run {int(ran // 60)} minutes (bound {int(bound // 60)}) — "
+                  "the lane was replaced; the stuck thread is abandoned")
+        try:
+            _ops.capture(RuntimeError(f"lane {name} stuck in {job} for {int(ran // 60)} minutes; replaced"),
+                         job=job, context="lane watchdog")
+        except Exception:
+            pass
+        return "replaced"
+    if ran > LANE_STUCK_FACTOR * bound and not lane.stuck_told:
+        lane.stuck_told = True
+        line = (f"{job} has run {int(ran // 60)} minutes on the {name} lane, past twice its "
+                f"{int(bound // 60)}-minute bound. The lane is replaced at three times it.")
+        log.error(line)
+        try:
+            _ops.capture(RuntimeError(line), job=job, context="lane watchdog")
+            _ops.page_operator(f"lane_stuck:{name}", f"Scheduler lane {name} stuck in {job}", [line])
+        except Exception:
+            pass
+        return "stuck"
     return None
 
 
@@ -5691,6 +6064,7 @@ def scheduler_loop():
     _ops = _PulsedOps()
 
     while True:
+        _this_tick = None                # when this tick began (time.monotonic()), for _tick_pause
         try:
             # One scheduler per deployment, enforced in the database rather
             # than by gunicorn's worker count. A second process idles here
@@ -5714,6 +6088,7 @@ def scheduler_loop():
                 _ops.became_runner()
                 _ops.close_orphaned_runs()
             _ops.begin_tick()
+            _this_tick = _ops._tick_began
             # The heartbeat is stamped only at the END of a tick (DH2-2): a
             # tick that died after stamping it at the top — the 9/19
             # UnboundLocalError — left a fresh heartbeat over a loop that ran
@@ -5732,18 +6107,19 @@ def scheduler_loop():
             # ran at the end of the tick, after every daily job that came
             # due in it — a 5am morning held them behind the whole sweep
             # chain. None of them reads what the nightly jobs below write.
+            #
+            # They run on their own lanes now, never on the loop thread
+            # (blind re-audit 10/20/26 R1-02): the batch collector, the DSR
+            # delivery and the staff reminders on "minute", live labor and
+            # the POS schedule push on "live" — submitted here AND by the
+            # pulse of whatever inline job holds the loop, so an hour's
+            # first tick (the hourly walks, the intraday slot) no longer
+            # holds them 20-50 minutes (_submit_minute_jobs).
+            _submit_minute_jobs(_ops, now)
             # The minute duties (scheduled posts, undo windows, issue
-            # escalations, held alerts, the outboxes) run with the first of
-            # them: its pulse starts them as soon as it starts (_PulsedOps).
-
-            # Every tick, claimed per 5-minute slot — the Message Batches
-            # collector (ai_batches.run_collector, AI cost audit 10/7/26
-            # #19): ended batches' answers ledgered at the batch rate and
-            # handed to their callbacks. Before the DSR sweep, so a narrative
-            # that came back is finalised in the same tick.
-            if _ops.claim_period("ai_batch_collect", f"{today}-{now.hour}-{now.minute // 5}"):
-                from ai_batches import run_collector as _run_batch_collector
-                _ops.run_job("ai_batch_collect", _run_batch_collector)
+            # escalations, held alerts, the outboxes) run in the pulse of
+            # the first inline job, as soon as it starts when they are due
+            # (_PulsedOps._pulse), and at the end of the tick otherwise.
 
             # Every tick, claimed per 10-minute slot — the nightly DSR
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
@@ -5777,81 +6153,21 @@ def scheduler_loop():
             if _pgs.enabled() and _ops.claim_period("pg_shadow", f"{today}-{now.hour}-{now.minute // 10}"):
                 _ops.run_job("pg_shadow", _pgs.run_shadow_pass)
 
-            # Every tick, claimed per 10-minute slot — DSR pushes held through
-            # a restaurant's quiet hours go out once they end
-            # (dsr.deliver.release_held). Bounded; the held rows are the
-            # queue, and each is taken (held -> sending) before it is sent.
-            if _ops.claim_period("dsr_delivery", f"{today}-{now.hour}-{now.minute // 10}"):
-                from dsr.deliver import release_held
-                _ops.run_job("dsr_delivery", release_held)
-
-            # Every tick, claimed per 10-minute slot — staff reminders: a push
-            # about an hour before each published shift and ~15 minutes before
-            # a critical task line is due, each claimed once per person; then
-            # the staff texts held through the night (staff_reminders).
-            # Bounded and resumable inside.
-            if _ops.claim_period("staff_reminders", f"{today}-{now.hour}-{now.minute // 10}"):
-                from staff_reminders import run_job as _run_staff_reminders
-                _ops.run_job("staff_reminders", _run_staff_reminders)
-
-            # Every 10 minutes — published weeks to the POS time clock where
-            # the owner turned the push on (pos_schedule_push; the queue is
-            # the cursor, a POS-side failure retried). Every 15 — live labor
-            # to date and the one legal, priced move (labor_live; each
-            # restaurant claimed per quarter hour inside).
-            if _ops.claim_period("pos_schedule_push", f"{today}-{now.hour}-{now.minute // 10}"):
-                from pos_schedule_push import run_queue as _run_pos_push
-                _ops.run_job("pos_schedule_push", _run_pos_push)
-            if _ops.claim_period("live_labor", f"{today}-{now.hour}-{now.minute // 15}"):
-                from labor_live import run_live_labor as _run_live_labor
-                _ops.run_job("live_labor", _run_live_labor)
-
             # During service — the only part of the product that can see a
             # day while it is happening (Toast and RPOWER both post during
             # service). Capture is hourly per restaurant, the pulse
             # is one push before dinner, coverage runs while they're open.
-            if _ops.claim_period("intraday", f"{today}-{now.hour}-{now.minute // 20}"):
-                # The restaurants are read ONCE per slot and handed to all
-                # six jobs; each is a bounded, resumable sweep with its own
-                # cursor (strategy_jobs._slot_sweep, DH5-9).
-                from strategy_jobs import (run_intraday_capture, run_pre_dinner_pulse, run_coverage_check,
-                                           slot_restaurants)
-                _slot = slot_restaurants()
-                _ops.run_job("intraday_capture", run_intraday_capture, restaurants=_slot, claim="intraday")
-                _ops.run_job("pre_dinner_pulse", run_pre_dinner_pulse, restaurants=_slot, claim="intraday")
-                _ops.run_job("coverage_check", run_coverage_check, restaurants=_slot, claim="intraday")
-                from strategy_jobs import run_preshift_nudge
-                _ops.run_job("preshift_nudge", run_preshift_nudge, restaurants=_slot, claim="intraday")
-                # A certificate about to expire, told to its holder and the
-                # owner once (10am local; staff_knowledge, employee audit V9).
-                from staff_knowledge import run_cert_reminders
-                _ops.run_job("cert_reminders", run_cert_reminders, restaurants=_slot, claim="intraday")
-                # How tonight went, once the doors are shut — the one part
-                # of the day nothing reported on while the owner could
-                # still picture the room.
-                from strategy_jobs import run_closing_summary
-                _ops.run_job("closing_summary", run_closing_summary, restaurants=_slot, claim="intraday")
-                # Task sheets: today's issued from the published schedule, a
-                # critical line past due texts the manager, an ended shift
-                # closes (task_sheets.py).
-                import task_sheets as _task_sheets
-                _ops.run_job("task_sheets", _task_sheets.run_job, restaurants=_slot, claim="intraday")
-                # A quiet night two days out, once a week — the one area of
-                # the product that produced no notification at all.
-                from strategy_jobs import run_demand_opportunity
-                _ops.run_job("demand_opportunity", run_demand_opportunity, restaurants=_slot, claim="intraday")
-                # The afternoon before a game measured big here, one push per
-                # game (Event Intelligence phase 3).
-                from event_intel.gameday import run_event_push
-                _ops.run_job("event_push", run_event_push, restaurants=_slot, claim="intraday")
+            # On its own lane since the blind re-audit of 10/20/26 (R1-02):
+            # nine jobs back to back (up to ~40 minutes at scale) held the
+            # loop, and an hour's long first tick held them in turn.
+            _submit_intraday(_ops, now)
 
-            # The morning briefs, here too when what they read is settled
-            # (_morning_input_pending); otherwise at the end of the tick.
-            _briefs_ran = False
-            if _morning_input_pending(_ops, now) is None:
-                import morning_brief as _mb
-                _ops.run_job("morning_brief", _mb.run_due)
-                _briefs_ran = True
+            # The morning briefs, on their own lane (R1-11), each restaurant
+            # held only while ITS OWN inputs are unsettled (R1-03,
+            # _brief_hold); started again at the end of the tick and by an
+            # inline job's pulse, so a brief whose inputs settle meanwhile
+            # goes then.
+            _submit_briefs(_ops, now)
 
             # Monday 6am — run competitor analysis for all clients
             # 2am daily — backup DB to email
@@ -6542,20 +6858,23 @@ def scheduler_loop():
                 _ops.run_job("business_metrics", snapshot_business_metrics, day=str(_metrics_day))
 
             # Every tick — morning briefs go at each restaurant's own local
-            # hour and claim themselves per restaurant per day. A job run of
-            # its own, with the pulse (#31): it wrote none at all. At the
-            # top of the tick when what they read is settled (#54), else
-            # here, after the tick's own 5-6am work — and not at all this
-            # tick while the sweep lane is still writing it (until
-            # BRIEF_INPUT_WAIT_UNTIL_HOUR).
-            if not _briefs_ran and _morning_input_pending(_ops, now) is None:
-                import morning_brief as _mb
-                _ops.run_job("morning_brief", _mb.run_due)
+            # hour and claim themselves per restaurant per day (a job run of
+            # its own, #31). Here again after the tick's own 5-6am work: a
+            # restaurant held at the top (its inputs unsettled) goes now if
+            # they have settled since — never past its own brief hour plus
+            # BRIEF_INPUT_GRACE_MINUTES (R1-03).
+            _submit_briefs(_ops, now)
 
             # Daily — drop login-attempt rows older than two days.
             if _ops.claim_period("prune_login_attempts", str(today)):
                 _ops.run_job("prune_login_attempts", run_prune_login_attempts)
 
+            # The lane watchdog here too (R1-12): a scheduler process of its
+            # own (worker.py --scheduler) has no platform supervisor.
+            try:
+                watch_lanes()
+            except Exception as e:
+                log.warning(f"lane watchdog failed: {e}")
             try:
                 run_health_checks()
             except Exception:
@@ -6584,8 +6903,9 @@ def scheduler_loop():
         # its own "already ran for this hour/date" marker, so a faster tick
         # doesn't re-run any of them — it exists so a post scheduled for 11am
         # publishes within a few minutes of 11am. A sweep-lane job finishing
-        # starts the next tick early (_tick_pause).
-        _tick_pause()
+        # starts the next tick early, and a long tick is followed at once
+        # (_tick_pause — R1-02: the pause is what is LEFT of the interval).
+        _tick_pause(_this_tick)
 
 
 def scheduling_allowed():

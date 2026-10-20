@@ -515,11 +515,12 @@ def test_the_queued_delivery_runs_the_batch_and_queues_the_rest(db, quiet, monke
         "sent": [1], "failed": [], "unreachable": [], "pending": ["Bo"], "attempted": 1, "hit_bound": True})
     sp.queue_delivery(7, "b9")
     sp.queue_delivery(7, "b9")                                    # one row a round
-    job = jq.claim("w", groups=("bulk",))
+    # The notify group since the blind re-audit of 10/20/26 (R1-08).
+    job = jq.claim("w", groups=("notify",))
     assert job["kind"] == "schedule_notices" and job.payload == {"restaurant_id": 7, "batch": "b9", "round": 0}
     out = jq.run_one(job)
     assert out["pending"] == 1 and calls[0]["batch"] == "b9" and calls[0]["budget_seconds"] == sp.NOTICE_QUEUE_SECONDS
-    nxt = jq.claim("w", groups=("bulk",))
+    nxt = jq.claim("w", groups=("notify",))
     assert nxt is not None and nxt.payload["round"] == 1
 
 
@@ -536,7 +537,7 @@ def test_auto_publish_fans_out_one_queue_row_a_restaurant(db, quiet, monkeypatch
     out = scheduler.run_auto_publish_schedules(enqueue=True)
     assert out["queued"] == 1 and out["ok"] == 1 and seen == []      # no gate run on the scheduler thread
     assert scheduler.run_auto_publish_schedules(enqueue=True)["queued"] == 0   # the same day queues nothing new
-    job = quiet.claim("w", groups=("bulk",))
+    job = quiet.claim("w", groups=("notify",))                       # R1-08: never behind the learners
     assert job["kind"] == "auto_publish" and job.payload == {"restaurant_id": rid}
     quiet.run_one(job)
     assert seen == [rid]                                              # the row runs the restaurant's own check

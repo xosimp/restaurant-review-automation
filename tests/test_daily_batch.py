@@ -14,7 +14,7 @@ def _redirect(db_path, monkeypatch):
     monkeypatch.setattr(notify, "DB_PATH", db_path)
     monkeypatch.setattr(notify, "rush_release_at", lambda *a, **k: None)
     yield
-    notify._batch = None
+    notify.discard_daily_batch()
 
 
 @pytest.fixture

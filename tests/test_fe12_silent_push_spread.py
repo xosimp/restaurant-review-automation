@@ -53,6 +53,7 @@ def test_the_waiting_echo_still_goes_at_once(db, apns, monkeypatch):
 
 
 def test_the_queue_knows_the_kind():
-    assert job_queue.KINDS["silent_push"][0] == "bulk"
+    # The notify group since the blind re-audit of 10/20/26 (R1-08): never behind the learners.
+    assert job_queue.KINDS["silent_push"][0] == "notify"
     assert job_queue.HANDLERS["silent_push"] == "push:run_queued_silent"
     assert job_queue._resolve(job_queue.HANDLERS["silent_push"]) is push.run_queued_silent

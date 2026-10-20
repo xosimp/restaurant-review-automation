@@ -2865,7 +2865,32 @@ DAILY_BATCH_TYPES = {
     "critical_low", "price_spike", "ai_visibility_drop", "no_response",
 }
 
-_batch = None
+# The open batch is the CALLING THREAD's (blind re-audit 10/20/26 R9-18): it
+# was one process global, and the scheduler's lanes raise alerts on their own
+# threads (the review fetch's connection_lost) — a lane's raise_alert could
+# read the batch between the loop's check and its use (an AttributeError,
+# the week's claim already spent) or grow the dict the flush was iterating
+# ("dictionary changed size", the rest of the morning's sends and claims
+# aborted). Only the thread that began a batch collects into it.
+_batch_local = threading.local()
+
+
+def _open_batch():
+    """The batch this thread is collecting, or None."""
+    return getattr(_batch_local, "batch", None)
+
+
+def _open_batch_claims():
+    claims = getattr(_batch_local, "claims", None)
+    if claims is None:
+        claims = _batch_local.claims = []
+    return claims
+
+
+def discard_daily_batch():
+    """Drop this thread's open batch unsent (a test's stand-in for a deploy
+    between collecting and flushing)."""
+    _batch_local.batch, _batch_local.claims = None, []
 
 
 class _Pending:
@@ -2881,23 +2906,22 @@ class _Pending:
 # is flushed. _gated_out used to claim each restaurant's day as it collected,
 # so a deploy between collecting and flushing lost that day's alerts with the
 # claims already spent (MOD-NOT-16); now the next hourly pass re-collects.
-_batch_claims = []
+# Kept per thread with the batch (_open_batch_claims).
 
 
 def begin_daily_batch():
-    """Start collecting. Idempotent, and safe to call when one is already
-    open (the scheduler runs one pass at a time behind the lease)."""
-    global _batch, _batch_claims
-    _batch = {}
-    _batch_claims = []
+    """Start collecting on this thread. Idempotent, and safe to call when
+    one is already open (the scheduler runs one pass at a time behind the
+    lease)."""
+    _batch_local.batch, _batch_local.claims = {}, []
 
 
 def flush_daily_batch(db_path: str = DB_PATH):
-    """Send what was collected: one notification per restaurant when more
-    than one thing fired, otherwise exactly what would have gone before."""
-    global _batch, _batch_claims
-    pending, _batch = (_batch or {}), None
-    claims, _batch_claims = _batch_claims, []
+    """Send what this thread collected: one notification per restaurant when
+    more than one thing fired, otherwise exactly what would have gone
+    before."""
+    pending, claims = (_open_batch() or {}), list(getattr(_batch_local, "claims", None) or [])
+    _batch_local.batch, _batch_local.claims = None, []
     out = {"restaurants": 0, "combined": 0, "single": 0}
     for rid, items in pending.items():
         if not items:
@@ -3036,9 +3060,10 @@ def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str
             return False
     if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
         return False
-    if _batch is not None and (alert_type in DAILY_BATCH_TYPES or _low_engagement(restaurant_id, alert_type,
-                                                                                  db_path)):
-        _batch.setdefault(restaurant_id, []).append(
+    batch = _open_batch()
+    if batch is not None and (alert_type in DAILY_BATCH_TYPES or _low_engagement(restaurant_id, alert_type,
+                                                                                 db_path)):
+        batch.setdefault(restaurant_id, []).append(
             _Pending(alert_type, sms_text, subject, lines, value, recs))
         return True
     if html is None:
@@ -3472,12 +3497,12 @@ def _gated_out(restaurant_id, local_hour, claim_key, db_path: str = DB_PATH, unt
         if not (local_hour <= local.hour < until):
             return True
         job, period = f"{claim_key}:{restaurant_id}", local.date().isoformat()
-        if _batch is not None:
+        if _open_batch() is not None:
             # Inside the morning batch the day is claimed at flush, once the
             # alerts collected here have actually gone out (MOD-NOT-16).
             if ops.period_claimed(job, period):
                 return True
-            _batch_claims.append((job, period))
+            _open_batch_claims().append((job, period))
             return False
         return not ops.claim_period(job, period)
     except Exception:

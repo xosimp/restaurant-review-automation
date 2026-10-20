@@ -2425,6 +2425,8 @@ def adopt_legacy_db(db_path: str = DB_PATH):
 
 
 def init_db(db_path: str = DB_PATH):
+    import time as _time_boot
+    _boot_t0 = _time_boot.monotonic()        # the deferrable backfills' budget starts here (R1-14)
     adopt_legacy_db(db_path)
     conn = boot_conn(db_path)
     import db_dialect as _dialect
@@ -5117,11 +5119,8 @@ def init_db(db_path: str = DB_PATH):
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
-    # days carry their provenance.
-    try:
-        backfill_labor_periods(db_path=db_path)
-    except Exception as e:
-        print(f"[labor periods] boot backfill skipped: {e}")
+    # days carry their provenance. Deferrable past the boot budget (R1-14).
+    _boot_backfill(_boot_t0, "labor periods", lambda: backfill_labor_periods(db_path=db_path))
     # The two boot backfills below find their rows through partial indexes
     # (scale audit 10/19/26 DB-16): each read the whole schedule_history —
     # every week's CSV — on every boot, inside the healthcheck window, for
@@ -5155,28 +5154,78 @@ def init_db(db_path: str = DB_PATH):
     # Each stored week's shift projection (schedule_shifts, ARCH-7): newest
     # weeks first, bounded; the marker table is its own cursor, so the next
     # boot resumes where this one stopped (a reader uses the week's text for
-    # a week not projected yet).
-    try:
+    # a week not projected yet). Deferrable past the boot budget (R1-14).
+    def _shift_projection():
         import schedule_shifts as _ss_boot
         _ss_boot.backfill(db_path=db_path)
-    except Exception as e:
-        print(f"[schedule shifts] projection backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "schedule shifts projection", _shift_projection)
+
     # Requests from before they kept their shift's id, matched once (ARCH-6).
-    try:
+    def _shift_ids():
         import shift_requests as _srq_boot
         _srq_boot.backfill_shift_ids(db_path=db_path)
-    except Exception as e:
-        print(f"[shift requests] shift-id backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "shift-request shift ids", _shift_ids)
+
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
-    try:
+    def _people_and_facts():
         _people_boot.backfill_people(db_path=db_path, max_seconds=15)
         import shift_facts as _sf_boot
         _sf_boot.backfill_from_csv(db_path=db_path, max_seconds=15)
-    except Exception as e:
-        print(f"[people] boot backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "people", _people_and_facts)
     print(f"Database initialised at {db_path}")
+
+
+# Boot work vs the worker timeout (blind re-audit 10/20/26 R1-14): init_db
+# runs inside the gunicorn worker at import, under `--timeout 120` and the
+# 120-second Railway healthcheck — a worker that has not reached its loop by
+# then is killed and re-forked, and runs the whole boot again. The schema
+# (every ALTER, every index) always runs inline; the data backfills at the
+# end of init_db that their readers do without (each says so above) run
+# inline only while init_db is inside BOOT_BACKFILL_BUDGET_SECONDS, and past
+# it go to a thread the web process starts once it is serving
+# (run_deferred_boot_backfills). boot_events.boot_ms is the measure.
+BOOT_BACKFILL_BUDGET_SECONDS = float(os.getenv("BOOT_BACKFILL_BUDGET_SECONDS", "45") or 45)
+_DEFERRED_BOOT_BACKFILLS = []
+_deferred_boot_lock = threading.Lock()
+
+
+def _boot_backfill(boot_started, name, fn) -> bool:
+    """Run one deferrable boot backfill now, or — init_db past its budget —
+    keep it for run_deferred_boot_backfills. A failure is logged, never
+    raised (as each was). Returns whether it ran now."""
+    import time as _time_boot
+    _log = logging.getLogger(__name__)
+    if boot_started is not None and _time_boot.monotonic() - boot_started > BOOT_BACKFILL_BUDGET_SECONDS:
+        with _deferred_boot_lock:
+            _DEFERRED_BOOT_BACKFILLS.append((name, fn))
+        _log.warning("boot past %ss: the %s backfill runs after the boot", int(BOOT_BACKFILL_BUDGET_SECONDS), name)
+        return False
+    try:
+        fn()
+    except Exception as e:
+        _log.warning("[%s] boot backfill skipped: %s", name, e)
+    return True
+
+
+def run_deferred_boot_backfills() -> int:
+    """The boot backfills init_db left for after the boot (R1-14), one at a
+    time, on the caller's thread (hosted_dashboard starts one once the
+    worker serves). Returns how many ran."""
+    _log = logging.getLogger(__name__)
+    n = 0
+    while True:
+        with _deferred_boot_lock:
+            if not _DEFERRED_BOOT_BACKFILLS:
+                return n
+            name, fn = _DEFERRED_BOOT_BACKFILLS.pop(0)
+        try:
+            fn()
+            n += 1
+            _log.info("deferred boot backfill done: %s", name)
+        except Exception as e:
+            _log.warning("[%s] deferred boot backfill skipped: %s", name, e)
 
 
 def _auto_seed_demo_clients():

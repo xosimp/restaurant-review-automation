@@ -405,7 +405,7 @@ def test_a_restart_mid_batch_does_not_lose_the_days_alerts(db_path, sent, monkey
     _labor_over(db_path, rid)
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path, local_hour=10)
-    notify._batch = None                                  # the deploy
+    notify.discard_daily_batch()                          # the deploy
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path, local_hour=10)
     notify.flush_daily_batch(db_path=db_path)

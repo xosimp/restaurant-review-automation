@@ -740,8 +740,14 @@ def run_queued_generation(job):
         _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     finally:
-        _settle_rejection(job_id, restaurant_id, p.get("rejection"))
-        notify_generation_watchers(job_id, restaurant_id)
+        # A copy whose queue lease was lost (job_queue.LeaseLost, blind
+        # re-audit 10/20/26 R1-05) leaves the settling and the watchers to
+        # the consumer now running the row: taking them here pushed nothing
+        # and left that consumer no one to tell.
+        import job_queue as _jq_lost
+        if not _jq_lost.lease_lost(job):
+            _settle_rejection(job_id, restaurant_id, p.get("rejection"))
+            notify_generation_watchers(job_id, restaurant_id)
     state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
     res = state.get("result") if isinstance(state.get("result"), dict) else {}
     return {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}

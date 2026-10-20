@@ -43,6 +43,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `CAVNAR_FORCE_SECURE_COOKIES` | — | Force the `Secure` cookie flag (and HSTS) off Railway, e.g. behind another TLS proxy. | auth.py |
 | `CAVNAR_SECRET_KEY_EPHEMERAL` | — | Set by the app itself when it had to mint a throwaway `SECRET_KEY`, so presence checks (the admin key panel) don't read it as configured (#125). Never set by hand. | hosted_dashboard.py |
 | `SENTRY_DSN` | `""` | Sentry error reporting, in every process — the web process, the queue worker and the scheduler process (`sentry_setup`, scale audit 10/19/26 OPS-5), each event tagged with its `process`. Empty: off. | sentry_setup.py, http_layer.py |
+| `SENTRY_CAPTURE_WINDOW_SECONDS` | `"600"` | `ops.capture` sends Sentry the first event of each (job, exception type) per window, and a logged error the first per logger and message (`sentry_setup.allow`, blind re-audit 10/20/26 R1-06); every failure still lands in `job_failures`. `0`: no dedupe. | sentry_setup.py |
+| `SENTRY_MAX_EVENTS_PER_HOUR` | `"120"` | The most events one process sends Sentry an hour, whatever raised them (`sentry_setup.before_send`, R1-06): a provider outage across the fleet no longer spends the month's quota in hours. | sentry_setup.py |
 | `LOG_LEVEL` | — | Log level for `logging_setup.py`. | logging_setup.py |
 | `HEALTHCHECK_PING_URL` | — | A dead-man's-switch URL the supervisor pings each healthy cycle (`ops.py`). | ops.py |
 | `GIT_COMMIT` | — | Build commit for `/health` and the console when Railway's variable is absent. | hosted_dashboard.py, platform_monitor.py |
@@ -237,11 +239,13 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `SCHEDULE_GEN_MEMORY_RESERVE_MB` | `1536` | What the container holds before any generation (the web process, the queue worker's baseline), kept out of the memory the generation slots are sized from. | job_queue.py |
 | `QUEUE_BULK_CONCURRENCY` | `"2"` | Learner rows running at once across every process. | job_queue.py |
 | `QUEUE_POS_IO_CONCURRENCY`, `QUEUE_POS_IO_MAX_RUNNING` | `"4"`, 2× | The `pos_io` group (the nightly POS archive rows — network-bound, scale audit 10/19/26 INF-6): rows doing work at once across every process, and in flight. RPOWER's own budget is its per-token bucket. | job_queue.py |
+| `QUEUE_NOTIFY_CONCURRENCY`, `QUEUE_NOTIFY_MAX_RUNNING` | `"2"`, 2× | The `notify` group (blind re-audit 10/20/26 R1-08): a published week's staff notices, the auto-publish check and widget wakes, on slots of their own so they never wait behind the nightly learner rows on bulk's two. | job_queue.py |
 | `QUEUE_BULK_DEADLINE_HOURS` | `"22"` | A nightly queue row (archive, learner, food cost diagnosis) still unstarted this long after it became runnable expires instead of running, so a backlog never stacks under the next night's rows (INF-6). | strategy_jobs.py |
 | `QUEUE_WORKER_ALERT_SECONDS` | `"300"` | The platform check warns when the queue worker the master supervises has not beaten its heartbeat for this long — the web process has the whole queue (INF-4). | ops.py |
 | `QUEUE_BACKLOG_ALERT_HOURS` | `"6"` | …and when a bulk or POS row that may run has waited longer than this (INF-6). | ops.py |
 | `BOUND_ALERT_RUNS` | `"3"` | …and when a job hit its time bound on each of its last this-many runs: it no longer covers every restaurant each period (INF-7). At least 2. | ops.py |
-| `DSR_SWEEP_WORKERS` | `"4"` | Restaurants the DSR sweep runs at once, earliest deadline first (INF-1, A4-06). `1`: the serial sweep. | dsr/pipeline.py |
+| `DSR_SWEEP_WORKERS` | unset (sized to the work) | Pins how many restaurants the DSR sweep runs at once, earliest deadline first (INF-1, A4-06). `1`: the serial sweep. Unset: one worker per `DSR_SWEEP_RESTAURANTS_PER_WORKER` restaurants with a night to run, between `DSR_SWEEP_MIN_WORKERS` and `DSR_SWEEP_MAX_WORKERS` (`dsr.pipeline.sweep_workers`, blind re-audit 10/20/26 R1-07 — a fixed four fitted ~1,500 restaurants). | dsr/pipeline.py |
+| `DSR_SWEEP_MIN_WORKERS`, `DSR_SWEEP_MAX_WORKERS`, `DSR_SWEEP_RESTAURANTS_PER_WORKER` | `"4"`, `"12"`, `"25"` | The DSR sweep's self-sizing (R1-07): never fewer than the minimum (today's four), never more than the maximum (the database pool and RPOWER's fleet budget bound it past that). | dsr/pipeline.py |
 | `BRIEF_WORKERS` | `"4"` | Restaurants the morning brief pass briefs at once (INF-10). | morning_brief.py |
 | `HTTP_5XX_ALERT_RATE`, `HTTP_5XX_ALERT_MIN_REQUESTS` | `"0.02"`, `"50"` | The platform check pages when customer requests' 5xx share over the last five minutes passes the rate, with at least that many requests (OPS-7). | platform_monitor.py |
 | `HTTP_P95_SLO_MS`, `HTTP_P95_ALERT_MIN_REQUESTS` | `"5000"`, `"200"` | …and warns when customer requests' p95 over the last fifteen minutes is past the SLO, with at least that many requests. | platform_monitor.py |
@@ -484,7 +488,10 @@ Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 | `BACKUP_OFFSITE_MAX_DAYS` | `"35"` | scheduler.py |
 | `BRIEF_INPUT_WAIT_UNTIL_HOUR` | `"8"` | scheduler.py — the Chicago hour until which the morning briefs (and the weekly digest) wait for the 5-6am sweeps they read to settle; from it they go on what is there (AI cost audit 10/7/26 #54) |
 | `CAMPAIGN_ATTRIBUTION_SECONDS` | `str(10 * 60` | guest_marketing.py |
-| `CLAIM_RECLAIM_MINUTES` | `"120"` | ops.py |
+| `CLAIM_RECLAIM_MINUTES` | `"120"` | ops.py — the most a claimed run with no pulse at all waits before it is judged dead (a pulsed run is dead once its pulse is `RUN_DEAD_MINUTES` silent; an unpulsed one after its job's own bound, at most this — blind re-audit 10/20/26 R1-10) |
+| `CLAIM_RECLAIMS_PER_DAY` | `"3"` | ops.py — a job interrupted this many times in a day (its process killed mid-run) is not reclaimed again that day, so a job that takes its process down cannot loop (R1-10) |
+| `BRIEF_INPUT_GRACE_MINUTES` | `"60"` | scheduler.py — how long past a restaurant's OWN brief hour its morning brief waits for the inputs it reads (a fleet sweep unsettled, or its own food cost diagnosis row open); never past `BRIEF_INPUT_WAIT_UNTIL_HOUR` (blind re-audit 10/20/26 R1-03 — the gate was one for the whole fleet) |
+| `BOOT_BACKFILL_BUDGET_SECONDS` | `"45"` | models.py — past this many seconds of `init_db` the deferrable data backfills at its end run on a thread once the worker serves (`models.run_deferred_boot_backfills`), not inside gunicorn's 120-second worker timeout (R1-14); the schema always runs inline |
 | `COMPETITOR_WORKERS` | `"3"` | scheduler.py — restaurants the weekly competitor analysis reads at once (AI cost audit 10/7/26 #55; was 1) |
 | `DAILY_ALERT_PASS_SECONDS` | `"600"` | notify.py |
 | `DIAGNOSES_BATCH_UNTIL` | `"5:30"` | scheduler.py — Chicago time after which the diagnoses' Message Batches are not sent (no time to land before the 6am pass; AI cost audit 10/7/26 #58) |

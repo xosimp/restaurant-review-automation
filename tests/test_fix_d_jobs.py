@@ -79,8 +79,19 @@ def _loop_job_names():
     # the pulse both call (scale audit 10/19/26 INF-1).
     if "_submit_dsr_sweep(_ops, now)" in src:
         src += inspect.getsource(scheduler._submit_dsr_sweep)
+    # The minute jobs and the briefs are started on their lanes through
+    # helpers the loop and the pulse both call (blind re-audit 10/20/26 R1-02,
+    # R1-11).
+    if "_submit_minute_jobs(_ops, now)" in src:
+        src += inspect.getsource(scheduler._submit_minute_jobs)
+    if "_submit_briefs(_ops, now)" in src:
+        src += inspect.getsource(scheduler._submit_briefs)
+    if "_submit_intraday(_ops, now)" in src:
+        src += inspect.getsource(scheduler._intraday_items)
     names = set(re.findall(r'run_job\("([a-z_]+)"', src))
     names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', src))
+    names |= set(re.findall(r'_minute_chain\(ops_, chain, "[a-z]+", "([a-z_]+)"', src))
+    names |= set(re.findall(r'_intraday_item\("([a-z_]+)"', src))
     return names
 
 

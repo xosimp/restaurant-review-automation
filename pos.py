@@ -412,6 +412,7 @@ def sync_all(stats=None):
     import scheduler
     by_rid, lock = {}, threading.Lock()
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
+    timing = {"total": 0, "max": 0}
     # Bounded and resumable like the review fetch: one long provider call no
     # longer holds the whole pass, and the next pass starts where this one
     # stopped.
@@ -424,11 +425,17 @@ def sync_all(stats=None):
             with lock:
                 counts["skipped"] += 1
             return
+        began = time.monotonic()
         result = sync_restaurant(rid)
+        took = int((time.monotonic() - began) * 1000)
         with lock:
             by_rid[rid] = {"restaurant": r.name, **result}
             counts["attempted"] += 1
             counts["ok" if result["ok"] else "failed"] += 1
+            # Each store's time (blind re-audit 10/20/26 R1-04): what sizes
+            # POS_SYNC_WORKERS and POS_SYNC_MAX_SECONDS from data.
+            timing["total"] += took
+            timing["max"] = max(timing["max"], took)
         if result["ok"]:
             log.info(f"POS sync OK [{name}] {r.name} — {result.get('rows', '?')} rows")
         else:
@@ -450,6 +457,9 @@ def sync_all(stats=None):
                                  f"restaurants before the {POS_SYNC_MAX_SECONDS}s bound; the rest lead the "
                                  "next pass"), job="pos_sync", context="time_bound")
     counts["hit_bound"] = bool(hit_bound)
+    if counts["attempted"]:
+        counts["store_ms_avg"] = int(timing["total"] / counts["attempted"])
+        counts["store_ms_max"] = timing["max"]
     if isinstance(stats, dict):
         stats.update(counts)
     return [by_rid[rid] for rid in order if rid in by_rid]

@@ -411,8 +411,11 @@ def test_the_long_ai_jobs_are_on_the_ai_lane():
     loop = inspect.getsource(scheduler.scheduler_loop)
     # "sweep" joined for the 4-6am restaurant sweeps (AI cost audit 10/7/26
     # #54, tests/test_ai_cost_sched_1007.py); "dsr", "pos" and "fetch" for the
-    # DSR sweep, the 3am POS chain and the review fetch (scale audit 10/19/26).
-    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch"}
+    # DSR sweep, the 3am POS chain and the review fetch (scale audit 10/19/26);
+    # "minute", "live" and "brief" for the minute jobs and the morning briefs
+    # (blind re-audit 10/20/26 R1-02, R1-11).
+    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch", "minute", "live", "intraday",
+                                     "brief"}
     for name in _AI_LANE_JOBS:
         assert f'_ops.run_in_lane("ai", "{name}"' in loop, name
         assert f'_ops.run_job("{name}"' not in loop, f"{name} still runs on the loop thread"
