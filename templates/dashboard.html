@@ -6082,19 +6082,30 @@ svg:hover .hb-xh{opacity:1}
     return r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch');
   }
   var RESULTTONE={improved:'good',worsened:'critical'};
+  // Each read's own address: the fallback, and where a block the combined
+  // read has not kept yet is read on its own.
+  var HB_FOLLOW_URL={brief:'/api/morning-brief?view=home',issues:'/api/issues?status=unresolved',goals:'/api/goals',outcomes:'/api/outcomes',
+    actions:'/api/actions',closeout:'/api/closeout',value:'/api/value',cross:'/api/cross-module',news:'/api/good-news',miles:'/api/milestones',
+    loss:'/api/loss-signals',month:'/api/monthly-review',
+    // The record behind the check-in (which result belongs to which
+    // recommendation) and "What worked for you" (rec-ROI #21, #28).
+    timeline:'/api/recs/timeline?limit=40',worked:'/api/recs/what-worked?days=180'};
   function hbFollow(){
-    var got={},left=15;
+    var got={},left=15,k;
     // The status line under the greeting draws the moment the report row
     // lands, not after all fifteen reads (density fix #1).
     function done(k,v){got[k]=v;left--;if(k==='dsr')hbStatus(v);if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
-    get('brief','/api/morning-brief?view=home');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
-    get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
-    get('cross','/api/cross-module');get('news','/api/good-news');get('miles','/api/milestones');
-    get('loss','/api/loss-signals');get('month','/api/monthly-review');get('dsr','/api/dsr?limit=1');
-    // The record behind the check-in (which result belongs to which
-    // recommendation) and "What worked for you" (rec-ROI #21, #28).
-    get('timeline','/api/recs/timeline?limit=40');get('worked','/api/recs/what-worked?days=180');
+    function each(){for(var key in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(key))get(key,HB_FOLLOW_URL[key]);}}
+    get('dsr','/api/dsr?limit=1');
+    // The other fourteen in one read (scale audit 10/19/26 FE-01). A block
+    // not kept for today yet comes back in 'missing' and is read on its own.
+    fetch('/api/home/follow',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(!d||!d.ok||!d.blocks){each();return;}
+      var miss=d.missing||[],i;
+      for(k in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(k)&&miss.indexOf(k)<0)done(k,d.blocks[k]||null);}
+      for(i=0;i<miss.length;i++){if(HB_FOLLOW_URL[miss[i]])get(miss[i],HB_FOLLOW_URL[miss[i]]);}
+    }).catch(function(){each();});
   }
   // ── last month, in the app ────────────────────────────────────────────────
   // The monthly review only ever went out as an email on the 1st. An owner

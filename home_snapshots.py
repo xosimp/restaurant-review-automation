@@ -333,6 +333,29 @@ def _start_refresh(key, restaurant_id, block, scope_key, as_of, stamp, build, db
         return False
 
 
+class SnapshotMiss(Exception):
+    """Nothing kept for this key today, and the caller asked not to build
+    (kept_only): Home's combined read leaves the block for the client to
+    read on its own, in parallel with the others."""
+
+
+_kept_only = threading.local()
+
+
+class kept_only:
+    """`with kept_only(): ...` — serve() raises SnapshotMiss instead of
+    building on the request (strategy_routes._do_home_follow)."""
+
+    def __enter__(self):
+        self._was = getattr(_kept_only, "on", False)
+        _kept_only.on = True
+        return self
+
+    def __exit__(self, *exc):
+        _kept_only.on = self._was
+        return False
+
+
 def keep(block, restaurant_id, scope_key, as_of, payload, restaurant=None, db_path=None) -> bool:
     """Keep an answer something else already built for this scope today —
     the morning brief's send builds each recipient's brief before they open
@@ -355,6 +378,8 @@ def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_pat
     the pool when the kept one is stale. Returns a fresh decoded copy each
     call (callers may change it). Never raises past `build`'s own errors."""
     if not enabled():
+        if getattr(_kept_only, "on", False):
+            raise SnapshotMiss(block)
         return build()
     as_of = str(as_of)
     stamp = data_stamp(restaurant_id, restaurant, db_path)
@@ -365,6 +390,8 @@ def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_pat
             # A request that waited on another's build reads its row.
             row = _read(restaurant_id, block, scope_key, db_path)
             if row is None or row["as_of"] != as_of:
+                if getattr(_kept_only, "on", False):
+                    raise SnapshotMiss(block)
                 payload = _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_path)
                 return json.loads(_encode(payload))
     if row["stamp"] != stamp or time.time() - float(row["built_at"] or 0) > REFRESH_SECONDS:

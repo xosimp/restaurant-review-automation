@@ -231,3 +231,56 @@ def test_the_morning_send_keeps_each_recipients_home_brief(db_path, monkeypatch,
     body = client.get("/api/morning-brief?view=home").get_json()
     assert body["brief"]["lines"][0]["text"] == "All clear"
     assert calls == [5]                          # read, not built
+
+
+# ── one read for Home's follow-through ──────────────────────────────────────
+
+def test_home_follow_answers_each_block_as_its_own_read_did(client, db_path, monkeypatch):
+    rid = _rid(db_path, module_labor=1, module_inventory=1)
+    _as(monkeypatch, rid)
+    import strategy_routes
+    # Build the kept blocks first (the individual reads), then the combined
+    # read must answer every block exactly as its own route does.
+    own = {}
+    for key, path, args, _body in strategy_routes._HOME_FOLLOW:
+        qs = "&".join(f"{k}={v}" for k, v in args.items())
+        r = client.get(path + ("?" + qs if qs else ""))
+        d = r.get_json() if r.status_code == 200 else None
+        own[key] = d if d and d.get("ok") else None
+    body = client.get("/api/home/follow").get_json()
+    assert body["ok"] and body["missing"] == []
+    assert set(body["blocks"]) == set(own)
+    for key in own:
+        assert body["blocks"][key] == own[key], key
+
+
+def test_home_follow_never_builds_a_kept_block_on_the_request(client, db_path, monkeypatch):
+    import morning_brief, good_news, monthly_review, business_intelligence
+    rid = _rid(db_path)
+    _as(monkeypatch, rid)
+    def _no_build(*a, **k):
+        raise AssertionError("built inside the combined read")
+    for mod, fn in ((morning_brief, "build"), (good_news, "all_good_news"),
+                    (monthly_review, "build"), (business_intelligence, "executive_brief")):
+        monkeypatch.setattr(mod, fn, _no_build)
+    body = client.get("/api/home/follow").get_json()
+    assert sorted(body["missing"]) == ["brief", "cross", "month", "news"]
+    assert body["blocks"]["goals"] is not None
+
+
+def test_home_follow_keeps_a_blocks_own_refusal(client, db_path, monkeypatch):
+    """Comps and voids are owner-only (LOSS_VIEW): a manager's combined read
+    carries null for them, as their own read answered 403."""
+    rid = _rid(db_path)
+    _as(monkeypatch, rid, role="manager")
+    assert client.get("/api/loss-signals").status_code == 403
+    assert client.get("/api/home/follow").get_json()["blocks"]["loss"] is None
+
+
+def test_home_follow_restores_the_requests_own_query(client, db_path):
+    import strategy_routes
+    from flask import request
+    rid = _rid(db_path)
+    with client.application.test_request_context("/api/home/follow?x=1"):
+        strategy_routes._do_home_follow({"id": 5, "restaurant_id": rid, "is_admin": 0, "role": "client"})
+        assert dict(request.args) == {"x": "1"}
