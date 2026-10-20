@@ -45,6 +45,9 @@ SHIFT_STATUSES = ("sent", "would_send", "skipped", "problem", "started", "salari
                   "failed", "removed_unconfirmed")
 RETRY_MINUTES = (10, 30, 120)
 RUN_MAX_SECONDS = 4 * 60
+# A push still `sending` this long after its claim belongs to a process that
+# died (_reap_stale): a run is bounded by RUN_MAX_SECONDS.
+SENDING_LEASE_MINUTES = 15
 # Minutes either side of a scheduled shift a punch may land before it is drift.
 DRIFT_GRACE_MINUTES = 7
 
@@ -361,6 +364,29 @@ def after_publish(restaurant_id, history_id, actor=None, db_path=None):
         return None
 
 
+def _reap_stale(db_path=None) -> int:
+    """Pushes a dead process left in `sending` (claimed longer ago than
+    SENDING_LEASE_MINUTES — a push takes seconds, a run at most
+    RUN_MAX_SECONDS) go back to `failed`, due now while their tries last and
+    left failed after the last (the owner's "push again" reaches them): a
+    deploy mid-push left the week off the POS for good, never retried and
+    never said (scale audit 10/19/26 A5-F15). Returns rows reaped."""
+    now = datetime.utcnow()
+    cutoff = (now - timedelta(minutes=SENDING_LEASE_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            "UPDATE pos_schedule_pushes SET status='failed', "
+            "error='The push was interrupted (a restart) before the POS answered.', "
+            "next_try_at=CASE WHEN attempts <= ? THEN ? ELSE NULL END, updated_at=datetime('now') "
+            "WHERE status='sending' AND updated_at < ?", (len(RETRY_MINUTES), stamp, cutoff)).rowcount
+        conn.commit()
+        return int(n or 0)
+    finally:
+        conn.close()
+
+
 def _claim(push_id, db_path=None) -> bool:
     conn = get_conn(db_path)
     try:
@@ -523,6 +549,11 @@ def run_queue(db_path=None, now=None) -> dict:
     are the cursor. Standard counts."""
     import time as _t
     t0 = _t.monotonic()
+    try:
+        _reap_stale(db_path)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="pos_schedule_push", context="stale sending rows")
     stamp = (now or datetime.utcnow()).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     try:

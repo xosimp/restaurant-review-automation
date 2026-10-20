@@ -266,6 +266,47 @@ def test_a_code_draft_is_never_planned_for_a_batch(db, monkeypatch):
     assert not sj._drafted_in_code(rid, "2026-10-19")
 
 
+# ── A5-F15: a POS push a dead process left `sending` is tried again ─────────
+
+def test_a_push_left_sending_by_a_dead_process_is_tried_again(db, monkeypatch):
+    import pos_schedule_push as psp
+    rid = _restaurant(db)
+    conn = models.get_conn()
+    try:
+        ins = ("INSERT INTO pos_schedule_pushes (restaurant_id, history_id, week_start, provider, status, attempts, "
+               "updated_at) VALUES (?,?,?,?,?,?,?)")
+        conn.execute(ins, (rid, 1, "2026-10-19", "rpower", "sending", 1, "2026-10-01 09:00:00"))   # died mid-push
+        conn.execute(ins, (rid, 2, "2026-10-26", "rpower", "sending", 4, "2026-10-01 09:00:00"))   # out of tries
+        conn.execute(ins, (rid, 3, "2026-11-02", "rpower", "sending", 1,
+                           time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())))                        # running now
+        conn.commit()
+    finally:
+        conn.close()
+    assert psp._reap_stale() == 2
+    conn = models.get_conn()
+    try:
+        rows = {r["history_id"]: dict(r) for r in conn.execute(
+            "SELECT history_id, status, next_try_at, error FROM pos_schedule_pushes").fetchall()}
+    finally:
+        conn.close()
+    assert rows[1]["status"] == "failed" and rows[1]["next_try_at"] and "interrupted" in rows[1]["error"]
+    assert rows[2]["status"] == "failed" and rows[2]["next_try_at"] is None      # left for "push again"
+    assert rows[3]["status"] == "sending"                                         # a live push is left alone
+    # The queue run reaps first, then takes the due retry.
+    ran = []
+    monkeypatch.setattr(psp, "run_push", lambda pid, **k: ran.append(pid) or {"status": "sent"})
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE pos_schedule_pushes SET status='sending', updated_at='2026-10-01 09:00:00', attempts=1 "
+                     "WHERE history_id=1")
+        conn.commit()
+        one = conn.execute("SELECT id FROM pos_schedule_pushes WHERE history_id=1").fetchone()[0]
+    finally:
+        conn.close()
+    out = psp.run_queue()
+    assert one in ran and out["ok"] >= 1
+
+
 # ── A5-F16: a whole week never supersedes edits saved while it ran ──────────
 
 WEEK = ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25"]
