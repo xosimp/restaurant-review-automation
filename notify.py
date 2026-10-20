@@ -458,6 +458,10 @@ def _otp_number_capped(phone: str, db_path: str = None) -> bool:
         finally:
             conn.close()
         return int(n or 0) >= OTP_SMS_PER_NUMBER_HOURLY
+    except Exception:
+        return False
+
+
 # Twilio answers that mean the message was NOT created: rate limited, or the
 # service refusing work. Retried once (R9-21).
 _SMS_RETRY_STATUS = (429, 503)

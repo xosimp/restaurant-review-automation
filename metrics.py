@@ -791,13 +791,15 @@ def measure(restaurant_id, key, start, end, db_path=DB_PATH, with_salaries=None)
         return None, f"could not measure: {e}"
 
 
-def trailing(restaurant_id, key, days=None, end=None, db_path=DB_PATH):
-    """The metric over the `days` ending on `end` (default today)."""
+def trailing(restaurant_id, key, days=None, end=None, db_path=DB_PATH, with_salaries=None):
+    """The metric over the `days` ending on `end` (default today).
+    `with_salaries` as measure's."""
     info = describe(key)
     end = date.fromisoformat(_d(end)) if end else date.today()
     days = days or info["default_window_days"]
     start = end - timedelta(days=days - 1)
-    value, detail = measure(restaurant_id, key, start.isoformat(), end.isoformat(), db_path)
+    value, detail = measure(restaurant_id, key, start.isoformat(), end.isoformat(), db_path,
+                            with_salaries=with_salaries)
     return {"value": value, "detail": detail, "start": start.isoformat(), "end": end.isoformat()}
 
 
