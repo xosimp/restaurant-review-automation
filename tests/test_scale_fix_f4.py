@@ -273,6 +273,18 @@ def test_the_line_window_is_its_own_and_the_rollup_outlives_it():
     assert "RETAIN_POS_LINES_DAYS" in inspect.getsource(ops)
 
 
+# ── DB-13: one row read to tell a restaurant's POS ─────────────────────────
+
+def test_the_connected_provider_reads_the_restaurant_once(db_path, monkeypatch):
+    import pos
+    rid = models.create_restaurant(models.Restaurant(name="Pos", owner_email="pos@x.com"), db_path=db_path)
+    reads = []
+    real = models._restaurant_from_row
+    monkeypatch.setattr(models, "_restaurant_from_row", lambda row: reads.append(1) or real(row))
+    assert pos.connected_provider(rid) == (None, None)
+    assert len(pos.get_providers()) >= 4 and len(reads) == 1           # was one read per provider
+
+
 # ── DB-08: tenant writes ───────────────────────────────────────────────────
 
 def test_a_tenant_write_is_begin_immediate_on_sqlite(tmp_path):

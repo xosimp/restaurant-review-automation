@@ -150,7 +150,19 @@ def connected_provider(restaurant_id):
     else (None, None). With credentials for more than one (a migration), the
     ONE primary provider pos_health.primary_provider names — the same one
     every freshness reading reads — so the nightly sync, the DSR, depletion
-    and the freshness line never read different providers (DH2-13)."""
+    and the freshness line never read different providers (DH2-13).
+
+    One read of the restaurant row for the whole answer (scale audit
+    10/19/26 DB-13): each provider's is_connected read it again — four full
+    281-column reads a restaurant, for every restaurant the 10-minute DSR
+    sweep and the nightly sync ask about. The check is one unit of work, so
+    it reads inside a read_scope (a request already memoises)."""
+    import models as _m
+    with _m.read_scope():
+        return _connected_provider(restaurant_id)
+
+
+def _connected_provider(restaurant_id):
     connected = []
     for name, mod in get_providers().items():
         try:
