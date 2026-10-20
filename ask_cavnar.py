@@ -3421,14 +3421,21 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     read_public_text = False
     read_this_turn = False
     inherited_taint = False
+    # Any answer in this chat read public text (R7-20): the persistent
+    # actions stay refused while its quotes can still be in the replayed
+    # history or the summary.
+    chat_taint = False
     if conversation_id and user is not None:
         try:
             import ask_conversations as _ac_taint
             from permissions import acting_login_id as _ali_taint
             inherited_taint = _ac_taint.last_answer_read_public(getattr(restaurant, "id", None), conversation_id,
                                                                 viewer_id=_ali_taint(user))
+            chat_taint = inherited_taint or _ac_taint.chat_read_public(
+                getattr(restaurant, "id", None), conversation_id, viewer_id=_ali_taint(user))
         except Exception:
             inherited_taint = True           # unreadable: fail closed
+            chat_taint = True
         read_public_text = inherited_taint
 
     # This turn's read results, kept for the chat's next turn (#65): each
@@ -3625,6 +3632,16 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
                 results.append({"type": "tool_result", "tool_use_id": block.id,
                                 "content": json.dumps({"error": f"{block.name} is not available "
                                                                 "here: this run can only read"})})
+                continue
+            if (chat_taint and block.name in tools.TAINT_PERSISTENT_TOOLS and not read_public_text
+                    and tools.is_action_tool(block.name)):
+                results.append({"type": "tool_result", "tool_use_id": block.id,
+                                "content": json.dumps({
+                                    "status": "not_performed",
+                                    "note": ("Not performed. An earlier answer in this chat read text written "
+                                             "by members of the public, and this change would last beyond "
+                                             "the chat. Tell the owner what you would do; they can make it in "
+                                             "a new chat, or in Account.")})})
                 continue
             if read_public_text and tools.is_action_tool(block.name):
                 results.append({"type": "tool_result", "tool_use_id": block.id,

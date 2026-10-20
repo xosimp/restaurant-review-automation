@@ -4140,6 +4140,14 @@ def is_write_tool(name):
     return bool(tool and tool["kind"] == "write")
 
 
+# Direct actions whose effect persists and steers later output — a memory
+# line every generator reads, a setting, where a member of staff is reached.
+# They are refused for the whole chat once any answer in it read text the
+# public wrote (ask_conversations.chat_read_public, re-audit 10/20/26 R7-20);
+# every other action keeps the one-turn carry.
+TAINT_PERSISTENT_TOOLS = frozenset({"remember", "change_setting", "set_staff_contact"})
+
+
 def is_action_tool(name):
     tool = _BY_NAME.get(name)
     return bool(tool and tool["kind"] == "action")
