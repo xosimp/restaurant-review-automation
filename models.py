@@ -13898,7 +13898,8 @@ def keep_four_day_spread_days(db_path=None) -> int:
             conn.rollback()
         except Exception:
             pass
-        print(f"auto-draft six-day spread migration failed (will retry at next boot): {e}")
+        import logging
+        logging.getLogger(__name__).warning("auto-draft six-day spread migration failed (will retry at next boot): %s", e)
         return 0
     finally:
         conn.close()
