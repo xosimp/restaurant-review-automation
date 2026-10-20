@@ -902,8 +902,41 @@ JOIN_RESEND_MINUTES = 10       # a double tap does not send a second confirmatio
 # SEC-05): every restaurant's join link is public (QR codes) and the per-IP
 # and per-phone limits do nothing against a botnet rotating both. Counted on
 # guest_optin_requests rows that sent (or tried to send) a text.
-JOIN_FLEET_HOURLY_DEFAULT = 300        # GUEST_JOIN_FLEET_HOURLY_CAP
+JOIN_FLEET_HOURLY_DEFAULT = 300        # GUEST_JOIN_FLEET_HOURLY_CAP (the floor; it grows, below)
 JOIN_RESTAURANT_DAILY_DEFAULT = 150    # GUEST_JOIN_RESTAURANT_DAILY_CAP
+# Re-audit 10/20/26 R7-04: the fleet ceiling was one pool any public token
+# could drain for every restaurant, and fixed at 300 an hour it refused real
+# guests from ~240 restaurants up. Now: the fleet ceiling grows with the
+# restaurants that run marketing (GUEST_JOIN_FLEET_PER_RESTAURANT an hour
+# each, never below GUEST_JOIN_FLEET_HOURLY_CAP); each restaurant has its own
+# hourly ceiling (GUEST_JOIN_RESTAURANT_HOURLY_CAP), so one link cannot spend
+# the fleet's hour; and a restaurant still inside its reserved share
+# (GUEST_JOIN_RESTAURANT_RESERVED an hour) is never refused for the fleet's
+# sake — someone else's flood cannot close its sign-up sheet.
+JOIN_FLEET_PER_RESTAURANT_DEFAULT = 6          # GUEST_JOIN_FLEET_PER_RESTAURANT
+JOIN_RESTAURANT_HOURLY_DEFAULT = 40            # GUEST_JOIN_RESTAURANT_HOURLY_CAP
+JOIN_RESTAURANT_RESERVED_DEFAULT = 10          # GUEST_JOIN_RESTAURANT_RESERVED
+_join_fleet_memo = {"at": 0.0, "n": 0}
+
+
+def _join_marketing_restaurants(conn) -> int:
+    """Restaurants with Marketing on — memoised 10 minutes."""
+    import time as _t_join
+    now = _t_join.monotonic()
+    if _join_fleet_memo["at"] and now - _join_fleet_memo["at"] < 600:
+        return _join_fleet_memo["n"]
+    try:
+        n = int(conn.execute("SELECT COUNT(*) FROM restaurants WHERE module_marketing=1").fetchone()[0] or 0)
+    except Exception:
+        n = _join_fleet_memo["n"]
+    _join_fleet_memo.update(at=now, n=n)
+    return n
+
+
+def join_fleet_hourly_cap(conn) -> int:
+    floor = _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT)
+    per = _join_cap("GUEST_JOIN_FLEET_PER_RESTAURANT", JOIN_FLEET_PER_RESTAURANT_DEFAULT)
+    return max(floor, per * _join_marketing_restaurants(conn))
 JOIN_COUNTRY_ERROR = "Enter a US or Canadian mobile number. We can only text numbers there."
 QUESTION_HOURS = 24            # how long "which restaurant did you mean" stays open
 
@@ -976,12 +1009,18 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
         mine = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE restaurant_id=? "
                             "AND status IN ('pending','send_failed') AND requested_at >= datetime('now','-1 day')",
                             (restaurant_id,)).fetchone()[0]
+        mine_hour = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE restaurant_id=? "
+                                 "AND status IN ('pending','send_failed') AND requested_at >= datetime('now','-1 hour')",
+                                 (restaurant_id,)).fetchone()[0]
+        fleet_cap = join_fleet_hourly_cap(conn)
     finally:
         conn.close()
-    if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) or \
-            mine >= _join_cap("GUEST_JOIN_RESTAURANT_DAILY_CAP", JOIN_RESTAURANT_DAILY_DEFAULT):
-        scope = "fleet" if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) \
-            else f"restaurant {restaurant_id}"
+    reserved = mine_hour < _join_cap("GUEST_JOIN_RESTAURANT_RESERVED", JOIN_RESTAURANT_RESERVED_DEFAULT)
+    over_fleet = fleet >= fleet_cap and not reserved
+    over_hour = mine_hour >= _join_cap("GUEST_JOIN_RESTAURANT_HOURLY_CAP", JOIN_RESTAURANT_HOURLY_DEFAULT)
+    over_day = mine >= _join_cap("GUEST_JOIN_RESTAURANT_DAILY_CAP", JOIN_RESTAURANT_DAILY_DEFAULT)
+    if over_fleet or over_hour or over_day:
+        scope = "fleet" if over_fleet else f"restaurant {restaurant_id}"
         try:
             import ops as _ops_join
             if _ops_join.claim_cooldown(f"guest_join_cap:{scope}", 60):

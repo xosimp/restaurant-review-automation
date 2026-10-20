@@ -750,6 +750,10 @@ def test_sec05_fleet_and_restaurant_ceilings(db_path, texts, monkeypatch):
     rids = [_rid(db_path, name=f"Spot {i}", owner_email=f"s{i}@x.test") for i in range(3)]
     monkeypatch.setenv("GUEST_JOIN_RESTAURANT_DAILY_CAP", "2")
     monkeypatch.setenv("GUEST_JOIN_FLEET_HOURLY_CAP", "4")
+    # The fleet ceiling alone: no growth with the fleet, no reserved share
+    # (both since re-audit 10/20/26 R7-04, tested in test_reaudit_1020_g7_security).
+    monkeypatch.setenv("GUEST_JOIN_FLEET_PER_RESTAURANT", "0")
+    monkeypatch.setenv("GUEST_JOIN_RESTAURANT_RESERVED", "0")
     got = [gm.request_public_optin(rids[0], f"+1312557{i:04d}", ip=f"198.51.100.{i}", db_path=db_path)
            for i in range(3)]
     assert [r["ok"] for r in got] == [True, True, False] and got[2]["status"] == 429
@@ -757,3 +761,28 @@ def test_sec05_fleet_and_restaurant_ceilings(db_path, texts, monkeypatch):
            for i in range(3)]
     assert [r["ok"] for r in got] == [True, True, False], "the fleet's hour is spent"
     assert len(texts) == 4
+
+
+def test_r704_one_link_cannot_close_every_restaurants_sign_up_sheet(db_path, texts, monkeypatch):
+    """Re-audit 10/20/26 R7-04: the fleet's hour was one pool any public
+    link could drain for everyone. One link now spends at most its own
+    hourly ceiling, and a restaurant inside its reserved share still gets
+    through while the fleet's hour is spent."""
+    flood, quiet = (_rid(db_path, name=f"Spot {i}", owner_email=f"s{i}@x.test") for i in range(2))
+    monkeypatch.setenv("GUEST_JOIN_FLEET_HOURLY_CAP", "5")
+    monkeypatch.setenv("GUEST_JOIN_FLEET_PER_RESTAURANT", "0")
+    monkeypatch.setenv("GUEST_JOIN_RESTAURANT_HOURLY_CAP", "6")
+    monkeypatch.setenv("GUEST_JOIN_RESTAURANT_RESERVED", "2")
+    got = [gm.request_public_optin(flood, f"+1312559{i:04d}", ip=f"198.51.102.{i}", db_path=db_path)
+           for i in range(8)]
+    assert sum(1 for r in got if r["ok"]) == 5            # the fleet's 5, under its own 6
+    ok = [gm.request_public_optin(quiet, f"+1312560{i:04d}", ip=f"198.51.103.{i}", db_path=db_path)["ok"]
+          for i in range(3)]
+    assert ok == [True, True, False]                       # its reserved 2, then the fleet's limit
+    monkeypatch.setenv("GUEST_JOIN_FLEET_PER_RESTAURANT", "6")
+    gm._join_fleet_memo.update(at=0.0, n=0)
+    import models as _m
+    conn = _m.get_conn(db_path)
+    assert gm.join_fleet_hourly_cap(conn) >= 5
+    conn.close()
+    gm._join_fleet_memo.update(at=0.0, n=0)
