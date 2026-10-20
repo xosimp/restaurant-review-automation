@@ -79,6 +79,9 @@ SHIFT_WINDOW_MINUTES = (15, 65)     # start in (now+15, now+65]: ~60 min ahead o
 TASK_WINDOW_MINUTES = (0, 20)       # due in (now, now+20]: ~15 min ahead
 JOB_MAX_SECONDS = 4 * 60
 RELEASE_MAX_ROWS = 200
+# A held text more than this long past its release is dropped, not sent
+# late (R9-23).
+HELD_MAX_AGE_HOURS = 24
 RELEASE_MAX_SECONDS = 2 * 60
 RETENTION_DAYS = 30
 
@@ -196,11 +199,29 @@ def release_held(now_utc=None, db_path=None) -> dict:
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
     conn = get_conn(db_path)
     try:
+        # A held text past its morning by HELD_MAX_AGE_HOURS (the scheduler
+        # was down) talks about a night that is over: dropped, never sent
+        # days late (blind re-audit 10/20/26 R9-23).
+        stale = [dict(r) for r in conn.execute(
+            "SELECT id, meta_json FROM staff_notices WHERE kind='held_text' AND state='held' AND release_at <= ? "
+            "ORDER BY release_at, id LIMIT ?",
+            (_utc_stamp(now_utc - timedelta(hours=HELD_MAX_AGE_HOURS)), RELEASE_MAX_ROWS)).fetchall()]
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM staff_notices WHERE kind='held_text' AND state='held' AND release_at <= ? "
-            "ORDER BY release_at, id LIMIT ?", (_utc_stamp(now_utc), RELEASE_MAX_ROWS)).fetchall()]
+            "AND release_at > ? ORDER BY release_at, id LIMIT ?",
+            (_utc_stamp(now_utc), _utc_stamp(now_utc - timedelta(hours=HELD_MAX_AGE_HOURS)),
+             RELEASE_MAX_ROWS)).fetchall()]
     finally:
         conn.close()
+    for row in stale:
+        try:
+            meta = json.loads(row.get("meta_json") or "{}") or {}
+        except (TypeError, ValueError):
+            meta = {}
+        _undo_share(meta, db_path)
+        _finish(row["id"], None, db_path, state="dropped",
+                error=f"held more than {HELD_MAX_AGE_HOURS} hours past its release: not sent late")
+        out["skipped"] += 1
     started = _time.monotonic()
     for row in rows:
         if _time.monotonic() - started > RELEASE_MAX_SECONDS:

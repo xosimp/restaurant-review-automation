@@ -114,6 +114,30 @@ def test_two_different_email_sends_carry_different_idempotency_keys(db_path, mon
     assert keys[0] != keys[1], "two distinct orders shared a key — Resend would drop the second"
 
 
+def test_a_callers_retry_of_one_logical_email_reuses_its_key(db_path, monkeypatch):
+    """R9-15 (blind re-audit 10/20/26): the newsletter's retry, a released
+    digest claim or onboarding's next tick called deliver() afresh and got a
+    fresh key, so a send Resend had taken before a timeout went twice."""
+    rid = _restaurant(db_path)
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
+    calls = _sequence(monkeypatch, "requests.post", [_Resp(200, {"id": "m"})])
+    payload = {"to": ["g@x.test"], "subject": "News", "html": "<p>n</p>"}
+    for _ in range(2):
+        with emails.send_key("newsletter:7:41"):
+            emails.deliver(payload, restaurant_id=rid, email_type="guest_newsletter")
+    with emails.send_key("newsletter:7:42"):
+        emails.deliver(dict(payload, to=["h@x.test"]), restaurant_id=rid, email_type="guest_newsletter")
+    for _ in range(2):
+        emails.deliver(payload, restaurant_id=rid, email_type="send_onboarding_day7")
+    keys = [_idempotency_key(c) for c in calls]
+    assert keys[0] == keys[1] and keys[2] != keys[0]
+    assert keys[3] == keys[4], "an onboarding step is one email per restaurant"
+    emails.deliver(payload, restaurant_id=rid, email_type="send_supplier_order")
+    emails.deliver(payload, restaurant_id=rid, email_type="send_supplier_order")
+    keys = [_idempotency_key(c) for c in calls]
+    assert keys[5] != keys[6], "outside a send_key every deliver() keeps its own key"
+
+
 def test_a_timed_out_email_send_is_retried_and_the_outcome_is_recorded_once(db_path, monkeypatch):
     """Pins the retry itself (the fix is a header, not removing the retry),
     and that email_log holds one row for one logical send."""
@@ -139,17 +163,38 @@ def twilio(monkeypatch):
     monkeypatch.setattr(notify, "TWILIO_MESSAGING_SERVICE_SID", "MG_test")
 
 
+def _never_connected():
+    import urllib3
+    reason = urllib3.exceptions.NewConnectionError(None, "Failed to establish a new connection: refused")
+    return requests.ConnectionError(urllib3.exceptions.MaxRetryError(None, "/Messages.json", reason))
+
+
 @pytest.mark.parametrize("first", [
     pytest.param(_Resp(503, text="Service Unavailable"), id="http-503"),
-    pytest.param(_Resp(500, text="Internal Server Error"), id="http-500"),
     pytest.param(_Resp(429, text="Too Many Requests"), id="http-429"),
-    pytest.param(requests.ConnectionError("connection reset by peer"), id="connection-reset"),
+    pytest.param(_never_connected(), id="connection-refused"),
+    pytest.param(requests.exceptions.ConnectTimeout("connect timed out"), id="connect-timeout"),
 ])
 def test_a_transient_twilio_failure_then_success_delivers_the_sms_once(twilio, monkeypatch, first):
     calls = _sequence(monkeypatch, "requests.post", [first, _Resp(201, {"sid": "SM1"})])
     assert notify.send_sms("(630) 555-0100", "1-star review at Channel Co") is True, \
         "a single Twilio blip lost the owner's alert text"
     assert len(calls) == 2, f"expected one retry, made {len(calls)} request(s)"
+
+
+@pytest.mark.parametrize("first", [
+    pytest.param(_Resp(500, text="Internal Server Error"), id="http-500"),
+    pytest.param(_Resp(504, text="Gateway Timeout"), id="http-504"),
+    pytest.param(requests.ConnectionError("connection reset by peer"), id="reset-after-send"),
+    pytest.param(requests.ReadTimeout("read timed out"), id="read-timeout"),
+])
+def test_a_failure_after_twilio_may_have_taken_the_text_is_not_retried(twilio, monkeypatch, first):
+    """R9-21 (blind re-audit 10/20/26): Twilio's Messages API has no
+    idempotency key; a retry after the request may have been accepted can
+    text the owner twice."""
+    calls = _sequence(monkeypatch, "requests.post", [first, _Resp(201, {"sid": "SM1"})])
+    assert notify.send_sms("(630) 555-0100", "1-star review at Channel Co") is False
+    assert len(calls) == 1
 
 
 def test_a_permanent_twilio_rejection_is_not_retried(twilio, monkeypatch):

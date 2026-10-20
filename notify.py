@@ -439,6 +439,27 @@ def _own_guest_service(restaurant_id):
         return None
 
 
+# Twilio answers that mean the message was NOT created: rate limited, or the
+# service refusing work. Retried once (R9-21).
+_SMS_RETRY_STATUS = (429, 503)
+
+
+def _sms_never_sent(e) -> bool:
+    """Whether a requests ConnectionError happened before the request could
+    reach Twilio: the connection never opened (refused, no route, DNS) or
+    timed out while connecting. A reset or abort after the request was
+    written may follow an accepted message."""
+    if isinstance(e, requests.exceptions.ConnectTimeout):
+        return True
+    try:
+        import urllib3
+        reason = getattr(e.args[0], "reason", None) if e.args else None
+        return isinstance(reason, (urllib3.exceptions.NewConnectionError,
+                                   urllib3.exceptions.ConnectTimeoutError))
+    except Exception:
+        return False
+
+
 def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
                     restaurant_id: int = None, db_path: str = None) -> SmsResult:
     """Send one SMS via Twilio and return what happened (SmsResult), with an
@@ -545,11 +566,12 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
     # Twilio reports delivered / undelivered / failed here, signed, and
     # webhook_routes moves the sms_log row on (#14).
     data["StatusCallback"] = config.base_url() + SMS_STATUS_CALLBACK_PATH
-    # One retry for a failure Twilio says is transient (429, 5xx) or a
-    # connection that failed before a response (AI-27): a single blip lost an
-    # owner's health alert text. NOT for a read timeout — Twilio's Messages
-    # API has no idempotency key, and a request it accepted but did not answer
-    # in time would be sent twice. A 4xx is permanent and is not retried.
+    # One retry, only when Twilio provably did not take the request (AI-27,
+    # narrowed by blind re-audit 10/20/26 R9-21): a 429 or a 503 (refused,
+    # not processed), or a connection that never opened. Twilio's Messages
+    # API has no idempotency key, so anything after the request may have
+    # gone out — a read timeout, a reset while reading the answer, a 500,
+    # 502 or 504 — is not retried: it could text twice. A 4xx is permanent.
     last = None
     for attempt in (1, 2):
         try:
@@ -574,11 +596,15 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             permanent = code in SMS_PERMANENT_ERROR_CODES
             last = SmsResult(False, status="failed", error_code=code or str(r.status_code),
                              error=message_text, permanent=permanent and not account, account_level=account)
-            if not (r.status_code == 429 or r.status_code >= 500):
+            if r.status_code not in _SMS_RETRY_STATUS:
                 break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
+            if not _sms_never_sent(e):
+                # The request may have reached Twilio (a reset while its
+                # answer was read): a retry could text twice (R9-21).
+                break
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
@@ -2877,10 +2903,11 @@ class _Pending:
         self.recs = recs or [alert_rec(alert_type, title=subject)]
 
 
-# The once-a-day claims a batched pass has EARNED, written only when the batch
-# is flushed. _gated_out used to claim each restaurant's day as it collected,
-# so a deploy between collecting and flushing lost that day's alerts with the
-# claims already spent (MOD-NOT-16); now the next hourly pass re-collects.
+# The once-a-day claims a batched pass has EARNED, (job, period, restaurant),
+# written at flush, each restaurant's just before its own delivery (R9-12).
+# _gated_out used to claim each restaurant's day as it collected, so a deploy
+# between collecting and flushing lost that day's alerts with the claims
+# already spent (MOD-NOT-16); now the next hourly pass re-collects.
 _batch_claims = []
 
 
@@ -2899,8 +2926,26 @@ def flush_daily_batch(db_path: str = DB_PATH):
     pending, _batch = (_batch or {}), None
     claims, _batch_claims = _batch_claims, []
     out = {"restaurants": 0, "combined": 0, "single": 0}
+    # Each restaurant's day is claimed right before ITS delivery, not after
+    # the whole flush (blind re-audit 10/20/26 R9-12): a deploy or a crash
+    # mid-flush re-sent every restaurant already delivered (no claim yet) at
+    # the next hourly pass — a flush is minutes long at a few hundred
+    # restaurants. Now a kill loses at most the one restaurant in flight
+    # (claim before send: never twice), and one checked with nothing to
+    # send is claimed first. A day claimed meanwhile elsewhere is not sent.
+    by_rid = {}
+    for job, period, rid in claims:
+        by_rid.setdefault(rid, []).append((job, period))
+    import ops
+    for rid, mine in by_rid.items():
+        if not pending.get(rid):
+            for job, period in mine:
+                ops.claim_period(job, period)
     for rid, items in pending.items():
         if not items:
+            continue
+        mine = by_rid.get(rid) or []
+        if mine and not [1 for job, period in mine if ops.claim_period(job, period)]:
             continue
         out["restaurants"] += 1
         try:
@@ -2917,10 +2962,6 @@ def flush_daily_batch(db_path: str = DB_PATH):
                 ops.capture(e, job="daily_batch", context=f"restaurant_id={rid}", db_path=db_path)
             except Exception:
                 pass
-    if claims:
-        import ops
-        for job, period in claims:
-            ops.claim_period(job, period)
     return out
 
 
@@ -3477,7 +3518,7 @@ def _gated_out(restaurant_id, local_hour, claim_key, db_path: str = DB_PATH, unt
             # alerts collected here have actually gone out (MOD-NOT-16).
             if ops.period_claimed(job, period):
                 return True
-            _batch_claims.append((job, period))
+            _batch_claims.append((job, period, restaurant_id))
             return False
         return not ops.claim_period(job, period)
     except Exception:

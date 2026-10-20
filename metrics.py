@@ -443,7 +443,17 @@ def _overtime_hours(rid, start, end, param, db_path):
     wsd = int(getattr(r, "week_start_day", 0) or 0) if r else 0
     s, e = date.fromisoformat(_d(start)), date.fromisoformat(_d(end))
     hours, weeks, estimated = {}, set(), False
+    # A salaried person's long week is not overtime: their pay does not
+    # move with their hours (blind re-audit 10/20/26 R9-19 — a GM working
+    # fewer hours was credited as overtime "delivered"). Every spelling of
+    # them, as the DSR and labor._without_salaried leave them out.
+    try:
+        salaried = models.salaried_keys(r, db_path) if r else set()
+    except Exception:
+        salaried = set()
     for sh in shifts:
+        if salaried and models.salaried_name_key(sh.get("employee")) in salaried:
+            continue
         day = str(sh.get("date") or "")[:10]
         try:
             date.fromisoformat(day)
@@ -753,11 +763,28 @@ def describe(key) -> dict:
             "default_window_days": window}
 
 
-def measure(restaurant_id, key, start, end, db_path=DB_PATH):
-    """(value or None, detail) for one metric over one inclusive window."""
+# The metrics whose value depends on whether the salaries are in
+# (_salary_share: labor % is all-in for the owner, hourly for anyone else).
+# A comparison of two readings of one of these must make both on ONE basis
+# (blind re-audit 10/20/26 R9-07: a manager-started tracker's hourly
+# baseline was compared with an all-in "after" read in the nightly job).
+SALARY_METRICS = frozenset({"labor_pct", "labor_pct_day"})
+
+
+def salary_sensitive(key) -> bool:
+    return parse(key)[0] in SALARY_METRICS
+
+
+def measure(restaurant_id, key, start, end, db_path=DB_PATH, with_salaries=None):
+    """(value or None, detail) for one metric over one inclusive window.
+    `with_salaries` True/False reads a salary-sensitive metric on that basis
+    wherever this runs; None reads it as the current viewer may see it."""
     base, param = parse(key)
     if base not in _REGISTRY:
         return None, f"unknown metric {key}"
+    if with_salaries is not None and base in SALARY_METRICS:
+        with _models_mod.salary_view(bool(with_salaries)):
+            return measure(restaurant_id, key, start, end, db_path)
     try:
         return _REGISTRY[base][0](restaurant_id, start, end, param, db_path)
     except Exception as e:
@@ -1300,9 +1327,11 @@ OVERTIME_BASIS = ("the overtime premium only: the extra half of time-and-a-half 
 
 def overtime_premium_per_hour(restaurant_id, db_path=DB_PATH):
     """Dollars the premium costs per overtime hour for this restaurant: the
-    blended wage (models.compute_blended_rate over its shifts, per-role
-    rates where set, else the restaurant's hourly rate) times
-    (labor.OVERTIME_MULTIPLIER - 1). None when there is no restaurant."""
+    hourly people's wage (labor.labor_rate_basis over their shifts — the
+    POS's own pay, the owner's rate for a person or a role, what the role's
+    people make, then the restaurant's hourly rate; salaried people out,
+    R9-19) times (labor.OVERTIME_MULTIPLIER - 1). None when there is no
+    restaurant."""
     import labor
     import models
     r = models.get_restaurant(restaurant_id, db_path)
@@ -1313,9 +1342,13 @@ def overtime_premium_per_hour(restaurant_id, db_path=DB_PATH):
     try:
         # The one reader (SCALE-5): shift_facts once they are the record.
         shifts = labor.shift_history(restaurant_id, db_path=db_path)
+        salaried = models.salaried_keys(r, db_path)
+        if salaried:
+            shifts = [s for s in shifts or () if models.salaried_name_key(s.get("employee")) not in salaried]
         if shifts:
-            rate = models.compute_blended_rate(shifts, models.get_role_rates(restaurant_id, db_path),
-                                               fallback=fallback) or fallback
+            basis = labor.labor_rate_basis(shifts, models.get_role_rates(restaurant_id, db_path), fallback,
+                                           models.person_rates(r))
+            rate = basis.get("rate") or fallback
     except Exception as e:
         print(f"[metrics] blended wage unreadable for {restaurant_id}, using the hourly rate: {e}")
         rate = fallback
