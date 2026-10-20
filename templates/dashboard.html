@@ -17229,6 +17229,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
                Studio's AI tab and on What to order this week. #}
             <div class="ac-row" id="as-autodraft-day-row" hidden><div class="l"><b>Draft day</b><span>It drafts your next week, on your own week start, from 6am that day &mdash; any day but the day before your week starts. Publish it for me goes the day after.</span></div>
               <div class="c"><select id="as-autodraft-day" class="ac-select" onchange="saveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></div></div>
+            {# The labor setup steps that hold the weekly draft, the owner's
+               to confirm (scale re-audit 10/20/26 R8-11; GET/POST
+               /api/account-settings/setup). Shown only while one is open. #}
+            <div class="ac-row" id="as-setup-row" hidden><div class="l"><b>Confirm your setup before the first draft</b><span>The weekly draft waits until each of these is confirmed. Where your POS suggested an answer, it is shown.</span></div></div>
+            <div id="as-setup-list" hidden></div>
             <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
@@ -32077,10 +32082,52 @@ function loadOpsSettings() {
     var row = document.getElementById('as-autodraft-row');
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
-    if (!d.external_tool) { asDraftDay(d); loadAutoPublish(); }
+    if (!d.external_tool) { asDraftDay(d); loadAutoPublish(); loadOwnerSetup(); }
     loadAutoOrder();
     loadWeeklyPlanAndDelay();
   }).catch(function() {});
+}
+
+/* The labor setup steps that hold the weekly draft (scale re-audit 10/20/26
+   R8-11): the owner confirms each here instead of waiting for Cavnar AI to.
+   Owner-only on the server; anyone else gets a 403 and the row stays hidden. */
+var AS_SETUP_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+function loadOwnerSetup() {
+  fetch('/api/account-settings/setup', {credentials: 'same-origin'}).then(apiJson).then(asRenderSetup)
+    .catch(function() {});
+}
+function asRenderSetup(d) {
+  var row = document.getElementById('as-setup-row'), list = document.getElementById('as-setup-list');
+  if (!row || !list) return;
+  if (!d || !d.ok || !d.pending || !d.pending.length) { row.hidden = true; list.hidden = true; return; }
+  var h = '';
+  for (var i = 0; i < (d.items || []).length; i++) {
+    var it = d.items[i];
+    if (it.done) continue;
+    var sug = it.suggested && it.suggested.label ? '<span>Suggested: ' + _escHtml(it.suggested.label) + '</span>' : '';
+    var ctl = '';
+    if (it.key === 'week_start') {
+      var pick = it.suggested && it.suggested.week_start_day != null ? it.suggested.week_start_day : 0;
+      ctl = '<select id="as-setup-weekday" class="ac-select" aria-label="Day the payroll week starts">';
+      for (var j = 0; j < 7; j++) ctl += '<option value="' + j + '"' + (j === pick ? ' selected' : '') + '>' + AS_SETUP_DAYS[j] + '</option>';
+      ctl += '</select> ';
+    }
+    h += '<div class="ac-row"><div class="l"><b>' + _escHtml(it.label) + '</b>' + sug + '</div>'
+      + '<div class="c">' + ctl + '<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="asConfirmSetup(\'' + it.key + '\')">Confirm</button></div></div>';
+  }
+  list.innerHTML = h;
+  row.hidden = false;
+  list.hidden = false;
+}
+function asConfirmSetup(step) {
+  var body = {step: step};
+  if (step === 'week_start') {
+    var sel = document.getElementById('as-setup-weekday');
+    body.value = sel ? parseInt(sel.value, 10) : null;
+  }
+  asPost('/api/account-settings/setup/confirm', body, 'as-auto-ops-status', 'Confirmed').then(function(d) {
+    if (d && d.ok) asRenderSetup(d);
+  });
 }
 
 // "Is push actually working on my phone?" had no answer short of reaching

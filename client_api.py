@@ -11093,6 +11093,36 @@ def _auto_approve_trust_safe(rid):
         return {}
 
 
+def _do_setup_confirmations(rid, data=None, current_user=None):
+    """The owner's own setup confirmations (scale re-audit 10/20/26 R8-11):
+    `data` None reads them; {step, value?} confirms one — the same
+    onboarding.confirm the console's Setup uses (week_start applies its day),
+    recorded as the owner's and in the account's activity. Owner-only: the
+    payroll week and the rates are the account holder's judgments, and a
+    confirmation releases the weekly auto-draft."""
+    import onboarding
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can confirm the setup."}, 403
+    r = get_restaurant(rid)
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    if data is None:
+        return dict(onboarding.owner_setup(r), ok=True), 200
+    step = (data or {}).get("step")
+    if step not in onboarding.OWNER_STEPS or not getattr(r, "module_labor", 0):
+        return {"ok": False, "error": "That isn't a setup step for this restaurant."}, 400
+    who = f"owner:{(current_user or {}).get('username') or (current_user or {}).get('email') or 'owner'}"
+    out = onboarding.confirm(rid, step, value=(data or {}).get("value"), who=who)
+    if not out.get("ok"):
+        return out, 400
+    log_account_event(rid, "setup_confirmed", current_user,
+                      detail=f"{step}" + (f": {out['value'].get('label')}" if isinstance(out.get("value"), dict)
+                                          and out["value"].get("label") else ""))
+    return dict(onboarding.owner_setup(get_restaurant(rid)), ok=True, applied=out.get("applied") or {}), 200
+
+
 def _do_auto_approve(rid, data, current_user=None):
     """The one rule: drafted 5-star responses get approved (and posted, when
     Google is connected) without waiting — capped per day, with a kill
@@ -11523,6 +11553,23 @@ def brand_voice(current_user):
                        # Read-only for anyone but an account holder (PROMPTS-9).
                        can_edit=_is_principal_bv(current_user))
     payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/setup")
+@login_required
+def account_setup_confirmations(current_user):
+    """The labor setup steps that hold the weekly auto-draft, owner-only
+    (client_api._do_setup_confirmations, R8-11)."""
+    payload, status = _do_setup_confirmations(current_user["restaurant_id"], None, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/setup/confirm", methods=["POST"])
+@login_required
+def account_setup_confirm(current_user):
+    payload, status = _do_setup_confirmations(current_user["restaurant_id"],
+                                              request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
 

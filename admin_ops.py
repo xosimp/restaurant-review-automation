@@ -4686,7 +4686,7 @@ def resolved_issues(limit=500):
 
 _ACTIVITY_LABELS = {
     "review_approved": "Approved a reply", "review_undo": "Undid an approval", "reviews_bulk_approved": "Published replies in bulk",
-    "auto_approve_changed": "Changed auto-approve", "admin_settings_update": "Admin updated settings", "sessions_revoked_others": "Signed out other devices",
+    "auto_approve_changed": "Changed auto-approve", "setup_confirmed": "Confirmed a setup step", "admin_settings_update": "Admin updated settings", "sessions_revoked_others": "Signed out other devices",
     "marketing_emails_changed": "Changed email preferences", "profile_updated": "Updated profile", "two_fa_enabled": "Turned on 2FA",
     "two_fa_disabled": "Turned off 2FA", "team_member_invited": "Invited a teammate", "team_member_revoked": "Removed a teammate",
     "data_exported": "Exported data", "recovery_email_set": "Set a recovery email", "password_changed": "Changed password",

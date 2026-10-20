@@ -1424,7 +1424,7 @@ function onbBoard(b){
   const bf = b.backfill || {}, held = (bf.active||[]).filter(x=>x.held_reason);
   const stuck = (b.stuck||[]).slice(0,8).map(x=>`<a href="#client/${x.id}">${esc(x.name)}</a> <span class="dim">· ${esc(x.stage)} · day ${x.days}</span>`).join('<br>');
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Fleet onboarding</h2><span class="sub">POS history backfill: <span class="n">${bf.used==null?'—':bf.used}</span> of <span class="n">${bf.cap==null?'—':bf.cap}</span> slots${held.length?` · <span style="color:var(--amber-t)">${held.length} held: ${esc(held[0].held_reason)}</span>`:''}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Fleet onboarding</h2><span class="sub">POS history backfill: <span class="n">${bf.used==null?'—':bf.used}</span> of <span class="n">${bf.cap==null?'—':bf.cap}</span> slots${held.length?` · <span style="color:var(--amber-t)">${held.length} held: ${esc(held[0].held_reason)}</span>`:''}${bf.old?` · <span style="color:var(--amber-t)"><span class="n">${bf.old}</span> held over ${bf.old_after_days} days</span>`:''}</span></div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">${st}</div>
     ${stuck?`<div class="muted" style="font-size:12.5px"><span class="lbl">Not live after ${b.stuck_after_days} days</span><br>${stuck}</div>`:''}</div>`;
 }
@@ -1444,14 +1444,15 @@ async function bulkPartners(){
     (d.partners||[]).forEach(p=>{ const o = document.createElement('option'); o.value = p.id; o.textContent = p.name + (p.billing_mode==='partner'?' (billed by partner)':''); sel.appendChild(o); }); }catch(e){}
 }
 function bulkRows(rows){
-  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 async function bulkDry(){
   const d = await post('/admin/api/onboarding/provision/dry-run', {csv: $('bulk-csv').value});
   if(!d.ok){ $('bulk-out').innerHTML = `<div class="warnline">${esc(d.error||'The list could not be read')}</div>`; $('bulk-apply').disabled = true; return; }
-  const c = d.counts || {};
-  $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix</div>` + bulkRows(d.rows);
-  $('bulk-apply').disabled = !(c.create > 0);
+  const c = d.counts || {}, bl = d.billing || {};
+  $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix${d.joins_owner?` · <span class="n">${d.joins_owner}</span> join an existing owner's group`:''}</div>`
+    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '') + bulkRows(d.rows);
+  $('bulk-apply').disabled = !(c.create > 0) || bl.ok === false;
 }
 async function bulkApply(){
   const n = $('bulk-out').querySelectorAll('tbody tr').length;

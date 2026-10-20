@@ -9294,6 +9294,23 @@ def mobile_remove_recovery_email(current_user):
     return jsonify(ok=True)
 
 
+@mobile_bp.route("/account/setup")
+@mobile_login_required
+def mobile_account_setup(current_user):
+    """See client_api._do_setup_confirmations (R8-11) — the web route's twin."""
+    payload, status = _capi._do_setup_confirmations(current_user["restaurant_id"], None, current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/setup/confirm", methods=["POST"])
+@mobile_login_required
+def mobile_account_setup_confirm(current_user):
+    """See client_api._do_setup_confirmations."""
+    payload, status = _capi._do_setup_confirmations(current_user["restaurant_id"],
+                                                    request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/account/auto-approve", methods=["POST"])
 @mobile_login_required
 def mobile_auto_approve(current_user):

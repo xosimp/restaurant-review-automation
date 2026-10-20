@@ -319,7 +319,15 @@ def _check_storage():
     free_mb, pct_free = d["free_mb"], d["pct_free"]
 
     detail = f"{free_mb:,.0f} MB free ({pct_free:.0f}%)"
-    if d["state"] == "critical":
+    if d["state"] == "critical" and d.get("backend") == "postgres":
+        # The database is on the Postgres service (R8-06): this volume holds
+        # the backups, the logs and the cutover's frozen file.
+        update_service_status("storage", "outage", f"App volume almost full — {detail}. The nightly backup no "
+                                                   "longer fits.")
+        _page_operator("storage_critical",
+                       f"App volume almost full — {detail}. The nightly backup's snapshot no longer fits; the "
+                       f"database itself is on the Postgres service (its volume is watched separately).")
+    elif d["state"] == "critical":
         update_service_status("storage", "outage", f"Volume almost full — {detail}. Writes will start failing.")
         _page_operator("storage_critical",
                        f"Volume almost full — {detail}. SQLite writes will start failing; "
@@ -353,13 +361,19 @@ def _page_operator(key, message):
         log.warning("could not page operator for %s: %s", key, e)
 
 
-# Disk thresholds, as multiples of the live database (file + WAL) with an
-# absolute floor under each. The fixed 50 MB / 250 MB lines were right for a
-# 7 MB database and meaningless for a 2 GB one (#28): the nightly backup
-# writes a snapshot, a redacted copy and an encrypted file beside the
-# database — about 3.5 times its size, which is what backup_db checks for —
-# so "low" is the point where the next backup no longer fits, and
-# "critical" the point where a checkpoint, a VACUUM or a migration fails.
+# Disk thresholds, as multiples of the live database with an absolute floor
+# under each. The fixed 50 MB / 250 MB lines were right for a 7 MB database
+# and meaningless for a 2 GB one (#28). "low" is the point where the next
+# nightly backup no longer fits: one run needs about
+# scheduler.BACKUP_PEAK_SPACE_FACTOR (2.75) times the database free at its
+# peak — the work copy, tonight's gzip, the encrypted off-site copy — so 4x
+# leaves a night's margin; "critical" the point where even the local
+# snapshot no longer fits (scheduler.BACKUP_FREE_SPACE_FACTOR, 1.5x).
+#
+# On Postgres (scale re-audit 10/20/26 R8-06) "the database" here is the LIVE
+# one (pg_database_size), never the SQLite file the cutover left on the app
+# volume, which never grows: the backup's export of it is what lands on this
+# volume. The Postgres service's own volume is pg_volume_state's.
 DISK_LOW_FLOOR_MB = 250
 DISK_CRITICAL_FLOOR_MB = 50
 DISK_LOW_DB_MULTIPLE = 4.0
@@ -373,10 +387,26 @@ def _file_mb(path):
         return 0.0
 
 
-def disk_state(db_path=None):
-    """Free space on the volume the database lives on, as a state plus the
-    numbers behind it: free and total, the database and WAL sizes, and the
-    two thresholds this reading was judged against.
+def _pg_live_mb(db_path=None):
+    """pg_database_size in MB when the database is Postgres, else None. Never
+    raises (None)."""
+    try:
+        import onboarding
+        b = onboarding._pg_bytes(db_path)
+        return None if b is None else b / (1024 * 1024)
+    except Exception as e:
+        log.warning("disk: Postgres size unreadable: %s", e)
+        return None
+
+
+def disk_state(db_path=None, live_mb=None):
+    """Free space on the APP volume (the one models.DB_PATH lives on), as a
+    state plus the numbers behind it: free and total, the database and WAL
+    sizes, and the two thresholds this reading was judged against.
+
+    `live_mb` is the live database's size when the caller already has it (on
+    Postgres, pg_database_size); otherwise it is read — the Postgres size on
+    Postgres, the SQLite file and its WAL on SQLite.
 
     Shared by _check_storage (which writes the status page), /health (which
     an uptime monitor polls) and the admin console's system card, so none
@@ -392,8 +422,14 @@ def disk_state(db_path=None):
         pct_free = (usage.free / usage.total * 100) if usage.total else 100.0
     except Exception as e:
         return {"state": "unknown", "error": str(e)[:80]}
-    db_mb, wal_mb = _file_mb(path), _file_mb(path + "-wal")
-    live_mb = db_mb + wal_mb
+    if live_mb is None:
+        live_mb = _pg_live_mb(db_path)
+    backend = "postgres" if live_mb is not None else "sqlite"
+    if live_mb is None:
+        db_mb, wal_mb = _file_mb(path), _file_mb(path + "-wal")
+        live_mb = db_mb + wal_mb
+    else:
+        db_mb, wal_mb = float(live_mb), 0.0
     critical_below = max(DISK_CRITICAL_FLOOR_MB, live_mb * DISK_CRITICAL_DB_MULTIPLE)
     low_below = max(DISK_LOW_FLOOR_MB, live_mb * DISK_LOW_DB_MULTIPLE)
     state = "ok"
@@ -403,8 +439,78 @@ def disk_state(db_path=None):
         state = "low"
     return {"state": state, "free_mb": round(free_mb), "pct_free": round(pct_free, 1),
             "total_mb": round(usage.total / (1024 * 1024)),
-            "db_mb": round(db_mb, 1), "wal_mb": round(wal_mb, 1),
+            "db_mb": round(db_mb, 1), "wal_mb": round(wal_mb, 1), "backend": backend,
             "low_below_mb": round(low_below), "critical_below_mb": round(critical_below)}
+
+
+# The Postgres service's own volume (scale re-audit 10/20/26 R8-06). The app
+# cannot see another Railway service's disk, so its size is configured
+# (PG_VOLUME_MAX_BYTES — onboarding reads the same variable for the
+# backfill's room) and the database's own size plus its write-ahead log is
+# measured against it: past PG_VOLUME_LOW_SHARE a warning, past
+# PG_VOLUME_CRITICAL_SHARE a page that cannot wait — a full Postgres volume
+# refuses every write on the platform, and /health's db_not_writable was the
+# first anyone heard of it. Unset on Postgres is itself a warning: there is
+# no early signal without it.
+PG_VOLUME_LOW_SHARE = 0.80
+PG_VOLUME_CRITICAL_SHARE = 0.90
+
+
+def pg_volume_max_bytes() -> int:
+    try:
+        return int(float(os.getenv("PG_VOLUME_MAX_BYTES", "0") or 0))
+    except ValueError:
+        return 0
+
+
+def pg_volume_state(db_path=None) -> dict:
+    """{state: n/a | unset | ok | low | critical | unknown, db_mb, wal_mb,
+    used_mb, max_mb, pct_used, wal_error?}. "n/a" on SQLite. Never raises."""
+    try:
+        import db_dialect
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception as e:
+        return {"state": "unknown", "error": str(e)[:120]}
+    try:
+        if not db_dialect.is_postgres(conn):
+            return {"state": "n/a"}
+        size = int(conn.execute_native("SELECT pg_database_size(current_database())").fetchone()[0] or 0)
+        wal, wal_err = None, None
+        try:
+            wal = int(conn.execute_native("SELECT COALESCE(SUM(size), 0) FROM pg_ls_waldir()").fetchone()[0] or 0)
+        except Exception as e:                 # needs pg_monitor or a superuser; the size alone still counts
+            wal_err = str(e)[:120]
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    except Exception as e:
+        return {"state": "unknown", "error": str(e)[:120]}
+    finally:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+    mb = 1024 * 1024
+    used = size + (wal or 0)
+    out = {"db_mb": round(size / mb, 1), "wal_mb": round(wal / mb, 1) if wal is not None else None,
+           "used_mb": round(used / mb, 1), "max_mb": None, "pct_used": None}
+    if wal_err:
+        out["wal_error"] = wal_err
+    cap = pg_volume_max_bytes()
+    if not cap:
+        out["state"] = "unset"
+        return out
+    pct = used / float(cap)
+    out.update(max_mb=round(cap / mb), pct_used=round(pct * 100, 1),
+               state="critical" if pct >= PG_VOLUME_CRITICAL_SHARE else "low" if pct >= PG_VOLUME_LOW_SHARE
+               else "ok")
+    return out
 
 
 _reference_schema = {}
@@ -587,7 +693,7 @@ def health_snapshot(db_path=None):
     if journal != "wal":
         problems.append("db_not_wal")
 
-    disk = disk_state(path)
+    disk = disk_state(path, live_mb=pg_mb) if pg_mb is not None else disk_state(path)
     if disk["state"] in ("low", "critical"):
         problems.append(f"disk_{disk['state']}")
 

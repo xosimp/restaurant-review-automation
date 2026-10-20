@@ -106,7 +106,12 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # (network-bound POS reads — scale audit 10/19/26 INF-6: the nightly archive
 # rows held one of bulk's two CPU slots while they waited on RPOWER, so the
 # learners queued behind them).
-GROUPS = ("generation", "bulk", "pos_io")
+# "maintenance" (scale re-audit 10/20/26 R8-03): the platform's own long
+# work — the nightly backup's export and off-site copy, the monthly restore
+# drill — one row at a time, in the queue worker process: off the
+# scheduler loop and out of the web process (it ran inline on the loop, in
+# the web process, for an hour at ~40 GB).
+GROUPS = ("generation", "bulk", "pos_io", "maintenance")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -144,6 +149,10 @@ KINDS = {
     # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
     # scheduler.run_auto_publish_schedules fans out).
     "auto_publish": ("bulk", "bulk", 2),
+    # A scheduled job the loop hands to the queue worker (jobs_registry
+    # `queue`; scheduler.queue_scheduled_job — scale re-audit 10/20/26
+    # R8-03): run there through ops.run_job under its own name.
+    "scheduled_job": ("maintenance", "scheduled", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -160,6 +169,7 @@ HANDLERS = {
     "silent_push": "push:run_queued_silent",
     "schedule_notices": "schedule_publish:run_queued_notices",
     "auto_publish": "scheduler:run_queued_auto_publish",
+    "scheduled_job": "scheduler:run_queued_scheduled_job",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -238,6 +248,10 @@ def group_concurrency(grp) -> int:
         # Network-bound rows: their slots are not cores. RPOWER's own budget
         # is its per-token bucket (rpower), not this count.
         return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
+    if grp == "maintenance":
+        # One at a time, always: the backup and the drill share the volume's
+        # free space and must never run side by side (R8-03).
+        return 1
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
@@ -417,6 +431,8 @@ def max_running(grp) -> int:
     configured token budget, never more streams than it carries. This is
     also the size of a consumer's thread pool for the group."""
     slots = group_concurrency(grp)
+    if grp == "maintenance":
+        return slots                      # no model waits: never more in flight than its one slot
     n = _int_env(f"QUEUE_{str(grp).upper()}_MAX_RUNNING", slots * (3 if grp == "generation" else 2))
     if grp == "generation":
         cap = _gateway_streams()
@@ -1016,13 +1032,36 @@ def _dead_rows(conn, grp, now, expired) -> list:
     return out
 
 
+def frozen() -> str:
+    """Why no row may be claimed now, or "" (scale re-audit 10/20/26 R8-05):
+    the Postgres cutover's write freeze (MAINTENANCE_READ_ONLY), a restore in
+    progress (RESTORE_FROM — the runbook promises nothing runs against a
+    database nobody has looked at yet; the scheduler stood down but the
+    queue went on claiming schedule notices, auto-publishes and generations),
+    or a database that went back in time under the running service
+    (restore_guard — a Railway Postgres restore, R8-04). config.
+    scheduling_allowed is not the gate: it is false on every laptop, where
+    the queue must still run an owner's press."""
+    if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
+        return "maintenance_read_only"
+    if (os.getenv("RESTORE_FROM") or "").strip():
+        return "restore_from"
+    try:
+        import config
+        if config.restore_frozen():
+            return "restore_detected"
+    except Exception:
+        pass
+    return ""
+
+
 def claim(worker_id, groups=GROUPS, db_path=None):
     """The next row this consumer may run, claimed (state running, a lease,
     attempts + 1, holding a CPU slot) — or None when nothing is claimable
     within the bounds above. Rows expired unstarted on the way are handed
     to their kind's EXPIRE_HOOKS after the commit."""
-    if _draining.is_set() or (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
-        return None                       # draining, or the cutover's write freeze
+    if _draining.is_set() or frozen():
+        return None                       # draining, a write freeze, a restore, or a restored database
     now = time.time()
     expired, picked = [], None
     conn = get_conn(db_path)

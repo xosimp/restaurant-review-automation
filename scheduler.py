@@ -2078,8 +2078,24 @@ _OFFSITE_WORK_PREFIX = "offsite_work_"
 # local snapshot — the restore artifact — is already safely written.
 BACKUP_FREE_SPACE_FACTOR = float(os.getenv("BACKUP_FREE_SPACE_FACTOR", "1.5"))
 # The encrypted off-site copy is base64'd Fernet: ~4/3 of the scrubbed copy
-# it is made from, plus a token's overhead per 3 MB chunk.
+# it is made from, plus a token's overhead per 3 MB chunk. The scrub's
+# compaction (offsite_backup.redact's VACUUM INTO, at most the copy's size)
+# runs before it, on the same volume, and is freed before it starts — so
+# this one factor covers both (scale re-audit 10/20/26 R8-18: a plain VACUUM
+# wrote its copy to the container's temp disk, outside every check).
 BACKUP_OFFSITE_SPACE_FACTOR = 1.4
+# What one whole run needs free at its peak, as a multiple of the database
+# (scale re-audit 10/20/26 R8-03): the uncompressed work copy (1.0), tonight's
+# gzip beside it before the prune (a third, rounded up), and the encrypted
+# copy while the work copy still exists (BACKUP_OFFSITE_SPACE_FACTOR) —
+# 2.75. The two gates above stay in two stages on purpose: short of the
+# local one nothing is written; short of the off-site one the local snapshot
+# (the restore artifact) is still made and the run fails and pages. This is
+# the figure the things that must warn BEFORE a run stops fitting read: the
+# backfill's room check (onboarding.storage_room) and the volume's "low"
+# line (status_manager.disk_state).
+BACKUP_GZIP_SHARE = 0.35
+BACKUP_PEAK_SPACE_FACTOR = 1.0 + BACKUP_GZIP_SHARE + BACKUP_OFFSITE_SPACE_FACTOR
 BACKUP_GZIP_LEVEL = 6
 
 
@@ -2285,8 +2301,10 @@ def _backup_too_slow(run):
         if scheduling_allowed():
             _ops.page_operator("backup_slow", "Cavnar AI: the nightly backup is nearing its time bound",
                                [f"{total}s of a {int(bound)}s bound — stages {d.get('stage_seconds')}",
-                                "Move the copy off the app volume before it stops fitting (RECOVERY.md -> The backup; "
-                                "docs/plans/POSTGRES_AND_WORKERS_PLAN.md -> Backups at scale)."],
+                                "It runs in the queue worker, so nothing waits on it, but past the bound it is "
+                                "stuck and the morning's prune runs without it: grow the bound or split the export "
+                                "(RECOVERY.md -> The backup; docs/plans/POSTGRES_AND_WORKERS_PLAN.md -> Backups "
+                                "at scale)."],
                                cooldown_minutes=24 * 60)
     except Exception as e:
         log.warning(f"backup_db: slow-backup page failed: {e}")
@@ -2464,8 +2482,14 @@ def backup_db():
     """Daily 2am backup: a local snapshot, then the off-site copies.
 
     1. Free space first (#28): at least BACKUP_FREE_SPACE_FACTOR times the
-       database (and its WAL) must be free, or the run fails before it
-       writes anything.
+       database (and its WAL; on Postgres the live database's size) must be
+       free, or the run fails before it writes anything. The off-site stage
+       checks its own room (BACKUP_OFFSITE_SPACE_FACTOR) against the real
+       snapshot; one whole run's peak is BACKUP_PEAK_SPACE_FACTOR, what the
+       warnings ahead of it read (R8-03).
+
+    Runs in the queue worker process as a `scheduled_job` row (scale
+    re-audit 10/20/26 R8-03), not on the scheduler loop.
     2. The snapshot is a VACUUM INTO copy, integrity-checked (see
        _write_consistent_snapshot), then gzipped and read back
        (_gzip_snapshot) — cavnar_ai_backup_<date>.db.gz; the newest
@@ -2525,7 +2549,10 @@ def backup_db():
         # A work copy a crashed run left behind is not a snapshot and holds
         # space this run needs.
         import glob as _glob
-        for _stale in _glob.glob(os.path.join(backup_dir, _OFFSITE_WORK_PREFIX + "*")):
+        # A run handed back by a deploy (the queue resumes it from the
+        # start — R8-03) can leave a half-written gzip too.
+        for _stale in (_glob.glob(os.path.join(backup_dir, _OFFSITE_WORK_PREFIX + "*"))
+                       + _glob.glob(os.path.join(backup_dir, "cavnar_ai_backup_*.partial"))):
             try:
                 os.unlink(_stale)
             except OSError:
@@ -2659,7 +2686,8 @@ def backup_db():
         # The redacted copy exists only to be encrypted and sent. Leaving it
         # on the volume would double the backup directory's size and put a
         # second, restore-useless file next to every real snapshot.
-        for _tmp in (redacted_path, redacted_path + "-journal", enc_path):
+        for _tmp in (redacted_path, redacted_path + "-journal", redacted_path + ".vacuum",
+                     redacted_path + ".vacuum-journal", enc_path):
             try:
                 if os.path.exists(_tmp):
                     os.unlink(_tmp)
@@ -4742,6 +4770,10 @@ def run_restore_drill():
         _t0[0] = now_m
 
     _clean()
+    # Room first (scale re-audit 10/20/26 R8-15): the drill decompresses a
+    # whole copy beside the snapshots, and a drill that filled the volume
+    # would take the live database's neighbours down with it.
+    _drill_room(backup_dir, _snapshot_bytes_estimate(newest), "the decompressed snapshot")
     if newest.endswith(".gz"):
         # Decompressed into the scratch file — the step a real restore
         # (RESTORE_FROM, db_restore) takes too.
@@ -4835,6 +4867,43 @@ def _decrypt_file_chunked(src_path, dest_path, key):
                 dst.write(fernet.decrypt(line))
 
 
+def _snapshot_bytes_estimate(path):
+    """The uncompressed size of a local snapshot: the newest backup run's own
+    record of it (backup_runs detail snapshot_bytes), else four times the
+    gzip (a SQLite file compresses to a quarter or a third)."""
+    import json as _json
+    size = os.path.getsize(path)
+    if not path.endswith(".gz"):
+        return size
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT detail_json FROM backup_runs WHERE local_ok=1 ORDER BY id DESC LIMIT 1").fetchone()
+        finally:
+            conn.close()
+        got = int((_json.loads(row["detail_json"] or "{}") if row else {}).get("snapshot_bytes") or 0)
+        if got:
+            return got
+    except Exception as e:
+        log.warning(f"restore drill: snapshot size unread ({e}); estimating from the gzip")
+    return 4 * size
+
+
+def _drill_room(backup_dir, need_bytes, what):
+    """Raise (the drill fails, recorded and paged like any job) when the
+    volume has less than `need_bytes` and a 10% margin free for `what`."""
+    import shutil as _sh_d
+    try:
+        free = _sh_d.disk_usage(backup_dir).free
+    except OSError:
+        return
+    need = int(1.1 * int(need_bytes or 0))
+    if free < need:
+        raise RuntimeError(f"restore drill: not enough free space for {what}: {free // 1048576} MB free, "
+                           f"{need // 1048576} MB needed — nothing was written")
+
+
 def _drill_count(path, sql):
     import sqlite3
     c = sqlite3.connect(path)
@@ -4861,8 +4930,8 @@ def _drill_offsite(backup_dir):
     try:
         conn = get_conn()
         try:
-            row = conn.execute("SELECT offsite_target, sha256, finished_at FROM backup_runs WHERE offsite_ok=1 "
-                               "AND offsite_target LIKE 's3://%' ORDER BY id DESC LIMIT 1").fetchone()
+            row = conn.execute("SELECT offsite_target, sha256, finished_at, detail_json FROM backup_runs "
+                               "WHERE offsite_ok=1 AND offsite_target LIKE 's3://%' ORDER BY id DESC LIMIT 1").fetchone()
         finally:
             conn.close()
     except Exception as e:
@@ -4883,6 +4952,13 @@ def _drill_offsite(backup_dir):
         stages[name] = round(now_m - _t[0], 1)
         _t[0] = now_m
     try:
+        # The encrypted download and its decrypted copy sit side by side
+        # (R8-15): ~1.75 times the encrypted size.
+        try:
+            enc_bytes = int((__import__("json").loads(row["detail_json"] or "{}")).get("encrypted_bytes") or 0)
+        except (TypeError, ValueError):
+            enc_bytes = 0
+        _drill_room(backup_dir, int(1.75 * enc_bytes), "the off-site copy and its decryption")
         got = offsite_backup.download_file(object_key, enc, cfg=cfg, full_key=True)
         _lap("download")
         if row["sha256"] and got["sha256"] != row["sha256"]:
@@ -5646,6 +5722,14 @@ def _run_manual_requests(pulsed):
             _ops.finish_job_request(req_id, state != _ops.RUN_FAILED,
                                     outcome.get("error") or (None if state != _ops.RUN_FAILED else "the run failed"))
         context = f"manual by {req.get('requested_by') or 'admin'}"
+        if spec.get("queue"):
+            # A job the queue worker runs (R8-03): Run now queues it there
+            # too; the worker finishes the request when the run ends.
+            if queue_scheduled_job(name, f"manual-{req['id']}", context=context, request_id=req["id"]) is None:
+                _ops.finish_job_request(req["id"], False, "could not be queued")
+            else:
+                ran += 1
+            continue
         lane = spec.get("lane")
         if lane in _LANES:
             def lane_body(body=body, name=name, req_id=req["id"]):
@@ -5675,6 +5759,133 @@ def _run_manual_requests(pulsed):
         finish()
         ran += 1
     return ran
+
+
+def _restore_guard_holds() -> bool:
+    """restore_guard's look at the top of a tick: True while the database is
+    held as restored-under-us (the tick runs nothing). A guard that cannot
+    read never holds the platform."""
+    try:
+        import restore_guard
+        return restore_guard.check_and_stamp().get("state") in ("detected", "frozen")
+    except Exception as e:
+        log.warning(f"restore guard unavailable: {e}")
+        return False
+
+
+# ── scheduled jobs the queue worker runs (scale re-audit 10/20/26 R8-03) ────
+#
+# A registry entry with `queue` is not run on this loop or a lane: the loop
+# claims its period as ever and enqueues one `scheduled_job` row (job_queue's
+# maintenance group, one at a time), and the queue worker process runs it
+# through ops.run_job under the job's own name — job_runs, the SLA, the
+# console's Jobs page and Run now read it exactly as before. The row's
+# idempotency key is the period, so a reclaimed period never queues it
+# twice; a deploy hands a running row back and the next process starts it
+# again (the backup clears a crashed run's work files first).
+
+def _scheduled_key(name, period):
+    return f"scheduled:{name}:{period}"
+
+
+def queue_scheduled_job(name, period, context="", request_id=None):
+    """Enqueue registry job `name` for `period` (or for a console Run now,
+    `request_id`). Returns the queue row id, or None when it could not be
+    queued (logged and captured: the period's claim stays spent, and the
+    job's SLA and ops.backup_status say so)."""
+    key = f"run_now:{name}:{request_id}" if request_id is not None else _scheduled_key(name, period)
+    try:
+        import job_queue
+        qid, _created = job_queue.enqueue(
+            "scheduled_job", {"job": name, "period": str(period), "context": context or "",
+                              "request_id": request_id},
+            # Not woken here: the queue worker's poll (or the web process's
+            # minute tick, when it consumes) takes it — never a drain thread
+            # started from the scheduler loop.
+            idempotency_key=key, external_id=key, wake=False)
+        return qid
+    except Exception as e:
+        log.error(f"{name} not queued for {period}: {e}")
+        _ops.capture(e, job=name, context=f"queue {period}")
+        return None
+
+
+def _scheduled_job_settled(name, period) -> bool:
+    """Whether the queue row of `name` for `period` has finished (done,
+    failed, expired or cancelled) — what the jobs that follow it wait on."""
+    try:
+        import job_queue
+        row = job_queue.row_for(_scheduled_key(name, period))
+    except Exception as e:
+        log.warning(f"{name} {period}: queue row unreadable: {e}")
+        return False
+    return bool(row) and row.get("state") not in ("queued", "running")
+
+
+# The prune and the drill wait for tonight's backup until this hour, then
+# go on without it: a backup that never finished must not starve the
+# retention pass (ops.prune_backup_gate still holds the deletes without a
+# fresh snapshot, and the drill fails on a stale one).
+BACKUP_FOLLOWERS_LATEST_HOUR = 6
+
+
+def _backup_settled(now, today) -> bool:
+    return _due(now, BACKUP_FOLLOWERS_LATEST_HOUR) or _scheduled_job_settled("backup_db", str(today))
+
+
+def run_queued_scheduled_job(job):
+    """job_queue handler for a `scheduled_job` row: the registry job named
+    in its payload, through ops.run_job (recorded, captured, pulsed). A
+    console Run now's request is finished here. A failed retryable,
+    non-sending scheduled run raises, so the queue tries it again after its
+    backoff (on the loop it was the loop's retry). Returns {job, ok}."""
+    import importlib
+    import contextlib
+    payload = job.get("payload") or {}
+    name = payload.get("job")
+    spec = jobs_registry.spec(name) if name else None
+    request_id = payload.get("request_id")
+    if not spec or not spec.get("queue") or not spec.get("target"):
+        if request_id is not None:
+            _ops.finish_job_request(request_id, False, "not a queued job")
+        err = RuntimeError(f"scheduled_job: {name!r} is not a queued registry job")
+        err.no_retry = True
+        raise err
+    if _ops.is_running(name) or _ops.running_elsewhere(name):
+        if request_id is not None:
+            _ops.finish_job_request(request_id, False, "already running")
+        return {"job": name, "ok": False, "skipped": "already running"}
+    mod, fn_name = spec["target"]
+    fn = getattr(importlib.import_module(mod), fn_name)
+    kwargs = jobs_registry.run_kwargs(name, now=_chi_now())
+    outcome = {}
+
+    def body(**kw):
+        try:
+            res = fn(**kw)
+        except Exception as e:
+            outcome["error"] = str(e)
+            raise
+        outcome["result"] = res
+        return res
+    ctx = contextlib.nullcontext()
+    if request_id is not None:
+        try:
+            import ai_utils as _ai_q
+            ctx = _ai_q.ai_context(trigger="admin", correlation_id=f"run_now:{name}:{request_id}")
+        except Exception:
+            ctx = contextlib.nullcontext()
+    with ctx:
+        _ops.run_job(name, body, context=payload.get("context") or "", claim=spec.get("claim") or name,
+                     request_id=request_id, **kwargs)
+    failed = "result" not in outcome or _ops.run_outcome(outcome["result"])[0] == _ops.RUN_FAILED
+    if request_id is not None:
+        _ops.finish_job_request(request_id, not failed,
+                                outcome.get("error") or ("the run failed" if failed else None))
+    elif failed and spec.get("retry") and not spec.get("sends"):
+        raise RuntimeError(f"{name} failed for {payload.get('period')}: "
+                           f"{outcome.get('error') or 'see job_runs'} - the queue tries it again")
+    return {"job": name, "ok": not failed}
 
 
 def scheduler_loop():
@@ -5714,6 +5925,13 @@ def scheduler_loop():
                 _ops.became_runner()
                 _ops.close_orphaned_runs()
             _ops.begin_tick()
+            # A database put back to an earlier point under this running
+            # service (a Railway Postgres restore) stops the tick before any
+            # job runs, until a person confirms (restore_guard — scale
+            # re-audit 10/20/26 R8-04).
+            if _restore_guard_holds():
+                time.sleep(SCHEDULER_TICK_SECONDS)
+                continue
             # The heartbeat is stamped only at the END of a tick (DH2-2): a
             # tick that died after stamping it at the top — the 9/19
             # UnboundLocalError — left a fresh heartbeat over a loop that ran
@@ -5853,20 +6071,25 @@ def scheduler_loop():
                 _ops.run_job("morning_brief", _mb.run_due)
                 _briefs_ran = True
 
-            # Monday 6am — run competitor analysis for all clients
-            # 2am daily — backup DB to email
+            # 2am daily — the nightly backup. A row on the job queue's
+            # maintenance group (scale re-audit 10/20/26 R8-03): the queue
+            # worker process runs it (run_queued_scheduled_job), off
+            # this loop and out of the web process — inline it held the loop
+            # (and the web process's memory and GIL) for ~91 s a GB.
             if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
-                log.info("Running daily DB backup...")
-                _ops.run_job("backup_db", backup_db)
-                # The 2nd of every month, after the backup: prove the newest
-                # snapshot and the off-site copy restore, and time it (OPS-10;
-                # it was quarterly). See run_restore_drill.
-                if today.day == 2 and \
-                        _ops.claim_period("restore_drill", f"{today}"):
-                    _ops.run_job("restore_drill", run_restore_drill)
-                # Straight after the backup, so the pruned rows are in it:
-                # ops.prune_ledgers (the one retention registry) and each
-                # owner's review retention, nightly (#72, #81).
+                log.info("Queueing the nightly DB backup...")
+                queue_scheduled_job("backup_db", str(today))
+            # The 2nd of every month, once tonight's backup has finished:
+            # prove the newest snapshot and the off-site copy restore, and
+            # time it (OPS-10; it was quarterly). On the queue too (R8-15).
+            if today.day == 2 and _due(now, 2) and _backup_settled(now, today) and \
+                    _ops.claim_period("restore_drill", f"{today}"):
+                queue_scheduled_job("restore_drill", f"{today}")
+            # After tonight's backup, so the pruned rows are in it:
+            # ops.prune_ledgers (the one retention registry) and each
+            # owner's review retention, nightly (#72, #81). Its own day
+            # claim now that the backup no longer runs in this block.
+            if _due(now, 2) and _backup_settled(now, today) and _ops.claim_period("prune_ledgers", str(today)):
                 _ops.run_job("prune_ledgers", run_nightly_retention)
             # Weekly, after the backup: the object store's own expiry of the
             # off-site copies (FORGET-9).

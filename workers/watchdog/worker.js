@@ -1,8 +1,15 @@
 // cavnar-watchdog — the monitor that lives OUTSIDE Railway.
 //
 // 1. Dead-man heartbeat: the scheduler GETs /ping/<token> at the end of every
-//    tick (ops.ping_healthcheck, HEALTHCHECK_PING_URL); /ping/<token>/fail
-//    marks a failed backup or digest. Silence past STALE_MINUTES pages Will.
+//    tick (ops.ping_healthcheck, HEALTHCHECK_PING_URL). Silence past
+//    STALE_MINUTES pages Will.
+//    /ping/<token>/fail marks a failed backup or digest. It is an EVENT, kept
+//    in its own key until it has been alerted (scale re-audit 10/20/26
+//    R8-13): it used to ride the heartbeat's key, so the next ordinary ping —
+//    the end of the same tick — overwrote it seconds later, and the cron,
+//    which needs two sightings five minutes apart, could never see it. A
+//    failure now alerts on the first check that sees it, once, whatever the
+//    heartbeat says, and expires after FAIL_KEEP_HOURS if no channel took it.
 // 2. Uptime: every 5 minutes the cron fetches /health and expects 200 with
 //    "db":"ok". Two failing checks in a row page Will (a deploy's restart is
 //    shorter than that); a recovery sends one "back up" email.
@@ -26,6 +33,9 @@ const FAILS_BEFORE_ALERT = 2;
 // a heartbeat is written at most once per PING_WRITE_MINUTES (a failure at
 // once), and the state only when it changes: about 300 writes a day.
 const PING_WRITE_MINUTES = 4;
+// A failure not yet alerted is kept this long (a day and a half: past the
+// next night's backup, which says the same again if it fails again).
+const FAIL_KEEP_HOURS = 36;
 
 export default {
   async fetch(request, env) {
@@ -33,11 +43,16 @@ export default {
     const m = url.pathname.match(/^\/ping\/([A-Za-z0-9_-]+)(\/fail)?\/?$/);
     if (!m || m[1] !== env.PING_TOKEN) return new Response("not found", { status: 404 });
     const fail = Boolean(m[2]);
+    if (fail) {
+      // Its own key, never overwritten by a heartbeat; the cron alerts on it.
+      await env.WATCH.put("fail", JSON.stringify({ at: Date.now(), alerted: false }),
+        { expirationTtl: FAIL_KEEP_HOURS * 3600 });
+    }
     const last = JSON.parse((await env.WATCH.get("ping")) || "null");
-    // Reads are cheap (100,000 a day); a write only when the news is new: a
-    // failure, a recovery from one, or a heartbeat older than the window.
-    if (!last || fail || last.fail || Date.now() - last.at >= PING_WRITE_MINUTES * 60000) {
-      await env.WATCH.put("ping", JSON.stringify({ at: Date.now(), fail }));
+    // Reads are cheap (100,000 a day); a heartbeat write only when it is
+    // older than the window (a /fail is a heartbeat too: the process is up).
+    if (!last || Date.now() - last.at >= PING_WRITE_MINUTES * 60000) {
+      await env.WATCH.put("ping", JSON.stringify({ at: Date.now() }));
     }
     return new Response("ok");
   },
@@ -50,8 +65,19 @@ async function check(env) {
   const now = Date.now();
   const problems = [];
   const ping = JSON.parse((await env.WATCH.get("ping")) || "null");
-  if (ping && ping.fail) problems.push("The scheduler reported a failure (the nightly backup or the digest).");
-  else if (ping && now - ping.at > STALE_MINUTES * 60000)
+  // A reported failure alerts at once, on its own (R8-13): one sighting.
+  const failed = JSON.parse((await env.WATCH.get("fail")) || "null");
+  if (failed && !failed.alerted) {
+    const when = new Date(failed.at).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+    const sent = await notify(env, "trigger", "Cavnar AI: a nightly job failed",
+      `The scheduler reported a failure at ${when} (the nightly backup or the failure digest). ` +
+      "The in-app page has the reason; this is the copy from outside Railway.", "cavnar-watchdog-fail");
+    if (sent) {
+      await env.WATCH.put("fail", JSON.stringify({ at: failed.at, alerted: now }),
+        { expirationTtl: FAIL_KEEP_HOURS * 3600 });
+    }
+  }
+  if (ping && now - ping.at > STALE_MINUTES * 60000)
     problems.push(`No heartbeat from the scheduler for ${Math.round((now - ping.at) / 60000)} minutes — its jobs have stopped.`);
   try {
     const r = await fetch(HEALTH_URL, { headers: { "User-Agent": "cavnar-watchdog" }, cf: { cacheTtl: 0 } });
@@ -85,9 +111,9 @@ function list(value) {
 
 // Every configured channel, each on its own: one failing never stops the
 // others. True when any of them accepted the alert.
-async function notify(env, event, subject, text) {
+async function notify(env, event, subject, text, dedup = "cavnar-watchdog-down") {
   const sends = [email(env, subject, text)];
-  if (env.PAGERDUTY_ROUTING_KEY) sends.push(pagerduty(env, event, subject));
+  if (env.PAGERDUTY_ROUTING_KEY) sends.push(pagerduty(env, event, subject, dedup));
   if (env.PAGER_WEBHOOK_URL) sends.push(webhook(env, event, subject, text));
   if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM) {
     for (const to of list(env.ALERT_SMS_TO)) sends.push(sms(env, to, `${subject}: ${text}`.slice(0, 320)));
@@ -107,12 +133,12 @@ async function email(env, subject, text) {
   return r.ok;
 }
 
-async function pagerduty(env, event, subject) {
+async function pagerduty(env, event, subject, dedup) {
   const r = await fetch("https://events.pagerduty.com/v2/enqueue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      routing_key: env.PAGERDUTY_ROUTING_KEY, event_action: event, dedup_key: "cavnar-watchdog-down",
+      routing_key: env.PAGERDUTY_ROUTING_KEY, event_action: event, dedup_key: dedup || "cavnar-watchdog-down",
       payload: { summary: subject, source: "cavnar-watchdog", severity: "critical" },
     }),
   });
