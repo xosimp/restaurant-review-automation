@@ -191,6 +191,8 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
 | `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |
 | `PG_SHADOW_WRITE` | — | `1` notes every schedule revision in `pg_shadow_outbox`; the `pg_shadow` job writes them to `SHADOW_DATABASE_URL`. | pg_shadow.py |
+| `LOADTEST_STAGING` | unset | `1` lets `scripts/loadtest/seed_staging.py` and `nightly_sim.py` run — on a STAGING database with no provider keys only, never production (scale audit 10/19/26). | scripts/loadtest |
+| `LOADTEST_USERS` | `scripts/loadtest/users.csv` | The logins file `scripts/loadtest/locustfile.py` reads (written by `seed_staging.py`; git-ignored). | scripts/loadtest |
 | `PG_POOL_MAX` | `20` | On Postgres: connections a process may have checked out by threads holding none — the per-process cap (blind re-audit 10/11/26 SCALE-11). The web process plus `worker.py` stay under Railway's `max_connections` (100) at the defaults. | db_dialect.py |
 | `PG_POOL_OVERFLOW` | `20` | More connections, only for a thread that already holds one (a nested `get_conn`; a wait there could deadlock). Process ceiling = `PG_POOL_MAX + PG_POOL_OVERFLOW`. | db_dialect.py |
 | `PG_POOL_IDLE` | `5` | Idle Postgres connections a process keeps for reuse. | db_dialect.py |
