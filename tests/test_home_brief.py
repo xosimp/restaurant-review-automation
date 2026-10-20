@@ -251,6 +251,27 @@ def test_group_brief_lists_every_location_without_averaging(db_path, monkeypatch
     assert home_brief.build_group_brief(_user(a, uid=3), fresh=True)[1] == 403
     solo = _seed(db_path, "Solo")
     assert home_brief.build_group_brief(_user(solo, uid=4, role="owner"), fresh=True)[1] == 400
+
+
+def test_the_group_view_reads_each_locations_kept_row(db_path, monkeypatch):
+    """Scale audit 10/19/26 FE-09: every location's labor and inventory
+    analyses ran serially on the request for every open of the group view.
+    Each location's row is kept for its business day; a later open (any
+    owner) reads the rows, and an explicit refresh builds them again."""
+    monkeypatch.setenv("HOME_SNAPSHOTS", "1")
+    a = _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Downtown")
+    _seed(db_path, "Corner Bar", location_group="Corner Group", location_name="Uptown")
+    built = []
+    real = home_brief._location_record
+    monkeypatch.setattr(home_brief, "_location_record", lambda c, r, now: built.append(r["id"]) or real(c, r, now))
+    first, _ = home_brief.build_group_brief(_user(a, role="owner"), fresh=True)
+    assert len(built) == 2
+    home_brief.invalidate()
+    again, _ = home_brief.build_group_brief(_user(a, uid=7, role="owner"))
+    assert len(built) == 2
+    assert [l["reviews"] for l in again["locations"]] == [l["reviews"] for l in first["locations"]]
+    home_brief.build_group_brief(_user(a, role="owner"), fresh=True)
+    assert len(built) == 4
     app = Flask(__name__, template_folder="../templates"); app.register_blueprint(client_bp); cl = app.test_client()
     monkeypatch.setattr(auth, "get_current_user", lambda: _user(a, role="owner"))
     r = cl.get("/api/home/brief/group?fresh=1")

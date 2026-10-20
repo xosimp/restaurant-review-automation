@@ -52,7 +52,10 @@ import time
 
 log = logging.getLogger("home_snapshots")
 
-BLOCKS = ("morning_brief", "good_news", "monthly_review", "cross_module")
+BLOCKS = ("morning_brief", "good_news", "monthly_review", "cross_module",
+          # One location's row of the group view (home_brief._location_record,
+          # FE-09): the same for every viewer.
+          "location_record")
 
 # A kept answer older than this is rebuilt in the background on its next
 # read even when no stamped input moved (what the stamp does not cover:
@@ -370,13 +373,15 @@ def keep(block, restaurant_id, scope_key, as_of, payload, restaurant=None, db_pa
         return False
 
 
-def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_path=None):
+def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_path=None, fresh=False):
     """The kept answer for (restaurant, block, scope) today, or a new build.
 
     `build` is a no-argument callable returning a JSON-able answer; it runs
     on the request when nothing is kept for `as_of` (once per key), else on
     the pool when the kept one is stale. Returns a fresh decoded copy each
-    call (callers may change it). Never raises past `build`'s own errors."""
+    call (callers may change it). Never raises past `build`'s own errors.
+    `fresh` (an explicit refresh: the client's ?fresh=1) builds on the
+    request and keeps the result, whatever is kept."""
     if not enabled():
         if getattr(_kept_only, "on", False):
             raise SnapshotMiss(block)
@@ -384,7 +389,10 @@ def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_pat
     as_of = str(as_of)
     stamp = data_stamp(restaurant_id, restaurant, db_path)
     key = (int(restaurant_id), block, scope_key, db_path)
-    row = _read(restaurant_id, block, scope_key, db_path)
+    row = None if fresh else _read(restaurant_id, block, scope_key, db_path)
+    if fresh and not getattr(_kept_only, "on", False):
+        payload = _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_path)
+        return json.loads(_encode(payload))
     if row is None or row["as_of"] != as_of:
         with _key_lock(key):
             # A request that waited on another's build reads its row.
