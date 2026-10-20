@@ -25207,7 +25207,13 @@ function generateSchedule(btn, opts) {
       // failed job: it keeps running server-side, so the page keeps asking
       // and only gives up after several failures in a row (SCHED-41).
       var _pollFails = 0;
-      _schedPollInterval = setInterval(function() {
+      // One poll at a time: the next is asked 2 s after this one answers
+      // (scale audit 10/19/26 A5-F5 - a 2 s interval stacked polls on a slow
+      // server). _schedPollInterval holds the waiting timer; null is stopped.
+      var _schedNext = function() {
+        if (_schedPollInterval !== null) _schedPollInterval = setTimeout(_schedPoll, 2000);
+      };
+      var _schedPoll = function() {
         fetch('/api/schedule-status/' + jobId)
           .then(apiJson)
           .then(function(pollData) {
@@ -25222,6 +25228,7 @@ function generateSchedule(btn, opts) {
               // The days the draft has finished so far, counted from the
               // answer as it streams (AI cost audit 10/7/26 #36).
               _schedProgress = pollData.progress || null;
+              _schedNext();
               return;
             }
             clearTimeout(_hardTimeout);
@@ -25236,7 +25243,7 @@ function generateSchedule(btn, opts) {
           })
           .catch(function() {
             _pollFails += 1;
-            if (_pollFails < 8) return;
+            if (_pollFails < 8) { _schedNext(); return; }
             clearTimeout(_hardTimeout);
             clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
@@ -25244,7 +25251,8 @@ function generateSchedule(btn, opts) {
             _schedReset(btn);
             _schedNotice(btn, 'We lost touch with the schedule generation. It may still finish \u2014 check Schedule History in a few minutes.');
           });
-      }, 2000);
+      };
+      _schedPollInterval = setTimeout(_schedPoll, 2000);
     })
     .catch(function() {
       clearInterval(_elapsedTimer);

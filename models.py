@@ -8836,6 +8836,20 @@ _INPUT_STAMPS = (
     ("demand_signals", "COUNT(*), MAX(id)"),
     ("labor_daily_history", "COUNT(*), MAX(saved_at)"),
 )
+# restaurants columns schedule_inputs_version leaves out: written by
+# background work or a session (sync stamps, tokens, caches of other
+# modules, read marks), never read by a schedule's inputs. The weather's own
+# forecast (weather_cache_json, weather_hourly_json) stays in: a draft's
+# demand reads it.
+_INPUTS_VOLATILE = frozenset({
+    "last_fetched_at", "weather_cached_at", "geocode_failed_at", "aivis_city_json", "inventory_updated_at",
+    "competitor_updated_at", "competitor_intel", "ig_token", "ig_token_expires", "fb_token_expires", "fb_page_token",
+    "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
+    "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
+    "clover_api_token", "clover_last_synced", "rpower_token", "rpower_last_synced", "rpower_verified_at",
+    "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
+    "gbp_review_count", "gbp_rating_updated_at", "optin_invites_ack_at", "demo_cleared_at",
+})
 
 
 def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
@@ -8853,7 +8867,16 @@ def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        h.update(repr(tuple(row) if row else ()).encode())
+        # Every column but the ones background work writes that no schedule
+        # input reads (_INPUTS_VOLATILE — scale audit 10/19/26 A5-F5): a
+        # review fetch's last_fetched_at, a POS sync's *_last_synced, a
+        # weather refresh's stamp emptied every Studio's kept inputs and the
+        # pre-publish cache all day.
+        if row is not None:
+            items = sorted((k, row[k]) for k in row.keys() if k not in _INPUTS_VOLATILE)
+            h.update(repr(items).encode())
+        else:
+            h.update(b"()")
         try:
             cd = conn.execute("SELECT updated_at, shifts_source, COALESCE(LENGTH(shifts_csv), 0), "
                               "COALESCE(LENGTH(shifts_csv_z), 0), shifts_stale FROM client_data "

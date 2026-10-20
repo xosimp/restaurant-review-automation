@@ -3550,18 +3550,25 @@ def _do_schedule_violations(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can check a schedule.")
     import schedule_rules as _sr
-    from schedule_engine import quality_inputs_from_db
+    from schedule_engine import studio_prepared
     b = _body()
     rows = _rows_from_body(b)
     if not rows:
         return {"ok": False, "error": "rows required"}, 400
-    inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
+    # The Studio's kept inputs for this week (schedule_engine.studio_prepared,
+    # keyed on the inputs version, built once at a time): every check after
+    # an edit rebuilt them from the database — the forecast, the baseline,
+    # the requirement model, the roster — 5 s on average, 41 s at worst, on
+    # a web request thread (scale audit 10/19/26 A5-F5 / A6 FE-11). The
+    # roster is on the kept Constraints already.
+    try:
+        hid_key = int(b.get("history_id")) if b.get("history_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        hid_key = None
+    inputs = studio_prepared(_rid(u), rows, history_id=hid_key)["inputs"]
     c = inputs.get("constraints")
     if c is None:
         return {"ok": True, "violations": [], "review": _sr.summarize([])}, 200
-    if inputs.get("roster"):
-        c.active = {n.lower() for n in inputs["roster"]}
-        c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}

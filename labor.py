@@ -358,11 +358,11 @@ def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
             # _cached_shifts: read-only by convention.
             key = ("shifts", int(restaurant_id))
             if key not in store:
-                store[key] = _own_shifts(restaurant_id, None)
+                store[key] = _own_shifts_shared(restaurant_id)
             if store[key]:
                 return store[key]
             return load_shifts() if allow_sample else []
-        rows = _own_shifts(restaurant_id, None)
+        rows = _own_shifts_shared(restaurant_id)
         return rows if rows else (load_shifts() if allow_sample else [])
     data = client_data
     if data and (data.get("shifts_store") == "facts" or ("shifts_csv" not in data and data.get("has_shifts"))):
@@ -373,6 +373,86 @@ def load_shifts_for_restaurant(restaurant_id: int, allow_sample: bool = False,
     if data and data.get("shifts_csv"):
         return load_shifts(csv_string=data["shifts_csv"])
     return load_shifts() if allow_sample else []
+
+
+# The parsed shift history shared by the web process's requests (scale audit
+# 10/19/26 A5-F5 / A6 FE-11): every Studio read — publish-review, score,
+# violations, a schedule's history — parsed the restaurant's WHOLE history
+# again per request (the request memo and a read_scope last one request),
+# seconds a call on a long history. Kept per (database, restaurant, history
+# stamp) — client_data's updated_at, sizes and stale mark, the stamp the
+# Studio's live check and the requirement model are keyed on — so an upload
+# or a POS sync is seen at once in every process, at most
+# SHIFT_HISTORY_CACHE_SECONDS as a backstop, and at most
+# SHIFT_HISTORY_CACHE_ROWS rows held (least recently used out first; the
+# newest always kept). Inside a Flask request only: a job reads the history
+# fresh (its read_scope is its one parse). Shared like the request memo:
+# read-only by convention.
+import collections as _collections_sh
+import threading as _threading_sh
+import os as _os_sh
+SHIFT_HISTORY_CACHE_SECONDS = float(_os_sh.getenv("SHIFT_HISTORY_CACHE_SECONDS", "900"))
+SHIFT_HISTORY_CACHE_ROWS = int(_os_sh.getenv("SHIFT_HISTORY_CACHE_ROWS", "300000"))
+_shared_history = _collections_sh.OrderedDict()
+_shared_history_lock = _threading_sh.Lock()
+
+
+def shared_history_clear() -> None:
+    """Forget every kept history (schedule_engine.studio_invalidate)."""
+    with _shared_history_lock:
+        _shared_history.clear()
+
+
+def _history_stamp(restaurant_id):
+    """client_data's stamp for the restaurant's history, or None."""
+    try:
+        import models as _m_hs
+        conn = _m_hs.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at, COALESCE(LENGTH(shifts_csv), 0), COALESCE(LENGTH(shifts_csv_z), 0), "
+                               "shifts_stale, shifts_store FROM client_data WHERE restaurant_id=?",
+                               (restaurant_id,)).fetchone()
+        finally:
+            conn.close()
+        return tuple(row) if row else ()
+    except Exception:
+        return None
+
+
+def _in_request() -> bool:
+    try:
+        from flask import has_request_context
+        return has_request_context()
+    except Exception:
+        return False
+
+
+def _own_shifts_shared(restaurant_id) -> list:
+    """_own_shifts, shared across a web process's requests by the history's
+    stamp (above); outside a request, or with no stamp, read fresh."""
+    if not _in_request() or SHIFT_HISTORY_CACHE_ROWS <= 0:
+        return _own_shifts(restaurant_id, None)
+    stamp = _history_stamp(restaurant_id)
+    if stamp is None:
+        return _own_shifts(restaurant_id, None)
+    import models as _m_sh
+    key = (str(_m_sh.DB_PATH), int(restaurant_id), stamp)
+    now = time.monotonic()
+    with _shared_history_lock:
+        hit = _shared_history.get(key)
+        if hit is not None and now - hit[0] < SHIFT_HISTORY_CACHE_SECONDS:
+            _shared_history.move_to_end(key)
+            return hit[1]
+    rows = _own_shifts(restaurant_id, None)
+    with _shared_history_lock:
+        for k in [k for k in _shared_history if k[:2] == key[:2]]:
+            _shared_history.pop(k, None)           # this restaurant's older stamps
+        _shared_history[key] = (now, rows)
+        total = sum(len(v[1] or ()) for v in _shared_history.values())
+        while total > SHIFT_HISTORY_CACHE_ROWS and len(_shared_history) > 1:
+            _k, old = _shared_history.popitem(last=False)
+            total -= len(old[1] or ())
+    return rows
 
 
 def _own_shifts(restaurant_id, client_data) -> list:

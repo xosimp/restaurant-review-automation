@@ -452,6 +452,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `SCHEDULE_FILL_SCORE_TOTAL_WORK` | `"2400000"` | schedule_engine.py — the same across a generation's scorers (was 24 seconds) |
 | `STUDIO_CACHE_PER_RESTAURANT` | `"3"` | schedule_engine.py |
 | `STUDIO_CACHE_SECONDS` | `"900"` | schedule_engine.py |
+| `PREPUBLISH_CACHE_SECONDS` | `"300"` | How long a pre-publish review (the saved week's, or the rows on screen by their text) is served from its cache; the key holds everything the review reads, so this is a backstop (it was a fixed 30 s — scale audit 10/19/26 A5-F5). prepublish.py |
+| `SHIFT_HISTORY_CACHE_SECONDS` | `"900"` | The backstop on the parsed shift history web requests share (`labor._shared_history`, keyed on client_data's history stamp — scale audit 10/19/26 A5-F5). labor.py |
+| `SHIFT_HISTORY_CACHE_ROWS` | `"300000"` | The most shift rows that shared history holds across restaurants (least recently used out first; 0 turns it off). labor.py |
 | `SWEEP_MAX_SECONDS` | `str(45 * 60` | scheduler.py |
 | `SWEEP_WORKERS` | `"1"` | scheduler.py |
 | `TOKEN_REFRESH_MAX_SECONDS` | `str(10 * 60` | scheduler.py |

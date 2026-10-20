@@ -266,6 +266,137 @@ def test_a_code_draft_is_never_planned_for_a_batch(db, monkeypatch):
     assert not sj._drafted_in_code(rid, "2026-10-19")
 
 
+# ── A5-F5 / A6 FE-11: the Studio's reads off the request threads' hot path ──
+
+def test_background_writes_no_longer_move_the_schedule_inputs_version(db):
+    rid = _restaurant(db, module_labor=1)
+    before = models.schedule_inputs_version(rid)
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE restaurants SET last_fetched_at='2026-10-19 10:00:00', "
+                     "weather_cached_at='2026-10-19T10:00:00+00:00', rpower_last_synced='2026-10-19 10:05:00', "
+                     "gbp_review_count=412, last_activity='2026-10-19 10:06:00' WHERE id=?", (rid,))
+        conn.commit()
+    finally:
+        conn.close()
+    assert models.schedule_inputs_version(rid) == before                # a review fetch, a sync, a visit
+    models.update_restaurant(rid, {"role_minimums_json": json.dumps({"Server": 2})})
+    assert models.schedule_inputs_version(rid) != before                # a rule the week is built to
+
+
+def test_the_studio_builds_a_weeks_inputs_once_however_many_ask_at_once(db, monkeypatch):
+    import threading
+    import schedule_engine as se
+    rid = _restaurant(db, module_labor=1)
+    rows = [{"date": WEEK[0], "day": "Monday", "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""}]
+    built = []
+    gate = threading.Event()
+
+    def slow_inputs(restaurant_id, daily_target_hours=None, week_rows=None):
+        built.append(restaurant_id)
+        gate.wait(5)
+        return {"roster": []}
+    monkeypatch.setattr(se, "quality_inputs_from_db", slow_inputs)
+    monkeypatch.setattr(se, "_quality_signals", lambda rid_, inputs: ({}, {}))
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(se.studio_prepared(rid, rows, history_id=4)))
+               for _ in range(3)]
+    for t in threads:
+        t.start()
+    time.sleep(0.3)
+    gate.set()
+    for t in threads:
+        t.join(10)
+    assert len(built) == 1 and len(got) == 3 and all(g is got[0] for g in got)
+
+
+def test_the_violations_check_reads_the_studios_kept_inputs(db, monkeypatch):
+    from flask import Flask
+    import schedule_engine as se
+    import strategy_routes as sr_
+    rid = _restaurant(db, module_labor=1)
+    calls = []
+    real = se.quality_inputs_from_db
+    monkeypatch.setattr(se, "quality_inputs_from_db", lambda *a, **k: calls.append(1) or real(*a, **k))
+    rows = [{"date": WEEK[0], "day": "Monday", "employee": "Ana", "role": "Server", "shift_start": "4:00pm",
+             "shift_end": "10:00pm", "scheduled_hours": "6", "notes": ""}]
+    app = Flask(__name__)
+    u = {"restaurant_id": rid, "is_admin": True, "id": 1}
+    for _ in range(2):
+        with app.test_request_context(json={"rows": rows, "history_id": 9}):
+            out, status = sr_._do_schedule_violations(u)
+        assert status == 200 and out["ok"]
+    assert calls == [1]                                               # built once, read twice
+
+
+def test_requests_share_the_parsed_history_until_it_changes(db, monkeypatch):
+    from flask import Flask
+    import labor
+    rid = _restaurant(db, module_labor=1)
+    models.save_client_data(rid, "shifts", "date,employee,role\n2026-10-01,Ana,Server\n")
+    parses = []
+    real = labor._own_shifts
+    monkeypatch.setattr(labor, "_own_shifts", lambda r, cd: parses.append(r) or real(r, cd))
+    app = Flask(__name__)
+    for _ in range(2):
+        with app.test_request_context():
+            labor.load_shifts_for_restaurant(rid)
+    assert parses == [rid]                                            # two requests, one parse
+    labor.load_shifts_for_restaurant(rid)                             # a job: read fresh
+    assert parses == [rid, rid]
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE client_data SET updated_at='2099-01-01 00:00:00' WHERE restaurant_id=?", (rid,))
+        conn.commit()
+    finally:
+        conn.close()
+    with app.test_request_context():
+        labor.load_shifts_for_restaurant(rid)
+    assert parses == [rid, rid, rid]                                  # an upload or a sync is seen at once
+    labor.shared_history_clear()
+
+
+def test_the_requirement_model_cache_keeps_one_entry_a_restaurant(monkeypatch):
+    import schedule_engine as se
+    se._REQUIREMENT_MODEL_CACHE.clear()
+    stamps = iter([("a",), ("b",), ("c",)])
+    monkeypatch.setattr(se, "shifts_stamp", lambda rid: next(stamps))
+    import learning_stats
+    monkeypatch.setattr(learning_stats, "learning_off", lambda: False)
+    import staffing_model, schedule_economics, staffing_elasticity
+    monkeypatch.setattr(staffing_model, "measure", lambda rid, shifts=None: None)
+    monkeypatch.setattr(schedule_economics, "measured_half_hours", lambda rid: None)
+    monkeypatch.setattr(staffing_elasticity, "moves", lambda rid: None)
+    for _ in range(3):
+        se._requirement_model(5)
+    assert [k[1:] for k in se._REQUIREMENT_MODEL_CACHE] == [(5, ("c",))]
+    monkeypatch.setattr(se, "REQUIREMENT_MODEL_ENTRIES", 2)
+    stamps2 = iter([("x",), ("y",), ("z",)])
+    monkeypatch.setattr(se, "shifts_stamp", lambda rid: next(stamps2))
+    for rid in (6, 7, 8):
+        se._requirement_model(rid)
+    assert [k[1] for k in se._REQUIREMENT_MODEL_CACHE] == [7, 8]       # the least recent out, never all
+    se._REQUIREMENT_MODEL_CACHE.clear()
+
+
+def test_a_review_of_the_same_rows_on_screen_is_served_from_the_cache(db, monkeypatch):
+    import prepublish
+    rid = _restaurant(db, module_labor=1)
+    hid = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6, 0, 30, _csv([(WEEK[0], "Ana")]), [])
+    built = []
+    monkeypatch.setattr(prepublish, "_review", lambda *a, **k: built.append(k.get("rows")) or {"ok": True, "n": 1})
+    prepublish.invalidate()
+    rows = [{"date": WEEK[0], "employee": "Ana"}]
+    assert prepublish.review(rid, hid, rows=rows)["n"] == 1
+    assert prepublish.review(rid, hid, rows=rows)["n"] == 1
+    assert len(built) == 1                                            # the Summary and Publish, one build
+    prepublish.review(rid, hid, rows=[{"date": WEEK[0], "employee": "Bo"}])
+    assert len(built) == 2                                            # an edit is new rows
+    assert prepublish.CACHE_SECONDS >= 300
+    prepublish.invalidate()
+
+
 # ── A5-F14: publish claims before its gate; the outbox in fewer writes ──────
 
 def _publish_week(db_path, rid):
