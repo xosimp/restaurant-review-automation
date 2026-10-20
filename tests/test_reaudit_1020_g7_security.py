@@ -704,6 +704,23 @@ def test_the_listed_admin_writes_carry_a_typed_audit_and_the_step_ups():
     assert "owner_phone" in admin_routes._SETTINGS_STEP_UP_FIELDS
 
 
+# ── R7-21: a poller answers only its own kind of job ──────────────────────
+
+def test_the_schedule_poller_never_returns_another_kind_of_job(db_path, client, monkeypatch):
+    import ops
+    monkeypatch.setattr(ops, "_async_conn", lambda: models.get_conn(db_path), raising=False)
+    rid, owner = _setup(db_path, two_fa=False)
+    ops.start_async_job("scan-1", "invoice_scan", rid)
+    ops.finish_async_job("scan-1", "done", {"ok": True, "total": 1234.5})
+    assert ops.read_async_job("scan-1", restaurant_id=rid) is not None
+    assert ops.read_async_job("scan-1", restaurant_id=rid, kinds=("schedule",)) is None
+    tok = auth.create_session(owner, device_type="ios", db_path=db_path)
+    r = client.get("/mobile/api/labor/schedule-status/scan-1", headers=_bearer(tok))
+    assert r.status_code == 404
+    r = client.get("/mobile/api/intel/refresh-status/scan-1", headers=_bearer(tok))
+    assert r.status_code == 404
+
+
 # ── R7-24: wages stay with the logins that see pay ────────────────────────
 
 def test_a_login_that_does_not_see_pay_gets_no_wage_from_the_schedule_checks(monkeypatch):

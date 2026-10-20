@@ -3650,8 +3650,8 @@ def competitor_intel_status(current_user, job_id):
     """Poll for competitor analysis result. Scoped to the caller's own
     restaurant — this used to be unauthenticated on the reasoning that the
     job id is an unguessable UUID, which is true but left a competitor
-    report readable by anyone who saw the id."""
-    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
+    report readable by anyone who saw the id. Competitor jobs only (R7-21)."""
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"], kinds=("competitor_intel",))
     if not job:
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":

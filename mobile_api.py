@@ -4859,7 +4859,8 @@ def mobile_schedule_status(job_id, current_user):
     ops.async_jobs table — the web route generates the job the phone may end
     up polling and vice versa, so they have to share one store."""
     import ops as _ops
-    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
+    # Schedule generations only (R7-21).
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"], kinds=("schedule",))
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
@@ -7397,9 +7398,10 @@ def mobile_refresh_competitors(current_user):
 @mobile_login_required
 def mobile_refresh_competitors_status(job_id, current_user):
     """Mirrors mobile_schedule_status's body/shape, reading the same
-    ops.async_jobs table the web Intel tab's poll reads."""
+    ops.async_jobs table the web Intel tab's poll reads. Competitor
+    refreshes only (R7-21)."""
     import ops as _ops
-    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"], kinds=("competitor_intel",))
     if not job:
         return jsonify(ok=False, status="error", error="Job not found"), 404
     if job["status"] == "pending":
