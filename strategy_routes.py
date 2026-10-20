@@ -5959,7 +5959,14 @@ def _do_cross_module(u):
     except Exception:
         _log_rank = False
     # The login's own answers leave its links too (CROSSMODULE-2).
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
+    # Kept per login for the business day (home_snapshots, scale audit
+    # 10/19/26 FE-01): a 3 s build on every Home open. Links answered since
+    # the build are left out below by their presentation.
+    import home_snapshots
+    brief = home_snapshots.serve(
+        "cross_module", _rid(u), home_snapshots.viewer_scope(u), _local_today(u),
+        lambda: bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank),
+        restaurant=r)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
@@ -6109,8 +6116,14 @@ def _do_good_news(u):
     # and it fails closed: a role lookup that errors hides everything.
     view = viewer_restaurant(get_restaurant(_rid(u)), u)
     denied = set(getattr(view, "_ask_denied", frozenset()))
-    items = good_news.all_good_news(_rid(u), today=_local_today(u),
-                                    restaurant=view, denied_modules=denied)
+    # Kept per denied-module set for the business day (home_snapshots,
+    # FE-01): an 11 s build on every Home open.
+    import home_snapshots
+    today = _local_today(u)
+    items = home_snapshots.serve(
+        "good_news", _rid(u), home_snapshots.denied_scope(denied), today,
+        lambda: good_news.all_good_news(_rid(u), today=today, restaurant=view, denied_modules=denied),
+        restaurant=view)
     items = [dict(i, ask=f"What's behind this: {i.get('headline', '')}") for i in items]
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
@@ -6356,7 +6369,12 @@ def _do_monthly_review(u):
     import monthly_review
     from models import get_restaurant
     rid = _rid(u)
-    review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
+    # The build is the same for every login (the filters below are per
+    # login), kept for the business day (home_snapshots, FE-01).
+    import home_snapshots
+    r, today = get_restaurant(rid), _local_today(u)
+    review = home_snapshots.serve("monthly_review", rid, "all", today,
+                                  lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r)
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
     review["goals"] = [g for g in (review.get("goals") or []) if _metric_visible(u, g.get("metric"))]
@@ -6419,7 +6437,15 @@ def _do_morning_brief(u):
     import morning_brief
     from models import get_restaurant
     r = get_restaurant(_rid(u))
-    brief = morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u)
+    # Kept per login for the business day (home_snapshots, FE-01): a 13 s
+    # build on every Home open. A line an answer has silenced since the
+    # build is dropped at serve time, as the build itself drops them.
+    import home_snapshots
+    today = _local_today(u)
+    brief = home_snapshots.serve(
+        "morning_brief", _rid(u), home_snapshots.viewer_scope(u), today,
+        lambda: morning_brief.build(_rid(u), restaurant=r, today=today, viewer=u), restaurant=r)
+    brief["lines"] = morning_brief._drop_answered(_rid(u), brief.get("lines") or [], viewer=u)
     # K6: Home's "Before service" card renders these lines, so a load that
     # names itself a Home view (?view=home, web and iOS Home) records them on
     # "home" — once a day per key. Every other reader (the settings screens)

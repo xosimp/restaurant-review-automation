@@ -304,6 +304,12 @@ Changed or added by the AI cost audit (10/7/26):
 - `DIGEST_WORKERS` (**2**) and `DIGEST_MAX_SECONDS` (**1200**): the weekly digest pass's pool and wall-clock bound (cursor `weekly_digest_cursor`); a restaurant not reached gives its day back to the next hourly pass.
 - `OWNER_AI_JOB_WORKERS` — **3**: the owner AI job pool (`ai_async`, #57) — an invoice read, a recipe-card read, the Campaign Studio's three drafts and the owner's live AI-visibility check run there as jobs the client polls, off the four request threads. Per process, like the other pools (CLAUDE.md, gunicorn `--workers`).
 
+Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
+
+- `HOME_SNAPSHOTS` — **1**: Home's four slow reads (the morning brief, good news, the monthly review, the cross-module links; web and phone) are kept per restaurant, business day and viewer scope in `home_snapshots` and served from the row. `0` builds every read on the request, as before.
+- `HOME_SNAPSHOT_REFRESH_SECONDS` — **900**: a kept answer older than this is rebuilt off the request on its next read even when no stamped input moved (a moved input rebuilds it at once). The stale answer is served meanwhile.
+- `HOME_SNAPSHOT_WORKERS` (**2**) and `HOME_SNAPSHOT_MAX_PENDING` (**200**): the background rebuild pool, and how many rebuilds may wait for it before a stale read is served without starting one. Per process, like the other pools (CLAUDE.md, gunicorn `--workers`).
+
 | Variable | Default | Read in |
 |---|---|---|
 | `ADMIN_BADGES_MAX_AGE_SECONDS` | `"300"` | admin_ops.py |
@@ -422,6 +428,10 @@ Changed or added by the AI cost audit (10/7/26):
 | `PUSH_MAX_QUEUED` | `"500"` | push.py |
 | `PUSH_MAX_WORKERS` | `"4"` | push.py |
 | `OWNER_AI_JOB_WORKERS` | `"3"` | ai_async.py |
+| `HOME_SNAPSHOTS` | `"1"` | home_snapshots.py |
+| `HOME_SNAPSHOT_REFRESH_SECONDS` | `"900"` | home_snapshots.py |
+| `HOME_SNAPSHOT_WORKERS` | `"2"` | home_snapshots.py |
+| `HOME_SNAPSHOT_MAX_PENDING` | `"200"` | home_snapshots.py |
 | `PUSH_OUTBOX_MAX_AGE_MINUTES` | `"120"` | push.py |
 | `RETENTION_CHUNK_ROWS` | `"5000"` | ops.py |
 | `RETENTION_MAX_SECONDS` | `str(10 * 60` | ops.py |

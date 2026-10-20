@@ -229,7 +229,8 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Do not raise gunicorn `--workers` past 1** until the bounded pools
   that still multiply with workers are sized for it: the two admin pools —
   `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
-  and push delivery pools, the owner AI job pool `ai_async`, the AI
+  and push delivery pools, the owner AI job pool `ai_async`, Home's
+  snapshot rebuild pool (`home_snapshots`, `HOME_SNAPSHOT_WORKERS`), the AI
   background pools (Ask's read and summary pools, the shadow-review and
   scoring pools) and the schedule model-call pool — one per process,
   `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
