@@ -491,6 +491,21 @@ def _reset_home_brief_cache():
 
 
 @pytest.fixture(autouse=True)
+def _reset_prepublish_cache():
+    """prepublish caches each week's review for PREPUBLISH_CACHE_SECONDS,
+    keyed by the week's version and the inputs/dismissal stamps — the same
+    on every test's fresh database, so one test's review (a withheld range)
+    was the next test's answer. Cleared only where prepublish is loaded."""
+    def _clear():
+        pp = sys.modules.get("prepublish")
+        if pp is not None and hasattr(pp, "invalidate"):
+            pp.invalidate()
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_requirement_model_cache():
     """schedule_engine caches each restaurant's work-driven requirement model
     (staffing_model, the half-hour curve, the elasticity moves) for 15

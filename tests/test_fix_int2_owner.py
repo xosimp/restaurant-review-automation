@@ -165,7 +165,7 @@ def test_the_blocked_page_shows_a_hold_with_no_resume(db_path, reason):
     html = body if isinstance(body, str) else body.get_data(as_text=True)
     assert code == 402 and "on hold" in html and 'id="resume-btn"' not in html
     msg, extra = auth._billing_blocked_message(user)
-    assert "on hold" in msg and "contact Will" in msg and "Resume" not in msg
+    assert "on hold" in msg and "billing@cavnar.ai" in msg and "Resume" not in msg
     assert extra["locked"] is True and extra["pause_reason"] == reason
 
 

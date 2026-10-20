@@ -20,6 +20,7 @@ Every model call is mocked: ai_utils.get_client is replaced for the whole
 file, so nothing here can reach a provider.
 """
 import json
+import threading
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -78,14 +79,21 @@ def _msg(text):
 
 
 class _Model:
-    """create_with_retry's stand-in: records each call, answers in turn."""
-    def __init__(self, *replies):
-        self.replies, self.calls = list(replies), []
+    """create_with_retry's stand-in: records each call, answers in turn —
+    or, given `by_source` ({source text: reply}), answers the call whose
+    prompt carries that text (translations run on a pool, so two of them
+    arrive in either order)."""
+    def __init__(self, *replies, by_source=None):
+        self.replies, self.calls, self.by_source = list(replies), [], by_source or {}
+        self._lock = threading.Lock()
 
     def __call__(self, client, **kw):
-        self.calls.append(kw)
-        assert "readiness" in kw
-        r = self.replies.pop(0) if self.replies else ""
+        with self._lock:
+            self.calls.append(kw)
+            assert "readiness" in kw
+            said = repr(kw.get("messages")) + repr(kw.get("system"))
+            hits = [v for k, v in self.by_source.items() if k in said]
+            r = hits[0] if hits else (self.replies.pop(0) if self.replies else "")
         if isinstance(r, Exception):
             raise r
         return _msg(r)
@@ -590,7 +598,8 @@ def test_staff_read_the_approved_brief_and_focus_line_in_their_language(client, 
     staff_brief.approve(rid, user, day=DAY, text="Big Friday. Rush around 6–8pm.")
     staff_brief.set_focus(rid, user, "Short Rib", "Offer it first.", day=DAY)
     monkeypatch.setattr(ai_utils, "create_with_retry",
-                        _Model("Gran viernes. Más movimiento entre 6–8pm.", "Ofrécelo primero."))
+                        _Model(by_source={"Big Friday. Rush around 6–8pm.": "Gran viernes. Más movimiento entre 6–8pm.",
+                                          "Offer it first.": "Ofrécelo primero."}))
     _as_staff(client, rid, uid)
     # Never a model call on the request (re-audit 10/20/26 R4-08): the first
     # read shows the approved English and writes the translation off the
