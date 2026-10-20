@@ -100,7 +100,13 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
 - **Locks:** `BEGIN IMMEDIATE` is one advisory lock (SQLite's one writer)
   except on the hot paths, which lock only what they serialise
   (`db_dialect.begin_write`): a job group's claim, one kind's enqueues, one
-  gateway minute, one rate key.
+  gateway minute, one rate key. The nightly sync's writes are tenant
+  transactions (`db_dialect.begin_tenant_write`, scale audit 10/19/26
+  DB-08): the one-writer lock taken SHARED plus that restaurant's own —
+  `shift_facts` ingests, `people.resolve_rows`, the item roll — so
+  restaurants sync side by side while every `BEGIN IMMEDIATE` site still
+  excludes them; `pos.save_synced_shifts` holds a per-restaurant lock on
+  Postgres (the process-wide one on SQLite).
 
 ## 0. Before anything
 

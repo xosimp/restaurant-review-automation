@@ -466,15 +466,34 @@ def note_sync_failure(restaurant_id, now=None):
     return True
 
 
+_TENANT_LOCKS = {}
+_TENANT_LOCKS_GUARD = threading.Lock()
+
+
+def _write_lock_for(restaurant_id):
+    """The lock a sync's write section holds: on SQLite _WRITE_LOCK, one for
+    the process (one writer — four fetches waiting on its busy_timeout
+    instead would only contend); on Postgres the restaurant's own (scale
+    audit 10/19/26 DB-08): its writes are tenant transactions there
+    (shift_facts / people begin_tenant_write), so two restaurants' syncs
+    write side by side and one restaurant's two never overlap."""
+    import db_dialect
+    if db_dialect.backend() != "postgres":
+        return _WRITE_LOCK
+    with _TENANT_LOCKS_GUARD:
+        return _TENANT_LOCKS.setdefault(int(restaurant_id), threading.RLock())
+
+
 def _serialized_write(fn):
-    """Hold _WRITE_LOCK for the whole call: the nightly sweep fetches four
-    restaurants at once, and this is the section that writes SQLite."""
+    """Hold the write lock (_write_lock_for) for the whole call: the nightly
+    sweep fetches four restaurants at once, and this is the section that
+    writes."""
     import functools
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        with _WRITE_LOCK:
-            return fn(*args, **kwargs)
+    def wrapper(restaurant_id, *args, **kwargs):
+        with _write_lock_for(restaurant_id):
+            return fn(restaurant_id, *args, **kwargs)
     return wrapper
 
 
@@ -490,7 +509,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     - Only Toast archived labor_daily_history (what YoY and trends read), so
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
-    by _WRITE_LOCK (the sweep's fetches run four at a time)."""
+    by _write_lock_for (the sweep's fetches run four at a time)."""
     from datetime import datetime, timezone
     from labor import load_shifts
     import shift_facts

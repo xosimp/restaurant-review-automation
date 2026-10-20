@@ -2005,6 +2005,25 @@ def begin_write(conn, *resource, lock_now=True):
         lock(conn, *resource)
 
 
+def begin_tenant_write(conn, *resource):
+    """A write transaction for one tenant's `resource` (scale audit 10/19/26
+    DB-08) that still keeps the one-writer rule for everything else. SQLite:
+    BEGIN IMMEDIATE. Postgres: the platform's write lock (WRITE_LOCK_KEY)
+    SHARED, then `resource`'s own lock. Two tenants' syncs (or two
+    resources of one) run side by side; every BEGIN IMMEDIATE site, which
+    takes WRITE_LOCK_KEY exclusively, still waits for them and they for it —
+    so a site moved here is serialised against every site not yet moved
+    exactly as before, and against its own resource of its own tenant."""
+    if not is_postgres(conn):
+        conn.execute("BEGIN IMMEDIATE")
+        return
+    if not resource:
+        raise ValueError("begin_tenant_write needs the resource it serialises")
+    conn.execute("BEGIN")
+    conn.execute_native("SELECT pg_advisory_xact_lock_shared(%s)", (WRITE_LOCK_KEY,))
+    lock(conn, *resource)
+
+
 def lock(conn, *resource) -> None:
     """Inside an open write transaction: on Postgres, wait for and hold the
     advisory lock of `resource` until the transaction ends; on SQLite a

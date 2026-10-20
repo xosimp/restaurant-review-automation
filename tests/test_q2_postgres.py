@@ -902,6 +902,33 @@ def test_retention_drops_whole_months_past_the_window(scratch_db, tmp_path, monk
         c.close()
 
 
+@live
+def test_tenant_writes_run_side_by_side_and_still_exclude_the_one_writer(scratch_db):
+    # Scale audit 10/19/26 DB-08: two restaurants' sync transactions no longer queue on one key; a
+    # BEGIN IMMEDIATE site still waits for them, and one restaurant's resource for itself.
+    a, b, g = (db_dialect.connect(scratch_db) for _ in range(3))
+    try:
+        for c in (b, g):
+            c.execute_native("SET lock_timeout = '300ms'")
+            c.commit()
+        db_dialect.begin_tenant_write(a, "shift_facts", 1)
+        db_dialect.begin_tenant_write(b, "shift_facts", 2)            # another restaurant: at once
+        b.rollback()
+        with pytest.raises(sqlite3.OperationalError):
+            db_dialect.begin_tenant_write(b, "shift_facts", 1)        # the same restaurant: waits
+        b.rollback()
+        with pytest.raises(sqlite3.OperationalError):
+            g.execute("BEGIN IMMEDIATE")                              # the one writer: waits for the tenant
+        g.rollback()
+        a.rollback()
+        g.execute("BEGIN IMMEDIATE")
+        g.execute("SELECT 1").fetchone()
+        g.rollback()
+    finally:
+        for c in (a, b, g):
+            c.close()
+
+
 def test_the_partition_job_is_a_no_op_on_sqlite(monkeypatch):
     import pg_partitions
     monkeypatch.delenv("DATABASE_URL", raising=False)

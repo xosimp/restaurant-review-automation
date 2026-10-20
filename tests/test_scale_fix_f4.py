@@ -271,3 +271,34 @@ def test_the_line_window_is_its_own_and_the_rollup_outlives_it():
     assert ops._RETENTION_ROLLUP["pos_ticket_lines"] == "pos_archive:roll_item_days"
     assert ops._RETENTION_DAYS["pos_item_daily"] >= ops._RETENTION_DAYS["pos_ticket_lines"]
     assert "RETAIN_POS_LINES_DAYS" in inspect.getsource(ops)
+
+
+# ── DB-08: tenant writes ───────────────────────────────────────────────────
+
+def test_a_tenant_write_is_begin_immediate_on_sqlite(tmp_path):
+    import db_dialect
+    c = sqlite3.connect(str(tmp_path / "x.db"), isolation_level=None)
+    try:
+        db_dialect.begin_tenant_write(c, "shift_facts", 5)
+        assert c.in_transaction
+        c.execute("ROLLBACK")
+    finally:
+        c.close()
+
+
+def test_the_sync_write_lock_is_the_restaurants_own_on_postgres(monkeypatch):
+    import pos
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert pos._write_lock_for(1) is pos._WRITE_LOCK is pos._write_lock_for(2)       # SQLite: one writer
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    one, two = pos._write_lock_for(1), pos._write_lock_for(2)
+    assert one is not two and one is pos._write_lock_for(1) and one is not pos._WRITE_LOCK
+
+
+def test_the_nightly_syncs_hot_writes_are_tenant_transactions():
+    import inspect
+    import people
+    import shift_facts
+    src = inspect.getsource(shift_facts)
+    assert 'conn.execute("BEGIN IMMEDIATE")' not in src and src.count("    _tenant_write(conn, ") == 5
+    assert 'begin_tenant_write(conn, "people"' in inspect.getsource(people.resolve_rows)
