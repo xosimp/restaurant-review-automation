@@ -4790,6 +4790,10 @@ def init_db(db_path: str = DB_PATH):
     init_bar_mapping(db_path)
     from rpower import init_rate_limit
     init_rate_limit(db_path)
+    # Shared token buckets (rate_bucket, scale audit 10/19/26 SEC-03): the
+    # fleet's and each restaurant's guest-text pace.
+    from rate_bucket import init_rate_buckets
+    init_rate_buckets(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway

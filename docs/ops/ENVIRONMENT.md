@@ -86,6 +86,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `GUEST_FROM_EMAIL` | `""` | The address guest newsletters and review-request emails come from, on its own verified Resend domain (e.g. `news@guests.cavnar.ai`); unset keeps `FROM_EMAIL` / `reviews@cavnar.ai` (SEC-02). | config.py |
 | `GUEST_EMAIL_COMPLAINT_PAUSE_PCT` | `0.1` | A restaurant's guest mail pauses when more than this % of the last 7 days' accepted guest emails were marked spam (at least 50 accepted; `guest_email.guest_mail_paused`, SEC-02). | guest_email.py |
 | `GUEST_EMAIL_BOUNCE_PAUSE_PCT` | `5` | The same pause for bounces (SEC-02). | guest_email.py |
+| `GUEST_SMS_FLEET_PER_SECOND` | `0` (off) | Campaign texts per second across every restaurant (`rate_bucket` `guest_sms:fleet`). Set it below the guest campaign's registered MPS: review requests and join confirmations are not paced by it, so the gap is their lane (SEC-03). | guest_marketing.py |
+| `GUEST_SMS_STOP_PAUSE_PCT` | `3` | A restaurant whose campaign texts drew more than this % STOP replies over 7 days (at least 200 sent) cannot start a new campaign until the week clears (`guest_marketing.stop_rate_pause`, SEC-03). | guest_marketing.py |
 | `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
 | `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
 | `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |

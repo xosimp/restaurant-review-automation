@@ -56,6 +56,37 @@ def test_sec02_guest_mail_can_leave_from_its_own_domain(monkeypatch):
     assert config.guest_from_email() == ""
 
 
+def test_sec03_a_shared_bucket_paces_every_process(db_path):
+    import rate_bucket
+    assert rate_bucket.take("t:1", 2.0, db_path=db_path) == 0.0, "a quiet bucket gives its first slot"
+    w = rate_bucket.take("t:1", 2.0, db_path=db_path)
+    assert 0 < w <= 0.5, "the next one waits for the refill"
+    assert rate_bucket.take("t:2", 2.0, db_path=db_path) == 0.0, "another restaurant's bucket is its own"
+    assert rate_bucket.take("t:3", 0, db_path=db_path) == 0.0, "a rate of 0 is off"
+
+
+def test_sec03_a_tenant_whose_texts_draw_stops_cannot_start_a_campaign(db_path, monkeypatch):
+    import guest_marketing as gm
+    import models
+    monkeypatch.delenv("GUEST_SMS_STOP_PAUSE_PCT", raising=False)
+    gm.init_guest_marketing(db_path)
+    conn = models.get_conn(db_path)
+    rows = [(1, 1, i, f"+1312555{i:04d}", "sent") for i in range(gm.STOP_PAUSE_MIN_SENT)]
+    conn.executemany("INSERT INTO guest_campaign_queue (campaign_id, restaurant_id, contact_id, phone, status, sent_at) "
+                     "VALUES (?,?,?,?,?, datetime('now','-1 hour'))", rows)
+    conn.commit()
+    assert gm.stop_rate_pause(1, db_path=db_path) is None
+    conn.executemany("INSERT INTO guest_consent_events (restaurant_id, phone, event, source) "
+                     "VALUES (0, ?, 'opted_out', 'sms_reply')", [(f"+1312555{i:04d}",) for i in range(10)])
+    conn.commit()
+    conn.close()
+    reason = gm.stop_rate_pause(1, db_path=db_path)
+    assert reason and "replied STOP" in reason
+    assert gm.stop_rate_pause(2, db_path=db_path) is None, "another restaurant's list is not judged by it"
+    seg, refused = gm.prepare_campaign(1, "Half-price wings tonight", "all", db_path=db_path)
+    assert refused and refused["blocked"] == "stop_rate"
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api
