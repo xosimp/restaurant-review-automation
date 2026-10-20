@@ -75,7 +75,15 @@ Three things page, and they fail independently:
    wedged job or stalled loop, an overdue job, low or critical disk, a
    refused write, a stale / failed / off-site-less backup, a DSR night
    missing past its deadline, a retention window set under its floor
-   (`retention_floor`) — at most once an hour per problem, and only
+   (`retention_floor`), customer requests failing (a 5xx rate over
+   `HTTP_5XX_ALERT_RATE`, 2%, across the last five minutes with at least
+   `HTTP_5XX_ALERT_MIN_REQUESTS`, 50) — and, as daily warnings, customer
+   p95 over `HTTP_P95_SLO_MS` for fifteen minutes, the queue worker process
+   silent for `QUEUE_WORKER_ALERT_SECONDS` (the web process has the queue),
+   a bulk or POS queue row runnable but waiting past
+   `QUEUE_BACKLOG_ALERT_HOURS`, and a job that hit its time bound on each
+   of its last `BOUND_ALERT_RUNS` runs (it no longer covers every
+   restaurant; scale audit 10/19/26 INF-4/6/7, OPS-7) — at most once an hour per problem, and only
    on Railway. The same unresolved problem repeats hourly until it is
    fixed. Every page is an `operator_alerts` row (Operations → Jobs shows
    the last one and whether it went). Owners are never paged.
@@ -108,6 +116,26 @@ Railway outage or a crashed process.
    or a `/health` that does not answer 200 within the 120-second
    healthcheck, is **downtime until a redeploy or a rollback** — the
    previous container does NOT keep serving.
+
+   **Every deploy is an outage for every restaurant** (one container, no
+   replicas while a volume is attached — scale audit 10/19/26 INF-8), so
+   deploys follow the restaurants' day, not ours:
+   - **Do not deploy 5pm–2am CT** (service, the closes and the DSR sweep's
+     nights: a deploy kills an in-flight sweep pass, whose nights resume on
+     the next pass, but an owner mid-shift loses the app) **or 3–6am CT**
+     (the POS chain on the "pos" lane and the 4–6am sweeps: an inline or
+     lane job killed mid-run keeps its period claimed until
+     `CLAIM_RECLAIM_MINUTES`, 120, so a job killed at 3:05 re-runs about
+     5:05 — past the briefs' inputs).
+   - **Deploy 9am–4pm CT**, after the 8am briefs and review fetch, and not
+     within ten minutes of a slot a restaurant is waiting on.
+   - Queue rows (generations, learners, the archive) are handed back at
+     SIGTERM and resumed from their checkpoints — they are not the risk.
+   - Each boot's length is `boot_events.boot_ms` (Engineering → Boots); the
+     downtime is roughly the old container's stop plus that.
+   - A fix that cannot wait is deployed anyway — the freeze is guidance, not
+     a lock. The end of the outage is replicas with rolling deploys, which
+     need no volume (docs/plans/POSTGRES_AND_WORKERS_PLAN.md).
 4. If the process is crash-looping, read the deploy logs. Each boot writes a
    `boot_events` row saying how the previous process ended (clean, unclean,
    boot failed); more than 3 boots of one deployment, or more than 3 that followed a crash, in
@@ -156,7 +184,19 @@ consumer within a minute (the `job_queue_tick` minute duty). The queue
 cannot be turned off any more (`JOB_QUEUE=0` and the in-process paths it
 switched back to are gone — blind re-audit 10/11/26 ARCH-10); a queue worker
 process that misbehaves is turned off with `QUEUE_WORKER=0` (the web process
-consumes the queue again). The Postgres cutover
+consumes the queue again). The queue worker recycles itself after
+`QUEUE_WORKER_MAX_JOBS` generations (bulk rows no longer count) or
+`QUEUE_WORKER_MAX_RSS_MB`; it tells gunicorn's master when it stops
+claiming, and its replacement starts then, beside it, without waiting for a
+web boot that already happened (scale audit 10/19/26 INF-4, A5-F3 — until
+then a recycled worker never started again and the web process silently
+took the queue). If it goes silent anyway the platform check warns
+("The queue worker process has not beaten its heartbeat"): read the logs for
+`queue worker exited` / `no web process booted`. Per kind, what is queued,
+how long the oldest runnable row has waited and what failed or expired in a
+day is `job_queue.stats()["kinds"]`. Nightly rows (archive, learners,
+diagnoses) expire unstarted after `QUEUE_BULK_DEADLINE_HOURS` (22) instead
+of stacking under the next night's. The Postgres cutover
 and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
 
 ## Database recovery
@@ -482,7 +522,10 @@ way.
   `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY` (`BACKUP_S3_REGION`
   defaults to `auto` for R2). Give the key read and write on that one bucket
   only (the drill downloads), and add a lifecycle rule expiring objects after
-  about 35 days. A single object is at most 5 GB (no multipart yet). The
+  about 35 days. A copy past `BACKUP_MULTIPART_THRESHOLD` (512 MiB) goes up
+  in `BACKUP_MULTIPART_PART_BYTES` parts (256 MiB; up to 10,000 parts,
+  `offsite_backup.upload_file_multipart`), so the 5 GB single-PUT limit no
+  longer caps the copy. The
   rule is checked weekly (`offsite_lifecycle`, `scheduler.run_offsite_lifecycle_check`
   → `offsite_backup.lifecycle_days`, one signed `GET ?lifecycle`): no
   enabled expiration rule covering `BACKUP_S3_PREFIX`, or one longer than

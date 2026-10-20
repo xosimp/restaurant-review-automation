@@ -21,6 +21,8 @@ happen here by construction. Each line carries an "ask" prompt so a tap opens
 Ask Cavnar on exactly that question.
 """
 import logging
+import os
+import threading
 import config
 from datetime import date, datetime, timedelta
 
@@ -1920,6 +1922,10 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
 # ones it did not reach lead the next tick (a cursor), five minutes later,
 # still inside their window (#81).
 BRIEF_MAX_SECONDS = 4 * 60
+# Restaurants briefed at once (scale audit 10/19/26 INF-10): one at a time at
+# ~4.5 s each, 1,500 briefs took 1.9 hours from 8am CT. Each brief claims
+# its own restaurant and day first, so a worker never sends one twice.
+BRIEF_WORKERS = max(1, int(os.getenv("BRIEF_WORKERS", "4") or 4))
 # A brief that failed transiently for someone is retried at most this many
 # more times a day (fix round E: deliver() says `retry`).
 BRIEF_RETRIES_PER_DAY = 3
@@ -1984,7 +1990,6 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
     (#131) — "no brief today" used to look exactly like a quiet morning.
     Returns the standard counts."""
     import ops
-    import time as _time
     from models import get_restaurant
     due, missed = _brief_queue(db_path)
     for rid, day in missed:
@@ -2002,22 +2007,25 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
     last = int(row["value"]) if row and str(row["value"]).isdigit() else 0
     due.sort()
     due = [d for d in due if d[0] > last] + [d for d in due if d[0] <= last]
-    started = _time.monotonic()
-    reached = None
-    for rid, day in due:
-        if reached is not None and _time.monotonic() - started > max_seconds:
-            c["hit_bound"] = True
-            break
-        reached = rid
+    c["eligible"] = len(due)
+    lock = threading.Lock()
+
+    def _add(**k):
+        with lock:
+            for key, v in k.items():
+                c[key] = c.get(key, 0) + v
+
+    def _one(item):
+        rid, day = item
         if not ops.claim_period(f"morning_brief:{rid}", day):
-            c["skipped"] += 1
-            continue
-        c["attempted"] += 1
+            _add(skipped=1)
+            return
+        _add(attempted=1)
         try:
             r = get_restaurant(rid, db_path=db_path)
             from datetime import date as _date
             out = deliver(rid, restaurant=r, today=_date.fromisoformat(day), db_path=db_path)
-            c["sent"] += 1 if out.get("sent") else 0
+            _add(sent=1 if out.get("sent") else 0)
             if out.get("retry") and any(ops.claim_period(f"morning_brief_retry:{rid}", f"{day}#{n}")
                                         for n in range(BRIEF_RETRIES_PER_DAY)):
                 # A transient failure (a 429, a 5xx, a timeout) left someone
@@ -2026,13 +2034,20 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
                 # reached today (morning_brief_deliveries). Up to
                 # BRIEF_RETRIES_PER_DAY times.
                 ops.release_period(f"morning_brief:{rid}", day)
-                c["failed"] += 1
-                c["retried"] = c.get("retried", 0) + 1
+                _add(failed=1, retried=1)
             else:
-                c["ok"] += 1
+                _add(ok=1)
         except Exception as e:
-            c["failed"] += 1
+            _add(failed=1)
             ops.capture(e, job="morning_brief", context=f"restaurant_id={rid}")
+
+    # BRIEF_WORKERS at once, handed out in order and bounded by the clock
+    # (scheduler.bounded_map): every brief handed out finishes, so the ones
+    # reached are a prefix of `due` and the cursor is the last of them.
+    import scheduler as _sched
+    done, hit = _sched.bounded_map(due, _one, BRIEF_WORKERS, max_seconds)
+    c["hit_bound"] = bool(hit)
+    reached = due[done - 1][0] if done else None
     if reached is not None:
         conn = get_conn(db_path)
         try:

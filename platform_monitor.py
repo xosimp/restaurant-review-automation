@@ -33,8 +33,11 @@ log = logging.getLogger(__name__)
 # request_rollups   per minute, per route, per traffic class: counts, errors,
 #                   latency buckets, peak concurrency (#77 — the only latency
 #                   signal was a five-minute window that reset on deploy).
-# All three are written off the request path (PlatformSupervisor) and pruned
-# by prune_platform_telemetry.
+# tenant_request_rollups  per hour, per restaurant: the busiest restaurants'
+#                   customer requests, 5xx and time (scale audit 10/19/26
+#                   OPS-9 — the route rollups have no restaurant).
+# All of them are written off the request path (PlatformSupervisor) and
+# pruned by prune_platform_telemetry.
 
 def _bucket_columns():
     import http_layer
@@ -97,6 +100,16 @@ def _platform_ddl():
             PRIMARY KEY (minute_at, route, method, klass)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_request_rollups_minute ON request_rollups(minute_at)",
+        """CREATE TABLE IF NOT EXISTS tenant_request_rollups (
+            hour_at       TEXT NOT NULL,
+            restaurant_id INTEGER NOT NULL,
+            requests      INTEGER NOT NULL DEFAULT 0,
+            errors_5xx    INTEGER NOT NULL DEFAULT 0,
+            total_ms      REAL NOT NULL DEFAULT 0,
+            max_ms        REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (hour_at, restaurant_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_tenant_request_rollups_hour ON tenant_request_rollups(hour_at)",
     )
 
 
@@ -154,6 +167,103 @@ def persist_request_rollups(rows, db_path=None) -> int:
     return len(values)
 
 
+def persist_tenant_rollups(rows, db_path=None) -> int:
+    """Upsert http_layer.drain_tenant_rollups() rows, adding to a row
+    already there for the hour (a shutdown flush, then the next process).
+    Raises on a database error so the caller can keep them."""
+    if not rows:
+        return 0
+    conn = _telemetry_conn(db_path)
+    try:
+        conn.executemany(
+            "INSERT INTO tenant_request_rollups (hour_at, restaurant_id, requests, errors_5xx, total_ms, max_ms) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(hour_at, restaurant_id) DO UPDATE SET "
+            "requests = requests + excluded.requests, errors_5xx = errors_5xx + excluded.errors_5xx, "
+            "total_ms = total_ms + excluded.total_ms, max_ms = MAX(max_ms, excluded.max_ms)",
+            [(r["hour_at"], int(r["restaurant_id"]), int(r["requests"]), int(r["errors_5xx"]),
+              float(r["total_ms"]), float(r["max_ms"])) for r in rows])
+        conn.commit()
+    finally:
+        conn.close()
+    return len(rows)
+
+
+def tenant_load(hours=24, limit=10, db_path=None) -> dict:
+    """The busiest restaurants over the last `hours`, from the per-tenant
+    rollups (OPS-9): {by_requests[], by_time[]} — each {restaurant_id, name,
+    requests, errors_5xx, total_seconds, avg_ms, max_ms}. A sample: each hour
+    kept its busiest TENANT_ROLLUP_TOP."""
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT t.restaurant_id, r.name, SUM(t.requests) AS n, SUM(t.errors_5xx) AS e5, SUM(t.total_ms) AS ms, "
+            "MAX(t.max_ms) AS mx FROM tenant_request_rollups t LEFT JOIN restaurants r ON r.id = t.restaurant_id "
+            "WHERE t.hour_at >= datetime('now', ?) GROUP BY t.restaurant_id, r.name",
+            (f"-{int(hours)} hours",)).fetchall()
+    except sqlite3.OperationalError as e:
+        log.warning("tenant rollups unreadable: %s", e)
+        return {"by_requests": [], "by_time": [], "hours": hours}
+    finally:
+        conn.close()
+    items = [{"restaurant_id": r[0], "name": r[1], "requests": int(r[2] or 0), "errors_5xx": int(r[3] or 0),
+              "total_seconds": round(float(r[4] or 0) / 1000.0, 1),
+              "avg_ms": round(float(r[4] or 0) / r[2], 1) if r[2] else None, "max_ms": round(float(r[5] or 0), 1)}
+             for r in rows]
+    return {"hours": hours, "by_requests": sorted(items, key=lambda x: -x["requests"])[:limit],
+            "by_time": sorted(items, key=lambda x: -x["total_seconds"])[:limit]}
+
+
+# Customer requests paged on (scale audit 10/19/26 OPS-7): a 5xx rate over
+# the last HTTP_5XX_ALERT_MINUTES (urgent), and a p95 over the SLO held for
+# HTTP_P95_ALERT_MINUTES (a warning). Each needs a floor of requests, so a
+# quiet night's one failure is not 100%.
+HTTP_5XX_ALERT_RATE = float(os.getenv("HTTP_5XX_ALERT_RATE", "0.02"))
+HTTP_5XX_ALERT_MIN_REQUESTS = int(os.getenv("HTTP_5XX_ALERT_MIN_REQUESTS", "50"))
+HTTP_5XX_ALERT_MINUTES = 5
+HTTP_P95_SLO_MS = int(os.getenv("HTTP_P95_SLO_MS", "5000"))
+HTTP_P95_ALERT_MIN_REQUESTS = int(os.getenv("HTTP_P95_ALERT_MIN_REQUESTS", "200"))
+HTTP_P95_ALERT_MINUTES = 15
+
+
+def request_slo(db_path=None) -> dict:
+    """{requests, errors_5xx, error_rate, error_rate_over, latency_requests,
+    p95_le_ms, latency_over, ...} for customer traffic (http_layer.
+    CUSTOMER_CLASSES) from the persisted per-minute rollups: the last
+    HTTP_5XX_ALERT_MINUTES whole minutes for the 5xx rate, the last
+    HTTP_P95_ALERT_MINUTES for the p95 (a bucket edge, as the console reads
+    it). The minute still filling is not persisted yet, so each window ends a
+    minute back."""
+    import http_layer
+    cols = _bucket_columns()
+    classes = tuple(http_layer.CUSTOMER_CLASSES)
+    marks = ",".join("?" * len(classes))
+    bsum = ", ".join(f"SUM({c})" for c in cols)
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        err = conn.execute(
+            f"SELECT SUM(requests), SUM(errors_5xx) FROM request_rollups WHERE minute_at >= datetime('now', ?) "
+            f"AND route <> '*' AND klass IN ({marks})",
+            (f"-{HTTP_5XX_ALERT_MINUTES + 1} minutes",) + classes).fetchone()
+        lat = conn.execute(
+            f"SELECT SUM(requests), {bsum} FROM request_rollups WHERE minute_at >= datetime('now', ?) "
+            f"AND route <> '*' AND klass IN ({marks})",
+            (f"-{HTTP_P95_ALERT_MINUTES + 1} minutes",) + classes).fetchone()
+    finally:
+        conn.close()
+    n, e5 = int(err[0] or 0), int(err[1] or 0)
+    rate = (e5 / n) if n else 0.0
+    ln = int(lat[0] or 0)
+    p95 = _bucket_percentile([int(x or 0) for x in lat[1:]], 0.95) if ln else None
+    return {"requests": n, "errors_5xx": e5, "error_rate": round(rate, 4), "error_minutes": HTTP_5XX_ALERT_MINUTES,
+            "error_rate_alert": HTTP_5XX_ALERT_RATE,
+            "error_rate_over": bool(n >= HTTP_5XX_ALERT_MIN_REQUESTS and rate > HTTP_5XX_ALERT_RATE),
+            "latency_requests": ln, "latency_minutes": HTTP_P95_ALERT_MINUTES, "p95_le_ms": p95,
+            "p95_slo_ms": HTTP_P95_SLO_MS,
+            "latency_over": bool(ln >= HTTP_P95_ALERT_MIN_REQUESTS and p95 is not None and p95 > HTTP_P95_SLO_MS)}
+
+
 def persist_server_errors(samples, db_path=None) -> int:
     """Insert http_layer.drain_server_errors() samples. Raises on a database
     error so the caller can keep them."""
@@ -182,6 +292,7 @@ def persist_server_errors(samples, db_path=None) -> int:
 # they are bounded even before ops.prune_ledgers' registry names them.
 TELEMETRY_RETENTION_DAYS = {
     "request_rollups": ("minute_at", int(os.getenv("RETAIN_REQUEST_ROLLUPS_DAYS", "14"))),
+    "tenant_request_rollups": ("hour_at", int(os.getenv("RETAIN_REQUEST_ROLLUPS_DAYS", "14"))),
     "http_5xx_log":    ("created_at", int(os.getenv("RETAIN_HTTP_5XX_DAYS", "30"))),
     "boot_events":     ("started_at", int(os.getenv("RETAIN_BOOT_EVENTS_DAYS", "180"))),
     "provider_health": ("checked_at", int(os.getenv("RETAIN_PROVIDER_HEALTH_DAYS", "30"))),
@@ -523,7 +634,7 @@ class PlatformSupervisor:
         self.scheduler_restarts = 0
         self._next_restart_at = 0.0
         self._backoff = 30.0
-        self._pending_rollups, self._pending_errors = [], []
+        self._pending_rollups, self._pending_errors, self._pending_tenants = [], [], []
         import threading
         self._flush_lock = threading.Lock()
         self.last_tick_at = None
@@ -574,7 +685,15 @@ class PlatformSupervisor:
         import http_layer
         self._pending_rollups += http_layer.drain_rollups(include_current=include_current)
         self._pending_errors += http_layer.drain_server_errors()
-        written = {"rollups": 0, "errors": 0}
+        self._pending_tenants += http_layer.drain_tenant_rollups(include_current=include_current)
+        written = {"rollups": 0, "errors": 0, "tenants": 0}
+        if self._pending_tenants:
+            try:
+                written["tenants"] = persist_tenant_rollups(self._pending_tenants, self.db_path)
+                self._pending_tenants = []
+            except Exception as e:
+                log.warning("tenant rollups not persisted (kept for the next tick): %s", e)
+                self._pending_tenants = self._pending_tenants[-5000:]
         if self._pending_rollups:
             try:
                 written["rollups"] = persist_request_rollups(self._pending_rollups, self.db_path)
@@ -852,6 +971,7 @@ def system_report(db_path=None) -> dict:
     except Exception as e:
         report["http"] = {"error": str(e)[:120]}
     report["rollups_24h"] = request_rollup_summary(24, db_path)
+    report["rollups_24h"]["tenants"] = tenant_load(24, db_path=db_path)
     report["server_errors_24h"] = recent_server_errors(24, 50, db_path)
     report["boots"] = {"recent": recent_boots(10, db_path), "crash_loop": crash_loop_state(None, db_path)}
     report["size_trend"] = _size_trend(db_path)

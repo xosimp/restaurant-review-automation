@@ -396,6 +396,21 @@ def run_loss_sync(db_path=DB_PATH):
                    synced=synced, not_supported=unsupported)
 
 
+# A nightly row (archive, learner, diagnosis) still queued this long after it
+# became runnable expires instead of running (scale audit 10/19/26 INF-6):
+# the rows had no deadline, so a backlog never drained and the next night's
+# rows stacked behind it. Just under a day, so it goes before the next
+# fan-out queues its successor — the next night's archive re-reads restated
+# days and backfills a week; a learner's next pass covers the same ground.
+BULK_ROW_DEADLINE_HOURS = float(os.getenv("QUEUE_BULK_DEADLINE_HOURS", "22") or 22)
+
+
+def _bulk_deadline(not_before=None):
+    import time as _t
+    start = max(_t.time(), float(not_before or 0))
+    return start + BULK_ROW_DEADLINE_HOURS * 3600
+
+
 def run_pos_archive(db_path=DB_PATH, today=None):
     """Nightly: the ticket-level POS archive as queue work (bar audit
     10/14/26 RPW-10 / R2). One `pos_archive` row (bulk class) per restaurant
@@ -426,7 +441,8 @@ def run_pos_archive(db_path=DB_PATH, today=None):
             continue
         night, not_before = _archive_night(r, today)
         items.append({"payload": {"restaurant_id": r.id, "day": night}, "restaurant_id": r.id,
-                      "not_before": not_before, "idempotency_key": f"pos_archive:{r.id}:{night}"})
+                      "not_before": not_before, "deadline": _bulk_deadline(not_before),
+                      "idempotency_key": f"pos_archive:{r.id}:{night}"})
     created = job_queue.enqueue_many("pos_archive", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
     return _counts(created, created, 0, unsupported + (len(items) - created), False, queued=created)
@@ -1921,13 +1937,15 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     items = []
     if name == "people_nightly":
         items.append({"payload": {"learner": "people_backfill", "restaurant_id": None, "day": day},
-                      "restaurant_id": None, "idempotency_key": f"learner:people_backfill:{day}"})
+                      "restaurant_id": None, "deadline": _bulk_deadline(),
+                      "idempotency_key": f"learner:people_backfill:{day}"})
     for r in _restaurants(db_path):
         if not getattr(r, "module_labor", 0):
             continue
         items.append({"payload": {"learner": name, "restaurant_id": r.id, "day": day,
                                   **({"today": str(today)[:10]} if today else {})},
-                      "restaurant_id": r.id, "idempotency_key": f"learner:{name}:{r.id}:{day}"})
+                      "restaurant_id": r.id, "deadline": _bulk_deadline(),
+                      "idempotency_key": f"learner:{name}:{r.id}:{day}"})
     created = job_queue.enqueue_many("learner", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path)
     return _counts(created, created, 0, len(items) - created, False, queued=created)
@@ -1951,6 +1969,7 @@ def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
         if today_by_id and rid in today_by_id:
             payload["today"] = str(today_by_id[rid])[:10]
         items.append({"payload": payload, "restaurant_id": int(rid), "not_before": not_before,
+                      "deadline": _bulk_deadline(not_before),
                       "idempotency_key": f"learner:{name}:{int(rid)}:{day}"})
     created = job_queue.enqueue_many("learner", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0

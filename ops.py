@@ -191,7 +191,11 @@ _RESULT_KEYS = ("attempted", "ok", "failed", "skipped", "hit_bound", "held", "re
 # Counters that are not a success when a job reports no `attempted` of its
 # own: everything else it counts ({sent: 99}, {diagnosed: 3}) is.
 _NOT_SUCCESS = frozenset(("attempted", "failed", "skipped", "held", "retried", "hit_bound", "closed", "not_yet",
-                          "not_supported", "empty", "expired", "unsupported", "missed"))
+                          "not_supported", "empty", "expired", "unsupported", "missed", "eligible"))
+# Kept beside the counts when a job reports it (scale audit 10/19/26 INF-7):
+# how many restaurants the pass was FOR, so a run its bound cut short says
+# how far it got (jobs_bound_capped).
+_COVERAGE_KEYS = ("eligible",)
 
 # How often a running job proves it is alive (job_runs.pulse_at), and how
 # long a silent run may go before it is taken to be dead — its process gone.
@@ -259,7 +263,7 @@ def run_outcome(result):
         state = RUN_FAILED
     elif failed or counts["hit_bound"]:
         state = RUN_PARTIAL
-    blob_counts = {k: result.get(k) for k in _RESULT_KEYS if k in result}
+    blob_counts = {k: result.get(k) for k in _RESULT_KEYS + _COVERAGE_KEYS if k in result}
     for k, v in counts.items():
         blob_counts.setdefault(k, v)
     try:
@@ -572,6 +576,10 @@ def init_ops(db_path=None):
             conn.execute(sql)
         conn.executemany("INSERT OR IGNORE INTO job_expected_since (job) VALUES (?)",
                          [(job,) for job in EXPECTED_JOBS])
+        # The lease's one row, here at boot: acquire_scheduler_lease ran this
+        # and the CREATE TABLE on every tick, pulse and lane renew (scale
+        # audit 10/19/26 INF-18 — no DDL on a per-call path).
+        conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
         for table, columns in (("job_runs", _RUNS_COLUMNS), ("job_failures", _FAILURE_COLUMNS),
                                ("scheduler_lease", _LEASE_COLUMNS), ("async_jobs", _ASYNC_JOB_COLUMNS)):
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -1012,6 +1020,19 @@ RESUME_DEADLINE_SECONDS = 20 * 60
 # An owner's generation waiting past this to start (the queue's interactive
 # p95 over the last hour) warns the operator (check_platform_sla).
 QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
+# The queue worker process silent this long while it is meant to run
+# (gunicorn.conf.py starts it) warns the operator (scale audit 10/19/26
+# INF-4): the web process then consumes the whole queue itself, and nothing
+# said so.
+QUEUE_WORKER_ALERT_SECONDS = int(os.getenv("QUEUE_WORKER_ALERT_SECONDS", "300"))
+# A row that may run (past its not_before) still queued this long in a
+# non-generation group warns (INF-6): the bulk or POS rows are not draining
+# before the morning that reads them.
+QUEUE_BACKLOG_ALERT_SECONDS = int(float(os.getenv("QUEUE_BACKLOG_ALERT_HOURS", "6")) * 3600)
+# A job whose last this-many runs ALL hit their time bound warns (INF-7): it
+# is no longer reaching every restaurant each period, and a bounded run was
+# counted a success (job_runs.ok 2), so no SLA saw it.
+BOUND_ALERT_RUNS = max(2, int(os.getenv("BOUND_ALERT_RUNS", "3")))
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -1960,6 +1981,91 @@ def jobs_overdue(now=None, db_path=None) -> list:
     return out
 
 
+_bound_cache = {}
+_BOUND_TTL_SECONDS = 600
+
+
+def jobs_bound_capped(db_path=None, runs=None, use_cache=True) -> list:
+    """[{job, runs, eligible, attempted}] for every registered job whose last
+    `runs` (BOUND_ALERT_RUNS) finished runs ALL hit their time bound (scale
+    audit 10/19/26 INF-7): a resumable sweep that is cut short every pass
+    rotates through the fleet instead of covering it — pos_sync reaching
+    each store every second night at 1,500 — while every one of those runs
+    counts as a success and no SLA fires. One indexed read per job (the
+    jobs_overdue pattern), kept ten minutes. Never raises: [] unreadable."""
+    import json as _json
+    n = int(runs or BOUND_ALERT_RUNS)
+    key = (db_path or "", n)
+    hit = _bound_cache.get(key)
+    if use_cache and hit and time.monotonic() - hit[0] < _BOUND_TTL_SECONDS:
+        return list(hit[1])
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception:
+        return []
+    out = []
+    try:
+        for job in jobs_registry.JOBS:
+            rows = conn.execute("SELECT result_json FROM job_runs WHERE job=? AND finished_at IS NOT NULL "
+                                "ORDER BY started_at DESC LIMIT ?", (job, n)).fetchall()
+            if len(rows) < n:
+                continue
+            blobs = []
+            for r in rows:
+                try:
+                    blobs.append(_json.loads(r[0]) if r[0] else {})
+                except (TypeError, ValueError):
+                    blobs.append({})
+            if all(isinstance(b, dict) and b.get("hit_bound") for b in blobs):
+                last = blobs[0]
+                out.append({"job": job, "runs": n, "eligible": last.get("eligible"),
+                            "attempted": last.get("attempted")})
+    except Exception as e:
+        log.warning(f"jobs_bound_capped unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    _bound_cache[key] = (time.monotonic(), list(out))
+    return out
+
+
+def queue_problems(q, worker_expected=None) -> list:
+    """[(warn kind, sentence)] about the job queue from job_queue.stats():
+      * the queue worker process silent past QUEUE_WORKER_ALERT_SECONDS while
+        it is meant to run (INF-4) — the web process has the queue;
+      * a non-generation group's oldest runnable row waiting past
+        QUEUE_BACKLOG_ALERT_SECONDS (INF-6).
+    `worker_expected`: whether gunicorn's master supervises a queue worker
+    here (QUEUE_WORKER_SUPERVISED, which it sets before the web worker
+    forks); None reads it."""
+    out = []
+    q = q or {}
+    if worker_expected is None:
+        worker_expected = (os.getenv("QUEUE_WORKER_SUPERVISED") or "").strip() == "1"
+    if worker_expected:
+        age = q.get("worker_heartbeat_age_seconds")
+        booted = q.get("web_started_age_seconds")
+        silent = (age is None and booted is not None and booted > QUEUE_WORKER_ALERT_SECONDS) or \
+            (age is not None and age > QUEUE_WORKER_ALERT_SECONDS
+             and (booted is None or booted > QUEUE_WORKER_ALERT_SECONDS))
+        if silent:
+            when = "since this process booted" if age is None else f"for {int(age // 60)} minutes"
+            out.append(("queue_worker", f"The queue worker process has not beaten its heartbeat {when} — the web "
+                        "process is running every generation, learner and archive row itself. Check the logs "
+                        "for 'queue worker exited' or 'no web process booted' (worker.py --queue)."))
+    for grp, g in sorted((q.get("groups") or {}).items()):
+        if grp == "generation":
+            continue
+        age = (g or {}).get("oldest_ready_seconds")
+        if age is not None and age > QUEUE_BACKLOG_ALERT_SECONDS:
+            out.append(("queue_backlog", f"The {grp} queue is behind: its oldest runnable row has waited "
+                        f"{age / 3600:.1f} hours (alert past {QUEUE_BACKLOG_ALERT_SECONDS // 3600}) with "
+                        f"{int(g.get('queued') or 0)} queued — raise QUEUE_{grp.upper()}_CONCURRENCY or see "
+                        "docs/plans/POSTGRES_AND_WORKERS_PLAN.md."))
+    return out
+
+
 def write_probe(db_path=None, timeout=2.0):
     """(ok, error): can the database take a write right now? BEGIN
     IMMEDIATE takes the write lock without writing anything, then ROLLBACK.
@@ -2118,6 +2224,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or state.get("wedged") or state.get("loop_stalled")
                 or out.get("jobs_overdue")
                 or disk.get("state") == "critical"
+                or (out.get("requests") or {}).get("error_rate_over")
                 or not write_ok)
 
 
@@ -2150,7 +2257,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
            "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
-           "alerted": False}
+           "bound_capped": [], "requests": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2271,6 +2378,39 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — check the queue worker "
                         "process is running (QUEUE_WORKER=1, the default) or raise QUEUE_GENERATION_CONCURRENCY "
                         "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
+    # The queue worker alive and the bulk / POS backlog (scale audit 10/19/26
+    # INF-4, INF-6).
+    for kind, sentence in queue_problems(q):
+        warn_kinds.add(kind)
+        problems.append(sentence)
+    # Sweeps their bound cuts short every pass (INF-7): coverage, not
+    # success. Read where the supervisor pages (send) — kept ten minutes.
+    if send:
+        out["bound_capped"] = jobs_bound_capped(db_path=db_path)
+    for b in out["bound_capped"]:
+        warn_kinds.add("bound_capped")
+        reach = (f" (the last reached {b['attempted']} of {b['eligible']})"
+                 if b.get("eligible") and b.get("attempted") is not None else "")
+        problems.append(f"{b['job']} hit its time bound on each of its last {b['runs']} runs{reach} — it no "
+                        "longer covers every restaurant each period.")
+    # Customer requests failing or slow (scale audit 10/19/26 OPS-7), from the
+    # persisted per-minute rollups: a 5xx rate over the last minutes, and a
+    # p95 over the SLO held for a quarter of an hour.
+    try:
+        import platform_monitor as _pm_sla
+        out["requests"] = _pm_sla.request_slo(db_path=db_path)
+    except Exception as e:
+        log.warning(f"request rollups unavailable to the platform check: {e}")
+    rq = out["requests"] or {}
+    if rq.get("error_rate_over"):
+        problems.append(f"{rq['errors_5xx']} of {rq['requests']} customer requests failed with a 5xx in the last "
+                        f"{rq['error_minutes']} minutes ({rq['error_rate'] * 100:.1f}%, alert past "
+                        f"{rq['error_rate_alert'] * 100:g}%) — the routes are in the console's 5xx samples.")
+    if rq.get("latency_over"):
+        warn_kinds.add("latency")
+        problems.append(f"Customer requests are slow: p95 within {rq['p95_le_ms']} ms over the last "
+                        f"{rq['latency_minutes']} minutes (SLO {rq['p95_slo_ms']} ms, {rq['latency_requests']} "
+                        "requests) — the slow routes are in the console's request rollups.")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -2624,9 +2764,8 @@ def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> boo
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute(_LEASE_SQL)
-        conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
-        conn.commit()
+        # The table and its one row are made at boot (init_ops — INF-18);
+        # one UPDATE here.
         try:
             cur = conn.execute(
                 "UPDATE scheduler_lease SET owner=?, heartbeat_at=datetime('now'), kept=? "
@@ -2646,6 +2785,11 @@ def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> boo
             )
         conn.commit()
         held = cur.rowcount == 1
+        if not held and conn.execute("SELECT 1 FROM scheduler_lease WHERE id=1").fetchone() is None:
+            # The row went missing (a hand-edited or restored database):
+            # made once, then taken by the next call.
+            conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
+            conn.commit()
         conn.close()
         return held
     except Exception as e:
@@ -2718,8 +2862,6 @@ def scheduler_lease_holder():
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute(_LEASE_SQL)
-        conn.commit()
         row = conn.execute("SELECT * FROM scheduler_lease WHERE id=1").fetchone()
         conn.close()
         if not row:

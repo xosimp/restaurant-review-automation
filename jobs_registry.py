@@ -51,8 +51,12 @@ lane          run on this bounded worker lane beside the loop, not on the
               recipe drafts, weekly digests — AI cost audit 10/7/26 #6;
               the Labor pre-warm, #100); "sweep" the 4-6am restaurant
               sweeps and the diagnoses (#54), each waiting on what it
-              reads (scheduler._PulsedOps.settled). A lane run gets the
-              loop's retry when it fails
+              reads (scheduler._PulsedOps.settled); "dsr" the DSR sweep,
+              submitted by the pulse too while an inline job holds the
+              loop, "pos" the 3am POS chain (pos_sync, loss_sync, the DSR
+              backfill) and "fetch" the review fetch (scale audit 10/19/26
+              INF-1, INF-2, INF-9). A lane run gets the loop's retry when
+              it fails
 
 Owner-facing SLAs are about 3 h for hourly jobs, 26 h for daily, 8 days for
 weekly (#31).
@@ -106,9 +110,9 @@ JOBS = {
         description="Restore the newest snapshot to scratch and prove it is fresh, opens, migrates and kept its tokens",
         target=("scheduler", "run_restore_drill"), max_minutes=30),
     "pos_sync": dict(
-        cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        cadence="3am CT nightly (POS lane)", sla_minutes=_D, sends=False, runnable=True,
         label="POS sync", description="Pull yesterday's sales and labor from every connected POS, then inventory systems",
-        target=("scheduler", "run_toast_sync"), max_minutes=75, retry=True),
+        target=("scheduler", "run_toast_sync"), max_minutes=75, retry=True, lane="pos"),
     # The Labor read written ahead of the morning open (AI cost audit 10/7/26
     # #100), for restaurants whose owner opened it in the last week.
     "labor_prewarm": dict(
@@ -129,9 +133,9 @@ JOBS = {
                     "disagree (bounded, resumable)",
         target=("billing_jobs", "reconcile_stripe"), max_minutes=20, retry=True),
     "loss_sync": dict(
-        cadence="3am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        cadence="3am CT nightly, after the POS sync (POS lane)", sla_minutes=_D, sends=False, runnable=True,
         label="Loss sync", description="Pull comps, voids and refunds from POSes that report them",
-        target=("strategy_jobs", "run_loss_sync"), max_minutes=45, retry=True),
+        target=("strategy_jobs", "run_loss_sync"), max_minutes=45, retry=True, lane="pos"),
     # Halsted & Rye, the showcase demo (demo_store): what reaches a real
     # store from outside its POS — invoices, reviews, the kitchen count, the
     # coming week's schedule — written for the night, so the demo is current
@@ -157,7 +161,7 @@ JOBS = {
         label="DSR backfill", description="Fill the Daily Sales Report's figures for nights before it started, "
                                           "from the POS (figures only: no report, email or model; bounded, "
                                           "resumable)",
-        target=("strategy_jobs", "run_dsr_backfill"), max_minutes=40, retry=True),
+        target=("strategy_jobs", "run_dsr_backfill"), max_minutes=40, retry=True, lane="pos"),
     "intelligence_features": dict(
         cadence="3am CT daily", sla_minutes=_D, sends=False, runnable=True,
         label="Intelligence features", description="The intelligence engine's per-restaurant feature pass (bounded, resumable)",
@@ -367,7 +371,7 @@ JOBS = {
         # bounded pass of up to three.
         cadence="8am / 12pm / 4pm / 8pm CT", sla_minutes=16 * 60, sends=True, runnable=True,
         label="Review fetch", description="Fetch new reviews, analyse, draft replies, alert owners (bounded, resumable)",
-        target=("scheduler", "run_daily_fetch"), max_minutes=200),
+        target=("scheduler", "run_daily_fetch"), max_minutes=200, lane="fetch"),
     "provider_probes": dict(
         cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
         label="Provider probes",
@@ -601,9 +605,10 @@ JOBS = {
         target=("pg_shadow", "run_shadow_pass"), max_minutes=5),
     "dsr_sweep": dict(
         # Delivery inside is gated on scheduling_allowed (dsr.deliver._allowed).
-        cadence="every 10 minutes", sla_minutes=60, sends=False, runnable=True,
-        label="DSR sweep", description="Nightly DSR: past each close, poll the POS close, collect, write, finalise",
-        target=("dsr.pipeline", "run_sweep"), max_minutes=30),
+        cadence="every 10 minutes (DSR lane)", sla_minutes=60, sends=False, runnable=True,
+        label="DSR sweep", description="Nightly DSR: past each close, poll the POS close, collect, write, finalise "
+                                       "(several restaurants at once, earliest deadline first)",
+        target=("dsr.pipeline", "run_sweep"), max_minutes=30, lane="dsr"),
     "dsr_delivery": dict(
         cadence="every 10 minutes", sla_minutes=60, sends=True, runnable=True,
         label="DSR delivery", description="Send the DSR pushes held through each restaurant's quiet hours, once they end",

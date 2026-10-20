@@ -376,6 +376,15 @@ _pending_5xx = deque(maxlen=500)
 _dropped = {"rollup_minutes": 0, "server_errors": 0}
 _sentry_last = {}                   # (rule, status) -> last capture time
 _SENTRY_EVERY_SECONDS = 60
+# Per restaurant, per hour (scale audit 10/19/26 OPS-9): the route rollups
+# have no restaurant, so a noisy tenant (an organization's forty locations, a
+# script on one login) could not be found. Customer requests whose
+# restaurant is known (auth binds it) add here; each completed hour's busiest
+# TENANT_ROLLUP_TOP by requests and by time are persisted (a sample, so the
+# write is bounded whatever the fleet's size).
+_tenant_rollups = {}                # (hour, restaurant_id) -> [n, e5, total_ms, max_ms]
+_MAX_TENANT_KEYS = 20000
+TENANT_ROLLUP_TOP = 50
 
 
 def _bucket(ms):
@@ -435,6 +444,53 @@ def drain_rollups(now=None, include_current=False):
                         "buckets": [0] * (len(LATENCY_BUCKETS_MS) + 1), "max_inflight": peak})
         for m in [m for m in _peak_by_minute if m < current and m not in minutes]:
             _peak_by_minute.pop(m, None)
+    return out
+
+
+def _hour(ts):
+    return time.strftime("%Y-%m-%d %H:00:00", time.gmtime(ts))
+
+
+def _tenant_add(now, restaurant_id, elapsed_ms, status):
+    """One customer request against its restaurant's hour. Caller holds
+    _metrics_lock."""
+    key = (_hour(now), int(restaurant_id))
+    row = _tenant_rollups.get(key)
+    if row is None:
+        if len(_tenant_rollups) >= _MAX_TENANT_KEYS:
+            _dropped["tenant_keys"] = _dropped.get("tenant_keys", 0) + 1
+            return
+        row = _tenant_rollups[key] = [0, 0, 0.0, 0.0]
+    row[0] += 1
+    if status >= 500:
+        row[1] += 1
+    row[2] += elapsed_ms
+    row[3] = max(row[3], elapsed_ms)
+
+
+def drain_tenant_rollups(now=None, include_current=False, top=None):
+    """Take every completed hour's per-restaurant figures out of the buffer:
+    per hour, the `top` (TENANT_ROLLUP_TOP) restaurants by requests and the
+    `top` by total time, as dicts for platform_monitor.
+    persist_tenant_rollups. The current hour stays (still filling) unless
+    include_current (a shutdown flush)."""
+    now = time.time() if now is None else now
+    current = _hour(now)
+    top = int(top or TENANT_ROLLUP_TOP)
+    with _metrics_lock:
+        keys = [k for k in _tenant_rollups if include_current or k[0] < current]
+        taken = {k: _tenant_rollups.pop(k) for k in keys}
+    by_hour = {}
+    for (hour, rid), row in taken.items():
+        by_hour.setdefault(hour, []).append((rid, row))
+    out = []
+    for hour, rows in sorted(by_hour.items()):
+        keep = {rid for rid, _r in sorted(rows, key=lambda x: -x[1][0])[:top]}
+        keep |= {rid for rid, _r in sorted(rows, key=lambda x: -x[1][2])[:top]}
+        for rid, row in rows:
+            if rid in keep:
+                out.append({"hour_at": hour, "restaurant_id": rid, "requests": row[0], "errors_5xx": row[1],
+                            "total_ms": round(row[2], 1), "max_ms": round(row[3], 1)})
     return out
 
 
@@ -546,6 +602,14 @@ def _record_request(response):
             _slowest.append({"at": now, "ms": round(elapsed_ms), "rule": rule,
                              "status": status, "klass": klass})
         _aggregate(now, elapsed_ms, status, rule, method, klass)
+    if klass in CUSTOMER_CLASSES:
+        try:
+            tenant = _restaurant_of_request()
+        except Exception:
+            tenant = None
+        if tenant is not None:
+            with _metrics_lock:
+                _tenant_add(now, tenant, elapsed_ms, status)
     rid = getattr(g, "request_id", None)
     if rid:
         response.headers["X-Request-ID"] = rid
@@ -670,6 +734,7 @@ def reset_metrics():
         _samples.clear()
         _slowest.clear()
         _rollups.clear()
+        _tenant_rollups.clear()
         _pending_5xx.clear()
         _inflight.clear()
         _peak_by_minute.clear()

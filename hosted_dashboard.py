@@ -40,21 +40,11 @@ from models import get_conn, get_restaurant, get_review_stats, get_reviews_data,
 from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
-import sentry_sdk
+# One initialisation for every process (sentry_setup — the queue worker and
+# worker.py call it too, scale audit 10/19/26 OPS-5); none without SENTRY_DSN.
+import sentry_setup as _sentry_setup
 from sentry_sdk.integrations.flask import FlaskIntegration
-_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
-if _SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=_SENTRY_DSN,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.1,   # 10% of requests for performance tracing
-        profiles_sample_rate=0.0, # off — not needed yet
-        environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
-        # The deployed commit, so an error is tied to the build that raised
-        # it and a regression shows as new in a release (#38, #77).
-        release=(os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or None),
-        send_default_pii=False,   # never send PII to Sentry
-    )
+_sentry_setup.init("web", integrations=[FlaskIntegration()])
 
 app = Flask(__name__)
 
@@ -1267,7 +1257,12 @@ except Exception as _reset_e:
 # scheduler_lease() elects exactly one runner across processes, so the loser
 # idles and takes over only if the holder stops heartbeating. Unsetting the
 # variable is therefore also the rollback.
-_RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", "1").strip().lower() not in ("0", "false", "no")
+# SCHEDULER_PROCESS=1 (scale audit 10/19/26 INF-13): gunicorn's master runs
+# the scheduler as its own process (gunicorn.conf.py, `worker.py
+# --scheduler`), so the default here turns to 0. An explicit
+# RUN_SCHEDULER_IN_WEB still wins.
+_SCHED_DEFAULT = "0" if (os.getenv("SCHEDULER_PROCESS") or "").strip().lower() in ("1", "true", "yes", "on") else "1"
+_RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", _SCHED_DEFAULT).strip().lower() not in ("0", "false", "no")
 import threading as _sched_threading
 _SCHED_THREAD = None
 _SCHED_START_FAILED = False
