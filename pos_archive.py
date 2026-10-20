@@ -30,6 +30,7 @@ the POS has since removed.
 """
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
@@ -290,6 +291,51 @@ def _wait_for_other(restaurant_id, name, iso, since, db_path):
         _t.sleep(2.0)
 
 
+# The NOT NULL columns of the archive tables and their DEFAULTs, read from
+# the database once a process. SQLite's INSERT OR REPLACE writes a column's
+# default for a NULL in a NOT NULL column; Postgres refuses the row — after
+# the 10/19/26 cutover a provider row without a figure (Toast's wage-less
+# reg_rate, Square's tips, tips_net and grats, a ticket with no type_sale)
+# would have failed the whole night. A missing value is stored as SQLite
+# always stored it: the column's default.
+_NOT_NULL_DEFAULTS = {}
+
+
+def _default_value(expr):
+    """A column DEFAULT as written (SQLite) or as the catalog shows it
+    (Postgres: `0`, `'x'::text`) — a number or a string; None when it is an
+    expression (a function call) this does not evaluate."""
+    if expr is None:
+        return None
+    t = re.sub(r"::[a-z ]+(\[\])?$", "", str(expr).strip(), flags=re.I).strip()
+    if t.startswith("(") and t.endswith(")"):
+        t = t[1:-1].strip()
+    if len(t) >= 2 and t[0] == t[-1] == "'":
+        return t[1:-1].replace("''", "'")
+    try:
+        return int(t)
+    except ValueError:
+        try:
+            return float(t)
+        except ValueError:
+            return None
+
+
+def _not_null_defaults(conn, table) -> dict:
+    """{column: default} of `table`'s NOT NULL columns that have one."""
+    got = _NOT_NULL_DEFAULTS.get(table)
+    if got is None:
+        got = {}
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall():
+            name, notnull, dflt = row[1], row[3], row[4]
+            val = _default_value(dflt)
+            if notnull and val is not None:
+                got[name] = val
+        _NOT_NULL_DEFAULTS[table] = got
+    return got
+
+
+
 def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     """Read one business date from the POS and store it whole.
     {"date", "tickets", "lines", "punches", "net_sales", "restated",
@@ -336,9 +382,11 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
                          (restaurant_id, name, iso))
             want = rows.get(key) or []
             marks = ",".join("?" for _ in range(len(cols) + 2))
+            dflt = _not_null_defaults(conn, table)
             conn.executemany(
                 f"INSERT OR REPLACE INTO {table} (restaurant_id, provider, {','.join(cols)}) VALUES ({marks})",
-                [(restaurant_id, name, *[r.get(c) for c in cols]) for r in want])
+                [(restaurant_id, name, *[(dflt[c] if (r.get(c) is None and c in dflt) else r.get(c)) for c in cols])
+                 for r in want])
             # Every record the POS returned is a row (POS-10): a key two
             # records shared replaced one with the other, silently.
             got = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE restaurant_id=? AND provider=? "
