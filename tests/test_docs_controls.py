@@ -162,6 +162,9 @@ _STEP_UP_TODAY = {
     # purging a received file.
     "/admin/api/client/<int:restaurant_id>/intake/rotate",
     "/admin/api/client/<int:restaurant_id>/intake/purge",
+    # Website analytics ownership (scale fix 10/19/26, SEC-01): approving a
+    # pending GA4 / Search Console binding by hand.
+    "/admin/api/external-bindings/approve",
 }
 
 # Routes that need the step-up for only PART of what they do, through

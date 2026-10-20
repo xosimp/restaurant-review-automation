@@ -3869,6 +3869,46 @@ def admin_api_overview(current_user):
     return jsonify(**admin_ops.overview())
 
 
+@admin_bp.route("/admin/api/external-bindings")
+@admin_required
+def admin_api_external_bindings(current_user):
+    """GA4 properties / Search Console sites waiting for ownership proof
+    (external_bindings, scale audit 10/19/26 SEC-01): pasted by an owner,
+    readable or not, never read until proved or approved here."""
+    import external_bindings as _eb
+    return jsonify(ok=True, pending=_eb.pending())
+
+
+@admin_bp.route("/admin/api/external-bindings/approve", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_external_bindings_approve(current_user):
+    """Approve one pending binding after checking by hand that the property
+    is the restaurant's. Refused when another restaurant holds it verified."""
+    import admin_events
+    import external_bindings as _eb
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    data = request.get_json(silent=True) or {}
+    provider = str(data.get("provider") or "")
+    try:
+        rid = int(data.get("restaurant_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="restaurant_id is required."), 400
+    if provider not in _eb.PROVIDER_COLUMNS:
+        return jsonify(ok=False, error="Unknown provider."), 400
+    before = _eb.binding(provider, rid)
+    result = _eb.approve(provider, data.get("external_id"), rid)
+    admin_events.record_admin_action(current_user, "external_binding.approved", restaurant_id=rid,
+                                     target=f"{provider}:{_eb.normalize(provider, data.get('external_id'))}",
+                                     before=before, after=_eb.binding(provider, rid),
+                                     result="ok" if result == "verified" else "refused")
+    if result != "verified":
+        return jsonify(ok=False, result=result,
+                       error="Another restaurant holds it." if result == "conflict" else "No such pending binding."), 409
+    return jsonify(ok=True, result=result)
+
+
 @admin_bp.route("/admin/api/intelligence")
 @admin_required
 def admin_api_intelligence(current_user):

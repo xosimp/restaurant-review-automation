@@ -13542,6 +13542,14 @@ def _do_web_analytics_set(current_user):
         fields["gsc_site_url"] = site or None
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
+    # One property, one restaurant (scale audit 10/19/26, SEC-01): an id
+    # another live restaurant holds verified is refused before it is saved,
+    # and never named — that is another client's.
+    import external_bindings as _eb
+    for col, source, what in (("ga4_property_id", "ga4", "Google Analytics property"),
+                              ("gsc_site_url", "gsc", "Search Console site")):
+        if fields.get(col) and _eb.conflict(source, fields[col], rid):
+            return {"ok": False, "code": "taken", "error": _wa.TAKEN_MESSAGE.format(what=what)}, 409
     before = _web_analytics_status(rid)
     if not fields.get("ga4_property_id", before["ga4_property_id"]) and \
             not fields.get("gsc_site_url", before["gsc_site_url"]):
@@ -13550,12 +13558,29 @@ def _do_web_analytics_set(current_user):
     log_account_event(rid, "web_analytics_changed", current_user,
                       detail=", ".join(f"{k}={'set' if v else 'cleared'}" for k, v in fields.items()
                                        if k in ("ga4_property_id", "gsc_site_url")))
+    for col, source in (("ga4_property_id", "ga4"), ("gsc_site_url", "gsc")):
+        if col in fields and not fields[col]:
+            _eb.unbind(source, rid)
     checks = {}
     if _wa.configured():
         try:
             checks = _wa.verify(fields.get("ga4_property_id"), fields.get("gsc_site_url"))
         except Exception as e:
             checks = {"error": _safe_err(e)}
+        # Readable is not the same as yours: a source Google lets us read is
+        # read only once it is proved this restaurant's (SEC-01).
+        r_now = get_restaurant(rid)
+        for col, source in (("ga4_property_id", "ga4"), ("gsc_site_url", "gsc")):
+            c = checks.get(source) if isinstance(checks, dict) else None
+            if not fields.get(col) or not isinstance(c, dict) or not c.get("ok"):
+                continue
+            try:
+                owned = _wa.ensure_ownership(r_now, source, fields[col])
+            except Exception as e:
+                print(f"[web_analytics] ownership check failed for {rid}: {e}")
+                owned = False
+            if not owned:
+                checks[source] = {"ok": False, "code": "unconfirmed", "error": _wa.UNCONFIRMED_MESSAGE}
     started = bool(_wa.configured() and any((c or {}).get("ok") for c in checks.values() if isinstance(c, dict))
                    and _start_web_analytics_sync(rid))
     out = _web_analytics_status(rid)
@@ -13570,6 +13595,9 @@ def _do_web_analytics_disconnect(current_user):
     rid = current_user["restaurant_id"]
     update_restaurant(rid, {"ga4_property_id": None, "gsc_site_url": None, "web_analytics_synced_at": None,
                             "web_analytics_error": None})
+    import external_bindings as _eb
+    for source in _eb.PROVIDER_COLUMNS:
+        _eb.unbind(source, rid)
     log_account_event(rid, "web_analytics_disconnected", current_user)
     return {"ok": True}, 200
 

@@ -4883,6 +4883,10 @@ def init_db(db_path: str = DB_PATH):
     # The website's daily analytics and top searches (web_analytics, 10/2/26).
     from web_analytics import init_web_analytics
     init_web_analytics(db_path)
+    # One GA4 property / Search Console site per restaurant, proved before
+    # it is read (external_bindings, scale audit 10/19/26 SEC-01).
+    from external_bindings import init_external_bindings
+    init_external_bindings(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
