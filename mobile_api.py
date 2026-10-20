@@ -8245,7 +8245,32 @@ def mobile_google_authorize(current_user):
     from gmb import get_mobile_auth_url
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return jsonify(ok=False, error="Google OAuth not configured"), 500
-    return jsonify(ok=True, url=get_mobile_auth_url(current_user["restaurant_id"]))
+    # Bound to this login: the callback saves nothing, this login confirms
+    # (re-audit 10/20/26 R7-16).
+    return jsonify(ok=True, url=get_mobile_auth_url(current_user["restaurant_id"],
+                                                    bind=f"u{int(current_user['id'])}"))
+
+
+@mobile_bp.route("/connections/google/confirm", methods=["POST"])
+@mobile_login_required
+def mobile_google_confirm(current_user):
+    """The second half of the app's Google Business connect (R7-16): the
+    sealed ticket the callback handed back, confirmed by the login that
+    started it, at its restaurant."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Google Business connection")
+    if denied:
+        return denied
+    from gmb import open_connect_ticket
+    data = open_connect_ticket((request.get_json(silent=True) or {}).get("ticket"))
+    if not data:
+        return jsonify(ok=False, error="This connection expired. Start again from Account → Connections."), 400
+    if str(data.get("u")) != str(current_user.get("id")) or int(data.get("rid") or 0) != int(current_user["restaurant_id"]):
+        return jsonify(ok=False, error="This connection was started by another login. Nothing was connected."), 403
+    allowed = ("gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_account_id", "gmb_location_id")
+    update_restaurant(current_user["restaurant_id"], {k: v for k, v in (data.get("fields") or {}).items() if k in allowed})
+    _log_account_event(current_user["restaurant_id"], "gmb_connected", current_user)
+    return jsonify(ok=True)
 
 
 @mobile_bp.route("/connections/google", methods=["DELETE"])

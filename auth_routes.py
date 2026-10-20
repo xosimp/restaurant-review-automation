@@ -1166,8 +1166,9 @@ def gmb_mobile_callback():
     google_sso_callback already uses for mobile login, so no new URL
     scheme registration is needed — GMBConnectCoordinator.swift just
     listens for a different path on it."""
-    from gmb import exchange_code, find_gmb_location, verify_mobile_state, MOBILE_REDIRECT_URI
-    from models import update_restaurant, get_restaurant
+    from gmb import (exchange_code, find_gmb_location, verify_bound_state, seal_connect_ticket,
+                     MOBILE_REDIRECT_URI)
+    from models import get_restaurant
     from datetime import datetime, timezone, timedelta
     import urllib.parse
 
@@ -1190,9 +1191,12 @@ def gmb_mobile_callback():
     if error or not code or not state:
         return _finish("error", error or "No code returned")
 
-    restaurant_id = verify_mobile_state(state)
-    if restaurant_id is None:
+    # The state names the login that started the flow (re-audit 10/20/26
+    # R7-16); a restaurant-only state is no longer issued to the app.
+    bound = verify_bound_state(state)
+    if bound is None or not str(bound[1]).startswith("u"):
         return _finish("error", "Connection expired — please try again")
+    restaurant_id, bind = bound
 
     try:
         tokens        = exchange_code(code, redirect_uri=MOBILE_REDIRECT_URI)
@@ -1207,14 +1211,16 @@ def gmb_mobile_callback():
             print(f"[GMB] mobile connect refused for rid={restaurant_id}: {match.get('error')}")
             return _finish("nomatch")
 
-        update_restaurant(restaurant_id, {
+        # Saved only when the login that started it confirms the sealed
+        # ticket (/mobile/api/connections/google/confirm).
+        ticket = seal_connect_ticket(restaurant_id, bind, {
             "gmb_access_token":  access_token,
             "gmb_refresh_token": refresh_token,
             "gmb_token_expires": expires_at,
             "gmb_account_id":    match["account"],
             "gmb_location_id":   match["location"],
         })
-        return _finish("connected")
+        return redirect("cavnarai://gmb-callback?status=confirm&ticket=" + urllib.parse.quote(ticket, safe=""))
     except Exception as e:
         print(f"[GMB] Mobile OAuth callback error: {e}")
         return _finish("error", "Connection error")

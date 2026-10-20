@@ -1118,7 +1118,16 @@ final class AccountViewModel {
                 connectGoogleError = response.error ?? "Couldn't start Google connect."
                 return
             }
-            try await GMBConnectCoordinator().connect(authorizeURL: url)
+            // The callback saves nothing for the app: this login confirms
+            // the connection it started (re-audit 10/20/26 R7-16).
+            if let ticket = try await GMBConnectCoordinator().connect(authorizeURL: url) {
+                let confirmed: APIClient.OKResponse = try await client.send(
+                    "/mobile/api/connections/google/confirm", method: .post, body: ["ticket": ticket])
+                guard confirmed.ok else {
+                    connectGoogleError = confirmed.error ?? "Couldn't connect Google Business."
+                    return
+                }
+            }
             await load()
         } catch let error as GMBConnectError {
             switch error {
