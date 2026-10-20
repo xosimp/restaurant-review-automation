@@ -8097,6 +8097,30 @@ _aivis_cache = {}
 # so a wrong one silently scores zero forever.
 _CITY_CACHE_SECS = 86400
 _city_cache = {}
+# Both per-process caches above are keyed by restaurant / place and were
+# never bounded (scale audit 10/19/26, SEC-19): memory grew with the fleet,
+# per worker. home_brief._cache_put's sweep: oldest first, expired or past
+# the cap.
+_TENANT_CACHE_MAX = 2000
+
+
+def _bounded_put(cache, key, value, ttl_secs, max_entries=_TENANT_CACHE_MAX):
+    """Store (stamp, ...) under `key`, first dropping expired entries from
+    the oldest end and, past `max_entries`, the oldest ones. Values are
+    tuples whose first item is the datetime they were stored."""
+    now = datetime.utcnow()
+    cache.pop(key, None)
+    while cache:
+        k = next(iter(cache))
+        try:
+            old = (now - cache[k][0]).total_seconds() >= ttl_secs
+        except Exception:
+            old = True
+        if len(cache) >= max_entries or old:
+            cache.pop(k, None)
+        else:
+            break
+    cache[key] = value
 
 
 def _city_from_place_id(place_id: str) -> str:
@@ -8142,7 +8166,7 @@ def _city_from_place_id(place_id: str) -> str:
     # cached as "no city" for a day, which scored every run in it as zero
     # (MOD-INT-4); it is retried on the next call instead.
     if settled:
-        _city_cache[place_id] = (datetime.utcnow(), city, state)
+        _bounded_put(_city_cache, place_id, (datetime.utcnow(), city, state), _CITY_CACHE_SECS)
     return city
 
 
@@ -8604,7 +8628,7 @@ def _aivis_serve_stored(rid, r):
         _cached["measured_at"] = _stored[1]
         _cached["state"] = _aivis_state(_cached)
         _cached["measured"] = True
-        _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
+        _bounded_put(_aivis_cache, rid, (datetime.utcnow(), dict(_cached)), _AIVIS_CACHE_SECS)
         return _aivis_with_live_listing(_cached, r, rid), 200
     return _aivis_not_measured(r, rid), 200
 
@@ -9389,7 +9413,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # eight live queries. An outage (nothing came back) is neither: the last
     # stored run keeps being served.
     if _complete or _run_id:
-        _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
+        _bounded_put(_aivis_cache, rid, (datetime.utcnow(), dict(_payload)), _AIVIS_CACHE_SECS)
     if _run_id:
         try:
             import json as _json_av
