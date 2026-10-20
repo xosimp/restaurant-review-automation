@@ -21,6 +21,10 @@ sends, spends or writes anything on the provider's side:
                  under its no-charge ID-refresh SKU
   apns           mint the ES256 provider token (no network: it proves the .p8
                  parses and signs, which is how push failed for months)
+  rpower         store/get with one connected store's token
+                 (RPOWER_PROBE_RESTAURANT_ID, else the lowest id), through the
+                 RPOWER breaker — the half-open probe once it lapses (scale
+                 audit 10/19/26 A3-10 / OPS-6)
 
 Each answer is recorded in provider_health (one row per probe). A provider
 that goes from anything else to failing, or stays unreachable for three
@@ -41,7 +45,7 @@ log = logging.getLogger("provider_health")
 # (scripts/check_timeouts.py).
 PROBE_TIMEOUT = (3.05, 6)
 
-PROVIDERS = ("resend", "twilio", "anthropic", "stripe", "google_places", "apns")
+PROVIDERS = ("resend", "twilio", "anthropic", "stripe", "google_places", "apns", "rpower")
 
 # A place Google's own documentation uses. If it is ever retired Google
 # answers NOT_FOUND, which still proves the key.
@@ -289,8 +293,60 @@ def probe_apns(db_path=None):
         return _result("failing", f"APNS_PRIVATE_KEY does not sign: {type(e).__name__}", None, started)
 
 
+def _rpower_probe_restaurant(db_path=None):
+    """(restaurant id, token) to probe RPOWER with: RPOWER_PROBE_RESTAURANT_ID
+    when set, else the lowest-id live, non-demo restaurant with an RPOWER
+    token. None when no restaurant has one."""
+    from models import get_conn, DB_PATH
+    want = (os.getenv("RPOWER_PROBE_RESTAURANT_ID") or "").strip()
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        sql = ("SELECT id FROM restaurants WHERE rpower_token IS NOT NULL AND rpower_token <> '' "
+               "AND COALESCE(is_demo, 0) = 0")
+        args = ()
+        if want.isdigit():
+            sql += " AND id=?"
+            args = (int(want),)
+        row = conn.execute(sql + " ORDER BY id LIMIT 1", args).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    import rpower
+    try:
+        token = rpower._creds(int(row[0]))["token"]
+    except Exception:
+        return None
+    return (int(row[0]), token) if token and not token.startswith("demo-store:") else None
+
+
+def probe_rpower(db_path=None):
+    """store/get with one connected store's token (scale audit 10/19/26
+    A3-10 / OPS-6): read-only, the documented first call. Goes through the
+    same breaker as every RPOWER request, so while the breaker is open this
+    probe is refused (and recorded as unreachable), and once it lapses the
+    probe IS the half-open probe that closes it."""
+    pick = _rpower_probe_restaurant(db_path)
+    if pick is None:
+        return _result("unconfigured", "no restaurant has an RPOWER token")
+    rid, token = pick
+    started = time.monotonic()
+    import rpower
+    try:
+        with rpower.for_store(rid):
+            stores = rpower.list_stores(token)
+    except rpower.RPowerAuthError as e:
+        return _result("failing", f"token refused: {e}", None, started)
+    except rpower.RPowerTryLater as e:
+        return _result("error", f"paused: {e}", None, started)
+    except Exception as e:
+        return _result("error", f"unreachable: {type(e).__name__}", None, started)
+    return _result("ok" if stores else "failing", None if stores else "the token sees no store", 200, started)
+
+
 PROBES = {"resend": probe_resend, "twilio": probe_twilio, "anthropic": probe_anthropic,
-          "stripe": probe_stripe, "google_places": probe_google_places, "apns": probe_apns}
+          "stripe": probe_stripe, "google_places": probe_google_places, "apns": probe_apns,
+          "rpower": probe_rpower}
 
 
 def probe(provider, db_path=None):

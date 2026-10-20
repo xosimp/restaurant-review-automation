@@ -2271,6 +2271,27 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — check the queue worker "
                         "process is running (QUEUE_WORKER=1, the default) or raise QUEUE_GENERATION_CONCURRENCY "
                         "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
+    # The fleet's POS (scale audit 10/19/26 OPS-6): a provider failing for
+    # more than pos_health.FLEET_OUTAGE_SHARE of the connected stores is one
+    # outage and one page (a warning: once a day for the set), never one
+    # console issue per store; a breaker held open past its page threshold
+    # pages once per opening (pos_io.page_if_long_open).
+    try:
+        import pos_health as _ph_sla
+        # Read only when paging: /health's read-only call stays lean.
+        fleet = _ph_sla.fleet_state() if send else {}
+        out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
+                            for p, f in fleet.items()}
+        for prov, f in fleet.items():
+            if f["outage"]:
+                warn_kinds.add(f"pos_fleet_{prov}")
+                problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
+                                f"stores ({int(round(f['share'] * 100))}%) — one outage, not a store's own problem.")
+        if send:
+            import pos_io as _pio_sla
+            _pio_sla.page_if_long_open("rpower")
+    except Exception as e:
+        log.warning(f"the fleet POS reading unavailable to the platform check: {e}")
     out["problems"] = problems
     if not problems or not send:
         return out

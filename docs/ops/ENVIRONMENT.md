@@ -135,6 +135,9 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `POS_BREAKER_COOLDOWN_SECONDS` | `120` | How long an opened breaker refuses before its first probe; doubled by each failed probe. | pos_io.py |
 | `POS_BREAKER_MAX_COOLDOWN_SECONDS` | `1800` | The longest cooldown between probes. | pos_io.py |
 | `POS_BREAKER_PAGE_AFTER_SECONDS` | `1800` | A breaker open (or failing its probes) this long pages the operator once for the opening — one page for a provider outage, not one issue per store (OPS-6). | pos_io.py |
+| `RPOWER_PROBE_RESTAURANT_ID` | `""` | The restaurant whose RPOWER token the hourly provider probe (`store/get`) uses; unset: the lowest-id live, non-demo restaurant with a token. | provider_health.py |
+| `POS_FLEET_OUTAGE_SHARE` | `0.05` | A POS provider failing for more than this share of connected stores (and at least `POS_FLEET_OUTAGE_MIN_STORES`) is one outage: one console issue, one page (OPS-6). | pos_health.py |
+| `POS_FLEET_OUTAGE_MIN_STORES` | `2` | The fewest failing stores that make a fleet outage (one store's trouble stays its own issue). | pos_health.py |
 | `POS_LIVE_SNAPSHOT_SECONDS` | `840` | How long a store's live read during service (sales so far, clock-ins) is shared by live labor, the coverage check, the hourly capture and /labor/live before one of them reads again (A3-02). | pos_io.py |
 
 ## Billing and contracts

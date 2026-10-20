@@ -230,5 +230,7 @@ def test_unconfigured_and_skipped_providers_are_not_counted_as_failures(monkeypa
         monkeypatch.setenv(var, "")
     monkeypatch.setattr(ph, "_get", lambda *a, **k: pytest.fail("probed an unconfigured provider"))
     out = ph.run_probes(db, alert=False)
-    assert out["attempted"] == 0 and out["failed"] == 0 and out["skipped"] == 6
-    assert "google_places" not in out["results"]
+    # Seven providers since the RPOWER probe (scale audit 10/19/26): it is
+    # unconfigured where no restaurant has an RPOWER token.
+    assert out["attempted"] == 0 and out["failed"] == 0 and out["skipped"] == 7
+    assert "google_places" not in out["results"] and out["results"]["rpower"] == "unconfigured"

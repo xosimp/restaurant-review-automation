@@ -197,6 +197,65 @@ def test_the_timeout_is_connect_then_read():
     assert isinstance(rpower.TIMEOUT_SECONDS, tuple) and rpower.TIMEOUT_SECONDS[0] <= 5
 
 
+# ── OPS-6: one fleet reading, one probe ─────────────────────────────────────
+
+def test_a_fleet_outage_needs_two_stores_and_a_share():
+    import pos_health
+    one = pos_health._fleet([("rpower", True, {"id": 1})])
+    assert not one["rpower"]["outage"], "one store's trouble stays its own issue"
+    many = pos_health._fleet([("rpower", i < 3, {"id": i}) for i in range(20)])
+    assert many["rpower"]["outage"] and len(many["rpower"]["failing"]) == 3
+    few = pos_health._fleet([("rpower", i < 2, {"id": i}) for i in range(100)])
+    assert not few["rpower"]["outage"], "2% of the fleet is not an outage"
+
+
+def test_a_fleet_outage_folds_the_stores_own_console_rows(monkeypatch):
+    import admin_ops
+    recs = [{"id": i, "name": f"S{i}", "issues": [{"key": "int:rpower", "severity": "critical", "since": None}]}
+            for i in range(3)]
+    monkeypatch.setattr(admin_ops, "_platform_issues", lambda recs, d: (
+        [{"key": "fleet:pos:rpower", "severity": "critical", "since": None}], {"pos_fleet": {"rpower": {}}}))
+    monkeypatch.setattr(admin_ops, "_sort_issues", lambda xs: xs)
+    issues, _facts = admin_ops._all_issues(recs, {})
+    assert [i["key"] for i in issues] == ["fleet:pos:rpower"]
+
+
+def test_the_platform_check_names_a_fleet_pos_outage(monkeypatch):
+    import ops
+    import pos_health
+    monkeypatch.setattr(pos_health, "fleet_state", lambda: pos_health._fleet(
+        [("rpower", i < 4, {"id": i, "name": f"S{i}"}) for i in range(10)]))
+    monkeypatch.setattr(pos_io, "page_if_long_open", lambda p: False)
+    import scheduler
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: False)
+    out = ops.check_platform_sla(send=True)
+    assert out["pos_fleet"]["rpower"]["failing"] == 4
+    assert any("RPOWER sync failing for 4 of 10" in p for p in out["problems"])
+
+
+def test_the_rpower_probe_reads_store_get_through_the_breaker(monkeypatch):
+    import provider_health
+    assert provider_health.probe_rpower()["state"] == "unconfigured"
+    _restaurant(1)
+    monkeypatch.setattr("requests.get", lambda *a, **k: _Resp(200, [{"mid": "1", "cg": 1280}]))
+    assert provider_health.probe_rpower()["state"] == "ok"
+    pos_io._write_breaker("rpower", open_until=time.time() + 600, opened_at=time.time(), cooldown=600.0)
+    got = provider_health.probe_rpower()
+    assert got["state"] == "error" and "paused" in got["detail"]
+
+
+def test_a_long_open_breaker_pages_once_per_opening(monkeypatch):
+    import ops
+    import scheduler
+    opened = time.time() - 4000
+    pos_io._write_breaker("rpower", open_until=time.time() + 60, opened_at=opened, cooldown=600.0, reason="x")
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
+    pages = []
+    monkeypatch.setattr(ops, "page_operator", lambda *a, **k: (pages.append(a), {"sent": True})[1])
+    assert pos_io.page_if_long_open("rpower") is True
+    assert pos_io.page_if_long_open("rpower") is False and len(pages) == 1
+
+
 # ── A3-14 / ONB-3 / INF-12: the two-level budget ────────────────────────────
 
 def test_requests_take_a_slot_in_the_token_bucket_and_the_fleet_bucket(monkeypatch):

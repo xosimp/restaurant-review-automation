@@ -2729,6 +2729,32 @@ def _platform_issues(recs, d):
                     "Fetches run at 8am, noon, 4pm and 8pm Central."),
             action="Open jobs", action_kind="link", action_href="#operations/jobs")
     facts["fetch_behind"] = len(stale_fetch)
+    # FLEET POS (scale audit 10/19/26 OPS-6): a provider failing for many
+    # stores at once is ONE outage — one platform issue naming the share,
+    # and _all_issues folds those stores' own "RPOWER POS needs attention"
+    # rows into it (an outage at 1,500 stores was 1,500 console rows). The
+    # breaker (pos_io) open is the same outage seen from the requests.
+    facts["pos_fleet"] = {}
+    try:
+        import pos_health as _ph_fleet
+        import pos_io as _pio_fleet
+        fleet = _ph_fleet.fleet_from_records(recs)
+        for prov, f in fleet.items():
+            br = _pio_fleet.breaker_state(prov) if prov == "rpower" else {"state": "closed"}
+            if not (f["outage"] or br["state"] != "closed"):
+                continue
+            facts["pos_fleet"][prov] = f
+            label = _POS_LABELS.get(prov, prov.title())
+            names = ", ".join(r["name"] for r in f["failing"][:4])
+            add(f"fleet:pos:{prov}", (f"{label} failing for {len(f['failing'])} of {f['connected']} stores"
+                                      if f["failing"] else f"{label} requests are paused by the breaker"),
+                "critical", zone="UTC",
+                detail=(f"{names}{'…' if len(f['failing']) > 4 else ''}. " if names else "")
+                + (f"Breaker {br['state'].replace('_', '-')}: {br.get('reason') or ''}. " if br["state"] != "closed" else "")
+                + "One outage, not one problem per store — the stores' own rows are folded into this one.",
+                action="Open integrations", action_kind="link", action_href="#operations/integrations")
+    except Exception as e:
+        _note_failure("pos_fleet", e)
     # Expected jobs past their SLA (ops.EXPECTED_JOBS, DH2-2).
     overdue_ok = True
     try:
@@ -2892,7 +2918,10 @@ def _issue_counts(issues):
 def _all_issues(recs, d):
     """(every open issue sorted, platform facts)."""
     platform, facts = _platform_issues(recs, d)
-    return _sort_issues([i for r in recs for i in r["issues"]] + platform), facts
+    # A POS outage across the fleet is one platform issue (OPS-6): the
+    # stores' own rows for that provider are folded into it, not listed N times.
+    folded = {f"int:{p}" for p in (facts.get("pos_fleet") or {})}
+    return _sort_issues([i for r in recs for i in r["issues"] if i.get("key") not in folded] + platform), facts
 
 
 ISSUES_IN_OVERVIEW = 60
