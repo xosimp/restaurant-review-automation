@@ -6373,7 +6373,7 @@ def _do_monthly_review(u):
     # login), kept for the business day (home_snapshots, FE-01).
     import home_snapshots
     r, today = get_restaurant(rid), _local_today(u)
-    review = home_snapshots.serve("monthly_review", rid, "all", today,
+    review = home_snapshots.serve("monthly_review", rid, home_snapshots.shared_scope(), today,
                                   lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r)
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]

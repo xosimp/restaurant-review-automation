@@ -126,9 +126,26 @@ def viewer_scope(user) -> str:
         "authority": authority})
 
 
+def salary_scope() -> str:
+    """Whether this read may carry the salaries (models.viewer_sees_salaries:
+    the account holder's, decided from the request's login): an all-in labor
+    figure in a build gives them away, so it is part of every shared scope."""
+    try:
+        from models import viewer_sees_salaries
+        return "s1" if viewer_sees_salaries() else "s0"
+    except Exception:
+        return "s0"
+
+
 def denied_scope(denied) -> str:
-    """An answer that depends only on the modules a viewer may not see."""
-    return "d:" + (",".join(sorted(str(d) for d in (denied or ()))) or "-")
+    """An answer that depends only on the modules a viewer may not see (and
+    whether it may see the salaries)."""
+    return "d:" + (",".join(sorted(str(d) for d in (denied or ()))) or "-") + ":" + salary_scope()
+
+
+def shared_scope() -> str:
+    """An answer the same for every viewer but for the salaries."""
+    return "all:" + salary_scope()
 
 
 # Restaurant fields that move without the Home answers moving (activity
@@ -305,9 +322,37 @@ def _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_pat
     return payload
 
 
-def _refresh(key, restaurant_id, block, scope_key, as_of, stamp, build, db_path):
+def _request_state():
+    """What a rebuild off the request needs to read exactly as the request
+    did: the app, the request's path and query, and its flask.g (the login
+    — models.viewer_sees_salaries, permissions' view-as — and the request's
+    memos). None outside a request."""
     try:
-        _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_path)
+        from flask import current_app, g, has_request_context, request
+        if not has_request_context():
+            return None
+        state = {k: v for k, v in g.__dict__.items() if not k.startswith("_inflight")}
+        return (current_app._get_current_object(), request.path,
+                (request.query_string or b"").decode("utf-8", "replace"), state)
+    except Exception:
+        return None
+
+
+def _refresh(key, restaurant_id, block, scope_key, as_of, stamp, build, db_path, req=None):
+    """The rebuild, on the pool. Started from a request, it runs inside a
+    request context made like that one, with its flask.g: everything the
+    build reads from the request (whose salaries, view-as, and that it may
+    not wait on a provider — rpower.on_request_thread) reads as it did on the
+    request, so the kept answer is the one the request would have built."""
+    try:
+        if req is not None:
+            app, path, query, state = req
+            from flask import g
+            with app.test_request_context(path, query_string=query):
+                g.__dict__.update(state)
+                _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_path)
+        else:
+            _build_and_keep(restaurant_id, block, scope_key, as_of, stamp, build, db_path)
     except Exception as e:
         try:
             import ops
@@ -327,7 +372,8 @@ def _start_refresh(key, restaurant_id, block, scope_key, as_of, stamp, build, db
             return False
         _refreshing.add(key)
     try:
-        _executor().submit(_refresh, key, restaurant_id, block, scope_key, as_of, stamp, build, db_path)
+        _executor().submit(_refresh, key, restaurant_id, block, scope_key, as_of, stamp, build, db_path,
+                           _request_state())
         return True
     except Exception as e:
         with _refresh_guard:

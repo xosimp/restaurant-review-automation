@@ -3101,7 +3101,8 @@ def _location_record_kept(r, fresh=False):
             return _location_record(c, r, datetime.now(timezone.utc))
         finally:
             c.close()
-    return home_snapshots.serve("location_record", rid, "all", today, build, restaurant=loc, fresh=fresh)
+    return home_snapshots.serve("location_record", rid, home_snapshots.shared_scope(), today, build,
+                                restaurant=loc, fresh=fresh)
 
 
 def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):

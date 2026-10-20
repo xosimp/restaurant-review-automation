@@ -112,6 +112,46 @@ def test_the_background_rebuild_writes_the_new_answer(db_path):
     assert home_snapshots.serve("good_news", rid, "d:-", today, build)["n"] == 2
 
 
+def test_a_rebuild_off_the_request_reads_as_the_request_did(db_path, monkeypatch):
+    """The pool thread has no request: without one, models.viewer_sees_salaries
+    says yes (a job reporting to the owner) and rpower may wait on the POS.
+    The rebuild runs in a request context made like the one that started it,
+    with its flask.g, so a manager's kept answer never carries the salaries."""
+    import models as _m
+    rid = _rid(db_path)
+    seen = []
+
+    def build():
+        from flask import has_request_context
+        seen.append((has_request_context(), _m.viewer_sees_salaries()))
+        return {"x": 1}
+    app = Flask(__name__)
+    with app.test_request_context("/api/good-news?x=1"):
+        from flask import g
+        g.cavnar_current_user = {"id": 6, "restaurant_id": rid, "role": "manager", "is_admin": 0}
+        state = home_snapshots._request_state()
+        assert home_snapshots.salary_scope() == "s0"
+    key = (rid, "good_news", "d:-:s0", None)
+    errors = []
+    import ops
+    import traceback; monkeypatch.setattr(ops, "capture", lambda e, **k: errors.append("".join(traceback.format_exception(e))))
+    home_snapshots._refreshing.add(key)
+    home_snapshots._refresh(key, rid, "good_news", "d:-:s0", "2026-10-19", "s", build, None, state)
+    assert errors == [] and seen == [(True, False)]
+
+
+def test_shared_answers_are_kept_apart_by_whether_the_viewer_sees_salaries():
+    app = Flask(__name__)
+    from flask import g
+    with app.test_request_context("/"):
+        g.cavnar_current_user = {"id": 1, "role": "owner", "is_admin": 0}
+        owner = (home_snapshots.shared_scope(), home_snapshots.denied_scope(set()))
+    with app.test_request_context("/"):
+        g.cavnar_current_user = {"id": 2, "role": "manager", "is_admin": 0}
+        manager = (home_snapshots.shared_scope(), home_snapshots.denied_scope(set()))
+    assert owner[0] != manager[0] and owner[1] != manager[1]
+
+
 def test_switched_off_every_read_builds(db_path, monkeypatch):
     monkeypatch.setenv("HOME_SNAPSHOTS", "0")
     rid = _rid(db_path)
@@ -231,6 +271,27 @@ def test_the_morning_send_keeps_each_recipients_home_brief(db_path, monkeypatch,
     body = client.get("/api/morning-brief?view=home").get_json()
     assert body["brief"]["lines"][0]["text"] == "All clear"
     assert calls == [5]                          # read, not built
+
+
+def test_the_morning_send_never_keeps_a_managers_brief(db_path, monkeypatch, client):
+    """Off a request every build reads as the owner's (the salaries), so only
+    an account holder's send-time build is kept for Home."""
+    import morning_brief
+    rid = _rid(db_path)
+    auth.init_auth(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO users (id, restaurant_id, username, email, password_hash, role) "
+                 "VALUES (6, ?, 'm', 'm@x.com', 'x', 'manager')", (rid,))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(morning_brief, "build", lambda *a, viewer=None, **k: {
+        "lines": [{"key": "all_clear", "tone": "good", "text": "All clear"}]})
+    monkeypatch.setattr(morning_brief, "_email_brief", lambda *a, **k: type("R", (), {"ok": True})())
+    morning_brief.deliver(rid, db_path=db_path)
+    conn = get_conn(db_path)
+    kept = conn.execute("SELECT COUNT(*) FROM home_snapshots WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.close()
+    assert kept == 0
 
 
 # ── one read for Home's follow-through ──────────────────────────────────────
