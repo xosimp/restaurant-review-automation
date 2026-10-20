@@ -96,7 +96,12 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
 - **Savepoints:** every statement inside a transaction is its own savepoint;
   a write loop of more than 64 `execute()` calls in one transaction
   overflows Postgres's subtransaction cache — write loops use `executemany`
-  (one savepoint) instead (DB-05; `save_labor_daily_history` since 10/19/26).
+  (one savepoint) instead (DB-05; `save_labor_daily_history` since 10/19/26,
+  and the DSR metrics, loss days, Bar nights, cohort benchmarks and the
+  other loops the 10/19/26 sweep found). A loop still left is named once per
+  call site in the log ("subtransactions: more than 64 write statements in
+  one transaction at <file:line>", `db_dialect.SUBXACT_WARN`) — search the
+  Railway logs for it after a night on Postgres.
 - **Locks:** `BEGIN IMMEDIATE` is one advisory lock (SQLite's one writer)
   except on the hot paths, which lock only what they serialise
   (`db_dialect.begin_write`): a job group's claim, one kind's enqueues, one

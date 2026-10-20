@@ -1589,6 +1589,39 @@ def run_atomic_many(raw, sql, rows, in_tx_hint=False):
     return cur
 
 
+# Writes past this many in one transaction overflow Postgres's per-backend
+# subtransaction cache (PGPROC_MAX_CACHED_SUBXIDS): each is a savepoint that
+# took an XID, and from then on every other session's snapshot reads
+# pg_subtrans. The loops found by the 10/19/26 sweep are one executemany
+# now (DB-05); a loop still left is said once per call site in the log, so
+# production names the rest.
+SUBXACT_WARN = 64
+_WRITE_STMT = re.compile(r"^\s*(INSERT|UPDATE|DELETE|WITH\b.*\b(INSERT|UPDATE|DELETE))\b", re.I | re.S)
+_subxact_sites = set()
+
+
+def _note_subxact(conn):
+    n = getattr(conn, "_tx_writes", 0) + 1
+    conn._tx_writes = n
+    if n != SUBXACT_WARN + 1:
+        return
+    try:
+        import traceback
+        here = os.path.abspath(__file__)
+        site = next((f"{os.path.basename(f.filename)}:{f.lineno} {f.name}"
+                     for f in reversed(traceback.extract_stack()[:-2])
+                     if os.path.abspath(f.filename) != here and not f.filename.endswith("models.py")), "?")
+    except Exception:
+        site = "?"
+    if site in _subxact_sites:
+        return
+    _subxact_sites.add(site)
+    import logging
+    logging.getLogger("db_dialect").warning(
+        f"subtransactions: more than {SUBXACT_WARN} write statements in one transaction at {site} — "
+        "one savepoint each on Postgres; make it one executemany (scale audit 10/19/26 DB-05)")
+
+
 def _undo_statement(raw):
     """Back to the statement's savepoint (the transaction before it)."""
     try:
@@ -1699,6 +1732,10 @@ class PgConnection:
     def _run(self, sql, params, cur):
         # Always a tuple: every literal % was doubled, so the query is
         # always read for placeholders (never sent with params=None).
+        if not self._in_tx:
+            self._tx_writes = 0
+        elif _WRITE_STMT.match(sql):
+            _note_subxact(self)
         try:
             raw = run_atomic(self._raw, sql, tuple(params or ()), self._in_tx)
         except Exception as e:

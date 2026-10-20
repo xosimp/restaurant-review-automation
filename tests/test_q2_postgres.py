@@ -929,6 +929,29 @@ def test_tenant_writes_run_side_by_side_and_still_exclude_the_one_writer(scratch
             c.close()
 
 
+@live
+def test_a_write_loop_past_the_subtransaction_cache_is_named_once(scratch_db, caplog):
+    # DB-05: a loop of single-row writes in one transaction is a savepoint each; past 64 the log names it.
+    import logging
+    c = db_dialect.connect(scratch_db)
+    try:
+        c.execute_native("CREATE TABLE loop_t (k INTEGER PRIMARY KEY)")
+        c.commit()
+        db_dialect._subxact_sites.clear()
+        with caplog.at_level(logging.WARNING, logger="db_dialect"):
+            for _ in range(2):
+                c.execute("DELETE FROM loop_t")
+                for k in range(70):
+                    c.execute("INSERT INTO loop_t (k) VALUES (?)", (k,))
+                c.commit()
+                c.executemany("INSERT INTO loop_t (k) VALUES (?)", [(k,) for k in range(100, 200)])
+                c.commit()
+        said = [r.getMessage() for r in caplog.records if "subtransactions" in r.getMessage()]
+        assert len(said) == 1 and "test_q2_postgres.py" in said[0]
+    finally:
+        c.close()
+
+
 def test_the_partition_job_is_a_no_op_on_sqlite(monkeypatch):
     import pg_partitions
     monkeypatch.delenv("DATABASE_URL", raising=False)
