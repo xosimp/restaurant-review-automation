@@ -229,8 +229,7 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Do not raise gunicorn `--workers` past 1** until the bounded pools
   that still multiply with workers are sized for it: the two admin pools —
   `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
-  and push delivery pools, the owner AI job pool `ai_async`, Home's
-  snapshot rebuild pool (`home_snapshots`, `HOME_SNAPSHOT_WORKERS`), the
+  and push delivery pools, the owner AI job pool `ai_async`, the
   interactive AI lane (`ai_lane`, `AI_LANE_WORKERS` — its polled Ask turns'
   events live in process memory, so a second worker also needs the poll
   pinned to its process), the AI
@@ -279,7 +278,9 @@ A deletion is only "verified" when the trace is written down alongside it.
   stopped. A time bound without a cursor is worse than no bound — it starves
   the same tail every pass.
 - **A scheduled job is one `jobs_registry.JOBS` entry plus one
-  `ops.run_job("<name>", fn)` call in `scheduler_loop`**, returning
+  `ops.run_job("<name>", fn)` call in `scheduler_loop`** (or, for long
+  platform work the queue worker runs — the nightly backup, the restore
+  drill — one `queue_scheduled_job("<name>")` call; registry `queue`), returning
   `{attempted, ok, failed, skipped, hit_bound}` or raising
   (`tests/test_fix_d_jobs.py` keeps the two in step; `ops.run_outcome` reads
   any other result as partial, never clean). A heavy per-restaurant pass
