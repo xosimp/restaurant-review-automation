@@ -524,3 +524,22 @@ def test_a_seal_the_restoring_key_cannot_open_is_blanked_not_served(tmp_path, mo
         assert c.execute("SELECT COUNT(*) FROM app_secrets").fetchone()[0] == 0
     finally:
         c.close()
+
+
+def test_the_backup_records_its_stage_seconds_and_says_when_it_nears_its_bound(monkeypatch):
+    """OPS-11 (scale audit 10/19/26): the backup's scale curve is measured
+    (backup_runs.detail_json stage_seconds), and a run past half its job
+    bound is captured before the night it no longer fits."""
+    import ops
+    run = {"_detail": {}}
+    ticks = iter([0.0, 10.0, 12.0, 40.0, 2000.0])
+    monkeypatch.setattr(scheduler.time, "monotonic", lambda: next(ticks))
+    for stage in ("snapshot", "snapshot", "gzip", "scrub", "encrypt"):
+        scheduler._backup_lap(run, stage)
+    assert run["_detail"]["stage_seconds"] == {"snapshot": 10.0, "gzip": 2.0, "scrub": 28.0, "encrypt": 1960.0}
+    captured = []
+    monkeypatch.setattr(ops, "capture", lambda e, **k: captured.append(str(e)))
+    monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: False)
+    scheduler._backup_too_slow(run)
+    assert run["_detail"]["slow"] is True and run["_detail"]["total_seconds"] == 2000.0
+    assert captured and "over 50%" in captured[0]

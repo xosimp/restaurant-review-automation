@@ -2240,6 +2240,52 @@ def _remove_quietly(path):
         pass
 
 
+# A backup past this share of its job bound (jobs_registry backup_db
+# max_minutes) is said out loud, before the night it no longer fits (scale
+# audit 10/19/26 OPS-11: ~78 s/GB measured, so the 60-minute bound is
+# reached near 46 GB; the stage seconds in backup_runs.detail_json are the
+# measured curve).
+BACKUP_SLOW_SHARE = 0.5
+
+
+def _backup_lap(run, stage):
+    """Seconds per backup stage into the run's detail (OPS-11). The first
+    call for 'snapshot' starts the clock."""
+    now = time.monotonic()
+    d = run.setdefault("_detail", {})
+    last = d.pop("_lap_at", None)
+    if last is not None:
+        stages = d.setdefault("stage_seconds", {})
+        stages[stage] = round(stages.get(stage, 0) + (now - last), 1)
+    d["_lap_at"] = now
+
+
+def _backup_too_slow(run):
+    d = run.get("_detail") or {}
+    d.pop("_lap_at", None)
+    total = round(sum((d.get("stage_seconds") or {}).values()), 1)
+    d["total_seconds"] = total
+    try:
+        import jobs_registry
+        bound = 60 * float(jobs_registry.JOBS["backup_db"].get("max_minutes") or 60)
+    except Exception:
+        bound = 3600.0
+    if total <= BACKUP_SLOW_SHARE * bound:
+        return
+    d["slow"] = True
+    _ops.capture(RuntimeError(f"backup_db took {total}s, over {int(BACKUP_SLOW_SHARE * 100)}% of its "
+                              f"{int(bound)}s bound: {d.get('stage_seconds')}"), job="backup_db", context="slow")
+    try:
+        if scheduling_allowed():
+            _ops.page_operator("backup_slow", "Cavnar AI: the nightly backup is nearing its time bound",
+                               [f"{total}s of a {int(bound)}s bound — stages {d.get('stage_seconds')}",
+                                "Move the copy off the app volume before it stops fitting (RECOVERY.md -> The backup; "
+                                "docs/plans/POSTGRES_AND_WORKERS_PLAN.md -> Backups at scale)."],
+                               cooldown_minutes=24 * 60)
+    except Exception as e:
+        log.warning(f"backup_db: slow-backup page failed: {e}")
+
+
 def _redact_snapshot(path):
     """Strip credentials from a COPY of a snapshot before it leaves the
     server (offsite_backup.redact, the one scrub registry)."""
@@ -2283,6 +2329,7 @@ def _backup_failed(run, message, page=True):
     run.setdefault("local_ok", 0)
     run.setdefault("offsite_ok", 0)
     detail = dict(run.pop("_detail", {}) or {})
+    detail.pop("_lap_at", None)
     detail["error"] = str(message)[:300]
     run["detail_json"] = _json.dumps(detail, default=str)[:2000]
     _ops.record_backup_run(run)
@@ -2490,8 +2537,11 @@ def backup_db():
 
     try:
         local_path = os.path.join(backup_dir, filename + ".gz")
+        _backup_lap(run, "snapshot")
         _write_consistent_snapshot(work_path)
+        _backup_lap(run, "snapshot")
         _gzip_snapshot(work_path, local_path)
+        _backup_lap(run, "gzip")
         run["_detail"]["snapshot_bytes"] = os.path.getsize(work_path)
         # The LOCAL snapshot is NOT redacted, deliberately.
         #
@@ -2558,11 +2608,13 @@ def backup_db():
             raise RuntimeError(f"not enough free space for the encrypted copy: {_free // (1024 * 1024)} MB free, "
                                f"{_need // (1024 * 1024)} MB needed")
         scrubbed = _redact_snapshot(redacted_path) or {}
+        _backup_lap(run, "scrub")
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
         run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
         run["_detail"]["scrubbed_columns"] = len(scrubbed.get("columns") or [])
         run["_detail"]["sealed_columns"] = scrubbed.get("sealed") or []
         _encrypt_file_chunked(redacted_path, enc_path, key)
+        _backup_lap(run, "encrypt")
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
         digest = offsite_backup.sha256_file(enc_path)
@@ -2572,6 +2624,7 @@ def backup_db():
         if cfg.get("s3"):
             try:
                 up = offsite_backup.upload_file(enc_path, enc_name, sha256_hex=digest)
+                _backup_lap(run, "upload")
                 targets.append(up["target"])
                 log.info(f"backup_db: uploaded {up['target']} ({size_kb} KB, sha256 {digest[:12]}…)")
             except Exception as e:
@@ -2612,6 +2665,7 @@ def backup_db():
     if not targets:
         _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
     run["finished_at"] = _now_utc_stamp()
+    _backup_too_slow(run)
     run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
     _ops.record_backup_run(run)
     _ops.ping_healthcheck()

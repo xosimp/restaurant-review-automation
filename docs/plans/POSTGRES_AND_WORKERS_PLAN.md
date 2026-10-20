@@ -224,3 +224,58 @@ which was 30-50x too late:
 The latency triggers (`request_rollups` p95 by class, the write probe's
 wait) still apply, but they do not see queue wait — that is the new trigger
 above.
+
+## Backups at scale (scale audit 10/19/26 OPS-11 — design; status below)
+
+**Today (built):** on Postgres the nightly `backup_db` exports the whole
+database into a SQLite file on the app volume (`pg_copy.export_to_sqlite`),
+gzips it (the local copy), makes a full-size scrubbed / sealed work copy,
+encrypts it and uploads it to R2. Since 10/19/26 Railway Pro's scheduled
+volume backups on the Postgres service (daily kept 6 days, weekly kept a
+month — snapshots, not point-in-time) are the first restore path and this
+export the second, independent one (RECOVERY.md → *Database recovery*).
+
+**Why it stops fitting:** measured ~78 s/GB (30 s for 384 MB), so the
+60-minute job bound is reached near **46 GB** — about 200 store-years of the
+POS archive — and the work needs ~2.5x the database free on the app volume
+at its peak (the export, its gzip, the scrub copy, the encrypted copy). The
+nightly `backup_runs.detail_json` now carries `stage_seconds` (snapshot,
+gzip, scrub, encrypt, upload) and `total_seconds`, and a run past half its
+bound is captured and paged (`backup_slow`, `scheduler.BACKUP_SLOW_SHARE`) —
+the measured curve, before the night it no longer fits. The backup's
+free-space gate reads the live Postgres size since 10/19/26 (it read the
+SQLite file left by the cutover).
+
+**The design for past tens of GB, in order:**
+
+1. **Stream, never stage.** Replace export → gzip → scrub copy → encrypt with
+   one streaming pass per table: read a table from Postgres with `COPY ... TO
+   STDOUT` (or a server-side cursor), apply the scrub / seal registry to each
+   row in flight (`offsite_backup` already names every column; the seal is
+   per value), and write gzip → Fernet-chunk → R2 multipart parts as it goes.
+   Disk needed: one part buffer (256 MiB), not 2.5x the database. Restore is
+   the same stream in reverse into an empty Postgres (`scripts/run_pg_copy.py`
+   grows a `--from-offsite` source). The format is versioned beside the old
+   one; the drill restores both until the old one ages out (35 days).
+2. **Off the web process.** The stream runs as a `job_queue` row in the queue
+   worker (bulk class, its own bound), not on the scheduler thread in the web
+   process; the scheduler only enqueues it at 2am.
+3. **The local copy goes away on Postgres.** Railway's volume backups are the
+   fast restore; the app-volume export exists only because SQLite needed it.
+   Once (1) ships, `BACKUP_RETAIN_COUNT` local exports drop to zero on
+   Postgres and the app volume holds no database copy at all.
+4. **Point-in-time recovery** (the RPO, OPS-2): Railway Pro's volume
+   snapshots are daily. Continuous WAL archiving to R2 (`archive_command` /
+   `wal-g` / `pgBackRest`) needs control of the Postgres server's config,
+   which Railway's managed template does not give; a self-run Postgres image
+   on Railway with `wal-g` pushing to the existing R2 bucket would, at the
+   cost of running Postgres ourselves. Decision for Will (report F8). A
+   logical replica is the other path and needs a second service (out of
+   scope this round).
+5. **Partitioned facts age out of the backup.** The month-partitioned POS
+   archive tables (`pg_partitions`) older than a quarter change only on a
+   restatement; a monthly full copy of closed partitions plus a nightly copy
+   of the open ones cuts the nightly stream to the hot set.
+
+Nothing above (1-5) is built yet except the measurements and the gate.
+
