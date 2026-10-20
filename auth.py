@@ -294,7 +294,8 @@ CREATE TABLE IF NOT EXISTS two_fa_challenges (
     pending_hash    TEXT    NOT NULL UNIQUE,
     code_hash       TEXT    NOT NULL,
     expires_at      TEXT    NOT NULL,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    attempts        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_two_fa_challenges_user
     ON two_fa_challenges(restaurant_id, user_id, purpose);
@@ -595,6 +596,9 @@ def init_auth(db_path: str = DB_PATH):
         # switch never reactivates a row carrying either stamp.
         "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
+        # Re-audit 10/20/26 R7-01: wrong codes typed against one challenge.
+        # It dies at TWO_FA_CHALLENGE_MAX_WRONG; a resend keeps the count.
+        "ALTER TABLE two_fa_challenges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             conn_m = boot_conn(db_path)
@@ -2588,6 +2592,60 @@ def second_factor_throttle_key(user):
     return f"2fa-app:{user['id']}" if uses_authenticator_app(user) else None
 
 
+def second_factor_lock_left(user_id, db_path: str = DB_PATH) -> int:
+    """Seconds this login's second step stays locked (re-audit 10/20/26
+    R7-01: security.SECOND_FACTOR_DAY_MAX wrong codes in a rolling day, from
+    any address), 0 when it is open. Fails open on a read error — the
+    per-address and per-challenge limits still hold."""
+    try:
+        import security
+        return security.second_factor_lock_left(user_id, db_path=db_path)
+    except Exception:
+        return 0
+
+
+SECOND_FACTOR_LOCKED_MESSAGE = ("Too many wrong codes for this login. Sign-in codes are paused for now; "
+                                "we've emailed the account. Try again later, or sign in on a device you "
+                                "chose to remember.")
+
+
+def note_second_factor_failure(user, restaurant_id, ip=None, db_path: str = DB_PATH) -> dict:
+    """A wrong second step (code and backup code both failed) for `user`:
+    counted per login, and on the failure that locks it the login's
+    activity log says so and its own address is told (security mail). The
+    sign-in screens call this beside the per-address failure."""
+    uid = (user or {}).get("id")
+    if not uid:
+        return {"failures": 0, "locked": False}
+    try:
+        import security
+        res = security.record_second_factor_failure(uid, ip, db_path=db_path)
+    except Exception:
+        return {"failures": 0, "locked": False}
+    if res.get("locked"):
+        try:
+            from models import log_event
+            log_event(restaurant_id or user.get("restaurant_id"), "two_factor_locked",
+                      {"username": (user.get("username") or "")[:60], "ip": (ip or "")[:64],
+                       "failures": res.get("failures")}, db_path=db_path)
+        except Exception:
+            pass
+        try:
+            import emails
+            from models import get_restaurant
+            r = get_restaurant(restaurant_id or user.get("restaurant_id"))
+            to = (user.get("email") or "").strip()
+            if to and "@" in to and not to.lower().endswith("@staff.invalid"):
+                emails.send_security_notice_email(
+                    to, getattr(r, "name", "") or "your restaurant", "two_factor_locked",
+                    restaurant_id=restaurant_id or user.get("restaurant_id"),
+                    tz=getattr(r, "timezone", None))
+        except Exception as e:
+            import logging as _lg_sf
+            _lg_sf.getLogger(__name__).warning("two-factor lock notice failed for user %s: %s", uid, e)
+    return res
+
+
 def check_sign_in_code(user, restaurant_id: int, user_id: int, code: str, pending: str,
                        db_path: str = DB_PATH) -> str:
     """'ok' | 'wrong' | 'expired' | 'missing' for the code typed at a
@@ -2688,12 +2746,22 @@ def reissue_two_fa_code(restaurant_id: int, user_id: int, pending: str,
         conn.close()
 
 
+TWO_FA_CHALLENGE_MAX_WRONG = 5
+
+
 def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str = None,
                       purpose: str = "login", consume: bool = True, db_path: str = DB_PATH) -> str:
     """'ok', 'wrong', 'expired' or 'missing' for a code typed against one
     login's challenge. 'setup' challenges are looked up by login (pending
     None); 'login' ones by the pending secret. A correct, unexpired code
-    deletes the challenge when consume is set, so it works exactly once."""
+    deletes the challenge when consume is set, so it works exactly once.
+
+    A wrong code is counted on the challenge, and the
+    TWO_FA_CHALLENGE_MAX_WRONG-th deletes it (re-audit 10/20/26 R7-01): a
+    challenge used to stay guessable for its whole 10 minutes, bounded only
+    by the per-address budget. The sign-in then starts again from the
+    password; the per-login lock (security.SECOND_FACTOR_DAY_MAX) bounds
+    how many challenges a password holder can burn."""
     import hmac as _h
     conn = get_conn(db_path)
     try:
@@ -2702,6 +2770,17 @@ def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str 
             return "missing"
         expected = _two_fa_hash("code", row["pending_hash"] + ":" + (code or "").strip())
         if not _h.compare_digest(row["code_hash"], expected):
+            try:
+                spent = int(row["attempts"] or 0) + 1
+            except (IndexError, KeyError):
+                spent = 1
+            if spent >= TWO_FA_CHALLENGE_MAX_WRONG:
+                conn.execute("DELETE FROM two_fa_challenges WHERE id=? AND restaurant_id=?",
+                             (row["id"], restaurant_id))
+            else:
+                conn.execute("UPDATE two_fa_challenges SET attempts=? WHERE id=? AND restaurant_id=?",
+                             (spent, row["id"], restaurant_id))
+            conn.commit()
             return "wrong"
         expired = conn.execute("SELECT datetime('now') > ?", (row["expires_at"],)).fetchone()[0]
         if expired:

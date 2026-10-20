@@ -213,8 +213,14 @@ def clear_account_lock(username, db_path=DB_PATH) -> int:
         cur = conn.execute("DELETE FROM login_attempts WHERE key=? OR key LIKE ? ESCAPE '\\'",
                            (_acct_key(name), "acctip:" + name.replace("\\", "\\\\").replace("%", "\\%")
                             .replace("_", "\\_") + "@%"))
+        removed = cur.rowcount or 0
+        # The login's second-step lock too (R7-01): "Clear lockout" and the
+        # break-glass unlock must reach every lock the login is under.
+        for u in conn.execute("SELECT id FROM users WHERE LOWER(username)=? OR LOWER(email)=?",
+                              (name, name)).fetchall():
+            removed += conn.execute("DELETE FROM login_attempts WHERE key=?", (_sf_key(u["id"]),)).rowcount or 0
         conn.commit()
-        return cur.rowcount or 0
+        return removed
     finally:
         conn.close()
 
@@ -288,11 +294,16 @@ def lockout_state(username, db_path=DB_PATH, *, internal=False) -> dict:
             out["addresses"].append({"ip": p["ip"], "locked": left > 0, "seconds_left": left,
                                      "failures_15m": _count(conn, p["key"], WINDOW_MINUTES)})
         left = _internal_day_left(conn, name) if internal else _lock_left(conn, key)
-        out["locked"] = left > 0 or any(a["locked"] for a in out["addresses"])
-        out["seconds_left"] = max([left] + [a["seconds_left"] for a in out["addresses"]])
-        return out
+        uids = [u["id"] for u in conn.execute("SELECT id FROM users WHERE LOWER(username)=? OR LOWER(email)=?",
+                                              (name, name)).fetchall()]
     finally:
         conn.close()
+    # The login's second-step lock (R7-01), so the console shows and clears it.
+    sf_left = max([second_factor_lock_left(uid, db_path=db_path) for uid in uids] or [0])
+    out["second_factor_seconds_left"] = sf_left
+    out["locked"] = left > 0 or sf_left > 0 or any(a["locked"] for a in out["addresses"])
+    out["seconds_left"] = max([left, sf_left] + [a["seconds_left"] for a in out["addresses"]])
+    return out
 
 
 def active_lockouts(db_path=DB_PATH) -> list:
@@ -312,6 +323,16 @@ def active_lockouts(db_path=DB_PATH) -> list:
         for r in rows:
             k = r["key"]
             names.add(k[5:] if k.startswith("acct:") else k[len("acctip:"):].rsplit("@", 1)[0])
+        # A login whose second step is locked (R7-01) is listed by its username.
+        for r in conn.execute("SELECT DISTINCT key FROM login_attempts WHERE kind='second_factor' "
+                              "AND attempted_at >= ?", (since,)).fetchall():
+            try:
+                u = conn.execute("SELECT username FROM users WHERE id=?",
+                                 (int(str(r["key"]).split(":", 1)[1]),)).fetchone()
+            except (ValueError, IndexError):
+                u = None
+            if u and u["username"]:
+                names.add(str(u["username"]).strip().lower())
         internal = {n for n in names if n and conn.execute(
             "SELECT 1 FROM users WHERE LOWER(username)=? AND (is_admin=1 OR LOWER(COALESCE(role,''))='support')",
             (n,)).fetchone()}
@@ -356,6 +377,78 @@ def clear_reauth_misses(key, db_path=DB_PATH):
     try:
         conn.execute("DELETE FROM login_attempts WHERE key=?", (key,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── second factor, per login (re-audit 10/20/26 R7-01) ───────────────────────
+#
+# An emailed or texted sign-in code was bounded only per address ("2fa:<ip>",
+# 5 in 15 minutes): every /login with the password opened a fresh challenge,
+# so a password holder with a pool of addresses could guess the 900,000-code
+# space at any rate. Each challenge now dies after TWO_FA_CHALLENGE_MAX_WRONG
+# (auth), and every wrong second step — code or backup code, any method,
+# from any address — counts against the LOGIN: SECOND_FACTOR_DAY_MAX in a
+# rolling day locks that login's second step until the oldest ages out, and
+# the login is told once per lock. A remembered device never reaches this
+# step, so the owner on their own phone is not locked out by a stranger.
+SECOND_FACTOR_DAY_MAX = 10
+SECOND_FACTOR_WINDOW_MINUTES = 24 * 60
+
+
+def _sf_key(user_id):
+    return f"2fa-user:{int(user_id)}"
+
+
+def second_factor_lock_left(user_id, db_path=DB_PATH) -> int:
+    """Seconds until this login's second step takes a code again, or 0."""
+    if not user_id:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        since = _utc(datetime.now(timezone.utc) - timedelta(minutes=SECOND_FACTOR_WINDOW_MINUTES))
+        rows = conn.execute("SELECT attempted_at FROM login_attempts WHERE key=? AND attempted_at >= ? "
+                            "ORDER BY attempted_at DESC", (_sf_key(user_id), since)).fetchall()
+        if len(rows) < SECOND_FACTOR_DAY_MAX:
+            return 0
+        # Unlocks when the MAX-th newest failure leaves the rolling day.
+        pivot = rows[SECOND_FACTOR_DAY_MAX - 1]["attempted_at"]
+        try:
+            until = datetime.fromisoformat(str(pivot)) + timedelta(minutes=SECOND_FACTOR_WINDOW_MINUTES)
+            left = (until - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+        except Exception:
+            left = SECOND_FACTOR_WINDOW_MINUTES * 60
+        return int(left) if left > 0 else 1
+    finally:
+        conn.close()
+
+
+def record_second_factor_failure(user_id, ip=None, db_path=DB_PATH) -> dict:
+    """One wrong second step for this login. {failures, locked} — `locked`
+    is True exactly once, on the failure that reaches the day's limit, so
+    the caller tells the login once per lock."""
+    if not user_id:
+        return {"failures": 0, "locked": False}
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO login_attempts (key, kind, ip, attempted_at) VALUES (?,?,?,?)",
+                     (_sf_key(user_id), "second_factor", ip or "", _utc()))
+        conn.commit()
+        n = _count(conn, _sf_key(user_id), SECOND_FACTOR_WINDOW_MINUTES)
+        return {"failures": n, "locked": n == SECOND_FACTOR_DAY_MAX}
+    finally:
+        conn.close()
+
+
+def clear_second_factor_failures(user_id, db_path=DB_PATH) -> int:
+    """The console's Clear lockout, a password reset, the break-glass unlock."""
+    if not user_id:
+        return 0
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM login_attempts WHERE key=?", (_sf_key(user_id),))
+        conn.commit()
+        return cur.rowcount or 0
     finally:
         conn.close()
 

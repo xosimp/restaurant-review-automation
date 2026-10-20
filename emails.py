@@ -444,6 +444,7 @@ _SUPPRESSION_EXEMPT = {
     "send_password_changed_email",
     "send_email_changed_email",
     "send_passkey_added_email",
+    "send_security_notice_email",
     "send_recovery_email_code",
     "send_login_notification",
 }
@@ -819,6 +820,7 @@ FLOOD_LIMITS = {
     "send_email_changed_email": (6, 3600),
     "send_password_changed_email": (6, 3600),
     "send_passkey_added_email": (6, 3600),
+    "send_security_notice_email": (8, 3600),
     "send_team_invite_email": (10, 3600),
     "digest_preview": (6, 3600),
 }
@@ -4041,6 +4043,77 @@ def send_passkey_added_email(to_email: str, restaurant_name: str, passkey_name: 
                                 "html": _html_document(html)})
     except Exception as e:
         log.warning("send_passkey_added_email: request to Resend failed: %s", e)
+        return not_sent("build_error", str(e)[:300])
+
+
+# Re-audit 10/20/26 (R7-01, R7-03): what happened to sign-in security that
+# the account holder should hear about whoever did it. One sender, one
+# template; `kind` picks the sentence. Each says what happened, never a
+# secret, and where to turn if it wasn't them.
+SECURITY_NOTICES = {
+    "two_factor_locked": (
+        "Sign-in codes paused on your Cavnar AI login",
+        "Someone typed too many wrong sign-in codes for your <strong>{restaurant}</strong> login, so sign-in "
+        "codes are paused for up to a day. Typing a code needs your password first.",
+        "If this was you, wait and try again, or sign in on a device you chose to remember. If it wasn&rsquo;t, "
+        "change your password now: someone has it."),
+    "principal_added": (
+        "A co-owner was added to your Cavnar AI account",
+        "{detail} now has co-owner access to <strong>{restaurant}</strong>: they can change sign-in security, "
+        "billing and the team.",
+        "If you didn&rsquo;t expect this, remove them in Account &rarr; Team and change your password."),
+    "two_fa_disabled": (
+        "Two-factor was turned off on your Cavnar AI account",
+        "Two-factor sign-in was turned off for <strong>{restaurant}</strong>{detail_by}.",
+        "If you didn&rsquo;t expect this, turn it back on in Account &rarr; Security and change your password."),
+    "backup_codes_regenerated": (
+        "New backup codes were made for your Cavnar AI account",
+        "New two-factor backup codes were made for <strong>{restaurant}</strong>{detail_by}; the old ones no "
+        "longer work.",
+        "If you didn&rsquo;t expect this, make new ones yourself in Account &rarr; Security and change your "
+        "password."),
+}
+
+
+def send_security_notice_email(to_email: str, restaurant_name: str, kind: str, detail: str = None,
+                               tz: str = None, restaurant_id: int = None) -> "SendResult":
+    """A sign-in security change, said to an account holder's own address
+    (security mail: suppression-exempt, flood-capped). `detail` is the name
+    the sentence needs (who was added, who acted) — escaped here."""
+    spec = SECURITY_NOTICES.get(kind)
+    if not spec:
+        return not_sent("nothing_to_send", f"unknown security notice {kind!r}")
+    if not _resend_key():
+        log.warning("send_security_notice_email: RESEND_API_KEY not set — nothing sent")
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    subject, line, advice = spec
+    who = esc(detail) if detail else ""
+    body = line.format(restaurant=esc(restaurant_name), detail=who or "Someone",
+                       detail_by=(f" by {who}" if who else ""))
+    now_str = security_stamp(tz)
+    b = BRAND
+    html = f"""
+    <div style="background:{b["paper"]};width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:{_SANS};max-width:480px;margin:0 auto;background:{b["paper"]};padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="{_WORDMARK}" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:{b["card"]};border-radius:10px;padding:28px 24px;border:1px solid {b["border"]}">
+        <p style="color:{b["ink"]};font-size:15px;margin:0 0 16px">{body}</p>
+        <p style="color:{b["muted"]};font-size:13px;margin:0 0 12px">{now_str}</p>
+        <p style="color:{b["muted"]};font-size:13px;margin:16px 0 0;line-height:1.6">{advice} Questions: <a href="mailto:will@cavnar.ai" style="color:{b["ember"]}">will@cavnar.ai</a>.</p>
+      </div>
+      <p style="color:{b["muted"]};font-size:11px;text-align:center;margin-top:20px"><img src="{_SEAL}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        return deliver(email_type="send_security_notice_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email], "subject": subject,
+                                "preheader": "If this wasn't you, change your password now.",
+                                "html": _html_document(html)})
+    except Exception as e:
+        log.warning("send_security_notice_email: request to Resend failed: %s", e)
         return not_sent("build_error", str(e)[:300])
 
 

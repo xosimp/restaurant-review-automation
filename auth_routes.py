@@ -440,6 +440,14 @@ def verify_2fa():
         # secret is fixed, so guesses from many addresses add up (R10).
         from auth import second_factor_throttle_key as _sftk, check_sign_in_code as _csic
         _app_key = _sftk(_pending_user)
+        # Per login, from every address (re-audit 10/20/26 R7-01).
+        from auth import second_factor_lock_left as _sfll, SECOND_FACTOR_LOCKED_MESSAGE as _SFLM
+        if _sfll(pending_user_id):
+            resp_lk = make_response(render_template('two_fa.html',
+                masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error=_SFLM,
+                pending_token=pending_token, next_url=next_url, csrf_token=csrf4), 429)
+            resp_lk.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+            return resp_lk
         if _app_key and _is_rate_limited(_app_key):
             resp_lim = make_response(render_template('two_fa.html',
                 masked_email=masked, channel=channel_v, backup_mode=_backup_mode,
@@ -456,6 +464,8 @@ def verify_2fa():
                 _record_failed_attempt("2fa:" + ip)
                 if _app_key:
                     _record_failed_attempt(_app_key)
+                from auth import note_second_factor_failure as _nsff
+                _nsff(_pending_user, uid, ip)
                 resp_err = make_response(render_template('two_fa.html',
                     masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Incorrect code. Try again.",
                     pending_token=pending_token, next_url=next_url, csrf_token=csrf4))

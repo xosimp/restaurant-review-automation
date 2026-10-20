@@ -720,6 +720,10 @@ def mobile_verify_2fa():
         second_factor_throttle_key
     _pending_user = _gubi_bc(pending_user_id)
     app_key = second_factor_throttle_key(_pending_user)
+    # Per login, from every address (re-audit 10/20/26 R7-01).
+    from auth import second_factor_lock_left, SECOND_FACTOR_LOCKED_MESSAGE, note_second_factor_failure
+    if second_factor_lock_left(pending_user_id):
+        return jsonify(ok=False, error=SECOND_FACTOR_LOCKED_MESSAGE, second_factor_locked=True), 429
     if app_key and _is_rate_limited(app_key):
         return jsonify(ok=False, error="Too many attempts. Please wait 15 minutes and try again."), 429
     otp_result = check_sign_in_code(_pending_user, rid, pending_user_id, code_entered, pending_secret)
@@ -733,6 +737,7 @@ def mobile_verify_2fa():
             _record_failed_attempt("2fa:" + ip)
             if app_key:
                 _record_failed_attempt(app_key)
+            note_second_factor_failure(_pending_user, rid, ip)
             return jsonify(ok=False, error="Incorrect code. Try again."), 401
     elif otp_result != "ok":
         return jsonify(ok=False, error="Code expired. Request a new one."), 401
