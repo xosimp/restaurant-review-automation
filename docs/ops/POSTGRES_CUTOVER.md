@@ -76,6 +76,14 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   scoped) once statements are not prepared server-side: PgBouncer 1.21+
   with `max_prepared_statements`, or `PG_PREPARE_THRESHOLD=off` (scale audit
   10/19/26 DB-07) — not needed at these numbers.
+  A database that restarts (10/19/26: enabling PITR redeployed it; every
+  checkout waited the 10 s connect timeout for ~3 minutes and the four
+  request threads queued) no longer stalls the app (DB-22): a connect gives
+  up after `PG_CONNECT_TIMEOUT_S` (5 s); after a failed one, checkouts that
+  need a new connection fail at once for `PG_CONNECT_BACKOFF_S` (3 s) with
+  the `sqlite3.OperationalError` callers already handle; an idle connection
+  is checked before reuse (and asked `SELECT 1` past `PG_POOL_PING_AFTER_S`,
+  30 s), so a restart's dead connections are dropped, not handed out.
 - **Timeouts:** every connection sets `lock_timeout` 30 s (SQLite's
   busy_timeout), `statement_timeout` 5 min and
   `idle_in_transaction_session_timeout` 5 min (`PG_*_MS`, ENVIRONMENT.md;

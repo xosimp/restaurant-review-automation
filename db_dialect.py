@@ -2195,7 +2195,11 @@ def _driver_connect(url):
             f"-c lock_timeout={_env_int(os.getenv('PG_LOCK_TIMEOUT_MS'), 30000)}",
             f"-c statement_timeout={_env_int(os.getenv('PG_STATEMENT_TIMEOUT_MS'), 300000)}",
             f"-c idle_in_transaction_session_timeout={_env_int(os.getenv('PG_IDLE_TX_TIMEOUT_MS'), 300000)}"]
-    raw = psycopg.connect(url, autocommit=False, connect_timeout=10, options=" ".join(opts))
+    # PG_CONNECT_TIMEOUT_S (5): a server that does not answer a connect is
+    # given up on this soon (it was 10 s, and every request thread waited
+    # it out in turn while the database restarted - DB-22).
+    raw = psycopg.connect(url, autocommit=False, connect_timeout=max(2, _env_int(os.getenv("PG_CONNECT_TIMEOUT_S"), 5)),
+                          options=" ".join(opts))
     # Behind PgBouncer in transaction mode (before 1.21) a server-side
     # prepared statement may not exist on the next backend (DB-07):
     # PG_PREPARE_THRESHOLD=off never prepares.
@@ -2210,6 +2214,35 @@ def _env_int(value, default):
         return max(0, int(value or default))
     except ValueError:
         return default
+
+
+def _env_float(value, default):
+    try:
+        return max(0.0, float(value if value not in (None, "") else default))
+    except ValueError:
+        return default
+
+
+def _alive(raw, ping=False) -> bool:
+    """Whether an idle connection can be handed out: open, not broken, its
+    socket's status OK — and, with `ping`, answering a round trip (DB-22)."""
+    try:
+        if getattr(raw, "closed", False) or getattr(raw, "broken", False):
+            return False
+        pgconn = getattr(raw, "pgconn", None)
+        if pgconn is not None:
+            from psycopg import pq
+            if pgconn.status != pq.ConnStatus.OK:
+                return False
+        if ping:
+            try:
+                raw.execute("SELECT 1", prepare=False)
+            except TypeError:               # a DB-API driver without `prepare`
+                raw.cursor().execute("SELECT 1")
+            raw.rollback()
+        return True
+    except Exception:
+        return False
 
 
 class _Pool:
@@ -2245,6 +2278,8 @@ class _Pool:
         self.base = 0                     # checked out by a thread holding none
         self.overflow = 0                 # checked out by a thread already holding one
         self.opened = 0                   # live raw connections (out + idle)
+        self.down_until = 0.0             # the connect breaker (DB-22): monotonic
+        self.down_error = ""
 
     def limits(self):
         # Read each checkout (cheap), so a changed limit needs no restart.
@@ -2273,20 +2308,11 @@ class _Pool:
                         f"database connection pool exhausted ({self.base} + {self.overflow} in use; "
                         f"PG_POOL_MAX={cap_base}, PG_POOL_OVERFLOW={cap_over})")
                 self.cond.wait(left)
-            raw = None
-            now = time.monotonic()
-            while self.idle:
-                r, born, since = self.idle.pop()
-                if now - born > life or now - since > idle_s:
-                    self.opened -= 1
-                    _close_raw(r)
-                    continue
-                raw = (r, born)
-                break
         held[self.url] = held.get(self.url, 0) + 1
         try:
+            raw = self._reuse(life, idle_s)
             if raw is None:
-                raw = (_driver_connect(self.url), time.monotonic())
+                raw = (self._connect(), time.monotonic())
                 with self.cond:
                     self.opened += 1
             c = PgConnection(raw[0])
@@ -2296,6 +2322,49 @@ class _Pool:
             raise
         c._url, c._born, c._slot = self.url, raw[1], kind
         return c
+
+    # ── a database that restarts (DB-22, 10/19/26) ──────────────────────────
+    #
+    # Enabling point-in-time recovery redeployed production's Postgres: for
+    # ~3 minutes every checkout opened a new connection and waited the whole
+    # connect timeout (10 s) before failing, and the four request threads
+    # queued behind those waits. Now a failed connect opens a short breaker
+    # (PG_CONNECT_BACKOFF_S, 3 s): until it closes, a checkout that needs a
+    # new connection fails at once, with the sqlite3.OperationalError every
+    # caller already handles. And an idle connection is checked before it is
+    # handed out — its own state always, a round trip when it has sat idle
+    # past PG_POOL_PING_AFTER_S (30 s) — so a restart's dead connections are
+    # dropped, never given to a request.
+
+    def _reuse(self, life, idle_s):
+        """A live idle connection as (raw, born), or None."""
+        ping_after = _env_int(os.getenv("PG_POOL_PING_AFTER_S"), 30)
+        while True:
+            with self.cond:
+                if not self.idle:
+                    return None
+                r, born, since = self.idle.pop()
+            now = time.monotonic()
+            if now - born <= life and now - since <= idle_s and _alive(r, ping=now - since > ping_after):
+                return (r, born)
+            with self.cond:
+                self.opened -= 1
+            _close_raw(r)
+
+    def _connect(self):
+        now = time.monotonic()
+        if now < self.down_until:
+            raise sqlite3.OperationalError(
+                f"database unreachable (a connect failed {self.down_error}; retrying within "
+                f"{max(0.0, self.down_until - now):.1f} s)")
+        try:
+            raw = _driver_connect(self.url)
+        except Exception as e:
+            self.down_until = time.monotonic() + _env_float(os.getenv("PG_CONNECT_BACKOFF_S"), 3.0)
+            self.down_error = f"{type(e).__name__}: {str(e)[:200]}"
+            raise sqlite3.OperationalError(f"database unreachable: {self.down_error}") from e
+        self.down_until = 0.0
+        return raw
 
     def checkin(self, conn):
         held = _held()

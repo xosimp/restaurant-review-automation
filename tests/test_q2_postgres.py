@@ -359,7 +359,52 @@ def test_an_old_connection_is_retired_not_reused(fake_pool, monkeypatch):
     c2.close()
 
 
-# ── per-resource locks (SCALE-12) ───────────────────────────────────────────
+def test_a_failed_connect_fails_the_next_checkouts_fast_then_retries(fake_pool, monkeypatch):
+    # 10/19/26 (DB-22): the database restarting made every checkout wait the whole connect timeout.
+    url = fake_pool
+    calls = []
+
+    def down(u):
+        calls.append(u)
+        raise RuntimeError("connection timeout expired")
+    monkeypatch.setattr(db_dialect, "_driver_connect", down)
+    monkeypatch.setenv("PG_CONNECT_BACKOFF_S", "30")
+    with pytest.raises(sqlite3.OperationalError, match="unreachable"):
+        db_dialect.connect(url)
+    t0 = time.monotonic()
+    for _ in range(3):
+        with pytest.raises(sqlite3.OperationalError, match="retrying within"):
+            db_dialect.connect(url)
+    assert len(calls) == 1 and time.monotonic() - t0 < 0.5          # no connect tried inside the backoff
+    assert db_dialect.pool_stats(url)["in_use"] == 0                   # every slot given back
+    db_dialect.pool(url).down_until = 0.0                              # the backoff over
+    monkeypatch.setattr(db_dialect, "_driver_connect", lambda u: _FakeRaw())
+    db_dialect.connect(url).close()
+
+
+def test_a_dead_idle_connection_is_dropped_not_handed_out(fake_pool, monkeypatch):
+    url = fake_pool
+    c = db_dialect.connect(url)
+    raw = c._raw
+    c.close()
+    raw.broken = True                                                 # the server restarted under it
+    c2 = db_dialect.connect(url)
+    assert c2._raw is not raw and raw.closed
+    c2.close()
+    # One idle past PG_POOL_PING_AFTER_S is asked a round trip first.
+    raw2 = c2._raw
+    monkeypatch.setenv("PG_POOL_PING_AFTER_S", "0")
+
+    def gone(*a, **k):
+        raise OSError("server closed the connection unexpectedly")
+    raw2.execute = gone
+    time.sleep(0.01)
+    c3 = db_dialect.connect(url)
+    assert c3._raw is not raw2 and raw2.closed
+    c3.close()
+
+
+# ── per-resource locks (SCALE-12)───────────────────────────────────────────
 
 def test_hot_paths_lock_what_they_serialise_not_the_platform(tmp_path):
     assert db_dialect.resource_key("jobs", "claim", "generation") == db_dialect.resource_key("jobs", "claim",
