@@ -1192,6 +1192,14 @@ class Translator:
             mode = "DECLARED"
         part = PARTITIONED.get(table or "")
         if part:
+            # Only a table the copy partitioned carries the column in its
+            # key (pg_copy.table_ddl): one a boot made itself — a fresh
+            # Postgres, CI's — keeps SQLite's key, and an arbiter naming the
+            # column matches no constraint there.
+            pk = [c.lower() for c in (self.pk_lookup(table) or [])]
+            if pk and part not in pk:
+                part = None
+        if part:
             toks = _add_conflict_column(toks, part)
         if mode is None:
             return toks

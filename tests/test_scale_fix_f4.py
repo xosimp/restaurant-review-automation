@@ -157,3 +157,117 @@ def test_the_hot_reads_seek_an_index(db_path, sql, args, index):
     finally:
         c.close()
     assert any(i in plan for i in ((index,) if isinstance(index, str) else index)), plan
+
+
+# ── DB-11 / DB-02: the lines by item and day ───────────────────────────────
+
+class _FakePOS:
+    @staticmethod
+    def archive_rows(rid, day):
+        iso = day.isoformat()
+
+        def line(lid, ticket, item, name, kind="sale", qty=1, sales=6.0, parent=None, cost=None, aqu=None):
+            return {"line_id": f"{iso}-{lid}", "ticket_id": ticket, "business_date": iso, "item_id": item,
+                    "item_name": name, "kind": kind, "qty": qty, "sales": sales,
+                    "parent_line_id": f"{iso}-{parent}" if parent else None, "cost": cost, "aqu_count": aqu,
+                    "department": "Bar", "sales_category": "Liquor", "price": sales, "regular_price": sales,
+                    "voided": 0}
+
+        def ticket(tid, net):
+            t = {c: 0 for c in ("is_bar", "guest_count", "entree_count", "bev_count", "discount", "tip", "grat",
+                                "tax", "cancelled", "type_sale", "type_discnt", "type_promo", "type_comp")}
+            t.update({"ticket_id": f"{iso}-{tid}", "business_date": iso, "net_sales": net})
+            return t
+        return {"tickets": [ticket("T1", 30.0), ticket("T2", 6.0)],
+                "lines": [line("a", "T1", "100", "Tito's", cost=1.2), line("b", "T1", "100", "Tito's", cost=1.2),
+                          line("c", "T1", "900", "Double", qty=0, sales=0.0, parent="a"),
+                          line("d", "T2", "200", "Miller Lite", kind="comp", qty=-1, sales=0.0),
+                          line("e", "T2", "300", "  Fish  Tacos", qty=2, sales=24.0),
+                          line("f", "T2", "300", "Fish Tacos", kind="refund", qty=1, sales=-12.0)],
+                "punches": [], "payments": [], "payouts": [], "max_stamp": f"{iso}T23:00:00"}
+
+
+def _archive(db_path, rid, day):
+    import pos_archive
+    return pos_archive.archive_day(rid, day, db_path=db_path, provider=("fakepos", _FakePOS))
+
+
+def _rid_(db_path):
+    return models.create_restaurant(models.Restaurant(name="Roll", owner_email="roll@x.com"), db_path=db_path)
+
+
+def test_archive_day_rolls_its_lines_by_item_in_the_same_transaction(db_path):
+    from datetime import date
+    import pos_archive
+    rid = _rid_(db_path)
+    _archive(db_path, rid, date(2026, 10, 8))
+    c = models.get_conn(db_path)
+    try:
+        assert c.execute("SELECT item_rollup FROM pos_archive_days WHERE restaurant_id=?", (rid,)).fetchone()[0] == \
+            pos_archive.ITEM_ROLLUP_VERSION
+        assert pos_archive.rolled_window(c, rid, "2026-10-08", "2026-10-08")
+        assert not pos_archive.rolled_window(c, rid, "2026-10-01", "2026-10-07")     # nothing archived there
+        got = [dict(r) for r in c.execute("SELECT * FROM pos_item_daily WHERE restaurant_id=?", (rid,)).fetchall()]
+    finally:
+        c.close()
+    rows = {(r["item_id"], r["kind"], r["is_mod"], r["mult"]): r for r in got}
+    # The Double doubles the one line it modifies: that line is its own row, the plain one another.
+    assert rows[("100", "sale", 0, 2.0)]["lines"] == 1 and rows[("100", "sale", 0, 1.0)]["lines"] == 1
+    assert sum(r["cost_lines"] for r in got if r["item_id"] == "100") == 2
+    rows = {(r["item_id"], r["kind"], r["is_mod"]): r for r in got}
+    dbl = rows[("900", "sale", 1)]
+    assert dbl["pure_mod"] == 1 and dbl["qty_eff"] == 1.0 and dbl["kind_eff"] == "sale"
+    assert rows[("200", "comp", 0)]["qty_eff"] == 1.0                    # a comp's units are counted positive
+    assert rows[("300", "refund", 0)]["units"] == 1.0                     # every kind is kept
+
+
+def test_recipes_read_the_same_sales_from_the_rollup_as_from_the_lines(db_path, monkeypatch):
+    from datetime import date
+    import backoffice_recipes
+    import pos_archive
+    rid = _rid_(db_path)
+    _archive(db_path, rid, date(2026, 10, 8))
+    _archive(db_path, rid, date(2026, 10, 9))
+    args = (rid, ["Fish Tacos", "Tito's"], "2026-10-08", "2026-10-09")
+    rolled = backoffice_recipes._pos_sales(*args, db_path=db_path)
+    by_day = backoffice_recipes._pos_sales(*args, db_path=db_path, by_day=True)
+    monkeypatch.setattr(pos_archive, "rolled_window", lambda *a, **k: False)
+    assert backoffice_recipes._pos_sales(*args, db_path=db_path) == rolled
+    assert backoffice_recipes._pos_sales(*args, db_path=db_path, by_day=True) == by_day
+    assert rolled[backoffice_recipes._pos_key("Fish Tacos")] == (4.0, 48.0)
+
+
+def test_the_nightly_roll_fills_older_days_and_keeps_the_lines_while_one_is_due(db_path):
+    from datetime import date, timedelta
+    import pos_archive
+    rid = _rid_(db_path)
+    _archive(db_path, rid, date(2026, 10, 8))
+    c = models.get_conn(db_path)
+    try:
+        c.execute("UPDATE pos_archive_days SET item_rollup=NULL")
+        c.execute("DELETE FROM pos_item_daily")
+        c.commit()
+    finally:
+        c.close()
+    assert pos_archive.roll_item_days(db_path) == {"rolled": 1, "left": 0}
+    c = models.get_conn(db_path)
+    try:
+        assert c.execute("SELECT COUNT(*) FROM pos_item_daily WHERE restaurant_id=?", (rid,)).fetchone()[0] > 0
+        old = (date.today() - timedelta(days=ops._RETENTION_DAYS["pos_ticket_lines"] + 10)).isoformat()
+        c.execute("INSERT INTO pos_archive_days (restaurant_id, provider, business_date) VALUES (?, 'fakepos', ?)",
+                  (rid, old))
+        c.commit()
+    finally:
+        c.close()
+    # A day the line window has reached and no time left to roll it: the rollup refuses, so the prune
+    # keeps the lines tonight.
+    with pytest.raises(RuntimeError, match="not rolled"):
+        pos_archive.roll_item_days(db_path, max_seconds=0)
+    assert pos_archive.roll_item_days(db_path)["rolled"] == 1
+
+
+def test_the_line_window_is_its_own_and_the_rollup_outlives_it():
+    import inspect
+    assert ops._RETENTION_ROLLUP["pos_ticket_lines"] == "pos_archive:roll_item_days"
+    assert ops._RETENTION_DAYS["pos_item_daily"] >= ops._RETENTION_DAYS["pos_ticket_lines"]
+    assert "RETAIN_POS_LINES_DAYS" in inspect.getsource(ops)

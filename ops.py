@@ -2882,7 +2882,11 @@ _RETENTION_DAYS = {
     # The ticket-level POS archive (pos_archive, 9/29/26): three years, the
     # history every people, table and price learner reads.
     "pos_tickets":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
-    "pos_ticket_lines":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # The line detail may be kept shorter than the rest of the archive
+    # (scale audit 10/19/26 DB-02: ~0.2 GB a store-year of the ~0.3):
+    # RETAIN_POS_LINES_DAYS, the archive's window unless set. Its rollup
+    # (pos_item_daily, below) rolls every day before a line of it goes.
+    "pos_ticket_lines":   int(os.getenv("RETAIN_POS_LINES_DAYS", os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095"))),
     "pos_punches":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_archive_days":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_payments":       int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
@@ -2891,6 +2895,10 @@ _RETENTION_DAYS = {
     # discounts (bar.sales.derive_nights, 10/15/26): kept as long as the
     # archive it is derived from.
     "bar_sales_nights":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # The lines by item and day (pos_archive.roll_item_days, DB-11 / DB-02):
+    # about a tenth of the lines' rows, kept at least as long as the archive
+    # so it outlives a shortened line window.
+    "pos_item_daily":     int(os.getenv("RETAIN_POS_ITEM_DAILY_DAYS", os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095"))),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3080,7 +3088,7 @@ _RETENTION_COLUMN = {
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
-    "bar_sales_nights": "business_date",
+    "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
     "task_proof_media": "created_at",
     "ai_reads": "created_at", "ai_claims": "created_at",
@@ -3209,7 +3217,7 @@ _RETENTION_FLOOR_DAYS = {
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     "pos_payments": 400, "pos_payouts": 400,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
-    "bar_sales_nights": 400,
+    "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
     "task_assignments": 90, "task_line_completions": 90, "task_signoffs": 90, "task_proof_media": 30,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
@@ -3287,6 +3295,10 @@ _RETENTION_ROLLUP = {
     # (ai_read_summaries, kept forever) before any raw read or claim goes.
     "ai_reads": "ai_reads:rollup_quarters",
     "ai_claims": "ai_reads:rollup_quarters",
+    # Each archived day's lines by item (pos_item_daily) before any line of
+    # the day goes (scale audit 10/19/26 DB-02); raises while a day past the
+    # line window is not rolled yet.
+    "pos_ticket_lines": "pos_archive:roll_item_days",
 }
 # (reader, window, what a lifetime reader reads instead). A window is days,
 # or "module.CONSTANT" (the reader's own constant, read by the test), or

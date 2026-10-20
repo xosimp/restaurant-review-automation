@@ -1869,6 +1869,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_archive_days", "links_ok", "INTEGER"),
         ("pos_archive_days", "recon_gap", "REAL"),
         ("pos_archive_days", "unknown_sales", "REAL"),
+        # The rollup version the day's pos_item_daily rows were written at
+        # (scale audit 10/19/26 DB-11 / DB-02): NULL = not rolled; a reader
+        # takes the rollup only for a window whose every day is at
+        # pos_archive.ITEM_ROLLUP_VERSION.
+        ("pos_archive_days", "item_rollup", "INTEGER"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -4362,6 +4367,46 @@ def init_db(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, provider, punch_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_day ON pos_punches(restaurant_id, business_date)",
+        # The line archive by item and day (scale audit 10/19/26 DB-11,
+        # DB-02): the Bar's bought-vs-sold walk and the recipes' sold-by-name
+        # read moved a store's whole window of lines into Python on every
+        # request (73k rows for 8 weeks at EJ's). One row per day, provider,
+        # item, name, filing and the few per-line facts those readers need —
+        # the effective kind and quantity a modifier takes from its line,
+        # the "double" multiplier, a bucket ticket, a pure modifier, a zero
+        # quantity, an alternate-unit count — with the sums. Written by
+        # pos_archive.archive_day in the same transaction as the lines; the
+        # nightly prune's rollup (pos_archive.roll_item_days) fills older
+        # days first. It outlives the lines (its own window), so the line
+        # detail can be kept shorter later.
+        """CREATE TABLE IF NOT EXISTS pos_item_daily (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            business_date   TEXT NOT NULL,
+            item_id         TEXT NOT NULL DEFAULT '',
+            item_name       TEXT NOT NULL DEFAULT '',
+            kind            TEXT NOT NULL,
+            kind_eff        TEXT NOT NULL,
+            department      TEXT NOT NULL DEFAULT '',
+            sales_category  TEXT NOT NULL DEFAULT '',
+            category_id     TEXT NOT NULL DEFAULT '',
+            is_mod          INTEGER NOT NULL DEFAULT 0,
+            mult            REAL NOT NULL DEFAULT 1,
+            pure_mod        INTEGER NOT NULL DEFAULT 0,
+            in_bucket       INTEGER NOT NULL DEFAULT 0,
+            qty_zero        INTEGER NOT NULL DEFAULT 0,
+            has_aqu         INTEGER NOT NULL DEFAULT 0,
+            lines           INTEGER NOT NULL DEFAULT 0,
+            units           REAL NOT NULL DEFAULT 0,
+            qty_eff         REAL NOT NULL DEFAULT 0,
+            sales           REAL NOT NULL DEFAULT 0,
+            aqu             REAL NOT NULL DEFAULT 0,
+            cost_pos        REAL NOT NULL DEFAULT 0,
+            cost_lines      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (restaurant_id, provider, business_date, item_id, item_name, kind, kind_eff, department,
+                         sales_category, category_id, is_mod, mult, pure_mod, in_bucket, qty_zero, has_aqu)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_day ON pos_item_daily(restaurant_id, business_date)",
         # One row per archived day: what was stored, the newest POS write it
         # held, and how often the POS restated it after it was archived.
         """CREATE TABLE IF NOT EXISTS pos_archive_days (
