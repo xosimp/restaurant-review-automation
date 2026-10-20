@@ -333,6 +333,20 @@ def _start_refresh(key, restaurant_id, block, scope_key, as_of, stamp, build, db
         return False
 
 
+def keep(block, restaurant_id, scope_key, as_of, payload, restaurant=None, db_path=None) -> bool:
+    """Keep an answer something else already built for this scope today —
+    the morning brief's send builds each recipient's brief before they open
+    Home, so their first open reads it (the precompute). Never raises."""
+    if not enabled():
+        return False
+    try:
+        stamp = data_stamp(restaurant_id, restaurant, db_path)
+        return _write(restaurant_id, block, scope_key, str(as_of), stamp, payload, 0, db_path)
+    except Exception as e:
+        log.warning("home snapshot not kept rid=%s %s: %s", restaurant_id, block, e)
+        return False
+
+
 def serve(block, restaurant_id, scope_key, as_of, build, restaurant=None, db_path=None):
     """The kept answer for (restaurant, block, scope) today, or a new build.
 

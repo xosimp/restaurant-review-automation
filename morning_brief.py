@@ -1769,6 +1769,15 @@ def _email_brief(restaurant_id, u, brief, name, today, db_path=DB_PATH):
     return result
 
 
+def _keep_for_home(restaurant_id, u, brief_date, full, restaurant, db_path=DB_PATH):
+    """The brief as GET /morning-brief builds it for `u` (before the send's
+    dedupe), kept as their Home snapshot for the day (scale audit 10/19/26
+    FE-01). Never raises past _safe."""
+    import home_snapshots
+    home_snapshots.keep("morning_brief", restaurant_id, home_snapshots.viewer_scope(u), brief_date, full,
+                        restaurant=restaurant, db_path=None if db_path == DB_PATH else db_path)
+
+
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     """Build and send each recipient THEIR brief. Push to that person's own
     devices when they have the app; email them otherwise — never both,
@@ -1801,6 +1810,7 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
     holds = _safe(_notify_h.dropped_holds, restaurant_id, db_path) or []
     folded = False
     built, pushed, emailed, empty, failed, retry = {}, 0, 0, 0, 0, False
+    fulls = {}
     sent_views = set()
     for u in people:
         done = _ledger_get(restaurant_id, u["id"], brief_date, db_path)
@@ -1818,7 +1828,12 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
             # Deduped against the other surfaces BEFORE anything here is
             # presented: the brief's own showings never count against it.
             full = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
+            fulls[key] = full
             built[key] = _safe(_dedupe, restaurant_id, full, db_path) or full
+        # The brief Home will show this login today, kept before they open it
+        # (home_snapshots, scale audit 10/19/26 FE-01): their first open reads
+        # it instead of building it again on a request thread.
+        _safe(_keep_for_home, restaurant_id, u, brief_date, fulls[key], restaurant, db_path)
         brief = built[key]
         held = _held_alerts_line(holds, u)
         if held:

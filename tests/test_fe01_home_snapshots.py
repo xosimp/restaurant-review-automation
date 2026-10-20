@@ -206,3 +206,28 @@ def test_two_logins_never_share_a_brief(client, db_path, monkeypatch):
     assert client.get("/api/morning-brief").get_json()["brief"]["lines"][0]["text"] == "for 5"
     _as(monkeypatch, rid, role="manager", uid=6)
     assert client.get("/api/morning-brief").get_json()["brief"]["lines"][0]["text"] == "for 6"
+
+
+def test_the_morning_send_keeps_each_recipients_home_brief(db_path, monkeypatch, client):
+    """The precompute: deliver() builds every recipient's brief before they
+    open Home; their first open reads it instead of building it again."""
+    import morning_brief
+    rid = _rid(db_path)
+    auth.init_auth(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO users (id, restaurant_id, username, email, password_hash, role) "
+                 "VALUES (5, ?, 'o', 'o@x.com', 'x', 'owner')", (rid,))
+    conn.commit()
+    conn.close()
+    calls = []
+    monkeypatch.setattr(morning_brief, "build", lambda *a, viewer=None, **k: calls.append(viewer["id"]) or {
+        "lines": [{"key": "all_clear", "tone": "good", "text": "All clear"}]})
+    monkeypatch.setattr(morning_brief, "_email_brief", lambda *a, **k: type("R", (), {"ok": True})())
+    morning_brief.deliver(rid, db_path=db_path)
+    assert calls == [5]
+    monkeypatch.setattr(auth, "get_current_user",
+                        lambda: {"id": 5, "restaurant_id": rid, "is_admin": 0, "role": "owner",
+                                 "grants": frozenset(), "username": "o", "email": "o@x.com"})
+    body = client.get("/api/morning-brief?view=home").get_json()
+    assert body["brief"]["lines"][0]["text"] == "All clear"
+    assert calls == [5]                          # read, not built
