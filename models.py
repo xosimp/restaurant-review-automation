@@ -5098,7 +5098,7 @@ def init_db(db_path: str = DB_PATH):
         finally:
             _ix.close()
     except Exception as e:
-        print(f"[schedule history] backfill indexes skipped: {e}")
+        logging.getLogger(__name__).warning("schedule history: backfill indexes skipped: %s", e)
     # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
     # after the column list above has added hours_hourly / hours_salaried.
     try:

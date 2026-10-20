@@ -104,9 +104,11 @@ def test_the_sub_daily_jobs_are_the_loops_sub_daily_claims():
     import scheduler
     import strategy_jobs
     src = inspect.getsource(scheduler)
-    for job in ("ai_batch_collect", "dsr_sweep", "dsr_delivery", "staff_reminders", "pos_schedule_push",
+    for job in ("ai_batch_collect", "dsr_delivery", "staff_reminders", "pos_schedule_push",
                 "live_labor", "intraday"):
         assert f'claim_period("{job}", f"{{today}}-{{now.hour}}-' in src, job
+    # The DSR sweep claims its 10-minute slot in _submit_dsr_sweep (its own lane since F3, 10/19/26).
+    assert 'slot = f"{now.date()}-{now.hour}-{now.minute // 10}"' in src and 'claim_period("dsr_sweep", slot)' in src
     assert 'claim_period(f"live_labor:{r.id}", f"{local.date().isoformat()}-{local.hour}-"' in \
         inspect.getsource(labor_live)
     assert 'claim_period(f"intraday:{r.id}", f"{local.date().isoformat()}-{local.hour}")' in \
