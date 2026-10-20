@@ -528,6 +528,36 @@ def test_a_spray_across_the_roster_reaches_the_owner_once(db_path, alerts):
     assert len(sprays) == 1 and "rotate" in sprays[0]["body"]
 
 
+def test_a_spray_is_refused_not_only_reported(db_path, alerts):
+    """Scale audit 10/19/26, SEC-15: past the block threshold the address
+    gets no more PIN checks there — even the right PIN — and nobody's
+    attempts are spent; another address (the real tablet) still signs in."""
+    rid = _restaurant(db_path)
+    staff = [_staff(db_path, rid, f"s{i}", f"Staff {i}") for i in range(auth.PIN_SPRAY_BLOCK_PEOPLE)]
+    mids = [m for _u, m in staff]
+    auth.set_membership_pin(mids[0], rid, "4826", db_path=db_path)
+    n = 0
+    while n < auth.PIN_SPRAY_BLOCK_FAILURES:
+        for m in mids:
+            # Spread so no one locks first (PIN_MAX_ATTEMPTS each at most).
+            auth._clear_pin_failures(m, db_path=db_path)
+            auth.verify_membership_pin(m, rid, "9031", ip_address="198.51.100.9", db_path=db_path)
+            n += 1
+    assert auth.pin_spray_blocked(rid, "198.51.100.9", db_path=db_path)
+    out = auth.verify_membership_pin(mids[0], rid, "4826", ip_address="198.51.100.9", db_path=db_path)
+    assert out["ok"] is False and "this device" in out["error"]
+    assert auth.verify_membership_pin(mids[0], rid, "4826", ip_address="203.0.113.77", db_path=db_path)["ok"]
+
+
+def test_a_longer_floor_for_new_pins_is_one_setting(monkeypatch):
+    monkeypatch.delenv("STAFF_PIN_MIN_LENGTH", raising=False)
+    assert auth.validate_pin("4826") == "4826"
+    monkeypatch.setenv("STAFF_PIN_MIN_LENGTH", "6")
+    with pytest.raises(auth.PinError):
+        auth.validate_pin("4826")
+    assert auth.validate_pin("482691") == "482691"
+
+
 def test_owner_notices_go_to_owners_and_managers_by_name(db_path, monkeypatch):
     """The audience is explicit user ids — never an employee's phone at the
     same restaurant — and the owner is emailed when none has the app."""

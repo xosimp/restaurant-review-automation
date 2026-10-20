@@ -1397,6 +1397,18 @@ def _year_like(pin: str) -> bool:
     return len(pin) == 4 and pin[:2] in ("19", "20")
 
 
+def new_pin_min_length() -> int:
+    """The shortest NEW PIN (scale audit 10/19/26, SEC-15): STAFF_PIN_MIN_LENGTH,
+    4 by default and clamped to 4..8. A 6-digit floor makes a month of
+    guessing ~100x less likely to land; existing PINs keep working whatever
+    it is — only a set, reset or change is held to it."""
+    try:
+        n = int(os.environ.get("STAFF_PIN_MIN_LENGTH", "") or PIN_MIN_LENGTH)
+    except ValueError:
+        n = PIN_MIN_LENGTH
+    return min(PIN_MAX_LENGTH, max(PIN_MIN_LENGTH, n))
+
+
 def validate_pin(pin: str) -> str:
     """Normalize and refuse PINs that aren't worth the name.
 
@@ -1405,8 +1417,9 @@ def validate_pin(pin: str) -> str:
     pin = (pin or "").strip()
     if not pin.isdigit():
         raise PinError("A PIN must be digits only.")
-    if not (PIN_MIN_LENGTH <= len(pin) <= PIN_MAX_LENGTH):
-        raise PinError(f"A PIN must be {PIN_MIN_LENGTH}–{PIN_MAX_LENGTH} digits.")
+    shortest = new_pin_min_length()
+    if not (shortest <= len(pin) <= PIN_MAX_LENGTH):
+        raise PinError(f"A PIN must be {shortest}–{PIN_MAX_LENGTH} digits.")
     if len(set(pin)) == 1:
         raise PinError("That PIN is too easy to guess — don't repeat one digit.")
     # Straight runs up or down (1234, 4321, 9876).
@@ -1759,6 +1772,10 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     if not row:
         _burn_pin_cycles(pin)
         return generic
+    if counter == "signin" and pin_spray_blocked(restaurant_id, ip_address, db_path=db_path):
+        _burn_pin_cycles(pin)
+        return {"ok": False, "locked": True,
+                "error": "Too many wrong PINs from this device. Ask a manager, or try again in an hour."}
 
     reserved = _reserve_pin_attempt(membership_id, db_path=db_path, counter=counter)
     if not reserved["allowed"]:
@@ -1833,6 +1850,34 @@ PIN_SPRAY_FAILURES = 10
 PIN_SPRAY_PEOPLE = 3
 PIN_SPRAY_WINDOW_MINUTES = 15
 PIN_SPRAY_ALERT_EVERY_MINUTES = 60
+# A spray is refused, not only reported (scale audit 10/19/26, SEC-15): an
+# address with this many failures across at least this many people at one
+# restaurant in the last PIN_SPRAY_BLOCK_MINUTES gets no more PIN checks
+# there until the window clears — the same answer as a wrong PIN, no attempt
+# counted against anyone (so it cannot lock the staff out either). Set well
+# above the alert so a shift change gone wrong on the shared tablet is told
+# to the owner long before it is refused.
+PIN_SPRAY_BLOCK_FAILURES = 20
+PIN_SPRAY_BLOCK_PEOPLE = 4
+PIN_SPRAY_BLOCK_MINUTES = 60
+
+
+def pin_spray_blocked(restaurant_id: int, ip_address, db_path: str = DB_PATH) -> bool:
+    if not ip_address:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, COUNT(DISTINCT user_id) AS people FROM login_history "
+                "WHERE restaurant_id=? AND ip_address=? AND event='pin_failed' "
+                "AND created_at >= datetime('now', ?)",
+                (restaurant_id, ip_address, f"-{PIN_SPRAY_BLOCK_MINUTES} minutes")).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    return bool(row) and row["n"] >= PIN_SPRAY_BLOCK_FAILURES and row["people"] >= PIN_SPRAY_BLOCK_PEOPLE
 
 
 def mask_phone_last4(phone) -> str:

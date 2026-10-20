@@ -58,6 +58,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `APNS_BUNDLE_ID` | `"ai.cavnar.CavnarAI"` | The app's bundle id (default `ai.cavnar.CavnarAI`); also the audience for the app's Sign in with Apple tokens. | mobile_api.py, push.py |
 | `PASSKEY_HOSTS` | — | Extra hosts passkeys may be used on besides `BASE_URL`'s and localhost (a test tunnel), comma-separated. | passkeys.py |
 | `ALLOW_PUBLIC_SIGNUP` | `""` | Allows the mobile self-serve register route (off: accounts come from a signed contract). | mobile_api.py |
+| `STAFF_PIN_MIN_LENGTH` | `4` | Shortest NEW staff PIN (4-8, `auth.new_pin_min_length`); existing PINs keep working. 6 cuts a month of guessing ~100x (SEC-15). | auth.py |
 | `STAFF_OTP_COUNTRY_CODES` | `"1"` | Country calling codes a staff sign-up or forgot-PIN code may be texted to, comma-separated (default +1 only). | auth.py |
 | `STAFF_OTP_HOURLY_CAP` | `600` | Platform-wide backstop on staff verification texts per hour (`auth.STAFF_OTP_HOURLY_CAP_DEFAULT`; 200 until 10/19/26, when the per-restaurant shares below took over the fair-share job). | auth.py |
 | `STAFF_OTP_RESTAURANT_HOURLY_CAP` | `30` | Each restaurant's own hourly share of verification texts, counted by the join code the sign-up named, or the restaurant of a forgot-PIN (SEC-04). | auth.py |
