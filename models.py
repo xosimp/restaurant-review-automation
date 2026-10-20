@@ -12232,7 +12232,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           job_id: str = None, in_transaction=None) -> int:
+                           job_id: str = None, in_transaction=None, week_copy: tuple = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -12271,6 +12271,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     BUGSLIFE-26) — and the job is marked as having saved (async_jobs.
     saved_ref, its first draft's id) in the same commit, so a later Stop
     knows a draft was saved (ops.stop_async_job, ARCH-2).
+    `week_copy` = (history_id or None, schedule_csv) is the week's working
+    copy a whole-week generation started from (None: no check): when the
+    working copy is another row, or its text moved, since — a manager's
+    Studio save while it ran — nothing is written and DraftChanged is
+    raised (scale audit 10/19/26 A5-F16; it was superseded unconditionally).
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -12313,6 +12318,12 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                 prior_text = now["schedule_csv"] or ""
             elif week_start:
                 cur_copy = week_draft(conn, restaurant_id, week_start)
+                if week_copy is not None:
+                    now_copy = ((int(cur_copy["id"]), cur_copy["schedule_csv"] or "") if cur_copy is not None
+                                else (None, ""))
+                    if now_copy != (week_copy[0], week_copy[1] or ""):
+                        raise DraftChanged(now_copy[0] or week_copy[0] or 0,
+                                           now_copy[1] if cur_copy is not None else None)
                 if cur_copy is not None:
                     prior_text = cur_copy["schedule_csv"] or ""
                 else:

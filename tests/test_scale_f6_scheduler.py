@@ -264,3 +264,96 @@ def test_a_code_draft_is_never_planned_for_a_batch(db, monkeypatch):
     assert sj._drafted_in_code(rid, "2026-10-19")
     monkeypatch.setenv("SCHEDULE_DRAFT_SOURCE", "model")
     assert not sj._drafted_in_code(rid, "2026-10-19")
+
+
+# ── A5-F16: a whole week never supersedes edits saved while it ran ──────────
+
+WEEK = ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25"]
+
+
+def _csv(names_by_date):
+    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"]
+    for d, name in names_by_date:
+        lines.append(f"{d},Monday,{name},Server,4:00pm,10:00pm,6,")
+    return "\n".join(lines)
+
+
+def test_the_save_refuses_a_working_copy_that_moved_since_the_week_began(db):
+    rid = _restaurant(db)
+    first = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6, 0, 30, _csv([(WEEK[0], "Ana")]), [])
+    conn = models.get_conn()
+    try:
+        row = models.week_draft(conn, rid, WEEK[0])
+        seen = (int(row["id"]), row["schedule_csv"])
+    finally:
+        conn.close()
+    # A manager's Studio save while the generation ran: the same row, new text.
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE schedule_history SET schedule_csv=? WHERE id=?", (_csv([(WEEK[0], "Bo")]), first))
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(models.DraftChanged):
+        models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6, 0, 30, _csv([(WEEK[0], "Cy")]), [], week_copy=seen)
+    conn = models.get_conn()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM schedule_history WHERE restaurant_id=?", (rid,)).fetchone()[0] == 1
+        assert conn.execute("SELECT superseded_by FROM schedule_history WHERE id=?", (first,)).fetchone()[0] is None
+        row = models.week_draft(conn, rid, WEEK[0])
+        now = (int(row["id"]), row["schedule_csv"])
+    finally:
+        conn.close()
+    # Over the copy as it stands, it saves and supersedes it as before.
+    new = models.save_schedule_history(rid, WEEK[0], WEEK[-1], 6, 0, 30, _csv([(WEEK[0], "Cy")]), [], week_copy=now)
+    assert new != first
+    # A week that had no working copy when it began, and has one now.
+    other = ["2026-10-26", "2026-11-01"]
+    models.save_schedule_history(rid, other[0], other[1], 6, 0, 30, _csv([(other[0], "Di")]), [])
+    with pytest.raises(models.DraftChanged):
+        models.save_schedule_history(rid, other[0], other[1], 6, 0, 30, _csv([(other[0], "Ed")]), [],
+                                     week_copy=(None, ""))
+
+
+def test_a_whole_week_runs_again_in_code_or_refuses_from_the_model(db, monkeypatch):
+    import schedule_engine as se
+    import schedule_job as sjob
+    rid = _restaurant(db)
+    req = sjob.Request("wk-1", rid, week_start=WEEK[0])
+    built, commits = [], []
+
+    class Cand:
+        def __init__(self, code):
+            self.result = {"draft_source": {"chosen": "solver" if code else "model"}}
+
+    def make(code):
+        def week_pass(job):
+            built.append(job.week_copy)
+            return Cand(code)
+        return week_pass
+
+    def commit(job, winner):
+        commits.append(1)
+        if len(commits) == 1:
+            raise models.DraftChanged(1, "moved")
+        return 7
+    monkeypatch.setattr(sjob, "_commit", commit)
+    monkeypatch.setattr(sjob, "_week_pass", make(True))
+    job = sjob.GenerationRun(req, None)
+    sjob._week(job)
+    assert len(built) == 2 and len(commits) == 2                      # drafted again in code, saved over it
+    assert built[0] == (WEEK[0], (None, ""))                          # the working copy it began from
+    # From the model: never paid for twice — nothing saved, the edits stand.
+    commits.clear()
+    built.clear()
+    monkeypatch.setattr(sjob, "_week_pass", make(False))
+    with pytest.raises(se.ScheduleGenerationError) as why:
+        sjob._week(sjob.GenerationRun(req, None))
+    assert "your changes are kept" in str(why.value) and len(built) == 1
+    # In code, at most WEEK_RERUNS_MAX more times.
+    monkeypatch.setattr(sjob, "_week_pass", make(True))
+    monkeypatch.setattr(sjob, "_commit", lambda job, winner: (_ for _ in ()).throw(models.DraftChanged(1, "x")))
+    built.clear()
+    with pytest.raises(se.ScheduleGenerationError):
+        sjob._week(sjob.GenerationRun(req, None))
+    assert len(built) == sjob.WEEK_RERUNS_MAX + 1
