@@ -3121,6 +3121,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 /* Home's hero column: the DNA card is one size whether it is forming or formed - the forming card's
    168px (owner, 10/17/26: the demo's formed card ran twice as tall as EJ's; 134px then crushed it). Formed, a smaller
    radar, a two-line read, one line of traits and a smaller ring. */
+/* hbDnaFit sets its height so its foot lines up with the last line of the
+   greeting column (owner, 10/20/26); 168px is its floor and its height where
+   the columns stack. */
+.hb-dna-slot.fit{align-items:flex-start}
 .hb-dna-slot .dn-home{height:168px;padding:22px 26px;gap:18px;grid-template-columns:80px minmax(0,1fr) auto;align-items:center}
 .hb-dna-slot .dn-home.quiet{grid-template-columns:minmax(0,1fr);align-content:center}
 .hb-dna-slot .dn-home .mini .dn-radar{max-width:80px}
@@ -5321,6 +5325,7 @@ svg:hover .hb-xh{opacity:1}
       // (density fix #24, DS §5).
       h+='<button type="button" class="cbtn cbtn-secondary cbtn-sm hb-qa" onclick="hbAct(\''+esc(q.kind)+'\',\''+esc(q.module||'')+'\',this,'+(+q.count||0)+',\''+esc(q.nav||'')+'\')">'+esc(q.label)+(q.count&&q.kind!=='publish_replies'?' <span class="hb-num">'+(+q.count)+'</span>':'')+'</button>';}
     el.innerHTML=h;el.hidden=!h;
+    if(window.hbDnaFit)window.hbDnaFit();
     window._hbQuick=qs;   // the command palette's "One tap" group
   }
   // ── hero chart ────────────────────────────────────────────────────────────
@@ -6140,7 +6145,26 @@ svg:hover .hb-xh{opacity:1}
     var k,el,m=null;
     for(k=0;k<fade.children.length;k++){el=fade.children[k];if(el.offsetHeight>0){m=parseFloat(window.getComputedStyle(el).marginTop);break;}}
     if(m!==null&&m>=0&&m<=80)slot.style.setProperty('--hb-dna-gap',m+'px');
+    hbDnaFit();
   }
+  // The DNA card runs down to the last line of the greeting column - the
+  // night's net, or the One tap row when it shows - so the two columns end
+  // on one line (owner, 10/20/26). Never under 168px; stacked, left alone.
+  function hbDnaFit(){
+    var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild,lead=document.querySelector('#hb-root>.hb-top>div:first-child'),qk=document.getElementById('hb-quick');
+    if(!card||!lead)return;
+    card.style.height='';slot.classList.remove('fit');
+    if(window.innerWidth<=1000)return;
+    var els=lead.querySelectorAll('*'),b=0,i,r;
+    for(i=0;i<els.length;i++){if(els[i].children.length||!els[i].offsetHeight)continue;r=els[i].getBoundingClientRect();if(r.bottom>b)b=r.bottom;}
+    if(qk&&!qk.hidden&&qk.offsetHeight){r=qk.getBoundingClientRect();if(r.bottom>b)b=r.bottom;}
+    slot.classList.add('fit');
+    var h=Math.round(b-card.getBoundingClientRect().top);
+    if(h>168)card.style.height=h+'px';else slot.classList.remove('fit');
+  }
+  window.hbDnaFit=hbDnaFit;
+  var _hbFitT=null;
+  window.addEventListener('resize',function(){clearTimeout(_hbFitT);_hbFitT=setTimeout(hbDnaFit,120);});
   // ── follow-through: today's brief, open issues, goals, results ────────────
   // Four small reads, rendered together once all have answered. Each is
   // optional — a 403 (a manager login has no morning brief) or a failure
@@ -6916,7 +6940,7 @@ svg:hover .hb-xh{opacity:1}
     var el=document.getElementById('hb-status');if(!el)return;
     var st=_hbScope==='group'?null:hbStatusHtml(x);
     if(!st){el.hidden=true;el.innerHTML='';return;}
-    el.className='hb-status'+(st.tone?' '+st.tone:'');el.innerHTML=st.html;el.hidden=false;
+    el.className='hb-status'+(st.tone?' '+st.tone:'');el.innerHTML=st.html;el.hidden=false;if(window.hbDnaFit)window.hbDnaFit();
   }
   // ── last night's daily report ─────────────────────────────────────────────
   // The nightly DSR's front door in the day: its status, the summary's
@@ -12324,6 +12348,9 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 .ts-line.over .st{border-color:var(--hb-bad);background:var(--hb-tint)}
 .ts-line.done .l{color:var(--ink2)}
 .ts-line .by{font-size:12.5px;color:var(--ink3);margin-top:3px}
+.ts-toggle{margin-top:6px;display:inline-flex;align-items:center;gap:6px}
+.ts-chev{width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform .2s}
+.ts-toggle[aria-expanded="true"] .ts-chev{transform:translateY(1px) rotate(-135deg)}
 .ts-sec-lbl{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);padding:10px 0 2px}
 .ts-tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:999px;margin-left:6px;vertical-align:1px;border:1px solid currentColor}
 .ts-tag.bad{color:var(--hb-bad)}.ts-tag.warn{color:var(--hb-warn)}.ts-tag.crit{color:var(--ember2)}.ts-tag.quiet{color:var(--ink3)}
@@ -26954,9 +26981,14 @@ function tsCard(a, isToday) {
   var h = '<div class="ts-card ' + tone + '"><div class="t"><span>' + tsE(a.title) + '</span><span class="n">' + a.done + '/' + a.total + '</span></div>'
     + '<div class="m">' + (when ? '<span class="hb-num">' + tsE(when) + '</span> · ' : '') + tsE(who) + ' · ' + tsE(state) + '</div>'
     + '<div class="ts-bar"><i style="width:' + (a.total ? Math.round(100 * a.done / a.total) : 0) + '%"></i></div>';
+  // The first TS_SHOWN lines, the rest folded behind one toggle (owner,
+  // 10/20/26: the sheets ran 25 lines each, two columns of wall). Which
+  // sheets are open survives a re-render (_ts.open).
+  var key = String(a.assignment_id || a.id || a.title), open = !!(_ts.open && _ts.open[key]), more = a.lines.length - TS_SHOWN;
   var lastSec = null;
   for (var j = 0; j < a.lines.length; j++) {
     var l = a.lines[j];
+    if (j === TS_SHOWN && more > 0) h += '<div class="ts-more"' + (open ? '' : ' hidden') + ' data-ts-more="' + tsA(key) + '">';
     if ((l.section || '') !== (lastSec || '') && l.section) h += '<div class="ts-sec-lbl">' + tsE(l.section) + '</div>';
     lastSec = l.section || '';
     var tags = (l.critical ? '<span class="ts-tag crit">Critical</span>' : '')
@@ -26976,8 +27008,25 @@ function tsCard(a, isToday) {
       + (l.photo ? '<a class="ts-photo" href="/api/task-sheets/photo/' + tsA(l.photo) + '" target="_blank" rel="noopener"><img src="/api/task-sheets/photo/' + tsA(l.photo) + '" alt="Proof photo for ' + tsA(l.label) + '"></a>' : '')
       + '</div></div>';
   }
+  if (more > 0) {
+    h += '</div><button type="button" class="cbtn cbtn-text cbtn-sm ts-toggle" aria-expanded="' + (open ? 'true' : 'false') + '" data-ts-toggle="' + tsA(key) + '" data-n="' + more + '">'
+      + (open ? 'Show fewer' : 'Show ' + more + ' more') + '<span class="ts-chev" aria-hidden="true"></span></button>';
+  }
   return h + '</div>';
 }
+var TS_SHOWN = 3;
+document.addEventListener('click', function (ev) {
+  var t = ev.target && ev.target.closest ? ev.target.closest('[data-ts-toggle]') : null;
+  if (!t) return;
+  var key = t.getAttribute('data-ts-toggle'), card = t.parentNode, box = card ? card.querySelector('[data-ts-more]') : null;
+  if (!box) return;
+  var open = box.hidden;
+  box.hidden = !open;
+  if (!_ts.open) _ts.open = {};
+  _ts.open[key] = open;
+  t.setAttribute('aria-expanded', open ? 'true' : 'false');
+  t.firstChild.nodeValue = open ? 'Show fewer' : 'Show ' + t.getAttribute('data-n') + ' more';
+});
 
 // ── the consistency report ────────────────────────────────────────────────
 function tsLoadReport() {
@@ -29113,7 +29162,10 @@ function ssRenderSummary() {
   // lines that put most weeks in amber; the reason a cap bit leads (TRUST-29).
   var qcls = pq.grade === 'good' ? 'good' : (pq.grade === 'weak' ? 'warn' : '');
   h += tile(sc == null ? '' : qcls, 'Shift quality', sc == null ? '—' : '<span class="hb-num">' + Math.round(sc) + '</span>',
-            (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · out of 100' : 'Out of 100'))),
+            // Under a Not ready / Decisions first banner the reason is already
+            // on screen above: the tile keeps to its score (owner, 10/20/26).
+            ((pd && pd.verdict && pd.verdict.tone && pd.verdict.tone !== 'green') ? (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · out of 100' : 'Out of 100')
+              : (pq.lead ? _numText(pq.lead) : (pq.text ? _numText(pq.text) : (band ? _escHtml(band.charAt(0).toUpperCase() + band.slice(1)) + ' · out of 100' : 'Out of 100')))),
             sc == null ? '' : '<svg class="ring" viewBox="0 0 74 74" aria-hidden="true"><circle class="tr" cx="37" cy="37" r="30"/><circle class="fg" cx="37" cy="37" r="30" stroke-dasharray="' + C.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 37 37)"/></svg>');
   // One grade with iOS (TRUST-7): the server's - over at any amount past the
   // target, neutral with none; the basis named on the tile (TRUST-30).
@@ -47118,7 +47170,7 @@ function sfw2RuleCheck(chk) {
     load(function (d) {
       var p = d && d.profile, s = (d && d.story) || {};
       if (!p) { el.innerHTML = ''; return; }
-      if (!p.available) { el.innerHTML = '<div class="dn-home quiet"><div><div class="hb-kicker">Restaurant DNA</div><h3>Your DNA is still forming.</h3><div class="hb-empty" style="padding:0">' + esc(p.why_not || '') + '</div></div></div>'; return; }
+      if (!p.available) { el.innerHTML = '<div class="dn-home quiet"><div><div class="hb-kicker">Restaurant DNA</div><h3>Your DNA is still forming.</h3><div class="hb-empty" style="padding:0">' + esc(p.why_not || '') + '</div></div></div>'; if (window.hbDnaFit) window.hbDnaFit(); return; }
       var first = String(s.headline || '').split('. ')[0], tr = (s.traits || []).slice(), chips = '', i, o = s.observed || {};
       if (first && first.slice(-1) !== '.') first += '.';
       tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
@@ -47144,6 +47196,7 @@ function sfw2RuleCheck(chk) {
         a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; e.preventDefault(); window.dnaOpen(); });
         var rg = a.querySelectorAll('[data-off]'); setTimeout(function () { for (var k = 0; k < rg.length; k++) rg[k].style.strokeDashoffset = rg[k].getAttribute('data-off'); }, 120);
       }
+      if (window.hbDnaFit) window.hbDnaFit();
     });
   };
   document.addEventListener('DOMContentLoaded', function () { if (window._DNA_BOOT) window.dnaOpen({fromBoot: true}); });

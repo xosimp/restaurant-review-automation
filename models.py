@@ -1271,6 +1271,53 @@ def _pg_url_for(db_path):
     return None
 
 
+import re as _re_alter
+_ADD_COLUMN_RE = _re_alter.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", _re_alter.I)
+
+
+def add_missing_columns(db_path, alters) -> int:
+    """Run each "ALTER TABLE t ADD COLUMN c ..." in `alters` whose column the
+    table does not have yet, on one boot connection; returns how many ran.
+    Each table's columns are read once (PRAGMA table_info). Trying every
+    ALTER and catching "duplicate column" cost ~5 ms a statement on this
+    schema — SQLite re-parses the whole schema to refuse it — so a boot (and
+    every test that ran init_auth) paid ~0.2 s for columns already there.
+    A statement that is not an ADD COLUMN, or whose check fails, is tried
+    as before."""
+    conn = boot_conn(db_path)
+    have, ran = {}, 0
+    try:
+        for sql in alters:
+            m = _ADD_COLUMN_RE.match(sql)
+            if m:
+                table, col = m.group(1), m.group(2).lower()
+                if table not in have:
+                    try:
+                        have[table] = {str(r[1]).lower() for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                    except Exception:
+                        have[table] = None
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                if have[table] is not None and col in have[table]:
+                    continue
+            try:
+                conn.execute(sql)
+                conn.commit()
+                ran += 1
+                if m and have.get(m.group(1)) is not None:
+                    have[m.group(1)].add(m.group(2).lower())
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+    finally:
+        conn.close()
+    return ran
+
+
 def boot_conn(db_path: str = DB_PATH):
     """The connection a boot migration (init_db, init_auth, the init_*
     chain) writes through: a plain sqlite3 connection to `db_path` — or,

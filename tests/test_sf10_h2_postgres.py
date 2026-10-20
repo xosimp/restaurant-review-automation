@@ -288,6 +288,10 @@ def test_a_copy_moves_every_row_counts_what_it_could_not_store_and_verifies(sour
     dst_path = str(tmp_path / "copy.db")
     models.init_db(dst_path)
     models.ensure_columns(dst_path)
+    # The source is a test database: the whole boot schema, init_auth and
+    # the rest included (conftest._boot_schema) — the copy's target is too.
+    from conftest import _boot_schema
+    _boot_schema(dst_path)
     src = sqlite3.connect(db)
     dst = sqlite3.connect(dst_path)
     try:

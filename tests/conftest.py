@@ -540,6 +540,27 @@ _DB_TEMPLATE = None
 _PG_TEMPLATE = None
 
 
+def _boot_schema(path):
+    """hosted_dashboard's init_* chain after init_db, on `path` (schema only)."""
+    import auth
+    import guest_marketing
+    import models
+    import platform_monitor
+    import provider_health
+    import push
+    import sales_audits
+    import webhooks
+    auth.init_auth(db_path=path)
+    models.init_two_fa_backup_codes(db_path=path)
+    models.init_email_log(db_path=path)
+    push.init_push(db_path=path)
+    webhooks.init_webhooks(db_path=path)
+    guest_marketing.init_guest_marketing(path)
+    sales_audits.init_sales_audits(db_path=path)
+    platform_monitor.init_platform_tables(db_path=path)
+    provider_health.init_provider_health(db_path=path)
+
+
 def _db_template():
     """One database per test process built by the real boot migrations —
     init_db() AND ensure_columns(), the two separate paths hosted_dashboard
@@ -560,6 +581,13 @@ def _db_template():
             atexit.register(_pg_drop, _PG_TEMPLATE)
         init_db(db_path=path)
         ensure_columns(db_path=path)
+        # And the rest of hosted_dashboard's boot schema (tables only, no
+        # seeds): most files ran init_auth and friends in a per-test fixture,
+        # and on a bare copy that was the users/sessions/memberships tables
+        # plus ~40 ALTERs every test — about a third of the suite's setup
+        # time (10/20/26). Here they are built once; a per-test call finds
+        # them and does next to nothing.
+        _boot_schema(path)
         conn = sqlite3.connect(path)
         try:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

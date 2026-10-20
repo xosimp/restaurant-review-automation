@@ -13,7 +13,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 from werkzeug.security import generate_password_hash, check_password_hash
-from models import DB_PATH, get_conn, boot_conn
+from models import DB_PATH, get_conn, boot_conn, add_missing_columns
 
 # ── Schema extension ──────────────────────────────────────────────────────────
 
@@ -484,7 +484,7 @@ def init_auth(db_path: str = DB_PATH):
     conn.commit()
     conn.close()
     # Migrations — for databases created before these columns existed.
-    for col_sql in [
+    _alters = [
         "ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))",
         "ALTER TABLE sessions ADD COLUMN ip_address TEXT",
         "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
@@ -595,14 +595,10 @@ def init_auth(db_path: str = DB_PATH):
         # switch never reactivates a row carrying either stamp.
         "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
-    ]:
-        try:
-            conn_m = boot_conn(db_path)
-            conn_m.execute(col_sql)
-            conn_m.commit()
-            conn_m.close()
-        except Exception:
-            pass  # Column already exists
+    ]
+    # Only the columns a table is missing are added (models.add_missing_columns):
+    # a refused duplicate costs SQLite a full schema parse.
+    add_missing_columns(db_path, _alters)
 
     # A PIN identity is an employee, never a console login. They were created
     # with users.role's column default 'client', which is what the session

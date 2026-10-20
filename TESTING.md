@@ -1,6 +1,6 @@
 # Testing — Cavnar AI
 
-The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail -1` (or `python3 scripts/repo_inventory.py --tests`) is the count. A full run in parallel takes several minutes (about 8 on a laptop at 625 files, 9/30/26) and far longer serially — never run it without `-n auto`. **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing many minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need thousands of tests re-run to prove it's safe.
+The suite's size is not typed here: `python3 -m pytest --collect-only -q | tail -1` (or `python3 scripts/repo_inventory.py --tests`) is the count. A full run in parallel takes several minutes (about 8 on a laptop at ~990 files, 10/20/26) and far longer serially — never run it without `-n auto`. **The full suite is not the default verification step for a normal task.** This file exists because running it on every single edit was costing many minutes per turn for changes it had no chance of catching anything new in — a template color tweak doesn't need thousands of tests re-run to prove it's safe.
 
 ## Default verification (most tasks)
 
@@ -34,7 +34,12 @@ python3 -m pytest tests/test_shift_quality.py::test_a_specific_case -q
 # and gets its own throwaway default database. The db_path fixture copies
 # one database per worker built by the real init_db() + ensure_columns()
 # (conftest._db_template) instead of migrating a fresh file per test —
-# ~230 ms a test, which was most of a full run.
+# ~230 ms a test, which was most of a full run. Since 10/20/26 the template
+# also holds hosted_dashboard's other boot tables (conftest._boot_schema:
+# init_auth, push, webhooks, guest_marketing and the rest), so a per-test
+# init_auth finds them instead of building them plus ~40 ALTERs each time
+# (15:01 -> 7:47 for the whole suite). A test that copies or compares a whole
+# database builds its own target with _boot_schema too.
 python3 -m pytest -q -p no:warnings -n auto --dist loadfile
 
 # Color lint — template/CSS color changes only

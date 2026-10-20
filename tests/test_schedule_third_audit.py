@@ -37,13 +37,20 @@ def _c(**kw):
 # ── F1: a slice that omits a date is retried once, then fails the week ──
 
 def _fake_generator(answers):
-    """Each call pops the next answer: a list of (date, employee) rows."""
-    calls = []
+    """Each call takes the first answer left whose dates all fall inside the
+    days it was asked for: a list of (date, employee) rows. The slices run in
+    parallel, so handing answers out in arrival order gave Monday's answer to
+    the Friday slice whenever that thread won the race (10/20/26)."""
+    import threading
+    calls, lock = [], threading.Lock()
 
     def fake(analysis, shifts, week_slice=None, prior_rows=None, **kwargs):
         # What one call is told alone rides in THIS REQUEST (call_notes, C1).
-        calls.append({"slice": week_slice, "extra": kwargs.get("call_notes") or ""})
-        rows = answers.pop(0)
+        with lock:
+            calls.append({"slice": week_slice, "extra": kwargs.get("call_notes") or ""})
+            asked = set(week_slice or [])
+            i = next((k for k, a in enumerate(answers) if a and {d for d, _e in a} <= asked), 0)
+            rows = answers.pop(i)
         return {"schedule_csv": _csv([(d, e, "Server", "4:00pm", "10:00pm", 6) for d, e in rows]),
                 "narrative": ["ok"], "generation_seconds": 1.0, "truncated": False, "stop_reason": "end_turn"}
     fake.calls = calls
