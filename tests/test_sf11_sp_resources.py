@@ -406,6 +406,7 @@ def test_a_generation_scope_reads_the_roster_once_and_again_after_a_write(db_pat
     assert len(calls) == 5
 
 
+@pytest.mark.sqlite_only     # the SQLite connection pool's PRAGMAs
 def test_a_reused_connection_skips_the_pragmas_nobody_changed(db_path, monkeypatch):
     seen = []
     real = models._TrackedConnection.execute

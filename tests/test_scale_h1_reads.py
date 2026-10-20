@@ -99,6 +99,7 @@ def test_outside_a_request_an_inputs_build_parses_the_shift_history_once(monkeyp
     assert len(parses) == 1
 
 
+@pytest.mark.sqlite_only     # counts statements with sqlite3's trace callback
 def test_a_read_scope_reads_the_restaurant_row_once_and_sees_a_write(monkeypatch):
     rid = _rid()
     selects = []

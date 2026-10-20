@@ -216,6 +216,7 @@ def test_a_sheet_nobody_works_today_settles_the_day(db_path, monkeypatch):
     assert bar["assignees"] == ["Dana"] and bar["status"] == "open"
 
 
+@pytest.mark.sqlite_only     # counts statements with sqlite3's trace callback
 def test_the_tick_answers_with_the_sheet_and_photo_tokens_are_joined(client, db_path, monkeypatch):
     rid = _rid(db_path)
     _sheet(rid, db_path, kind="opening", lines=["Stock ice", {"label": "Photo of the bar", "proof": "photo"}])

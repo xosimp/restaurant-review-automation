@@ -516,11 +516,23 @@ def receive(data, db_path=None):
         return "error"
 
 
+# The keys one email's jobs can carry: email_intake:<id>, then :<n> per
+# requeue or release (_ensure_job) — at most MAX_REQUEUES requeues plus the
+# releases an admin makes.
+_JOB_KEYS_PER_EMAIL = 24
+
+
 def _job_rows(email_id, conn):
+    """The email's jobs, by their exact keys. It was a text range
+    (> 'key:' AND < 'key;'), which a Postgres with a non-C collation (':'
+    and ';' ignored at the first level) read as empty: every requeue saw no
+    earlier job, reused the first key and never gave up (blind re-audit
+    10/20/26 R9-02, the Postgres mode found it)."""
     base = f"email_intake:{email_id}"
+    keys = [base] + [f"{base}:{n}" for n in range(1, _JOB_KEYS_PER_EMAIL)]
     return [dict(r) for r in conn.execute(
-        "SELECT idempotency_key, state FROM jobs WHERE idempotency_key=? OR "
-        "(idempotency_key > ? AND idempotency_key < ?)", (base, base + ":", base + ";")).fetchall()]
+        f"SELECT idempotency_key, state FROM jobs WHERE idempotency_key IN ({','.join('?' * len(keys))})",
+        keys).fetchall()]
 
 
 def _ensure_job(email_id, restaurant_id, released=False, db_path=None) -> bool:

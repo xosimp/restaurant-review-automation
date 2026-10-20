@@ -79,8 +79,8 @@ def test_a_rule_change_rejudges_every_row_already_written():
     from intelligence import feedback, provenance
     rid = create_restaurant(Restaurant(name="Google Co", owner_email="g@x.test"))
     _x("INSERT INTO rec_instances (rec_id, restaurant_id, key, kind, evidence_sources) "
-       "VALUES ('a' || hex(randomblob(15)), ?, 'dish_promote:brisket', 'dish_promote', '[\"marketing\", \"reviews\"]')",
-       (rid,))
+       "VALUES (?, ?, 'dish_promote:brisket', 'dish_promote', '[\"marketing\", \"reviews\"]')",
+       ("a" + __import__("uuid").uuid4().hex[:30].upper(), rid))
     ep = _q("SELECT rec_id FROM rec_instances")[0]["rec_id"]
     # Written under the old rule: not review-derived, so pooled.
     _x("INSERT INTO intel_rec_events (restaurant_id, rec_kind, source_key, action, rec_id, review_derived, google_data, event_at) "

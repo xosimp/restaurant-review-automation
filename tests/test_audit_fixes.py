@@ -159,6 +159,7 @@ def test_an_owner_reaches_the_manager_dm_inbox(client, db_path):
 
 # ── F-02 / F-13 · indexes ─────────────────────────────────────────────────
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_sessions_is_indexed_on_user_id(db_path):
     """F-02. Every sign-in runs two DELETE … WHERE user_id=? statements; the
     only index was the token primary key, so both were full scans."""
@@ -855,6 +856,7 @@ def test_a_deleted_membership_takes_its_lockout_counter_with_it(db_path):
         conn.close()
 
 
+@pytest.mark.sqlite_only     # an orphan row Postgres's key refuses to exist
 def test_orphaned_lockout_counters_are_swept_at_boot(db_path):
     """F-16's other half. SQLite cannot add a foreign-key action to a live
     table without rebuilding it, so databases that predate the cascade need

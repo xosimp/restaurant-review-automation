@@ -203,6 +203,17 @@ def _literal(arg):
 _INTERVAL = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s+(second|minute|hour|day|month|year)s?\s*$", re.I)
 
 
+def _is_julian(arg) -> bool:
+    """Whether a date function's time value is a Julian day number:
+    julianday(…), or MAX / MIN / AVG of one."""
+    sig = _significant(arg)
+    k = 0
+    while k + 1 < len(sig) and sig[k].kind == "word" and sig[k].upper in ("MAX", "MIN", "AVG") \
+            and sig[k + 1].kind == "op" and sig[k + 1].text == "(":
+        k += 2
+    return k < len(sig) and sig[k].kind == "word" and sig[k].upper == "JULIANDAY"
+
+
 def _timestamp(args, tr) -> str:
     """The timestamp expression for SQLite's (timevalue, modifiers...)."""
     if not args:
@@ -212,6 +223,12 @@ def _timestamp(args, tr) -> str:
     unix = any((_literal(m) or "").strip().lower() == "unixepoch" for m in mods)
     if base is not None and base.lower() == "now":
         expr = _NOW_TS
+    elif _is_julian(args[0]):
+        # datetime(MAX(julianday(x))): SQLite reads a number as a Julian day
+        # (how the console orders mixed stamp formats as instants). As text
+        # it was no date, so every owner's last sign-in and last request read
+        # NULL on Postgres (blind re-audit 10/20/26 R9-02).
+        expr = f"timezone('UTC', to_timestamp(({tr(args[0]).strip()} - 2440587.5) * 86400.0))"
     elif unix:
         expr = f"timezone('UTC', to_timestamp(CAST({tr(args[0]).strip()} AS double precision)))"
     else:
@@ -327,6 +344,10 @@ CONFLICT_REPLACE = {
 }
 
 _COMPARISON_OPS = {"=", "==", "!=", "<>", "<", ">", "<=", ">="}
+# A literal that is a date / time stamp (or empty): orders the same under
+# any collation, so _binary_ranges leaves it alone.
+_DML = re.compile(r"^\s*(INSERT|UPDATE|DELETE)\b", re.I)
+_DATEISH = re.compile(r"^[0-9 :.\-T+Z]*$")
 _BOOLEAN_WORDS = {"IS", "IN", "LIKE", "ILIKE", "GLOB", "NOTGLOB", "BETWEEN", "EXISTS", "NOT", "AND", "OR"}
 _ORDER_END_WORDS = {"LIMIT", "OFFSET", "FETCH", "FOR", "UNION", "EXCEPT", "INTERSECT", "ROWS", "RANGE",
                     "GROUPS", "RETURNING", "ON"}
@@ -384,6 +405,30 @@ def _is_boolean(toks) -> bool:
                 return True
             if t.kind == "word" and t.upper in _BOOLEAN_WORDS:
                 return True
+    return False
+
+
+def _simple_case_when(toks, when_index) -> bool:
+    """Whether the WHEN at `when_index` belongs to a simple CASE (`CASE x
+    WHEN 1 THEN …`, whose WHEN holds a value to compare) rather than a
+    searched one (`CASE WHEN cond THEN …`)."""
+    depth = case_depth = 0
+    for k in range(when_index - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "op" and t.text == ")":
+            depth += 1
+        elif t.kind == "op" and t.text == "(":
+            if depth == 0:
+                return False
+            depth -= 1
+        elif depth == 0 and t.kind == "word" and t.upper == "END":
+            case_depth += 1
+        elif depth == 0 and t.kind == "word" and t.upper == "CASE":
+            if case_depth:
+                case_depth -= 1
+                continue
+            n = _sig_index(toks, k, 1)
+            return not (n is not None and toks[n].kind == "word" and toks[n].upper == "WHEN")
     return False
 
 
@@ -680,10 +725,14 @@ class Translator:
         """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
         `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
         boolean and refuses the smallint a Python int binds as. It becomes
-        `CAST(? AS integer) <> 0` (NULL stays unknown)."""
+        `CAST(? AS integer) <> 0` (NULL stays unknown). A number standing
+        alone the same way (`WHERE 0`, `AND 1`, a fragment builder's "match
+        nothing") becomes `(1 = 0)` / `(1 = 1)`: Postgres refused
+        `WHERE 0` and the console's Recommendations read nothing (blind
+        re-audit 10/20/26 R9-02)."""
         out = list(toks)
         for k, t in enumerate(toks):
-            if t.kind != "param":
+            if t.kind not in ("param", "num"):
                 continue
             p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
             prev = toks[p] if p is not None else None
@@ -699,6 +748,11 @@ class Translator:
                 bb = _sig_index(toks, b, -1) if b is not None else None
                 if bb is not None and toks[bb].kind == "word" and toks[bb].upper == "BETWEEN":
                     continue                     # x BETWEEN ? AND ?
+            if prev.upper == "WHEN" and _simple_case_when(toks, p):
+                continue                         # CASE x WHEN 1 THEN: a value, not a condition
+            if t.kind == "num":
+                out[k] = Tok("other", "(1 = 0)" if float(t.text) == 0 else "(1 = 1)")
+                continue
             out[k] = Tok("other", f"CAST({_P} AS integer) <> 0")
         return out
 
@@ -749,6 +803,39 @@ class Translator:
                         continue
             out.append(t)
             i += 1
+        return out
+
+    def _binary_ranges(self, toks) -> list:
+        """`metric >= 'sales.cat:' AND metric < 'sales.cat;'` — the prefix
+        range the app reads a family of keys with. SQLite compares text
+        byte by byte (BINARY); Postgres by the database's collation, and a
+        non-C locale (en_US) ignores punctuation at the first level, so
+        'sales.cat:' and 'sales.cat;' compare as the same string and the
+        range is EMPTY: the Bar's and Food Cost's sales by category, the
+        DSR's departments and the shadow-review spend read nothing (blind
+        re-audit 10/20/26 R9-02, found by the Postgres mode). A range
+        comparison of a text column of the statement's table with a string
+        literal that is not a date or a time gets COLLATE "C" — SQLite's
+        own comparison. A date literal is left alone: its digits order the
+        same under any collation, and a partition's pruning reads it."""
+        out = list(toks)
+        hits = []
+        for k, t in enumerate(out):
+            if t.kind != "op" or t.text not in ("<", "<=", ">", ">="):
+                continue
+            n, p = _sig_index(out, k, 1), _sig_index(out, k, -1)
+            if n is None or p is None or out[n].kind != "str" or _DATEISH.match(out[n].text[1:-1]):
+                continue
+            col = out[p]
+            if col.kind not in ("word", "qid") or col.upper in _SQL_KEYWORDS or not self._table:
+                continue
+            types = self.types_lookup(self._table) or {}
+            name = col.text.strip('"')
+            typ = str(types.get(name) or types.get(name.lower()) or "").lower()
+            if "text" in typ or "char" in typ:
+                hits.append(n)
+        for n in reversed(hits):
+            out[n + 1:n + 1] = [Tok("ws", " "), Tok("word", "COLLATE"), Tok("ws", " "), Tok("other", '"C"')]
         return out
 
     def _like_escape(self, toks) -> list:
@@ -1107,6 +1194,7 @@ class Translator:
         toks = self._having_alias(toks)
         toks = self._case_bool(toks)
         toks = self._qualify_upsert(toks)
+        toks = self._binary_ranges(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
         toks = self._rewrite(toks, ddl=is_index)
@@ -1468,6 +1556,11 @@ class PgCursor:
     def close(self):
         pass
 
+    @property
+    def connection(self):
+        """sqlite3.Cursor.connection: the connection that made it."""
+        return self._conn
+
     def execute(self, sql, params=()):
         return self._conn.execute(sql, params, _cursor=self)
 
@@ -1715,7 +1808,10 @@ class PgConnection:
 
     @property
     def total_changes(self):
-        return 0
+        """sqlite3's: rows inserted, updated or deleted through this
+        connection. It answered 0, so people's handoff questions counted
+        none asked on Postgres (blind re-audit 10/20/26 R9-02)."""
+        return getattr(self, "_changes", 0)
 
     def cursor(self):
         return PgCursor(self, None)
@@ -1816,6 +1912,8 @@ class PgConnection:
         except TranslationError as e:
             raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
         self._run(text, params, cur)
+        if _DML.match(text) and (cur.rowcount or 0) > 0:
+            self._changes = getattr(self, "_changes", 0) + cur.rowcount
         if returning:
             got = cur.fetchone()
             cur.lastrowid = got[0] if got else None

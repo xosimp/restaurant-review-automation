@@ -787,6 +787,7 @@ def _plan(db, sql, args):
         c.close()
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_b21_the_dedupe_check_and_the_decisions_read_use_the_new_indexes(db):
     rid = _rid(db)
     plan = _plan(db, "SELECT 1 FROM rec_events WHERE restaurant_id=? AND key=? AND dedupe=? LIMIT 1",

@@ -92,6 +92,7 @@ def _request_app():
 
 # ── P0-1: get_restaurant is memoised per request, and only per request ─────
 
+@pytest.mark.sqlite_only     # counts statements with a sqlite3 connection factory
 def test_repeated_reads_outside_a_request_are_not_cached(db_path, monkeypatch):
     """models.py is imported by the scheduler, the tests and one-off scripts.
     A job loop that runs for an hour MUST see a row change under it."""

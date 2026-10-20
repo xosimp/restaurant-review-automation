@@ -390,6 +390,7 @@ def test_delete_restaurant_removes_every_row_in_every_table_with_a_restaurant_id
 
 # ── a restaurant that fails to hydrate (DATA-43) ───────────────────────────
 
+@pytest.mark.sqlite_only     # a malformed value Postgres's typed column refuses at write
 def test_one_malformed_row_does_not_cost_the_rest_of_the_list(db_path):
     good, bad = _rid(db_path, name="Good"), _rid(db_path, name="Bad")
     conn = models.get_conn(db_path)
@@ -399,6 +400,7 @@ def test_one_malformed_row_does_not_cost_the_rest_of_the_list(db_path):
     assert good in [r.id for r in models.get_all_restaurants(db_path=db_path)]
 
 
+@pytest.mark.sqlite_only     # a malformed value Postgres's typed column refuses at write
 def test_a_skipped_row_is_reported_to_ops(db_path, monkeypatch):
     bad = _rid(db_path, name="Bad")
     conn = models.get_conn(db_path)

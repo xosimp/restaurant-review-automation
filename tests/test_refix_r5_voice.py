@@ -95,12 +95,12 @@ def test_marketing_style_note_reads_edited_pieces_only():
         _exec("INSERT INTO marketing_edits (restaurant_id, channel, source, ref_id, original_body, final_body, "
               "edit_category, edit_signals, words_before, words_after, authority, created_at) "
               "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now','-40 days'))",
-              (rid, "social", "post", f"e{i}", "Come in!!", "Come in.", "light",
+              (rid, "social", "post", 1000 + i, "Come in!!", "Come in.", "light",
                json.dumps(["removed_exclamations"]), 2, 2, "principal"))
     for i in range(40):
         _exec("INSERT INTO marketing_edits (restaurant_id, channel, source, ref_id, original_body, final_body, "
               "edit_category, edit_signals, words_before, words_after, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-              (rid, "social", "post", f"u{i}", "Come in.", "Come in.", "unchanged", "[]", 2, 2, "principal"))
+              (rid, "social", "post", 2000 + i, "Come in.", "Come in.", "unchanged", "[]", 2, 2, "principal"))
     block = marketing_voice.voice_block(rid, "social")
     assert "OWNER'S EDITS" in block
 
@@ -135,7 +135,7 @@ def test_drafts_sent_as_drafted_are_never_the_owners_own_words():
     for i in range(3):
         _exec("INSERT INTO marketing_edits (restaurant_id, channel, source, ref_id, original_body, final_body, "
               "edit_category, edit_signals, words_before, words_after, authority) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-              (rid, "social", "post", f"u{i}", f"Model draft {i}", f"Model draft {i}", "unchanged", "[]", 3, 3,
+              (rid, "social", "post", 2000 + i, f"Model draft {i}", f"Model draft {i}", "unchanged", "[]", 3, 3,
                "principal"))
     block = marketing_voice.voice_block(rid, "social")
     assert "in their own words" not in block and "Model draft" not in block
@@ -154,7 +154,7 @@ def test_a_login_with_the_marketing_voice_grant_teaches_the_voice():
         _exec("INSERT INTO marketing_edits (restaurant_id, channel, source, ref_id, original_body, final_body, "
               "edit_category, edit_signals, words_before, words_after, authority, user_id) "
               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-              (rid, "social", "post", f"g{i}", "Come in!!", "Come in, friends.", "light",
+              (rid, "social", "post", 3000 + i, "Come in!!", "Come in, friends.", "light",
                json.dumps(["removed_exclamations"]), 2, 3, "delegate", gm))
     assert "OWNER'S EDITS" not in marketing_voice.voice_block(rid, "social")
     _exec("INSERT INTO permission_grants (user_id, restaurant_id, permission) VALUES (?,?,?)",

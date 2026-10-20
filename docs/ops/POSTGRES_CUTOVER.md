@@ -58,7 +58,7 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   the intel version, the append-only ledgers); a CREATE TABLE's foreign
   keys are added once their target exists; ALTER TABLE ADD COLUMN gets
   CREATE TABLE's types.
-- **SQL semantics:** SUM/AVG of a predicate, `COLLATE NOCASE` (as lower()),
+- **SQL semantics:** SUM/AVG of a predicate (one wrapped whole in parentheses too), a text range against a non-date literal compared byte by byte as SQLite does (`COLLATE "C"`: a non-C database collation ignores punctuation, and `metric >= 'sales.cat:' AND metric < 'sales.cat;'` read empty), a bare `0`/`1` as a condition (`WHERE 0`), `datetime(MAX(julianday(x)))` (a Julian day), `'now'` arriving at run time (`cavnar_ts`), `lastrowid` from a partitioned table (its key without the partition column), `total_changes` (blind re-audit 10/20/26 R9-02), `COLLATE NOCASE` (as lower()),
   NULL ordering (NULLS FIRST ascending, LAST descending — and indexes built
   the same way), NULL-preserving `MAX(a, b)`, `LIKE … ESCAPE ''`, typed
   `json_extract`, NULL for a date read of `''`, `x IS ?`, a bare

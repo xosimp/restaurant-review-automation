@@ -54,6 +54,10 @@ def test_with_a_learned_memory_binding_the_ablation_runs_the_loop_again_without_
     real_repair = se.repair_week
     monkeypatch.setattr(se, "repair_week", lambda rows, x: ran.append(bool(getattr(x, "shadow", False)))
                         or real_repair(rows, x))
+    # This process's own queue pool would drain the queued row on a thread
+    # at once (it consumes while no worker heartbeat is fresh) — a race this
+    # test lost on Postgres. The row is run below, by hand.
+    monkeypatch.setattr(job_queue, "kick", lambda *a, **k: None)
     rid, hid, tags = _run(db, monkeypatch, learned=learned)
     # Off the owner's wait (blind re-audit 10/11/26 ARCH-14): the generation
     # ran ONE repair loop and queued the ablation as a bulk row.

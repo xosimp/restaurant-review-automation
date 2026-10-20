@@ -366,6 +366,48 @@ def test_r9_02_an_insert_into_a_partitioned_fact_table_answers_its_id(db_path):
         conn.close()
 
 
+def test_r9_02_a_prefix_range_compares_bytes_as_sqlite_does():
+    """metric >= 'sales.cat:' AND metric < 'sales.cat;' was EMPTY on a
+    Postgres whose collation is a non-C locale (punctuation ignored at the
+    first level): the Bar's and Food Cost's sales by category read
+    nothing. A text range against a non-date literal compares under "C";
+    a date literal and a numeric column are left alone."""
+    import db_dialect
+    types = {"dsr_metrics": {"metric": "TEXT", "business_date": "TEXT", "value": "REAL"}}
+    tr = db_dialect.Translator(lambda t: ["id"], lambda t: list(types.get(t, {})), None, None,
+                               lambda t: types.get(t))
+    out = tr.translate("SELECT value FROM dsr_metrics WHERE metric >= 'sales.cat:' AND metric < 'sales.cat;' "
+                       "AND business_date >= '2026-10-01' AND value > '5'")
+    assert out.count('COLLATE "C"') == 2
+    assert "'2026-10-01' COLLATE" not in out and "'5' COLLATE" not in out
+
+
+def test_r9_02_a_number_standing_as_a_condition_and_a_julian_day_translate():
+    """`WHERE 0` (a fragment builder's "match nothing") was refused by
+    Postgres - the console's Recommendations and the learning calibration
+    read nothing; datetime(MAX(julianday(x))) read a Julian day as text -
+    every owner's last sign-in NULL in the console."""
+    import db_dialect
+    tr = db_dialect.Translator(lambda t: ["id"], lambda t: None)
+    assert tr.translate("SELECT id FROM restaurants WHERE 0") == "SELECT id FROM restaurants WHERE (1 = 0)"
+    assert "AND (1 = 1)" in tr.translate("SELECT 1 FROM t WHERE a = 1 AND 1")
+    simple = tr.translate("SELECT CASE k WHEN 1 THEN 2 WHEN 0 THEN 3 END FROM t")
+    assert "WHEN 1 THEN" in simple and "WHEN 0 THEN" in simple, "a simple CASE's values stay values"
+    assert "BETWEEN 0 AND 1" in tr.translate("SELECT 1 FROM t WHERE x BETWEEN 0 AND 1")
+    out = tr.translate("SELECT datetime(MAX(julianday(created_at))) FROM t")
+    assert "to_timestamp((" in out and "- 2440587.5) * 86400.0" in out
+
+
+def test_r9_02_now_at_run_time_is_the_current_time_on_postgres():
+    """julianday(COALESCE(?, 'now')): 'now' arriving as a value read NULL in
+    cavnar_ts, so ops.jobs_overdue found no job overdue on Postgres."""
+    import os
+    sql = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "migrations", "postgres",
+                            "0000_sqlite_compat.sql")).read()
+    body = sql[sql.index("CREATE OR REPLACE FUNCTION cavnar_ts"):]
+    assert "lower(btrim(v)) = 'now' THEN timezone('UTC', now())" in body.split("$$;")[0]
+
+
 def test_r9_02_the_console_ai_table_groups_by_everything_it_selects():
     import inspect
     import admin_ops

@@ -494,8 +494,10 @@ def test_c7_a_teammates_request_is_listed_but_never_presented(db_path):
     import action_queue
     rid = _rid(db_path, module_labor=1)
     c = sqlite3.connect(db_path)
+    week = c.execute("INSERT INTO schedule_history (restaurant_id, week_start, generated_at) VALUES (?, '2020-01-06', '2020-01-01 00:00:00')",
+                     (rid,)).lastrowid                      # a real week for the request to name
     c.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, kind, "
-              "status) VALUES (?,1,'Ben','2099-01-01','17:00','drop','pending')", (rid,))
+              "status) VALUES (?,?,'Ben','2099-01-01','17:00','drop','pending')", (rid, week))
     c.commit(); c.close()
     out = action_queue.items(rid, db_path=db_path, today=date(2026, 9, 24))
     task = next(i for i in out["items"] if i["key"].startswith("shift_request:"))

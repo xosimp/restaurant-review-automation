@@ -313,6 +313,7 @@ def test_disk_and_a_refused_write_are_platform_problems(db_path, monkeypatch):
     assert any("almost full" in x for x in sent[0]) and any("refuses writes" in x for x in sent[0])
 
 
+@pytest.mark.sqlite_only     # SQLite's file write lock
 def test_the_write_probe_sees_a_held_lock(db_path):
     assert ops.write_probe(db_path) == (True, None)
     holder = sqlite3.connect(db_path)

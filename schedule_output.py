@@ -1467,7 +1467,12 @@ def generations(restaurant_ids=None, history_ids=None, limit=20, linked_only=Tru
         rows = conn.execute(
             "SELECT generation_id, restaurant_id, week_start, MAX(history_id) AS history_id, COUNT(*) AS calls, "
             "MIN(created_at) AS created_at, MAX(id) AS last_id FROM schedule_model_calls WHERE "
-            + " AND ".join(where) + " GROUP BY generation_id ORDER BY last_id DESC", args).fetchall()
+            # Every selected column grouped (a generation is one restaurant-
+            # week): Postgres refused the bare restaurant_id / week_start,
+            # and every reader of the stored generations raised there
+            # (blind re-audit 10/20/26 R9-02, the Postgres mode found it).
+            + " AND ".join(where) + " GROUP BY generation_id, restaurant_id, week_start ORDER BY last_id DESC",
+            args).fetchall()
     finally:
         conn.close()
     out, seen = [], set()

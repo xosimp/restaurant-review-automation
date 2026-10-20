@@ -476,6 +476,7 @@ def test_email_intake_in_retention_registry(db):
     assert out.get("email_intake_unrouted") == 1 and out.get("email_intake") == 1
 
 
+@pytest.mark.sqlite_only     # the off-site copy of the SQLite file
 def test_intake_address_scrubbed_offsite(db, tmp_path):
     import offsite_backup
     rid = _rid(db)

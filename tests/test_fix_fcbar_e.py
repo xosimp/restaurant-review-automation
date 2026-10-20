@@ -226,6 +226,7 @@ def test_ai_11_the_guess_is_frozen_in_forecast_log_and_scored_against_usage(db):
     start, end = forecast_log.period_bounds(inventory.EVENT_FORECAST_KIND, SOON)
     assert forecast_log.actual_for(rid, inventory.EVENT_FORECAST_KIND, row["horizon_end"], row=row) is None
     c = sqlite3.connect(db)
+    c.execute("INSERT INTO ingredients (id, restaurant_id, name) VALUES (7, ?, 'Heavy Cream')", (rid,))  # its row
     c.execute("INSERT INTO ingredient_stock_events (restaurant_id, ingredient_id, event_type, qty, event_date, "
               "source) VALUES (?,?,?,?,?,?)", (rid, 7, "depletion", 15.0, start.isoformat(), "toast"))
     c.commit()

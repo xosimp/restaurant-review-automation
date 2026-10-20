@@ -2,6 +2,7 @@
 the same init_db() the app uses, so schema drift is caught here instead of in
 production."""
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,16 +73,27 @@ os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = _TEST_VOLUME
 
 from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
 
-# ── Postgres mode (blind re-audit 10/11/26, SCALE-10) ───────────────────────
+# ── Postgres mode (blind re-audit 10/11/26, SCALE-10; 10/20/26 R9-02) ──────
 # CAVNAR_TEST_PG_URL=postgresql://user@host:port/postgres (a SCRATCH server —
 # never production's) runs the suite's database on Postgres: the default
 # database and every test's db_path are routed (models._PG_ROUTES) to a
-# database of their own, built by the same boot (init_db through db_dialect)
-# and copied per test from a template, then dropped. The files the SQLite
-# mode uses still exist, so a test that opens one with sqlite3.connect
-# directly reads an empty schema — those files are not in the CI list.
-# CI runs tests/test_q2_postgres_live.py and the database-heavy files this
-# way (.github/workflows/ci.yml, job `postgres`).
+# database of their own, copied per test from a template, then dropped.
+#
+# The template is built the way production's database was: the boot's
+# migrations on SQLite, pg_copy.copy_database into Postgres (so the fact
+# tables in db_dialect.PARTITIONED are month-partitioned, their keys carrying
+# the partition column, as they are in production), then the boot again on
+# Postgres (every deploy boots on the copied database).
+#
+# A test's own sqlite3.connect(<its db_path>) — seeding a fixture, reading a
+# row back — is served by the same Postgres database (_pg_aware_connect), so
+# the test reads what the code under test wrote. The app's own
+# sqlite3.connect calls are never redirected.
+#
+# CI's `postgres` job runs EVERY test file this way. What cannot run on
+# Postgres is listed in ONE place, with the reason: the `sqlite_only` marker
+# on a test (it reads the SQLite file itself — a PRAGMA, a snapshot, a query
+# plan, a file copy) and PG_MODE_SKIP_FILES below for a whole file.
 _PG_BASE = (os.getenv("CAVNAR_TEST_PG_URL") or "").strip()
 
 
@@ -129,21 +141,196 @@ def pytest_configure(config):
                             "plan, a PRAGMA); skipped in the Postgres mode")
 
 
+# Whole files that cannot run in the Postgres mode, and why. Every entry is
+# a file that is ABOUT the SQLite file (its bytes, its snapshot, its PRAGMAs)
+# — never a file that fails on Postgres for a reason the app would meet in
+# production: that is a bug to fix, not a file to list.
+PG_MODE_SKIP_FILES = {
+    "test_query_plans.py": "every test reads SQLite's EXPLAIN QUERY PLAN (Postgres's plans are its own; "
+                           "the indexes themselves are copied by pg_copy)",
+}
+
+
 def pytest_collection_modifyitems(config, items):
     if not _PG_BASE:
         return
     skip = pytest.mark.skip(reason="reads the SQLite file itself; the Postgres mode routes the database elsewhere")
     for item in items:
-        if "sqlite_only" in item.keywords:
+        name = os.path.basename(str(getattr(item, "fspath", "") or ""))
+        if name in PG_MODE_SKIP_FILES:
+            item.add_marker(pytest.mark.skip(reason="Postgres mode: " + PG_MODE_SKIP_FILES[name]))
+        elif "sqlite_only" in item.keywords:
             item.add_marker(skip)
 
 
+class _TestPgCursor:
+    """A db_dialect cursor whose rows come back as the test's connection
+    asked for them: tuples with no row_factory (sqlite3's default), name-
+    and-position rows for sqlite3.Row, or what any other factory builds."""
+
+    def __init__(self, cur, conn):
+        self._cur, self._conn = cur, conn
+
+    def _shape(self, row):
+        if row is None:
+            return None
+        rf = self._conn.row_factory
+        if rf is None:
+            return tuple(row)
+        if rf is sqlite3.Row:
+            return row
+        return rf(self, tuple(row))
+
+    def fetchone(self):
+        return self._shape(self._cur.fetchone())
+
+    def fetchall(self):
+        return [self._shape(r) for r in self._cur.fetchall()]
+
+    def fetchmany(self, size=1):
+        return [self._shape(r) for r in self._cur.fetchmany(size)]
+
+    def __iter__(self):
+        for r in self._cur:
+            yield self._shape(r)
+
+    def execute(self, sql, params=()):
+        self._cur = self._conn._c.execute(sql, params)
+        return self
+
+    def executemany(self, sql, seq):
+        self._cur = self._conn._c.executemany(sql, seq)
+        return self
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class _TestPgConnection:
+    """What a test's sqlite3.connect(<its routed db_path>) returns in the
+    Postgres mode: the db_dialect connection, rows shaped as sqlite3's."""
+
+    def __init__(self, conn):
+        object.__setattr__(self, "_c", conn)
+        object.__setattr__(self, "row_factory", None)
+
+    def execute(self, sql, params=()):
+        return _TestPgCursor(self._c.execute(sql, params), self)
+
+    def executemany(self, sql, seq):
+        return _TestPgCursor(self._c.executemany(sql, seq), self)
+
+    def cursor(self, *a, **k):
+        return _TestPgCursor(self._c.cursor(), self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        return self._c.__exit__(et, ev, tb)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def __setattr__(self, name, value):
+        if name == "row_factory":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._c, name, value)
+
+
 if _PG_BASE:
-    import models as _models_pg
-    _PG_DEFAULT = _pg_new_database()
-    _models_pg._PG_ROUTES[_models_pg.DB_PATH] = _pg_url(_PG_DEFAULT)
-    import atexit as _atexit
-    _atexit.register(_pg_drop, _PG_DEFAULT)
+    import sqlite3
+    _real_sqlite_connect = sqlite3.connect
+    _TESTS_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+
+    def _pg_aware_connect(database, *a, **k):
+        """sqlite3.connect, except that a TEST's connect to a database file
+        the Postgres mode routes is that Postgres database."""
+        try:
+            caller = sys._getframe(1).f_code.co_filename
+        except ValueError:
+            caller = ""
+        if caller.startswith(_TESTS_DIR) and isinstance(database, (str, os.PathLike)):
+            import models
+            url = models._PG_ROUTES.get(os.fspath(database))
+            if url:
+                import db_dialect
+                return _TestPgConnection(db_dialect.connect(url))
+        return _real_sqlite_connect(database, *a, **k)
+
+    sqlite3.connect = _pg_aware_connect
+
+
+def _pg_copy_into(sqlite_path, name):
+    """The SQLite file at `sqlite_path` copied into the Postgres database
+    `name` the way production's was (pg_copy: partitioned fact tables)."""
+    import psycopg
+    import pg_copy
+    # Autocommit: the whole schema in one transaction holds a lock per
+    # table and index, and eight workers building theirs at once ran the
+    # server out of its shared lock table.
+    with psycopg.connect(_pg_url(name), connect_timeout=10, autocommit=True) as dst:
+        rep = pg_copy.copy_database(sqlite_path, dst)
+    # A key to a table the per-test template does not build (users: the
+    # auth chain, which a test runs when it needs it) waits for the boot,
+    # as on a fresh Postgres; any other refusal is the copy's bug.
+    bad = [r for r in rep["foreign_keys"]["refused"] if "does not exist" not in r["error"]]
+    if bad:
+        raise RuntimeError(f"Postgres mode: the template's foreign keys were refused: {bad[:2]}")
+
+
+# ── The statement recorder (blind re-audit 10/20/26 R9-02) ──────────────────
+# CAVNAR_RECORD_SQL=<dir> (the SQLite run; CI's `test` job sets it) records
+# every distinct statement the APP executes through a models connection —
+# the run-time-built ones included (f-strings, joined IN lists), which the
+# source audit cannot PREPARE — into <dir>/sql-<pid>.jsonl at the session's
+# end. scripts/pg_sql_audit.py --recorded <dir> translates and PREPAREs each
+# on Postgres (CI's `postgres-recorded-sql` job). A test's own SQL is left
+# out: it is not the app's.
+_RECORD_DIR = (os.getenv("CAVNAR_RECORD_SQL") or "").strip()
+_RECORDED = {}
+
+
+def _record_statement(sql):
+    import re
+    try:
+        f = sys._getframe(2)
+        models_file = sys.modules["models"].__file__
+        while f is not None and f.f_code.co_filename == models_file and \
+                f.f_code.co_name in ("execute", "executemany", "executescript"):
+            f = f.f_back
+        if f is None or f.f_code.co_filename.startswith(os.path.dirname(os.path.abspath(__file__)) + os.sep):
+            return
+        # The text as run (a `--` comment ends at its line, so lines stay);
+        # one shape per IN list, whatever its length.
+        text = str(sql or "").strip()
+        text = re.sub(r"(?i)\bIN\s*\(\s*\?(?:\s*,\s*\?)+\s*\)", "IN (?)", text)
+        if text and text not in _RECORDED and len(_RECORDED) < 200000:
+            _RECORDED[text] = f"{os.path.relpath(f.f_code.co_filename, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))}:{f.f_lineno}"
+    except Exception:
+        pass
+
+
+if _RECORD_DIR and not _PG_BASE:
+    import models as _models_rec
+    _real_note_write = _models_rec._note_write
+
+    def _note_write_recording(sql):
+        _record_statement(sql)
+        return _real_note_write(sql)
+
+    _models_rec._note_write = _note_write_recording
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if not (_RECORD_DIR and _RECORDED):
+        return
+    import json
+    os.makedirs(_RECORD_DIR, exist_ok=True)
+    with open(os.path.join(_RECORD_DIR, f"sql-{os.getpid()}.jsonl"), "w", encoding="utf-8") as out:
+        for text, at in _RECORDED.items():
+            out.write(json.dumps({"sql": text, "at": at}) + "\n")
 
 
 def _build_default_schema():
@@ -180,6 +367,16 @@ def _build_default_schema():
 
 
 _build_default_schema()
+if _PG_BASE:
+    # The default database: built on SQLite above, copied, then the boot
+    # again on Postgres — the order production's database had.
+    import models as _models_pg
+    _PG_DEFAULT = _pg_new_database()
+    import atexit as _atexit
+    _atexit.register(_pg_drop, _PG_DEFAULT)
+    _pg_copy_into(_models_pg.DB_PATH, _PG_DEFAULT)
+    _models_pg._PG_ROUTES[_models_pg.DB_PATH] = _pg_url(_PG_DEFAULT)
+    _build_default_schema()
 
 
 @pytest.fixture(autouse=True)
@@ -551,15 +748,20 @@ def _db_template():
     if _DB_TEMPLATE is None:
         import sqlite3
         path = os.path.join(_tempfile.mkdtemp(prefix="cavnar-test-template-"), "template.db")
+        init_db(db_path=path)
+        ensure_columns(db_path=path)
         if _PG_BASE:
+            # Copied (partitioned, as production's) then booted again on
+            # Postgres; the SQLite file stays the empty-of-rows schema.
             import models
             global _PG_TEMPLATE
             _PG_TEMPLATE = _pg_new_database()
-            models._PG_ROUTES[path] = _pg_url(_PG_TEMPLATE)
             import atexit
             atexit.register(_pg_drop, _PG_TEMPLATE)
-        init_db(db_path=path)
-        ensure_columns(db_path=path)
+            _pg_copy_into(path, _PG_TEMPLATE)
+            models._PG_ROUTES[path] = _pg_url(_PG_TEMPLATE)
+            init_db(db_path=path)
+            ensure_columns(db_path=path)
         conn = sqlite3.connect(path)
         try:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

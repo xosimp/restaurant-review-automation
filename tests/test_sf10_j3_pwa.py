@@ -135,11 +135,17 @@ def test_offer_answers_are_timed_per_platform(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     rid = models.create_restaurant(models.Restaurant(name="P Co", owner_email="p@x.test", module_labor=1))
     conn = models.get_conn()
-    conn.execute("PRAGMA foreign_keys=OFF")          # the offers' requests are not the point here
+    # A real request for the offers to name: Postgres enforces the key the
+    # PRAGMA foreign_keys=OFF this used let it skip.
+    week = conn.execute("INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?, '2098-12-29')",
+                        (rid,)).lastrowid
+    req = conn.execute("INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, "
+                       "kind, status) VALUES (?, ?, 'Ana', '2099-01-01', '17:00', 'open', 'pending')",
+                       (rid, week)).lastrowid
     for i in range(6):
         conn.execute("INSERT INTO shift_offers (id, restaurant_id, request_id, name, name_key, created_at, answered_at, "
                      "status) VALUES (?,?,?,?,?,datetime('now','-30 minutes'),datetime('now'),'accepted')",
-                     (100 + i, rid, 1, "Ana", "ana"))
+                     (100 + i, rid, req, "Ana", "ana"))
     conn.commit()
     conn.close()
     for i in range(6):
