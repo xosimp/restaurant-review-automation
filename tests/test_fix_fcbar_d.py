@@ -301,9 +301,12 @@ def test_pos_13_retry_after_is_capped_and_never_waited_on_a_request_thread(monke
     monkeypatch.setattr(requests, "get", lambda *a, **k: R())
     monkeypatch.setattr(rpower.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr(rpower, "_sleep_for_spacing", lambda token="": None)
-    with pytest.raises(rpower.RPowerError):
+    # A Retry-After past the cap is no longer cut short and retried early
+    # (scale audit 10/19/26 A3-10): the call raises at once with the wait,
+    # and a queue row is rescheduled by it.
+    with pytest.raises(rpower.RPowerRateLimited) as got:
         rpower._request("tok", "ticket/getbybusinessdate", {})
-    assert slept and max(slept) <= rpower.RETRY_AFTER_MAX_SECONDS
+    assert got.value.retry_after == 3600 and all(s <= rpower.RETRY_AFTER_MAX_SECONDS for s in slept)
     slept.clear()
     with Flask("t").test_request_context("/"):
         with pytest.raises(rpower.RPowerError):
@@ -401,7 +404,7 @@ def test_pos_21_sync_now_runs_once_per_cooldown(db_path, monkeypatch):
     import scheduler
     rid = _rid(db_path)
     started = []
-    monkeypatch.setattr(scheduler, "start_manual_pos_sync", lambda r, who: started.append(r))
+    monkeypatch.setattr(scheduler, "start_manual_pos_sync", lambda r, who: (started.append(r), ("job", False))[1])
     stamps = {}
 
     def claim(key, minutes):
@@ -414,7 +417,8 @@ def test_pos_21_sync_now_runs_once_per_cooldown(db_path, monkeypatch):
     assert rpower_routes.do_sync(user)[1] == 200
     body, status = rpower_routes.do_sync(user)
     assert status == 429 and body["cooldown"] and started == [rid]
-    assert stamps == {f"rpower_sync_now:{rid}": rpower_routes.SYNC_NOW_COOLDOWN_MINUTES}
+    # One cooldown for every Sync now (scale audit 10/19/26 A3-09).
+    assert stamps == {f"pos_sync_now:{rid}": rpower_routes.SYNC_NOW_COOLDOWN_MINUTES}
 
 
 # ── SCALE-07: the heavy sweeps run as queue rows ────────────────────────────

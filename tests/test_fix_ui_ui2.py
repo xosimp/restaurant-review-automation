@@ -606,6 +606,7 @@ READS = [
         "webhooks_inbound.providers[].secret_env", "webhooks_inbound.ledger", "webhooks_inbound.basis",
         "generated_at", "errors"]),
     ("/admin/api/data-sources", ["rows", "summary", "data_health_median", "stale_snapshots", "issue_threshold"]),
+    ("/admin/api/pos-traffic", ["total", "by_endpoint", "by_store", "breaker.state", "breaker.reason", "ledger_on"]),
     ("/admin/api/system", ["keys[]." + k for k in ("label", "vars", "group", "required", "state", "breaks")]
      + ["warnings", "build", "env", "db"]
      + ["system." + k for k in (

@@ -435,6 +435,29 @@ def _covers_trading_days(in_window, reference, d0, d1):
     return have >= expected - max(1, expected // 10), have, expected
 
 
+def _nullctx():
+    import contextlib
+    return contextlib.nullcontext()
+
+
+def _for_an_owner() -> bool:
+    """Whether this read answers a person: inside a request, or in work an
+    owner or a login started (an AI context naming who asked). The nightly
+    jobs carry no actor."""
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            return True
+    except Exception:
+        pass
+    try:
+        import ai_utils
+        ctx = ai_utils.current_ai_context()
+        return bool(ctx.get("actor_user_id")) or str(ctx.get("trigger") or "") in ("owner", "ask", "user")
+    except Exception:
+        return False
+
+
 def net_sales_in_window(restaurant_id, start, end):
     """Net sales for the window, or None when it cannot be known. None means
     unknown - never 0. Returns (total, why): `why` says what is missing when
@@ -464,7 +487,12 @@ def net_sales_in_window(restaurant_id, start, end):
         return archived[0], _sales_note(archived[1], archived[2])
     try:
         import pos
-        by_date, _provider = pos.fetch_business_days(restaurant_id, start, end)
+        # An owner's question (Ask, an AI answer, a page) reads the POS
+        # archive only — no live multi-day read from a thread with no request
+        # context (scale audit 10/19/26 A3-20). A job (a queue row, the
+        # scheduler) keeps reading through to the POS for days not archived.
+        with (pos.archive_only() if _for_an_owner() else _nullctx()):
+            by_date, _provider = pos.fetch_business_days(restaurant_id, start, end)
     except Exception as e:
         # POSCapabilityError carries the honest reason ("no POS connected",
         # or connected-but-cannot-report); anything else is a transport

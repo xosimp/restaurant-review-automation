@@ -138,6 +138,30 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `POS_BACKFILL_BYTES_PER_STORE_DAY` | `"650000"` | What one archived store-day is reckoned to cost on disk (the audit measured ~613 KB with indexes): the free-space gate's estimate of tonight's backfill. | onboarding.py |
 | `PG_VOLUME_MAX_BYTES` | `"0"` | The Postgres volume's size in bytes, when set (the app cannot see another service's disk): a backfill waits once the database plus tonight's days would pass 80% of it. 0 = only the app volume is checked. | onboarding.py |
 | `ONBOARDING_STUCK_DAYS` | `"14"` | The fleet onboarding board names a store not live this many days after signing up. | onboarding.py |
+| `POS_ARCHIVE_READS_OFF` | `""` | Restaurant ids (comma-separated) whose readers go back to the POS while every other store keeps reading the archive — the per-restaurant form of `POS_ARCHIVE_READS=0` (scale audit A3-11). | pos_archive.py |
+| `POS_ONBOARD_ARCHIVE_DAYS` | `60` | A newly connected store's onboarding queue row (`pos_onboard`) archives this many closed nights, newest first, before its first sync, so every reader then reads each night from the archive once (scale audit ONB-4 / ONB-6). | pos_archive.py |
+| `POS_ONBOARD_MAX_SECONDS` | `1200` | The onboarding row's wall-clock bound for archiving; what is left is archived by the nightly backfill and the readers. | pos_archive.py |
+| `SLOT_JOB_WORKERS` | `4` | Workers the POS-reading slot jobs (live labor, the coverage check) walk their restaurants on (INF-14). | strategy_jobs.py |
+| `POS_PRICE_SYNC_DAYS` | `7` | The POS price list (`menuitemprice`, 11 pages at Simple EJ's) is read this often, or the night a sold line rang at a price the kept list disagrees with (A3-07). 1 = every night. | pos_archive.py |
+| `RPOWER_REQUEST_SPACING_SECONDS` | `0.15` | The per-token request budget: seconds between two RPOWER requests on one token (one bucket per token, or per token and store with `RPOWER_BUDGET_PER_STORE`). 0 turns both budget levels off. | rpower.py |
+| `RPOWER_CATALOG_MAX_AGE_SECONDS` | `21600` | How old a kept RPOWER list (`pos_catalogs`: sales types, menu, jobs, employees, tables…, one per consolidation group) may be before a job reads it again; a night naming an id the kept list lacks reads that list afresh at once. A web request uses the kept list at any age (A3-07 / A3-09). | rpower.py |
+| `RPOWER_LABOR_LIVE_DAYS` | `14` | The nightly labor sync reads this many recent days of RPOWER's timeclock live (where punches are still edited); an older day comes from the archive's punches when they were read from RPOWER at least this long after the day, else live. The live read refreshes the archive's punches it covers. 60 or more: all 60 days live, as before 10/19/26 (scale audit A3-06). | rpower.py |
+| `RPOWER_BUDGET_PER_STORE` | `"0"` | 1: the per-token bucket becomes one per (token, store) — for when RPOWER confirms its limit is per store and one partner token serves many stores (scale audit A3-14 / ONB-3). | rpower.py |
+| `RPOWER_FLEET_RPS` | `10` | The fleet-wide RPOWER ceiling: requests a second across every token and store (the second budget level; 0 = off). Set it to the rate RPOWER agrees to. Over budget a request waits up to 60 s (5 s on a page load) and is then refused (`RPowerBudgetExceeded`, a queue row rescheduled), never sent anyway. | rpower.py |
+| `POS_REQUEST_LEDGER` | `"1"` | 0 turns off the POS request ledger (`pos_request_ledger`: requests per hour, endpoint and store; the console's "RPOWER traffic" card). | pos_io.py |
+| `POS_REQUEST_LEDGER_FLUSH_SECONDS` | `30` | How often each process writes its in-memory request counts to the ledger (one batch). | pos_io.py |
+| `RETAIN_POS_REQUEST_LEDGER_DAYS` | `90` | How long the request ledger is kept (floor 30). | ops.py |
+| `POS_BREAKER` | `"1"` | 0 turns off the POS circuit breaker (`pos_breakers`). On: after a run of transport failures or 5xx answers, nothing is sent to that POS until a half-open probe answers. | pos_io.py |
+| `POS_BREAKER_FAILURES` | `5` | Consecutive failures, from at least two stores, that open the breaker. | pos_io.py |
+| `POS_BREAKER_FAILURES_ONE_STORE` | `12` | Consecutive failures that open it when only one store is failing. | pos_io.py |
+| `POS_BREAKER_WINDOW_SECONDS` | `300` | A run of failures older than this starts again. | pos_io.py |
+| `POS_BREAKER_COOLDOWN_SECONDS` | `120` | How long an opened breaker refuses before its first probe; doubled by each failed probe. | pos_io.py |
+| `POS_BREAKER_MAX_COOLDOWN_SECONDS` | `1800` | The longest cooldown between probes. | pos_io.py |
+| `POS_BREAKER_PAGE_AFTER_SECONDS` | `1800` | A breaker open (or failing its probes) this long pages the operator once for the opening — one page for a provider outage, not one issue per store (OPS-6). | pos_io.py |
+| `RPOWER_PROBE_RESTAURANT_ID` | `""` | The restaurant whose RPOWER token the hourly provider probe (`store/get`) uses; unset: the lowest-id live, non-demo restaurant with a token. | provider_health.py |
+| `POS_FLEET_OUTAGE_SHARE` | `0.05` | A POS provider failing for more than this share of connected stores (and at least `POS_FLEET_OUTAGE_MIN_STORES`) is one outage: one console issue, one page (OPS-6). | pos_health.py |
+| `POS_FLEET_OUTAGE_MIN_STORES` | `2` | The fewest failing stores that make a fleet outage (one store's trouble stays its own issue). | pos_health.py |
+| `POS_LIVE_SNAPSHOT_SECONDS` | `840` | How long a store's live read during service (sales so far, clock-ins) is shared by live labor, the coverage check, the hourly capture and /labor/live before one of them reads again (A3-02). | pos_io.py |
 
 ## Billing and contracts
 
@@ -471,6 +495,9 @@ Added by the scale fix round (10/19/26, FE-01 — `home_snapshots.py`):
 | `METRICS_SYNC_SECONDS` | `"1800"` | scheduler.py |
 | `OPTIN_INVITE_SECONDS` | `"240"` | guest_marketing.py |
 | `POS_RETRY_MAX_SECONDS` | `str(15 * 60` | scheduler.py |
+| `POS_SYNC_MAX_SECONDS` | `2700` | pos.py — the nightly POS sync's wall-clock bound (resumable; scale audit INF-5) |
+| `POS_SYNC_WORKERS` | `"4"` | pos.py — the nightly POS sync's workers |
+| `LOSS_SYNC_WORKERS` | `"4"` | strategy_jobs.py — the nightly comps/voids sync's workers (it walked serially; INF-5) |
 | `PPLX_BACKOFF_BASE` | `"2"` | client_api.py — first step of a 429's exponential backoff (with jitter) when no Retry-After came |
 | `PPLX_MIN_REQUEST_INTERVAL` | `"1.3"` | client_api.py |
 | `PPLX_RETRY_AFTER_MAX` | `"8"` | client_api.py — the longest Retry-After a 429 is waited out; a longer one gives the question up |

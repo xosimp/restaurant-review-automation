@@ -217,6 +217,7 @@ class _BoundedWalk:
 
 # The walks above, bounded (#84). Each is per-restaurant model or POS work.
 LOSS_SYNC_MAX_SECONDS = 30 * 60
+LOSS_SYNC_WORKERS = max(1, int(os.getenv("LOSS_SYNC_WORKERS", "4")))
 WEEKLY_PLAN_MAX_SECONDS = 45 * 60
 RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
 ISSUE_SCAN_MAX_SECONDS = 15 * 60
@@ -373,26 +374,43 @@ def run_loss_sync(db_path=DB_PATH):
     """Nightly: comps, voids and refunds from POSes that report them.
     Bounded and resumable (_BoundedWalk, #84)."""
     import loss_detection, ops
-    synced = unsupported = failed = 0
-    walk = _BoundedWalk("loss_sync", _restaurants(db_path), db_path, LOSS_SYNC_MAX_SECONDS)
-    for r in walk:
+    import scheduler as _sched
+    c = {"synced": 0, "unsupported": 0, "failed": 0}
+    lock = threading.Lock()
+    by_id = {r.id: r for r in _restaurants(db_path)}
+
+    def _one(rid):
+        r = by_id[rid]
         try:
             out = loss_detection.sync(r.id, db_path=db_path)
         except Exception as e:
             ops.capture(e, job="loss_sync", context=f"restaurant_id={r.id}")
-            failed += 1
+            with lock:
+                c["failed"] += 1
             _record_loss(r.id, False, str(e), None, db_path)
-            continue
+            return
         if out.get("ok"):
-            synced += 1
+            with lock:
+                c["synced"] += 1
             _record_loss(r.id, True, None, out.get("provider"), db_path)
             _loss_flags_to_issues(r, db_path)
         else:
             # A POS that cannot report comps and voids is a normal state,
             # not a failed sync: nothing is recorded for it.
-            unsupported += 1
+            with lock:
+                c["unsupported"] += 1
+
+    # A pool and the same cursor, not a serial walk (scale audit 10/19/26
+    # INF-5 / A3-04): serially it covered ~780 stores a night; its reads are
+    # the archive's now, so the bound is mostly database time.
+    _done, hit_bound = _sched.resumable_sweep("loss_sync_cursor", sorted(by_id), _one, LOSS_SYNC_MAX_SECONDS,
+                                              workers=LOSS_SYNC_WORKERS, job="loss_sync")
+    if hit_bound:
+        ops.capture(RuntimeError(f"loss_sync stopped at its {LOSS_SYNC_MAX_SECONDS}s bound; the rest lead the "
+                                 "next pass"), job="loss_sync", context="time_bound")
+    synced, failed, unsupported = c["synced"], c["failed"], c["unsupported"]
     # The counts job_runs judges a partial or failed night by (DH2-1, #39).
-    return _counts(synced + failed, synced, failed, unsupported, walk.hit_bound,
+    return _counts(synced + failed, synced, failed, unsupported, bool(hit_bound),
                    synced=synced, not_supported=unsupported)
 
 
@@ -479,9 +497,52 @@ def run_queued_pos_archive(job):
         return {"skipped": "no POS that can archive"}
     out = pos_archive.run_for(rid)
     if not out.get("ok"):
-        raise RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        err = RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        # The POS asked us to wait (an open breaker, a long Retry-After):
+        # the row is tried again then, not on the fixed backoff (A3-10).
+        if out.get("retry_after"):
+            err.retry_after = float(out["retry_after"])
+        raise err
     return {"archived": len(out.get("archived") or []), "restated": out.get("restated") or 0,
             "backfill_left": out.get("backfill_left")}
+
+
+def run_queued_pos_onboard(job):
+    """job_queue's handler for `pos_onboard` (scale audit 10/19/26 ONB-6 /
+    ONB-4): a store just connected. Its history is archived first, newest
+    night first (pos_archive.onboard, bounded), then its first sync runs —
+    which then reads the archive, not 60 days live — so the owner sees data
+    within minutes of the connect, not at 3am, and no night is read twice.
+    A provider that asks us to wait reschedules the row."""
+    import pos
+    import pos_archive
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None or pos_archive.provider_for(rid)[1] is None:
+        return {"skipped": "no POS that can archive"}
+    arch = pos_archive.onboard(rid)
+    if arch.get("retry_after"):
+        err = RuntimeError(f"pos_onboard: the POS asked us to wait ({len(arch.get('archived') or [])} nights in)")
+        err.retry_after = float(arch["retry_after"])
+        raise err
+    sync = pos.sync_restaurant(rid, trigger="connect")
+    return {"archived": len(arch.get("archived") or []), "failed": len(arch.get("failed") or []),
+            "left": arch.get("left"), "sync_ok": bool(sync.get("ok")), "sync_error": sync.get("error")}
+
+
+def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
+    """Queue a just-connected store's onboarding (once a day per store
+    binding). Never raises: the nightly jobs onboard it anyway."""
+    try:
+        import job_queue
+        from datetime import date as _date
+        _qid, created = job_queue.enqueue(
+            "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
+            priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
+        return bool(created)
+    except Exception as e:
+        log.warning("pos_onboard not queued for %s: %s", restaurant_id, e)
+        return False
 
 
 # The DSR backfill's pass (bar audit 10/14/26 RPW-13 / R11): bounded and
@@ -2647,6 +2708,10 @@ def _open_now(r, local):
 INTRADAY_WORKERS = 4
 INTRADAY_CAPTURE_MAX_SECONDS = 10 * 60
 SLOT_JOB_MAX_SECONDS = 4 * 60
+# The POS-reading slot jobs (live labor, the coverage check) walk their
+# restaurants on this many workers, as the capture does (scale audit
+# 10/19/26 INF-14 / A3-03): serially they reached ~96 and ~185 stores a run.
+SLOT_WORKERS = max(1, int(os.getenv("SLOT_JOB_WORKERS", "4")))
 
 
 def slot_restaurants(db_path=DB_PATH) -> list:
@@ -3147,12 +3212,14 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
     every gap, and someone already on whose shift ends as the gap begins
     (the lunch server who could stay) is suggested before anyone off."""
     import intraday, issues, ops
+    import pos as _pos_live
     from time_utils import restaurant_now, business_date
-    opened = 0
-    st = {"attempted": 0, "failed": 0}
-    for r in _slot_iter("coverage_check", restaurants, db_path, state=st):
+    st = {"attempted": 0, "failed": 0, "opened": 0}
+    lock = threading.Lock()
+
+    def _one(r):
         if not getattr(r, "module_labor", 0):
-            continue
+            return
         local = restaurant_now(r, naive=True)
         # Every pass, open or not: a gap whose shift has ended stops asking
         # for a cover, and an earlier day's issue closes as a miss (it stayed
@@ -3162,12 +3229,24 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
         except Exception as ce:
             ops.capture(ce, job="coverage_check", context=f"restaurant_id={r.id} ended shifts")
         if not _open_now(r, local):
-            continue
+            return
         if "manager" not in issues.get_routing(r.id, db_path):
-            continue
-        st["attempted"] += 1
+            return
+        with lock:
+            st["attempted"] += 1
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
+            if gaps.get("missing"):
+                # The clock-ins came from the shared live read (up to
+                # pos_io.LIVE_SNAPSHOT_SECONDS old, scale audit A3-02):
+                # before anyone is told a person has not clocked in, read
+                # them afresh — they may have punched in since — unless the
+                # read was made this minute.
+                import pos_io as _pio_cov
+                snap = _pio_cov.snapshot_get(r.id, "clock_ins", str(gaps.get("business_date") or "")[:10])
+                if not snap or snap["age"] > 60:
+                    with _pos_live.fresh_live_reads():
+                        gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
             # The service the clock is in — the date coverage_gaps read the
             # published week and the clock-ins for (E-4).
             bday = str(gaps.get("business_date") or business_date(r, local).isoformat())[:10]
@@ -3203,11 +3282,17 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     continue
                 due.append(dict(m, hold=staff_comms.hold_sentence(hold)))
             if due:
-                opened += _raise_coverage(r, bday, due, gaps, local, db_path)
+                n = _raise_coverage(r, bday, due, gaps, local, db_path)
+                with lock:
+                    st["opened"] += n
         except Exception as e:
-            st["failed"] += 1
+            with lock:
+                st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
-    return _slot_counts(st, opened=opened)
+
+    # On SLOT_WORKERS, not a serial walk (INF-14 / A3-03).
+    st["hit_bound"] = _slot_sweep("coverage_check", restaurants, _one, db_path, workers=SLOT_WORKERS)
+    return _slot_counts(st, opened=st["opened"])
 
 
 # Covers suggested for each gap on a coverage issue (the issue page offers

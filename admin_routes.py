@@ -6439,6 +6439,17 @@ def admin_api_queues(current_user):
     return jsonify(**_admin_ops_c.queues())
 
 
+@admin_bp.route("/admin/api/pos-traffic")
+@admin_required
+def admin_api_pos_traffic(current_user):
+    """RPOWER requests over the last ?hours= (24): by endpoint, by store and
+    by hour, from the request ledger, with the breaker's state (scale audit
+    10/19/26 A3-19). Read-only."""
+    import pos_io
+    hours = request.args.get("hours", 24, type=int)
+    return jsonify(ok=True, **pos_io.summary(hours=hours if hours in (1, 6, 24, 72, 168) else 24))
+
+
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):

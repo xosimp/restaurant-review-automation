@@ -226,6 +226,9 @@ def test_a_bounded_walk_stops_reports_and_resumes(db, monkeypatch):
     import loss_detection
     ids = [_rid(db, f"Loss {i}") for i in range(4)]
     monkeypatch.setattr(strategy_jobs, "LOSS_SYNC_MAX_SECONDS", 0)
+    # One worker: since 10/19/26 the walk runs on a pool (scale audit INF-5),
+    # and with one worker the bound stops it after the first restaurant.
+    monkeypatch.setattr(strategy_jobs, "LOSS_SYNC_WORKERS", 1)
     seen = []
     monkeypatch.setattr(loss_detection, "sync", lambda rid, **k: seen.append(rid) or {"ok": False})
     out = strategy_jobs.run_loss_sync(db_path=db)
@@ -242,10 +245,11 @@ def test_bounded_each_reports_its_bound(db, monkeypatch):
 
 
 def test_the_diagnoses_and_token_refresh_are_bounded():
-    for fn in (scheduler.run_review_diagnoses, scheduler.run_food_cost_diagnoses, scheduler.refresh_expiring_tokens):
+    for fn in (scheduler.run_review_diagnoses, scheduler.run_food_cost_diagnoses, scheduler.refresh_expiring_tokens,
+               strategy_jobs.run_loss_sync):
         assert "resumable_sweep(" in inspect.getsource(fn), fn.__name__
     for fn in (strategy_jobs.run_weekly_plan, strategy_jobs.run_recipe_drafts, strategy_jobs.run_issue_scan,
-               strategy_jobs.run_trusted_orders, strategy_jobs.run_loss_sync):
+               strategy_jobs.run_trusted_orders):
         assert "_BoundedWalk(" in inspect.getsource(fn), fn.__name__
 
 
@@ -353,6 +357,11 @@ def test_the_sync_buttons_no_longer_call_sync_to_db_directly():
         # module's shared do_sync body (web + mobile twins); read through it.
         if "do_sync(" in src:
             src += inspect.getsource(inspect.getmodule(fn).do_sync)
+        # Since 10/19/26 (scale audit A3-09) the owner's Sync now goes through
+        # pos.sync_now — the one cooldown — which starts the same admin task.
+        if "pos.sync_now(" in src:
+            import pos
+            src += inspect.getsource(pos.sync_now)
         assert "start_manual_pos_sync" in src and "sync_to_db(" not in src, fn.__name__
 
 

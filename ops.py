@@ -2426,6 +2426,27 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
         problems.append(f"Customer requests are slow: p95 within {rq['p95_le_ms']} ms over the last "
                         f"{rq['latency_minutes']} minutes (SLO {rq['p95_slo_ms']} ms, {rq['latency_requests']} "
                         "requests) — the slow routes are in the console's request rollups.")
+    # The fleet's POS (scale audit 10/19/26 OPS-6): a provider failing for
+    # more than pos_health.FLEET_OUTAGE_SHARE of the connected stores is one
+    # outage and one page (a warning: once a day for the set), never one
+    # console issue per store; a breaker held open past its page threshold
+    # pages once per opening (pos_io.page_if_long_open).
+    try:
+        import pos_health as _ph_sla
+        # Read only when paging: /health's read-only call stays lean.
+        fleet = _ph_sla.fleet_state() if send else {}
+        out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
+                            for p, f in fleet.items()}
+        for prov, f in fleet.items():
+            if f["outage"]:
+                warn_kinds.add(f"pos_fleet_{prov}")
+                problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
+                                f"stores ({int(round(f['share'] * 100))}%) — one outage, not a store's own problem.")
+        if send:
+            import pos_io as _pio_sla
+            _pio_sla.page_if_long_open("rpower")
+    except Exception as e:
+        log.warning(f"the fleet POS reading unavailable to the platform check: {e}")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -3144,6 +3165,10 @@ _RETENTION_DAYS = {
     # about a tenth of the lines' rows, kept at least as long as the archive
     # so it outlives a shortened line window.
     "pos_item_daily":     int(os.getenv("RETAIN_POS_ITEM_DAILY_DAYS", os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095"))),
+    # The POS request ledger (pos_io, scale audit 10/19/26 A3-19): hourly
+    # counts per endpoint and store; the console reads a day, a quarter
+    # keeps the trend RPOWER's limits will be argued from.
+    "pos_request_ledger": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3332,6 +3357,7 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
+    "pos_request_ledger": "hour",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
@@ -3461,6 +3487,8 @@ _RETENTION_FLOOR_DAYS = {
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     "pos_payments": 400, "pos_payouts": 400,
+    # The console reads a day of the request ledger (pos_io.summary).
+    "pos_request_ledger": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
     "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).

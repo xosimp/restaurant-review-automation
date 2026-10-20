@@ -274,7 +274,7 @@ def test_re_saving_the_same_rpower_token_keeps_its_binding(db_path, admin_client
     update_restaurant(rid, {"rpower_token": "tok", "rpower_cg": 1280, "rpower_store_mid": "1123",
                             "rpower_last_synced": "2026-09-28T05:00:00"})
     monkeypatch.setattr(rpower, "test_token", lambda token: {"ok": True, "stores": [dict(_STORE)]})
-    monkeypatch.setattr(rpower, "bootstrap", lambda rid_, store_mid=None: {"ok": True, "store": dict(_STORE)})
+    monkeypatch.setattr(rpower, "bootstrap", lambda rid_, store_mid=None, **k: {"ok": True, "store": dict(_STORE)})
     r = _post(admin_client, f"/admin/rpower/save/{rid}", {"token": "tok"})
     assert r.get_json()["ok"] is True
     row = get_restaurant(rid)

@@ -1,5 +1,5 @@
 """The ticket-level POS archive (RPower endpoint audit, 9/29/26, Critical #2)."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -86,9 +86,15 @@ def test_a_night_stores_yesterday_restated_days_and_a_week_of_backfill(db_path, 
     assert first["backfill_left"] == pos_archive.BACKFILL_DAYS - 1 - pos_archive.BACKFILL_DAYS_PER_NIGHT
     fake.calls.clear()
     fake.changed = {"2026-09-25", "2026-09-30"}                 # a re-post of an archived day; today is not closed
-    second = pos_archive.run_for(rid, today=date(2026, 10, 1), now_utc=now)
+    # The next night's look (scale audit 10/19/26: a restated day is
+    # re-stored when it was stored before the change read looked — so the
+    # look is after the first night's writes, and a fresh read, not the
+    # shared one the first night kept).
+    pos_archive._change_memo.clear()
+    later = (datetime.now(timezone.utc) + timedelta(minutes=10)).replace(microsecond=0)
+    second = pos_archive.run_for(rid, today=date(2026, 10, 1), now_utc=later)
     assert fake.calls[0] == "2026-09-30" and "2026-09-25" in fake.calls
-    assert second["ok"] and pos_archive._changes_checked_to(rid, "rpower", models.DB_PATH) == now
+    assert second["ok"] and pos_archive._changes_checked_to(rid, "rpower", models.DB_PATH) == later
 
 
 def test_a_restaurant_whose_pos_cannot_archive_is_skipped(db_path):

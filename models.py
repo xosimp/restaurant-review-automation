@@ -1833,6 +1833,17 @@ def ensure_columns(db_path: str = DB_PATH):
         # Which archive layout stored the day (pos_archive.ARCHIVE_VERSION): a
         # day stored before a table joined the archive is stored again.
         ("pos_archive_days", "version", "INTEGER NOT NULL DEFAULT 1"),
+        # Scale audit 10/19/26 (A3-06 / A3-08 / A3-11): when the day's punches
+        # were last read from the POS (the archive, or the nightly labor
+        # read's refresh) — a day read once it had settled is labor's source;
+        # the last change read shared by every process (its time, the moment
+        # it looked from, the dates it found); restated days a failed night
+        # still owes, so the change cursor advances anyway.
+        ("pos_archive_days", "punches_read_at", "TEXT"),
+        ("pos_archive_state", "change_read_at", "TEXT"),
+        ("pos_archive_state", "change_read_since", "TEXT"),
+        ("pos_archive_state", "change_read_dates", "TEXT"),
+        ("pos_archive_state", "restate_pending", "TEXT"),
         # The raw fields every POS read derives from (archive layout 3,
         # 9/29/26): with them a closed day is read from the archive by the
         # very code that reads RPOWER, instead of being downloaded again by
@@ -4854,6 +4865,11 @@ def init_db(db_path: str = DB_PATH):
     init_bar_mapping(db_path)
     from rpower import init_rate_limit
     init_rate_limit(db_path)
+    # The POS traffic controls (pos_io, scale audit 10/19/26 A3): the
+    # request ledger, the provider breakers, the catalogs per group and the
+    # live snapshot every intraday reader shares.
+    from pos_io import init_pos_io
+    init_pos_io(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
