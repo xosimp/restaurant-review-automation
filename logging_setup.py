@@ -209,4 +209,11 @@ def configure(level=None, fmt=None, stream=None, force=False):
     except (AttributeError, ValueError, OSError):
         pass
     _configured = True
+    # The same lines to an outside log service when LOG_DRAIN_URL is set
+    # (log_drain, scale audit 10/19/26 OPS-8); off, nothing changes.
+    try:
+        import log_drain
+        log_drain.install()
+    except Exception as e:
+        sys.stderr.write(f"log drain not installed: {e}\n")
     return handler

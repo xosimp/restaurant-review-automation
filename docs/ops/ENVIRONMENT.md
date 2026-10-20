@@ -25,6 +25,10 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
+| `LOG_DRAIN_URL` | `""` (off) | An https endpoint every process (web and queue worker) also ships its JSON log lines to, in batches off the request path (`log_drain`, scale audit 10/19/26 OPS-8): Better Stack, Axiom, Datadog's HTTP intake, anything taking a JSON array POST. Off, nothing changes; plain http is refused. | log_drain.py |
+| `LOG_DRAIN_TOKEN` | `""` | Sent as `Authorization: Bearer` to the drain. A secret. | log_drain.py |
+| `LOG_DRAIN_LEVEL` | `"INFO"` | The lowest level shipped to the drain. | log_drain.py |
+| `LOG_DRAIN_QUEUE_MAX`, `LOG_DRAIN_BATCH`, `LOG_DRAIN_FLUSH_SECONDS` | `5000`, `200`, `2` | The drain's bounded queue (oldest dropped and counted when full), lines per POST, seconds between sends. | log_drain.py |
 | `PORT` | `5000` | The port `hosted_dashboard.py` binds when run directly (default 5000; run locally as `PORT=5050`, which the iOS debug build expects). | hosted_dashboard.py |
 | `RUN_SCHEDULER_IN_WEB` | `"1"` | 1 (default): the web process runs the scheduler thread. `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. | hosted_dashboard.py |
 | `CAVNAR_SEASONS_DIR` | `event_intel/seasons` | Where the bundled season files load from. Unset in production; the test suite points it at its frozen copy, `tests/fixtures/seasons`, because the live files are refreshed daily (`.github/workflows/refresh-seasons.yml`). | event_intel/store.py |
