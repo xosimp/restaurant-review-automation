@@ -117,6 +117,21 @@ final class HomeViewModel {
         return true
     }
 
+    /// How long a load stands when Home merely appears again (scale audit
+    /// 10/19/26 FE-07): every appear in the tab bar re-ran the whole Home
+    /// fan-out — the summary, then the follow-through, the brief, last
+    /// night, the activity strip and the Bar — although nothing had moved.
+    static let appearFreshSeconds: TimeInterval = 120
+
+    /// Home appearing: a load only when this session has none yet or the
+    /// last one is older than appearFreshSeconds. A pull, a location switch,
+    /// a confirmed action and the return from the background still load.
+    func loadIfStale(now: Date = Date()) async {
+        adoptCurrentSession()
+        if let last = lastLoadedAt, now.timeIntervalSince(last) < Self.appearFreshSeconds { return }
+        await load()
+    }
+
     /// `fresh`: pull-to-refresh — the server rebuilds the brief rather than
     /// serving its 60-second copy (GET /mobile/api/home?fresh=1, parity #90).
     func load(fresh: Bool = false) async {
