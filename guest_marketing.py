@@ -894,6 +894,13 @@ JOIN_CONFIRM_HOURS = 48        # a Y later than this confirms nothing
 JOIN_PHONE_DAILY_LIMIT = 3     # form submissions for one number per 24h, all restaurants
 JOIN_IP_HOURLY_LIMIT = 20      # durable, beside the in-process per-IP limit on the route
 JOIN_RESEND_MINUTES = 10       # a double tap does not send a second confirmation text
+# Fleet and per-restaurant ceilings on join texts (scale audit 10/19/26,
+# SEC-05): every restaurant's join link is public (QR codes) and the per-IP
+# and per-phone limits do nothing against a botnet rotating both. Counted on
+# guest_optin_requests rows that sent (or tried to send) a text.
+JOIN_FLEET_HOURLY_DEFAULT = 300        # GUEST_JOIN_FLEET_HOURLY_CAP
+JOIN_RESTAURANT_DAILY_DEFAULT = 150    # GUEST_JOIN_RESTAURANT_DAILY_CAP
+JOIN_COUNTRY_ERROR = "Enter a US or Canadian mobile number. We can only text numbers there."
 QUESTION_HOURS = 24            # how long "which restaurant did you mean" stays open
 
 JOIN_DISCLOSURE_VERSION = "2026-09-28"
@@ -927,6 +934,13 @@ def confirmation_text(restaurant_name) -> str:
     return name[:room].rstrip() + _CONFIRM_TAIL
 
 
+def _join_cap(name, default) -> int:
+    try:
+        return max(0, int(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
 def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=None, db_path=DB_PATH) -> dict:
     """The public join form's submission: a PENDING opt-in and one
     confirmation text. Consent is set only when that phone replies Y within
@@ -946,6 +960,32 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
     {"ok": False, "status": 429|502, "error"}."""
     phone = _normalize_phone(phone)
     ip = (ip or "").strip() or None
+    import notify as _notify_cc
+    if not _notify_cc.sms_country_allowed(phone):
+        # Refused before anything is written: no unconsented row, no text.
+        return {"ok": False, "status": 400, "error": JOIN_COUNTRY_ERROR}
+    conn = get_conn(db_path)
+    try:
+        fleet = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE status IN ('pending','send_failed') "
+                             "AND requested_at >= datetime('now','-1 hour')").fetchone()[0]
+        mine = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE restaurant_id=? "
+                            "AND status IN ('pending','send_failed') AND requested_at >= datetime('now','-1 day')",
+                            (restaurant_id,)).fetchone()[0]
+    finally:
+        conn.close()
+    if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) or \
+            mine >= _join_cap("GUEST_JOIN_RESTAURANT_DAILY_CAP", JOIN_RESTAURANT_DAILY_DEFAULT):
+        scope = "fleet" if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) \
+            else f"restaurant {restaurant_id}"
+        try:
+            import ops as _ops_join
+            if _ops_join.claim_cooldown(f"guest_join_cap:{scope}", 60):
+                _ops_join.capture(RuntimeError(f"guest join texts hit the {scope} ceiling"), job="guest_join_cap",
+                                  context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            print(f"[guest_join] {scope} ceiling reached")
+        return {"ok": False, "status": 429, "error": "We can't send confirmation texts right now. "
+                                                     "Please try again later."}
     conn = get_conn(db_path)
     try:
         r = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
@@ -2073,6 +2113,26 @@ GUEST_CAMPAIGN_RESUME_HOURS = 24
 # handed over at once sat in Twilio's queue behind — and ahead of — every
 # other restaurant's review requests on the shared number (MB-13).
 GUEST_SMS_PER_SECOND_DEFAULT = 2.0
+# Fleet pacing and fair shares (scale audit 10/19/26, SEC-03). Every
+# restaurant's campaigns leave on ONE guest messaging service, whose carrier
+# throughput is the campaign's registered rate: 2/s per campaign times every
+# campaign draining at once overran it, and the excess sat in Twilio's queue
+# until it expired — review requests included. Now each restaurant's campaign
+# texts share one bucket at GUEST_SMS_PER_SECOND (across all its campaigns and
+# processes), and all campaign texts share one fleet bucket at
+# GUEST_SMS_FLEET_PER_SECOND (off at 0, the default, until it is set from the
+# campaign's registered MPS). Single texts — review requests, join
+# confirmations — never take from these: they are the priority lane, so set
+# the fleet rate below the registered rate to leave them room. A drain that
+# cannot get a slot within GUEST_SMS_SLOT_MAX_WAIT seconds stops and the
+# scheduler resumes it.
+GUEST_SMS_SLOT_MAX_WAIT = 30.0
+# A restaurant whose campaign texts drew more than GUEST_SMS_STOP_PAUSE_PCT
+# STOPs over 7 days (at least STOP_PAUSE_MIN_SENT texts) cannot start a new
+# campaign until the week clears: carriers filter the SHARED campaign on its
+# opt-out rate, so one tenant's list would cost every tenant's texts.
+STOP_PAUSE_PCT_DEFAULT = 3.0
+STOP_PAUSE_MIN_SENT = 200
 _OPEN = ("sending", "waiting")
 _WEEKDAY_TITLES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -2102,6 +2162,75 @@ def _submit_interval() -> float:
     except ValueError:
         rate = GUEST_SMS_PER_SECOND_DEFAULT
     return 1.0 / rate if rate > 0 else 0.0
+
+
+def _rate_env(name, default) -> float:
+    try:
+        return max(0.0, float(os.getenv(name) or default))
+    except ValueError:
+        return default
+
+
+def _take_campaign_slots(restaurant_id) -> bool:
+    """The restaurant's slot, then the fleet's, from the shared buckets
+    (SEC-03). False when one could not be had in GUEST_SMS_SLOT_MAX_WAIT
+    (the drain stops; the scheduler resumes it). True as well when the
+    buckets cannot be reached — the drain's own interval still paces it."""
+    import notify as _n
+    if not (_n.TWILIO_SID and _n.TWILIO_TOKEN):
+        return True
+    import rate_bucket
+    mine = _rate_env("GUEST_SMS_PER_SECOND", GUEST_SMS_PER_SECOND_DEFAULT)
+    fleet = _rate_env("GUEST_SMS_FLEET_PER_SECOND", 0.0)
+    for key, rate in ((f"guest_sms:r{int(restaurant_id)}", mine), ("guest_sms:fleet", fleet)):
+        if rate <= 0:
+            continue
+        w = rate_bucket.take(key, rate, burst=1.0)
+        waited = 0.0
+        while w is not None and w > 0:
+            if waited >= GUEST_SMS_SLOT_MAX_WAIT:
+                return False
+            import time as _t
+            _t.sleep(min(w, 1.0))
+            waited += min(w, 1.0)
+            w = rate_bucket.take(key, rate, burst=1.0)
+    return True
+
+
+def stop_rate_pause(restaurant_id, db_path=DB_PATH):
+    """The sentence saying why this restaurant cannot start a campaign —
+    its texts drew too many STOPs this week (SEC-03) — or None. A STOP is
+    counted against it when its campaign texted that number before the STOP
+    in the window. Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            sent = conn.execute("SELECT COUNT(*) FROM guest_campaign_queue WHERE restaurant_id=? AND status='sent' "
+                                "AND sent_at >= datetime('now','-7 days')", (int(restaurant_id),)).fetchone()[0]
+            if sent < STOP_PAUSE_MIN_SENT:
+                return None
+            stops = conn.execute(
+                "SELECT COUNT(DISTINCT e.phone) FROM guest_consent_events e JOIN guest_campaign_queue q "
+                "ON q.phone=e.phone AND q.restaurant_id=? AND q.status='sent' "
+                "WHERE e.restaurant_id=0 AND e.event='opted_out' AND e.source='sms_reply' "
+                "AND e.created_at >= datetime('now','-7 days') AND q.sent_at >= datetime('now','-10 days') "
+                "AND q.sent_at <= e.created_at", (int(restaurant_id),)).fetchone()[0]
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if 100.0 * stops / sent <= _rate_env("GUEST_SMS_STOP_PAUSE_PCT", STOP_PAUSE_PCT_DEFAULT):
+        return None
+    try:
+        import ops
+        if ops.claim_cooldown(f"guest_sms_stop_pause:{int(restaurant_id)}", 24 * 60):
+            ops.capture(RuntimeError(f"guest texts paused: {stops} STOPs on {sent} campaign texts in 7 days"),
+                        job="guest_sms_breaker", context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        pass
+    return (f"New text campaigns are paused for now: {stops} of the last {sent} guests texted replied STOP this "
+            "week, and carriers filter everyone's texts on that rate. Text only guests who asked to hear from you; "
+            "it resumes on its own as the week clears.")
 
 
 def _content_hash(segment, message) -> str:
@@ -2304,6 +2433,19 @@ def _drain(campaign_id, max_seconds=None, limit=None, db_path=DB_PATH) -> dict:
             wait = interval - (_time.monotonic() - last_submit)
             if wait > 0:
                 _time.sleep(wait)
+        if not _take_campaign_slots(rid):
+            # No slot in the shared buckets: this guest goes back to pending
+            # and the scheduler's next pass resumes the campaign (SEC-03).
+            _release_guest(row["contact_id"], prior, db_path)
+            conn = get_conn(db_path)
+            try:
+                conn.execute("UPDATE guest_campaign_queue SET status='pending', claimed_at=NULL "
+                             "WHERE id=? AND status='sending'", (row["id"],))
+                conn.commit()
+            finally:
+                conn.close()
+            done -= 1
+            break
         last_submit = _time.monotonic()
         err = None
         try:
@@ -2497,6 +2639,9 @@ def prepare_campaign(restaurant_id, message, segment, with_link=False, db_path=D
     seg = known_segment(segment)
     if seg is None:
         return None, _refusal("unknown_segment", "That audience isn't one Cavnar AI knows. Pick one of the audiences shown.")
+    paused = stop_rate_pause(restaurant_id, db_path=db_path)
+    if paused:
+        return seg, _refusal("stop_rate", paused)
     too = check_campaign_text(restaurant_id, message, with_link=with_link, db_path=db_path)
     if too:
         return seg, too

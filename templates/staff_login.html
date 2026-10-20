@@ -522,20 +522,23 @@
     $('signin-root').style.display = 'none';
     $('signup-root').style.display = 'block';
     /* Arriving through a restaurant's own link means we already know where
-       they work, so that step is filled in and skipped later. */
+       they work, so that step is filled in and skipped. Otherwise the
+       restaurant code comes FIRST: the verification text is counted against
+       that restaurant's own hourly share (scale audit 10/19/26, SEC-04). */
     suJoin = JOIN_CODE;
-    suShow(0);
+    if (suJoin) { suShow(0); } else { suShow(2); $('su-join-in').focus(); }
   };
 
   window.signupBack = function(){
-    if (suStep === 0) {
+    /* The first screen is the restaurant code (2), or the phone (0) when the
+       link named the restaurant; back from it leaves sign-up. */
+    if (suStep === 2 || (suStep === 0 && JOIN_CODE)) {
       $('signup-root').style.display = 'none';
       $('signin-root').style.display = 'block';
       return;
     }
-    /* Step 2 is skipped on the way forward when the link named the
-       restaurant, so skip it on the way back too. */
-    if (suStep === 3 && JOIN_CODE) { suShow(1); return; }
+    if (suStep === 0) { suShow(2); return; }
+    if (suStep === 3) { suShow(1); return; }
     suShow(suStep - 1);
   };
 
@@ -548,7 +551,7 @@
     $('su-err').textContent = "";
     var label = btn.textContent;
     btn.textContent = 'Sending…';
-    suPost('/staff/api/signup/start', {phone: val, optin: $('su-optin').checked}, function(d){
+    suPost('/staff/api/signup/start', {phone: val, optin: $('su-optin').checked, join_code: suJoin}, function(d){
       suBusy = false;
       btn.textContent = label;
       if (!d.ok) { suFail(d.error || 'Could not send a code.'); return; }
@@ -614,7 +617,7 @@
         btn.textContent = label;
         if (!d.ok) { suFail(d.error || 'We don’t recognise that code.'); return; }
         suJoin = code;
-        suLoadNames();
+        if (suToken) { suLoadNames(); } else { suShow(0); $('su-phone-in').focus(); }
       }).catch(function(){ suFail('Could not reach the server. Try again.'); });
   };
 

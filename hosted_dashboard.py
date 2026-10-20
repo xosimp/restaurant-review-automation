@@ -1403,6 +1403,14 @@ def _post_boot():
         res = _cred_boot.encrypt_existing()
         if res.get("encrypted") or res.get("failed"):
             _boot_log.info("credentials encrypted at boot: %s", res)
+        # Webhook signing secrets sealed too, and a key rotation finished
+        # (CREDENTIAL_KEY_PREVIOUS) — scale audit 10/19/26, SEC-14.
+        sealed_hooks = _cred_boot.encrypt_webhook_secrets()
+        if sealed_hooks:
+            _boot_log.info("webhook secrets encrypted at boot: %s", sealed_hooks)
+        rot = _cred_boot.rotate_existing()
+        if rot.get("rotated") or rot.get("unreadable"):
+            _boot_log.warning("credential key rotation at boot: %s", rot)
     except Exception as e:
         _boot_log.exception("credential encryption pass failed: %s", e)
     # Now that this database is known good, say on the volume that it holds

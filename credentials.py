@@ -71,7 +71,29 @@ def key_state():
         return "invalid"
 
 
+def previous_keys() -> list:
+    """CREDENTIAL_KEY_PREVIOUS: the keys a rotation retires, comma-separated,
+    newest first (scale audit 10/19/26, SEC-14). They only DECRYPT; every
+    write uses CREDENTIAL_KEY, and the boot's rotate_existing() re-encrypts
+    what they sealed, after which they can be removed."""
+    raw = (os.getenv("CREDENTIAL_KEY_PREVIOUS") or "").strip()
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def _single(key):
+    f = _fernet_cache.get(key)
+    if f is None:
+        from cryptography.fernet import Fernet
+        f = Fernet(key.encode() if isinstance(key, str) else key)
+        _fernet_cache[key] = f
+    return f
+
+
 def _fernet():
+    """The current key's Fernet — or, while a rotation is under way, a
+    MultiFernet that encrypts with CREDENTIAL_KEY and decrypts with it or any
+    CREDENTIAL_KEY_PREVIOUS. Rotating used to mean every POS, Google and
+    Meta token decrypted to None (SEC-14)."""
     key = (os.getenv("CREDENTIAL_KEY") or "").strip()
     if not key:
         global _warned
@@ -80,11 +102,15 @@ def _fernet():
             print("WARNING: CREDENTIAL_KEY not set — client OAuth/POS credentials are stored unencrypted. "
                   "Generate one with Fernet.generate_key() and set it in Railway.")
         return None
-    f = _fernet_cache.get(key)
+    olds = [k for k in previous_keys() if k != key]
+    if not olds:
+        return _single(key)
+    cache_key = (key, tuple(olds))
+    f = _fernet_cache.get(cache_key)
     if f is None:
-        from cryptography.fernet import Fernet
-        f = Fernet(key.encode() if isinstance(key, str) else key)
-        _fernet_cache[key] = f
+        from cryptography.fernet import MultiFernet
+        f = MultiFernet([_single(key)] + [_single(k) for k in olds])
+        _fernet_cache[cache_key] = f
     return f
 
 
@@ -202,6 +228,94 @@ def encrypt_existing(db_path=None) -> dict:
     finally:
         conn.close()
     return out
+
+
+# ── key rotation (scale audit 10/19/26, SEC-14) ─────────────────────────────
+# Every column sealed with this module's PREFIX: the restaurants credentials,
+# an internal login's authenticator secrets, a sales-audit share link and a
+# customer webhook's signing secret.
+SEALED_COLUMNS = tuple(("restaurants", f) for f in FIELDS) + (
+    ("user_totp", "secret"), ("user_totp", "pending_secret"),
+    ("sales_audit_shares", "token_enc"), ("webhooks", "secret"))
+
+
+def _table_columns(conn, table):
+    try:
+        return {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+    except Exception:
+        return set()
+
+
+def rotate_existing(db_path=None) -> dict:
+    """Re-encrypt under CREDENTIAL_KEY every sealed value that only a
+    CREDENTIAL_KEY_PREVIOUS key opens. Run at boot while one is set;
+    idempotent, compare-and-set per value (a save racing it wins), never
+    writes a value it could not read back. Returns {rotated, current,
+    unreadable, key}: `unreadable` > 0 means a value no configured key
+    opens — keep the old key until it is 0."""
+    out = {"rotated": 0, "current": 0, "unreadable": 0, "key": key_state()}
+    if out["key"] != "ok" or not previous_keys():
+        return out
+    key = (os.getenv("CREDENTIAL_KEY") or "").strip()
+    current, every = _single(key), _fernet()
+    from models import get_conn, DB_PATH, _invalidate_request_cache
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        for table, col in SEALED_COLUMNS:
+            if col not in _table_columns(conn, table):
+                continue
+            pk = "id" if "id" in _table_columns(conn, table) else "rowid"
+            rows = conn.execute(f"SELECT {pk} AS k, {col} AS v FROM {table} "
+                                f"WHERE substr({col}, 1, {len(PREFIX)}) = ?", (PREFIX,)).fetchall()
+            for r in rows:
+                sealed = r["v"]
+                body = sealed[len(PREFIX):].encode("ascii")
+                try:
+                    current.decrypt(body)
+                    out["current"] += 1
+                    continue
+                except Exception:
+                    pass
+                try:
+                    fresh = PREFIX + every.rotate(body).decode("ascii")
+                    if current.decrypt(fresh[len(PREFIX):].encode("ascii")) != every.decrypt(body):
+                        raise ValueError("round trip")
+                except Exception:
+                    out["unreadable"] += 1
+                    continue
+                cur = conn.execute(f"UPDATE {table} SET {col}=? WHERE {pk}=? AND {col}=?", (fresh, r["k"], sealed))
+                if cur.rowcount == 1:
+                    out["rotated"] += 1
+                    if table == "restaurants":
+                        _invalidate_request_cache(r["k"])
+            conn.commit()
+    finally:
+        conn.close()
+    return out
+
+
+def encrypt_webhook_secrets(db_path=None) -> int:
+    """Seal every customer webhook signing secret still stored plain
+    (SEC-14; webhooks.py writes them sealed since 10/19/26). Compare-and-
+    set, round-tripped, a no-op without a working key."""
+    if key_state() != "ok":
+        return 0
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    n = 0
+    try:
+        if "secret" not in _table_columns(conn, "webhooks"):
+            return 0
+        for r in conn.execute("SELECT id, secret FROM webhooks WHERE secret IS NOT NULL AND secret <> '' "
+                              f"AND substr(secret, 1, {len(PREFIX)}) <> ?", (PREFIX,)).fetchall():
+            enc = encrypt(r["secret"])
+            if enc.startswith(PREFIX) and decrypt(enc) == r["secret"]:
+                n += conn.execute("UPDATE webhooks SET secret=? WHERE id=? AND secret=?",
+                                  (enc, r["id"], r["secret"])).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return n
 
 
 # ── one registry of what counts as a credential column ──────────────────────

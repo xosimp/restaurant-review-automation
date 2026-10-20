@@ -73,17 +73,24 @@ def test_no_template_placeholder_leaks_in_any_onboarding_email(monkeypatch):
         assert not leaks, f"unrendered placeholders leaked: {leaks}"
 
 
-def test_send_team_invite_email_contains_temp_password(monkeypatch):
+def test_send_team_invite_email_carries_a_set_password_link_never_a_password(monkeypatch):
+    """Scale audit 10/19/26, ONB-8: the invite carries the welcome's one-use
+    link; a password in an inbox is a credential in an inbox."""
     _stub_resend(monkeypatch)
-    emails.send_team_invite_email("teammate@x.com", "Gia Mia", "gia_teammate", "S3cr3t-Temp-9",
-                                  inviter_name="Will")
+    emails.send_team_invite_email("teammate@x.com", "Gia Mia", "gia_teammate",
+                                  "https://dashboard.cavnar.ai/reset-password/tok123", inviter_name="Will")
     payload = FakeEmails.last
     assert payload["to"] == ["teammate@x.com"]
     html = payload["html"]
     assert "gia_teammate" in html
-    assert "S3cr3t-Temp-9" in html
+    assert "/reset-password/tok123" in html and "Choose your password" in html
+    assert "password:" not in html.lower() and "Temporary password" not in html
     assert "Gia Mia" in html
     assert "Will" in html
+    import inspect
+    import mobile_api
+    src = inspect.getsource(mobile_api.mobile_invite_team_member)
+    assert "create_set_password_token" in src and 'result["temp_password"]' not in src
 
 
 # ── The two report emails ──────────────────────────────────────────────────

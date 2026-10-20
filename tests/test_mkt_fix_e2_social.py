@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 import auth
 import client_api
@@ -102,7 +103,20 @@ def app():
     flask_app.register_blueprint(social_bp)
     flask_app.register_blueprint(client_bp)
     flask_app.register_blueprint(mobile_bp)
+    flask_app.test_client_class = _BrowserThatStartedIt
     return flask_app
+
+
+# The web popup's state is bound to the browser's nonce cookie (scale audit
+# 10/19/26, SEC-09): every test client here is the browser that pressed
+# Connect, holding TEST_NONCE.
+TEST_NONCE = "nonce-of-the-browser-that-started-it"
+
+
+class _BrowserThatStartedIt(FlaskClient):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.set_cookie(social_routes.IG_NONCE_COOKIE, TEST_NONCE, path="/instagram")
 
 
 CSRF = "csrf-test-token"
@@ -560,7 +574,8 @@ def test_weekly_reach_buckets_on_when_the_post_went_out(db_path):
 # ── MB-9 secrets stay out of URLs and logs ────────────────────────────────
 
 def _web_state(rid):
-    return "web~" + gmb.sign_mobile_state(rid)
+    import social_routes
+    return "web~" + gmb.sign_bound_state(rid, social_routes.nonce_bind(TEST_NONCE))
 
 
 def test_the_code_exchange_sends_the_app_secret_in_a_post_body(app, db_path, monkeypatch):
@@ -654,7 +669,8 @@ def test_the_web_tab_no_longer_polls_meta():
 
 def _expired_state(rid):
     import hmac, hashlib
-    payload = f"{rid}:{int(time.time()) - 60}"
+    import social_routes
+    payload = f"{rid}:{int(time.time()) - 60}:{social_routes.nonce_bind(TEST_NONCE)}"
     sig = hmac.new(gmb._state_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
     return f"web~{payload}:{sig}"
 

@@ -19,6 +19,7 @@ import sys
 
 import pytest
 from flask import Flask
+from flask.testing import FlaskClient
 
 import auth
 import models
@@ -74,7 +75,20 @@ def _db(db_path, monkeypatch):
 def app():
     flask_app = Flask(__name__)
     flask_app.register_blueprint(social_bp)
+    flask_app.test_client_class = _BrowserThatStartedIt
     return flask_app
+
+
+# The web popup's state is bound to the browser's nonce cookie (scale audit
+# 10/19/26, SEC-09): every test client here is the browser that pressed
+# Connect, holding TEST_NONCE.
+TEST_NONCE = "nonce-of-the-browser-that-started-it"
+
+
+class _BrowserThatStartedIt(FlaskClient):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.set_cookie(social_routes.IG_NONCE_COOKIE, TEST_NONCE, path="/instagram")
 
 
 def _restaurant(db_path, name="Meta Co", **fields):
@@ -140,7 +154,7 @@ def _is_long_exchange(kw):
 def _web_state(rid):
     """The state /instagram/connect mints for the web popup."""
     import gmb
-    return "web~" + gmb.sign_mobile_state(rid)
+    return "web~" + gmb.sign_bound_state(rid, social_routes.nonce_bind(TEST_NONCE))
 
 
 ATTACKER_OAUTH = [
@@ -177,25 +191,58 @@ def test_a_callback_with_a_bare_numeric_state_does_not_bind_a_page_to_that_resta
     assert after["ig_token"] == "victim-ig"
 
 
-def test_a_signed_mobile_state_connects_the_restaurant_that_asked(app, db_path, monkeypatch):
-    """A6 Meta #1 control: the signed path (gmb.sign_mobile_state) works."""
+def test_a_signed_mobile_state_connects_only_once_its_login_confirms(app, db_path, monkeypatch):
+    """A6 Meta #1 control, and SEC-09 (10/19/26): the app's signed state
+    names its login; the callback saves nothing and hands back a ticket that
+    only that login, at that restaurant, can confirm."""
     import gmb
+    from urllib.parse import parse_qs, urlparse
     rid = _restaurant(db_path)
     _graph(monkeypatch, ATTACKER_OAUTH)
-    resp = app.test_client().get(f"/instagram/callback?code=c&state={gmb.sign_mobile_state(rid)}")
-    assert resp.status_code == 302
-    assert "status=connected" in resp.headers["Location"]
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={gmb.sign_bound_state(rid, 'u41')}")
+    assert resp.status_code == 302 and "status=confirm" in resp.headers["Location"]
+    assert not _meta_fields(db_path, rid)["fb_page_id"], "nothing is saved before the login confirms"
+    ticket = parse_qs(urlparse(resp.headers["Location"]).query)["ticket"][0]
+    other_login = {"id": 77, "restaurant_id": rid}
+    assert social_routes.confirm_mobile_connection(other_login, ticket)[1] == 403
+    elsewhere = {"id": 41, "restaurant_id": rid + 1}
+    assert social_routes.confirm_mobile_connection(elsewhere, ticket)[1] == 403
+    out, status = social_routes.confirm_mobile_connection({"id": 41, "restaurant_id": rid}, ticket)
+    assert status == 200 and out["ok"]
     after = _meta_fields(db_path, rid)
     assert (after["ig_user_id"], after["fb_page_id"]) == ("attacker_ig", "attacker_page")
+
+
+def test_metas_url_handed_to_another_browser_connects_nothing(app, db_path, monkeypatch):
+    """SEC-09: restaurant A starts Connect and sends Meta's authorize URL to
+    B's owner; B's browser finishes the dialog without A's nonce cookie."""
+    from flask.testing import FlaskClient as _Plain
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, ATTACKER_OAUTH)
+    victim_browser = _Plain(app, app.response_class, use_cookies=True)
+    resp = victim_browser.get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    assert b"state_invalid" in resp.data and not _meta_fields(db_path, rid)["fb_page_id"]
+    restaurant_only = "web~" + __import__("gmb").sign_mobile_state(rid)
+    assert b"state_invalid" in app.test_client().get(f"/instagram/callback?code=c&state={restaurant_only}").data
+
+
+def test_a_page_another_restaurant_holds_is_refused(app, db_path, monkeypatch):
+    """SEC-09: one Page posts for one restaurant (pos_binding_conflict's rule)."""
+    _restaurant(db_path, name="Holder", fb_page_id="attacker_page", fb_page_token="t")
+    rid = _restaurant(db_path)
+    _graph(monkeypatch, ATTACKER_OAUTH)
+    resp = app.test_client().get(f"/instagram/callback?code=c&state={_web_state(rid)}")
+    assert b"page_taken" in resp.data and b"Holder" not in resp.data
+    assert not _meta_fields(db_path, rid)["fb_page_id"]
 
 
 def test_a_tampered_mobile_state_connects_nothing(app, db_path, monkeypatch):
     """A6 Meta #1: a forged signature is refused and says so to the app."""
     import gmb
     rid = _restaurant(db_path)
-    good = gmb.sign_mobile_state(rid)
-    rid_s, exp, sig = good.split(":")
-    forged = f"{rid_s}:{exp}:{'0' * len(sig)}"
+    good = gmb.sign_bound_state(rid, "u41")
+    rid_s, exp, bind, sig = good.split(":")
+    forged = f"{rid_s}:{exp}:{bind}:{'0' * len(sig)}"
     _graph(monkeypatch, ATTACKER_OAUTH)
     resp = app.test_client().get(f"/instagram/callback?code=c&state={forged}")
     assert "status=error" in resp.headers["Location"]

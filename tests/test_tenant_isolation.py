@@ -491,7 +491,7 @@ def test_a_view_as_session_is_marked_and_not_mistaken_for_the_clients_own(db_pat
 
     app = Flask(__name__)
     app.register_blueprint(admin_bp)
-    with app.test_request_context(f"/admin/view-as/{rid}", method="POST"):   # a GET only asks (SEC-34)
+    with app.test_request_context(f"/admin/view-as/{rid}", method="POST", data={"reason": "checking a ticket for them"}):   # a GET only asks (SEC-34)
         view_as_client(rid)
 
     conn = models.get_conn(db_path)

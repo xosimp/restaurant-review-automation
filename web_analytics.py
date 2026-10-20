@@ -45,6 +45,9 @@ SERVICE_ACCOUNT_ENV = "GA_SERVICE_ACCOUNT_JSON"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 GA4_URL = "https://analyticsdata.googleapis.com/v1beta/properties/{pid}:runReport"
 GSC_URL = "https://www.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
+# The property's web streams (Analytics Admin API, read with the same
+# analytics.readonly scope a Viewer has) — the GA4 ownership proof (SEC-01).
+GA4_STREAMS_URL = "https://analyticsadmin.googleapis.com/v1beta/properties/{pid}/dataStreams"
 SCOPES = ("https://www.googleapis.com/auth/analytics.readonly "
           "https://www.googleapis.com/auth/webmasters.readonly")
 HTTP_TIMEOUT = (5, 30)
@@ -217,10 +220,17 @@ def access_token():
 
 
 def _post(url, body, what):
+    return _call("POST", url, body, what)
+
+
+def _call(method, url, body, what):
     import requests
     try:
-        resp = requests.post(url, json=body, headers={"Authorization": f"Bearer {access_token()}"},
-                             timeout=HTTP_TIMEOUT)
+        headers = {"Authorization": f"Bearer {access_token()}"}
+        if method == "GET":
+            resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+        else:
+            resp = requests.post(url, json=body, headers=headers, timeout=HTTP_TIMEOUT)
     except WebAnalyticsError:
         raise
     except Exception as e:
@@ -455,6 +465,10 @@ def sync(restaurant_id, db_path=None, restaurant=None) -> dict:
     for source, key, reader in readers:
         if not key:
             continue
+        if not sim and not ensure_ownership(r, source, key, db_path=db_path):
+            out[source] = {"ok": False, "error": UNCONFIRMED_MESSAGE, "code": "unconfirmed"}
+            errors.append(UNCONFIRMED_MESSAGE)
+            continue
         start = end - timedelta(days=(RECENT_DAYS if _has_rows(restaurant_id, source, db_path) else BACKFILL_DAYS) - 1)
         try:
             values = reader(key, start, end)
@@ -466,7 +480,7 @@ def sync(restaurant_id, db_path=None, restaurant=None) -> dict:
             out[source] = {"ok": False, "error": e.message, "code": e.code}
             errors.append(e.message)
     out["ok"] = not errors
-    out["error"] = " ".join(errors) or None
+    out["error"] = " ".join(dict.fromkeys(errors)) or None
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         fields = {"web_analytics_error": out["error"]}
@@ -502,6 +516,119 @@ def verify(property_id=None, site_url=None) -> dict:
         except WebAnalyticsError as e:
             out["gsc"] = {"ok": False, "error": e.message, "code": e.code}
     return out
+
+
+# ── whose property it is (scale audit 10/19/26, SEC-01) ─────────────────────
+# One service account reads for every client, so "Cavnar AI can read it"
+# proves nothing about whose it is. A property is read for a restaurant only
+# once external_bindings holds it verified there: its own website must be
+# the restaurant's website, as the restaurant's admin-set Google listing
+# (google_place_id) or admin-set menu URL names it — never a field the owner
+# types. Otherwise it waits for an admin (Admin → the pending list).
+
+UNCONFIRMED_MESSAGE = ("Cavnar AI can't yet confirm this is your website's — it must match the website on your "
+                       "Google listing. We've been told and will confirm it, usually within a day.")
+TAKEN_MESSAGE = ("That {what} is already connected to another Cavnar AI account, and one website can feed only one "
+                 "restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
+
+
+def _host(url) -> str:
+    from urllib.parse import urlparse
+    text = str(url or "").strip().lower()
+    if not text:
+        return ""
+    if "://" not in text:
+        text = "https://" + text
+    host = (urlparse(text).hostname or "").strip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def host_matches(host, trusted) -> bool:
+    """`host` is the restaurant's: equal to a trusted website host, or the
+    domain above it (a Domain property "sc-domain:ejs.com" covers the site
+    at order.ejs.com). Never the other way: a site hosted at
+    ejs.wixsite.com does not make wixsite.com the restaurant's."""
+    h = str(host or "").strip(".").lower()
+    if not h or "." not in h:
+        return False
+    return any(t == h or t.endswith("." + h) for t in trusted if t)
+
+
+def trusted_hosts(restaurant) -> set:
+    """The website hosts this restaurant is known by, from fields only an
+    admin sets: the Google listing's website (google_place_id, one Places
+    Details read, cached for the day by places_request) and the menu URL."""
+    out = set()
+    h = _host(getattr(restaurant, "menu_url", None))
+    if h:
+        out.add(h)
+    place = getattr(restaurant, "google_place_id", None)
+    if place:
+        try:
+            import config
+            from ai_utils import places_request
+            resp = places_request("details", {"place_id": place, "fields": "website",
+                                              "key": config.google_places_key()},
+                                  restaurant_id=restaurant.id, action="web_analytics_ownership", timeout=8)
+            data = resp.json() or {}
+            if data.get("status") == "OK":
+                h = _host((data.get("result") or {}).get("website"))
+                if h:
+                    out.add(h)
+        except Exception as e:
+            log.info("web_analytics ownership: no listing website for %s: %s", getattr(restaurant, "id", "?"), e)
+    return out
+
+
+def ga4_stream_hosts(property_id) -> set:
+    """The hosts of the property's web streams (Analytics Admin API)."""
+    data = _call("GET", GA4_STREAMS_URL.format(pid=property_id), None, "Google Analytics")
+    out = set()
+    for s in data.get("dataStreams") or []:
+        h = _host(((s or {}).get("webStreamData") or {}).get("defaultUri"))
+        if h:
+            out.add(h)
+    return out
+
+
+def prove_ownership(restaurant, source, key) -> tuple:
+    """('verified', how) when `key` (a cleaned GA4 property id or Search
+    Console site) is provably this restaurant's website, else ('pending',
+    why). A Google refusal is 'pending' too — it is retried at the next
+    save, Check again or daily read."""
+    trusted = trusted_hosts(restaurant)
+    if not trusted:
+        return "pending", "no website on the Google listing or menu URL to match"
+    if source == "gsc":
+        import external_bindings as _eb
+        host = _eb.site_host(key)
+        if host_matches(host, trusted):
+            return "verified", "website_match"
+        return "pending", f"site {host} is not the listing's website"
+    try:
+        hosts = ga4_stream_hosts(key)
+    except WebAnalyticsError as e:
+        return "pending", f"web streams not readable ({e.code})"
+    if any(host_matches(h, trusted) for h in hosts):
+        return "verified", "stream_match"
+    return "pending", "no web stream on the listing's website"
+
+
+def ensure_ownership(restaurant, source, key, db_path=None) -> bool:
+    """Whether `key` may be read for this restaurant now: verified in
+    external_bindings (or a demo), proving it once more when it is not.
+    Never verifies an id another restaurant already holds verified."""
+    import external_bindings as _eb
+    rid = restaurant.id
+    if _eb.is_verified(source, key, rid, db_path=db_path):
+        return True
+    if _eb.conflict(source, key, rid, db_path=db_path):
+        return False
+    status, how = prove_ownership(restaurant, source, key)
+    if status == "verified":
+        return _eb.bind(source, key, rid, "verified", how=how, db_path=db_path) == "verified"
+    _eb.bind(source, key, rid, "pending", detail=how, db_path=db_path)
+    return False
 
 
 # ── what the numbers say ────────────────────────────────────────────────────

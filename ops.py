@@ -1489,8 +1489,10 @@ def read_async_job(job_id, restaurant_id=None):
             return None
         # Scoped where the caller is authenticated: a job belongs to the
         # restaurant that started it, whatever the id in the URL.
-        if restaurant_id is not None and row["restaurant_id"] is not None \
-                and int(row["restaurant_id"]) != int(restaurant_id):
+        # A row with no restaurant is nobody's to read through a scoped
+        # call (scale audit 10/19/26, SEC-18: it failed open).
+        if restaurant_id is not None and (row["restaurant_id"] is None
+                                          or int(row["restaurant_id"]) != int(restaurant_id)):
             conn.close()
             return None
         status = row["status"]

@@ -3986,10 +3986,14 @@ def mobile_admin_view_as(restaurant_id, current_user):
     refused = _internal_login_refusal(current_user)
     if refused:
         return refused
-    from admin_routes import _principal_login_id, _audit_admin_action
+    from admin_routes import _principal_login_id, _audit_admin_action, view_as_reason, tell_tenant_support_access
     user_id = _principal_login_id(restaurant_id)
     if not user_id:
         return jsonify(ok=False, error="This restaurant has no owner login to view as."), 404
+    # A reason the tenant sees (scale audit 10/19/26, SEC-12). App builds
+    # from before it send none: recorded as such, never refused, so an
+    # admin's phone still opens a view.
+    reason = view_as_reason((request.get_json(silent=True) or {}).get("reason")) or "opened from the app (no reason given)"
     from auth import create_view_as_session, get_session_user, VIEW_AS_HOURS, sql_utc
     from datetime import datetime as _dt_mva, timedelta as _td_mva, timezone as _tz_mva
     read_only = not current_user.get("is_admin")
@@ -4003,10 +4007,11 @@ def mobile_admin_view_as(restaurant_id, current_user):
     _audit_admin_action(current_user, "view_as_started", restaurant_id=restaurant_id,
                         target=f"user:{user_id}",
                         after={"target_user_id": user_id, "read_only": read_only, "hours": VIEW_AS_HOURS,
-                               "ends_at": sql_utc(ends), "surface": "ios"},
+                               "ends_at": sql_utc(ends), "surface": "ios", "reason": reason},
                         summary=(f"{current_user.get('username')} opened a "
                                  f"{'read-only ' if read_only else ''}view-as session from the app "
                                  f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"))
+    tell_tenant_support_access(restaurant_id, "opened", current_user, reason, read_only=read_only)
     rest = get_restaurant(restaurant_id)
     return jsonify(ok=True, token=token, user=_public_user(viewing), restaurant_id=restaurant_id,
                    restaurant_name=(rest.name if rest else None) or f"Restaurant {restaurant_id}",
@@ -4035,6 +4040,9 @@ def mobile_admin_stop_viewing():
                         after={"view_as": False, "surface": "ios"},
                         summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
                                 f"{viewing.get('username')} from the app")
+    from admin_routes import tell_tenant_support_access
+    tell_tenant_support_access(viewing.get("restaurant_id"), "closed",
+                               {"username": viewing.get("acting_admin") or "Cavnar AI support"})
     return jsonify(ok=True, stopped=True)
 
 
@@ -8363,17 +8371,26 @@ def mobile_invite_team_member(current_user):
         # name to greet someone by. owner_name is what's actually typed in
         # with real capitalization; the login username is the last resort.
         inviter = restaurant.owner_name or current_user.get("username")
+        # A one-use link to choose a password, never the password itself
+        # (scale audit 10/19/26, ONB-8 — the welcome's #12 rule): the
+        # generated password is never shown to anyone.
+        import config as _config
+        from models import create_set_password_token
+        link_token = create_set_password_token(result["user_id"])
+        if not link_token:
+            raise RuntimeError("no set-password link for the new login")
+        set_url = f"{_config.base_url()}/reset-password/{link_token}"
         # Logged by deliver() against the restaurant with its real outcome
         # (#119); this wrote its own 'sent' row whatever happened.
-        res = send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
+        res = send_team_invite_email(email, restaurant.name, result["username"], set_url,
                                      inviter_name=inviter, restaurant_id=current_user["restaurant_id"])
         invite_sent = bool(getattr(res, "ok", False))
         if not invite_sent:
             invite_error = ("That address can't receive our email (it bounced or complained)."
                             if getattr(res, "reason", None) == "suppressed"
-                            else "The invite email didn't go out — share their sign-in yourself or try again.")
+                            else "The invite email didn't go out. Try again, or they can use Forgot password with this email.")
     except Exception:
-        invite_error = "The invite email didn't go out — share their sign-in yourself or try again."
+        invite_error = "The invite email didn't go out. Try again, or they can use Forgot password with this email."
     _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user,
                        detail=f"{email}:{role}")
     return jsonify(ok=True, user_id=result["user_id"], username=result["username"], role=role,
@@ -9377,7 +9394,7 @@ def mobile_instagram_authorize(current_user):
     if denied:
         return denied
     import urllib.parse
-    from gmb import sign_mobile_state
+    from gmb import sign_bound_state
     from meta_api import oauth_dialog_url
     app_id = os.getenv("META_APP_ID", "")
     if not app_id:
@@ -9387,9 +9404,30 @@ def mobile_instagram_authorize(current_user):
     params = urllib.parse.urlencode({
         "client_id": app_id, "redirect_uri": redirect_uri, **login_params(),
         "auth_type": "rerequest", "response_type": "code",
-        "state": sign_mobile_state(current_user["restaurant_id"]),
+        # Bound to this login (scale audit 10/19/26, SEC-09): the callback
+        # saves nothing; the app confirms the chosen Page with this login's
+        # bearer token (/connections/instagram/confirm).
+        "state": sign_bound_state(current_user["restaurant_id"], f"u{int(current_user['id'])}"),
     })
     return jsonify(ok=True, url=oauth_dialog_url(params))
+
+
+@mobile_bp.route("/connections/instagram/confirm", methods=["POST"])
+@mobile_login_required
+def mobile_instagram_confirm(current_user):
+    """The second half of the app's Meta connect (SEC-09): the sealed ticket
+    the callback handed back, confirmed by the login that started it."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
+    import social_routes
+    payload, status = social_routes.confirm_mobile_connection(
+        current_user, (request.get_json(silent=True) or {}).get("ticket"))
+    if payload.get("ok"):
+        _log_account_event(current_user["restaurant_id"], "instagram_connected", current_user,
+                           detail=str(payload.get("page") or "")[:80])
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/connections/instagram", methods=["DELETE"])

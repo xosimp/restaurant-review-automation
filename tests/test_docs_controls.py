@@ -167,6 +167,9 @@ _STEP_UP_TODAY = {
     # saving a partner (with PARTNER_BILLING on it takes contracts off stores).
     "/admin/api/onboarding/provision/apply",
     "/admin/api/partners",
+    # Website analytics ownership (scale fix 10/19/26, SEC-01): approving a
+    # pending GA4 / Search Console binding by hand.
+    "/admin/api/external-bindings/approve",
 }
 
 # Routes that need the step-up for only PART of what they do, through

@@ -8,6 +8,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import threading
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
@@ -216,10 +217,14 @@ CREATE TABLE IF NOT EXISTS staff_pin_resets (
 -- per-phone and per-address limits do nothing against a script rotating
 -- both. Only the kind and the time are kept — never the number — and rows
 -- older than a day are deleted as new ones are written.
+-- restaurant_id (scale audit 10/19/26, SEC-04): the restaurant whose join
+-- code the send named — its own share of the hour — or NULL for a send that
+-- named none (the anonymous lane, bounded on its own).
 CREATE TABLE IF NOT EXISTS staff_otp_sends (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     kind            TEXT    NOT NULL,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    restaurant_id   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_staff_otp_sends_created
     ON staff_otp_sends(created_at);
@@ -530,6 +535,9 @@ def init_auth(db_path: str = DB_PATH):
         # unticking it. The signup text consent covers the one-time code
         # only; a schedule text needs this (people.reach, Friction #17).
         "ALTER TABLE memberships ADD COLUMN schedule_texts_at TEXT",
+        # The restaurant whose share of the hourly verification-text ceiling
+        # a send spent (scale audit 10/19/26, SEC-04); NULL = no join code.
+        "ALTER TABLE staff_otp_sends ADD COLUMN restaurant_id INTEGER",
         # A short, typeable version of the portal token. The 32-character URL
         # token is fine to tap in a link and miserable to read off a whiteboard
         # and type on a phone, which is exactly what signup asks people to do.
@@ -1389,6 +1397,18 @@ def _year_like(pin: str) -> bool:
     return len(pin) == 4 and pin[:2] in ("19", "20")
 
 
+def new_pin_min_length() -> int:
+    """The shortest NEW PIN (scale audit 10/19/26, SEC-15): STAFF_PIN_MIN_LENGTH,
+    4 by default and clamped to 4..8. A 6-digit floor makes a month of
+    guessing ~100x less likely to land; existing PINs keep working whatever
+    it is — only a set, reset or change is held to it."""
+    try:
+        n = int(os.environ.get("STAFF_PIN_MIN_LENGTH", "") or PIN_MIN_LENGTH)
+    except ValueError:
+        n = PIN_MIN_LENGTH
+    return min(PIN_MAX_LENGTH, max(PIN_MIN_LENGTH, n))
+
+
 def validate_pin(pin: str) -> str:
     """Normalize and refuse PINs that aren't worth the name.
 
@@ -1397,8 +1417,9 @@ def validate_pin(pin: str) -> str:
     pin = (pin or "").strip()
     if not pin.isdigit():
         raise PinError("A PIN must be digits only.")
-    if not (PIN_MIN_LENGTH <= len(pin) <= PIN_MAX_LENGTH):
-        raise PinError(f"A PIN must be {PIN_MIN_LENGTH}–{PIN_MAX_LENGTH} digits.")
+    shortest = new_pin_min_length()
+    if not (shortest <= len(pin) <= PIN_MAX_LENGTH):
+        raise PinError(f"A PIN must be {shortest}–{PIN_MAX_LENGTH} digits.")
     if len(set(pin)) == 1:
         raise PinError("That PIN is too easy to guess — don't repeat one digit.")
     # Straight runs up or down (1234, 4321, 9876).
@@ -1751,6 +1772,10 @@ def verify_membership_pin(membership_id: int, restaurant_id: int, pin: str,
     if not row:
         _burn_pin_cycles(pin)
         return generic
+    if counter == "signin" and pin_spray_blocked(restaurant_id, ip_address, db_path=db_path):
+        _burn_pin_cycles(pin)
+        return {"ok": False, "locked": True,
+                "error": "Too many wrong PINs from this device. Ask a manager, or try again in an hour."}
 
     reserved = _reserve_pin_attempt(membership_id, db_path=db_path, counter=counter)
     if not reserved["allowed"]:
@@ -1825,6 +1850,34 @@ PIN_SPRAY_FAILURES = 10
 PIN_SPRAY_PEOPLE = 3
 PIN_SPRAY_WINDOW_MINUTES = 15
 PIN_SPRAY_ALERT_EVERY_MINUTES = 60
+# A spray is refused, not only reported (scale audit 10/19/26, SEC-15): an
+# address with this many failures across at least this many people at one
+# restaurant in the last PIN_SPRAY_BLOCK_MINUTES gets no more PIN checks
+# there until the window clears — the same answer as a wrong PIN, no attempt
+# counted against anyone (so it cannot lock the staff out either). Set well
+# above the alert so a shift change gone wrong on the shared tablet is told
+# to the owner long before it is refused.
+PIN_SPRAY_BLOCK_FAILURES = 20
+PIN_SPRAY_BLOCK_PEOPLE = 4
+PIN_SPRAY_BLOCK_MINUTES = 60
+
+
+def pin_spray_blocked(restaurant_id: int, ip_address, db_path: str = DB_PATH) -> bool:
+    if not ip_address:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, COUNT(DISTINCT user_id) AS people FROM login_history "
+                "WHERE restaurant_id=? AND ip_address=? AND event='pin_failed' "
+                "AND created_at >= datetime('now', ?)",
+                (restaurant_id, ip_address, f"-{PIN_SPRAY_BLOCK_MINUTES} minutes")).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return False
+    return bool(row) and row["n"] >= PIN_SPRAY_BLOCK_FAILURES and row["people"] >= PIN_SPRAY_BLOCK_PEOPLE
 
 
 def mask_phone_last4(phone) -> str:
@@ -2196,7 +2249,35 @@ def login_needs_second_factor(user, restaurant) -> bool:
     their restaurant's switch."""
     if is_internal_login(user):
         return user_two_factor_enrolled(user)
-    return bool(restaurant and getattr(restaurant, "two_fa_enabled", 0))
+    if restaurant and getattr(restaurant, "two_fa_enabled", 0):
+        return True
+    return principal_two_factor_required(user, restaurant)
+
+
+def principal_two_factor_required(user, restaurant) -> bool:
+    """An account holder (owner, co-owner) signs in with a second factor
+    whatever the restaurant's switch says, once the rollout reaches them
+    (scale audit 10/19/26, SEC-11): they hold the POS credentials, the guest
+    list, payroll and the webhooks, and 2FA was opt-in per restaurant.
+    PRINCIPAL_2FA_REQUIRED_SINCE=YYYY-MM-DD covers restaurants created on or
+    after that day (new tenants now); PRINCIPAL_2FA_REQUIRED=1 covers every
+    one (the existing ones, after their notice). Both unset: off. Never for a
+    login with nowhere to send a code — that would lock it out."""
+    if not user or not restaurant or is_internal_login(user):
+        return False
+    every = (os.environ.get("PRINCIPAL_2FA_REQUIRED") or "").strip().lower() in ("1", "true", "yes")
+    since = (os.environ.get("PRINCIPAL_2FA_REQUIRED_SINCE") or "").strip()
+    if not every:
+        created = str(getattr(restaurant, "created_at", "") or "")[:10]
+        if not since or not created or created < since:
+            return False
+    try:
+        from permissions import is_principal
+        if not is_principal(user):
+            return False
+        return two_fa_destination(user, restaurant, method="email") is not None
+    except Exception:
+        return False
 
 
 def session_cookie_max_age(user) -> int:
@@ -3007,7 +3088,19 @@ def _sms_configured() -> bool:
 #     local backend's ngrok URL, while production's Twilio keys still sent it.
 #   * A log line carries the last four digits, never the number (SEC-14).
 
-STAFF_OTP_HOURLY_CAP_DEFAULT = 200
+STAFF_OTP_HOURLY_CAP_DEFAULT = 600
+# Fair shares inside the platform ceiling (scale audit 10/19/26, SEC-04). The
+# one fleet-wide 200 an hour was spendable by anyone with a few addresses and a
+# list of numbers — no join code needed — and that stopped sign-up and forgot
+# PIN for every restaurant. Now each restaurant has its own hourly share
+# (STAFF_OTP_RESTAURANT_HOURLY_CAP, counted by the join code the send named),
+# and a send that names no restaurant draws on a small anonymous lane of its
+# own (STAFF_OTP_ANON_HOURLY_CAP) that can never touch a restaurant's share.
+# STAFF_OTP_REQUIRE_JOIN_CODE=1 closes the anonymous lane outright (the web
+# page and the app ask for the restaurant code first since this round; old
+# app builds still send none, so it is off until they have aged out).
+STAFF_OTP_RESTAURANT_HOURLY_CAP_DEFAULT = 30
+STAFF_OTP_ANON_HOURLY_CAP_DEFAULT = 30
 
 
 def otp_country_codes() -> tuple:
@@ -3033,23 +3126,67 @@ def _otp_hourly_cap() -> int:
         return STAFF_OTP_HOURLY_CAP_DEFAULT
 
 
-def _otp_cap_reserve(conn, kind: str) -> bool:
+def _env_cap(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
+def otp_join_code_required() -> bool:
+    return (os.environ.get("STAFF_OTP_REQUIRE_JOIN_CODE") or "").strip().lower() in ("1", "true", "yes")
+
+
+def _otp_cap_reserve(conn, kind: str, restaurant_id: Optional[int] = None) -> bool:
     """Inside the caller's write transaction: take one send under the hourly
-    ceiling. False (nothing written) when the ceiling is reached."""
+    ceilings — the platform's, then the restaurant's own share (or, with no
+    restaurant, the anonymous lane's). False (nothing written) when any is
+    reached."""
     conn.execute("DELETE FROM staff_otp_sends WHERE created_at < datetime('now', '-1 day')")
     n = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE created_at >= datetime('now', '-1 hour')"
                      ).fetchone()[0]
-    if n >= _otp_hourly_cap():
-        try:
-            import ops as _ops_cap
-            if _ops_cap.claim_cooldown("staff_otp_cap", 60):
-                _ops_cap.capture(RuntimeError(f"staff verification texts hit the hourly cap ({n})"),
-                                 job="staff_otp_cap", context=f"kind={kind}")
-        except Exception:
-            print(f"[staff_otp] hourly cap reached ({n}); {kind} refused")
+    scope, refused = "platform", n >= _otp_hourly_cap()
+    if not refused and restaurant_id:
+        mine = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE restaurant_id=? "
+                            "AND created_at >= datetime('now', '-1 hour')", (int(restaurant_id),)).fetchone()[0]
+        scope = f"restaurant {int(restaurant_id)}"
+        refused = mine >= _env_cap("STAFF_OTP_RESTAURANT_HOURLY_CAP", STAFF_OTP_RESTAURANT_HOURLY_CAP_DEFAULT)
+    elif not refused:
+        anon = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE restaurant_id IS NULL "
+                            "AND created_at >= datetime('now', '-1 hour')").fetchone()[0]
+        scope = "anonymous"
+        cap = 0 if otp_join_code_required() else _env_cap("STAFF_OTP_ANON_HOURLY_CAP",
+                                                          STAFF_OTP_ANON_HOURLY_CAP_DEFAULT)
+        refused = anon >= cap
+    if refused:
+        # Reported by _report_otp_cap AFTER the caller's transaction ends:
+        # ops.claim_cooldown and ops.capture write on their own connection,
+        # which waited on this transaction's write lock (scale fix 10/19/26).
+        _otp_cap_local.hit = (scope, n, kind)
         return False
-    conn.execute("INSERT INTO staff_otp_sends (kind) VALUES (?)", (kind,))
+    conn.execute("INSERT INTO staff_otp_sends (kind, restaurant_id) VALUES (?, ?)",
+                 (kind, int(restaurant_id) if restaurant_id else None))
     return True
+
+
+_otp_cap_local = threading.local()
+
+
+def _report_otp_cap():
+    """Report a refusal _otp_cap_reserve noted, once an hour per scope.
+    Called by the sender once its write transaction is over."""
+    hit = getattr(_otp_cap_local, "hit", None)
+    _otp_cap_local.hit = None
+    if not hit:
+        return
+    scope, n, kind = hit
+    try:
+        import ops as _ops_cap
+        if _ops_cap.claim_cooldown(f"staff_otp_cap:{scope}", 60):
+            _ops_cap.capture(RuntimeError(f"staff verification texts hit the {scope} hourly cap ({n} in the hour)"),
+                             job="staff_otp_cap", context=f"kind={kind}")
+    except Exception:
+        print(f"[staff_otp] {scope} hourly cap reached ({n}); {kind} refused")
 
 
 OTP_CAP_MESSAGE = "We can't send codes right now. Try again in a little while."
@@ -3091,7 +3228,8 @@ def _send_otp_text(phone: str, code: str, kind: str) -> dict:
     return out
 
 
-def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) -> dict:
+def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH,
+                       join_code: Optional[str] = None) -> dict:
     """Send a verification code to a phone. {ok, sms_sent[, dev_code]} or
     raises SignupError. The gates above apply (country, hourly ceiling, the
     explicit dev-code flag).
@@ -3112,6 +3250,15 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) 
         raise SignupError("Check the box to consent to the text before we can send it.")
     if not otp_country_allowed(phone):
         raise SignupError("Enter a US mobile number — we can only text codes to US numbers.")
+    # The restaurant the code is spent against (SEC-04): its join code, when
+    # the person gave it — every client asks it first since 10/19/26.
+    rid = None
+    if str(join_code or "").strip():
+        rid = restaurant_for_join_code(join_code, db_path=db_path)
+        if not rid:
+            raise SignupError("We don't recognise that restaurant code. Check with your manager.")
+    elif otp_join_code_required():
+        raise SignupError("Enter your restaurant code first.")
 
     code = f"{secrets.randbelow(1000000):06d}"
     code_hash = generate_password_hash(code)
@@ -3130,7 +3277,7 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) 
                 (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()
             if recent:
                 raise SignupError("We just texted you — give it a moment.")
-        if not _otp_cap_reserve(conn, "signup"):
+        if not _otp_cap_reserve(conn, "signup", restaurant_id=rid):
             raise SignupError(OTP_CAP_MESSAGE)
         if row:
             conn.execute(
@@ -3145,6 +3292,7 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH) 
         raise
     finally:
         conn.close()
+        _report_otp_cap()
 
     out = {"ok": True}
     out.update(_send_otp_text(phone, code, "signup"))
@@ -3546,7 +3694,7 @@ def start_pin_reset(restaurant_id: int, phone: str, db_path: str = DB_PATH) -> d
                 (phone, f"-{SIGNUP_RESEND_COOLDOWN_SECONDS} seconds")).fetchone()):
             conn.rollback()
             return out          # silently: the same answer as a number with no account
-        if not _otp_cap_reserve(conn, "pin_reset"):
+        if not _otp_cap_reserve(conn, "pin_reset", restaurant_id=restaurant_id):
             conn.rollback()
             return out
         if row:
@@ -3563,6 +3711,7 @@ def start_pin_reset(restaurant_id: int, phone: str, db_path: str = DB_PATH) -> d
         raise
     finally:
         conn.close()
+        _report_otp_cap()
     sent = _send_otp_text(phone, code, "pin_reset")
     if "dev_code" in sent:
         out["dev_code"] = sent["dev_code"]
@@ -4940,7 +5089,8 @@ def set_morning_brief_pref(restaurant_id, user_id, enabled, db_path: str = DB_PA
         if u and not on_team:
             from permissions import normalize_role as _nr
             # The same logins morning_brief.recipients adds at a sibling.
-            on_team = _nr(u["role"]) == "owner" and _still_in_group(conn, u["restaurant_id"], restaurant_id)
+            on_team = _nr(u["role"]) == "owner" and _still_in_group(conn, u["restaurant_id"], restaurant_id,
+                                                                       db_path=db_path)
         if not on_team:
             raise TeamAccessError("that login isn't on this restaurant's team")
         from permissions import CONSOLE_ROLES, normalize_role
@@ -4990,7 +5140,7 @@ def _note_session_touch_failure(e):
         pass
 
 
-def _still_in_group(conn, base_id, active_id) -> bool:
+def _still_in_group(conn, base_id, active_id, db_path: str = DB_PATH) -> bool:
     """Whether `active_id` is still in the location group of `base_id`, by
     the same rule get_location_group applies: the same organization, or the
     same group name under the same owner email."""
@@ -5003,12 +5153,20 @@ def _still_in_group(conn, base_id, active_id) -> bool:
     b, a = rows.get(base_id), rows.get(active_id)
     if not a or not b or not (b["location_group"] or "").strip():
         return False
-    if b["organization_id"] and a["organization_id"] and a["organization_id"] != b["organization_id"]:
+    # ONE rule for "in my group" (scale audit 10/19/26, SEC-13): the switch
+    # validates with models.get_location_group and this revalidation used a
+    # stricter one of its own (name AND owner email even inside one
+    # organization), so a move the switcher allowed was silently undone on
+    # the next request. Both now ask get_location_group. A location an admin
+    # moves to another owner changes its (group, owner) pair, and
+    # update_restaurant re-points its organization to match
+    # (models._sync_restaurant_organization), so it leaves the group here too.
+    try:
+        import models as _m_grp
+        group = _m_grp.get_location_group(b["location_group"], db_path=db_path, owner_email=b["owner_email"])
+    except Exception:
         return False
-    # The name and owner must still agree even inside one organization: an
-    # admin moving a location to another owner edits these two fields.
-    return ((a["location_group"] or "").strip() == (b["location_group"] or "").strip()
-            and (a["owner_email"] or "").strip().lower() == (b["owner_email"] or "").strip().lower())
+    return any(int(r["id"]) == int(active_id) for r in group)
 
 
 def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = False) -> Optional[dict]:
@@ -5139,7 +5297,8 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     # An active membership at the location is itself authorization there.
     if owner_switched and user["active_restaurant_id"] != user.get("restaurant_id") \
             and not (joined and row["_m_id"] is not None) \
-            and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"]):
+            and not _still_in_group(conn, user.get("restaurant_id"), user["active_restaurant_id"],
+                                    db_path=db_path):
         try:
             conn.execute("UPDATE sessions SET active_restaurant_id=NULL WHERE token=?", (hash_session_token(token),))
             conn.commit()
@@ -6008,6 +6167,12 @@ def login_required(f):
             if state != "ok":
                 return _second_factor_refusal(state)
         _bind_log_context(user)
+        # A fair share of the four request threads per login and restaurant
+        # (scale audit 10/19/26, SEC-07; request_limits).
+        import request_limits as _rl
+        limited = _rl.session_refusal(user)
+        if limited is not None:
+            return limited
         if _console_denied(user):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_cd
@@ -6289,6 +6454,10 @@ def mobile_login_required(f):
             if state != "ok":
                 return _second_factor_refusal(state)
         _bind_log_context(user)
+        import request_limits as _rl
+        limited = _rl.session_refusal(user)
+        if limited is not None:
+            return limited
         # Same console gate as the web decorator — the iOS app ships both the
         # owner dashboard and the staff portal against this one blueprint, so
         # a PIN session must be refused here too or the whole owner API is

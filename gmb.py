@@ -115,6 +115,39 @@ def verify_mobile_state(state: str) -> int | None:
         return None
 
 
+def sign_bound_state(restaurant_id: int, bind: str, ttl_seconds: int = 600) -> str:
+    """sign_mobile_state with the login that started the flow bound into
+    the signature (scale audit 10/19/26, SEC-09): `bind` is "n<hash>" — the
+    hash of a nonce cookie only the initiating browser holds — or "u<id>",
+    the login a mobile flow must be confirmed by (a bearer call from that
+    login). A restaurant-only state let one tenant start "Connect Instagram",
+    hand Meta's authorize URL to another tenant's owner, and receive their
+    Page on its own restaurant."""
+    import hmac, hashlib, time
+    bind = str(bind or "")
+    if not bind or ":" in bind:
+        raise ValueError("bind must be a non-empty token without ':'")
+    expires = int(time.time()) + int(ttl_seconds)
+    payload = f"{int(restaurant_id)}:{expires}:{bind}"
+    sig = hmac.new(_state_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{payload}:{sig}"
+
+
+def verify_bound_state(state: str):
+    """(restaurant_id, bind) for a valid, unexpired sign_bound_state token,
+    else None. A restaurant-only (three-part) state is not one."""
+    import hmac, hashlib, time
+    try:
+        rid_s, expires_s, bind, sig = state.split(":")
+        payload = f"{rid_s}:{expires_s}:{bind}"
+        expected = hmac.new(_state_secret(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig, expected) or int(expires_s) < int(time.time()) or not bind:
+            return None
+        return int(rid_s), bind
+    except (ValueError, AttributeError, RuntimeError):
+        return None
+
+
 class GoogleTokenRevoked(RuntimeError):
     """Google answered invalid_grant: the refresh token is dead (revoked by
     the owner, expired, or superseded) and will never work again."""

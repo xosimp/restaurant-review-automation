@@ -307,7 +307,9 @@ lost Railway project takes the key with it. Keep `CREDENTIAL_KEY` beside it:
 a restored local snapshot holds credentials encrypted with it, and an
 off-site copy's sealed values open only with it. **Without the escrowed
 `CREDENTIAL_KEY` an off-site restore severs every integration** (each sealed
-value is blanked, never served as ciphertext).
+value is blanked, never served as ciphertext). After a key rotation the previous key is needed too until the boot log says
+`unreadable: 0` (`CREDENTIAL_KEY_PREVIOUS`, `docs/ops/SECURITY.md` → Data at
+rest): a snapshot taken before the rotation was sealed with the old one.
 
 #### Restoring from the object-storage copy, step by step
 

@@ -13,6 +13,7 @@ H10  forgot PIN by text.
      Sessions: revoked per restaurant, the roster sync reports failures, the
      JSON-object guard, no pepper-less "upgrade", and the Me tab's fields.
 """
+import os
 import sqlite3
 import threading
 
@@ -373,6 +374,51 @@ def test_verification_texts_stop_at_the_hourly_ceiling(client, db_path, monkeypa
     assert len(sent) == 2
 
 
+def test_anonymous_sends_never_spend_a_restaurants_share(client, db_path, monkeypatch):
+    """Scale audit 10/19/26, SEC-04: a script with no join code spends only
+    the small anonymous lane; each restaurant's share is its own; a bad join
+    code sends nothing; STAFF_OTP_REQUIRE_JOIN_CODE closes the lane."""
+    for var in ("STAFF_OTP_RESTAURANT_HOURLY_CAP", "STAFF_OTP_ANON_HOURLY_CAP", "STAFF_OTP_REQUIRE_JOIN_CODE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("STAFF_OTP_ANON_HOURLY_CAP", "2")
+    monkeypatch.setenv("STAFF_OTP_RESTAURANT_HOURLY_CAP", "2")
+    sent = []
+    import notify
+    monkeypatch.setattr(notify, "send_sms", lambda *a, **k: sent.append(a[0]) or True)
+    ejs, other = _restaurant(db_path), _restaurant(db_path, name="Other", owner="o@x.test")
+    ejs_code, other_code = get_join_code(ejs, db_path=db_path), get_join_code(other, db_path=db_path)
+
+    def start(phone, code=None):
+        body = {"phone": phone, "optin": True}
+        if code:
+            body["join_code"] = code
+        return client.post("/staff/api/signup/start", json=body)
+    assert start("5550140031").status_code == 200 and start("5550140032").status_code == 200
+    assert start("5550140033").status_code == 400, "the anonymous lane is full"
+    assert start("5550140034", ejs_code).status_code == 200, "a restaurant's share is untouched by it"
+    assert start("5550140035", ejs_code).status_code == 200
+    assert start("5550140036", ejs_code).status_code == 400, "EJ's own share is spent"
+    assert start("5550140037", other_code).status_code == 200, "and never another restaurant's"
+    bad = start("5550140038", "ZZZZZZ")
+    assert bad.status_code == 400 and "restaurant code" in bad.get_json()["error"]
+    assert len(sent) == 5
+    conn = models.get_conn(db_path)
+    rows = conn.execute("SELECT restaurant_id, COUNT(*) FROM staff_otp_sends GROUP BY restaurant_id").fetchall()
+    conn.close()
+    assert {(r[0], r[1]) for r in rows} == {(None, 2), (ejs, 2), (other, 1)}
+    monkeypatch.setenv("STAFF_OTP_REQUIRE_JOIN_CODE", "1")
+    monkeypatch.setenv("STAFF_OTP_ANON_HOURLY_CAP", "50")
+    assert "restaurant code first" in start("5550140039").get_json()["error"]
+
+
+def test_both_sign_up_clients_ask_the_restaurant_code_before_the_phone():
+    page = open(os.path.join(os.path.dirname(__file__), "..", "templates", "staff_login.html")).read()
+    assert "join_code: suJoin" in page and "if (suJoin) { suShow(0); } else { suShow(2);" in page
+    swift = open(os.path.join(os.path.dirname(__file__), "..", "ios", "CavnarAI", "CavnarAI", "Features",
+                              "Staff", "StaffSignupView.swift")).read()
+    assert "joinCode: code.isEmpty ? nil : code" in swift and "? .phone : .restaurant" in swift
+
+
 def test_the_dev_code_needs_the_explicit_flag(client, db_path, monkeypatch):
     monkeypatch.delenv("STAFF_SIGNUP_DEV_CODE")
     for var in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "CAVNAR_FORCE_SECURE_COOKIES"):
@@ -480,6 +526,36 @@ def test_a_spray_across_the_roster_reaches_the_owner_once(db_path, alerts):
         auth.verify_membership_pin(mids[i % 4], rid, "9031", ip_address="198.51.100.9", db_path=db_path)
     sprays = [a for a in alerts if a["kind"] == "pin_spray"]
     assert len(sprays) == 1 and "rotate" in sprays[0]["body"]
+
+
+def test_a_spray_is_refused_not_only_reported(db_path, alerts):
+    """Scale audit 10/19/26, SEC-15: past the block threshold the address
+    gets no more PIN checks there — even the right PIN — and nobody's
+    attempts are spent; another address (the real tablet) still signs in."""
+    rid = _restaurant(db_path)
+    staff = [_staff(db_path, rid, f"s{i}", f"Staff {i}") for i in range(auth.PIN_SPRAY_BLOCK_PEOPLE)]
+    mids = [m for _u, m in staff]
+    auth.set_membership_pin(mids[0], rid, "4826", db_path=db_path)
+    n = 0
+    while n < auth.PIN_SPRAY_BLOCK_FAILURES:
+        for m in mids:
+            # Spread so no one locks first (PIN_MAX_ATTEMPTS each at most).
+            auth._clear_pin_failures(m, db_path=db_path)
+            auth.verify_membership_pin(m, rid, "9031", ip_address="198.51.100.9", db_path=db_path)
+            n += 1
+    assert auth.pin_spray_blocked(rid, "198.51.100.9", db_path=db_path)
+    out = auth.verify_membership_pin(mids[0], rid, "4826", ip_address="198.51.100.9", db_path=db_path)
+    assert out["ok"] is False and "this device" in out["error"]
+    assert auth.verify_membership_pin(mids[0], rid, "4826", ip_address="203.0.113.77", db_path=db_path)["ok"]
+
+
+def test_a_longer_floor_for_new_pins_is_one_setting(monkeypatch):
+    monkeypatch.delenv("STAFF_PIN_MIN_LENGTH", raising=False)
+    assert auth.validate_pin("4826") == "4826"
+    monkeypatch.setenv("STAFF_PIN_MIN_LENGTH", "6")
+    with pytest.raises(auth.PinError):
+        auth.validate_pin("4826")
+    assert auth.validate_pin("482691") == "482691"
 
 
 def test_owner_notices_go_to_owners_and_managers_by_name(db_path, monkeypatch):

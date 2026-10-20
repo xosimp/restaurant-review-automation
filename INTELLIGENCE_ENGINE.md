@@ -203,7 +203,7 @@ deleted restaurant's kept rows keep the labels they had.
 
 | Module | Level | Responsibility |
 |---|---|---|
-| `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder), effect rounding |
+| `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder; every tenant name is found through `_NameMatcher` — names indexed by first word, so a string costs the same at 10,000 restaurants as at 5; scale fix 10/19/26 SEC-10), effect rounding |
 | `stats.py` | all | pure-Python mean / sd / Cohen's d / percentiles / least-squares slope / **permutation test** (seeded, two-sided) / **Benjamini–Hochberg** |
 | `categories.py` | 3 | taxonomy; `category_for(restaurant)` → (category, source) — the confirmed concept first; `profile_for` / `partition_key(profile, family)` (the hard split: service model; × bar-led for labor and food; × menu family for food cost and waste) / `partition_label`; `infer_detail` (format before cuisine, name before menu, Google types, a confidence) and `suggestion` ("We think you're a pizzeria — is that right?"); `clean_profile` / `profile_payload` for the Account block |
 | `features.py` | 1 | `compute(rid, week_end)` from own tables (every query bounded above by the as-of day); `store()` at `FEATURES_VERSION`; `latest` / `series` / `latest_by_restaurant()` / `weekly_by_restaurant()` read only current-version rows; the backfill helpers (`weeks_to_backfill`, `backfill_week`) |
@@ -1648,6 +1648,15 @@ comparison".
   denominators inside ratios; dollars are never stored there.
 - Every cross-restaurant answer passes `privacy.cohort_ok(n)`; below the
   floor it returns `{available: False, reason}`.
+- **Differencing over time** (scale fix 10/19/26, SEC-20): k = 5 does not
+  stop a member reading the band the week before and the week after one
+  organisation joined or left. `benchmarks.published` withholds a band whose
+  organisations (the viewer's left out) differ from the previous week's
+  band for that cohort and measure by exactly one (`_one_owner_moved`,
+  `DIFFERENCING_REASON`); identical, or two or more changed, it is shown.
+  The other cross-restaurant figures (`predict`, `patterns`, `staffing`,
+  `scoring`, `event_intel.peers`, `outcome_benchmark`) keep their floors
+  without this guard yet.
 - `privacy.assert_anonymous(payload)` rejects any payload carrying a key
   from the forbidden list (`restaurant_id`, `name`, `owner_email`,
   `employee`, `phone`, `place_id`, `sales`, `revenue`, …) on its way to a

@@ -7787,6 +7787,10 @@ def _do_send_review_request(rid, data, actor=None):
         _em = _emails_mod()
         if not _em._resend_key():
             return {"ok": False, "error": "Email not configured"}, 500
+        import guest_email as _ge_breaker
+        _paused = _ge_breaker.guest_mail_paused(rid)
+        if _paused:
+            return {"ok": False, "paused": True, "error": _paused}, 409
 
         import html as _html_escape
         # Everything the owner typed or the restaurant is called goes in
@@ -7838,7 +7842,7 @@ def _do_send_review_request(rid, data, actor=None):
         # complained or opted-out address was mailed anyway and nothing
         # reached email_log (MOD-EML-4).
         result = _em.deliver(email_type="guest_review_request", restaurant_id=rid, payload={
-            "from":    _em.display_from(rest_name, "reviews@cavnar.ai"),
+            "from":    _em.display_from(rest_name, config.guest_from_email() or "reviews@cavnar.ai"),
             "to":      [customer_email],
             "subject": f"How was your visit to {rest_name}?",
             "html":    _html_doc(html_body),
@@ -8201,6 +8205,30 @@ _aivis_cache = {}
 # so a wrong one silently scores zero forever.
 _CITY_CACHE_SECS = 86400
 _city_cache = {}
+# Both per-process caches above are keyed by restaurant / place and were
+# never bounded (scale audit 10/19/26, SEC-19): memory grew with the fleet,
+# per worker. home_brief._cache_put's sweep: oldest first, expired or past
+# the cap.
+_TENANT_CACHE_MAX = 2000
+
+
+def _bounded_put(cache, key, value, ttl_secs, max_entries=_TENANT_CACHE_MAX):
+    """Store (stamp, ...) under `key`, first dropping expired entries from
+    the oldest end and, past `max_entries`, the oldest ones. Values are
+    tuples whose first item is the datetime they were stored."""
+    now = datetime.utcnow()
+    cache.pop(key, None)
+    while cache:
+        k = next(iter(cache))
+        try:
+            old = (now - cache[k][0]).total_seconds() >= ttl_secs
+        except Exception:
+            old = True
+        if len(cache) >= max_entries or old:
+            cache.pop(k, None)
+        else:
+            break
+    cache[key] = value
 
 
 def _city_from_place_id(place_id: str) -> str:
@@ -8246,7 +8274,7 @@ def _city_from_place_id(place_id: str) -> str:
     # cached as "no city" for a day, which scored every run in it as zero
     # (MOD-INT-4); it is retried on the next call instead.
     if settled:
-        _city_cache[place_id] = (datetime.utcnow(), city, state)
+        _bounded_put(_city_cache, place_id, (datetime.utcnow(), city, state), _CITY_CACHE_SECS)
     return city
 
 
@@ -8708,7 +8736,7 @@ def _aivis_serve_stored(rid, r):
         _cached["measured_at"] = _stored[1]
         _cached["state"] = _aivis_state(_cached)
         _cached["measured"] = True
-        _aivis_cache[rid] = (datetime.utcnow(), dict(_cached))
+        _bounded_put(_aivis_cache, rid, (datetime.utcnow(), dict(_cached)), _AIVIS_CACHE_SECS)
         return _aivis_with_live_listing(_cached, r, rid), 200
     return _aivis_not_measured(r, rid), 200
 
@@ -9493,7 +9521,7 @@ def _do_ai_visibility_inner(rid, force=False):
     # eight live queries. An outage (nothing came back) is neither: the last
     # stored run keeps being served.
     if _complete or _run_id:
-        _aivis_cache[rid] = (datetime.utcnow(), dict(_payload))
+        _bounded_put(_aivis_cache, rid, (datetime.utcnow(), dict(_payload)), _AIVIS_CACHE_SECS)
     if _run_id:
         try:
             import json as _json_av
@@ -9502,6 +9530,13 @@ def _do_ai_visibility_inner(rid, force=False):
         except Exception as _pe:
             print(f"[aivis] payload store failed for rid={rid}: {_pe}")
     return _payload, 200
+
+
+def _webhooks_open_secret(value):
+    """The signing secret as the owner copies it (sealed since 10/19/26,
+    SEC-14)."""
+    import webhooks as _wh_open
+    return _wh_open.open_secret(value)
 
 
 @client_bp.route("/api/webhook", methods=["GET"])
@@ -9529,7 +9564,7 @@ def webhook_get(current_user):
     from permissions import is_principal
     return jsonify(ok=True, webhook={
         "url":                  wh["url"],
-        "secret":               wh["secret"] if is_principal(current_user) else None,
+        "secret":               _webhooks_open_secret(wh["secret"]) if is_principal(current_user) else None,
         "events":               json.loads(wh.get("events") or "[]"),
         "last_fired":           wh.get("last_fired_at"),
         "last_status":          wh.get("last_status"),
@@ -9872,7 +9907,11 @@ def guest_optin_submit(token):
         return jsonify(ok=False, error="Not found"), 404
     from ai_utils import ai_rate_limited
     ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
-    if ai_rate_limited(f"guestoptin:{ip}", max_calls=5, window_secs=300):
+    # In memory, not ai_rate_limited: that writes a row per allowed call,
+    # and this route is public (scale audit 10/19/26, SEC-08). The durable
+    # per-phone and per-IP limits are guest_optin_requests'.
+    import request_limits as _rl_join
+    if _rl_join.memory_limited(f"guestoptin:{ip}", 5, 300):
         return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -10927,7 +10966,8 @@ def staff_availability_submit(token):
                                restaurant_name=share.get("restaurant_name") or "", **_share_page_extras()), 410
 
     ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
-    if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
+    import request_limits as _rl_avail
+    if _rl_avail.memory_limited(f"staffavail:{ip}", 20, 300):     # public: no write per call (SEC-08)
         return redirect(f"/s/{token}?error=throttled")
 
     # The one save the app uses too, when this build has it (employee audit
@@ -13663,6 +13703,14 @@ def _do_web_analytics_set(current_user):
         fields["gsc_site_url"] = site or None
     if not fields:
         return {"ok": False, "error": "Nothing to change."}, 400
+    # One property, one restaurant (scale audit 10/19/26, SEC-01): an id
+    # another live restaurant holds verified is refused before it is saved,
+    # and never named — that is another client's.
+    import external_bindings as _eb
+    for col, source, what in (("ga4_property_id", "ga4", "Google Analytics property"),
+                              ("gsc_site_url", "gsc", "Search Console site")):
+        if fields.get(col) and _eb.conflict(source, fields[col], rid):
+            return {"ok": False, "code": "taken", "error": _wa.TAKEN_MESSAGE.format(what=what)}, 409
     before = _web_analytics_status(rid)
     if not fields.get("ga4_property_id", before["ga4_property_id"]) and \
             not fields.get("gsc_site_url", before["gsc_site_url"]):
@@ -13671,12 +13719,29 @@ def _do_web_analytics_set(current_user):
     log_account_event(rid, "web_analytics_changed", current_user,
                       detail=", ".join(f"{k}={'set' if v else 'cleared'}" for k, v in fields.items()
                                        if k in ("ga4_property_id", "gsc_site_url")))
+    for col, source in (("ga4_property_id", "ga4"), ("gsc_site_url", "gsc")):
+        if col in fields and not fields[col]:
+            _eb.unbind(source, rid)
     checks = {}
     if _wa.configured():
         try:
             checks = _wa.verify(fields.get("ga4_property_id"), fields.get("gsc_site_url"))
         except Exception as e:
             checks = {"error": _safe_err(e)}
+        # Readable is not the same as yours: a source Google lets us read is
+        # read only once it is proved this restaurant's (SEC-01).
+        r_now = get_restaurant(rid)
+        for col, source in (("ga4_property_id", "ga4"), ("gsc_site_url", "gsc")):
+            c = checks.get(source) if isinstance(checks, dict) else None
+            if not fields.get(col) or not isinstance(c, dict) or not c.get("ok"):
+                continue
+            try:
+                owned = _wa.ensure_ownership(r_now, source, fields[col])
+            except Exception as e:
+                print(f"[web_analytics] ownership check failed for {rid}: {e}")
+                owned = False
+            if not owned:
+                checks[source] = {"ok": False, "code": "unconfirmed", "error": _wa.UNCONFIRMED_MESSAGE}
     started = bool(_wa.configured() and any((c or {}).get("ok") for c in checks.values() if isinstance(c, dict))
                    and _start_web_analytics_sync(rid))
     out = _web_analytics_status(rid)
@@ -13691,6 +13756,9 @@ def _do_web_analytics_disconnect(current_user):
     rid = current_user["restaurant_id"]
     update_restaurant(rid, {"ga4_property_id": None, "gsc_site_url": None, "web_analytics_synced_at": None,
                             "web_analytics_error": None})
+    import external_bindings as _eb
+    for source in _eb.PROVIDER_COLUMNS:
+        _eb.unbind(source, rid)
     log_account_event(rid, "web_analytics_disconnected", current_user)
     return {"ok": True}, 200
 

@@ -76,13 +76,53 @@ _NAMES_TTL_SECONDS = 60
 _names_cache = {"key": None, "at": 0.0, "rx": None}
 
 
+_WORD_RE = re.compile(r"[\w']+")
+
+
+class _NameMatcher:
+    """Every tenant's name, found in a string in time that does not grow
+    with the fleet (scale audit 10/19/26, SEC-10). One alternation of every
+    name cost ~0.43 µs per name per string — 8.7 ms a string at 10,000
+    restaurants, seconds for a benchmark payload. Names are indexed by their
+    first word; a string is split into words once, and only the names whose
+    first word it contains are tried, each with the same boundary rule the
+    single pattern had (not inside a word, an apostrophe counting as one).
+    `search(s)` answers like re.Pattern.search: a match, or None."""
+
+    def __init__(self, names):
+        self._by_first = {}
+        for n in names:
+            words = _WORD_RE.findall(n.lower())
+            if words:
+                self._by_first.setdefault(words[0], []).append(n)
+        self._rx_cache = {}
+
+    def _rx(self, key):
+        rx = self._rx_cache.get(key)
+        if rx is None:
+            keep = sorted(self._by_first[key], key=len, reverse=True)
+            rx = self._rx_cache[key] = re.compile(
+                r"(?<![\w'])(?:" + "|".join(re.escape(n) for n in keep) + r")(?![\w'])", re.I)
+        return rx
+
+    def search(self, s):
+        text = str(s or "")
+        if not text:
+            return None
+        for w in dict.fromkeys(_WORD_RE.findall(text.lower())):
+            if w in self._by_first:
+                m = self._rx(w).search(text)
+                if m:
+                    return m
+        return None
+
+
 def _names_regex(names):
     keep = sorted({n.strip() for n in names or () if n and len(n.strip()) >= 4
                    and n.strip().lower() not in _GENERIC_NAMES}, key=len, reverse=True)
     if not keep:
         return None
-    alt = "|".join(re.escape(n) for n in keep)
-    return re.compile(r"(?<![\w'])(?:" + alt + r")(?![\w'])", re.I)
+    return _NameMatcher(keep)
 
 
 def invalidate_tenant_names(*_a):

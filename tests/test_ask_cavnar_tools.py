@@ -106,6 +106,18 @@ def test_read_reviews_returns_individual_reviews(db_path):
     assert {r["rating"] for r in out["reviews"]} == {2, 5}
 
 
+def test_the_model_can_set_only_what_a_tool_declares(db_path, monkeypatch):
+    """Scale audit 10/19/26, SEC-17: input outside the tool's schema never
+    reaches the function — a db_path, user or restaurant argument included."""
+    rid = _restaurant(db_path)
+    seen = {}
+    tool = tools._BY_NAME["read_reviews"]
+    monkeypatch.setitem(tool, "fn", lambda r, **kw: seen.update(kw) or {"count": 0, "reviews": []})
+    tools.run_read_tool("read_reviews", rid, {"search": "patio", "db_path": "/tmp/other.db",
+                                              "restaurant_id": 99, "_viewer": "x"})
+    assert seen == {"search": "patio"}
+
+
 def test_read_reviews_can_search_text(db_path):
     """The gap that made "which reviews mention the patio" unanswerable."""
     rid = _restaurant(db_path)

@@ -4870,6 +4870,10 @@ def init_db(db_path: str = DB_PATH):
     # live snapshot every intraday reader shares.
     from pos_io import init_pos_io
     init_pos_io(db_path)
+    # Shared token buckets (rate_bucket, scale audit 10/19/26 SEC-03): the
+    # fleet's and each restaurant's guest-text pace.
+    from rate_bucket import init_rate_buckets
+    init_rate_buckets(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
@@ -4967,6 +4971,10 @@ def init_db(db_path: str = DB_PATH):
     # The website's daily analytics and top searches (web_analytics, 10/2/26).
     from web_analytics import init_web_analytics
     init_web_analytics(db_path)
+    # One GA4 property / Search Console site per restaurant, proved before
+    # it is read (external_bindings, scale audit 10/19/26 SEC-01).
+    from external_bindings import init_external_bindings
+    init_external_bindings(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -15944,6 +15952,9 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 # those are admin telemetry, not "what changed on my account".
 ACCOUNT_EVENT_TYPES = (
     # Security events the owner should see without asking (security audit).
+    # Cavnar AI's own staff opening and closing the dashboard (view-as) —
+    # access transparency (scale audit 10/19/26, SEC-12).
+    "support_access_opened", "support_access_closed",
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
@@ -15986,6 +15997,8 @@ ACCOUNT_EVENT_TYPES = (
 )
 
 ACCOUNT_EVENT_LABELS = {
+    "support_access_opened": "Cavnar AI support opened your dashboard",
+    "support_access_closed": "Cavnar AI support closed your dashboard",
     "login": "Signed in",
     "password_changed": "Password changed",
     "email_changed": "Email address changed",
@@ -18338,6 +18351,23 @@ def email_delivery_stats(days: int = 7, restaurant_id: int = None, db_path: str 
 INBOUND_WEBHOOK_CAPTURE_MINUTES = 60
 
 
+REFUSED_WEBHOOK_WRITES_PER_MINUTE = 30
+
+
+def _refused_flood(provider) -> bool:
+    """A bad-signature flood from one address writes no more ledger rows
+    past REFUSED_WEBHOOK_WRITES_PER_MINUTE a minute (scale audit 10/19/26,
+    SEC-08) — the requests are still refused; the count already says the
+    secret is failing."""
+    try:
+        from flask import request, has_request_context
+        ip = request.remote_addr if has_request_context() else None
+    except Exception:
+        ip = None
+    import request_limits
+    return request_limits.memory_limited(f"whref:{provider}:{ip or '-'}", REFUSED_WEBHOOK_WRITES_PER_MINUTE, 60)
+
+
 def record_inbound_webhook(provider: str, verified: bool, event_type: str = None, reason: str = None,
                            db_path: str = DB_PATH) -> bool:
     """One inbound webhook request from `provider` ('resend', 'twilio',
@@ -18349,6 +18379,8 @@ def record_inbound_webhook(provider: str, verified: bool, event_type: str = None
     provider, so a rotated secret pages once, not on every retry. Never
     raises: a ledger hiccup must not change the webhook's answer."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    if not verified and _refused_flood(provider):
+        return False
     now = _dt.now(_tz.utc)
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
     try:

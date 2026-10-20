@@ -11,7 +11,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
 | `SECRET_KEY` | `""` | Flask session and token signing (auth, email links, OAuth state, guest links). **Required in production**; without it the app runs on an ephemeral key (`CAVNAR_SECRET_KEY_EPHEMERAL` marks that) and every restart signs everyone out. | auth.py, emails.py, gmb.py, guest_links.py |
-| `CREDENTIAL_KEY` | — | Fernet key for every credential at rest (`credentials.py`: POS tokens, OAuth tokens, TOTP secrets). **Required**; see `SECURITY.md`. | credentials.py, guest_links.py |
+| `CREDENTIAL_KEY` | — | Fernet key for every credential at rest (`credentials.py`: POS tokens, OAuth tokens, TOTP secrets, webhook signing secrets). **Required**; see `SECURITY.md`. | credentials.py, guest_links.py |
+| `CREDENTIAL_KEY_PREVIOUS` | `""` | During a key rotation: the retired key(s), comma-separated, decrypt-only; the boot's `credentials.rotate_existing()` re-seals what they opened. Remove once the boot log says `unreadable: 0` (SEC-14). | credentials.py |
 | `BASE_URL` | — | The dashboard's public origin (`config.base_url`), the root of every emailed/texted/pushed link. Production: `https://dashboard.cavnar.ai`. | config.py |
 | `RAILWAY_VOLUME_MOUNT_PATH` | `"."` | Where the SQLite file and backups live (the Railway volume). Default `.` locally; tests point it at a scratch directory. | models.py, platform_monitor.py, scripts/seed_simple_ejs_reviews.py, status_manager.py |
 | `ANTHROPIC_API_KEY` | `""` | Claude, for every model call (`ai_utils`). Empty forces every AI path onto its offline fallback (tests, CI). | ai_utils.py, competitor.py, emails.py, provider_health.py |
@@ -64,8 +65,14 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `APNS_BUNDLE_ID` | `"ai.cavnar.CavnarAI"` | The app's bundle id (default `ai.cavnar.CavnarAI`); also the audience for the app's Sign in with Apple tokens. | mobile_api.py, push.py |
 | `PASSKEY_HOSTS` | — | Extra hosts passkeys may be used on besides `BASE_URL`'s and localhost (a test tunnel), comma-separated. | passkeys.py |
 | `ALLOW_PUBLIC_SIGNUP` | `""` | Allows the mobile self-serve register route (off: accounts come from a signed contract). | mobile_api.py |
+| `PRINCIPAL_2FA_REQUIRED_SINCE` | `""` | `YYYY-MM-DD`: owners and co-owners of restaurants created on or after it sign in with a second factor whatever the restaurant's switch (`auth.principal_two_factor_required`, SEC-11). | auth.py |
+| `PRINCIPAL_2FA_REQUIRED` | `""` | `1`: every restaurant's owners and co-owners sign in with a second factor (the existing tenants, after notice) (SEC-11). | auth.py |
+| `STAFF_PIN_MIN_LENGTH` | `4` | Shortest NEW staff PIN (4-8, `auth.new_pin_min_length`); existing PINs keep working. 6 cuts a month of guessing ~100x (SEC-15). | auth.py |
 | `STAFF_OTP_COUNTRY_CODES` | `"1"` | Country calling codes a staff sign-up or forgot-PIN code may be texted to, comma-separated (default +1 only). | auth.py |
-| `STAFF_OTP_HOURLY_CAP` | `200` | Platform-wide ceiling on staff verification texts per hour (`auth.STAFF_OTP_HOURLY_CAP_DEFAULT`). | auth.py |
+| `STAFF_OTP_HOURLY_CAP` | `600` | Platform-wide backstop on staff verification texts per hour (`auth.STAFF_OTP_HOURLY_CAP_DEFAULT`; 200 until 10/19/26, when the per-restaurant shares below took over the fair-share job). | auth.py |
+| `STAFF_OTP_RESTAURANT_HOURLY_CAP` | `30` | Each restaurant's own hourly share of verification texts, counted by the join code the sign-up named, or the restaurant of a forgot-PIN (SEC-04). | auth.py |
+| `STAFF_OTP_ANON_HOURLY_CAP` | `30` | The hourly lane for sign-up texts that name no restaurant (old app builds); never touches a restaurant's share (SEC-04). | auth.py |
+| `STAFF_OTP_REQUIRE_JOIN_CODE` | `""` | `1` refuses a sign-up text that names no restaurant code (closes the anonymous lane). Turn on once app builds before 10/19/26 have aged out. | auth.py |
 | `STAFF_SIGNUP_DEV_CODE` | — | 1 returns the staff verification code in the response, only while Twilio is not configured (a local backend). | auth.py |
 
 ## Email and texts
@@ -90,6 +97,15 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TWILIO_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for owner alerts. | notify.py |
 | `TWILIO_OTP_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for sign-in codes. | notify.py |
 | `TWILIO_GUEST_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for guest marketing texts. | notify.py |
+| `GUEST_FROM_EMAIL` | `""` | The address guest newsletters and review-request emails come from, on its own verified Resend domain (e.g. `news@guests.cavnar.ai`); unset keeps `FROM_EMAIL` / `reviews@cavnar.ai` (SEC-02). | config.py |
+| `GUEST_EMAIL_COMPLAINT_PAUSE_PCT` | `0.1` | A restaurant's guest mail pauses when more than this % of the last 7 days' accepted guest emails were marked spam (at least 50 accepted; `guest_email.guest_mail_paused`, SEC-02). | guest_email.py |
+| `GUEST_EMAIL_BOUNCE_PAUSE_PCT` | `5` | The same pause for bounces (SEC-02). | guest_email.py |
+| `GUEST_SMS_FLEET_PER_SECOND` | `0` (off) | Campaign texts per second across every restaurant (`rate_bucket` `guest_sms:fleet`). Set it below the guest campaign's registered MPS: review requests and join confirmations are not paced by it, so the gap is their lane (SEC-03). | guest_marketing.py |
+| `GUEST_SMS_STOP_PAUSE_PCT` | `3` | A restaurant whose campaign texts drew more than this % STOP replies over 7 days (at least 200 sent) cannot start a new campaign until the week clears (`guest_marketing.stop_rate_pause`, SEC-03). | guest_marketing.py |
+| `REQUEST_LIMITS` | `1` | `0` turns off the per-login and per-restaurant request share (`request_limits.session_refusal`, SEC-07). | request_limits.py |
+| `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
+| `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
+| `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |
 | `TWILIO_STAFF_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for every staff text: a posted or changed week, and request notices (swaps, open shifts, time off), each only for an employee whose own consent covers that purpose (`preferences.staff_sms_scope`). Unset until the staff campaign is registered with the wording in `people.STAFF_SMS_CONSENT_TEXT`; while it is unset `people.staff_sms_ready()` is false, the staff app hides its "text me" switch (`sms_available`) and no staff text goes. | notify.py, people.py |
 | `STAFF_SMS_HOLD` | `""` | `1` holds every staff text although the staff campaign is approved and `TWILIO_STAFF_MESSAGING_SERVICE_SID` is set. While it holds, `people.staff_sms_ready()` is false, the "text me" switch stays hidden and a staff send is logged `not_configured` ("on hold"). Set 10/5/26 because employees read their schedule in the staff app, which isn't live for them yet. Remove it to go live. | notify.py, people.py |
 | `SMS_TRACKED_LINKS` | `""` | 1 keys the link in alert texts for open tracking (off: the longer link can add a billed segment). | notify.py |
