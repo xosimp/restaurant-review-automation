@@ -8340,17 +8340,26 @@ def mobile_invite_team_member(current_user):
         # name to greet someone by. owner_name is what's actually typed in
         # with real capitalization; the login username is the last resort.
         inviter = restaurant.owner_name or current_user.get("username")
+        # A one-use link to choose a password, never the password itself
+        # (scale audit 10/19/26, ONB-8 — the welcome's #12 rule): the
+        # generated password is never shown to anyone.
+        import config as _config
+        from models import create_set_password_token
+        link_token = create_set_password_token(result["user_id"])
+        if not link_token:
+            raise RuntimeError("no set-password link for the new login")
+        set_url = f"{_config.base_url()}/reset-password/{link_token}"
         # Logged by deliver() against the restaurant with its real outcome
         # (#119); this wrote its own 'sent' row whatever happened.
-        res = send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
+        res = send_team_invite_email(email, restaurant.name, result["username"], set_url,
                                      inviter_name=inviter, restaurant_id=current_user["restaurant_id"])
         invite_sent = bool(getattr(res, "ok", False))
         if not invite_sent:
             invite_error = ("That address can't receive our email (it bounced or complained)."
                             if getattr(res, "reason", None) == "suppressed"
-                            else "The invite email didn't go out — share their sign-in yourself or try again.")
+                            else "The invite email didn't go out. Try again, or they can use Forgot password with this email.")
     except Exception:
-        invite_error = "The invite email didn't go out — share their sign-in yourself or try again."
+        invite_error = "The invite email didn't go out. Try again, or they can use Forgot password with this email."
     _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user,
                        detail=f"{email}:{role}")
     return jsonify(ok=True, user_id=result["user_id"], username=result["username"], role=role,

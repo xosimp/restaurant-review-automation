@@ -2404,12 +2404,15 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     return deliver(params, restaurant_id=restaurant_id, email_type=_etype)
 
 
-def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None,
+def send_team_invite_email(to_email, restaurant_name, username, set_password_url, inviter_name=None,
                            restaurant_id=None) -> "SendResult":
-    """Self-serve team-invite counterpart to send_welcome_email() above —
-    same credentials-in-an-email shape (matches the risk profile already
-    accepted for every restaurant's primary login), reworded for "added
-    to an existing dashboard" instead of "your dashboard is live"."""
+    """THE team invite: one email for a login an owner added, carrying the
+    same one-use link to choose a password the welcome carries
+    (models.create_set_password_token, SET_PASSWORD_LINK_DAYS) — never a
+    password. It emailed a plaintext temporary password until 10/19/26
+    (scale audit ONB-8): a credential in an inbox, the thing the welcome
+    stopped doing in #12. Callers: mobile_api.mobile_invite_team_member,
+    which the web's /api/account/team/invite shares."""
     added_by = f" by {esc(inviter_name)}" if inviter_name else ""
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -2426,11 +2429,13 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
   <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
     <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
     <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
-    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {esc(username)}</p>
-    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {esc(password)}</p>
+    <p style="font-size:14px;margin:0"><strong>Username:</strong> {esc(username)}</p>
   </div>
-  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
-    Once you log in, go to the <strong>Account</strong> tab to set your own password.
+  <p style="margin:0 0 14px">
+    <a href="{esc(set_password_url)}" style="display:inline-block;background:{BRAND["ember"]};color:{BRAND["card"]};text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px">Choose your password</a>
+  </p>
+  <p style="font-size:14px;color:{BRAND["body"]};line-height:1.7;margin-bottom:24px">
+    The link works once and for {SET_PASSWORD_LINK_DAYS} days. If it has run out, use "Forgot password" on the sign-in page.
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
@@ -2445,7 +2450,7 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
         "from": sender("will"),
         "to": [to_email],
         "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
-        "preheader": "Your sign-in details are inside.",
+        "preheader": "Choose your password to sign in.",
         "html": _html_document(html),
     })
 
