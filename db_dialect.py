@@ -353,7 +353,22 @@ def _sig_index(toks, start, step):
 def _is_boolean(toks) -> bool:
     """True when the expression `toks` is a comparison / predicate at its
     own top level (outside parentheses and CASE … END): SQLite gives it the
-    value 0/1, Postgres a boolean that SUM() and friends refuse."""
+    value 0/1, Postgres a boolean that SUM() and friends refuse. A predicate
+    wrapped whole in parentheses — SUM((a AND b)), from an f-string that
+    parenthesises its piece — is one too (blind re-audit 10/20/26 R9-02:
+    ops._reclaim_dead_run's SUM((…)) raised on every call on Postgres)."""
+    sig = _significant(toks)
+    if len(sig) >= 2 and sig[0].kind == "op" and sig[0].text == "(" and sig[-1].kind == "op" and sig[-1].text == ")":
+        depth = 0
+        for k, t in enumerate(sig):
+            if t.kind == "op" and t.text == "(":
+                depth += 1
+            elif t.kind == "op" and t.text == ")":
+                depth -= 1
+                if depth == 0:
+                    if k == len(sig) - 1:
+                        return _is_boolean(sig[1:-1])
+                    break
     depth = case = 0
     for t in toks:
         if t.kind == "op" and t.text == "(":
@@ -1849,6 +1864,15 @@ class PgConnection:
                 not any(t.kind == "word" and t.upper == "RETURNING" for t in sig):
             table = _main_table(sig)
             pk = self._catalog.primary_key(table) if table else None
+            part = PARTITIONED.get(str(table or "").lower())
+            if pk and part and len(pk) == 2 and part in [str(c).lower() for c in pk]:
+                # A partitioned table's key gained its partition column in
+                # the copy (pg_copy); its SQLite rowid — lastrowid — is the
+                # key without it. With no RETURNING, an insert into
+                # schedule_model_calls or ai_usage answered lastrowid None
+                # (blind re-audit 10/20/26 R9-02: the Postgres mode, now
+                # built partitioned as production is, found it).
+                pk = [c for c in pk if str(c).lower() != part]
             if pk and len(pk) == 1 and self._catalog.is_integer(table, pk[0]):
                 return text.rstrip().rstrip(";") + f" RETURNING {pk[0]}", True
         return text, False

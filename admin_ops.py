@@ -3374,7 +3374,11 @@ def _by_action(conn, since, restaurant_id=None):
                ROUND(COALESCE(SUM(CASE WHEN "trigger"='admin' THEN cost_usd ELSE 0 END),0), 4) AS admin_cost,
                ROUND(AVG(CASE WHEN {_OUTCOME_SQL} <> 'blocked' THEN input_tokens + output_tokens END)) AS avg_tokens,
                MAX(created_at) AS last_at
-        FROM ai_usage {where} GROUP BY action, model ORDER BY cost DESC""", args)
+        FROM ai_usage {where} GROUP BY action, model, 3 ORDER BY cost DESC""", args)
+    # GROUP BY names the vendor too: Postgres refuses a selected expression
+    # it is not grouped by, and the swallow above showed the console's
+    # by-action AI table empty on Postgres (blind re-audit 10/20/26 R9-02:
+    # the recorded-statement PREPARE found it).
     lat = _latency_by(conn, since, restaurant_id)
     for r in rows:
         r["outcomes"] = {o: int(r.pop(f"n_{o}") or 0) for o in _OUTCOME_KEYS}

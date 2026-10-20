@@ -10694,9 +10694,12 @@ def _count_notifications_unread(current_user, scope=None):
             stamp, strict = notification_unread_bound(uid, i)
             parts.append(f"(w.restaurant_id = ? AND COALESCE(w.fired_at, '') {'>' if strict else '>='} ?)")
             bound_args += [i, stamp]
-        past_mark = "(" + " OR ".join(parts) + ")" if parts else "0"
+        past_mark = "(" + " OR ".join(parts) + ")" if parts else "(1 = 0)"
     else:
-        past_mark, bound_args = "1", []
+        # A boolean, not 1/0: `past_mark AND NOT opened` below is a boolean
+        # AND, which Postgres refuses on an integer (blind re-audit 10/20/26
+        # R9-02 — the Postgres mode found it).
+        past_mark, bound_args = "(1 = 1)", []
     conn = get_conn()
     try:
         have = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}

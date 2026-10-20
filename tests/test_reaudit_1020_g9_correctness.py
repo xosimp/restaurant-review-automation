@@ -314,6 +314,64 @@ def test_r9_23_the_console_shows_stuck_dsr_emails_and_staff_notices():
     assert {"dsr_emails", "staff_notices", "schedule_notices"} <= keys
 
 
+# ── R9-02 found: a query that failed on both databases, swallowed ──────────
+
+def test_r9_02_the_recommendation_confidence_impact_reads_its_recommendations(db_path, monkeypatch):
+    """data_health.module_impact ordered rec_instances BY id — a column it
+    does not have — so it raised on SQLite and Postgres alike and the line
+    was never shown. The recorded-statement PREPARE found it."""
+    import data_health
+    monkeypatch.setattr(data_health, "get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    monkeypatch.setattr(data_health.ce, "freshness", lambda states: {"pct": 30, "stalest": "inventory",
+                                                                      "basis": "Counts from 9/2/26", "errors": []})
+    rid = create_restaurant(Restaurant(name="Impact Co", owner_email="i@x.test"), db_path=db_path)
+    conn = get_conn(db_path)
+    for n in range(3):
+        conn.execute("INSERT INTO rec_instances (rec_id, restaurant_id, key, module, status, evidence_pct, "
+                     "accuracy_pct, created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))",
+                     (f"r{n}", rid, f"k{n}", "inventory", "open", 80, None))
+    conn.commit()
+    conn.close()
+    imp = data_health.module_impact(rid, "inventory", {}, db_path=db_path)
+    assert imp and imp["delta"] > 0 and "3 open recommendations" in imp["basis"]
+
+
+def test_r9_02_a_parenthesised_predicate_is_summed_as_sqlite_counts_it():
+    """ops._reclaim_dead_run's SUM((finished_at IS NULL AND …)) raised
+    'function sum(boolean) does not exist' on every call on Postgres, so a
+    period a dead process held was never reclaimed."""
+    import db_dialect
+    import ops
+    tr = db_dialect.Translator(lambda t: ["id"], lambda t: None)
+    out = tr.translate("SELECT SUM((a IS NULL AND b IS NOT NULL)), SUM(x = 1) FROM t")
+    assert out.count("CAST(") == 2
+    src = __import__("inspect").getsource(ops._reclaim_dead_run)
+    assert "SUM(CASE WHEN" in src and "SUM(finished_at" not in src
+
+
+def test_r9_02_an_insert_into_a_partitioned_fact_table_answers_its_id(db_path):
+    """On Postgres (CAVNAR_TEST_PG_URL: the template is pg_copy'd, its fact
+    tables partitioned as production's) the key gained its partition
+    column and no RETURNING was added: lastrowid was None for every
+    ai_usage and schedule_model_calls insert, so ai_calls.usage_id and a
+    recorded model call's id were lost. On SQLite it is the rowid."""
+    conn = get_conn(db_path)
+    try:
+        a = conn.execute("INSERT INTO schedule_model_calls (restaurant_id, generation_id) VALUES (1, 'g')").lastrowid
+        b = conn.execute("INSERT INTO ai_usage (restaurant_id, action) VALUES (1, 'x')").lastrowid
+        conn.commit()
+        assert a and conn.execute("SELECT generation_id FROM schedule_model_calls WHERE id=?", (a,)).fetchone()[0] == "g"
+        assert b and conn.execute("SELECT action FROM ai_usage WHERE id=?", (b,)).fetchone()[0] == "x"
+    finally:
+        conn.close()
+
+
+def test_r9_02_the_console_ai_table_groups_by_everything_it_selects():
+    import inspect
+    import admin_ops
+    assert "GROUP BY action, model, 3" in inspect.getsource(admin_ops._by_action)
+
+
 # ── R9-14 / R9-22: one collapse id per alert, on the restaurant's date ─────
 
 def test_r9_14_two_distinct_alerts_of_a_type_on_one_day_do_not_collapse(monkeypatch):

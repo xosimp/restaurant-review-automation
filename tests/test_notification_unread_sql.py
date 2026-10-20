@@ -45,10 +45,8 @@ def _user(db_path, rid, role="owner", name="owner", created_at="2026-01-01 00:00
     return {"id": uid, "restaurant_id": rid, "base_restaurant_id": rid, "role": role, "is_admin": 0}
 
 
-def _exec(db_path, sql, args=(), fk=True):
+def _exec(db_path, sql, args=()):
     conn = get_conn(db_path)
-    if not fk:
-        conn.execute("PRAGMA foreign_keys=OFF")     # a request needs no real schedule week here
     cur = conn.execute(sql, args)
     conn.commit()
     lid = cur.lastrowid
@@ -81,10 +79,14 @@ def _world(db_path, rng, rids, viewer, other_id, rows=70):
             refs.append((rid, "time_off", _exec(db_path,
                 "INSERT INTO staff_time_off (restaurant_id, employee_name, start_date, end_date, status) "
                 "VALUES (?,?,?,?,?)", (rid, "Dana", "2026-10-10", "2026-10-11", status))))
+        # A real schedule week for the request to name: Postgres enforces
+        # the key SQLite's PRAGMA foreign_keys=OFF let this skip.
+        week = _exec(db_path, "INSERT INTO schedule_history (restaurant_id, week_start) VALUES (?,?)",
+                     (rid, "2026-10-05"))
         for status in ("pending", "denied"):
             refs.append((rid, "shift", _exec(db_path,
                 "INSERT INTO shift_change_requests (restaurant_id, history_id, employee_name, date, shift_start, "
-                "status) VALUES (?,?,?,?,?,?)", (rid, 1, "Dana", "2026-10-10", "10:00", status), fk=False)))
+                "status) VALUES (?,?,?,?,?,?)", (rid, week, "Dana", "2026-10-10", "10:00", status))))
         for status in ("open", "acknowledged", "resolved"):
             refs.append((rid, "issue", _exec(db_path,
                 "INSERT INTO ops_issues (restaurant_id, kind, title, status) VALUES (?,?,?,?)",
