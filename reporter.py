@@ -623,7 +623,7 @@ def _submit_digest_batch(restaurant_id, fingerprint, prompt, readiness) -> str:
             return "too_late"
         run_id = ai_orchestrator.new_run_id(DIGEST_BATCH_WORKFLOW)
         cid = _digest_custom_id(restaurant_id, fingerprint)
-        out = ai_batches.submit(DIGEST_BATCH_WORKFLOW, [{
+        out = ai_batches.submit(DIGEST_BATCH_WORKFLOW, group=True, items=[{
             "custom_id": cid, "restaurant_id": restaurant_id, "action": "weekly_digest",
             "request": digest_request(prompt, wf.route_for(wf.policy(DIGEST_BATCH_WORKFLOW), 0)),
             "readiness": readiness, "callback": DIGEST_BATCH_CALLBACK, "correlation_id": run_id,

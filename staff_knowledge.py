@@ -42,11 +42,15 @@ Tables (created at boot by init_staff_knowledge, from models.init_db):
 """
 import hashlib
 import json
+import logging
+import os
 import re
 import threading
 from datetime import date, datetime, timedelta, timezone
 
 from models import DB_PATH
+
+log = logging.getLogger("staff_knowledge")
 
 LANGUAGES = {
     "en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French", "zh": "Chinese (Simplified)",
@@ -61,12 +65,20 @@ DOC_BODY_MAX = 20000
 CERT_REMIND_DAYS = 30
 CERT_NAME_MAX = 60
 TRANSLATE_RETRY_HOURS = 24
-TRANSLATE_TIMEOUT = 20.0       # a staff page waits on the first reader's translation
+TRANSLATE_TIMEOUT = 20.0       # one translation call (never on a request thread — R4-08)
 ANSWER_TIMEOUT = 30.0
 TRANSIENT = "transient: "      # a budget stop or an open breaker: not remembered as a failure
 ASK_QUESTION_MAX = 300
 ASK_PER_MINUTE = 4
 ASK_PER_DAY = 30
+# One restaurant's staff questions a minute, all members together (blind
+# re-audit 10/20/26 R4-08): the per-member limits above bound one person;
+# nothing bounded a whole crew asking before service.
+ASK_PER_RESTAURANT_MINUTE = max(1, int(os.getenv("STAFF_ASK_PER_RESTAURANT_MINUTE", "20") or 20))
+# Translations a request asked for, written off the request (R4-08): this
+# many at once per process, at most TRANSLATE_QUEUE_MAX waiting.
+TRANSLATE_WORKERS = max(1, int(os.getenv("STAFF_TRANSLATE_WORKERS", "2") or 2))
+TRANSLATE_QUEUE_MAX = 200
 ASK_MAX_SOURCES = 160          # numbered lines handed to the model, at most
 ASK_REFUSAL = "Ask your manager — I can only answer from your restaurant's house rules and docs."
 
@@ -303,6 +315,53 @@ def _translate(restaurant_id, text, lang, reader=None, db_path=DB_PATH):
     return v.text.strip(), "ok"
 
 
+def _on_request() -> bool:
+    try:
+        import ai_utils
+        return ai_utils.on_request_thread()
+    except Exception:
+        return False
+
+
+_tx_pool = None
+_tx_pending = set()
+_tx_pool_lock = threading.Lock()
+
+
+def _translate_later(membership_id, text, restaurant_id, db_path=DB_PATH) -> bool:
+    """Write this translation off the request (R4-08): on a small pool of
+    its own (TRANSLATE_WORKERS), one job per (restaurant, text, language
+    reader) at a time, at most TRANSLATE_QUEUE_MAX waiting — past that it is
+    simply asked again by the next read. Who asked rides along
+    (ai_utils.attributed). True when queued."""
+    import concurrent.futures
+    import ai_utils
+    global _tx_pool
+    key = (restaurant_id, membership_id, _text_hash(text))
+    with _tx_pool_lock:
+        if key in _tx_pending or len(_tx_pending) >= TRANSLATE_QUEUE_MAX:
+            return False
+        _tx_pending.add(key)
+        if _tx_pool is None:
+            _tx_pool = concurrent.futures.ThreadPoolExecutor(max_workers=TRANSLATE_WORKERS,
+                                                             thread_name_prefix="staff-translate")
+
+    def run():
+        try:
+            translate_for(membership_id, text, restaurant_id=restaurant_id, db_path=db_path)
+        finally:
+            with _tx_pool_lock:
+                _tx_pending.discard(key)
+    try:
+        _tx_pool.submit(ai_utils.background_runner(ai_utils.attributed(run)))
+        return True
+    except Exception as e:
+        with _tx_pool_lock:
+            _tx_pending.discard(key)
+        log.warning("staff translation not queued (rid=%s): %s", restaurant_id, e)
+        return False
+
+
 def translate_for(membership_id, text, restaurant_id=None, db_path=DB_PATH, cache_only=False) -> str:
     """`text` in this membership's language, or `text` itself (English, no
     preference, a failed or refused translation). For MANAGER-APPROVED
@@ -335,6 +394,15 @@ def translate_for(membership_id, text, restaurant_id=None, db_path=DB_PATH, cach
                     return text
             except (TypeError, ValueError):
                 return text
+        # Never a model call on a request thread (blind re-audit 10/20/26
+        # R4-08): a staff page used to wait up to TRANSLATE_TIMEOUT on the
+        # first reader's translation, holding one of the four request
+        # threads and an interactive slot. The page shows the text as
+        # written this once; the translation is written off the request and
+        # cached, so the next read has it.
+        if _on_request():
+            _translate_later(membership_id, text, rid, db_path)
+            return text
         key = (rid, h, lang)
         with _tx_locks_guard:
             lock = _tx_locks.setdefault(key, threading.Lock())

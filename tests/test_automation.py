@@ -820,7 +820,8 @@ def test_phase_c_routes_and_jobs_are_registered():
     for want in (("/food-cost/recipe-drafts", ("GET",)), ("/food-cost/recipes/import", ("POST",)),
                  ("/labor/weekly-plan", ("POST",)), ("/account/send-delay", ("POST",))):
         assert want in paths, want
-    assert admin_ops.RUNNABLE_JOBS["weekly_plan"]["target"] == ("strategy_jobs", "run_weekly_plan")
+    # Queued per restaurant since the re-audit fix round 10/20/26 (R4-09).
+    assert admin_ops.RUNNABLE_JOBS["weekly_plan"]["target"] == ("strategy_jobs", "fan_out_weekly_plan")
     assert admin_ops.RUNNABLE_JOBS["recipe_drafts"]["target"] == ("strategy_jobs", "run_recipe_drafts")
 
 

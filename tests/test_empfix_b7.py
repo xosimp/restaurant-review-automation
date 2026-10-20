@@ -592,6 +592,15 @@ def test_staff_read_the_approved_brief_and_focus_line_in_their_language(client, 
     monkeypatch.setattr(ai_utils, "create_with_retry",
                         _Model("Gran viernes. Más movimiento entre 6–8pm.", "Ofrécelo primero."))
     _as_staff(client, rid, uid)
+    # Never a model call on the request (re-audit 10/20/26 R4-08): the first
+    # read shows the approved English and writes the translation off the
+    # request; the next read has it.
+    d = client.get("/staff/api/preshift").get_json()
+    assert d["brief_text"] == "Big Friday. Rush around 6–8pm." and d["translated"] is False
+    import time as _t
+    end = _t.time() + 10
+    while sk._tx_pending and _t.time() < end:
+        _t.sleep(0.02)
     d = client.get("/staff/api/preshift").get_json()
     assert d["brief_text"] == "Gran viernes. Más movimiento entre 6–8pm." and d["translated"] is True
     assert d["focus"] == {"item": "Short Rib", "line": "Ofrécelo primero."}
@@ -778,6 +787,47 @@ def test_no_house_rules_means_no_call_and_asking_is_rate_limited(client, monkeyp
     codes = [client.post("/staff/api/ask", json={"question": "Where do coats go?"}).status_code
              for _ in range(sk.ASK_PER_MINUTE + 1)]
     assert 429 in codes
+
+
+def test_an_async_question_is_answered_off_the_request_and_polled(client, monkeypatch):
+    """Re-audit 10/20/26 R4-08: the staff portal and the iOS staff app ask
+    with `async`; the answer is written on the interactive lane and polled —
+    no request thread waits on the model — and only the asker reads it."""
+    import time as _t
+    rid = _restaurant()
+    _roster(monkeypatch)
+    _rules(rid)
+    reply = {"found": True, "answer": "Phones stay in the locker during service.", "sources": ["S1"]}
+    monkeypatch.setattr(ai_utils, "create_with_retry", _Model(json.dumps(reply), json.dumps(reply)))
+    uid, _mid = _staff(rid)
+    _as_staff(client, rid, uid)
+    r = client.post("/staff/api/ask", json={"question": "Can I keep my phone on me?", "async": True})
+    d = r.get_json()
+    assert r.status_code == 202 and d["pending"] is True and d["turn_id"]
+    end = _t.time() + 10
+    while True:
+        p = client.get(f"/staff/api/ask/turn/{d['turn_id']}").get_json()
+        if p.get("done") is not False or _t.time() > end:
+            break
+        _t.sleep(0.02)
+    assert p["done"] is True and p["answered"] is True and p["answer"] == "Phones stay in the locker during service."
+    other, _m2 = _staff(rid, username="sam", name="Sam Lee")
+    _as_staff(client, rid, other)
+    assert client.get(f"/staff/api/ask/turn/{d['turn_id']}").status_code == 404, "only the asker reads it"
+
+
+def test_a_whole_crew_is_held_to_its_restaurants_questions_a_minute(client, monkeypatch):
+    import staff_knowledge as sk
+    rid = _restaurant()
+    _roster(monkeypatch)
+    monkeypatch.setattr(ai_utils, "create_with_retry", _Model())
+    monkeypatch.setattr(sk, "ASK_PER_RESTAURANT_MINUTE", 2)
+    codes = []
+    for i in range(3):
+        uid, _m = _staff(rid, username=f"crew{i}", name=f"Crew {i}")
+        _as_staff(client, rid, uid)
+        codes.append(client.post("/staff/api/ask", json={"question": "Where do coats go?"}).status_code)
+    assert codes[:2] == [200, 200] and codes[2] == 429
 
 
 # ── the nudge: the one draft, and the manager's ask ─────────────────────────

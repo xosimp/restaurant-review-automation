@@ -1635,6 +1635,39 @@ struct StaffAskAnswer: Decodable, Equatable {
 
 struct StaffQuestionBody: Encodable, Equatable {
     let question: String
+    /// Asks the server to write the answer off its request threads and hand
+    /// back a turn to poll (re-audit 10/20/26 R4-08). Sent as `async`.
+    var poll: Bool = true
+
+    enum CodingKeys: String, CodingKey {
+        case question
+        case poll = "async"
+    }
+}
+
+/// The ask's first reply, or a poll of it: still being written (`pending`)
+/// or the answer itself (R4-08). A server that answers inline is read as
+/// a finished reply.
+struct StaffAskReply: Decodable {
+    let pending: Bool
+    let turnId: String?
+    let pollAfterMs: Int
+    let answer: StaffAskAnswer
+
+    enum CodingKeys: String, CodingKey {
+        case pending, done
+        case turnId = "turn_id"
+        case pollAfterMs = "poll_after_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let notDone = !c.staffBool(.done, default: true)
+        pending = c.staffBool(.pending) || notDone
+        turnId = c.staffString(.turnId)
+        pollAfterMs = c.staffInt(.pollAfterMs) ?? 700
+        answer = try StaffAskAnswer(from: decoder)
+    }
 }
 
 // MARK: - Load state

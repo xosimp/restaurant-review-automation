@@ -6668,6 +6668,46 @@ def admin_api_ai_reset_breaker(current_user):
     return jsonify(ok=True, breakers=after)
 
 
+@admin_bp.route("/admin/api/ai/emergency-stop", methods=["POST"])
+@admin_required
+def admin_api_ai_emergency_stop(current_user):
+    """Arm (body {"armed": true, "reason": "..."}) or clear ({"armed":
+    false}) the emergency stop: every model call for every client refused,
+    in every process within seconds, no deploy (blind re-audit 10/20/26
+    R4-02). AI_EMERGENCY_STOP in the environment still holds while set."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import ai_utils
+    body = request.get_json(silent=True) or {}
+    armed = body.get("armed") in (True, 1, "1", "true", "yes")
+    before = ai_utils.emergency_stop_armed()
+    if armed:
+        ai_utils.arm_emergency_stop(actor=current_user.get("username"),
+                                    reason=str(body.get("reason") or "")[:200] or None)
+    else:
+        ai_utils.clear_emergency_stop(actor=current_user.get("username"))
+    after = ai_utils.emergency_stop_armed()
+    _g_audit(current_user, "ai.emergency_stop", target="all", before={"armed": before}, after={"armed": after},
+             summary=f"AI emergency stop {'armed' if armed else 'cleared'} by {current_user.get('username')}")
+    return jsonify(ok=True, emergency_stop=after, env_armed=ai_utils._env_emergency_stop())
+
+
+@admin_bp.route("/admin/api/ai/fleet-brake/release", methods=["POST"])
+@admin_required
+def admin_api_ai_fleet_brake_release(current_user):
+    """Release the automatic fleet brake (R4-02): the paused background AI
+    work resumes, and the brake does not re-arm by itself for
+    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires)."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import ai_utils
+    before = ai_utils.fleet_brake_scope()
+    ai_utils.release_fleet_brake(actor=current_user.get("username"))
+    _g_audit(current_user, "ai.fleet_brake_release", target="all", before={"brake": before},
+             after={"brake": None}, summary=f"AI fleet brake released by {current_user.get('username')}")
+    return jsonify(ok=True, fleet_brake=ai_utils.fleet_brake_scope())
+
+
 @admin_bp.route("/admin/api/ai/quality")
 @admin_required
 def admin_api_ai_quality(current_user):

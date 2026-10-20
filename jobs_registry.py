@@ -468,8 +468,8 @@ JOBS = {
         target=("strategy_jobs", "run_auto_draft_schedules"), run_kwargs=_chi_now_kw, max_minutes=50, lane="ai"),
     "weekly_plan": dict(
         cadence="Mon 7am local (hourly on Mondays)", sla_minutes=_W, sends=False, runnable=True,
-        label="Weekly plan", description="The agent files the week's three actions as issues (nobody is texted)",
-        target=("strategy_jobs", "run_weekly_plan"), max_minutes=60, lane="ai"),
+        label="Weekly plan", description="The agent files the week's three actions as issues (nobody is texted) — queued per restaurant",
+        target=("strategy_jobs", "fan_out_weekly_plan"), max_minutes=60, lane="ai"),
     "recipe_drafts": dict(
         cadence="Tue 5am local (hourly on Tuesdays)", sla_minutes=_W, sends=False, runnable=True,
         label="Recipe drafts", description="Draft recipes for POS dishes that have none",

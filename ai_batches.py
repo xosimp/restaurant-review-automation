@@ -9,7 +9,12 @@ workflow: it is written while the owner is asleep, so nobody waits on it.
 
   enabled(workflow)              may this workflow batch here and now?
   submit(workflow, items)        gate each item as create_with_retry would,
-                                 then one batches.create for the rest
+                                 then batches.create for the rest — in
+                                 chunks under the API's size limit; with
+                                 group=True the items wait for the
+                                 collector's next pass and go out with
+                                 every other item of their workflow
+                                 (flush_deferred)
   item(workflow, custom_id)      the item's row (its status), or None
   pending(workflow, custom_id)   True while its answer has not come back
   cancel(workflow, custom_id)    the caller fell back: the answer, when it
@@ -82,6 +87,28 @@ wherever its batch is, and tells its callback once more
 (BatchItemFailed("stale"), or "cutoff" again) — a second cut-short call
 closes it as failed, never a third.
 
+ONE BATCH PER PASS, NOT ONE PER RESTAURANT (blind re-audit 10/20/26 R4-06).
+The nightly DSR narrative, the weekly digest, the competitor read and the
+quiet-night post each submit ONE item per restaurant as it comes due; one
+batch per item meant ~1,500 batches a night against a collector that read
+the 50 oldest a pass. They submit with group=True now: the item is gated
+at once (a refusal is told at once, as before) and kept `deferred`; the
+collector's next pass (flush_deferred, at its top) sends every deferred
+item of a workflow as one batch — chunked (R4-07) — and the caller reads
+"submitted" exactly as before (a deferred item is OPEN: pending, cancel and
+the cutoff sweep treat it as out). A flush that cannot send tells each
+item's callback BatchItemFailed("submit_failed"), so its caller falls back.
+The collector itself reads the open batches least-recently-checked first,
+at most AI_BATCH_COLLECT_MAX a pass, so every open batch is looked at in
+turn instead of the oldest 50 forever.
+
+CHUNKED UNDER THE API'S LIMIT (R4-07). One batches.create carried every
+item handed to submit — the fleet's diagnoses in one request — and the
+API takes at most 100,000 requests or 256 MB a batch: past it the whole
+fleet's batch failed. A submission is cut into chunks of at most
+AI_BATCH_MAX_ITEMS items and AI_BATCH_MAX_MB of serialized requests, one
+ai_batch_jobs row each, so a failed chunk fails (and falls back) alone.
+
 ONLY WHERE THE SCHEDULER RUNS. A local backend holds a copy of real
 restaurants and production's key; it never submits and never collects
 (scheduler.scheduling_allowed). AI_BATCHES_ENABLED=0 switches the whole
@@ -119,9 +146,16 @@ DEFAULT_WORKFLOWS = ("dsr_narrative,shadow_arms,review_diagnosis,food_cost_diagn
 # The batches endpoints carry a whole request set up and a JSONL file back.
 API_TIMEOUT_SECONDS = 60.0
 # The collector's bounds per pass (CLAUDE.md: bounded; the jobs table is the
-# queue, oldest first, so a pass that stops early leaves the rest for the next).
-COLLECT_MAX_BATCHES = 50
+# queue, least recently checked first, so a pass that stops early leaves the
+# rest for the next — R4-06).
+COLLECT_MAX_BATCHES = max(1, int(os.getenv("AI_BATCH_COLLECT_MAX", "200") or 200))
 COLLECT_MAX_SECONDS = 120
+# One batches.create at most this many items / this many MB of requests
+# (R4-07; the API's own limit is 100,000 requests or 256 MB a batch).
+BATCH_MAX_ITEMS = max(1, min(100000, int(os.getenv("AI_BATCH_MAX_ITEMS", "10000") or 10000)))
+BATCH_MAX_BYTES = int(max(1.0, min(250.0, float(os.getenv("AI_BATCH_MAX_MB", "50") or 50))) * 1024 * 1024)
+# Deferred items (group=True) sent per collector pass, oldest first.
+FLUSH_MAX_ITEMS = max(1, int(os.getenv("AI_BATCH_FLUSH_MAX", "20000") or 20000))
 # An item claimed for its callback this long ago whose callback is not
 # running in this process (a deploy killed the process mid-callback) is
 # handed to its callback once more as BatchItemFailed("stale"), so its
@@ -145,6 +179,7 @@ CALLBACK_INLINE_WAIT_SECONDS = 20
 CUTOFF_MAX_ITEMS = 10
 
 # Item states.
+DEFERRED = "deferred"          # gated and kept for the collector's next flush (group=True, R4-06)
 QUEUED = "queued"              # written; batches.create has not answered yet
 SUBMITTED = "submitted"        # in a batch at Anthropic
 BLOCKED = "blocked"            # refused by a gate, never sent; callback told
@@ -155,7 +190,8 @@ FAILED = "failed"              # errored / expired / canceled; callback told
 CANCELLED = "cancelled"        # the caller stopped waiting
 CUT_OFF = "cut_off"            # past its cutoff_at: cancelled, its callback owed (-> cancelled)
 DISCARDED = "discarded"        # answered after it was cancelled: ledgered, dropped
-OPEN = (QUEUED, SUBMITTED)
+OPEN = (DEFERRED, QUEUED, SUBMITTED)
+_OPEN_IN = "(" + ",".join("?" for _s in OPEN) + ")"
 
 # What submit() says about each item.
 DISABLED = "disabled"
@@ -406,7 +442,7 @@ def _gate(restaurant_id, action, model, readiness, attribution):
     if paused:
         ai_utils.log_blocked(restaurant_id, action, model, "budget", detail=paused, **attribution)
         return ai_utils.AIBudgetExceeded(_BUDGET_MESSAGE.format(over=paused))
-    if ai_utils.breaker_open("anthropic"):
+    if ai_utils.breaker_open("anthropic", model):
         ai_utils.log_blocked(restaurant_id, action, model, "breaker", detail="the provider breaker is open",
                              **attribution)
         return ai_utils.AIProviderDown(ai_utils._PROVIDER_DOWN_MESSAGE)
@@ -451,8 +487,11 @@ def _invoke(row, message=None, error=None):
         return f"{type(e).__name__}: {str(e)[:300]}"
 
 
-def submit(workflow, items, client=None):
-    """Send `items` as one batch. Returns {custom_id: outcome}: "submitted",
+def submit(workflow, items, client=None, group=False):
+    """Send `items` as a batch (chunked, R4-07). Returns {custom_id:
+    outcome}: "submitted" (with group=True: gated and kept for the
+    collector's next flush, which sends it with the rest of the pass —
+    R4-06),
     "blocked" (a gate refused it; its callback has been told), "disabled"
     (enabled() is false — nothing written, the caller goes synchronous),
     "duplicate" (that custom_id was already used for this workflow) or
@@ -498,7 +537,7 @@ def submit(workflow, items, client=None):
                 (workflow, cid, rid, action, model, it["callback"],
                  json.dumps(it.get("context") or {}, default=str),
                  None if error else zlib.compress(json.dumps(request, default=str).encode("utf-8")),
-                 BLOCKED if error else QUEUED, (type(error).__name__ if error else None),
+                 BLOCKED if error else (DEFERRED if group else QUEUED), (type(error).__name__ if error else None),
                  trigger, actor, (str(item_corr)[:80] if item_corr else None), cutoff))
             conn.commit()
             if cur.rowcount != 1:
@@ -507,6 +546,11 @@ def submit(workflow, items, client=None):
             if error is not None:
                 out[cid] = BLOCKED
                 blocked.append((cid, error))
+                continue
+            if group:
+                # Sent with the rest of the pass by the collector (R4-06);
+                # to the caller it is out, as a submitted item is.
+                out[cid] = SUBMITTED
                 continue
             requests.append({"custom_id": cid, "params": request})
             keep[cid] = (item_corr, action, rid, request)
@@ -520,45 +564,156 @@ def submit(workflow, items, client=None):
                 _update(workflow, cid, callback_error=err)
     if not requests:
         return out
-    ids = [r["custom_id"] for r in requests]
-    try:
-        batch = (client or _client()).messages.batches.create(requests=requests)
-        batch_id = str(getattr(batch, "id"))
-    except Exception as e:
-        reason = ai_utils.classify_error(e)
-        for cid in ids:
-            _update(workflow, cid, status=SUBMIT_FAILED, reason=reason, error=f"{type(e).__name__}: {str(e)[:300]}",
-                    request_z=None)
-            out[cid] = SUBMIT_FAILED
+    out.update(_send(workflow, requests, keep, client))
+    return out
+
+
+def _chunks(requests):
+    """`requests` cut into batches of at most BATCH_MAX_ITEMS items and
+    BATCH_MAX_BYTES of serialized requests (R4-07). A single request larger
+    than the byte bound is a chunk of its own (the API judges it)."""
+    chunk, size = [], 0
+    for r in requests:
+        n = len(json.dumps(r, default=str).encode("utf-8"))
+        if chunk and (len(chunk) >= BATCH_MAX_ITEMS or size + n > BATCH_MAX_BYTES):
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(r)
+        size += n
+    if chunk:
+        yield chunk
+
+
+def _send(workflow, requests, keep, client=None, on_failed=None):
+    """batches.create for `requests` ({custom_id, params}), chunk by chunk,
+    each chunk its own ai_batch_jobs row; a chunk that fails marks only its
+    own items SUBMIT_FAILED (on_failed(custom_id, error) is told). `keep`
+    maps custom_id -> (correlation id, action, restaurant id, request) for
+    the orchestrator's sampled replays. Returns {custom_id: outcome}."""
+    import ai_utils
+    out = {}
+    for chunk in _chunks(requests):
+        ids = [r["custom_id"] for r in chunk]
         try:
-            import ops
-            ops.capture(e, job="ai_batch_submit", context=f"{workflow}: {len(ids)} item(s)")
-        except Exception:
-            pass
-        return out
+            batch = (client or _client()).messages.batches.create(requests=chunk)
+            batch_id = str(getattr(batch, "id"))
+        except Exception as e:
+            reason = ai_utils.classify_error(e)
+            for cid in ids:
+                _update(workflow, cid, status=SUBMIT_FAILED, reason=reason,
+                        error=f"{type(e).__name__}: {str(e)[:300]}", request_z=None)
+                out[cid] = SUBMIT_FAILED
+                if on_failed is not None:
+                    on_failed(cid, e)
+            try:
+                import ops
+                ops.capture(e, job="ai_batch_submit", context=f"{workflow}: {len(ids)} item(s)")
+            except Exception:
+                pass
+            continue
+        conn = _conn()
+        try:
+            conn.execute("INSERT OR IGNORE INTO ai_batch_jobs (batch_id, workflow, status, n_items, submitted_at) "
+                         "VALUES (?,?,?,?,?)", (batch_id, workflow, "in_progress", len(ids), _now()))
+            conn.executemany("UPDATE ai_batch_items SET batch_id=?, status=?, submitted_at=? "
+                             "WHERE workflow=? AND custom_id=? AND status=?",
+                             [(batch_id, SUBMITTED, _now(), workflow, cid, QUEUED) for cid in ids])
+            conn.commit()
+        finally:
+            conn.close()
+        for cid in ids:
+            out[cid] = SUBMITTED
+            # A sample of the items that are a workflow run's first rung keep
+            # their request as that run's (seq 1, its tier): the answer lands
+            # with no create_with_retry call, so nothing else keeps it, and the
+            # learner's shadow replays need it (re-audit 10/7/26 #6).
+            if cid not in keep:
+                continue
+            corr_, action_, rid_, request_ = keep[cid]
+            try:
+                import ai_orchestrator
+                ai_orchestrator.keep_batch_request(corr_, action_, rid_, request_)
+            except Exception:
+                pass
+    return out
+
+
+def flush_deferred(client=None, out=None):
+    """Send every deferred item (submit's group=True) as one batch per
+    workflow — chunked — oldest first, at most FLUSH_MAX_ITEMS a pass (R4-06).
+    Run at the top of each collector pass. An item whose workflow may no
+    longer batch here, or whose chunk fails to send, is closed
+    SUBMIT_FAILED and its callback told BatchItemFailed("submit_failed") on
+    the pool, so its caller writes it synchronously. Returns the items sent."""
+    out = out if out is not None else {}
     conn = _conn()
     try:
-        conn.execute("INSERT OR IGNORE INTO ai_batch_jobs (batch_id, workflow, status, n_items, submitted_at) "
-                     "VALUES (?,?,?,?,?)", (batch_id, workflow, "in_progress", len(ids), _now()))
-        conn.executemany("UPDATE ai_batch_items SET batch_id=?, status=?, submitted_at=? "
-                         "WHERE workflow=? AND custom_id=? AND status=?",
-                         [(batch_id, SUBMITTED, _now(), workflow, cid, QUEUED) for cid in ids])
-        conn.commit()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT workflow, custom_id, restaurant_id, action, correlation_id, request_z FROM ai_batch_items "
+            "WHERE status=? ORDER BY created_at LIMIT ?", (DEFERRED, FLUSH_MAX_ITEMS + 1)).fetchall()]
     finally:
         conn.close()
-    for cid in ids:
-        out[cid] = SUBMITTED
-        # A sample of the items that are a workflow run's first rung keep
-        # their request as that run's (seq 1, its tier): the answer lands
-        # with no create_with_retry call, so nothing else keeps it, and the
-        # learner's shadow replays need it (re-audit 10/7/26 #6).
-        corr_, action_, rid_, request_ = keep[cid]
+    if len(rows) > FLUSH_MAX_ITEMS:
+        rows, out["hit_bound"] = rows[:FLUSH_MAX_ITEMS], True
+    by_wf = {}
+    for r in rows:
+        by_wf.setdefault(r["workflow"], []).append(r)
+    sent = 0
+    for wf_, items in by_wf.items():
+        # Claimed deferred -> queued, so a cancel() since the select wins.
+        claimed = []
+        conn = _conn()
         try:
-            import ai_orchestrator
-            ai_orchestrator.keep_batch_request(corr_, action_, rid_, request_)
-        except Exception:
-            pass
-    return out
+            for r in items:
+                cur = conn.execute("UPDATE ai_batch_items SET status=? WHERE workflow=? AND custom_id=? AND status=?",
+                                   (QUEUED, wf_, r["custom_id"], DEFERRED))
+                if cur.rowcount == 1:
+                    claimed.append(r)
+            conn.commit()
+        finally:
+            conn.close()
+        if not claimed:
+            continue
+
+        def failed(cid, error, _wf=wf_):
+            _update(_wf, cid, status=SUBMIT_FAILED, reason=getattr(error, "kind", None) or "submit_failed",
+                    error=str(error)[:300], request_z=None)
+            _dispatch(_wf, cid, _told_submit_failed(_wf, cid, error))
+
+        if not enabled(wf_):
+            for r in claimed:
+                failed(r["custom_id"], BatchItemFailed("submit_failed", "batching is off for this workflow here"))
+            continue
+        requests, keep = [], {}
+        for r in claimed:
+            try:
+                params = json.loads(zlib.decompress(r["request_z"]).decode("utf-8"))
+            except Exception as e:
+                failed(r["custom_id"], BatchItemFailed("submit_failed", f"request unreadable: {e}"))
+                continue
+            requests.append({"custom_id": r["custom_id"], "params": params})
+            keep[r["custom_id"]] = (r.get("correlation_id"), r.get("action"), r.get("restaurant_id"), params)
+        res = _send(wf_, requests, keep, client,
+                    on_failed=lambda cid, e, _f=failed: _dispatch_failed(_f, cid, e))
+        sent += sum(1 for v in res.values() if v == SUBMITTED)
+    out["flushed"] = out.get("flushed", 0) + sent
+    return sent
+
+
+def _dispatch_failed(failed, cid, error):
+    """A chunk's create failed: its item is already SUBMIT_FAILED; tell its
+    callback (BatchItemFailed carries the cause)."""
+    failed(cid, BatchItemFailed("submit_failed", f"{type(error).__name__}: {str(error)[:200]}"))
+
+
+def _told_submit_failed(workflow, custom_id, error):
+    """The pool's job for a deferred item that could not be sent: its
+    callback told `error` (its caller falls back); the item stays
+    SUBMIT_FAILED."""
+    def finish(err):
+        if err:
+            _update(workflow, custom_id, callback_error=err)
+    return lambda: _run_callback(workflow, custom_id, error=error, finish=finish)
 
 
 def _update(workflow, custom_id, **fields):
@@ -601,7 +756,7 @@ def open_items(workflow, restaurant_id=None):
     calls synchronously."""
     conn = _conn()
     try:
-        sql = "SELECT custom_id FROM ai_batch_items WHERE workflow=? AND status IN (?,?)"
+        sql = "SELECT custom_id FROM ai_batch_items WHERE workflow=? AND status IN " + _OPEN_IN
         args = [workflow, *OPEN]
         if restaurant_id is not None:
             sql += " AND restaurant_id=?"
@@ -631,7 +786,7 @@ def _stop_waiting(workflow, custom_id, client, status, reason):
     try:
         cur = conn.execute("UPDATE ai_batch_items SET status=?, reason=?, collected_at=?, "
                            "claimed_at=CASE WHEN ?=? THEN ? ELSE claimed_at END "
-                           "WHERE workflow=? AND custom_id=? AND status IN (?,?)",
+                           "WHERE workflow=? AND custom_id=? AND status IN " + _OPEN_IN,
                            (status, reason, _now(), status, CUT_OFF, _now(), workflow, str(custom_id), *OPEN))
         conn.commit()
         if cur.rowcount != 1:
@@ -639,7 +794,7 @@ def _stop_waiting(workflow, custom_id, client, status, reason):
         row = conn.execute("SELECT batch_id FROM ai_batch_items WHERE workflow=? AND custom_id=?",
                            (workflow, str(custom_id))).fetchone()
         batch_id = row["batch_id"] if row else None
-        wanted = conn.execute("SELECT COUNT(*) FROM ai_batch_items WHERE batch_id=? AND status IN (?,?)",
+        wanted = conn.execute("SELECT COUNT(*) FROM ai_batch_items WHERE batch_id=? AND status IN " + _OPEN_IN,
                               (batch_id, *OPEN)).fetchone()[0] if batch_id else 1
     finally:
         conn.close()
@@ -1000,7 +1155,7 @@ def _sweep_cutoffs(client, started, out, handed):
     conn = _conn()
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT workflow, custom_id, batch_id, status FROM ai_batch_items WHERE status IN (?,?) "
+            "SELECT workflow, custom_id, batch_id, status FROM ai_batch_items WHERE status IN " + _OPEN_IN + " "
             "AND cutoff_at IS NOT NULL AND cutoff_at <= ? ORDER BY cutoff_at LIMIT ?",
             (*OPEN, _now(), CUTOFF_MAX_ITEMS + 1)).fetchall()]
     finally:
@@ -1048,8 +1203,8 @@ def _cancel_for_cutoffs(batch_id, client, out) -> bool:
             except ValueError:
                 return False
             return age < CANCEL_GRACE_SECONDS
-        wanted = conn.execute("SELECT COUNT(*) FROM ai_batch_items WHERE batch_id=? AND status IN (?,?) AND "
-                              "(cutoff_at IS NULL OR cutoff_at > ?)", (batch_id, *OPEN, _now())).fetchone()[0]
+        wanted = conn.execute("SELECT COUNT(*) FROM ai_batch_items WHERE batch_id=? AND status IN " + _OPEN_IN
+                              + " AND (cutoff_at IS NULL OR cutoff_at > ?)", (batch_id, *OPEN, _now())).fetchone()[0]
     finally:
         conn.close()
     if wanted or not _scheduling_allowed():
@@ -1183,8 +1338,9 @@ def _capture_sweep(e, what="cutoff sweep"):
 
 
 def run_collector(client=None):
-    """The scheduled job (ai_batch_collect, every ~5 minutes): every batch
-    still out, oldest first, asked whether it has ended; an ended one's
+    """The scheduled job (ai_batch_collect, every ~5 minutes): the pass's
+    deferred items sent first (flush_deferred, R4-06); then every batch
+    still out, least recently checked first, asked whether it has ended; an ended one's
     results ledgered and their callbacks handed to the pool — never run on
     the loop thread (platform re-audit 10/7/26 #1). Bounded by
     COLLECT_MAX_BATCHES, by COLLECT_MAX_SECONDS checked per item and by
@@ -1200,11 +1356,20 @@ def run_collector(client=None):
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "items": 0, "cut_off": 0}
     if not _scheduling_allowed():
         return dict(out, reason="not the production scheduler host")
+    # The pass's grouped submissions first (R4-06): one batch per workflow.
+    try:
+        flush_deferred(client, out)
+    except Exception as e:
+        _capture_sweep(e, "deferred flush")
+    # Least recently checked first (R4-06): every open batch is asked in
+    # turn, never the oldest 50 forever. One a pass left half-collected
+    # keeps its place (its checked_at is not moved).
     conn = _conn()
     try:
         jobs = [dict(r) for r in conn.execute(
             "SELECT * FROM ai_batch_jobs WHERE status IN ('in_progress','canceling') "
-            "ORDER BY submitted_at, batch_id LIMIT ?", (COLLECT_MAX_BATCHES + 1,)).fetchall()]
+            "ORDER BY CASE WHEN checked_at IS NULL THEN 0 ELSE 1 END, checked_at, submitted_at, batch_id LIMIT ?",
+            (COLLECT_MAX_BATCHES + 1,)).fetchall()]
     finally:
         conn.close()
     started = time.monotonic()
@@ -1235,14 +1400,9 @@ def run_collector(client=None):
             out["ok"] += 1
             out["items"] += n
             if not complete:
-                # Left in progress: the next pass reads it again.
+                # Left in progress, its place in the line kept: the next
+                # pass reads it again first.
                 out["hit_bound"] = True
-                c = _conn()
-                try:
-                    c.execute("UPDATE ai_batch_jobs SET checked_at=? WHERE batch_id=?", (_now(), job["batch_id"]))
-                    c.commit()
-                finally:
-                    c.close()
                 break
         except Exception as e:
             out["attempted"] += 1

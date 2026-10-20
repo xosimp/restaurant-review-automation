@@ -199,7 +199,9 @@ def test_an_overload_is_retried_and_counts_toward_the_breaker(db_path):
         ai_utils.create_with_retry(client, model="claude-sonnet-5", max_tokens=10, restaurant_id=rid,
                                    action="t_529", retries=2)
     assert client.calls == 3, "a 529 was not retried"
-    assert ai_utils.breakers()["anthropic"]["failures"] == 1
+    # Counted against Sonnet's own breaker (re-audit 10/20/26 R4-04).
+    assert ai_utils.breakers()["anthropic/claude-sonnet-5"]["failures"] == 1
+    assert ai_utils.breakers()["anthropic"]["failures"] == 0
     (row,) = _rows(db_path, "action='t_529'")
     assert row["reason"] == "overloaded" and row["attempts"] == 3
 
@@ -304,7 +306,7 @@ def test_the_weekly_plan_logs_under_its_own_action(db_path, monkeypatch):
     import ask_cavnar
     import inspect
     import strategy_jobs
-    src = inspect.getsource(strategy_jobs.run_weekly_plan)
+    src = inspect.getsource(strategy_jobs.weekly_plan_one)
     assert 'action="weekly_plan"' in src
     assert 'action=action' in inspect.getsource(ask_cavnar.ask_with_tools)
 
