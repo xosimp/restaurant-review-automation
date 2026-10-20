@@ -983,7 +983,8 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
                 _ops_join.capture(RuntimeError(f"guest join texts hit the {scope} ceiling"), job="guest_join_cap",
                                   context=f"restaurant_id={restaurant_id}")
         except Exception:
-            print(f"[guest_join] {scope} ceiling reached")
+            import logging
+            logging.getLogger(__name__).warning("guest_join %s ceiling reached", scope)
         return {"ok": False, "status": 429, "error": "We can't send confirmation texts right now. "
                                                      "Please try again later."}
     conn = get_conn(db_path)

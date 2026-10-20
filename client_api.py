@@ -13738,7 +13738,8 @@ def _do_web_analytics_set(current_user):
             try:
                 owned = _wa.ensure_ownership(r_now, source, fields[col])
             except Exception as e:
-                print(f"[web_analytics] ownership check failed for {rid}: {e}")
+                import logging
+                logging.getLogger(__name__).warning("web_analytics ownership check failed for %s: %s", rid, e)
                 owned = False
             if not owned:
                 checks[source] = {"ok": False, "code": "unconfirmed", "error": _wa.UNCONFIRMED_MESSAGE}

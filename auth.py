@@ -3186,7 +3186,8 @@ def _report_otp_cap():
             _ops_cap.capture(RuntimeError(f"staff verification texts hit the {scope} hourly cap ({n} in the hour)"),
                              job="staff_otp_cap", context=f"kind={kind}")
     except Exception:
-        print(f"[staff_otp] {scope} hourly cap reached ({n}); {kind} refused")
+        import logging
+        logging.getLogger(__name__).warning("staff_otp %s hourly cap reached (%s); %s refused", scope, n, kind)
 
 
 OTP_CAP_MESSAGE = "We can't send codes right now. Try again in a little while."
