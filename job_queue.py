@@ -989,7 +989,9 @@ def complete(job_id, worker_id, result=None, db_path=None) -> bool:
 
 def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
     """A try that raised: queued again after RETRY_BACKOFF while tries are
-    left (and `retry`), else failed. Returns the new state."""
+    left (and `retry`), else failed. Returns the new state. An error that
+    carries `retry_after` seconds (a provider's Retry-After, an open
+    breaker — rpower.RPowerTryLater) waits at least that long instead."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT attempts, max_attempts FROM jobs WHERE id=?", (int(job_id),)).fetchone()
@@ -998,6 +1000,10 @@ def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
         again = retry and int(row["attempts"] or 0) < int(row["max_attempts"] or 1)
         if again:
             wait = RETRY_BACKOFF[min(int(row["attempts"] or 1), len(RETRY_BACKOFF)) - 1]
+            try:
+                wait = max(wait, min(float(getattr(error, "retry_after", 0) or 0), 6 * 3600.0))
+            except (TypeError, ValueError):
+                pass
             conn.execute("UPDATE jobs SET state='queued', not_before=?, error=?, lease_owner=NULL, lease_until=NULL, "
                          "phase=NULL WHERE id=? AND lease_owner=?",
                          (time.time() + wait, str(error)[:500], int(job_id), worker_id))

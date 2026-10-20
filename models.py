@@ -4790,6 +4790,11 @@ def init_db(db_path: str = DB_PATH):
     init_bar_mapping(db_path)
     from rpower import init_rate_limit
     init_rate_limit(db_path)
+    # The POS traffic controls (pos_io, scale audit 10/19/26 A3): the
+    # request ledger, the provider breakers, the catalogs per group and the
+    # live snapshot every intraday reader shares.
+    from pos_io import init_pos_io
+    init_pos_io(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway

@@ -122,6 +122,20 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TOAST_SCHEDULE_WRITE` | `""` (off) | 1 only once Toast has admitted Cavnar AI to its integration-partner programme and granted the labor write scope: the POS schedule push then writes shifts to Toast (`POST /labor/v1/shifts`). Off, the Toast push refuses and the preview says why (schedule audit 10/10/26 MARKET-7). | toast.py |
 | `BACKOFFICE_API_BASE` | — | Back Office API host, once one exists (`docs/plans/BACK_OFFICE_INTEGRATION.md`). | backoffice.py |
 | `POS_ARCHIVE_READS` | `"1"` | 1 (default): nightly readers read a closed day from the POS ticket archive instead of the POS API. | pos_archive.py |
+| `RPOWER_REQUEST_SPACING_SECONDS` | `0.15` | The per-token request budget: seconds between two RPOWER requests on one token (one bucket per token, or per token and store with `RPOWER_BUDGET_PER_STORE`). 0 turns both budget levels off. | rpower.py |
+| `RPOWER_BUDGET_PER_STORE` | `"0"` | 1: the per-token bucket becomes one per (token, store) — for when RPOWER confirms its limit is per store and one partner token serves many stores (scale audit A3-14 / ONB-3). | rpower.py |
+| `RPOWER_FLEET_RPS` | `10` | The fleet-wide RPOWER ceiling: requests a second across every token and store (the second budget level; 0 = off). Set it to the rate RPOWER agrees to. Over budget a request waits up to 60 s (5 s on a page load) and is then refused (`RPowerBudgetExceeded`, a queue row rescheduled), never sent anyway. | rpower.py |
+| `POS_REQUEST_LEDGER` | `"1"` | 0 turns off the POS request ledger (`pos_request_ledger`: requests per hour, endpoint and store; the console's "RPOWER traffic" card). | pos_io.py |
+| `POS_REQUEST_LEDGER_FLUSH_SECONDS` | `30` | How often each process writes its in-memory request counts to the ledger (one batch). | pos_io.py |
+| `RETAIN_POS_REQUEST_LEDGER_DAYS` | `90` | How long the request ledger is kept (floor 30). | ops.py |
+| `POS_BREAKER` | `"1"` | 0 turns off the POS circuit breaker (`pos_breakers`). On: after a run of transport failures or 5xx answers, nothing is sent to that POS until a half-open probe answers. | pos_io.py |
+| `POS_BREAKER_FAILURES` | `5` | Consecutive failures, from at least two stores, that open the breaker. | pos_io.py |
+| `POS_BREAKER_FAILURES_ONE_STORE` | `12` | Consecutive failures that open it when only one store is failing. | pos_io.py |
+| `POS_BREAKER_WINDOW_SECONDS` | `300` | A run of failures older than this starts again. | pos_io.py |
+| `POS_BREAKER_COOLDOWN_SECONDS` | `120` | How long an opened breaker refuses before its first probe; doubled by each failed probe. | pos_io.py |
+| `POS_BREAKER_MAX_COOLDOWN_SECONDS` | `1800` | The longest cooldown between probes. | pos_io.py |
+| `POS_BREAKER_PAGE_AFTER_SECONDS` | `1800` | A breaker open (or failing its probes) this long pages the operator once for the opening — one page for a provider outage, not one issue per store (OPS-6). | pos_io.py |
+| `POS_LIVE_SNAPSHOT_SECONDS` | `840` | How long a store's live read during service (sales so far, clock-ins) is shared by live labor, the coverage check, the hourly capture and /labor/live before one of them reads again (A3-02). | pos_io.py |
 
 ## Billing and contracts
 

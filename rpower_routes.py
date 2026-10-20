@@ -60,7 +60,8 @@ def save_rpower_token(restaurant_id, current_user):
     if not r:
         return jsonify(ok=False, error="Restaurant not found"), 404
 
-    probe = rpower.test_token(token)
+    with rpower.for_store(restaurant_id):
+        probe = rpower.test_token(token)
     if not probe["ok"]:
         return jsonify(ok=False, error=probe["error"]), 400
     stores = probe["stores"]
@@ -89,7 +90,7 @@ def save_rpower_token(restaurant_id, current_user):
             fields["rpower_last_synced"] = None
     update_restaurant(restaurant_id, fields)
     if len(stores) == 1:
-        result = rpower.bootstrap(restaurant_id, store_mid=stores[0]["store_mid"])
+        result = rpower.bootstrap(restaurant_id, store_mid=stores[0]["store_mid"], probe=probe)
         if not result.get("ok"):
             return jsonify(ok=False, error=result.get("error"), stores=stores), 400
         return jsonify(ok=True, connected=True, store=result["store"],
