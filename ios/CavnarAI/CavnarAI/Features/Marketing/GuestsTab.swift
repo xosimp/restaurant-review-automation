@@ -572,10 +572,10 @@ struct GuestsTabSection: View {
             VStack(alignment: .leading, spacing: CavnarSpace.xs) {
                 Text(p.ownNumber.map { "Texts come from \($0), and replies come back here." }
                      ?? "Texts come from the Cavnar AI number until your own number is approved.")
-                Text(p.tockConnected
-                     ? (p.tockEvents > 0 ? "Tock is connected: \(p.tockEvents) updates, the last on \(p.tockLast ?? "\u{2014}")."
-                                         : "Tock is connected. Nothing has arrived yet.")
-                     : "Tock isn\u{2019}t connected yet.")
+                // Connected only once Tock has sent something (owner, 10/20/26).
+                Text(p.tockEvents > 0
+                     ? "Tock is connected: \(p.tockEvents) updates, the last on \(p.tockLast ?? "\u{2014}")."
+                     : "Tock isn\u{2019}t sending yet.")
                 Text("Bring in your guest spreadsheet from Marketing \u{2192} Guests on the web.")
             }
             .cavnarText(.caption)

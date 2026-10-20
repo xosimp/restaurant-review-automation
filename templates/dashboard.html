@@ -19920,7 +19920,9 @@ function gxTexting(t, k) {
   var el = document.getElementById('gx-texting');
   if (el) el.textContent = t.own_number ? 'Texts come from ' + t.number + ', and guests’ replies come back here.' : 'Texts come from the Cavnar AI number until your own number is approved.';
   var tk = document.getElementById('gx-tock');
-  if (tk) tk.textContent = k.connected ? ('Tock is connected' + (k.events ? ': ' + k.events + ' updates, the last on ' + k.last_event + '.' : '. Nothing has arrived yet.')) : 'Tock isn’t connected yet. Once it is, reservations and walk-ins add guests here on their own.';
+  // Connected only once Tock has actually sent something: a secret on file is
+  // our half, not theirs (owner, 10/20/26).
+  if (tk) tk.textContent = k.events ? 'Tock is connected: ' + k.events + ' updates, the last on ' + k.last_event + '.' : 'Tock isn\u2019t sending yet. Once it is, reservations and walk-ins add guests here on their own.';
 }
 function gxThreads() {
   _gx.phone = null;
