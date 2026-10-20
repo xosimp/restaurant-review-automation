@@ -15,3 +15,18 @@ def test_sec19_the_tenant_caches_are_bounded():
     import inspect
     src = inspect.getsource(client_api)
     assert "_aivis_cache[rid] =" not in src and "_city_cache[place_id] =" not in src
+
+
+def test_sec09_every_meta_connect_start_is_bound_to_its_login():
+    import inspect
+    import mobile_api
+    import social_routes
+    web = inspect.getsource(social_routes.instagram_connect)
+    assert "set_cookie(IG_NONCE_COOKIE" in web and "sign_bound_state(" in web and "sign_mobile_state(" not in web
+    app = inspect.getsource(mobile_api.mobile_instagram_authorize)
+    assert "sign_bound_state(" in app and "f\"u{int(current_user['id'])}\"" in app
+    confirm = inspect.getsource(mobile_api.mobile_instagram_confirm)
+    assert "principal_only" in confirm and "confirm_mobile_connection" in confirm
+    swift = open(inspect.getfile(mobile_api).rsplit("/", 1)[0]
+                 + "/ios/CavnarAI/CavnarAI/Features/Account/AccountViewModel.swift").read()
+    assert "/mobile/api/connections/instagram/confirm" in swift

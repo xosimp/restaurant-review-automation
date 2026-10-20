@@ -25,20 +25,25 @@ final class GMBConnectCoordinator: NSObject, ASWebAuthenticationPresentationCont
     /// continuation suspended for the life of the process, with the caller's
     /// spinner running forever and no way to retry short of force-quitting
     /// (audit 4.4).
-    func connect(authorizeURL: URL) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
+    /// Returns the sealed ticket when the server asks this login to confirm
+    /// the connection (`status=confirm`, the Meta connect since 10/19/26 —
+    /// scale audit SEC-09), else nil once it is connected.
+    @discardableResult
+    func connect(authorizeURL: URL) async throws -> String? {
+        try await withThrowingTaskGroup(of: String?.self) { group in
             group.addTask { try await self.runSession(authorizeURL: authorizeURL) }
             group.addTask {
                 try await Task.sleep(for: .seconds(180))
                 throw GMBConnectError.server("Connection timed out — try again.")
             }
             defer { group.cancelAll() }
-            try await group.next()
+            let first = try await group.next()
+            return first ?? nil
         }
     }
 
-    private func runSession(authorizeURL: URL) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+    private func runSession(authorizeURL: URL) async throws -> String? {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String?, Error>) in
             let session = ASWebAuthenticationSession(
                 url: authorizeURL,
                 callbackURLScheme: "cavnarai"
@@ -60,7 +65,10 @@ final class GMBConnectCoordinator: NSObject, ASWebAuthenticationPresentationCont
                 }
                 let status = items.first(where: { $0.name == "status" })?.value
                 if status == "connected" {
-                    continuation.resume()
+                    continuation.resume(returning: nil)
+                } else if status == "confirm",
+                          let ticket = items.first(where: { $0.name == "ticket" })?.value, !ticket.isEmpty {
+                    continuation.resume(returning: ticket)
                 } else {
                     let msg = items.first(where: { $0.name == "msg" })?.value ?? "Couldn't connect Google Business"
                     continuation.resume(throwing: GMBConnectError.server(msg))

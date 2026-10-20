@@ -9363,7 +9363,7 @@ def mobile_instagram_authorize(current_user):
     if denied:
         return denied
     import urllib.parse
-    from gmb import sign_mobile_state
+    from gmb import sign_bound_state
     from meta_api import oauth_dialog_url
     app_id = os.getenv("META_APP_ID", "")
     if not app_id:
@@ -9373,9 +9373,30 @@ def mobile_instagram_authorize(current_user):
     params = urllib.parse.urlencode({
         "client_id": app_id, "redirect_uri": redirect_uri, **login_params(),
         "auth_type": "rerequest", "response_type": "code",
-        "state": sign_mobile_state(current_user["restaurant_id"]),
+        # Bound to this login (scale audit 10/19/26, SEC-09): the callback
+        # saves nothing; the app confirms the chosen Page with this login's
+        # bearer token (/connections/instagram/confirm).
+        "state": sign_bound_state(current_user["restaurant_id"], f"u{int(current_user['id'])}"),
     })
     return jsonify(ok=True, url=oauth_dialog_url(params))
+
+
+@mobile_bp.route("/connections/instagram/confirm", methods=["POST"])
+@mobile_login_required
+def mobile_instagram_confirm(current_user):
+    """The second half of the app's Meta connect (SEC-09): the sealed ticket
+    the callback handed back, confirmed by the login that started it."""
+    from permissions import principal_only
+    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    if denied:
+        return denied
+    import social_routes
+    payload, status = social_routes.confirm_mobile_connection(
+        current_user, (request.get_json(silent=True) or {}).get("ticket"))
+    if payload.get("ok"):
+        _log_account_event(current_user["restaurant_id"], "instagram_connected", current_user,
+                           detail=str(payload.get("page") or "")[:80])
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/connections/instagram", methods=["DELETE"])
