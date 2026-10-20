@@ -16002,6 +16002,9 @@ ACCOUNT_EVENT_TYPES = (
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
+    # The owner confirmed a labor setup step from Account (scale re-audit
+    # 10/20/26 R8-11; client_api._do_setup_confirmations).
+    "setup_confirmed",
     "pos_connected", "pos_disconnected", "supplier_order_sent", "schedule_published",
     # Data the owner's figures rest on stopped arriving (CA3 F6, F13): the
     # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
@@ -16054,6 +16057,7 @@ ACCOUNT_EVENT_LABELS = {
     "marketing_emails_changed": "Product update emails changed",
     "auto_approve_changed": "Auto-approve rule changed",
     "hours_changed": "Hours updated",
+    "setup_confirmed": "Setup step confirmed",
     "data_retention_changed": "Data retention changed",
     "profile_updated": "Profile updated",
     # `detail` carries which POS ("Square" / "Clover" / "Toast").

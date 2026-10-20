@@ -56,7 +56,8 @@ def scheduling_allowed() -> bool:
     scheduler's process may send (scheduler.scheduling_allowed delegates
     here). Only on Railway, unless ALLOW_LOCAL_SCHEDULER=1 says otherwise;
     never while a restore (RESTORE_FROM) or the Postgres cutover's write
-    freeze (MAINTENANCE_READ_ONLY) is in force.
+    freeze (MAINTENANCE_READ_ONLY) is in force, nor while restore_guard
+    holds a database restored under the running service (restore_frozen).
 
     Here, not only in scheduler.py, so a gate read from a generation stage
     (push.native_push_allowed, reached through live_activities) never
@@ -66,11 +67,25 @@ def scheduling_allowed() -> bool:
         return False
     if (os.getenv("MAINTENANCE_READ_ONLY") or "").strip().lower() in ("1", "true", "yes", "on"):
         return False
+    if restore_frozen():
+        return False
     if os.getenv("ALLOW_LOCAL_SCHEDULER", "").strip().lower() in ("1", "true", "yes"):
         return True
     # Railway sets all of these on every deploy; any one is enough.
     return any(os.getenv(v) for v in ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID",
                                        "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"))
+
+
+def restore_frozen() -> bool:
+    """Whether restore_guard found the database put back to an earlier point
+    under the running service and nobody has confirmed it yet (scale
+    re-audit 10/20/26 R8-04): its `.restore_freeze` file beside the
+    database file, on the app volume. A stat, no import of ours beyond the
+    already-loaded models (its DB_PATH, so a test's database has its own)."""
+    import sys
+    models = sys.modules.get("models")
+    path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
+    return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))
 
 
 def google_places_key() -> str:

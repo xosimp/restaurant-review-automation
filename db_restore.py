@@ -61,6 +61,19 @@ def restore_if_requested(db_path=None) -> dict:
     snapshot = requested()
     if not snapshot:
         return {"restored": False, "reason": "not requested"}
+    import models as _models_be
+    if _models_be._db_backend() == "postgres":
+        # RESTORE_FROM swaps the SQLite FILE. On Postgres the app never reads
+        # that file: the swap "succeeded", the log said "Restored … (N
+        # restaurants)", nothing changed for anyone and the scheduler stayed
+        # off (scale re-audit 10/20/26 R8-12). Refused loudly instead — the
+        # deploy fails, as every refused restore does.
+        raise RuntimeError(
+            "RESTORE_FROM restores the SQLite file, but this deployment serves Postgres (DATABASE_URL is set and "
+            "DB_BACKEND is not 'sqlite'); nothing was changed. Remove RESTORE_FROM and follow docs/ops/"
+            "RECOVERY.md -> Database recovery: a Railway point-in-time or volume-backup restore of the Postgres "
+            "service, or an off-site copy loaded with scripts/run_pg_copy.py — or set DB_BACKEND=sqlite as well to "
+            "roll the service back to SQLite on purpose.")
     from models import DB_PATH
     db_path = db_path or DB_PATH
     # A restore prepared out of band (prepare(), scripts/prepare_restore.py)
@@ -145,6 +158,7 @@ def restore_if_requested(db_path=None) -> dict:
         open(_marker_path(db_path, snapshot), "w").close()
     log.warning("Restored %s over %s (%d restaurants). Remove RESTORE_FROM once confirmed.",
                 snapshot, db_path, got)
+    _forget_guard_baseline()
     return {"restored": True, "snapshot": snapshot, "restaurants": got, "unsealed": unsealed}
 
 
@@ -267,9 +281,21 @@ def _swap_prepared(snapshot, record, db_path) -> dict:
     if got < expected:
         raise RuntimeError(f"prepared restore of {snapshot} came back with {got} restaurants, expected {expected}")
     open(marker, "w").close()
+    _forget_guard_baseline()
     log.warning("Restored the prepared %s over %s by rename (%d restaurants). Remove RESTORE_FROM once confirmed.",
                 snapshot, db_path, got)
     return {"restored": True, "snapshot": snapshot, "restaurants": got, "prepared": True}
+
+
+def _forget_guard_baseline():
+    """A RESTORE_FROM swap is itself the reviewed restore (the scheduler and
+    the queue stood down while it was set): restore_guard must not read its
+    older tick counter as a second, unreviewed one. Never fails the restore."""
+    try:
+        import restore_guard
+        restore_guard.forget_baseline()
+    except Exception as e:
+        log.warning("restore: the restore guard's baseline was not reset: %s", e)
 
 
 def _unseal(path) -> dict:

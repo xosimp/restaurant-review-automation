@@ -2093,6 +2093,35 @@ def write_probe(db_path=None, timeout=2.0):
     return False, (st.get("error") or st.get("state") or "write probe failed")[:200]
 
 
+# A missing DSR night pages the operator only when more than this share of
+# the stores with the report on are missing one (R8-14) — the POS fleet
+# outage's rule (pos_health.FLEET_OUTAGE_SHARE). With fewer than 1/share DSR
+# stores (today's fleet) any one missing still pages.
+DSR_MISSING_PAGE_SHARE = float(os.getenv("DSR_MISSING_PAGE_SHARE", "0.05"))
+
+
+def _dsr_missing_pages(missing, db_path=None) -> bool:
+    """Whether `missing` (dsr.pipeline.nights_missing) is a fleet problem
+    worth a page: more than DSR_MISSING_PAGE_SHARE of the DSR fleet — the
+    stores that had a report in the last week, and the missing ones. An
+    unreadable count pages (fail loud)."""
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+        try:
+            seen = {int(r[0]) for r in conn.execute(
+                "SELECT DISTINCT restaurant_id FROM dsr_reports WHERE business_date >= ?",
+                ((_dt.utcnow().date() - _td(days=8)).isoformat(),)).fetchall()}
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"DSR fleet count unavailable: {e}")
+        return True
+    fleet = len(seen | {int(m.get("restaurant_id") or 0) for m in missing})
+    return len(missing) > DSR_MISSING_PAGE_SHARE * fleet
+
+
 def _dsr_missing(db_path=None):
     """Restaurants whose last business night has no final or provisional
     Daily Sales Report an hour past its deadline (#17). [] when unreadable."""
@@ -2231,6 +2260,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or state.get("wedged") or state.get("loop_stalled")
                 or out.get("jobs_overdue")
                 or disk.get("state") == "critical"
+                or (out.get("pg_volume") or {}).get("state") == "critical"
                 or (out.get("requests") or {}).get("error_rate_over")
                 or not write_ok)
 
@@ -2262,7 +2292,8 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     contacted from here. Never raises. `write_ok` is the caller's own write
     probe (/health may already have run one)."""
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
-           "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
+           "disk": None, "pg_volume": None, "write_ok": None, "backup": None, "dsr_missing": [],
+           "dsr_missing_paged": False, "messaging": [], "problems": [],
            "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
            "bound_capped": [], "requests": None, "alerted": False}
     try:
@@ -2282,8 +2313,12 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     try:
         import status_manager as _sm
         out["disk"] = _sm.disk_state(db_path)
+        # The Postgres service's own volume (scale re-audit 10/20/26 R8-06):
+        # nothing watched it, so the first sign of it filling was every
+        # write failing. "n/a" on SQLite.
+        out["pg_volume"] = _sm.pg_volume_state(db_path)
     except Exception:
-        out["disk"] = None
+        out["disk"] = out.get("disk")
     if write_ok is None:
         write_ok, write_err = write_probe(db_path)
     else:
@@ -2319,15 +2354,35 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     if disk.get("state") in ("low", "critical"):
         if disk["state"] == "low":
             warn_kinds.add("disk_low")
-        problems.append(f"Volume {'almost full' if disk['state'] == 'critical' else 'filling up'} — "
+        what = "App volume (backups)" if disk.get("backend") == "postgres" else "Volume"
+        problems.append(f"{what} {'almost full' if disk['state'] == 'critical' else 'filling up'} — "
                         f"{disk.get('free_mb', '?')} MB free ({disk.get('pct_free', '?')}%).")
+    pv = out.get("pg_volume") or {}
+    if pv.get("state") in ("low", "critical"):
+        if pv["state"] == "low":
+            warn_kinds.add("pg_volume_low")
+        problems.append(f"Postgres volume {'almost full' if pv['state'] == 'critical' else 'filling up'} — "
+                        f"{pv.get('used_mb')} MB of {pv.get('max_mb')} MB used ({pv.get('pct_used')}%: the "
+                        f"database {pv.get('db_mb')} MB, its write-ahead log {pv.get('wal_mb')} MB). A full "
+                        "volume refuses every write: grow it in Railway, then raise PG_VOLUME_MAX_BYTES.")
+    elif pv.get("state") == "unset":
+        warn_kinds.add("pg_volume_unset")
+        problems.append(f"The Postgres database is {pv.get('used_mb')} MB and PG_VOLUME_MAX_BYTES is not set, so "
+                        "nothing can warn before its volume fills — set it to the Postgres volume's size "
+                        "(Railway -> Postgres -> Volume; docs/ops/ENVIRONMENT.md).")
     if not out["write_ok"]:
         problems.append(f"The database refuses writes: {write_err or 'write probe failed'}.")
     b = out["backup"] or {}
     if b.get("state") in ("stale", "failed", "no_offsite"):
         warn_kinds.add("backup")
         problems.append(b.get("summary") or "The nightly backup is not healthy.")
-    if out["dsr_missing"]:
+    # A missing DSR pages only above a share of the fleet's DSR stores (scale
+    # re-audit 10/20/26 R8-14): at hundreds of stores some store always has
+    # a closed night or a revoked token, and a daily page about one store's
+    # night is not the operator's to fix — it stays on the console's list
+    # (out["dsr_missing"]). Below DSR_MISSING_PAGE_SHARE stores it is any.
+    if out["dsr_missing"] and _dsr_missing_pages(out["dsr_missing"], db_path):
+        out["dsr_missing_paged"] = True
         warn_kinds.add("dsr_missing")
         names = ", ".join(str(m.get("restaurant") or m.get("restaurant_id")) for m in out["dsr_missing"][:4])
         problems.append(f"Daily Sales Report missing past its deadline for {len(out['dsr_missing'])} "

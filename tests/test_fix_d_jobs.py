@@ -81,7 +81,16 @@ def _loop_job_names():
         src += inspect.getsource(scheduler._submit_dsr_sweep)
     names = set(re.findall(r'run_job\("([a-z_]+)"', src))
     names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', src))
+    # A job the queue worker runs (jobs_registry `queue` — scale re-audit
+    # 10/20/26 R8-03): the loop claims its period and queues it.
+    names |= set(re.findall(r'queue_scheduled_job\("([a-z_]+)"', src))
     return names
+
+
+def test_a_queued_job_is_queued_by_the_loop_and_only_a_queued_job_is():
+    queued = set(re.findall(r'queue_scheduled_job\("([a-z_]+)"', _LOOP_SRC))
+    assert queued == {n for n, s in jobs_registry.JOBS.items() if s.get("queue")} == {"backup_db", "restore_drill"}
+    assert not re.search(r'run_job\("(backup_db|restore_drill)"', _LOOP_SRC), "the backup ran inline on the loop"
 
 
 def test_every_job_the_loop_runs_is_registered_and_every_registered_job_runs():

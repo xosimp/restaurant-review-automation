@@ -1642,13 +1642,40 @@ def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
                     db_path=db_path if db_path != DB_PATH else None)
         import scheduler as _sched
         if _sched.scheduling_allowed():
+            # One fleet page, not one per restaurant (scale re-audit 10/20/26
+            # R8-14): a POS or Google incident that floods many restaurants'
+            # owners at once sent one text, email, pager event and push per
+            # restaurant. The page names how many restaurants are capped in
+            # the last day and the first few; within its hour's cooldown the
+            # next restaurant to trip is on the console (and the capture
+            # above), and the page after it carries the new count.
             name = _restaurant_name(restaurant_id)
-            ops.alert_will(f"Cavnar AI: alert storm at {name}",
-                           [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
-                            "Only health and safety alerts go out until its local midnight.",
-                            "Lift it early from the client's page in the console if this is expected."])
+            capped = _storm_caps_last_day(db_path)
+            others = [x for x in capped if x != name]
+            lines = [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
+                     "Only health and safety alerts go out until each restaurant's local midnight.",
+                     "Lift a cap early from the client's page in the console if it is expected."]
+            if others:
+                lines.insert(1, f"{len(capped)} restaurants capped in the last day"
+                                f" ({', '.join(others[:5])}{'…' if len(others) > 5 else ''} too) — "
+                                "one incident across the fleet, not one per restaurant.")
+            ops.page_operator("alert_storm", "Cavnar AI: alert storm"
+                              + (f" at {len(capped)} restaurants" if len(capped) > 1 else f" at {name}"),
+                              lines, cooldown_minutes=60)
     except Exception as e:
         print(f"[notify] storm alert to the operator failed: {e}")
+
+
+def _storm_caps_last_day(db_path: str = DB_PATH) -> list:
+    """The names of the restaurants an automatic storm cap went on for in
+    the last 24 hours, newest first."""
+    conn = models.get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT restaurant_id FROM alert_storm_caps WHERE started_at >= datetime('now', '-1 day') "
+                            "ORDER BY id DESC LIMIT 50").fetchall()
+    finally:
+        conn.close()
+    return [_restaurant_name(r["restaurant_id"]) for r in rows]
 
 
 def lift_storm_cap(restaurant_id, actor, db_path: str = DB_PATH) -> bool:

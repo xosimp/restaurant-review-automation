@@ -167,6 +167,9 @@ _STEP_UP_TODAY = {
     # saving a partner (with PARTNER_BILLING on it takes contracts off stores).
     "/admin/api/onboarding/provision/apply",
     "/admin/api/partners",
+    # ...and attaching a store to a partner: the same billing effect for that
+    # store (scale re-audit 10/20/26 R8-22).
+    "/admin/api/partners/<int:partner_id>/stores",
     # Website analytics ownership (scale fix 10/19/26, SEC-01): approving a
     # pending GA4 / Search Console binding by hand.
     "/admin/api/external-bindings/approve",
@@ -440,6 +443,28 @@ def test_the_local_snapshot_is_never_scrubbed_and_the_offsite_copy_is():
     assert "_encrypt_file_chunked(redacted_path, enc_path, key)" in src
     _says(SECURITY, "deliberately not redacted")
     _says(RECOVERY, "the local snapshots are complete and directly restorable")
+
+
+def test_the_runbook_restores_postgres_behind_a_freeze_and_the_code_holds_it():
+    """Scale re-audit 10/20/26 R8-16 / R8-04 / R8-05 / R8-12: RECOVERY.md's
+    database steps were SQLite-era — a Railway Postgres restore with no
+    freeze, `sqlite3` reads of the frozen cutover file, a 3.5x space claim.
+    The runbook now restores Postgres first, behind MAINTENANCE_READ_ONLY,
+    with the restore guard as its backstop; the code holds each promise."""
+    import db_restore
+    import job_queue
+    import restore_guard
+    import config
+    _says(RECOVERY, "freeze the platform before any postgres restore", "set `maintenance_read_only=1`",
+          "python3 -m restore_guard confirm", "never `restore_from` on postgres", "point-in-time recovery",
+          "the job queue claims nothing (r8-05)")
+    text = _read(RECOVERY)
+    assert "3.5 × the database)" not in text and "no WAL shipping" not in text
+    assert "_db_backend()" in inspect.getsource(db_restore.restore_if_requested)
+    src = inspect.getsource(job_queue.frozen)
+    assert "MAINTENANCE_READ_ONLY" in src and "RESTORE_FROM" in src and "restore_frozen" in src
+    assert "restore_frozen()" in inspect.getsource(config.scheduling_allowed)
+    assert restore_guard.FREEZE_FILE == ".restore_freeze" and '".restore_freeze"' in inspect.getsource(config.restore_frozen)
 
 
 def test_the_backup_fails_without_a_key_or_an_offsite_copy():

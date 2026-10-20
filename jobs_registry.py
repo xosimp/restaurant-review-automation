@@ -57,6 +57,16 @@ lane          run on this bounded worker lane beside the loop, not on the
               backfill) and "fetch" the review fetch (scale audit 10/19/26
               INF-1, INF-2, INF-9). A lane run gets the loop's retry when
               it fails
+queue         run as a job_queue row in the queue worker process (the
+              "maintenance" group, one at a time), not on the loop or a
+              lane: the loop claims its period and enqueues it
+              (scheduler.queue_scheduled_job); the worker runs it through
+              ops.run_job under this name (scheduler.
+              run_queued_scheduled_job), so job_runs, the SLA and Run now
+              read it as before. The nightly backup and the restore drill
+              (scale re-audit 10/20/26 R8-03, R8-15): out of the web process
+              and off the loop. A failed retryable run is retried by the
+              queue's own backoff
 
 Owner-facing SLAs are about 3 h for hourly jobs, 26 h for daily, 8 days for
 weekly (#31).
@@ -91,10 +101,13 @@ JOBS = {
         cadence="2am CT nightly", sla_minutes=_D, sends=False, runnable=True,
         label="Nightly backup",
         description="Snapshot the database on the volume, then copy it off-site (object storage and the encrypted email)",
-        target=("scheduler", "backup_db"), max_minutes=60, retry=True),
+        # Bound: ~91 s a GB measured (10/20/26), so four hours is ~150 GB;
+        # half of it pages (scheduler._backup_too_slow). In the queue worker
+        # (R8-03) a long run holds nothing else up.
+        target=("scheduler", "backup_db"), max_minutes=240, retry=True, queue="maintenance"),
     "prune_ledgers": dict(
-        cadence="2am CT nightly, after the backup", sla_minutes=_D, sends=False, runnable=True,
-        label="Retention",
+        cadence="2am CT nightly, once the backup has finished (6am at the latest)", sla_minutes=_D, sends=False,
+        runnable=True, label="Retention",
         description="Delete ledger rows past their retention window, in chunks, then refresh planner statistics; "
                     "soft-delete reviews past each owner's retention",
         target=("scheduler", "run_nightly_retention"), max_minutes=45),
@@ -109,7 +122,7 @@ JOBS = {
         label="Restore drill",
         description="Restore the newest snapshot and the newest off-site copy to scratch, prove they are fresh, open, "
                     "migrate and kept their tokens (the off-site copy's sealed ones open), and time each stage",
-        target=("scheduler", "run_restore_drill"), max_minutes=30),
+        target=("scheduler", "run_restore_drill"), max_minutes=60, queue="maintenance"),
     "pos_sync": dict(
         cadence="3am CT nightly (POS lane)", sla_minutes=_D, sends=False, runnable=True,
         label="POS sync", description="Pull yesterday's sales and labor from every connected POS, then inventory systems",

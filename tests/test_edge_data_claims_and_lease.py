@@ -177,13 +177,15 @@ class _StopLoop(Exception):
 def _one_tick(monkeypatch, fetch):
     """Drive exactly one real scheduler_loop tick in which only a long INLINE
     job is due; `fetch` stands in for it. It was the review fetch, which has
-    run on its own lane since the scale audit (10/19/26 INF-9); the nightly
-    backup still runs on the loop thread, so it stands in now."""
+    run on its own lane since the scale audit (10/19/26 INF-9), then the
+    nightly backup, which the queue worker runs since the scale re-audit
+    (10/20/26 R8-03); the retention prune still runs on the loop thread, so
+    it stands in now."""
     import scheduler, marketing_publish, notify, issues, morning_brief, delayed
     monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 22, 2, 0))   # a Tuesday
-    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "backup_db")
-    monkeypatch.setattr(scheduler, "backup_db", fetch)
-    monkeypatch.setattr(scheduler, "run_nightly_retention", lambda *a, **k: {"attempted": 0})
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "prune_ledgers")
+    monkeypatch.setattr(scheduler, "_backup_settled", lambda *a, **k: True)
+    monkeypatch.setattr(scheduler, "run_nightly_retention", fetch)
     monkeypatch.setattr(notify, "release_due_alerts", lambda *a, **k: {})
     monkeypatch.setattr(issues, "tick", lambda *a, **k: None)
     monkeypatch.setattr(morning_brief, "run_due", lambda *a, **k: None)

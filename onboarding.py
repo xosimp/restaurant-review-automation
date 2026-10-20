@@ -124,9 +124,53 @@ def init_onboarding(db_path=None):
 # What one archived store-day costs, lines and tickets and their indexes
 # (scale audit A8: ~613 KB measured from the archive's own tables).
 BACKFILL_BYTES_PER_STORE_DAY = int(os.getenv("POS_BACKFILL_BYTES_PER_STORE_DAY", str(650 * 1000)))
-# How many stores may backfill history at once (ONB-1). Today's fleet is
-# under it; a wave of new stores queues behind it, newest-admitted last.
-BACKFILL_MAX_STORES = max(1, int(os.getenv("POS_BACKFILL_MAX_STORES", "8")))
+# How many stores may backfill history at once (ONB-1). A wave of new stores
+# queues behind it, newest-admitted last. An operator's POS_BACKFILL_MAX_STORES
+# is kept as given; unset, the cap is sized from the RPOWER fleet budget
+# (backfill_cap — scale re-audit 10/20/26 R8-08: a fixed 8 finished 1.6
+# stores a night, so a 1,500-store rollout took years to show "History
+# loaded"). The storage check below bounds it either way.
+BACKFILL_MAX_STORES = (max(1, int(os.getenv("POS_BACKFILL_MAX_STORES")))
+                       if (os.getenv("POS_BACKFILL_MAX_STORES") or "").strip() else None)
+# The budget's inputs: the share of RPOWER_FLEET_RPS history may take over
+# the night's archive window, and what one archived store-day costs in
+# requests (tickets, lines, punches and payments pages — ~835 for the
+# 60-day onboarding read, pos_archive; ASSUMPTION until pos_request_ledger
+# measures it per store-night). The floor is the old fixed 8; the ceiling
+# keeps one night's history writes inside what the volume check can judge.
+BACKFILL_WINDOW_HOURS = float(os.getenv("POS_BACKFILL_WINDOW_HOURS", "3") or 3)
+BACKFILL_FLEET_SHARE = 0.5
+BACKFILL_REQUESTS_PER_STORE_DAY = max(1, int(os.getenv("POS_BACKFILL_REQUESTS_PER_STORE_DAY", "15") or 15))
+BACKFILL_CAP_FLOOR = 8
+BACKFILL_CAP_CEILING = 200
+# A slot whose store archived no day for this many nights (a revoked token,
+# a POS that fails every night) is released, so it can never hold a slot a
+# working store needs (R8-09); it queues for a slot again on its next night.
+BACKFILL_SLOT_STALL_NIGHTS = 3
+# The console counts slots held longer than this (a slot should finish in
+# about two weeks at 7 days a night).
+BACKFILL_SLOT_OLD_DAYS = 30
+
+
+def backfill_cap() -> int:
+    """The backfill slot cap: POS_BACKFILL_MAX_STORES when set, else the
+    stores the RPOWER fleet budget can backfill a night — RPOWER_FLEET_RPS x
+    BACKFILL_FLEET_SHARE over BACKFILL_WINDOW_HOURS, over
+    BACKFILL_REQUESTS_PER_STORE_DAY x the days a store takes a night —
+    between BACKFILL_CAP_FLOOR and BACKFILL_CAP_CEILING (the ceiling when
+    the fleet budget is off)."""
+    if BACKFILL_MAX_STORES:
+        return int(BACKFILL_MAX_STORES)
+    try:
+        import pos_archive
+        import rpower
+        rps, per_night = float(rpower.FLEET_RPS or 0), int(pos_archive.BACKFILL_DAYS_PER_NIGHT)
+    except Exception:
+        return BACKFILL_CAP_FLOOR
+    if rps <= 0:
+        return BACKFILL_CAP_CEILING
+    stores = rps * BACKFILL_FLEET_SHARE * BACKFILL_WINDOW_HOURS * 3600 / (BACKFILL_REQUESTS_PER_STORE_DAY * per_night)
+    return int(max(BACKFILL_CAP_FLOOR, min(BACKFILL_CAP_CEILING, stores)))
 # The Postgres volume's size, when it is known (Railway shows it; the app
 # cannot see another service's disk): past PG_VOLUME_FILL_LIMIT of it a
 # backfill waits. 0 = not set: only the app volume is checked.
@@ -174,7 +218,10 @@ def storage_room(projected_bytes, db_path=None) -> dict:
     than that would break tomorrow's backup."""
     import shutil
     import scheduler
-    factor = float(getattr(scheduler, "BACKUP_FREE_SPACE_FACTOR", 1.5))
+    # The whole run's peak (scale re-audit 10/20/26 R8-03), not the local
+    # stage's 1.5x: a backfill that left room for the snapshot but not the
+    # encrypted off-site copy failed the next night's backup.
+    factor = float(getattr(scheduler, "BACKUP_PEAK_SPACE_FACTOR", 2.75))
     try:
         on_pg = _pg_bytes(db_path) is not None
         db_bytes = live_database_bytes(db_path)
@@ -209,16 +256,64 @@ def _finish_slot(conn, restaurant_id, provider):
                  (_now(), int(restaurant_id), provider))
 
 
+def _slot_stale(conn, restaurant_id, provider, admitted_at, held_reason):
+    """Why an active slot should be released, or None (R8-09): its store no
+    longer has `provider` connected (disconnected, churned, token removed),
+    or it has archived no day in BACKFILL_SLOT_STALL_NIGHTS nights since it
+    was admitted (a revoked token, a POS failing every night). A slot held
+    for room is never stale — room is the fleet's problem, not the store's."""
+    if held_reason:
+        return None
+    try:
+        import pos_archive
+        name, _mod = pos_archive.provider_for(restaurant_id)
+    except Exception:
+        name = provider
+    if name != provider:
+        return "released: the store no longer has its POS connected"
+    since = (datetime.now(timezone.utc) - timedelta(days=BACKFILL_SLOT_STALL_NIGHTS)).strftime("%Y-%m-%d %H:%M:%S")
+    if str(admitted_at or "") > since:
+        return None
+    hit = conn.execute("SELECT 1 FROM pos_archive_days WHERE restaurant_id=? AND provider=? AND archived_at >= ? "
+                       "LIMIT 1", (int(restaurant_id), provider, since)).fetchone()
+    if hit:
+        return None
+    return f"released: no day archived in {BACKFILL_SLOT_STALL_NIGHTS} nights"
+
+
+def release_stale_slots(conn) -> list:
+    """Release every stale active slot (_slot_stale) in the caller's write
+    transaction: finished, with why in held_reason (the store's next night
+    queues for a slot again, as a new store would). Returns the released
+    [(restaurant_id, provider, why)]."""
+    out = []
+    for r in conn.execute("SELECT restaurant_id, provider, admitted_at, held_reason FROM pos_backfill_slots "
+                          "WHERE finished_at IS NULL").fetchall():
+        why = _slot_stale(conn, r["restaurant_id"], r["provider"], r["admitted_at"], r["held_reason"])
+        if why:
+            conn.execute("UPDATE pos_backfill_slots SET finished_at=?, held_reason=?, held_at=? "
+                         "WHERE restaurant_id=? AND provider=? AND finished_at IS NULL",
+                         (_now(), why, _now(), int(r["restaurant_id"]), r["provider"]))
+            out.append((int(r["restaurant_id"]), r["provider"], why))
+    if out:
+        log.warning("backfill: released %d stale slot(s): %s", len(out), out)
+    return out
+
+
 def backfill_admission(restaurant_id, provider, missing_days, days_tonight, db_path=None) -> dict:
     """May this store backfill tonight? {admit, reason, slots_used, cap}.
 
     A store with nothing missing finishes its slot. One already holding a
-    slot keeps it; another takes one only while fewer than
-    BACKFILL_MAX_STORES are active. Either way the volumes must have room
-    for tonight's days and the backup after them (storage_room) — a store
-    held for room keeps its slot, so the wave resumes in order. Never
-    raises: an unreadable ledger admits (the archive's own bound stands)."""
-    rid, cap = int(restaurant_id), BACKFILL_MAX_STORES
+    slot keeps it; another takes one only while fewer than backfill_cap()
+    are active — counted and taken in ONE write transaction, so concurrent
+    archive rows cannot pass the cap (scale re-audit 10/20/26 R8-21). With
+    every slot taken, the stale ones are released first (release_stale_slots,
+    R8-09): a disconnected or failing store never holds a slot for good.
+    Either way the volumes must have room for tonight's days and the backup
+    after them (storage_room) — a store held for room keeps its slot, so the
+    wave resumes in order. Never raises: an unreadable ledger admits (the
+    archive's own bound stands)."""
+    rid, cap = int(restaurant_id), backfill_cap()
     try:
         conn = get_conn(db_path)
     except Exception as e:
@@ -229,13 +324,20 @@ def backfill_admission(restaurant_id, provider, missing_days, days_tonight, db_p
             _finish_slot(conn, rid, provider)
             conn.commit()
             return {"admit": False, "reason": "complete", "cap": cap}
+        import db_dialect
+        db_dialect.begin_write(conn, "pos_backfill_slots", "admit")
         row = conn.execute("SELECT finished_at FROM pos_backfill_slots WHERE restaurant_id=? AND provider=?",
                            (rid, provider)).fetchone()
         holding = row is not None and row["finished_at"] is None
         used = int(conn.execute("SELECT COUNT(*) FROM pos_backfill_slots WHERE finished_at IS NULL")
                    .fetchone()[0] or 0)
+        if not holding and used >= cap:
+            if release_stale_slots(conn):
+                used = int(conn.execute("SELECT COUNT(*) FROM pos_backfill_slots WHERE finished_at IS NULL")
+                           .fetchone()[0] or 0)
         if not holding:
             if used >= cap:
+                conn.commit()                 # any release above stands
                 waiting = {"admit": False, "reason": "waiting_for_slot", "slots_used": used, "cap": cap}
                 return waiting
             if row is None:
@@ -244,8 +346,8 @@ def backfill_admission(restaurant_id, provider, missing_days, days_tonight, db_p
             else:
                 conn.execute("UPDATE pos_backfill_slots SET admitted_at=?, finished_at=NULL, held_reason=NULL, "
                              "held_at=NULL WHERE restaurant_id=? AND provider=?", (_now(), rid, provider))
-            conn.commit()
             used += 1
+        conn.commit()
         room = storage_room(max(0, int(days_tonight)) * BACKFILL_BYTES_PER_STORE_DAY, db_path=db_path)
         if not room.get("ok"):
             conn.execute("UPDATE pos_backfill_slots SET held_reason=?, held_at=? WHERE restaurant_id=? AND provider=?",
@@ -259,6 +361,10 @@ def backfill_admission(restaurant_id, provider, missing_days, days_tonight, db_p
         conn.commit()
         return {"admit": True, "reason": None, "slots_used": used, "cap": cap}
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         log.warning("backfill admission failed for %s (%s); admitting", rid, e)
         return {"admit": True, "reason": f"admission failed: {e}"[:200], "cap": cap}
     finally:
@@ -292,8 +398,13 @@ def backfill_state(db_path=None) -> dict:
             "WHERE finished_at IS NULL ORDER BY admitted_at")]
     finally:
         conn.close()
-    return {"cap": BACKFILL_MAX_STORES, "used": len(rows), "active": rows,
-            "bytes_per_store_day": BACKFILL_BYTES_PER_STORE_DAY}
+    old = (datetime.now(timezone.utc) - timedelta(days=BACKFILL_SLOT_OLD_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    return {"cap": backfill_cap(), "used": len(rows), "active": rows,
+            "bytes_per_store_day": BACKFILL_BYTES_PER_STORE_DAY,
+            # Slots held past BACKFILL_SLOT_OLD_DAYS (R8-09): a history that
+            # should have finished in two weeks — the console counts them.
+            "old": sum(1 for r in rows if str(r.get("admitted_at") or "") < old),
+            "old_after_days": BACKFILL_SLOT_OLD_DAYS}
 
 
 # ── setup confirmations (ONB-11, ONB-12) ─────────────────────────────────────
@@ -424,6 +535,31 @@ def setup_items(r, facts=None) -> list:
     return out
 
 
+# The steps an OWNER may confirm from the app (scale re-audit 10/20/26
+# R8-11): the labor judgments that hold the auto-draft. Each was an admin's
+# confirmation only, so every labor store's first draft waited on a Cavnar AI
+# operator — ~1.5-3 stores a day per person. The DSR calendar has the
+# owner's own settings already; the admin's path stays for assisted setups.
+OWNER_STEPS = tuple(k for k, _l, scope in SETUP_STEPS if scope == "labor")
+
+
+def owner_setup(r, db_path=None) -> dict:
+    """What the owner's Account shows (R8-11): {items: [{key, label, done,
+    suggested, confirmed_at, confirmed_by}], pending: [keys], holds_auto_draft}
+    for a Labor restaurant whose checklist was opened; {items: []}
+    otherwise. `r` is a Restaurant or a dict with id and module_labor."""
+    row = r if isinstance(r, dict) else {"id": getattr(r, "id", None),
+                                         "module_labor": getattr(r, "module_labor", 0)}
+    if not row.get("module_labor") or row.get("id") is None:
+        return {"items": [], "pending": [], "holds_auto_draft": False}
+    conf = confirmations(row["id"], db_path)
+    if not conf:
+        return {"items": [], "pending": [], "holds_auto_draft": False}
+    items = [i for i in setup_items({"module_labor": 1}, {"confirmations": conf}) if i["key"] in OWNER_STEPS]
+    pending = [i["key"] for i in items if not i["done"]]
+    return {"items": items, "pending": pending, "holds_auto_draft": bool(pending)}
+
+
 def labor_setup_pending(r, db_path=None) -> list:
     """The labor setup confirmations still open for a restaurant (an object
     with the Restaurant fields, or a dict) — [] for one whose setup
@@ -443,6 +579,12 @@ def labor_setup_pending(r, db_path=None) -> list:
 # ── the tracker's steps and the fleet board (ONB-9) ─────────────────────────
 
 ARCHIVE_HISTORY_DAYS = 90
+# The board's history step is DONE at this many archived days (scale
+# re-audit 10/20/26 R8-08): what the onboarding read archives in one go
+# (pos_archive.ONBOARD_DAYS) and enough for every reader; the rest of the 90
+# fills in the background and is shown as "N days to go", never as a store
+# stuck on "History loading".
+ARCHIVE_HISTORY_DONE_DAYS = 60
 DSR_HISTORY_DAYS = 60
 # A store not live this many days after signing up is stuck on the board.
 ONBOARDING_STUCK_DAYS = int(os.getenv("ONBOARDING_STUCK_DAYS", "14"))
@@ -508,14 +650,15 @@ def pos_steps(r, facts=None) -> list:
     facts = facts or {}
     archived = int(facts.get("archive_days") or 0)
     left = max(0, (ARCHIVE_HISTORY_DAYS - 1) - archived)
+    usable = archived >= ARCHIVE_HISTORY_DONE_DAYS
     slot = facts.get("backfill_slot") or {}
     hist = "POS history archived" + (f" ({left} days to go" + (
         f"; held: {slot['held_reason']}" if slot.get("held_reason") else
-        ("" if slot else "; waiting for a backfill slot")) + ")" if left else "")
+        ("" if slot or usable else "; waiting for a backfill slot")) + ")" if left else "")
     steps = [
         {"key": "pos_bound", "label": "RPOWER store bound", "done": bool(r.get("rpower_store_mid"))},
         {"key": "pos_first_data", "label": "First POS data in", "done": bool(r.get("rpower_last_synced"))},
-        {"key": "pos_history", "label": hist, "done": left == 0, "left": left},
+        {"key": "pos_history", "label": hist, "done": left == 0 or usable, "left": left},
     ]
     if r.get("dsr_enabled"):
         nights = int(facts.get("dsr_nights") or 0)

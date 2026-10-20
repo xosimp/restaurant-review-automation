@@ -22,7 +22,7 @@ ways; the body names the problem by code.
 | `/health` says | What it means | Go to |
 |---|---|---|
 | Connection refused / 502 | The process is down, crash-looping, or Railway is down | [Platform down](#platform-down) |
-| `500`, `"error": "db_unavailable"` or `"db_unreadable"` | The database file cannot be opened or read | [Database recovery](#database-recovery) |
+| `500`, `"error": "db_unavailable"` or `"db_unreadable"` | The database (Postgres since 10/19/26) cannot be opened or read | [Database recovery](#database-recovery) |
 | `500`, `"error": "schema_mismatch"` (with `missing_count`) | The database lacks tables or columns this code expects — an empty or old restore, a skipped migration. The names are in the deploy log, not the body | [Database recovery](#database-recovery) |
 | `500`, `"error": "db_not_writable"` | The database refuses a write (read-only or failing storage, or a full volume) | [Volume full](#volume-full), then [Database recovery](#database-recovery) |
 | `500`, `"error": "data_missing"` | The database holds no client restaurants, but the volume's marker says it held some — an emptied or replaced database | [Database recovery](#database-recovery) |
@@ -97,7 +97,10 @@ Three things page, and they fail independently:
    the scheduler pings at the end of every tick and during a long job that
    is inside its bound; the backup and the digest ping `/fail` when they
    fail. Its silence is what pages when the whole process is gone — nothing
-   inside the process can.
+   inside the process can. The cavnar-watchdog Worker (below) alerts on a
+   `/fail` at the first check that sees it; until its 10/20/26 change
+   (R8-13) the next ordinary ping overwrote the failure seconds later, so a
+   `/fail` never alerted from outside.
 3. **The external uptime monitor** on `https://dashboard.cavnar.ai/health`,
    every 1–5 minutes, alerting unless the body contains `"status":"ok"`,
    with SMS contacts. Its hosted status page is the one that survives this
@@ -201,49 +204,165 @@ took the queue). If it goes silent anyway the platform check warns
 how long the oldest runnable row has waited and what failed or expired in a
 day is `job_queue.stats()["kinds"]`. Nightly rows (archive, learners,
 diagnoses) expire unstarted after `QUEUE_BULK_DEADLINE_HOURS` (22) instead
-of stacking under the next night's. The Postgres cutover
-and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
+of stacking under the next night's. The nightly backup and the monthly
+restore drill are queue rows too (`scheduled_job`, the one-at-a-time
+`maintenance` group — scale re-audit 10/20/26 R8-03): a deploy mid-backup
+hands the row back and the next process starts the backup again from the
+beginning (a crashed run's work files are cleared first). The queue claims
+nothing while `MAINTENANCE_READ_ONLY` or `RESTORE_FROM` is set or the
+restore guard holds a restored database (`job_queue.frozen`, R8-05). The
+Postgres cutover and its rollback are `docs/ops/POSTGRES_CUTOVER.md`.
 
 ## Database recovery
 
 **Production has run on Postgres since 10/19/26** (the Railway service
-`Postgres`, private URL `postgres.railway.internal`, through the web
-service's `DATABASE_URL=${{Postgres.DATABASE_URL}}`; docs/ops/POSTGRES_CUTOVER.md).
-The volume's `reviews.db` is the SQLite database as it stood at the switch
-(18:45 CT) — the instant rollback (`DB_BACKEND=sqlite`, losing what Postgres
-took since) is in the cutover runbook's *Rollback*. The steps below are the
-SQLite ones; on Postgres the nightly snapshot is an export to SQLite
-(`pg_copy.export_to_sqlite`), so a restore is that file through
-`RESTORE_FROM` with `DB_BACKEND=sqlite`, or `scripts/run_pg_copy.py` back
-into an empty Postgres.
+`Postgres`, Postgres 18, private URL `postgres.railway.internal`, through the
+web service's `DATABASE_URL=${{Postgres.DATABASE_URL}}`;
+docs/ops/POSTGRES_CUTOVER.md). The volume's `reviews.db` is the SQLite
+database as it stood at the switch (18:45 CT) and **never changes**: every
+`sqlite3 /app/data/reviews.db` read answers about 10/19/26, not about now —
+`integrity_check` on it always says ok. The Postgres path comes first below;
+the SQLite steps are kept under [Rolling back to SQLite](#rolling-back-to-sqlite)
+(scale re-audit 10/20/26 R8-16).
 
-**Two independent copies of the Postgres database, in this order** (the
-workspace moved to Railway Pro 10/19/26):
+`/health` returns 500 with a database error code (`db_unavailable`,
+`db_unreadable`, `db_not_writable`, `schema_mismatch`, `data_missing`), or
+data is wrong (a bad deploy or a bad hand-run statement wrote over it).
 
-1. **Railway's volume backups on the `Postgres` service** — the first
-   restore path. Scheduled on the service's *Backups* tab: **daily, kept 6
-   days**, and **weekly, kept 1 month**. Restore from that same tab (pick
-   the backup, Restore; Railway stages it and the service redeploys on it).
-   They are **volume snapshots, not point-in-time recovery**: a restore
-   comes back as of the snapshot's time, and everything after it is lost.
-   They live in Railway, so they do not survive losing the Railway project.
-2. **The nightly export + the encrypted off-site copy** (`backup_db`, 2am
-   CT; *The backup* below) — the second, independent copy: a SQLite export
-   on the volume and a sealed, Fernet-encrypted copy in R2 (and by email
-   when it fits), kept 35 days. This is the one that survives losing the
-   Railway project or account. Restore it through `RESTORE_FROM` with
-   `DB_BACKEND=sqlite`, or with `scripts/run_pg_copy.py` into an empty
-   Postgres (the boot then unseals its credentials, below).
+### Where the copies are, best restore point first
 
-**RPO is still up to 24 hours** on either path (the newest daily snapshot or
-the newest nightly export); there is no WAL shipping or point-in-time
-recovery in this round (scale audit 10/19/26 OPS-2). POS data since the
-snapshot re-pulls from RPOWER; owner edits, published schedules, uploaded
-invoices, ratings and DSR closeouts since the snapshot do not come back.
-Pro also lets the volumes grow to 1 TB (self-serve resize) — the first fix
-for a *Volume full* below.
+The workspace is on Railway Pro (10/19/26):
 
-`/health` returns 500 with a database error code, or SQLite reports corruption.
+1. **Point-in-time recovery on the `Postgres` service** — the first restore
+   path when it is on: Postgres archives its write-ahead log
+   (`archive_mode=on`, measured 10/20/26), so a restore can stop at any
+   moment — minutes before a bad write, not the night before. **RPO:
+   minutes.** Check it is really on before you need it: Railway → Postgres →
+   Backups shows point-in-time restore, and `SELECT archived_count,
+   last_archived_time, failed_count, last_failed_time FROM pg_stat_archiver;`
+   shows WAL leaving the server (a `failed_count` that grows, or a
+   `last_archived_time` hours old, is an archiver that has stopped — the WAL
+   then stays on the volume, which the Postgres volume check sees growing).
+2. **Railway's volume backups on the `Postgres` service** — scheduled on its
+   *Backups* tab: **daily, kept 6 days**, and **weekly, kept 1 month**.
+   Volume snapshots: a restore comes back as of the snapshot's time.
+   **RPO: up to 24 hours.**
+3. **The nightly export + the encrypted off-site copy** (`backup_db`, 2am CT;
+   *The backup* below) — a SQLite export of every Postgres table on the app
+   volume and a sealed, Fernet-encrypted copy in R2 (and by email when it
+   fits), kept 35 days. **The one copy that survives losing the Railway
+   project or account.** RPO: up to 24 hours. Loaded back into an empty
+   Postgres with `scripts/run_pg_copy.py` (the boot then unseals its
+   credentials in place).
+
+Paths 1 and 2 live in Railway; neither survives losing the project. POS data
+since the restore point re-pulls from RPOWER; owner edits, published
+schedules, uploaded invoices, ratings and DSR closeouts since it do not come
+back. Pro also lets volumes grow to 1 TB (self-serve resize) — the first fix
+for a [Volume full](#volume-full).
+
+### P1. Confirm it is really the database
+
+From your laptop, with the Railway CLI linked: `railway connect Postgres`
+opens `psql` on it. Then:
+
+```sql
+SELECT 1;
+SELECT pg_size_pretty(pg_database_size(current_database()));
+SELECT COUNT(*) FROM restaurants;
+SELECT MAX(review_date) FROM reviews;
+SELECT * FROM pg_stat_archiver;
+```
+
+A connection that is refused or a server out of space is the Postgres
+service, not the data: Railway → Postgres → Deployments and Metrics (a full
+volume: grow it, *Volume full* below) — no restore. Data that is present
+but wrong is a restore to just before it went wrong (P2).
+
+### P2. Freeze the platform BEFORE any Postgres restore
+
+A Postgres restore swaps the database under the running web service. Without
+a freeze, everything since the restore point runs again: that morning's day
+claims (`job_period_claims`) are gone, so the briefs, digests, DSR deliveries
+and labor reminders send a second time; `owed_sends` rows pending at the
+restore point go out again (welcomes, receipts, dunning); queued `jobs` rows
+run again — staff schedule notices, auto-publishes, a Monday bar price push
+that puts an older price back on RPOWER (scale re-audit 10/20/26 R8-04).
+
+1. Railway → the web service → Variables: set `MAINTENANCE_READ_ONLY=1` and
+   let it redeploy. The scheduler stands down, the job queue claims nothing
+   (`job_queue.frozen`), and no admin action sends email or texts
+   (`config.scheduling_allowed()` is false). Pages still load.
+2. Only then restore (P3).
+
+The backstop if this step is missed: **the restore guard** (`restore_guard.py`).
+The scheduler's tick advances a counter in the database (`job_cursors`
+`restore_epoch`) and copies it to the app volume (`.restore_epoch`). A
+database whose counter is behind the volume's was put back under the running
+service: the next tick (within a minute) writes `.restore_freeze` beside the
+database, stops scheduling, the queue and admin sends exactly as
+`MAINTENANCE_READ_ONLY` does, and pages (`restore_detected`) — until P4's
+confirm. It cannot stop what ran between the restore and that tick.
+
+### P3. Restore
+
+- **Point in time:** Railway → Postgres → Backups → restore to a point in
+  time, the minute before the damage (`MAX(...)` of the table it hit tells
+  you when). Railway restores into the service, or into a new one — if a new
+  one, point the web service's `DATABASE_URL` at it (a reference variable,
+  `${{<service>.DATABASE_URL}}`) before lifting the freeze. **Verify the exact
+  steps at the quarterly game day below** — the UI is Railway's, not ours.
+- **A volume backup:** Railway → Postgres → Backups → pick the backup →
+  Restore. Railway stages it and the Postgres service redeploys on it.
+- **The off-site copy** (the Railway project is gone, or both of the above
+  are): download, check and decrypt it ([Restoring from the object-storage
+  copy](#restoring-from-the-object-storage-copy-step-by-step)), prepare it
+  (`scripts/prepare_restore.py <file> --encrypted` unseals it), create an
+  EMPTY Postgres, then
+  `python3 scripts/run_pg_copy.py --sqlite <prepared.db> --database-url <new url>`
+  (docs/ops/POSTGRES_CUTOVER.md has the copy's flags and its verify report).
+  Only ever into an EMPTY database: a second run into a partly filled one
+  was never proved safe (a table without a primary key would duplicate).
+  Point `DATABASE_URL` at it.
+
+**Never `RESTORE_FROM` on Postgres.** It swaps the SQLite file the app does
+not read: it now refuses and fails the deploy (scale re-audit 10/20/26 R8-12)
+unless `DB_BACKEND=sqlite` is set too — which is the rollback to SQLite, below.
+
+### P4. After a Postgres restore — reconcile, confirm, unfreeze
+
+With `MAINTENANCE_READ_ONLY=1` still set, in `psql` (`railway connect
+Postgres`), with `T` the restore point in UTC:
+
+1. **Day claims** — every job that ran since `T` must not run again today:
+   `SELECT job_key FROM job_period_claims ORDER BY claimed_at DESC LIMIT 50;`
+   then for each digest, brief or DSR delivery that already went today:
+   `INSERT INTO job_period_claims (job_key) VALUES ('weekly_digests:YYYY-MM-DD') ON CONFLICT DO NOTHING;`
+2. **Owed sends** — rows the restored database has as pending that went out
+   after `T` (Resend's log and `email_log` on the console say which):
+   `UPDATE owed_sends SET status='cancelled' WHERE id IN (...);`
+3. **Queued jobs** — rows queued before `T` that already ran after it:
+   `SELECT id, kind, restaurant_id, enqueued_at FROM jobs WHERE state IN ('queued','running') ORDER BY id;`
+   cancel the ones that send or write outward (`schedule_notices`,
+   `auto_publish`, `bar_price_push`; a `pos_onboard` or `pos_archive` row
+   only re-reads, it may stay):
+   `UPDATE jobs SET state='cancelled', error='ran before the restore' WHERE id IN (...);`
+4. **Confirm the restore guard** (only if it froze — the console's Engineering
+   cards and `/health`'s scheduler say so, or `railway ssh -- python3 -m restore_guard`
+   prints `frozen`): `railway ssh -- python3 -m restore_guard confirm`. It
+   re-baselines the volume's copy to the restored database's counter.
+5. Remove `MAINTENANCE_READ_ONLY`. The next tick runs; then work through
+   [After any restore](#after-any-restore).
+
+---
+
+## Rolling back to SQLite
+
+The SQLite steps below are the rollback path (`DB_BACKEND=sqlite`, losing
+what Postgres took since — POSTGRES_CUTOVER.md → *Rollback*) and the way an
+off-site copy is opened and checked on any backend. Every `sqlite3 /app/data/reviews.db`
+read here is about the SQLite file — on Postgres that is the frozen cutover
+file, so use `psql` (P1) for anything about production now.
 
 ### 1. Confirm it is really the database
 
@@ -313,8 +432,9 @@ rest): a snapshot taken before the rotation was sealed with the old one.
 
 #### Restoring from the object-storage copy, step by step
 
-1. Find the newest good copy and its checksum:
-   `sqlite3 /app/data/reviews.db "SELECT finished_at, offsite_target, sha256 FROM backup_runs WHERE offsite_ok=1 ORDER BY id DESC LIMIT 3;"`
+1. Find the newest good copy and its checksum — in `psql` on Postgres
+   (`railway connect Postgres`; on the SQLite rollback, `sqlite3 /app/data/reviews.db`):
+   `SELECT finished_at, offsite_target, sha256 FROM backup_runs WHERE offsite_ok=1 ORDER BY id DESC LIMIT 3;`
    (if the database is gone, list the bucket: `aws s3 ls s3://<bucket>/cavnar-backups/ --endpoint-url https://<account>.r2.cloudflarestorage.com`).
    Each object also carries its SHA-256 as `x-amz-meta-sha256`
    (`aws s3api head-object --bucket <bucket> --key cavnar-backups/<file> --endpoint-url …`).
@@ -395,8 +515,9 @@ The restore is a boot step instead (`db_restore.py`):
    restaurant count matches. A snapshot that fails a check fails the deploy
    and changes nothing — and with a volume attached a failed deploy is
    downtime until you roll back or fix the variable.
-2. While `RESTORE_FROM` is set **the scheduler does not run**, and no admin
-   action sends email or texts (`scheduler.scheduling_allowed()` is false):
+2. While `RESTORE_FROM` is set **the scheduler does not run**, the job
+   queue claims nothing (R8-05), and no admin action sends email or texts
+   (`scheduler.scheduling_allowed()` is false):
    no briefs, digests, alerts or reset links go out of a database nobody has
    looked at yet. A marker beside the database stops a later boot from
    restoring the same snapshot again over new writes.
@@ -465,24 +586,44 @@ loads.
 | Stripe | `stripe_customer_id` kept (local) or sealed (off-site) | Only if blanked: re-link it in the console (Customers → the client → Billing → **Attach Stripe customer**, with the `cus_` id from the Stripe dashboard), then run the `stripe_reconcile` job (Operations → Jobs → Run now) so the subscription mirror is refilled |
 | Data since the snapshot | Lost | Reviews re-fetch on the next pass (`UNIQUE(restaurant_id, platform, external_id)` makes that safe). Uploaded CSVs and manual edits do not come back |
 | Job claims | Restored to snapshot state | Jobs already run that day **may run again**. Check `job_period_claims` before a digest hour |
-| Owed billing emails | Restored to snapshot state | Check `owed_sends` for rows the snapshot has as pending that already went (sent after the snapshot) and mark them `cancelled` before you delete `RESTORE_FROM`: the `owed_sends` job drains due rows on every tick once the scheduler is back |
+| Owed billing emails | Restored to snapshot state | Check `owed_sends` for rows the snapshot has as pending that already went (sent after the snapshot) and mark them `cancelled` before you lift the freeze (`RESTORE_FROM`, `MAINTENANCE_READ_ONLY`): the `owed_sends` job drains due rows on every tick once the scheduler is back |
+| Queued jobs | Restored to snapshot state | Rows queued before the restore point that already ran after it run again: cancel the ones that send or write outward (`schedule_notices`, `auto_publish`, `bar_price_push`) — P4 above |
+| The restore guard | Frozen, if the database went back under the running service | `railway ssh -- python3 -m restore_guard confirm` once the rows above are reconciled (a `RESTORE_FROM` restore re-baselines it itself) |
 
 The job-claims row is the one most likely to cause a visible mistake:
 restoring a 2am snapshot at 9am can re-send that morning's digests. To
-suppress:
+suppress, in `psql` on Postgres or `sqlite3` on the SQLite rollback (the
+same statement works on both):
 
-```bash
-sqlite3 reviews.db "INSERT OR IGNORE INTO job_period_claims (job_key) VALUES ('weekly_digests:YYYY-MM-DD');"
+```sql
+INSERT INTO job_period_claims (job_key) VALUES ('weekly_digests:YYYY-MM-DD') ON CONFLICT DO NOTHING;
 ```
 
 ---
 
 ## Volume full
 
-Writes fail, reads succeed, and **every fail-open guard in the system keeps
-failing open**. This looks like a hundred unrelated small errors, not one
+Two volumes since 10/19/26 (scale re-audit 10/20/26 R8-06):
+
+- **The Postgres service's volume** holds the database and its write-ahead
+  log. Full, Postgres refuses every write on the platform and `/health`
+  answers 500 `db_not_writable`. The platform check measures
+  `pg_database_size` plus the WAL (`pg_ls_waldir`) against
+  `PG_VOLUME_MAX_BYTES` (`status_manager.pg_volume_state`): past 80% a daily
+  warning, past 90% an urgent page; unset is itself a daily warning — **set it
+  to the volume's size** (Railway → Postgres → Volume). The fix is growing the
+  volume in Railway (self-serve to 1 TB on Pro), then raising
+  `PG_VOLUME_MAX_BYTES`. A WAL that keeps growing is an archiver that stopped
+  (`SELECT * FROM pg_stat_archiver;` — `failed_count`, `last_archived_time`).
+- **The app volume** (`/app/data`) holds the local backups, the cutover's
+  frozen SQLite file and the logs — the rest of this section.
+
+On the app volume a full disk means the backup stops fitting; on the SQLite
+rollback, writes fail, reads succeed, and **every fail-open guard in the
+system keeps failing open** — a hundred unrelated small errors, not one
 cause. `/health` names it directly: `disk_low` below max(250 MB, 4 × the
-database and its WAL) or under 10% free, `disk_critical` below max(50 MB,
+database — on Postgres the live database's size, since the backup's export
+of it lands here) or under 10% free, `disk_critical` below max(50 MB,
 1.5 ×) or under 2% free, and a 500 `db_not_writable` once a write is refused.
 
 People already signed in keep reading: a session's `last_active` stamp is
@@ -510,17 +651,22 @@ write — and every save, draft and send fails until space is freed.
    (`retention_held`), so nothing is deleted that no copy holds — free the
    space, let a backup succeed, then run it.
 5. The backup refuses to START with less than 1.5 × the database free
-   (`BACKUP_FREE_SPACE_FACTOR`: the `VACUUM INTO` copy plus its gzip) — it
+   (`BACKUP_FREE_SPACE_FACTOR`: the uncompressed copy plus its gzip) — it
    fails and pages rather than filling the volume at 2am. The off-site copy
    checks its own room just before it is made (1.4 × the snapshot, for the
-   encrypted file); short of it, that copy fails and pages and the local
-   snapshot stands. Engineering → Overview → Backups shows growth per day and
+   encrypted file; the scrub's compaction is written beside it, inside that
+   check — R8-18); short of it, that copy fails and pages and the local
+   snapshot stands. One whole run peaks at about 2.75 × the database
+   (`BACKUP_PEAK_SPACE_FACTOR`), which is what the backfill's room check and
+   the `disk_low` line are judged against. Engineering → Overview → Backups shows growth per day and
    days to full (`ops.storage_trend`, from each night's backup row).
 
 6. New stores' POS history backfill holds itself before it can break the
    backup (scale audit 10/19/26 ONB-1): a store backfills only while it
-   holds one of `POS_BACKFILL_MAX_STORES` slots AND the volume has room for
-   tonight's days plus `BACKUP_FREE_SPACE_FACTOR` x the database after them
+   holds one of the backfill slots (`onboarding.backfill_cap`, sized from
+   the RPOWER fleet budget unless `POS_BACKFILL_MAX_STORES` pins it) AND the
+   volume has room for tonight's days plus the backup's whole peak
+   (`BACKUP_PEAK_SPACE_FACTOR` x the database) after them
    (`onboarding.backfill_admission`); short of room it waits (last night
    still archives), says why on Customers → Onboarding, and pages once in 12
    hours (`backfill_no_room`). On Postgres the backup's gate reads the live
@@ -544,15 +690,24 @@ The web process's supervisor also flips the public `/status` page's
 scheduler row to an outage while the heartbeat is stale
 (`status_manager.check_scheduler_liveness`); `/health` itself only reads.
 
+0. **A restored database holds the loop on purpose.** When the restore
+   guard found the database behind the app volume's tick counter (a Railway
+   Postgres restore under the running service — R8-04), every tick stops
+   before any job and the queue claims nothing: the log says `restore guard:`,
+   `railway ssh -- python3 -m restore_guard` prints `frozen`, and a
+   `restore_detected` page went out. Reconcile ([P4](#p4-after-a-postgres-restore--reconcile-confirm-unfreeze)),
+   then `railway ssh -- python3 -m restore_guard confirm`. `RESTORE_GUARD=0`
+   turns the guard off if it ever misfires (say so in the incident notes).
 1. `/admin` → Operations → Jobs shows every job in the registry with its last runs and
    state (ok / partial / failed / running / stuck / overdue / never), the
    heartbeat (`wedged` — a job past its own bound; `loop_stalled` — no tick
    completed with nothing running; `stale`), the lease, the last operator
    page, missed windows and requests.
-2. The lease and the heartbeat are in the database:
-   ```bash
-   sqlite3 reviews.db "SELECT * FROM scheduler_lease;"
-   sqlite3 reviews.db "SELECT * FROM scheduler_heartbeat;"
+2. The lease and the heartbeat are in the database — on Postgres in `psql`
+   (`railway connect Postgres`), never the volume's frozen `reviews.db`:
+   ```sql
+   SELECT * FROM scheduler_lease;
+   SELECT * FROM scheduler_heartbeat;
    ```
    The holder renews its lease every minute (`kept`=1); a kept lease silent
    for 4 minutes is taken over automatically, an unkept one after
@@ -578,10 +733,19 @@ while the real jobs stopped. See `RAILWAY_SCHEDULER_SPLIT.md` (beside this file)
 
 ## The backup
 
-Nightly at 2am Central (`scheduler.backup_db`), in order: a free-space check
-(3.5 × the database), a consistent snapshot with `integrity_check` on the
-volume (unredacted — the restore artifact), then a scrubbed, encrypted copy
-to object storage and, when it fits, by email. **The run FAILS** — a failed
+Nightly at 2am Central (`scheduler.backup_db`), **as a job-queue row the
+queue worker process runs** (`scheduled_job`, the maintenance group — scale
+re-audit 10/20/26 R8-03; it ran inline on the scheduler loop, in the web
+process, at ~91 s a GB), in order: a free-space check (1.5 × the database;
+one run's peak is about 2.75 ×), a consistent snapshot with `integrity_check`
+on the volume (unredacted — the restore artifact), then a scrubbed, encrypted
+copy to object storage and, when it fits, by email. On Postgres the snapshot
+is `pg_copy.export_to_sqlite`: every Postgres table, streamed through a
+server-side cursor, each table's count checked in its own snapshot — the
+ordinary tables in one consistent snapshot, each partition of a partitioned
+fact table in its own short one after it (R8-17: one snapshot for the whole
+export held back vacuum for its whole run). The retention prune waits for
+the backup's row to finish (by 6am at the latest). **The run FAILS** — a failed
 job, a page (at most every 12 hours) and a `/fail` ping to the dead-man
 monitor — when the snapshot fails, there is no room, `BACKUP_ENCRYPTION_KEY`
 is unset, or no off-site copy was made. One `backup_runs` row per run either
@@ -683,9 +847,11 @@ The admin console needs a password, and — once enrolled or with
 
 ## Drill
 
-The drill is a job: `scheduler.run_restore_drill`, run automatically on
-the 2nd of every month after the 2am backup (quarterly until 10/19/26,
-OPS-10), and on demand from
+The drill is a job: `scheduler.run_restore_drill`, a queue row the queue
+worker runs on the 2nd of every month once the 2am backup has finished
+(quarterly until 10/19/26, OPS-10; on the queue since 10/20/26, R8-15 — it
+checks the volume has room for the decompressed copy, and for the off-site
+download and its decryption, before writing either), and on demand from
 `/admin` → Jobs → **restore_drill**. It copies the newest snapshot to a
 scratch file beside it (decompressing a gzipped one — the step
 `RESTORE_FROM` takes too) and FAILS on a snapshot older than 26 hours, then
@@ -745,8 +911,10 @@ quarter restore one into a scratch environment from the Backups tab and load
 - **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
   the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
 - **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
-- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row alerts once, and once more when it
-  recovers: an email to every `ALERT_TO` address (comma-separated; Resend, the Worker's own `RESEND_API_KEY` secret),
+- Silence past 20 minutes, or two failing `/health` checks in a row, alerts once, and once more when it recovers. A
+  `/fail` alerts on its own at the first check that sees it — kept in its own KV key until a channel took the alert,
+  36 hours at most (scale re-audit 10/20/26 R8-13; it used to ride the heartbeat's key and was overwritten by the next
+  ping). Every alert goes as an email to every `ALERT_TO` address (comma-separated; Resend, the Worker's own `RESEND_API_KEY` secret),
   and — so a Resend outage cannot silence the one monitor outside Railway (OPS-4) — each channel whose secrets are set:
   `PAGERDUTY_ROUTING_KEY` (a PagerDuty trigger, resolved on recovery), `PAGER_WEBHOOK_URL` (any paging service's
   webhook), and `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` + `ALERT_SMS_TO` (a text to each on-call
