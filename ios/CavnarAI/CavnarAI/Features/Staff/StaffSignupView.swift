@@ -46,6 +46,14 @@ struct StaffSignupView: View {
     @State private var hasAccount = false
     @State private var showingForgot = false
     @State private var showingNotListed = false
+    /// The phone's code was typed back (the restaurant step may follow it
+    /// only for a sign-up started before the code was known).
+    @State private var verified = false
+
+    /// The first screen: the restaurant code, unless the link named it — the
+    /// verification text is counted against that restaurant's own hourly
+    /// share (scale audit 10/19/26, SEC-04), so it is asked before the phone.
+    private var firstStep: Step { (knownJoinCode?.isEmpty == false) ? .phone : .restaurant }
 
     init(knownJoinCode: String? = nil) {
         self.knownJoinCode = knownJoinCode
@@ -80,6 +88,7 @@ struct StaffSignupView: View {
         }
         .onAppear {
             if let knownJoinCode, !knownJoinCode.isEmpty, joinCode.isEmpty { joinCode = knownJoinCode }
+            if step == .phone && !verified { step = firstStep }
         }
         .sheet(isPresented: $showingForgot) {
             StaffForgotPinView(staff: staff, code: joinCode, phone: phone)
@@ -94,7 +103,7 @@ struct StaffSignupView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: CavnarSpace.xs) {
             HStack(spacing: 4) {
-                StaffBackButton(label: step == .phone ? "Close" : "Back") { back() }
+                StaffBackButton(label: step == firstStep ? "Close" : "Back") { back() }
                 Text(chosen?.name ?? (restaurantName.isEmpty ? "Create your account" : restaurantName))
                     .cavnarText(.headline)
                     .lineLimit(2)
@@ -423,10 +432,10 @@ struct StaffSignupView: View {
         error = nil
         if expired { dismiss(); return }
         switch step {
-        case .phone:      dismiss()
+        case .phone:      if firstStep == .phone { dismiss() } else { step = .restaurant }
         case .code:       step = .phone
-        case .restaurant: step = .code
-        case .name:       step = (knownJoinCode?.isEmpty == false) ? .code : .restaurant
+        case .restaurant: if firstStep == .restaurant { dismiss() } else { step = .code }
+        case .name:       step = .code
         case .pin:        chosen = nil; hasAccount = false; step = .name
         case .confirm:    confirmPin = ""; step = .pin
         }
@@ -437,7 +446,9 @@ struct StaffSignupView: View {
         error = nil
         defer { loading = false }
         do {
-            let resp = try await staff.startSignup(phone: phone, optin: optedIn)
+            let code = joinCode.trimmingCharacters(in: .whitespaces)
+            let resp = try await staff.startSignup(phone: phone, optin: optedIn,
+                                                   joinCode: code.isEmpty ? nil : code)
             guard resp.ok else {
                 error = resp.error ?? "Couldn't send a code."
                 return
@@ -459,6 +470,7 @@ struct StaffSignupView: View {
         defer { loading = false }
         do {
             _ = try await staff.verifySignupCode(phone: phone, code: smsCode)
+            verified = true
             if joinCode.isEmpty {
                 step = .restaurant
             } else {
@@ -482,7 +494,11 @@ struct StaffSignupView: View {
         defer { loading = false }
         do {
             restaurantName = try await staff.restaurantFor(joinCode: joinCode.trimmingCharacters(in: .whitespaces))
-            await loadNamesNow()
+            if verified {
+                await loadNamesNow()
+            } else {
+                step = .phone
+            }
         } catch let apiError as APIClient.APIError {
             error = apiError.message
         } catch {

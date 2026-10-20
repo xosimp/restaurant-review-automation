@@ -13,6 +13,7 @@ H10  forgot PIN by text.
      Sessions: revoked per restaurant, the roster sync reports failures, the
      JSON-object guard, no pepper-less "upgrade", and the Me tab's fields.
 """
+import os
 import sqlite3
 import threading
 
@@ -371,6 +372,51 @@ def test_verification_texts_stop_at_the_hourly_ceiling(client, db_path, monkeypa
     third = client.post("/staff/api/signup/start", json={"phone": "5550140023", "optin": True})
     assert third.status_code == 400 and "can't send codes" in third.get_json()["error"]
     assert len(sent) == 2
+
+
+def test_anonymous_sends_never_spend_a_restaurants_share(client, db_path, monkeypatch):
+    """Scale audit 10/19/26, SEC-04: a script with no join code spends only
+    the small anonymous lane; each restaurant's share is its own; a bad join
+    code sends nothing; STAFF_OTP_REQUIRE_JOIN_CODE closes the lane."""
+    for var in ("STAFF_OTP_RESTAURANT_HOURLY_CAP", "STAFF_OTP_ANON_HOURLY_CAP", "STAFF_OTP_REQUIRE_JOIN_CODE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("STAFF_OTP_ANON_HOURLY_CAP", "2")
+    monkeypatch.setenv("STAFF_OTP_RESTAURANT_HOURLY_CAP", "2")
+    sent = []
+    import notify
+    monkeypatch.setattr(notify, "send_sms", lambda *a, **k: sent.append(a[0]) or True)
+    ejs, other = _restaurant(db_path), _restaurant(db_path, name="Other", owner="o@x.test")
+    ejs_code, other_code = get_join_code(ejs, db_path=db_path), get_join_code(other, db_path=db_path)
+
+    def start(phone, code=None):
+        body = {"phone": phone, "optin": True}
+        if code:
+            body["join_code"] = code
+        return client.post("/staff/api/signup/start", json=body)
+    assert start("5550140031").status_code == 200 and start("5550140032").status_code == 200
+    assert start("5550140033").status_code == 400, "the anonymous lane is full"
+    assert start("5550140034", ejs_code).status_code == 200, "a restaurant's share is untouched by it"
+    assert start("5550140035", ejs_code).status_code == 200
+    assert start("5550140036", ejs_code).status_code == 400, "EJ's own share is spent"
+    assert start("5550140037", other_code).status_code == 200, "and never another restaurant's"
+    bad = start("5550140038", "ZZZZZZ")
+    assert bad.status_code == 400 and "restaurant code" in bad.get_json()["error"]
+    assert len(sent) == 5
+    conn = models.get_conn(db_path)
+    rows = conn.execute("SELECT restaurant_id, COUNT(*) FROM staff_otp_sends GROUP BY restaurant_id").fetchall()
+    conn.close()
+    assert {(r[0], r[1]) for r in rows} == {(None, 2), (ejs, 2), (other, 1)}
+    monkeypatch.setenv("STAFF_OTP_REQUIRE_JOIN_CODE", "1")
+    monkeypatch.setenv("STAFF_OTP_ANON_HOURLY_CAP", "50")
+    assert "restaurant code first" in start("5550140039").get_json()["error"]
+
+
+def test_both_sign_up_clients_ask_the_restaurant_code_before_the_phone():
+    page = open(os.path.join(os.path.dirname(__file__), "..", "templates", "staff_login.html")).read()
+    assert "join_code: suJoin" in page and "if (suJoin) { suShow(0); } else { suShow(2);" in page
+    swift = open(os.path.join(os.path.dirname(__file__), "..", "ios", "CavnarAI", "CavnarAI", "Features",
+                              "Staff", "StaffSignupView.swift")).read()
+    assert "joinCode: code.isEmpty ? nil : code" in swift and "? .phone : .restaurant" in swift
 
 
 def test_the_dev_code_needs_the_explicit_flag(client, db_path, monkeypatch):

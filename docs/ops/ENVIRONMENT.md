@@ -59,7 +59,10 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `PASSKEY_HOSTS` | — | Extra hosts passkeys may be used on besides `BASE_URL`'s and localhost (a test tunnel), comma-separated. | passkeys.py |
 | `ALLOW_PUBLIC_SIGNUP` | `""` | Allows the mobile self-serve register route (off: accounts come from a signed contract). | mobile_api.py |
 | `STAFF_OTP_COUNTRY_CODES` | `"1"` | Country calling codes a staff sign-up or forgot-PIN code may be texted to, comma-separated (default +1 only). | auth.py |
-| `STAFF_OTP_HOURLY_CAP` | `200` | Platform-wide ceiling on staff verification texts per hour (`auth.STAFF_OTP_HOURLY_CAP_DEFAULT`). | auth.py |
+| `STAFF_OTP_HOURLY_CAP` | `600` | Platform-wide backstop on staff verification texts per hour (`auth.STAFF_OTP_HOURLY_CAP_DEFAULT`; 200 until 10/19/26, when the per-restaurant shares below took over the fair-share job). | auth.py |
+| `STAFF_OTP_RESTAURANT_HOURLY_CAP` | `30` | Each restaurant's own hourly share of verification texts, counted by the join code the sign-up named, or the restaurant of a forgot-PIN (SEC-04). | auth.py |
+| `STAFF_OTP_ANON_HOURLY_CAP` | `30` | The hourly lane for sign-up texts that name no restaurant (old app builds); never touches a restaurant's share (SEC-04). | auth.py |
+| `STAFF_OTP_REQUIRE_JOIN_CODE` | `""` | `1` refuses a sign-up text that names no restaurant code (closes the anonymous lane). Turn on once app builds before 10/19/26 have aged out. | auth.py |
 | `STAFF_SIGNUP_DEV_CODE` | — | 1 returns the staff verification code in the response, only while Twilio is not configured (a local backend). | auth.py |
 
 ## Email and texts
@@ -79,6 +82,9 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TWILIO_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for owner alerts. | notify.py |
 | `TWILIO_OTP_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for sign-in codes. | notify.py |
 | `TWILIO_GUEST_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for guest marketing texts. | notify.py |
+| `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
+| `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
+| `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |
 | `TWILIO_STAFF_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for every staff text: a posted or changed week, and request notices (swaps, open shifts, time off), each only for an employee whose own consent covers that purpose (`preferences.staff_sms_scope`). Unset until the staff campaign is registered with the wording in `people.STAFF_SMS_CONSENT_TEXT`; while it is unset `people.staff_sms_ready()` is false, the staff app hides its "text me" switch (`sms_available`) and no staff text goes. | notify.py, people.py |
 | `STAFF_SMS_HOLD` | `""` | `1` holds every staff text although the staff campaign is approved and `TWILIO_STAFF_MESSAGING_SERVICE_SID` is set. While it holds, `people.staff_sms_ready()` is false, the "text me" switch stays hidden and a staff send is logged `not_configured` ("on hold"). Set 10/5/26 because employees read their schedule in the staff app, which isn't live for them yet. Remove it to go live. | notify.py, people.py |
 | `SMS_TRACKED_LINKS` | `""` | 1 keys the link in alert texts for open tracking (off: the longer link can add a billed segment). | notify.py |

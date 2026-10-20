@@ -830,6 +830,13 @@ JOIN_CONFIRM_HOURS = 48        # a Y later than this confirms nothing
 JOIN_PHONE_DAILY_LIMIT = 3     # form submissions for one number per 24h, all restaurants
 JOIN_IP_HOURLY_LIMIT = 20      # durable, beside the in-process per-IP limit on the route
 JOIN_RESEND_MINUTES = 10       # a double tap does not send a second confirmation text
+# Fleet and per-restaurant ceilings on join texts (scale audit 10/19/26,
+# SEC-05): every restaurant's join link is public (QR codes) and the per-IP
+# and per-phone limits do nothing against a botnet rotating both. Counted on
+# guest_optin_requests rows that sent (or tried to send) a text.
+JOIN_FLEET_HOURLY_DEFAULT = 300        # GUEST_JOIN_FLEET_HOURLY_CAP
+JOIN_RESTAURANT_DAILY_DEFAULT = 150    # GUEST_JOIN_RESTAURANT_DAILY_CAP
+JOIN_COUNTRY_ERROR = "Enter a US or Canadian mobile number. We can only text numbers there."
 QUESTION_HOURS = 24            # how long "which restaurant did you mean" stays open
 
 JOIN_DISCLOSURE_VERSION = "2026-09-28"
@@ -863,6 +870,13 @@ def confirmation_text(restaurant_name) -> str:
     return name[:room].rstrip() + _CONFIRM_TAIL
 
 
+def _join_cap(name, default) -> int:
+    try:
+        return max(0, int(os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
 def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=None, db_path=DB_PATH) -> dict:
     """The public join form's submission: a PENDING opt-in and one
     confirmation text. Consent is set only when that phone replies Y within
@@ -882,6 +896,32 @@ def request_public_optin(restaurant_id, phone, name=None, ip=None, user_agent=No
     {"ok": False, "status": 429|502, "error"}."""
     phone = _normalize_phone(phone)
     ip = (ip or "").strip() or None
+    import notify as _notify_cc
+    if not _notify_cc.sms_country_allowed(phone):
+        # Refused before anything is written: no unconsented row, no text.
+        return {"ok": False, "status": 400, "error": JOIN_COUNTRY_ERROR}
+    conn = get_conn(db_path)
+    try:
+        fleet = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE status IN ('pending','send_failed') "
+                             "AND requested_at >= datetime('now','-1 hour')").fetchone()[0]
+        mine = conn.execute("SELECT COUNT(*) FROM guest_optin_requests WHERE restaurant_id=? "
+                            "AND status IN ('pending','send_failed') AND requested_at >= datetime('now','-1 day')",
+                            (restaurant_id,)).fetchone()[0]
+    finally:
+        conn.close()
+    if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) or \
+            mine >= _join_cap("GUEST_JOIN_RESTAURANT_DAILY_CAP", JOIN_RESTAURANT_DAILY_DEFAULT):
+        scope = "fleet" if fleet >= _join_cap("GUEST_JOIN_FLEET_HOURLY_CAP", JOIN_FLEET_HOURLY_DEFAULT) \
+            else f"restaurant {restaurant_id}"
+        try:
+            import ops as _ops_join
+            if _ops_join.claim_cooldown(f"guest_join_cap:{scope}", 60):
+                _ops_join.capture(RuntimeError(f"guest join texts hit the {scope} ceiling"), job="guest_join_cap",
+                                  context=f"restaurant_id={restaurant_id}")
+        except Exception:
+            print(f"[guest_join] {scope} ceiling reached")
+        return {"ok": False, "status": 429, "error": "We can't send confirmation texts right now. "
+                                                     "Please try again later."}
     conn = get_conn(db_path)
     try:
         r = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()

@@ -726,3 +726,33 @@ def test_cs19_counting_does_not_load_the_list():
     for fn in ("def segment_counts(", "def audience_size(", "def consent_ledger("):
         body = src.split(fn)[1].split("\ndef ")[0]
         assert "get_guest_contacts(" not in body and "segment_contacts(" not in body, fn
+
+
+# ── Scale audit 10/19/26, SEC-05: the join form is not an SMS pump ─────────
+
+def test_sec05_the_join_form_texts_only_north_america_and_writes_nothing_else(db_path, texts):
+    rid = _rid(db_path)
+    for phone in ("+447700900123", "+882345678901", "+1555014", "+8801711000000"):
+        res = gm.request_public_optin(rid, phone, name="X", ip="198.51.100.9", db_path=db_path)
+        assert res == {"ok": False, "status": 400, "error": gm.JOIN_COUNTRY_ERROR}
+    assert texts == [] and _sql(db_path, "SELECT COUNT(*) FROM guest_contacts")[0][0] == 0
+    assert _sql(db_path, "SELECT COUNT(*) FROM guest_optin_requests")[0][0] == 0
+    assert notify.sms_country_allowed("(312) 555-0101") and not notify.sms_country_allowed("+447700900123")
+
+
+def test_sec05_every_non_code_text_refuses_a_foreign_number(db_path, monkeypatch):
+    res = notify.send_sms_result("+447700900123", "hi", use_case="guest", db_path=db_path)
+    assert not res.ok and res.status == "blocked" and res.error_code == notify.SMS_COUNTRY_ERROR_CODE
+
+
+def test_sec05_fleet_and_restaurant_ceilings(db_path, texts, monkeypatch):
+    rids = [_rid(db_path, name=f"Spot {i}", owner_email=f"s{i}@x.test") for i in range(3)]
+    monkeypatch.setenv("GUEST_JOIN_RESTAURANT_DAILY_CAP", "2")
+    monkeypatch.setenv("GUEST_JOIN_FLEET_HOURLY_CAP", "4")
+    got = [gm.request_public_optin(rids[0], f"+1312557{i:04d}", ip=f"198.51.100.{i}", db_path=db_path)
+           for i in range(3)]
+    assert [r["ok"] for r in got] == [True, True, False] and got[2]["status"] == 429
+    got = [gm.request_public_optin(rids[1 + i % 2], f"+1312558{i:04d}", ip=f"198.51.101.{i}", db_path=db_path)
+           for i in range(3)]
+    assert [r["ok"] for r in got] == [True, True, False], "the fleet's hour is spent"
+    assert len(texts) == 4
