@@ -473,11 +473,41 @@ def copy_database(sqlite_path, dst, today=None, build_schema=True, on_table=None
 
 # ── Postgres -> SQLite (the nightly snapshot on Postgres, the rollback) ─────
 
+def _pg_public_tables(pg) -> dict:
+    """{table: [columns in order]} of every ordinary or partitioned table in
+    the Postgres schema the app uses — never a partition itself (its parent
+    reads its rows) nor a view."""
+    cur = pg.cursor()
+    cur.execute(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') AND NOT c.relispartition "
+        "ORDER BY c.relname")
+    names = [r[0] for r in cur.fetchall()]
+    out = {}
+    for name in names:
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() "
+                    "AND table_name = %s ORDER BY ordinal_position", (name,))
+        # The dialect's stable rowid on a table with no integer key is
+        # SQLite's own hidden rowid in the export, never a column of it.
+        out[name] = [r[0] for r in cur.fetchall() if r[0] != "rowid"]
+    return out
+
+
 def export_to_sqlite(dst_path, url=None, pg=None) -> dict:
     """A consistent snapshot of the Postgres database in a fresh SQLite file
-    at `dst_path`, built by the app's own migrations (models.init_db), every
-    table both have copied in one REPEATABLE READ transaction, then
-    verified (counts). Returns {tables: {name: rows}, verify}."""
+    at `dst_path`: the app's own migrations build it (models.init_db,
+    ensure_columns), and EVERY table Postgres holds is copied in one
+    REPEATABLE READ transaction — a table the migrations do not build
+    (auth's users and sessions, the guest tables, webhooks, push… are made
+    by other boot steps) is created from Postgres's own column list, so
+    nothing is left behind (scale re-audit 10/20/26 R8-01: the export
+    copied only what init_db built and dropped 53 tables, users among them).
+    Rows stream through a server-side cursor, BATCH_ROWS at a time — a
+    client-side cursor held a whole table in the web process's memory
+    (R8-02). Every table's copied count is checked against Postgres's in the
+    same snapshot; a mismatch raises, so the backup fails and pages instead
+    of shipping a partial copy. Returns {tables: {name: rows}, created: [...],
+    verify: {ok}}."""
     import models
     if os.path.exists(dst_path):
         os.unlink(dst_path)
@@ -489,31 +519,45 @@ def export_to_sqlite(dst_path, url=None, pg=None) -> dict:
         pg = psycopg.connect(url or db_dialect.database_url(), autocommit=False, connect_timeout=10)
     out = sqlite3.connect(dst_path)
     try:
-        cur = pg.cursor()
-        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        report = {"tables": {}}
-        for name, _sql in sqlite_tables(out):
-            cols = [c[0] for c in table_columns(out, name)]
-            try:
-                cur.execute(f'SELECT {", ".join(chr(34) + c + chr(34) for c in cols)} FROM "{name}"')
-            except Exception:
-                pg.rollback()
-                cur = pg.cursor()
-                cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-                report["tables"][name] = {"rows": 0, "missing": True}
+        pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        pg_tables = _pg_public_tables(pg)
+        have = {n for n, _sql in sqlite_tables(out)}
+        report = {"tables": {}, "created": [], "verify": {"ok": True, "mismatch": {}}}
+        for name, pg_cols in pg_tables.items():
+            if _SKIP.match(name):
                 continue
+            if name not in have:
+                # Untyped columns: SQLite keeps each value as Postgres gave it.
+                out.execute(f'CREATE TABLE "{name}" ({", ".join(chr(34) + c + chr(34) for c in pg_cols)})')
+                report["created"].append(name)
+            sqlite_cols = {c[0] for c in table_columns(out, name)}
+            cols = [c for c in pg_cols if c in sqlite_cols]
+            for c in pg_cols:
+                if c not in sqlite_cols:
+                    out.execute(f'ALTER TABLE "{name}" ADD COLUMN "{c}"')
+                    cols.append(c)
+            col_list = ", ".join(chr(34) + c + chr(34) for c in cols)
             out.execute(f'DELETE FROM "{name}"')
             n = 0
-            while True:
-                rows = cur.fetchmany(BATCH_ROWS)
-                if not rows:
-                    break
-                out.executemany(f'INSERT INTO "{name}" ({", ".join(chr(34) + c + chr(34) for c in cols)}) '
-                                f'VALUES ({", ".join("?" * len(cols))})', [tuple(r) for r in rows])
-                n += len(rows)
+            with pg.cursor(name=f"export_{len(report['tables'])}") as cur:
+                cur.itersize = BATCH_ROWS
+                cur.execute(f'SELECT {col_list} FROM "{name}"')
+                while True:
+                    rows = cur.fetchmany(BATCH_ROWS)
+                    if not rows:
+                        break
+                    out.executemany(f'INSERT INTO "{name}" ({col_list}) VALUES ({", ".join("?" * len(cols))})',
+                                    [tuple(r) for r in rows])
+                    n += len(rows)
+            want = pg.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
             report["tables"][name] = {"rows": n}
+            if int(want) != n:
+                report["verify"]["ok"] = False
+                report["verify"]["mismatch"][name] = {"postgres": int(want), "copied": n}
         out.commit()
         pg.rollback()
+        if not report["verify"]["ok"]:
+            raise RuntimeError(f"export_to_sqlite: copied counts differ from Postgres: {report['verify']['mismatch']}")
         return report
     finally:
         out.close()

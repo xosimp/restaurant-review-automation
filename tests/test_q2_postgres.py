@@ -985,3 +985,35 @@ def test_health_probes_writes_on_postgres(scratch_db, tmp_path, monkeypatch):
     assert code == 200, body
     assert body["database"]["write"] == "ok" and body["database"]["backend"] == "postgres"
     assert body["database"]["size_mb"] > 0
+
+
+@live
+def test_the_nightly_export_carries_every_table_and_its_rows(scratch_db, tmp_path):
+    # Scale re-audit 10/20/26 R8-01: the export copied only the tables
+    # models.init_db builds - auth's users and sessions, the guest tables,
+    # webhooks and push (made by other boot steps) were left out of every
+    # Postgres backup. The production boot builds the database here.
+    import pg_copy
+    _boot(tmp_path, scratch_db)
+    c = db_dialect.connect(scratch_db)
+    try:
+        rid = c.execute("INSERT INTO restaurants (name, owner_email) VALUES ('Exp', 'e@x.com') RETURNING id").fetchone()[0]
+        c.execute("INSERT INTO users (restaurant_id, username, email, password_hash) VALUES (?, 'exp', 'e@x.com', 'h')",
+                  (rid,))
+        c.commit()
+        pg_tables = {r[0] for r in c.execute_native(
+            "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition").fetchall()}
+    finally:
+        c.close()
+    dst = str(tmp_path / "export.db")
+    rep = pg_copy.export_to_sqlite(dst, url=scratch_db)
+    assert rep["verify"]["ok"]
+    s = sqlite3.connect(dst)
+    try:
+        lite = {r[0] for r in s.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert pg_tables - lite == set(), sorted(pg_tables - lite)[:10]
+        assert s.execute("SELECT COUNT(*) FROM users WHERE username='exp'").fetchone()[0] == 1
+        assert "users" in rep["tables"] and "sessions" in lite
+    finally:
+        s.close()
