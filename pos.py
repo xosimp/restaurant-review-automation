@@ -353,6 +353,33 @@ def _reopen_moved_nights(restaurant_id, mismatches):
     pipeline._spawn(go)
 
 
+# ── "Sync now": one path, one cooldown (scale audit 10/19/26 A3-09) ─────────
+#
+# The account card's RPOWER button (rpower_routes.do_sync, 10 minutes, key
+# rpower_sync_now:<rid>) and Data Health's Sync now (client_api, 5 minutes,
+# key sync_now:<rid>:pos — and a bare thread per tap with no request context)
+# could run two full pulls of one store at once. Both now take this one
+# cooldown and run on the bounded admin pool (scheduler.start_manual_pos_sync,
+# which joins a sync already running for the restaurant).
+SYNC_NOW_COOLDOWN_MINUTES = 10
+
+
+def sync_now_key(restaurant_id):
+    return f"pos_sync_now:{restaurant_id}"
+
+
+def sync_now(restaurant_id, actor="owner"):
+    """(started, job_id): start the restaurant's POS sync off the request
+    thread, unless any Sync now started one in the last
+    SYNC_NOW_COOLDOWN_MINUTES (then (False, None))."""
+    import ops
+    import scheduler
+    if not ops.claim_cooldown(sync_now_key(restaurant_id), SYNC_NOW_COOLDOWN_MINUTES):
+        return False, None
+    job_id, _joined = scheduler.start_manual_pos_sync(restaurant_id, actor)
+    return True, job_id
+
+
 POS_SYNC_MAX_SECONDS = 45 * 60
 # The fetch is network-bound (a 60-day pull per restaurant); the SQLite write
 # section (save_synced_shifts) holds _WRITE_LOCK, so four fetches overlap and

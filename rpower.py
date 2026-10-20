@@ -782,6 +782,11 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
         except (TypeError, ValueError):
             pass
     update_restaurant(restaurant_id, fields)
+    # The store's history and first sync, off this thread, now — not at 3am
+    # (scale audit 10/19/26 ONB-6). The showcase demo refreshes on its own.
+    if not str(c["token"]).startswith("demo-store:"):
+        import strategy_jobs
+        strategy_jobs.enqueue_pos_onboard(restaurant_id, f"{chosen.get('cg')}:{chosen.get('store_mid')}")
     return {"ok": True, "store": chosen, "applied": sorted(fields)}
 
 

@@ -271,12 +271,14 @@ def test_sync_now_is_deduplicated(db_path, monkeypatch):
     user = {"restaurant_id": rid}
     monkeypatch.setattr(pos, "connected_provider", lambda r: ("toast", object()))
     ran = []
-    monkeypatch.setattr(pos, "sync_restaurant", lambda r, trigger="nightly": ran.append((r, trigger)))
+    import scheduler
+    # Off the request thread on the admin pool (scale audit 10/19/26 A3-09).
+    monkeypatch.setattr(scheduler, "start_manual_pos_sync", lambda r, who: (ran.append(r), ("job", False))[1])
     claims = iter([True, False])
     monkeypatch.setattr(ops, "claim_cooldown", lambda key, minutes: next(claims))
     first, s1 = client_api._do_data_health_sync(user, "pos")
     second, s2 = client_api._do_data_health_sync(user, "pos")
-    assert s1 == 200 and first["started"] and s2 == 200 and second["already_syncing"]
+    assert s1 == 200 and first["started"] and s2 == 200 and second["already_syncing"] and ran == [rid]
     bad, s3 = client_api._do_data_health_sync(user, "weather")
     assert s3 == 400
 

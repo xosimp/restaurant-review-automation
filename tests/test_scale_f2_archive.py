@@ -210,6 +210,58 @@ def test_one_restaurant_can_be_sent_back_to_the_pos_alone(monkeypatch):
     assert pos_archive.ready_dates(rid, "rpower", [day], live=False) == set()
 
 
+# ── ONB-4 / ONB-6: a connect archives history first, then syncs ─────────────
+
+def test_a_connect_queues_the_onboarding_and_the_demo_does_not(monkeypatch):
+    import job_queue
+    rid = _rid()
+    store = {"cg": 1280, "store_mid": "1123", "name": "Arch Co"}
+    monkeypatch.setattr(rpower, "test_token", lambda token: {"ok": True, "stores": [dict(store)]})
+    assert rpower.bootstrap(rid)["ok"]
+    conn = models.get_conn()
+    rows = conn.execute("SELECT kind, restaurant_id FROM jobs WHERE kind='pos_onboard'").fetchall()
+    conn.execute("UPDATE restaurants SET rpower_token='demo-store:halsted' WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+    assert [tuple(r) for r in rows] == [("pos_onboard", rid)]
+    assert job_queue.HANDLERS["pos_onboard"] == "strategy_jobs:run_queued_pos_onboard"
+    assert rpower.bootstrap(rid)["ok"]
+    conn = models.get_conn()
+    assert conn.execute("SELECT COUNT(*) FROM jobs WHERE kind='pos_onboard'").fetchone()[0] == 1
+    conn.close()
+
+
+def test_onboarding_archives_newest_first_then_syncs(monkeypatch):
+    import strategy_jobs
+    rid = _rid()
+    fake = _Fake()
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    monkeypatch.setattr(pos_archive, "_closed", lambda *a: True)
+    synced = []
+    monkeypatch.setattr(pos, "sync_restaurant", lambda r, trigger="nightly": synced.append(trigger) or {"ok": True})
+    out = strategy_jobs.run_queued_pos_onboard(type("J", (), {"payload": {"restaurant_id": rid}})())
+    assert out["archived"] == pos_archive.ONBOARD_DAYS and synced == ["connect"]
+    assert fake.calls[0] > fake.calls[-1], "newest night first"
+    fake.calls.clear()
+    assert pos_archive.onboard(rid)["archived"] == [] and fake.calls == [], "a night is read once"
+
+
+def test_onboarding_stops_and_reschedules_when_the_pos_asks_us_to_wait(monkeypatch):
+    import strategy_jobs
+    rid = _rid()
+    fake = _Fake()
+
+    def busy(r, day):
+        fake.calls.append(day.isoformat())
+        raise rpower.RPowerUnavailable("open", retry_after=200)
+    fake.archive_rows = busy
+    monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
+    monkeypatch.setattr(pos_archive, "_closed", lambda *a: True)
+    with pytest.raises(RuntimeError) as got:
+        strategy_jobs.run_queued_pos_onboard(type("J", (), {"payload": {"restaurant_id": rid}})())
+    assert got.value.retry_after == 200 and len(fake.calls) == 1
+
+
 # ── A3-07 prices, DB-10 ─────────────────────────────────────────────────────
 
 def test_prices_are_read_weekly_or_when_a_sold_price_moved(monkeypatch):

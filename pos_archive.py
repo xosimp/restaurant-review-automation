@@ -593,6 +593,58 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
             "prices": prices, "catalog": catalog, "backfill_restated": backfill_restated}
 
 
+# ── onboarding: a new store's history archived first (scale audit 10/19/26
+# ONB-4 / ONB-6 / A3-12) ─────────────────────────────────────────────────────
+#
+# Before a store's archive started, every reader went live and nothing was
+# kept: the first night read 60 days of ticketsales for labor, 45 days for
+# dish sales and 45 for the DSR backfill — the same nights up to three
+# times, ~835 requests. The connect now queues `pos_onboard`
+# (strategy_jobs.run_queued_pos_onboard): ONBOARD_DAYS archived newest night
+# first under ONBOARD_MAX_SECONDS, then the first sync, so every reader
+# after it reads each night from the archive and the night is read once.
+ONBOARD_DAYS = int(__import__("os").getenv("POS_ONBOARD_ARCHIVE_DAYS", "60"))
+ONBOARD_MAX_SECONDS = int(__import__("os").getenv("POS_ONBOARD_MAX_SECONDS", str(20 * 60)))
+
+
+def onboard(restaurant_id, days=None, max_seconds=None, db_path=DB_PATH) -> dict:
+    """Archive the store's last `days` closed nights it lacks, newest first,
+    for up to `max_seconds`. {archived, failed, left, retry_after}. A night
+    still trading, or recent and not closed, is left for the nightly run."""
+    import time as _t
+    name, mod = provider_for(restaurant_id)
+    if mod is None:
+        return {"archived": [], "failed": [], "left": 0, "retry_after": None, "reason": "no POS that can archive"}
+    days = int(days or ONBOARD_DAYS)
+    limit = float(max_seconds or ONBOARD_MAX_SECONDS)
+    from models import get_restaurant
+    from time_utils import restaurant_now
+    import pos
+    r = get_restaurant(restaurant_id)
+    yesterday = pos.complete_through(r, restaurant_now(r, naive=True))
+    have = archived_dates(restaurant_id, name, db_path)
+    todo = [yesterday - timedelta(days=i) for i in range(days)
+            if (yesterday - timedelta(days=i)).isoformat() not in have]
+    if todo and todo[0] == yesterday and not _closed(mod, restaurant_id, yesterday):
+        todo = todo[1:]
+    started = _t.monotonic()
+    done, failed, retry_after = [], [], None
+    for i, d in enumerate(todo):
+        if _t.monotonic() - started > limit:
+            break
+        try:
+            archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
+            done.append(d.isoformat())
+        except Exception as e:
+            log.warning("pos_archive: onboarding %s %s failed: %s", restaurant_id, d, e)
+            failed.append(d.isoformat())
+            if getattr(e, "retry_after", None):
+                retry_after = float(e.retry_after)
+                break
+    return {"archived": done, "failed": failed, "left": max(0, len(todo) - len(done) - len(failed)),
+            "retry_after": retry_after}
+
+
 # ── the nightly labor read from the archive (scale audit 10/19/26 A3-06) ────
 #
 # rpower.build_shifts_csv read 60 days of timeclock every night (9 week-sized

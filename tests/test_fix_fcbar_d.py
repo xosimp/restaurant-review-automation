@@ -404,7 +404,7 @@ def test_pos_21_sync_now_runs_once_per_cooldown(db_path, monkeypatch):
     import scheduler
     rid = _rid(db_path)
     started = []
-    monkeypatch.setattr(scheduler, "start_manual_pos_sync", lambda r, who: started.append(r))
+    monkeypatch.setattr(scheduler, "start_manual_pos_sync", lambda r, who: (started.append(r), ("job", False))[1])
     stamps = {}
 
     def claim(key, minutes):
@@ -417,7 +417,8 @@ def test_pos_21_sync_now_runs_once_per_cooldown(db_path, monkeypatch):
     assert rpower_routes.do_sync(user)[1] == 200
     body, status = rpower_routes.do_sync(user)
     assert status == 429 and body["cooldown"] and started == [rid]
-    assert stamps == {f"rpower_sync_now:{rid}": rpower_routes.SYNC_NOW_COOLDOWN_MINUTES}
+    # One cooldown for every Sync now (scale audit 10/19/26 A3-09).
+    assert stamps == {f"pos_sync_now:{rid}": rpower_routes.SYNC_NOW_COOLDOWN_MINUTES}
 
 
 # ── SCALE-07: the heavy sweeps run as queue rows ────────────────────────────

@@ -12637,9 +12637,10 @@ def _do_data_health_sync(current_user, source):
     """One "Sync now" for a source, deduplicated: a second tap inside
     SYNC_NOW_COOLDOWN_MINUTES answers "already syncing" instead of starting
     another pull that would race the first one's merge (DH5-11). Runs through
-    pos.sync_restaurant, so the attempt is recorded like the nightly one."""
-    import threading
-    import ops
+    pos.sync_restaurant, so the attempt is recorded like the nightly one —
+    since 10/19/26 (scale audit A3-09) through pos.sync_now: the bounded
+    admin pool, never a thread per tap, and the ONE cooldown the account
+    card's RPOWER button shares, so the two cannot start two pulls."""
     rid = current_user.get("restaurant_id")
     if source not in SYNCABLE_SOURCES:
         return {"ok": False, "error": "That source can't be synced from here."}, 400
@@ -12647,21 +12648,16 @@ def _do_data_health_sync(current_user, source):
     name, mod = pos.connected_provider(rid)
     if not mod:
         return {"ok": False, "error": "No POS is connected."}, 400
-    if not ops.claim_cooldown(f"sync_now:{rid}:{source}", SYNC_NOW_COOLDOWN_MINUTES):
+    started, _job = pos.sync_now(rid, current_user.get("username") or "owner")
+    if not started:
         return {"ok": True, "already_syncing": True,
                 "message": "A sync is already running — this updates when it finishes."}, 200
-
-    def _run():
-        try:
-            pos.sync_restaurant(rid, trigger="manual")
-        except Exception as e:
-            print(f"[data_health] sync now failed for {rid}: {e}")
-    threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "started": True, "provider": name,
             "message": "Syncing now — this usually takes under a minute."}, 200
 
 
-SYNC_NOW_COOLDOWN_MINUTES = 5
+# The one Sync now cooldown (pos.SYNC_NOW_COOLDOWN_MINUTES, scale audit A3-09).
+from pos import SYNC_NOW_COOLDOWN_MINUTES  # noqa: E402
 
 
 @client_bp.route("/api/data-health/sync/<source>", methods=["POST"])

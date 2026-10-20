@@ -473,6 +473,44 @@ def run_queued_pos_archive(job):
             "backfill_left": out.get("backfill_left")}
 
 
+def run_queued_pos_onboard(job):
+    """job_queue's handler for `pos_onboard` (scale audit 10/19/26 ONB-6 /
+    ONB-4): a store just connected. Its history is archived first, newest
+    night first (pos_archive.onboard, bounded), then its first sync runs —
+    which then reads the archive, not 60 days live — so the owner sees data
+    within minutes of the connect, not at 3am, and no night is read twice.
+    A provider that asks us to wait reschedules the row."""
+    import pos
+    import pos_archive
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None or pos_archive.provider_for(rid)[1] is None:
+        return {"skipped": "no POS that can archive"}
+    arch = pos_archive.onboard(rid)
+    if arch.get("retry_after"):
+        err = RuntimeError(f"pos_onboard: the POS asked us to wait ({len(arch.get('archived') or [])} nights in)")
+        err.retry_after = float(arch["retry_after"])
+        raise err
+    sync = pos.sync_restaurant(rid, trigger="connect")
+    return {"archived": len(arch.get("archived") or []), "failed": len(arch.get("failed") or []),
+            "left": arch.get("left"), "sync_ok": bool(sync.get("ok")), "sync_error": sync.get("error")}
+
+
+def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
+    """Queue a just-connected store's onboarding (once a day per store
+    binding). Never raises: the nightly jobs onboard it anyway."""
+    try:
+        import job_queue
+        from datetime import date as _date
+        _qid, created = job_queue.enqueue(
+            "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
+            priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
+        return bool(created)
+    except Exception as e:
+        log.warning("pos_onboard not queued for %s: %s", restaurant_id, e)
+        return False
+
+
 # The DSR backfill's pass (bar audit 10/14/26 RPW-13 / R11): bounded and
 # resumable like every per-restaurant sweep.
 DSR_BACKFILL_MAX_SECONDS = 30 * 60

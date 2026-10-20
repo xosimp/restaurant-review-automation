@@ -27,8 +27,9 @@ from models import update_restaurant
 
 rpower_bp = Blueprint("rpower", __name__)
 # "Sync now" from the account card or the app, at most once in this many
-# minutes per restaurant (POS-21; do_sync).
-SYNC_NOW_COOLDOWN_MINUTES = 10
+# minutes per restaurant (POS-21; do_sync) — pos.SYNC_NOW_COOLDOWN_MINUTES,
+# the one cooldown every Sync now shares (scale audit 10/19/26 A3-09).
+from pos import SYNC_NOW_COOLDOWN_MINUTES
 # A JSON body must be an object: "x" or [1] used to 500 (SEC-32).
 from security import json_object_guard as _json_object_guard
 _json_object_guard(rpower_bp)
@@ -170,18 +171,16 @@ def do_sync(current_user):
     if not rpower.is_connected(rid):
         return {"ok": False, "error": "RPower isn't connected yet."}, 400
     # Once per SYNC_NOW_COOLDOWN_MINUTES per restaurant, whoever presses it
-    # (food & bar audit 10/16/26 POS-21): each press is a 60-day timeclock
-    # read — nine week-sized requests and the people lists, none of it from
-    # the archive — against a live store, the traffic RPOWER asked us not to
-    # send. The console's own button (admin) is not held to it.
-    import ops
-    if not ops.claim_cooldown(f"rpower_sync_now:{rid}", SYNC_NOW_COOLDOWN_MINUTES):
+    # and from wherever (food & bar audit 10/16/26 POS-21; scale audit
+    # 10/19/26 A3-09: the one cooldown pos.sync_now shares with Data
+    # Health's Sync now, so the two buttons cannot start two pulls). The
+    # console's own button (admin) is not held to it; it joins a running one.
+    import pos
+    started, _job = pos.sync_now(rid, current_user.get("username") or "owner")
+    if not started:
         return {"ok": False, "cooldown": True,
                 "error": f"RPower synced in the last {SYNC_NOW_COOLDOWN_MINUTES} minutes. "
                          f"Try again in a few minutes."}, 429
-    # The same path as the console's button and the nightly sync (#65).
-    import scheduler
-    scheduler.start_manual_pos_sync(rid, current_user.get("username") or "owner")
     return {"ok": True, "message": "RPower sync started."}, 200
 
 
