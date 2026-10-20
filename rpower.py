@@ -93,6 +93,19 @@ TIMEOUT_SECONDS = (3.05, 30)
 RETRY_AFTER_MAX_SECONDS = 10.0
 
 
+def _reader_only() -> bool:
+    """A page load, or a read made for an owner's question off the request
+    thread (pos.archive_only — scale audit 10/19/26 A3-20): the archive and
+    the kept lists only, never a live read of a day or a list."""
+    if on_request_thread():
+        return True
+    try:
+        import pos
+        return pos.archive_only_active()
+    except Exception:
+        return False
+
+
 def on_request_thread() -> bool:
     """True inside a Flask request: the code is running on one of the web
     process's four request threads, where nothing may wait on RPOWER."""
@@ -852,7 +865,7 @@ def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name
     scope = ("demo:" if str(token).startswith("demo-store:") else "") + str(base["cg"]) + (
         f":{base['storemid']}" if by_store else "")
     key = (scope, path)
-    page_load = on_request_thread() and not getattr(_io_ctx, "allow_live", False)
+    page_load = _reader_only() and not getattr(_io_ctx, "allow_live", False)
     if not _fresh():
         hit = _list_cache.get(key)
         if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
@@ -2987,6 +3000,9 @@ def fetch_menu_prices(restaurant_id: int) -> list:
     return out
 
 
+ORDERS_DUE_CACHE_SECONDS = 3600
+
+
 def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
     """Orders due at a later time — catering, scheduled pick-up — by the time
     they are needed: [{"due_at", "date", "guests", "net_sales", "ticket_no"}]
@@ -2994,9 +3010,20 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
     tickets with a real "needed by" time: RPOWER's 2000-01-01 means none
     (every ticket at Simple EJ's, 9/29/26)."""
     token, base = _ctx(restaurant_id)
-    rows = _paged(token, "ticket/getbyneeddatetime", {**base, "startdate": _d(start_date),
-                                                       "enddate": _d(end_date + timedelta(days=1)),
-                                                       "sortorder": "need_dttm"})
+    # Kept for ORDERS_DUE_CACHE_SECONDS (scale audit 10/19/26 A3-18): Ask's
+    # read_upcoming asked RPOWER on every question about the days ahead.
+    import pos_io
+    kind = f"orders_due:{_d(end_date)}"
+    kept = pos_io.snapshot_get(restaurant_id, kind, _d(start_date))
+    if kept is not None and kept["age"] < ORDERS_DUE_CACHE_SECONDS and isinstance(kept["value"], list):
+        rows = kept["value"]
+    else:
+        rows = _paged(token, "ticket/getbyneeddatetime", {**base, "startdate": _d(start_date),
+                                                           "enddate": _d(end_date + timedelta(days=1)),
+                                                           "sortorder": "need_dttm"})
+        pos_io.snapshot_put(restaurant_id, kind, _d(start_date),
+                            [{k: t.get(k) for k in ("need_dttm", "is_cancelled", "guest_count", "ticket", "items")}
+                             for t in rows])
     out = []
     for t in rows:
         due = _punch_dt(t.get("need_dttm"))
@@ -3099,7 +3126,7 @@ def _day_rows(restaurant_id: int, token: str, base: dict, path: str, start_date,
     while d <= end:
         days.append(d)
         d += timedelta(days=1)
-    page_load = on_request_thread()
+    page_load = _reader_only()
     try:
         import pos_archive
         ready = pos_archive.ready_dates(restaurant_id, "rpower", days, live=not page_load)

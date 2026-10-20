@@ -722,6 +722,33 @@ def fetch_loss_lines(restaurant_id, start_date, end_date):
 REQUEST_SNAPSHOT_MAX_SECONDS = 1800
 _live_ctx = threading.local()
 
+# Reads made for an owner's question rather than by a job — Ask, an AI
+# answer on the owner pool, a page's background refresh (scale audit
+# 10/19/26 A3-20) — read the archive and the kept lists only, as a page
+# load does: a thread with no request context used to get a job's
+# semantics (on-demand archiving, 60-second budget waits, three tries, live
+# multi-day reads). A ContextVar, so work copied to a pool keeps it.
+import contextvars as _cv
+_ARCHIVE_ONLY = _cv.ContextVar("pos_archive_only", default=False)
+
+
+class archive_only:
+    """`with pos.archive_only():` — POS reads inside are archive-and-kept-
+    lists only; a day the archive lacks is unknown (POSCapabilityError from
+    the pos.fetch_* front doors), never read live."""
+
+    def __enter__(self):
+        self.token = _ARCHIVE_ONLY.set(True)
+        return self
+
+    def __exit__(self, *exc):
+        _ARCHIVE_ONLY.reset(self.token)
+        return False
+
+
+def archive_only_active() -> bool:
+    return bool(_ARCHIVE_ONLY.get())
+
 
 class POSNoSalesYet(Exception):
     """The POS answered, with nothing posted yet for the day (a kept

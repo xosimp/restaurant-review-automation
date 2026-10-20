@@ -96,6 +96,43 @@ def test_a_snapshot_of_another_day_is_not_today(prov):
     assert prov.sales_reads == 2
 
 
+def _rpower_restaurant():
+    conn = models.get_conn()
+    conn.execute("INSERT INTO restaurants (id, name, owner_email, rpower_token, rpower_cg, rpower_store_mid, timezone) "
+                 "VALUES (1,'Ask Co','a@x.test','tok',1280,'1123','America/Chicago')")
+    conn.commit()
+    conn.close()
+    return 1
+
+
+def test_an_owners_question_off_the_request_thread_reads_the_archive_only(monkeypatch):
+    import rpower
+    import cogs
+    import ai_utils
+    _rpower_restaurant()
+    monkeypatch.setattr(pos, "PROVIDERS", None)
+    calls = []
+    monkeypatch.setattr(rpower, "_request", lambda t, p, params=None: calls.append(p) or [])
+    with pos.archive_only():
+        with pytest.raises(pos.POSCapabilityError):
+            pos.fetch_business_days(1, date(2026, 9, 1), date(2026, 9, 7))
+    assert [c for c in calls if c != "salestype/getbycg"] == [], "no live multi-day read"
+    assert not cogs._for_an_owner()
+    with ai_utils.ai_context(trigger="owner", actor_user_id=7):
+        assert cogs._for_an_owner()
+
+
+def test_asks_upcoming_orders_are_kept_for_an_hour(monkeypatch):
+    import rpower
+    _rpower_restaurant()
+    calls = []
+    monkeypatch.setattr(rpower, "_paged", lambda t, p, params, max_pages=200: calls.append(p) or [
+        {"need_dttm": "2026-10-21T12:00:00", "guest_count": 20, "ticket": 5, "items": 400.0, "is_cancelled": 0}])
+    a = rpower.fetch_orders_due(1, date(2026, 10, 20), date(2026, 10, 26))
+    b = rpower.fetch_orders_due(1, date(2026, 10, 20), date(2026, 10, 26))
+    assert a == b and a[0]["guests"] == 20 and calls == ["ticket/getbyneeddatetime"]
+
+
 def test_the_coverage_check_rereads_before_it_tells_anyone(monkeypatch, db_path):
     import intraday
     import issues
