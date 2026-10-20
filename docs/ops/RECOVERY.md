@@ -359,6 +359,25 @@ The restore is a boot step instead (`db_restore.py`):
 `init_db()` and `ensure_columns()` run right after the swap and additively
 migrate an older snapshot forward — that path is exercised on every deploy.
 
+**A large restore: prepare it out of band first** (scale audit 10/19/26
+OPS-3). The steps above run before gunicorn binds, inside the 120-second
+healthcheck; the monthly drill times them and says when they no longer fit.
+Then, while the old process still serves:
+
+```bash
+railway ssh -- python3 scripts/prepare_restore.py /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db.gz
+# an off-site copy, downloaded onto the volume (step 2 above):
+railway ssh -- python3 scripts/prepare_restore.py /app/data/restore.enc --encrypted
+```
+
+It decompresses or decrypts, integrity-checks and unseals into
+`/app/data/restore_prepared.db` (room for one more database is needed) and
+writes `restore_prepared.db.prepared.json`; it never touches the live
+database. Set `RESTORE_FROM=/app/data/restore_prepared.db`: the boot checks
+the file's size and mtime against the record and **renames** it into place —
+seconds, whatever the size. A file that changed since it was prepared is
+refused and nothing changes.
+
 Manual fallback, only with the service stopped (scale it to 0 in Railway
 first, so nothing can open the file):
 
