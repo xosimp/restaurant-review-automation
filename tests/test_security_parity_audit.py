@@ -248,27 +248,34 @@ def test_3_every_sign_in_path_passes_the_authenticating_login():
 
 # ── 4. Google Business and Instagram connections ───────────────────────────
 
-def test_4_mobile_google_and_instagram_connect_and_disconnect_are_owner_only(monkeypatch):
+def test_4_mobile_google_is_owner_only_and_instagram_is_the_marketing_logins(monkeypatch):
+    """Google Business stays the account holder's; Instagram & Facebook is
+    anyone's who may publish marketing (owner, 10/20/26: Danny runs Simple
+    EJ's pages from a manager login) - a legacy member still can't."""
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("META_APP_ID", "app")
     rid = _rid()
     models.update_restaurant(rid, {"gmb_location_id": "loc-1", "ig_user_id": "ig-1"})
     _uid, mgr = _login(rid, "mgr", "manager")
+    _uid, mem = _login(rid, "mem", "member")
     c = _app().test_client()
     for method, path in (("get", "/mobile/api/connections/google/authorize"),
-                         ("delete", "/mobile/api/connections/google"),
-                         ("get", "/mobile/api/connections/instagram/authorize"),
-                         ("delete", "/mobile/api/connections/instagram")):
+                         ("delete", "/mobile/api/connections/google")):
         r = getattr(c, method)(path, headers=mgr)
+        assert r.status_code == 403 and r.get_json()["owner_only"] is True, path
+    for method, path in (("get", "/mobile/api/connections/instagram/authorize"),
+                         ("delete", "/mobile/api/connections/instagram")):
+        r = getattr(c, method)(path, headers=mem)
         assert r.status_code == 403 and r.get_json()["owner_only"] is True, path
     after = models.get_restaurant(rid)
     assert after.gmb_location_id == "loc-1" and after.ig_user_id == "ig-1"
+    assert c.get("/mobile/api/connections/instagram/authorize", headers=mgr).status_code == 200
+    assert c.delete("/mobile/api/connections/instagram", headers=mgr).status_code == 200
     _uid, own = _login(rid, "boss", "client")
     assert c.get("/mobile/api/connections/google/authorize", headers=own).status_code == 200
-    assert c.delete("/mobile/api/connections/instagram", headers=own).status_code == 200
 
 
-def test_4_web_google_and_instagram_connect_and_disconnect_are_owner_only(monkeypatch):
+def test_4_web_google_is_owner_only_and_instagram_refuses_a_login_without_marketing(monkeypatch):
     import auth_routes
     import social_routes
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "cid")
@@ -276,10 +283,15 @@ def test_4_web_google_and_instagram_connect_and_disconnect_are_owner_only(monkey
     models.update_restaurant(rid, {"gmb_location_id": "loc-1", "ig_user_id": "ig-1"})
     mgr = _manager(rid)
     app = _app()
-    for fn in (auth_routes.gmb_connect, auth_routes.gmb_disconnect,
-               social_routes.instagram_connect, social_routes.instagram_disconnect):
+    for fn in (auth_routes.gmb_connect, auth_routes.gmb_disconnect):
         with app.test_request_context(method="POST", json={}):
             resp = inspect.unwrap(fn)(current_user=mgr)
+        assert resp[1] == 403, fn.__name__
+    # Instagram & Facebook: a manager may (marketing.approve); a legacy member may not.
+    member = dict(mgr, role="member")
+    for fn in (social_routes.instagram_connect, social_routes.instagram_disconnect):
+        with app.test_request_context(method="POST", json={}):
+            resp = inspect.unwrap(fn)(current_user=member)
         assert resp[1] == 403, fn.__name__
     with app.test_request_context("/auth/google/callback?code=c&state=n:1"):
         body, st = inspect.unwrap(auth_routes.gmb_callback)(current_user=mgr)

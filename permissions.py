@@ -437,6 +437,29 @@ def principal_only(user, what="this"):
                    error=f"Only the account owner can change {what}."), 403
 
 
+def may_connect_social(user) -> bool:
+    """Whether this login may connect, re-pick or disconnect the restaurant's
+    Instagram and Facebook: an account holder, or anyone who may publish its
+    marketing (MARKETING_APPROVE - owner, client, manager). Owner, 10/20/26:
+    "all marketing ppl should be able to connect" - Danny runs Simple EJ's
+    pages from a manager login. The connection is the restaurant's either
+    way; Google Business and the POS stay the account holder's."""
+    if not user:
+        return False
+    return is_principal(user) or has_permission(user, MARKETING_APPROVE)
+
+
+def social_connect_refusal(user):
+    """None when `user` may change the Instagram and Facebook connection
+    (may_connect_social), otherwise the 403 a route returns as-is."""
+    if may_connect_social(user):
+        return None
+    from flask import jsonify
+    return jsonify(ok=False, owner_only=True,
+                   error="Only the account owner or a teammate who can publish marketing can change the "
+                         "Instagram and Facebook connection."), 403
+
+
 def is_employee(user) -> bool:
     """True for a PIN identity. Used where the question really is "is this
     the staff tier" rather than a specific capability — notably the console

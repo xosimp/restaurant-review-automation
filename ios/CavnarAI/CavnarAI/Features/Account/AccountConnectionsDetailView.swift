@@ -19,6 +19,12 @@ struct AccountConnectionsDetailView: View {
     /// owner's (403 owner_only for a teammate): a teammate sees the status,
     /// not a button that is refused.
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
+    /// Instagram & Facebook: the owner or anyone who may publish marketing
+    /// (permissions.may_connect_social, owner 10/20/26 — Danny runs Simple
+    /// EJ's pages from a manager login).
+    private var mayConnectSocial: Bool {
+        isOwner || sessionStore.currentUser?.mayPublishMarketing == true
+    }
     /// A disconnect waiting on its confirm: what it disconnects and how.
     @State private var pendingDisconnect: (name: String, action: () async -> Bool)?
 
@@ -288,8 +294,10 @@ struct AccountConnectionsDetailView: View {
             if let error = viewModel.connectInstagramError {
                 Text(error).cavnarText(.secondary, color: .cavnarRedText)
             }
-            if !isOwner {
-                ownerOnlyNote
+            if !mayConnectSocial {
+                Text("Only the account owner or a teammate who can publish marketing can connect or disconnect this.")
+                    .cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if ig.connected {
                 disconnectButton("Instagram & Facebook") { await viewModel.disconnectInstagram() }
             } else {

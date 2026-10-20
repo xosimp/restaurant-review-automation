@@ -340,7 +340,8 @@ def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     app = inspect.getsource(mobile_api.mobile_instagram_authorize)
     assert "sign_bound_state(" in app and "f\"u{int(current_user['id'])}\"" in app
     confirm = inspect.getsource(mobile_api.mobile_instagram_confirm)
-    assert "principal_only" in confirm and "confirm_mobile_connection" in confirm
+    # The marketing logins, since 10/20/26 (permissions.social_connect_refusal).
+    assert "social_connect_refusal" in confirm and "confirm_mobile_connection" in confirm
     swift = open(inspect.getfile(mobile_api).rsplit("/", 1)[0]
                  + "/ios/CavnarAI/CavnarAI/Features/Account/AccountViewModel.swift").read()
     assert "/mobile/api/connections/instagram/confirm" in swift

@@ -34,8 +34,8 @@ def instagram_connect(current_user):
     """Open Meta OAuth in a popup — state carries restaurant_id. Owner-only,
     like every other connection: the callback (no session) trusts the signed
     state this mints, so this is where the owner check has to be."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    from permissions import social_connect_refusal
+    denied = social_connect_refusal(current_user)
     if denied:
         return denied
     import urllib.parse
@@ -725,9 +725,10 @@ def instagram_status(current_user):
 @social_bp.route("/api/instagram-disconnect", methods=["POST"])
 @login_required
 def instagram_disconnect(current_user):
-    """Disconnect Instagram from this restaurant. Owner-only."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    """Disconnect Instagram from this restaurant: the account holder or a
+    marketing login (permissions.social_connect_refusal)."""
+    from permissions import social_connect_refusal
+    denied = social_connect_refusal(current_user)
     if denied:
         return denied
     from models import update_restaurant

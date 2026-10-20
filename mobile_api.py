@@ -9495,10 +9495,11 @@ def mobile_dismiss_onboarding(current_user):
 def mobile_instagram_authorize(current_user):
     """Same Meta OAuth dialog the web's popup opens, with a signed mobile
     state (see gmb.sign_mobile_state) so the callback can finish via the
-    cavnarai://ig-callback deep link instead of window.opener. Owner-only
-    (the callback trusts the signed state minted here)."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    cavnarai://ig-callback deep link instead of window.opener. The account
+    holder or a marketing login (permissions.social_connect_refusal; the
+    callback trusts the signed state minted here)."""
+    from permissions import social_connect_refusal
+    denied = social_connect_refusal(current_user)
     if denied:
         return denied
     import urllib.parse
@@ -9525,8 +9526,8 @@ def mobile_instagram_authorize(current_user):
 def mobile_instagram_confirm(current_user):
     """The second half of the app's Meta connect (SEC-09): the sealed ticket
     the callback handed back, confirmed by the login that started it."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    from permissions import social_connect_refusal
+    denied = social_connect_refusal(current_user)
     if denied:
         return denied
     import social_routes
@@ -9541,8 +9542,8 @@ def mobile_instagram_confirm(current_user):
 @mobile_bp.route("/connections/instagram", methods=["DELETE"])
 @mobile_login_required
 def mobile_instagram_disconnect(current_user):
-    from permissions import principal_only
-    denied = principal_only(current_user, "the Instagram and Facebook connection")
+    from permissions import social_connect_refusal
+    denied = social_connect_refusal(current_user)
     if denied:
         return denied
     update_restaurant(current_user["restaurant_id"], {

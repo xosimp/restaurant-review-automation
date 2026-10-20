@@ -871,6 +871,13 @@ def index(current_user):
         _principal = bool(_is_principal(current_user))
     except Exception:
         _principal = current_user.get("role") in ("owner", "client")
+    # Instagram & Facebook: anyone who may publish the restaurant's marketing
+    # (permissions.may_connect_social, owner 10/20/26).
+    try:
+        from permissions import may_connect_social as _may_social_fn
+        _may_social = bool(_may_social_fn(current_user))
+    except Exception:
+        _may_social = _principal
     # Account → Delete my login: a teammate, or a co-owner while another
     # owner remains — the delete route's own rule (re-audit 10/8/26, #7).
     try:
@@ -945,7 +952,8 @@ def index(current_user):
         viewer_name=_viewer,
         social_channels=_social_channels,
         show_welcome=show_welcome,
-        is_principal=_principal, export_scopes=_export_scopes, can_delete_login=_can_delete_login,
+        is_principal=_principal, may_connect_social=_may_social, export_scopes=_export_scopes,
+        can_delete_login=_can_delete_login,
         onboarding_steps=onboarding_steps,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
