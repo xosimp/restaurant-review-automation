@@ -359,7 +359,52 @@ def test_an_old_connection_is_retired_not_reused(fake_pool, monkeypatch):
     c2.close()
 
 
-# ── per-resource locks (SCALE-12) ───────────────────────────────────────────
+def test_a_failed_connect_fails_the_next_checkouts_fast_then_retries(fake_pool, monkeypatch):
+    # 10/19/26 (DB-22): the database restarting made every checkout wait the whole connect timeout.
+    url = fake_pool
+    calls = []
+
+    def down(u):
+        calls.append(u)
+        raise RuntimeError("connection timeout expired")
+    monkeypatch.setattr(db_dialect, "_driver_connect", down)
+    monkeypatch.setenv("PG_CONNECT_BACKOFF_S", "30")
+    with pytest.raises(sqlite3.OperationalError, match="unreachable"):
+        db_dialect.connect(url)
+    t0 = time.monotonic()
+    for _ in range(3):
+        with pytest.raises(sqlite3.OperationalError, match="retrying within"):
+            db_dialect.connect(url)
+    assert len(calls) == 1 and time.monotonic() - t0 < 0.5          # no connect tried inside the backoff
+    assert db_dialect.pool_stats(url)["in_use"] == 0                   # every slot given back
+    db_dialect.pool(url).down_until = 0.0                              # the backoff over
+    monkeypatch.setattr(db_dialect, "_driver_connect", lambda u: _FakeRaw())
+    db_dialect.connect(url).close()
+
+
+def test_a_dead_idle_connection_is_dropped_not_handed_out(fake_pool, monkeypatch):
+    url = fake_pool
+    c = db_dialect.connect(url)
+    raw = c._raw
+    c.close()
+    raw.broken = True                                                 # the server restarted under it
+    c2 = db_dialect.connect(url)
+    assert c2._raw is not raw and raw.closed
+    c2.close()
+    # One idle past PG_POOL_PING_AFTER_S is asked a round trip first.
+    raw2 = c2._raw
+    monkeypatch.setenv("PG_POOL_PING_AFTER_S", "0")
+
+    def gone(*a, **k):
+        raise OSError("server closed the connection unexpectedly")
+    raw2.execute = gone
+    time.sleep(0.01)
+    c3 = db_dialect.connect(url)
+    assert c3._raw is not raw2 and raw2.closed
+    c3.close()
+
+
+# ── per-resource locks (SCALE-12)───────────────────────────────────────────
 
 def test_hot_paths_lock_what_they_serialise_not_the_platform(tmp_path):
     assert db_dialect.resource_key("jobs", "claim", "generation") == db_dialect.resource_key("jobs", "claim",
@@ -811,6 +856,98 @@ def test_the_partition_job_keeps_months_ahead_and_reports_rows_in_default(scratc
         lt = c.execute_native("SHOW lock_timeout").fetchone()[0]
         st = c.execute_native("SHOW statement_timeout").fetchone()[0]
         assert lt == "30s" and st == "5min"
+    finally:
+        c.close()
+
+
+@live
+def test_retention_drops_whole_months_past_the_window(scratch_db, tmp_path, monkeypatch):
+    # Scale audit 10/19/26 DB-03: a month wholly past the window is one DROP, not a month of deletes.
+    import contextlib
+    import io
+    import ops
+    import pg_copy
+    import pg_partitions
+    import psycopg
+    db_path = str(tmp_path / "source.db")
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+        models.ensure_columns(db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Drops", owner_email="dd@x.com"), db_path=db_path)
+    models.checkpoint(db_path)
+    dst = psycopg.connect(scratch_db, autocommit=False)
+    try:
+        assert pg_copy.copy_database(db_path, dst, today=date(2026, 10, 14))["verify"]["ok"]
+    finally:
+        dst.close()
+    c = db_dialect.connect(scratch_db)
+    try:
+        for day in ("2026-10-05", "2026-11-20", "2026-12-03"):
+            c.execute("INSERT INTO shift_facts (restaurant_id, business_date, employee_name, employee_key, source) "
+                      "VALUES (?, ?, 'Ana', 'ana', 'pos')", (rid, day))
+        c.commit()
+        parts = [n for n, _u in pg_partitions.month_partitions(c, "shift_facts")]
+        assert parts[:3] == ["shift_facts_p202610", "shift_facts_p202611", "shift_facts_p202612"]
+        # One month a pass by default, however far the cutoff reaches.
+        assert pg_partitions.drop_expired(c, "shift_facts", "2026-12-15 00:00:00") == ["shift_facts_p202610"]
+        assert pg_partitions.drop_expired(c, "shift_facts", "2026-12-15 00:00:00", max_drops=5) == \
+            ["shift_facts_p202611"]                                    # December is not wholly past
+        days = [r[0] for r in c.execute("SELECT business_date FROM shift_facts ORDER BY business_date").fetchall()]
+        assert days == ["2026-12-03"]
+        # The prune's own call: on Postgres it drops; a table that keeps some rows forever never does.
+        monkeypatch.setattr(pg_partitions, "PARTITION_DROPS_PER_PASS", 1)
+        assert ops._drop_expired_months(c, "shift_facts", 100000) == []          # nothing that old
+        assert ops._drop_expired_months(c, "rec_events", 1) == []                # not partitioned
+    finally:
+        c.close()
+
+
+@live
+def test_tenant_writes_run_side_by_side_and_still_exclude_the_one_writer(scratch_db):
+    # Scale audit 10/19/26 DB-08: two restaurants' sync transactions no longer queue on one key; a
+    # BEGIN IMMEDIATE site still waits for them, and one restaurant's resource for itself.
+    a, b, g = (db_dialect.connect(scratch_db) for _ in range(3))
+    try:
+        for c in (b, g):
+            c.execute_native("SET lock_timeout = '300ms'")
+            c.commit()
+        db_dialect.begin_tenant_write(a, "shift_facts", 1)
+        db_dialect.begin_tenant_write(b, "shift_facts", 2)            # another restaurant: at once
+        b.rollback()
+        with pytest.raises(sqlite3.OperationalError):
+            db_dialect.begin_tenant_write(b, "shift_facts", 1)        # the same restaurant: waits
+        b.rollback()
+        with pytest.raises(sqlite3.OperationalError):
+            g.execute("BEGIN IMMEDIATE")                              # the one writer: waits for the tenant
+        g.rollback()
+        a.rollback()
+        g.execute("BEGIN IMMEDIATE")
+        g.execute("SELECT 1").fetchone()
+        g.rollback()
+    finally:
+        for c in (a, b, g):
+            c.close()
+
+
+@live
+def test_a_write_loop_past_the_subtransaction_cache_is_named_once(scratch_db, caplog):
+    # DB-05: a loop of single-row writes in one transaction is a savepoint each; past 64 the log names it.
+    import logging
+    c = db_dialect.connect(scratch_db)
+    try:
+        c.execute_native("CREATE TABLE loop_t (k INTEGER PRIMARY KEY)")
+        c.commit()
+        db_dialect._subxact_sites.clear()
+        with caplog.at_level(logging.WARNING, logger="db_dialect"):
+            for _ in range(2):
+                c.execute("DELETE FROM loop_t")
+                for k in range(70):
+                    c.execute("INSERT INTO loop_t (k) VALUES (?)", (k,))
+                c.commit()
+                c.executemany("INSERT INTO loop_t (k) VALUES (?)", [(k,) for k in range(100, 200)])
+                c.commit()
+        said = [r.getMessage() for r in caplog.records if "subtransactions" in r.getMessage()]
+        assert len(said) == 1 and "test_q2_postgres.py" in said[0]
     finally:
         c.close()
 

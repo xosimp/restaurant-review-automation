@@ -1536,7 +1536,12 @@ def resolve_rows(restaurant_id, rows, source, db_path=None, seen_on=None) -> dic
     conn = _conn(db_path)
     out = {"people": 0, "created": 0, "renamed": 0, "questions": 0}
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        # One restaurant's people (scale audit 10/19/26 DB-08): on Postgres
+        # its own lock under the platform's shared one — the nightly sweep's
+        # restaurants resolve side by side; every BEGIN IMMEDIATE site
+        # (merges, renames from the console) still excludes it.
+        import db_dialect
+        db_dialect.begin_tenant_write(conn, "people", int(restaurant_id))
         idx = _Index(conn, restaurant_id)
         groups = {}
         for r in rows:

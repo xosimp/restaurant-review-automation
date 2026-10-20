@@ -15,12 +15,22 @@ dated rows sitting in each DEFAULT partition — a row the copy's NULL sentinel
 did not put there means a month was missed, and the job reports it failed.
 Daily from the scheduler (jobs_registry "pg_partitions"); a no-op on SQLite.
 
-Retention still deletes in chunks (ops); dropping whole month partitions is
-not built yet.
+Retention (scale audit 10/19/26, DB-03): ops.prune_ledgers drops each month
+wholly past a partitioned table's window (drop_expired — DETACH then DROP:
+one catalog change instead of a month of row deletes under the write lock),
+then deletes in chunks what is left past the window (the partial month, the
+DEFAULT partition). At most PARTITION_DROPS_PER_PASS months a table a night,
+so a wrong clock or a shortened window cannot take a year in one pass — the
+same guard the chunked delete's per-pass cap is.
 """
+import os
+import re
 from datetime import date
 
 import pg_copy
+
+PARTITION_DROPS_PER_PASS = int(os.getenv("PARTITION_DROPS_PER_PASS", "1"))
+_MONTH_PART = re.compile(r"^(?P<table>.+)_p(?P<y>\d{4})(?P<m>\d{2})$")
 
 
 def _partitioned_tables(conn) -> list:
@@ -63,6 +73,55 @@ def _partition_count(conn, table) -> int:
         # `table` is one of db_dialect.PARTITIONED's own names, never input.
         f"SELECT COUNT(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhparent WHERE c.relname = '{table}'"
     ).fetchone()[0])
+
+
+def month_partitions(conn, table) -> list:
+    """[(name, 'YYYY-MM-01' upper bound, exclusive)] of `table`'s month
+    partitions (pg_copy's `<table>_pYYYYMM`), oldest first. DEFAULT and any
+    partition not named that way are not listed."""
+    rows = conn.execute_native(
+        # `table` is one of db_dialect.PARTITIONED's own names, never input.
+        "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+        f"JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = '{table}'").fetchall()
+    out = []
+    for r in rows:
+        name = r[0] if not hasattr(r, "keys") else r["relname"]
+        m = _MONTH_PART.match(name or "")
+        if not m or m.group("table") != table:
+            continue
+        y, mo = int(m.group("y")), int(m.group("m"))
+        upper = pg_copy._add_months(date(y, mo, 1), 1)
+        out.append((name, upper.isoformat()))
+    return sorted(out, key=lambda x: x[1])
+
+
+def drop_expired(conn, table, cutoff, max_drops=None) -> list:
+    """Detach and drop `table`'s month partitions whose every row is older
+    than `cutoff` (a 'YYYY-MM-DD[ HH:MM:SS]' stamp: a month goes when its
+    upper bound is at or before it), oldest first, at most `max_drops`
+    (PARTITION_DROPS_PER_PASS). Each in its own transaction, committed.
+    Returns the names dropped. Postgres only — the caller checks."""
+    import db_dialect
+    if table not in db_dialect.PARTITIONED:
+        return []
+    limit = PARTITION_DROPS_PER_PASS if max_drops is None else int(max_drops)
+    cutoff = str(cutoff)
+    dropped = []
+    for name, upper in month_partitions(conn, table):
+        if len(dropped) >= limit or upper > cutoff:
+            break
+        try:
+            conn.execute_native(f"ALTER TABLE {table} DETACH PARTITION {name}")
+            conn.execute_native(f"DROP TABLE IF EXISTS {name}")
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        dropped.append(name)
+    return dropped
 
 
 def run() -> dict:

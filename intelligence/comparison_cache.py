@@ -52,15 +52,16 @@ def _cursor(conn, value=None):
 def store(restaurant_id, comparisons, week, db_path=DB_PATH):
     conn = get_conn(db_path)
     try:
-        for c in comparisons:
-            if not c.get("metric"):
-                continue
-            avail = any(k.get("available") for k in c.get("comparisons") or [])
-            conn.execute("INSERT INTO intel_benchmark_facts (restaurant_id, metric, week, payload_json, available) "
-                         "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, metric, week) DO UPDATE SET "
-                         "payload_json=excluded.payload_json, available=excluded.available, "
-                         "computed_at=datetime('now')",
-                         (restaurant_id, c["metric"], week, json.dumps(c, default=str), 1 if avail else 0))
+        # One executemany (scale audit 10/19/26 DB-05): a savepoint a metric
+        # on Postgres otherwise.
+        want = [(restaurant_id, c["metric"], week, json.dumps(c, default=str),
+                 1 if any(k.get("available") for k in c.get("comparisons") or []) else 0)
+                for c in comparisons if c.get("metric")]
+        if want:
+            conn.executemany("INSERT INTO intel_benchmark_facts (restaurant_id, metric, week, payload_json, available) "
+                             "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, metric, week) DO UPDATE SET "
+                             "payload_json=excluded.payload_json, available=excluded.available, "
+                             "computed_at=datetime('now')", want)
         conn.commit()
     finally:
         conn.close()

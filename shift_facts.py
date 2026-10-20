@@ -127,6 +127,16 @@ def _fact(row, source):
             "row_json": _row_json(row)}
 
 
+def _tenant_write(conn, restaurant_id):
+    """The write transaction for one restaurant's shift record (scale audit
+    10/19/26 DB-08): SQLite BEGIN IMMEDIATE as ever; on Postgres this
+    restaurant's own lock under the platform's shared one, so the nightly
+    sweep's syncs of different restaurants no longer queue behind one
+    writer (db_dialect.begin_tenant_write)."""
+    import db_dialect
+    db_dialect.begin_tenant_write(conn, "shift_facts", int(restaurant_id))
+
+
 def _write_facts(conn, restaurant_id, facts, lo, hi):
     """Replace this restaurant's facts inside [lo, hi] with `facts`."""
     conn.execute("DELETE FROM shift_facts WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
@@ -218,7 +228,7 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         facts = [f for f in (_fact(r, src) for r in new_rows) if f]
         conn = get_conn(db_path)
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            _tenant_write(conn, restaurant_id)
             _write_facts(conn, restaurant_id, facts, dates[0], dates[-1])
             conn.commit()
         except Exception:
@@ -302,7 +312,7 @@ def _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path):
         facts = [f for f in (_fact(r, src) for r in new_rows) if f]
         conn = get_conn(db_path)
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            _tenant_write(conn, restaurant_id)
             _write_facts(conn, restaurant_id, facts, dates[0], dates[-1])
             _respell_facts(conn, restaurant_id, new_rows, dates[0], dates[-1])
             cur = conn.execute("UPDATE client_data SET shifts_stale=1, shifts_source=?, updated_at=datetime('now') "
@@ -394,7 +404,7 @@ def adopt(restaurant_id, rows_=None, source="upload", db_path=None) -> dict:
             if f:
                 f["person_id"] = f["person_id"] or pid_of.get(f["employee_key"])
                 facts.append(f)
-        conn.execute("BEGIN IMMEDIATE")
+        _tenant_write(conn, restaurant_id)
         conn.executemany(
             "INSERT INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
             "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
@@ -553,7 +563,7 @@ def rewrite_window_from_csv(restaurant_id, csv_text, lo, hi, source="upload", db
             f["person_id"] = pid_of.get(staff_settings.name_key(f["employee_name"]))
             facts.append(f)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        _tenant_write(conn, restaurant_id)
         _write_facts(conn, restaurant_id, facts, lo, hi)
         conn.commit()
     except Exception:
@@ -644,7 +654,7 @@ def backfill_from_csv(db_path=None, max_seconds=15.0) -> int:
                     f["person_id"] = pid_of.get(staff_settings.name_key(f["employee_name"]))
                     facts.append(f)
             if facts:
-                conn.execute("BEGIN IMMEDIATE")
+                _tenant_write(conn, rid)
                 lo = min(f["business_date"] for f in facts)
                 hi = max(f["business_date"] for f in facts)
                 _write_facts(conn, rid, facts, lo, hi)

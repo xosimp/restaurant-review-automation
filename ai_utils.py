@@ -4334,6 +4334,13 @@ def init_ai_ops(db_path=None):
                 if "duplicate column" not in str(e).lower():    # another process added it first
                     raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)")
+        # The boot's backfills below find their rows through these (scale
+        # audit 10/19/26 DB-16): each was a scan of the whole ledger on every
+        # boot, for rows that are almost always none. A partial index holds
+        # only the rows still to do, so it stays empty.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_vendor ON ai_usage(id) WHERE vendor IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_outcome ON ai_usage(id) WHERE outcome IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_price ON ai_usage(id) WHERE price_version IS NULL")
         # The re-check dedupe's probe (W4): one text's checks on a surface.
         if cols:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_validation_log_hash ON ai_validation_log(text_hash, surface)")

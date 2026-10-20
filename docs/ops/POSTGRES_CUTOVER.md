@@ -27,7 +27,7 @@ What exists:
 | The boot on Postgres | `models.boot_conn`, `db_dialect.install_compat` / `install_triggers` | automatic: the boot builds or upgrades the Postgres schema itself |
 | A bounded connection pool | `db_dialect._Pool` (`PG_POOL_*`, ENVIRONMENT.md) | automatic |
 | CI against a real Postgres | `.github/workflows/ci.yml`, job `postgres` | every push |
-| The normalized schedule model, shadow-written | `pg_shadow.py`, `migrations/postgres/0001_schedule_model.sql` | `PG_SHADOW_WRITE=1` + `SHADOW_DATABASE_URL` |
+| The normalized schedule model, shadow-written (a shadow only: nothing reads `sched.*`, and after the switch nothing writes it — DB-19) | `pg_shadow.py`, `migrations/postgres/0001_schedule_model.sql` | `PG_SHADOW_WRITE=1` + `SHADOW_DATABASE_URL` |
 | Blobs in object storage | `blob_store.py` | `BLOB_STORE=s3` + `BLOB_S3_*` |
 | The write freeze | `http_layer.maintenance_gate`, `scheduler.scheduling_allowed`, `job_queue.claim` | `MAINTENANCE_READ_ONLY=1` |
 | The nightly backup on Postgres (an export to SQLite, then the usual scrub, encryption, off-site copy) | `scheduler._write_consistent_snapshot` → `pg_copy.export_to_sqlite` | automatic once `DATABASE_URL` is set |
@@ -76,6 +76,14 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   scoped) once statements are not prepared server-side: PgBouncer 1.21+
   with `max_prepared_statements`, or `PG_PREPARE_THRESHOLD=off` (scale audit
   10/19/26 DB-07) — not needed at these numbers.
+  A database that restarts (10/19/26: enabling PITR redeployed it; every
+  checkout waited the 10 s connect timeout for ~3 minutes and the four
+  request threads queued) no longer stalls the app (DB-22): a connect gives
+  up after `PG_CONNECT_TIMEOUT_S` (5 s); after a failed one, checkouts that
+  need a new connection fail at once for `PG_CONNECT_BACKOFF_S` (3 s) with
+  the `sqlite3.OperationalError` callers already handle; an idle connection
+  is checked before reuse (and asked `SELECT 1` past `PG_POOL_PING_AFTER_S`,
+  30 s), so a restart's dead connections are dropped, not handed out.
 - **Timeouts:** every connection sets `lock_timeout` 30 s (SQLite's
   busy_timeout), `statement_timeout` 5 min and
   `idle_in_transaction_session_timeout` 5 min (`PG_*_MS`, ENVIRONMENT.md;
@@ -83,15 +91,27 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   stopped every process.
 - **Partitions:** the copy makes them to 3 months ahead; the daily
   `pg_partitions` job keeps them 3 months ahead and fails when a dated row
-  sits in a DEFAULT partition (DB-04).
+  sits in a DEFAULT partition (DB-04); the nightly prune drops a month wholly
+  past its table's window (DB-03).
 - **Savepoints:** every statement inside a transaction is its own savepoint;
   a write loop of more than 64 `execute()` calls in one transaction
   overflows Postgres's subtransaction cache — write loops use `executemany`
-  (one savepoint) instead (DB-05; `save_labor_daily_history` since 10/19/26).
+  (one savepoint) instead (DB-05; `save_labor_daily_history` since 10/19/26,
+  and the DSR metrics, loss days, Bar nights, cohort benchmarks and the
+  other loops the 10/19/26 sweep found). A loop still left is named once per
+  call site in the log ("subtransactions: more than 64 write statements in
+  one transaction at <file:line>", `db_dialect.SUBXACT_WARN`) — search the
+  Railway logs for it after a night on Postgres.
 - **Locks:** `BEGIN IMMEDIATE` is one advisory lock (SQLite's one writer)
   except on the hot paths, which lock only what they serialise
   (`db_dialect.begin_write`): a job group's claim, one kind's enqueues, one
-  gateway minute, one rate key.
+  gateway minute, one rate key. The nightly sync's writes are tenant
+  transactions (`db_dialect.begin_tenant_write`, scale audit 10/19/26
+  DB-08): the one-writer lock taken SHARED plus that restaurant's own —
+  `shift_facts` ingests and `people.resolve_rows` — so
+  restaurants sync side by side while every `BEGIN IMMEDIATE` site still
+  excludes them; `pos.save_synced_shifts` holds a per-restaurant lock on
+  Postgres (the process-wide one on SQLite).
 
 ## 0. Before anything
 
@@ -192,7 +212,14 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    unset `MAINTENANCE_READ_ONLY`, nothing has changed.
 4. **Switch.** Set `DATABASE_URL=<private URL>` and remove
    `MAINTENANCE_READ_ONLY` in one change (Railway redeploys once). Remove
-   `PG_SHADOW_WRITE` / `SHADOW_DATABASE_URL` (the primary is the model now).
+   `PG_SHADOW_WRITE` / `SHADOW_DATABASE_URL`. (Not because the primary "is
+   the model": the app's tables on Postgres are SQLite's schema translated
+   (`schedule_history`, `schedule_versions`, `schedule_shifts`). The copy
+   creates the normalized `sched.*` tables (`0001_schedule_model.sql`) in
+   the primary too, and after the switch nothing reads or writes them —
+   they stay empty, or hold the shadow's rows as of the switch. Scale
+   audit 10/19/26 DB-19: moving readers onto `sched.*`, or dropping it, is
+   an open decision, not something the switch did.)
    The boot runs `init_db` against Postgres (every `CREATE … IF NOT EXISTS`
    a no-op, every already-applied ALTER refused under its own savepoint and
    tolerated — the transaction goes on; proven in CI by the copy-then-boot
@@ -223,6 +250,9 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
 - The scheduler and the queue workers can become their own Railway services
   (POSTGRES_AND_WORKERS_PLAN.md step 4) — the lease, the queue and the
   heartbeats live in the networked database now. Not before.
-- Retention on the partitioned fact tables can drop whole month partitions
-  instead of chunked deletes (`DROP TABLE <table>_p<YYYYMM>`), once a month,
-  for months wholly past the table's window.
+- Retention on the partitioned fact tables drops whole month partitions
+  (built 10/19/26, DB-03): the nightly `prune_ledgers` detaches and drops a
+  month once it is wholly past the table's window (`pg_partitions.drop_expired`,
+  at most `PARTITION_DROPS_PER_PASS` = 1 a table a night, after the table's
+  rollup and with a records hold respected), then deletes in chunks what is
+  left (the partial month, the DEFAULT partition). Nothing to do here.

@@ -53,6 +53,7 @@ def save(restaurant_id, rows, source="manual", created_by=None, db_path=DB_PATH)
     """rows: [{date, kind, label?, covers?, lift_pct?}]. Returns {written, skipped, errors}."""
     written = skipped = 0
     errors = []
+    want = []
     conn = get_conn(db_path)
     try:
         for r in list(rows or [])[:MAX_ROWS]:
@@ -97,12 +98,17 @@ def save(restaurant_id, rows, source="manual", created_by=None, db_path=DB_PATH)
             # like a figure the owner had given. It is stored with no lift
             # now; by_date marks it `assumed` (ASSUMED_EVENT_LIFT_PCT, said as
             # an assumption) and it never moves a demand level (CA1 L29).
-            conn.execute(
+            want.append((restaurant_id, day, kind, label, covers, lift, source,
+                         (created_by or "").strip()[:120] or None))
+            written += 1
+        # One executemany (scale audit 10/19/26 DB-05): a savepoint a row on
+        # Postgres, MAX_ROWS of them in one transaction.
+        if want:
+            conn.executemany(
                 "INSERT INTO demand_signals (restaurant_id, date, kind, label, covers, lift_pct, source, created_by) "
                 "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date, kind, label) DO UPDATE SET "
                 "covers=excluded.covers, lift_pct=excluded.lift_pct, source=excluded.source, created_at=datetime('now')",
-                (restaurant_id, day, kind, label, covers, lift, source, (created_by or "").strip()[:120] or None))
-            written += 1
+                want)
         conn.commit()
     finally:
         conn.close()

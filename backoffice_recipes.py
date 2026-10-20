@@ -561,11 +561,17 @@ def _pos_sales(restaurant_id, names, start, end, db_path=None, by_day=False) -> 
         return {}
     conn = get_conn(db_path)
     try:
-        q = ("SELECT %s LOWER(TRIM(REPLACE(item_name, '  ', ' '))) AS k, SUM(COALESCE(qty, 1)) AS units, "
-             "SUM(sales) AS sales FROM pos_ticket_lines WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
+        # The lines by item and day when the window is wholly rolled (scale
+        # audit 10/19/26 DB-11): the same sums from ~a tenth of the rows.
+        import pos_archive
+        rolled = pos_archive.rolled_window(conn, restaurant_id, start, end)
+        src, units = ("pos_item_daily", "units") if rolled else ("pos_ticket_lines", "COALESCE(qty, 1)")
+        q = ("SELECT %s LOWER(TRIM(REPLACE(item_name, '  ', ' '))) AS k, SUM(%s) AS units, "
+             "SUM(sales) AS sales FROM %s WHERE restaurant_id=? AND business_date BETWEEN ? AND ? "
              "AND kind='sale' AND LOWER(TRIM(REPLACE(item_name, '  ', ' '))) IN (%s) GROUP BY %s"
              "LOWER(TRIM(REPLACE(item_name, '  ', ' ')))"
-             % ("business_date," if by_day else "", ",".join("?" * len(keys)), "business_date, " if by_day else ""))
+             % ("business_date," if by_day else "", units, src, ",".join("?" * len(keys)),
+                "business_date, " if by_day else ""))
         rows = conn.execute(q, [int(restaurant_id), str(start), str(end), *keys]).fetchall()
     except Exception as e:
         # Degrade to "no sales" as before, but never silently (SCALE-11).

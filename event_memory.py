@@ -1749,12 +1749,20 @@ def record_weather(restaurant, days, db_path=None) -> dict:
             return out
         conn = get_conn(db_path)
         try:
+            want = []
             for d in todo:
                 s = weather.summarise_day(obs, tz, d, service=service_window(restaurant, d))
                 if s is None:
                     out["skipped"] += 1
                     continue
-                conn.execute(
+                want.append((rid, d.isoformat(), s["high_f"], s["low_f"], s["precip_in"], s["rain"], s["wet_hours"],
+                             s["conditions"], station, s["n_obs"], s.get("lunch_wet"), s.get("dinner_wet"),
+                             s.get("lunch_temp_f"), s.get("dinner_temp_f"), s.get("snow")))
+                out["recorded"] += 1
+            # One executemany (scale audit 10/19/26 DB-05): a backfill's
+            # days were a savepoint each on Postgres.
+            if want:
+                conn.executemany(
                     "INSERT INTO weather_daily (restaurant_id, date, high_f, low_f, precip_in, rain, wet_hours, "
                     "conditions, station, n_obs, lunch_wet, dinner_wet, lunch_temp_f, dinner_temp_f, snow) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date) "
@@ -1762,11 +1770,7 @@ def record_weather(restaurant, days, db_path=None) -> dict:
                     "rain=excluded.rain, wet_hours=excluded.wet_hours, conditions=excluded.conditions, "
                     "station=excluded.station, n_obs=excluded.n_obs, lunch_wet=excluded.lunch_wet, "
                     "dinner_wet=excluded.dinner_wet, lunch_temp_f=excluded.lunch_temp_f, "
-                    "dinner_temp_f=excluded.dinner_temp_f, snow=excluded.snow, fetched_at=datetime('now')",
-                    (rid, d.isoformat(), s["high_f"], s["low_f"], s["precip_in"], s["rain"], s["wet_hours"],
-                     s["conditions"], station, s["n_obs"], s.get("lunch_wet"), s.get("dinner_wet"),
-                     s.get("lunch_temp_f"), s.get("dinner_temp_f"), s.get("snow")))
-                out["recorded"] += 1
+                    "dinner_temp_f=excluded.dinner_temp_f, snow=excluded.snow, fetched_at=datetime('now')", want)
             conn.commit()
         finally:
             conn.close()

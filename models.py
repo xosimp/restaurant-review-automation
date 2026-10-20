@@ -1869,6 +1869,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_archive_days", "links_ok", "INTEGER"),
         ("pos_archive_days", "recon_gap", "REAL"),
         ("pos_archive_days", "unknown_sales", "REAL"),
+        # The rollup version the day's pos_item_daily rows were written at
+        # (scale audit 10/19/26 DB-11 / DB-02): NULL = not rolled; a reader
+        # takes the rollup only for a window whose every day is at
+        # pos_archive.ITEM_ROLLUP_VERSION.
+        ("pos_archive_days", "item_rollup", "INTEGER"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -3308,6 +3313,22 @@ def init_db(db_path: str = DB_PATH):
             summary_json    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_history_restaurant ON schedule_history(restaurant_id, id)",
+        # A restaurant's week and its newest draft (scale audit 10/19/26
+        # DB-17): activity.build, Ask, DNA and the morning brief read by
+        # week_start / generated_at and scanned the restaurant's whole
+        # history. The fleet's recent drafts (DB-16, A5-F11: the experiment
+        # power check runs on every generation; the admin sweeps) read by
+        # generated_at across tenants.
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_week ON schedule_history(restaurant_id, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_generated ON schedule_history(restaurant_id, generated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_fleet_gen ON schedule_history(generated_at, restaurant_id)",
+        # A chain's locations (models.get_location_group, DB-13): by
+        # organization, or by the admin's group name and owner.
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_org ON restaurants(organization_id)",
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_group ON restaurants(location_group, owner_email)",
+        # The activity sweeps by kind over a window (DB-16:
+        # scheduler's tab-view sweep, the admin's adoption reads).
+        "CREATE INDEX IF NOT EXISTS idx_activity_log_type_created ON activity_log(event_type, created_at)",
         # Second table with the same lazy-init history as schedule_history
         # above: it was only ever created by init_staff_availability(), so a
         # fresh database didn't have it until something happened to call
@@ -4346,6 +4367,46 @@ def init_db(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, provider, punch_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_day ON pos_punches(restaurant_id, business_date)",
+        # The line archive by item and day (scale audit 10/19/26 DB-11,
+        # DB-02): the Bar's bought-vs-sold walk and the recipes' sold-by-name
+        # read moved a store's whole window of lines into Python on every
+        # request (73k rows for 8 weeks at EJ's). One row per day, provider,
+        # item, name, filing and the few per-line facts those readers need —
+        # the effective kind and quantity a modifier takes from its line,
+        # the "double" multiplier, a bucket ticket, a pure modifier, a zero
+        # quantity, an alternate-unit count — with the sums. Written by
+        # pos_archive.archive_day in the same transaction as the lines; the
+        # nightly prune's rollup (pos_archive.roll_item_days) fills older
+        # days first. It outlives the lines (its own window), so the line
+        # detail can be kept shorter later.
+        """CREATE TABLE IF NOT EXISTS pos_item_daily (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            business_date   TEXT NOT NULL,
+            item_id         TEXT NOT NULL DEFAULT '',
+            item_name       TEXT NOT NULL DEFAULT '',
+            kind            TEXT NOT NULL,
+            kind_eff        TEXT NOT NULL,
+            department      TEXT NOT NULL DEFAULT '',
+            sales_category  TEXT NOT NULL DEFAULT '',
+            category_id     TEXT NOT NULL DEFAULT '',
+            is_mod          INTEGER NOT NULL DEFAULT 0,
+            mult            REAL NOT NULL DEFAULT 1,
+            pure_mod        INTEGER NOT NULL DEFAULT 0,
+            in_bucket       INTEGER NOT NULL DEFAULT 0,
+            qty_zero        INTEGER NOT NULL DEFAULT 0,
+            has_aqu         INTEGER NOT NULL DEFAULT 0,
+            lines           INTEGER NOT NULL DEFAULT 0,
+            units           REAL NOT NULL DEFAULT 0,
+            qty_eff         REAL NOT NULL DEFAULT 0,
+            sales           REAL NOT NULL DEFAULT 0,
+            aqu             REAL NOT NULL DEFAULT 0,
+            cost_pos        REAL NOT NULL DEFAULT 0,
+            cost_lines      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (restaurant_id, provider, business_date, item_id, item_name, kind, kind_eff, department,
+                         sales_category, category_id, is_mod, mult, pure_mod, in_bucket, qty_zero, has_aqu)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_day ON pos_item_daily(restaurant_id, business_date)",
         # One row per archived day: what was stored, the newest POS write it
         # held, and how often the POS restated it after it was archived.
         """CREATE TABLE IF NOT EXISTS pos_archive_days (
@@ -4400,6 +4461,7 @@ def init_db(db_path: str = DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_pos_lines_bdate ON pos_ticket_lines(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_bdate ON pos_punches(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_archive_days_bdate ON pos_archive_days(business_date)",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_bdate ON pos_item_daily(business_date)",
         # The POS's own menu prices, one row per item and price level, as of
         # the last nightly read (pos_archive.sync_prices, High ROI #7): the
         # baseline a change is found against. Replaced in place; no growth.
@@ -5021,6 +5083,22 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # The two boot backfills below find their rows through partial indexes
+    # (scale audit 10/19/26 DB-16): each read the whole schedule_history —
+    # every week's CSV — on every boot, inside the healthcheck window, for
+    # rows that are almost always none.
+    try:
+        _ix = get_conn(db_path)
+        try:
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_hours ON schedule_history(id) "
+                        "WHERE hours_hourly IS NULL")
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_published ON schedule_history(id) "
+                        "WHERE published_at IS NOT NULL AND published_csv IS NULL")
+            _ix.commit()
+        finally:
+            _ix.close()
+    except Exception as e:
+        print(f"[schedule history] backfill indexes skipped: {e}")
     # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
     # after the column list above has added hours_hourly / hours_salaried.
     try:

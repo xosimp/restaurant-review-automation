@@ -407,13 +407,17 @@ def land_narrative_batch(report_id, custom_id, narrative, outcome, db_path=DB_PA
 
 
 def _upsert_metrics(conn, restaurant_id, business_date, name, blk, report_id):
-    for key, value in (blk.get("metrics") or {}).items():
-        conn.execute(
+    # One executemany a block (scale audit 10/19/26 DB-05): on Postgres every
+    # execute inside a transaction is its own savepoint, and a night's ~100
+    # metrics in one transaction overflowed the subtransaction cache.
+    rows = [(restaurant_id, business_date, f"{name}.{key}", value, blk.get("status"), blk.get("source"), report_id)
+            for key, value in (blk.get("metrics") or {}).items()]
+    if rows:
+        conn.executemany(
             "INSERT INTO dsr_metrics (restaurant_id, business_date, metric, value, status, source, report_id, updated_at) "
             "VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, business_date, metric) DO UPDATE SET "
             "value=excluded.value, status=excluded.status, source=excluded.source, report_id=excluded.report_id, "
-            "updated_at=excluded.updated_at",
-            (restaurant_id, business_date, f"{name}.{key}", value, blk.get("status"), blk.get("source"), report_id))
+            "updated_at=excluded.updated_at", rows)
 
 
 def sync_metrics(report_id, db_path=DB_PATH):

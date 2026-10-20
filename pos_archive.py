@@ -253,6 +253,11 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     gap, unknown = _reconcile(restaurant_id, iso, rows.get("checks"))
     conn = get_conn(db_path)
     try:
+        # On Postgres the nightly roll (roll_item_days) of this restaurant's
+        # days waits for this day's store, and this for it (SQLite: no-op —
+        # the database has one writer).
+        import db_dialect
+        db_dialect.lock(conn, "pos_archive", restaurant_id)
         prev = conn.execute("SELECT max_stamp, restated FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
                             "AND business_date=?", (restaurant_id, name, iso)).fetchone()
         for table, cols, key in _TABLES:
@@ -279,10 +284,18 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
             "lines=excluded.lines, punches=excluded.punches, net_sales=excluded.net_sales, "
             "max_stamp=excluded.max_stamp, restated=pos_archive_days.restated + ?, version=excluded.version, "
             "links_ok=excluded.links_ok, recon_gap=excluded.recon_gap, unknown_sales=excluded.unknown_sales, "
-            "archived_at=datetime('now')",
+            "archived_at=datetime('now'), item_rollup=NULL",
             (restaurant_id, name, iso, len(rows["tickets"]), len(rows["lines"]), len(rows["punches"]), net,
              rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, links_ok, gap, unknown,
              1 if restated else 0))
+        # The day's lines by item (pos_item_daily, DB-11) in the same
+        # transaction. A failure leaves the day unrolled (item_rollup NULL,
+        # set just above): readers read its lines and the nightly roll
+        # tries again - the archive itself stands.
+        try:
+            _roll_day(conn, restaurant_id, name, iso)
+        except Exception as e:
+            log.warning("pos_archive: %s's items for %s not rolled: %s", restaurant_id, iso, e)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -301,6 +314,110 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     return {"date": iso, "tickets": len(rows["tickets"]), "lines": len(rows["lines"]),
             "punches": len(rows["punches"]), "net_sales": net, "restated": restated,
             "links_ok": links_ok, "recon_gap": gap, "unknown_sales": unknown}
+
+
+# ── the lines by item and day (scale audit 10/19/26 DB-11, DB-02) ─────────
+#
+# pos_item_daily: each archived day's lines grouped by item, name, filing
+# and the per-line facts the Bar's walk needs (bar.variance.resolve_lines),
+# with the sums - written with the day (archive_day), and for every older or
+# re-versioned day by roll_item_days, the nightly prune's rollup for
+# pos_ticket_lines, so no line is pruned before its day is rolled. Its own
+# window (RETAIN_POS_ITEM_DAILY_DAYS) outlives the lines', so the line
+# detail can be kept shorter (RETAIN_POS_LINES_DAYS) when the volume needs
+# it. Raise ITEM_ROLLUP_VERSION when resolve_lines changes what it records:
+# every day reads its lines again until it is rolled at the new version.
+ITEM_ROLLUP_VERSION = 1
+ITEM_ROLL_MAX_SECONDS = 120
+_ROLL_LINE_COLS = ("line_id", "ticket_id", "business_date", "provider", "item_id", "item_name", "kind", "qty",
+                   "sales", "cost", "aqu_count", "department", "sales_category", "category_id", "parent_line_id")
+
+
+def _roll_day(conn, restaurant_id, provider, iso) -> int:
+    """One archived day's pos_item_daily rows, replaced from its lines, and
+    the day marked rolled at ITEM_ROLLUP_VERSION - inside the caller's
+    transaction (the caller commits). Returns the groups written."""
+    from bar.variance import resolve_lines, ROLLUP_KEY, ROLLUP_SUMS
+    got = conn.execute(f"SELECT {', '.join(_ROLL_LINE_COLS)} FROM pos_ticket_lines WHERE restaurant_id=? "
+                       "AND provider=? AND business_date=?", (restaurant_id, provider, iso)).fetchall()
+    groups = resolve_lines(dict(zip(_ROLL_LINE_COLS, r)) for r in got)
+    cols = ("restaurant_id",) + ROLLUP_KEY + ROLLUP_SUMS
+    conn.execute("DELETE FROM pos_item_daily WHERE restaurant_id=? AND provider=? AND business_date=?",
+                 (restaurant_id, provider, iso))
+    if groups:
+        conn.executemany(f"INSERT INTO pos_item_daily ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                         [(restaurant_id,) + tuple(g[c] for c in ROLLUP_KEY + ROLLUP_SUMS) for g in groups])
+    conn.execute("UPDATE pos_archive_days SET item_rollup=? WHERE restaurant_id=? AND provider=? AND business_date=?",
+                 (ITEM_ROLLUP_VERSION, restaurant_id, provider, iso))
+    return len(groups)
+
+
+def rolled_window(conn, restaurant_id, start, end) -> bool:
+    """Whether pos_item_daily holds the whole window: at least one archived
+    day in [start, end] and every one of them rolled at ITEM_ROLLUP_VERSION.
+    Anything else reads the lines."""
+    try:
+        row = conn.execute("SELECT COUNT(*), SUM(CASE WHEN item_rollup = ? THEN 1 ELSE 0 END) FROM pos_archive_days "
+                           "WHERE restaurant_id=? AND business_date>=? AND business_date<=?",
+                           (ITEM_ROLLUP_VERSION, int(restaurant_id), str(start)[:10], str(end)[:10])).fetchone()
+    except Exception:
+        return False
+    n, done = int(row[0] or 0), int(row[1] or 0)
+    return n > 0 and done == n
+
+
+def roll_item_days(db_path=None, max_seconds=None) -> dict:
+    """Every archived day not rolled at ITEM_ROLLUP_VERSION, rolled - oldest
+    first, a day a transaction, bounded by ITEM_ROLL_MAX_SECONDS. The
+    nightly prune runs it as pos_ticket_lines' rollup before any line is
+    deleted, so it raises when a day the line window has reached is still
+    not rolled: the lines are then kept tonight. {rolled, left}."""
+    import time as _t
+    import db_dialect
+    import ops
+    stop = _t.monotonic() + float(ITEM_ROLL_MAX_SECONDS if max_seconds is None else max_seconds)
+    conn = get_conn(db_path)
+    try:
+        todo = [tuple(r) for r in conn.execute(
+            "SELECT restaurant_id, provider, business_date FROM pos_archive_days WHERE COALESCE(item_rollup, 0) <> ? "
+            "ORDER BY business_date, restaurant_id LIMIT 5000", (ITEM_ROLLUP_VERSION,)).fetchall()]
+    finally:
+        conn.close()
+    rolled = 0
+    for rid, prov, iso in todo:
+        if _t.monotonic() > stop:
+            break
+        conn = get_conn(db_path)
+        try:
+            db_dialect.begin_write(conn, "pos_archive", rid)
+            still = conn.execute("SELECT 1 FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
+                                 "AND business_date=? AND COALESCE(item_rollup, 0) <> ?",
+                                 (rid, prov, iso, ITEM_ROLLUP_VERSION)).fetchone()
+            if still:               # archive_day may have stored and rolled it since the list was read
+                _roll_day(conn, rid, prov, iso)
+            conn.commit()
+            rolled += 1
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            log.warning("pos_archive: %s's items for %s not rolled: %s", rid, iso, e)
+        finally:
+            conn.close()
+    days = ops.retention_days("pos_ticket_lines")
+    if days:
+        edge = (date.today() - timedelta(days=int(days) + 2)).isoformat()
+        conn = get_conn(db_path)
+        try:
+            due = conn.execute("SELECT COUNT(*) FROM pos_archive_days WHERE COALESCE(item_rollup, 0) <> ? "
+                               "AND business_date < ?", (ITEM_ROLLUP_VERSION, edge)).fetchone()[0]
+        finally:
+            conn.close()
+        if due:
+            raise RuntimeError(f"{due} archived day(s) past the line window are not rolled into pos_item_daily "
+                               "yet; their lines are kept tonight")
+    return {"rolled": rolled, "left": len(todo) - rolled}
 
 
 def archived_dates(restaurant_id, provider, db_path=DB_PATH) -> set:

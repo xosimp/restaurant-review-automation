@@ -276,6 +276,7 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
                            if k.startswith(_reg.SERVER_ONLY_PREFIXES)})
         for metric in tuple(_features.BENCHMARK_KEYS) + tuple(staffing):
             fam = _reg.partition_family(metric)
+            batch = []
             for cohort, rids in groups[fam].items():
                 info[fam].setdefault(cohort, {"members": [(r, elig[r]["org_hash"]) for r in rids], "metrics": []})
                 # Only a behaviour metric has an all-restaurants band (#6).
@@ -300,18 +301,23 @@ def compute(db_path=DB_PATH, cohorts: dict = None, today: date = None, members: 
                 # server-side (never selected into a payload): published()
                 # takes the viewer's whole organisation out of what it shows.
                 pairs.sort()
-                conn.execute(
-                    "INSERT INTO intel_benchmarks (cohort, metric, week, n, p25, p50, p75, mean, vals_json, orgs, "
-                    "max_org_share, members_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(cohort, metric, week) DO UPDATE SET n=excluded.n, p25=excluded.p25, "
-                    "p50=excluded.p50, p75=excluded.p75, mean=excluded.mean, vals_json=excluded.vals_json, "
-                    "orgs=excluded.orgs, max_org_share=excluded.max_org_share, members_json=excluded.members_json, "
-                    "computed_at=datetime('now') WHERE intel_benchmarks.members_json IS NULL",
+                batch.append(
                     (cohort, metric, week, len(vals), privacy.round_effect(percentile(vals, 25), 3),
                      privacy.round_effect(percentile(vals, 50), 3), privacy.round_effect(percentile(vals, 75), 3),
                      privacy.round_effect(mean(vals), 3), json.dumps(sorted(vals)), orgs, round(share, 3),
                      json.dumps([[v, o] for v, o in pairs])))
                 written += 1
+            # A metric's cohorts in one executemany (scale audit 10/19/26
+            # DB-05: a savepoint a cohort on Postgres, the fleet's cohorts of
+            # them in one transaction).
+            if batch:
+                conn.executemany(
+                    "INSERT INTO intel_benchmarks (cohort, metric, week, n, p25, p50, p75, mean, vals_json, orgs, "
+                    "max_org_share, members_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(cohort, metric, week) DO UPDATE SET n=excluded.n, p25=excluded.p25, "
+                    "p50=excluded.p50, p75=excluded.p75, mean=excluded.mean, vals_json=excluded.vals_json, "
+                    "orgs=excluded.orgs, max_org_share=excluded.max_org_share, members_json=excluded.members_json, "
+                    "computed_at=datetime('now') WHERE intel_benchmarks.members_json IS NULL", batch)
             # One commit per metric (R2-18): a pass that fails part-way keeps
             # what it wrote, and a re-run skips it (frozen) and carries on.
             conn.commit()
