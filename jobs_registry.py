@@ -156,8 +156,8 @@ JOBS = {
     "dsr_backfill": dict(
         cadence="3am CT nightly, after the POS sync", sla_minutes=_D, sends=False, runnable=True,
         label="DSR backfill", description="Fill the Daily Sales Report's figures for nights before it started, "
-                                          "from the POS (figures only: no report, email or model; bounded, "
-                                          "resumable)",
+                                          "from the POS (figures only: no report, email or model): one queue "
+                                          "row per restaurant, run by the queue worker (ONB-5)",
         target=("strategy_jobs", "run_dsr_backfill"), max_minutes=40, retry=True),
     "intelligence_features": dict(
         cadence="3am CT daily", sla_minutes=_D, sends=False, runnable=True,

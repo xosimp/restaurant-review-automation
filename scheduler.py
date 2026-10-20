@@ -2454,6 +2454,17 @@ def backup_db():
         run["wal_bytes"] = os.path.getsize(DB_PATH + "-wal")
     except OSError:
         run["wal_bytes"] = 0
+    import models as _m_size
+    if _m_size._db_backend() == "postgres":
+        # On Postgres DB_PATH is the SQLite file left by the cutover, which
+        # never grows: the free-space gate (and the storage trend) measured
+        # the wrong database. The export this run writes is the live one's
+        # size (scale fix 10/19/26, ONB-1).
+        try:
+            import onboarding as _onb_size
+            run["db_bytes"], run["wal_bytes"] = _onb_size.live_database_bytes(), 0
+        except Exception as e:
+            log.warning(f"backup_db: Postgres size unavailable: {e}")
 
     try:
         os.makedirs(backup_dir, exist_ok=True)

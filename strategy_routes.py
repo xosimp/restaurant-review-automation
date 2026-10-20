@@ -7114,114 +7114,19 @@ def _do_dsr_settings_set(u):
     the POS's own meal periods). Every column is in update_restaurant's
     whitelist. A value of the wrong type is a 400 with the reason, never a
     500."""
-    import json
-    from dsr import fiscal
     from models import get_restaurant, update_restaurant
-    from time_utils import mdy
     refused = _dsr_owner_only(u)
     if refused:
         return refused
     body = _body()
     if not isinstance(body, dict):
         return {"ok": False, "error": "Send the settings as a JSON object."}, 400
-    fields = {}
-    if "fiscal_week_start_dow" in body:
-        v = body.get("fiscal_week_start_dow")
-        if v is None or v == "":
-            fields["fiscal_week_start_dow"] = None
-        else:
-            try:
-                v = int(v)
-            except (TypeError, ValueError):
-                v = -1
-            if isinstance(body.get("fiscal_week_start_dow"), bool) or not 0 <= v <= 6:
-                return {"ok": False, "error": "Pick a day for your week to start."}, 400
-            fields["fiscal_week_start_dow"] = v
-    if "fiscal_year_start" in body:
-        raw = body.get("fiscal_year_start")
-        if raw in (None, ""):
-            fields["fiscal_year_start"] = None
-        else:
-            d = _dsr_day(raw)
-            if d is None:
-                return {"ok": False, "error": "The year start must be a date."}, 400
-            fields["fiscal_year_start"] = d.isoformat()
-    if "fiscal_period_scheme" in body:
-        raw = body.get("fiscal_period_scheme")
-        if isinstance(raw, list) and all(isinstance(n, int) and not isinstance(n, bool) for n in raw):
-            raw = ",".join(str(n) for n in raw)
-        scheme = raw.replace(" ", "") if isinstance(raw, str) else ""
-        if not fiscal.valid_scheme(scheme):
-            return {"ok": False, "error": "Pick 13 four-week periods, 4-4-5, 4-5-4 or 5-4-4, or list your "
-                                          "periods' lengths in weeks (12 or 13 of 4 or 5, totalling 52 or 53)."}, 400
-        fields["fiscal_period_scheme"] = scheme
-    if "fiscal_years" in body:
-        raw = body.get("fiscal_years")
-        if raw is not None and not isinstance(raw, list):
-            return {"ok": False, "error": "List each year as a start date and its period lengths."}, 400
-        rows, err = fiscal.parse_years(raw)
-        if err:
-            return {"ok": False, "error": err}, 400
-        fields["fiscal_years_json"] = (json.dumps([{"start": s.isoformat(), "lengths": n} for s, n in rows])
-                                       if rows else None)
-    if "dsr_enabled" in body:
-        fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
-    if "dsr_notify" in body:
-        fields["dsr_notify"] = 1 if body.get("dsr_notify") else 0
-    if "dsr_gross_basis" in body:
-        from dsr.block_sales import GROSS_BASES
-        # A list or an object is unhashable: `in GROSS_BASES` raised and the
-        # route answered 500 (re-audit D16). Only a known string is a basis.
-        basis = body.get("dsr_gross_basis")
-        if not isinstance(basis, str) or basis not in GROSS_BASES:
-            return {"ok": False, "error": "Gross is either items only or everything rung (items, tax and voids)."}, 400
-        fields["dsr_gross_basis"] = basis
-    if "dsr_deadline_hour" in body:
-        raw = body.get("dsr_deadline_hour")
-        try:
-            h = -1 if isinstance(raw, bool) else int(raw)
-        except (TypeError, ValueError):
-            h = -1
-        if not 0 <= h <= 11:
-            return {"ok": False, "error": "Pick an hour between midnight and 11am."}, 400
-        fields["dsr_deadline_hour"] = h
-    if "dsr_late_night_hour" in body:
-        # Checks opened from this hour on are "Late night" (dsr.block_service);
-        # null keeps the POS's own Lunch/Dinner tags.
-        raw = body.get("dsr_late_night_hour")
-        if raw is None or raw == "":
-            fields["dsr_late_night_hour"] = None
-        else:
-            try:
-                h = -1 if isinstance(raw, bool) else int(raw)
-            except (TypeError, ValueError):
-                h = -1
-            if not 18 <= h <= 23:
-                return {"ok": False, "error": "Late night starts between 6pm and 11pm."}, 400
-            fields["dsr_late_night_hour"] = h
-    if "dsr_budget_mode" in body:
-        # How the owner budgets (10/9/26): a figure per night, or one for
-        # the week split by the restaurant's own weekday mix.
-        if body.get("dsr_budget_mode") not in ("day", "week"):
-            return {"ok": False, "error": "Budget by day or by week."}, 400
-        fields["dsr_budget_mode"] = body["dsr_budget_mode"]
-    if not fields:
-        return {"ok": False, "error": "Nothing to change."}, 400
-    # Periods are whole weeks: a year start that isn't the week's first day
-    # would split a week across two periods.
-    r = get_restaurant(_rid(u))
-    dow = fields["fiscal_week_start_dow"] if "fiscal_week_start_dow" in fields else getattr(r, "fiscal_week_start_dow", None)
-    ys = fields["fiscal_year_start"] if "fiscal_year_start" in fields else getattr(r, "fiscal_year_start", None)
-    want = 0 if dow is None else int(dow)
-    if ys:
-        if date.fromisoformat(str(ys)[:10]).weekday() != want:
-            return {"ok": False, "error": f"Period 1 has to start on a {_WEEKDAYS[want]}, the first day of your week."}, 400
-    listed = (fiscal.parse_years(fields["fiscal_years_json"])[0] if "fiscal_years_json" in fields
-              else fiscal.listed_years(r))
-    for start, _lengths in listed:
-        if start.weekday() != want:
-            return {"ok": False, "error": f"The year starting {mdy(start)} has to start on a "
-                                          f"{_WEEKDAYS[want]}, the first day of your week."}, 400
+    # One validation for the owner's settings and the admin console's DSR
+    # calendar action (scale audit 10/19/26 ONB-7): dsr.settings.validate.
+    from dsr import settings as _dsr_settings
+    fields, error = _dsr_settings.validate(body, get_restaurant(_rid(u)))
+    if error:
+        return {"ok": False, "error": error}, 400
     update_restaurant(_rid(u), fields)
     return {"ok": True, "settings": _dsr_settings_payload(get_restaurant(_rid(u)))}, 200
 

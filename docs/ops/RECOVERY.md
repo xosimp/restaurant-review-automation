@@ -475,6 +475,16 @@ write — and every save, draft and send fails until space is freed.
    snapshot stands. Engineering → Overview → Backups shows growth per day and
    days to full (`ops.storage_trend`, from each night's backup row).
 
+6. New stores' POS history backfill holds itself before it can break the
+   backup (scale audit 10/19/26 ONB-1): a store backfills only while it
+   holds one of `POS_BACKFILL_MAX_STORES` slots AND the volume has room for
+   tonight's days plus `BACKUP_FREE_SPACE_FACTOR` x the database after them
+   (`onboarding.backfill_admission`); short of room it waits (last night
+   still archives), says why on Customers → Onboarding, and pages once in 12
+   hours (`backfill_no_room`). On Postgres the backup's gate reads the live
+   database's size (`pg_database_size`), not the SQLite file left by the
+   cutover. `PG_VOLUME_MAX_BYTES` adds the Postgres volume's own ceiling.
+
 A full volume is the one failure where doing nothing gets worse quietly.
 
 ---

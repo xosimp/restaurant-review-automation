@@ -127,11 +127,18 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TOAST_SCHEDULE_WRITE` | `""` (off) | 1 only once Toast has admitted Cavnar AI to its integration-partner programme and granted the labor write scope: the POS schedule push then writes shifts to Toast (`POST /labor/v1/shifts`). Off, the Toast push refuses and the preview says why (schedule audit 10/10/26 MARKET-7). | toast.py |
 | `BACKOFFICE_API_BASE` | — | Back Office API host, once one exists (`docs/plans/BACK_OFFICE_INTEGRATION.md`). | backoffice.py |
 | `POS_ARCHIVE_READS` | `"1"` | 1 (default): nightly readers read a closed day from the POS ticket archive instead of the POS API. | pos_archive.py |
+| `POS_BACKFILL_MAX_STORES` | `"8"` | How many stores may backfill POS history at once (scale audit 10/19/26 ONB-1, `onboarding.backfill_admission`): a wave of new stores waits for a slot; a waiting store still archives last night. | onboarding.py |
+| `POS_BACKFILL_DAYS_PER_NIGHT` | `"7"` | Days of history a backfilling store archives a night (ONB-5). 7 is 13 nights to 90 days; raise it for a wave once RPOWER agrees the fleet request budget. | pos_archive.py |
+| `POS_BACKFILL_BYTES_PER_STORE_DAY` | `"650000"` | What one archived store-day is reckoned to cost on disk (the audit measured ~613 KB with indexes): the free-space gate's estimate of tonight's backfill. | onboarding.py |
+| `PG_VOLUME_MAX_BYTES` | `"0"` | The Postgres volume's size in bytes, when set (the app cannot see another service's disk): a backfill waits once the database plus tonight's days would pass 80% of it. 0 = only the app volume is checked. | onboarding.py |
+| `ONBOARDING_SETUP_SINCE` | `"2026-10-20"` | Restaurants created before this date were set up by hand and are not asked the setup confirmations or checklist step (ONB-9/12). | onboarding.py |
+| `ONBOARDING_STUCK_DAYS` | `"14"` | The fleet onboarding board names a store not live this many days after signing up. | onboarding.py |
 
 ## Billing and contracts
 
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
+| `PARTNER_BILLING` | `""` (off) | `1` turns the partner / reseller entity's billing on (scale audit 10/19/26 ONB-10): a store under a partner with `billing_mode` partner and a signed master agreement needs no DocuSign envelope or checkout of its own, and its tracker's contract and billing steps read done. Off, a partner can be recorded and stores attached and nothing about a store's contract or billing changes. A business decision before it is turned on (the report lists it). | onboarding.py |
 | `STRIPE_SECRET_KEY` | `""` | Stripe, for checkout, subscriptions and reconcile. | admin_ops.py, admin_routes.py, billing_jobs.py, client_api.py |
 | `STRIPE_WEBHOOK_SECRET` | `""` | Verifies Stripe webhooks. | admin_routes.py, hosted_dashboard.py, webhook_routes.py |
 | `BILLING_PREVIEW_IDS` | `""` | Restaurant ids that see the billing screen before launch (`client_api.py`). | client_api.py |

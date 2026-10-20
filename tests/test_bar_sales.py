@@ -616,8 +616,12 @@ def test_dsr_backfill_failure_reaches_job_runs(db, monkeypatch):
         raise RuntimeError("RPOWER read failed")
     monkeypatch.setattr(backfill, "backfill", boom)
     assert "dsr_backfill" in jobs_registry.JOBS
-    out = ops.run_job("dsr_backfill", strategy_jobs.run_dsr_backfill, db_path=db)
+    # The inline sweep (a script's path) counts the failure on its run ...
+    out = ops.run_job("dsr_backfill", strategy_jobs.run_dsr_backfill_sweep, db_path=db)
     assert out["attempted"] >= 1 and out["failed"] == out["attempted"] and out["ok"] == 0
+    # ... and the nightly path's queue row raises it, so the queue records it
+    # and tries again (scale audit 10/19/26 ONB-5: fanned out, one row each).
+    assert strategy_jobs.LEARNERS["dsr_backfill"] == "strategy_jobs:dsr_backfill_one"
     c = _conn(db)
     row = c.execute("SELECT ok, error FROM job_runs WHERE job='dsr_backfill' ORDER BY id DESC LIMIT 1").fetchone()
     c.close()

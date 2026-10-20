@@ -162,6 +162,11 @@ _STEP_UP_TODAY = {
     # purging a received file.
     "/admin/api/client/<int:restaurant_id>/intake/rotate",
     "/admin/api/client/<int:restaurant_id>/intake/purge",
+    # Onboarding at scale (scale audit 10/19/26, ONB-2 / ONB-10): applying a
+    # provisioning list (it creates logins and keeps a POS credential), and
+    # saving a partner (with PARTNER_BILLING on it takes contracts off stores).
+    "/admin/api/onboarding/provision/apply",
+    "/admin/api/partners",
 }
 
 # Routes that need the step-up for only PART of what they do, through

@@ -274,6 +274,14 @@ if not getattr(audit_bp, "_csrf_wired", False):
     csrf_protect(audit_bp)
     audit_bp._csrf_wired = True
 app.register_blueprint(audit_bp)
+# Onboarding at scale (scale audit 10/19/26): bulk provisioning, backfill
+# pacing, setup confirmations, checklists, the DSR calendar, partners —
+# admin-console writes, CSRF-protected like admin_bp.
+from onboarding_routes import onboarding_bp
+if not getattr(onboarding_bp, "_csrf_wired", False):
+    csrf_protect(onboarding_bp)
+    onboarding_bp._csrf_wired = True
+app.register_blueprint(onboarding_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(auth_bp)

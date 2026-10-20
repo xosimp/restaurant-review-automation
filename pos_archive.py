@@ -29,6 +29,7 @@ A day is replaced whole, in one transaction: a re-read never leaves a line
 the POS has since removed.
 """
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 
 import models as _models_mod
@@ -68,7 +69,12 @@ READ_MIN_VERSION = 3
 RECONCILE_TOLERANCE = 1.00
 
 BACKFILL_DAYS = 90
-BACKFILL_DAYS_PER_NIGHT = 7
+# Days of history a backfilling store archives a night (scale audit 10/19/26
+# ONB-5: 7 is 13 nights to 90 days; a wave of new stores can take more a
+# night once RPOWER agrees the fleet budget). Only stores holding a backfill
+# slot backfill at all, and only with room for the days and the backup after
+# them (onboarding.backfill_admission, ONB-1).
+BACKFILL_DAYS_PER_NIGHT = max(1, int(os.getenv("POS_BACKFILL_DAYS_PER_NIGHT", "7")))
 # The change read looks back this far the first time (no state yet).
 FIRST_CHANGE_LOOKBACK_HOURS = 48
 
@@ -402,7 +408,22 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
     floor = yesterday - timedelta(days=BACKFILL_DAYS - 1)
     missing = [yesterday - timedelta(days=i) for i in range(1, BACKFILL_DAYS)
                if (yesterday - timedelta(days=i)) >= floor and (yesterday - timedelta(days=i)).isoformat() not in have]
-    todo += missing[:BACKFILL_DAYS_PER_NIGHT]
+    # Paced (ONB-1): a store backfills only while it holds one of the fleet's
+    # backfill slots and the volumes have room for tonight's days and the
+    # backup after them. Last night and restated days are never held.
+    tonight = missing[:BACKFILL_DAYS_PER_NIGHT]
+    admission = {"admit": True}
+    try:
+        import onboarding
+        admission = onboarding.backfill_admission(restaurant_id, name, len(missing), len(tonight),
+                                                  db_path=None if db_path == DB_PATH else db_path)
+    except Exception as e:                           # the archive's own bound stands
+        log.warning("pos_archive: backfill admission failed for %s: %s", restaurant_id, e)
+        admission = {"admit": True}
+    if tonight and admission.get("admit"):
+        todo += tonight
+    else:
+        tonight = []
     done, restated, failed = [], 0, []
     for d in dict.fromkeys(todo):
         try:
@@ -440,7 +461,9 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
         log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
             "not_closed": waiting,
-            "backfill_left": max(0, len(missing) - BACKFILL_DAYS_PER_NIGHT), "provider": name, "roles": roles,
+            "backfill_left": max(0, len(missing) - len(tonight)),
+            "backfill_held": None if admission.get("admit") or not missing else admission.get("reason"),
+            "provider": name, "roles": roles,
             "prices": prices, "catalog": catalog, "backfill_restated": backfill_restated}
 
 
