@@ -6,7 +6,8 @@ the web (/api/...) and the phone (/mobile/api/...) with one shared body:
   GET  /labor/floor-settings                 the switches (floor_settings)
   POST /labor/floor-settings                 {pos_push?, live_moves?, autopilot?, live_target_margin_pts?}
   GET  /labor/pos-schedule-push?schedule_id= the preview: every shift and what would happen to it
-  POST /labor/pos-schedule-push              {schedule_id} — push now (queued + sent)
+  POST /labor/pos-schedule-push              {schedule_id} — push now (queued; sent off the request
+                                             thread within seconds — R3-07)
   GET  /labor/live                           the live labor read and today's moves
   POST /labor/live/moves/<id>/act            carry out a suggested move
   POST /labor/live/moves/<id>/dismiss        not this one
@@ -115,12 +116,22 @@ def pos_push_preview(u):
     try:
         out = pos_schedule_push.preview(_rid(u), sid)
     except Exception as e:
+        if getattr(e, "archive_miss", False):
+            # The preview reads the POS's kept lists only, never the POS
+            # itself on this thread (R3-07); a store not read yet waits.
+            return {"ok": False, "error": "The POS's staff and job lists haven't been read yet. They are read "
+                                          "with tonight's sync, and a week you send is checked against them "
+                                          "before it goes."}, 409
         return {"ok": False, "error": f"The POS couldn't be read for the preview: {e}"}, 502
     return out, (200 if out.get("ok") else 400)
 
 
 def pos_push_now(u):
-    """Push the published week now — the owner's press, with the switch on."""
+    """Push the published week now — the owner's press, with the switch on.
+    Queued and sent off this request thread within seconds (blind re-audit
+    10/20/26 R3-07: the preview and a 30-second POST to the POS ran here, on
+    one of the web worker's four threads); `status` "queued", and the
+    preview's `last_push` shows how it went."""
     if not _sr()._may_publish(u):
         return _sr()._forbidden("Your login can't send the schedule.")
     sid = _schedule_id()
@@ -131,9 +142,9 @@ def pos_push_now(u):
     if not pid:
         return {"ok": False, "error": "Turn on \"Send published weeks to the POS\" first — and only a week that "
                                       "has gone to staff can go."}, 400
-    res = pos_schedule_push.run_push(pid)
+    pos_schedule_push.send_now(_rid(u), pid)
     week = (pos_schedule_push._hist(_rid(u), sid) or {}).get("week_start")
-    return {"ok": res.get("status") in ("sent", "unchanged", "partial"), **res,
+    return {"ok": True, "status": "queued", "push_id": pid,
             "push": pos_schedule_push.last_push(_rid(u), week) if week else None}, 200
 
 
@@ -194,6 +205,10 @@ def shift_edit_plan(u):
     b = _body()
     out = shift_edits.plan(_rid(u), str(b.get("op") or "").lower(), b, history_id=b.get("history_id"))
     out.pop("_rows", None)
+    # One shift's cost is that person's rate (R7-24): only for pay viewers.
+    if not _sr()._sees_pay(u):
+        out["cost"] = None
+        out["pay_hidden"] = True
     return out, (200 if out.get("ok") else 400)
 
 

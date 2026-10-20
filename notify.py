@@ -439,6 +439,50 @@ def _own_guest_service(restaurant_id):
         return None
 
 
+# Verification codes to one number in an hour, sign-in and staff alike
+# (R7-09): every password sign-in sends one, and email codes were already
+# capped at 8 an hour per address (emails.FLOOD_LIMITS) while texts were not.
+OTP_SMS_PER_NUMBER_HOURLY = 8
+OTP_NUMBER_CAP_ERROR_CODE = "cavnar_otp_number_cap"
+
+
+def _otp_number_capped(phone: str, db_path: str = None) -> bool:
+    """True when this number was sent OTP_SMS_PER_NUMBER_HOURLY codes in the
+    last hour (counted on sms_log by the number's hash). Fails open."""
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM sms_log WHERE use_case='otp' AND to_hash=? "
+                             "AND status NOT IN ('blocked', 'not_configured') "
+                             "AND created_at >= datetime('now', '-1 hour')", (_sms_hash(phone),)).fetchone()[0]
+        finally:
+            conn.close()
+        return int(n or 0) >= OTP_SMS_PER_NUMBER_HOURLY
+    except Exception:
+        return False
+
+
+# Twilio answers that mean the message was NOT created: rate limited, or the
+# service refusing work. Retried once (R9-21).
+_SMS_RETRY_STATUS = (429, 503)
+
+
+def _sms_never_sent(e) -> bool:
+    """Whether a requests ConnectionError happened before the request could
+    reach Twilio: the connection never opened (refused, no route, DNS) or
+    timed out while connecting. A reset or abort after the request was
+    written may follow an accepted message."""
+    if isinstance(e, requests.exceptions.ConnectTimeout):
+        return True
+    try:
+        import urllib3
+        reason = getattr(e.args[0], "reason", None) if e.args else None
+        return isinstance(reason, (urllib3.exceptions.NewConnectionError,
+                                   urllib3.exceptions.ConnectTimeoutError))
+    except Exception:
+        return False
+
+
 def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
                     restaurant_id: int = None, db_path: str = None) -> SmsResult:
     """Send one SMS via Twilio and return what happened (SmsResult), with an
@@ -485,11 +529,19 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # The showcase demo (Halsted & Rye) never texts anyone.
             return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
                                    permanent=True))
-    if use_case != "otp" and not sms_country_allowed(phone):
+    # Every text, a verification code included (re-audit 10/20/26 R7-09: a
+    # sign-in code to a premium-rate number abroad, looped by anyone with the
+    # owner's password, is toll fraud billed to the platform).
+    if not sms_country_allowed(phone):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_COUNTRY_ERROR_CODE,
                           "a country Cavnar AI does not text", db_path=db_path)
         return _done(SmsResult(False, status="blocked", error_code=SMS_COUNTRY_ERROR_CODE,
                                error="a country Cavnar AI does not text", permanent=True, log_id=log_id))
+    if use_case == "otp" and _otp_number_capped(phone, db_path=db_path):
+        log_id = _log_sms(rid, use_case, phone, "blocked", OTP_NUMBER_CAP_ERROR_CODE,
+                          "too many codes to this number this hour", db_path=db_path)
+        return _done(SmsResult(False, status="blocked", error_code=OTP_NUMBER_CAP_ERROR_CODE,
+                               error="too many codes to this number this hour", permanent=True, log_id=log_id))
     if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
                           "the number replied STOP", db_path=db_path)
@@ -545,11 +597,12 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
     # Twilio reports delivered / undelivered / failed here, signed, and
     # webhook_routes moves the sms_log row on (#14).
     data["StatusCallback"] = config.base_url() + SMS_STATUS_CALLBACK_PATH
-    # One retry for a failure Twilio says is transient (429, 5xx) or a
-    # connection that failed before a response (AI-27): a single blip lost an
-    # owner's health alert text. NOT for a read timeout — Twilio's Messages
-    # API has no idempotency key, and a request it accepted but did not answer
-    # in time would be sent twice. A 4xx is permanent and is not retried.
+    # One retry, only when Twilio provably did not take the request (AI-27,
+    # narrowed by blind re-audit 10/20/26 R9-21): a 429 or a 503 (refused,
+    # not processed), or a connection that never opened. Twilio's Messages
+    # API has no idempotency key, so anything after the request may have
+    # gone out — a read timeout, a reset while reading the answer, a 500,
+    # 502 or 504 — is not retried: it could text twice. A 4xx is permanent.
     last = None
     for attempt in (1, 2):
         try:
@@ -574,11 +627,15 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             permanent = code in SMS_PERMANENT_ERROR_CODES
             last = SmsResult(False, status="failed", error_code=code or str(r.status_code),
                              error=message_text, permanent=permanent and not account, account_level=account)
-            if not (r.status_code == 429 or r.status_code >= 500):
+            if r.status_code not in _SMS_RETRY_STATUS:
                 break
         except requests.exceptions.ConnectionError as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
+            if not _sms_never_sent(e):
+                # The request may have reached Twilio (a reset while its
+                # answer was read): a retry could text twice (R9-21).
+                break
         except Exception as e:
             print(f"[notify] SMS send failed: {e}")
             last = SmsResult(False, status="failed", error=str(e)[:300])
@@ -1642,13 +1699,40 @@ def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
                     db_path=db_path if db_path != DB_PATH else None)
         import scheduler as _sched
         if _sched.scheduling_allowed():
+            # One fleet page, not one per restaurant (scale re-audit 10/20/26
+            # R8-14): a POS or Google incident that floods many restaurants'
+            # owners at once sent one text, email, pager event and push per
+            # restaurant. The page names how many restaurants are capped in
+            # the last day and the first few; within its hour's cooldown the
+            # next restaurant to trip is on the console (and the capture
+            # above), and the page after it carries the new count.
             name = _restaurant_name(restaurant_id)
-            ops.alert_will(f"Cavnar AI: alert storm at {name}",
-                           [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
-                            "Only health and safety alerts go out until its local midnight.",
-                            "Lift it early from the client's page in the console if this is expected."])
+            capped = _storm_caps_last_day(db_path)
+            others = [x for x in capped if x != name]
+            lines = [f"{n} alerts in the last hour at {name} (restaurant #{restaurant_id}).",
+                     "Only health and safety alerts go out until each restaurant's local midnight.",
+                     "Lift a cap early from the client's page in the console if it is expected."]
+            if others:
+                lines.insert(1, f"{len(capped)} restaurants capped in the last day"
+                                f" ({', '.join(others[:5])}{'…' if len(others) > 5 else ''} too) — "
+                                "one incident across the fleet, not one per restaurant.")
+            ops.page_operator("alert_storm", "Cavnar AI: alert storm"
+                              + (f" at {len(capped)} restaurants" if len(capped) > 1 else f" at {name}"),
+                              lines, cooldown_minutes=60)
     except Exception as e:
         print(f"[notify] storm alert to the operator failed: {e}")
+
+
+def _storm_caps_last_day(db_path: str = DB_PATH) -> list:
+    """The names of the restaurants an automatic storm cap went on for in
+    the last 24 hours, newest first."""
+    conn = models.get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT restaurant_id FROM alert_storm_caps WHERE started_at >= datetime('now', '-1 day') "
+                            "ORDER BY id DESC LIMIT 50").fetchall()
+    finally:
+        conn.close()
+    return [_restaurant_name(r["restaurant_id"]) for r in rows]
 
 
 def lift_storm_cap(restaurant_id, actor, db_path: str = DB_PATH) -> bool:
@@ -2865,7 +2949,32 @@ DAILY_BATCH_TYPES = {
     "critical_low", "price_spike", "ai_visibility_drop", "no_response",
 }
 
-_batch = None
+# The open batch is the CALLING THREAD's (blind re-audit 10/20/26 R9-18): it
+# was one process global, and the scheduler's lanes raise alerts on their own
+# threads (the review fetch's connection_lost) — a lane's raise_alert could
+# read the batch between the loop's check and its use (an AttributeError,
+# the week's claim already spent) or grow the dict the flush was iterating
+# ("dictionary changed size", the rest of the morning's sends and claims
+# aborted). Only the thread that began a batch collects into it.
+_batch_local = threading.local()
+
+
+def _open_batch():
+    """The batch this thread is collecting, or None."""
+    return getattr(_batch_local, "batch", None)
+
+
+def _open_batch_claims():
+    claims = getattr(_batch_local, "claims", None)
+    if claims is None:
+        claims = _batch_local.claims = []
+    return claims
+
+
+def discard_daily_batch():
+    """Drop this thread's open batch unsent (a test's stand-in for a deploy
+    between collecting and flushing)."""
+    _batch_local.batch, _batch_local.claims = None, []
 
 
 class _Pending:
@@ -2877,30 +2986,48 @@ class _Pending:
         self.recs = recs or [alert_rec(alert_type, title=subject)]
 
 
-# The once-a-day claims a batched pass has EARNED, written only when the batch
-# is flushed. _gated_out used to claim each restaurant's day as it collected,
-# so a deploy between collecting and flushing lost that day's alerts with the
-# claims already spent (MOD-NOT-16); now the next hourly pass re-collects.
-_batch_claims = []
+# The once-a-day claims a batched pass has EARNED, (job, period, restaurant),
+# written at flush, each restaurant's just before its own delivery (R9-12).
+# _gated_out used to claim each restaurant's day as it collected, so a deploy
+# between collecting and flushing lost that day's alerts with the claims
+# already spent (MOD-NOT-16); now the next hourly pass re-collects.
+# Kept per thread with the batch (_open_batch_claims, R9-18).
 
 
 def begin_daily_batch():
-    """Start collecting. Idempotent, and safe to call when one is already
-    open (the scheduler runs one pass at a time behind the lease)."""
-    global _batch, _batch_claims
-    _batch = {}
-    _batch_claims = []
+    """Start collecting on this thread. Idempotent, and safe to call when
+    one is already open (the scheduler runs one pass at a time behind the
+    lease)."""
+    _batch_local.batch, _batch_local.claims = {}, []
 
 
 def flush_daily_batch(db_path: str = DB_PATH):
-    """Send what was collected: one notification per restaurant when more
-    than one thing fired, otherwise exactly what would have gone before."""
-    global _batch, _batch_claims
-    pending, _batch = (_batch or {}), None
-    claims, _batch_claims = _batch_claims, []
+    """Send what this thread collected: one notification per restaurant when
+    more than one thing fired, otherwise exactly what would have gone
+    before."""
+    pending, claims = (_open_batch() or {}), list(getattr(_batch_local, "claims", None) or [])
+    _batch_local.batch, _batch_local.claims = None, []
     out = {"restaurants": 0, "combined": 0, "single": 0}
+    # Each restaurant's day is claimed right before ITS delivery, not after
+    # the whole flush (blind re-audit 10/20/26 R9-12): a deploy or a crash
+    # mid-flush re-sent every restaurant already delivered (no claim yet) at
+    # the next hourly pass — a flush is minutes long at a few hundred
+    # restaurants. Now a kill loses at most the one restaurant in flight
+    # (claim before send: never twice), and one checked with nothing to
+    # send is claimed first. A day claimed meanwhile elsewhere is not sent.
+    by_rid = {}
+    for job, period, rid in claims:
+        by_rid.setdefault(rid, []).append((job, period))
+    import ops
+    for rid, mine in by_rid.items():
+        if not pending.get(rid):
+            for job, period in mine:
+                ops.claim_period(job, period)
     for rid, items in pending.items():
         if not items:
+            continue
+        mine = by_rid.get(rid) or []
+        if mine and not [1 for job, period in mine if ops.claim_period(job, period)]:
             continue
         out["restaurants"] += 1
         try:
@@ -2917,10 +3044,6 @@ def flush_daily_batch(db_path: str = DB_PATH):
                 ops.capture(e, job="daily_batch", context=f"restaurant_id={rid}", db_path=db_path)
             except Exception:
                 pass
-    if claims:
-        import ops
-        for job, period in claims:
-            ops.claim_period(job, period)
     return out
 
 
@@ -3036,9 +3159,10 @@ def raise_alert(restaurant_id: int, alert_type: str, sms_text: str, subject: str
             return False
     if _daily_alert_suppressed(restaurant_id, alert_type, db_path):
         return False
-    if _batch is not None and (alert_type in DAILY_BATCH_TYPES or _low_engagement(restaurant_id, alert_type,
-                                                                                  db_path)):
-        _batch.setdefault(restaurant_id, []).append(
+    batch = _open_batch()
+    if batch is not None and (alert_type in DAILY_BATCH_TYPES or _low_engagement(restaurant_id, alert_type,
+                                                                                 db_path)):
+        batch.setdefault(restaurant_id, []).append(
             _Pending(alert_type, sms_text, subject, lines, value, recs))
         return True
     if html is None:
@@ -3472,12 +3596,12 @@ def _gated_out(restaurant_id, local_hour, claim_key, db_path: str = DB_PATH, unt
         if not (local_hour <= local.hour < until):
             return True
         job, period = f"{claim_key}:{restaurant_id}", local.date().isoformat()
-        if _batch is not None:
+        if _open_batch() is not None:
             # Inside the morning batch the day is claimed at flush, once the
             # alerts collected here have actually gone out (MOD-NOT-16).
             if ops.period_claimed(job, period):
                 return True
-            _batch_claims.append((job, period))
+            _open_batch_claims().append((job, period, restaurant_id))
             return False
         return not ops.claim_period(job, period)
     except Exception:

@@ -386,6 +386,8 @@ NOT_ON_A_FINISHED_POLL = {
     # error answer, never a finished poll's.
     "stopped": "a stopped job's answer", "restored_history_id": "a stopped job's answer",
     "seconds_left": "a pending poll", "progress": "a pending poll",
+    # When to ask again (blind re-audit 10/20/26 R5-03).
+    "retry_after_ms": "a pending poll",
     "published_at": "history detail", "published_by": "history detail", "republished_at": "history detail",
     "superseded_by": "history detail", "replaced_reason": "history detail", "what_if_json": "history detail",
     "detail_thinned_at": "history detail", "economics": "history detail",

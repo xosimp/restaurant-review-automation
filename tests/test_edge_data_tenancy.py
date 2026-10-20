@@ -254,6 +254,7 @@ def test_an_invited_teammate_ends_up_with_the_role_they_were_invited_as():
     assert role == "manager"
 
 
+@pytest.mark.sqlite_only     # records the inserted role with a SQLite CREATE TRIGGER
 def test_an_invited_user_never_exists_with_the_client_role():
     rid = _loc("Simple EJ's", owner_email="erik@ej.test")
     create_user(rid, "erik", "erik@ej.test", "owner-pass-1")

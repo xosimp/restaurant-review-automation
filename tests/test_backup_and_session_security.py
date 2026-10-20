@@ -77,6 +77,7 @@ def test_a_stolen_database_row_cannot_be_replayed(db_path):
 
 # ── backup artifact ─────────────────────────────────────────────────────────
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_snapshot_is_consistent_and_passes_integrity_check(tmp_path, db_path, monkeypatch):
     import scheduler
     monkeypatch.setattr(models, "DB_PATH", db_path)
@@ -90,6 +91,7 @@ def test_snapshot_is_consistent_and_passes_integrity_check(tmp_path, db_path, mo
     conn.close()
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_backup_carries_no_session_tokens_or_credentials(tmp_path, db_path, monkeypatch):
     import scheduler
     monkeypatch.setattr(models, "DB_PATH", db_path)

@@ -829,7 +829,10 @@ def test_the_intraday_slot_reads_restaurants_once_and_resumes_from_its_cursor(tm
     # A sibling walks the same list and stops at its bound, resuming after
     # the last restaurant it finished.
     import time as _time
-    clock = iter([0, 999, 999, 999, 999])
+    import itertools
+    # 0, then past the bound for good: a fixed five-reading clock ran out
+    # when anything else read time.monotonic (the Postgres pool does).
+    clock = itertools.chain([0], itertools.repeat(999))
     monkeypatch.setattr(_time, "monotonic", lambda: next(clock))
     walked = [r.id for r in strategy_jobs._slot_iter("coverage_check", rows, tmpdb)]
     assert len(walked) == 1

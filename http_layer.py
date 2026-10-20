@@ -148,6 +148,31 @@ def _etag_eligible(path) -> bool:
     return True
 
 
+# Top-level keys of a tagged body that are a clock, not content (blind
+# re-audit 10/20/26 R6-F11): Home's `generated_at` (home_brief's build time,
+# every minute) made every Home answer unique, so the phone's If-None-Match
+# never matched. The tag is taken over the body without them; a 304 leaves
+# the phone its own copy, whose content is the same. (`local_now` stays in:
+# the phone reads its hour — it is the hour now, mobile_api._home_local_now.)
+_ETAG_IGNORED_KEYS = {"/mobile/api/home": ("generated_at",)}
+
+
+def _tagged_bytes(path, body: bytes) -> bytes:
+    keys = _ETAG_IGNORED_KEYS.get(path or "")
+    if not keys or not body:
+        return body
+    try:
+        import json
+        obj = json.loads(body)
+        if not isinstance(obj, dict):
+            return body
+        for k in keys:
+            obj.pop(k, None)
+        return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode()
+    except Exception:
+        return body
+
+
 def etag_for(user, body: bytes) -> str:
     """The weak ETag for `body` as answered to `user` (a session dict)."""
     import hashlib
@@ -184,7 +209,7 @@ def conditional_get(response):
         user = getattr(g, "cavnar_current_user", None)
         if not isinstance(user, dict) or user.get("id") is None:
             return response
-        tag = etag_for(user, response.get_data())
+        tag = etag_for(user, _tagged_bytes(request.path, response.get_data()))
         response.headers["ETag"] = tag
         # The answer depends on who asked: no cache may serve one login's
         # tag or body to another's request.

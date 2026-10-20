@@ -37,6 +37,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # the statement is a CREATE/ALTER/seed that is expected to fail once the
 # schema already has it, and there is no user-visible consequence.
 ALLOWED_WRITE_SITES = {
+    ("rpower.py", "_mark_live"),              # the live-traffic heartbeat (R3-01): a missed beat only lets bulk run a minute sooner
     ("models.py", "ensure_columns"),          # ALTER TABLE ADD COLUMN, already present
     ("auth.py", "init_auth"),                 # same, for the auth tables
     ("admin_ops.py", "_load_everything"),     # CREATE TABLE IF NOT EXISTS ensure

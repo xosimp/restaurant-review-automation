@@ -14,7 +14,7 @@
                                                        settings?, apply} -> the DSR calendar (ONB-7)
   GET  /admin/api/partners                            partners (ONB-10)
   POST /admin/api/partners                            {name, billing_mode, ...} step-up
-  POST /admin/api/partners/<pid>/stores               {restaurant_id}
+  POST /admin/api/partners/<pid>/stores               {restaurant_id} step-up
 
 Every write is an admin action recorded through admin_events.
 record_admin_action (and the blueprint's writes are in the audit trail);
@@ -285,7 +285,11 @@ def admin_partner_save(current_user):
 
 @onboarding_bp.route("/admin/api/partners/<int:partner_id>/stores", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def admin_partner_attach(partner_id, current_user):
+    """Attach a store to a partner. Step-up (scale re-audit 10/20/26 R8-22):
+    with PARTNER_BILLING on it takes the store's own contract and checkout
+    off it — the effect saving a partner already stepped up for."""
     import onboarding
     data = _body()
     try:

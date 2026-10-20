@@ -302,7 +302,7 @@ def test_time_off_create_withdraw_and_call_off_from_the_browser(db, told):
     assert part.status_code == 200, part.get_json()
     req = part.get_json()["request"]
     assert req["end_time"], "the portal's 15-minute select value is a time the server reads"
-    time_off.decide(rid, req["id"], True, decided_by="erik")
+    time_off.decide(rid, req["id"], True, decided_by=1)  # a login id, as the route passes
     called = _post(c, f"/staff/api/time-off/{req['id']}/cancel")
     assert called.status_code == 200 and called.get_json()["request"]["status"] == "withdrawn"
 

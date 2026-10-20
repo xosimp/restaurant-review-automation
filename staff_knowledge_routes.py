@@ -108,9 +108,56 @@ def staff_ask(current_user):
             ai_rate_limited(f"staff_ask_day:{mid}", max_calls=sk.ASK_PER_DAY, window_secs=86400):
         return jsonify(ok=False, error="That's a lot of questions — try again in a little while, or ask "
                                        "your manager.", suggest_message=True), 429
+    # The whole crew's questions together (blind re-audit 10/20/26 R4-08).
+    if ai_rate_limited(f"staff_ask_rid:{rid}", max_calls=sk.ASK_PER_RESTAURANT_MINUTE, window_secs=60):
+        return jsonify(ok=False, error="Lots of questions from your team right now — try again in a minute, or "
+                                       "ask your manager.", suggest_message=True), 429
     membership = get_membership(current_user["id"], rid) or {}
     roles = _job_roles(rid, membership, name)
+    import ai_async
+    import ai_lane
+    if ai_async.wants_async() and ai_lane.enabled():
+        # Off the request thread (R4-08): the answer is written on the
+        # interactive lane — fair between restaurants, bounded — and the
+        # client polls /staff/api/ask/turn/<id>. A client that does not ask
+        # for it (an older build) is answered inline as before.
+        import ai_utils
+
+        def body(turn):
+            try:
+                turn.put({"type": "answer", "answer": sk.answer(rid, mid, name, roles, q)})
+            except Exception as e:
+                import ops
+                ops.capture(e, job="staff_ask", context=f"restaurant_id={rid}")
+                turn.put({"type": "error", "error": "Couldn't get an answer right now — ask your manager."})
+        try:
+            turn = ai_lane.start(rid, ("staff", mid), ai_utils.attributed(body))
+        except ai_lane.LaneBusy:
+            return jsonify(ok=False, error=ai_lane.BUSY_MESSAGE, suggest_message=True), 503
+        return jsonify(ok=True, pending=True, turn_id=turn.id, poll_after_ms=ai_lane.POLL_AFTER_MS), 202
     return jsonify(ok=True, **sk.answer(rid, mid, name, roles, q))
+
+
+@staff_knowledge_bp.route("/api/ask/turn/<turn_id>")
+@staff_login_required
+def staff_ask_turn(current_user, turn_id):
+    """A polled staff answer (R4-08): {"done": false} while it is written;
+    then the answer exactly as the inline route gives it, or its error.
+    Only the member who asked reads it."""
+    import ai_lane
+    rid, _name = _staff(current_user)
+    got = ai_lane.read(turn_id, rid, ("staff", current_user.get("membership_id")))
+    if got is None:
+        return jsonify(ok=False, error="That question isn't here any more — ask it again."), 404
+    events, _next, done = got
+    if not done:
+        return jsonify(ok=True, done=False, poll_after_ms=ai_lane.POLL_AFTER_MS)
+    for e in events:
+        if e.get("type") == "answer":
+            return jsonify(ok=True, done=True, **(e.get("answer") or {}))
+    err = next((e.get("error") for e in events if e.get("type") == "error"), None)
+    return jsonify(ok=False, done=True, error=err or "Couldn't get an answer right now — ask your manager.",
+                   suggest_message=True)
 
 
 # ── the console (web + mobile twins) ────────────────────────────────────────

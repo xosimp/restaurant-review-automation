@@ -10,6 +10,7 @@ from datetime import datetime
 # Import everything needed from the main app
 from models import get_conn, get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
 from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required, recent_auth_required
+import admin_events as _admin_events_c   # the typed audit decorator on admin writes (R7-13)
 from emails import send_payment_email, send_welcome_email
 import emails as _emails
 
@@ -123,6 +124,7 @@ def _new_client_problem(data):
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def create_client(current_user):
     """Create the restaurant and its owner's login, then start the provider
     calls (the Places menu fetch, the DocuSign contract) as a background
@@ -256,6 +258,12 @@ def create_client(current_user):
             "actor": current_user.get("username") or "admin",
         }
         job_id, setup_error = _start_client_setup(rid, setup)
+        _audit_admin_action(current_user, "client.created", restaurant_id=rid, target=f"restaurant:{rid}",
+                            after={"restaurant_name": setup["restaurant_name"], "owner_email": setup["owner_email"],
+                                   "username": data["username"].strip(), "modules": module_names,
+                                   "location_group": (data.get("location_group") or "").strip() or None,
+                                   "timezone": timezone},
+                            summary=f"{current_user.get('username')} created {setup['restaurant_name']}"[:300])
         return jsonify(ok=True, restaurant_id=rid, setup_job_id=job_id, setup_error=setup_error,
                        envelope_id=None, docusign_skipped=False, timezone=timezone,
                        timezone_defaulted=not (data.get("timezone") or "").strip())
@@ -402,6 +410,7 @@ def deactivate_client(user_id, current_user):
 
 @admin_bp.route("/admin/reactivate-client/<int:user_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def reactivate_client(user_id, current_user):
     """Switch a login back on. Never an admin row (the deactivate twin
     always refused one; this did not — SECURITY #93). Any session left from
@@ -1060,6 +1069,7 @@ def get_staff_availability_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("staff_availability.saved")
 def save_staff_availability_route(restaurant_id, current_user):
     from models import save_staff_availability
     data = request.get_json() or {}
@@ -1076,6 +1086,7 @@ def save_staff_availability_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>/delete", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("staff_availability.deleted")
 def delete_staff_availability_route(restaurant_id, current_user):
     from models import delete_staff_availability
     data = request.get_json() or {}
@@ -1158,6 +1169,7 @@ def test_alert_sms_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("data.uploaded")
 def upload_data(restaurant_id, current_user):
     """A client's shifts or inventory CSV, loaded by an admin into THAT
     client's restaurant — the one the URL names. The console's data page
@@ -1223,7 +1235,9 @@ _SETTINGS_CONTROL_KEYS = frozenset({"touched", "expected_version", "base", "bill
 # client is sold and billed for) and the owner's email (where every account
 # and security email goes).
 _SETTINGS_STEP_UP_FIELDS = ("billing_status", "module_reviews", "module_labor", "module_inventory",
-                            "module_marketing", "owner_email")
+                            "module_marketing", "owner_email",
+                            # where an account holder's sign-in codes are texted (R7-13)
+                            "owner_phone")
 
 # The two targets this page sets: label, lowest, highest. The labor target
 # keeps the admin's stricter 5–60 (SCHED-36); food cost takes the owner
@@ -2646,11 +2660,30 @@ def view_as_client(restaurant_id, current_user):
     if not user_id:
         return ("This restaurant has no owner login to view as. Open it from the location "
                 "that has the owner's login, or add one first."), 404
+    import auth as _auth_va
+    # A view that can make changes is the owner's whole account: it asks for
+    # the admin's password within the step-up window, like every other
+    # sensitive admin action (re-audit 10/20/26 R7-03). A support login's
+    # read-only view does not.
+    needs_pw = bool(current_user.get("is_admin")) and not _auth_va.reauth_is_recent(current_user)
     if request.method != "POST":
-        return _view_as_confirm_page(restaurant_id)
+        return _view_as_confirm_page(restaurant_id, ask_password=needs_pw)
     reason = view_as_reason(request.form.get("reason"))
     if not reason:
-        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE), 400
+        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE, ask_password=needs_pw), 400
+    if needs_pw:
+        _tok_va = _auth_va.current_session_token()
+        if not (_tok_va and _auth_va.password_matches(current_user["id"], request.form.get("password") or "")):
+            import security as _sec_va
+            if _tok_va:
+                misses = _sec_va.record_reauth_miss("reauth:" + _auth_va.hash_session_token(_tok_va)[:24],
+                                                    request.remote_addr)
+                if misses >= REAUTH_MAX_MISSES:
+                    _auth_va.delete_session(_tok_va)
+                    return redirect("/login")
+            return _view_as_confirm_page(restaurant_id, error="Enter your password to open a view that can make "
+                                                              "changes.", ask_password=True), 403
+        _auth_va.mark_reauthenticated(_tok_va)
     from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
     from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
     read_only = not current_user.get("is_admin")
@@ -2711,7 +2744,7 @@ def tell_tenant_support_access(restaurant_id, what, admin, reason=None, read_onl
 _VIEW_AS_RETURN_COOKIE = "cavnar_admin_return"
 
 
-def _view_as_confirm_page(restaurant_id, error=None):
+def _view_as_confirm_page(restaurant_id, error=None, ask_password=False):
     """The GET half of view-as: a button that POSTs, carrying the csrf_js
     double-submit token (minted here when this browser has none yet —
     ensure_csrf_cookie leaves a response that already sets one alone)."""
@@ -2733,6 +2766,9 @@ def _view_as_confirm_page(restaurant_id, error=None):
         f"<p><label for='va-reason'>Why? They see this in their account activity.</label><br>"
         f"<input id='va-reason' name='reason' required minlength='8' maxlength='200' "
         f"style='width:100%;max-width:420px' placeholder='Ticket, their request, the fix you are checking'></p>"
+        + ("<p><label for='va-pw'>Your password (this view can make changes)</label><br>"
+           "<input id='va-pw' name='password' type='password' required autocomplete='current-password' "
+           "style='width:100%;max-width:420px'></p>" if ask_password else "")
         + (f"<p style='color:var(--bad)'>{_esc_va(error)}</p>" if error else "")
         + f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
         f"<p style='margin-top:16px'><a href='/admin'>Back to the admin console</a></p>")
@@ -3151,6 +3187,7 @@ def inv_trend_api(current_user):
 
 @admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.uploaded")
 def upload_menu_pdf(restaurant_id, current_user):
     """Extract the menu from a PDF, as a background job; poll
     /admin/api/menu-extract/<job_id>. The text comes back to the page to
@@ -3183,6 +3220,7 @@ def _extract_menu_pdf(restaurant_id, pdf_bytes, restaurant_name):
 
 @admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.fetched_from_url")
 def fetch_menu_from_url_route(restaurant_id, current_user):
     """Extract the menu from a web page, as a background job; poll
     /admin/api/menu-extract/<job_id>. Returned to review, never saved here
@@ -3211,6 +3249,7 @@ def _extract_menu_url(restaurant_id, url):
 
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.notes_refreshed")
 def refresh_menu_notes(restaurant_id, current_user):
     """Menu notes from Google Places, merged with the saved ones, as a
     background job; poll /admin/api/menu-extract/<job_id>. Returned to
@@ -3611,8 +3650,8 @@ def competitor_intel_status(current_user, job_id):
     """Poll for competitor analysis result. Scoped to the caller's own
     restaurant — this used to be unauthenticated on the reasoning that the
     job id is an unguessable UUID, which is true but left a competitor
-    report readable by anyone who saw the id."""
-    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"])
+    report readable by anyone who saw the id. Competitor jobs only (R7-21)."""
+    job = _ops.read_async_job(job_id, restaurant_id=current_user["restaurant_id"], kinds=("competitor_intel",))
     if not job:
         return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
@@ -3716,6 +3755,7 @@ def admin_get_changelog(current_user):
 
 @admin_bp.route("/admin/api/changelog", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("changelog.added")
 def admin_create_changelog(current_user):
     data = request.get_json(force=True) or {}
     title = (data.get("title") or "").strip()
@@ -3728,6 +3768,7 @@ def admin_create_changelog(current_user):
 
 @admin_bp.route("/admin/api/changelog/<int:entry_id>", methods=["DELETE"])
 @admin_required
+@_admin_events_c.audited("changelog.deleted")
 def admin_delete_changelog(entry_id, current_user):
     delete_changelog_entry(entry_id)
     return jsonify(ok=True)
@@ -5042,6 +5083,9 @@ def admin_api_reset_two_factor(user_id, current_user):
     if _auth_rt.is_internal_login(full):
         before = {"two_fa_enabled": _auth_rt.user_two_factor_enrolled(full), "method": full.get("two_fa_method")}
         _clear_user_two_factor(user_id)
+        # A reset is what a lost or compromised phone gets: the views that
+        # login opened end with it (re-audit 10/20/26 R7-06).
+        _auth_rt.end_view_as_opened_by(user_id)
         scope = "login"
     else:
         r = get_restaurant(row["restaurant_id"])
@@ -6256,6 +6300,7 @@ def admin_list_templates(restaurant_id, current_user):
 
 @admin_bp.route("/admin/api/templates/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("template.saved")
 def admin_create_template(restaurant_id, current_user):
     """The owner route's rules (mobile_api.mobile_create_template)."""
     from models import create_response_template
@@ -6279,6 +6324,7 @@ def admin_create_template(restaurant_id, current_user):
 
 @admin_bp.route("/admin/api/templates/<int:restaurant_id>/<int:template_id>/delete", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("template.deleted")
 def admin_delete_template(restaurant_id, template_id, current_user):
     from models import delete_response_template
     delete_response_template(template_id, restaurant_id)
@@ -6428,18 +6474,39 @@ def _admin_fleet_invalidate(resp):
 def _admin_support_redaction(resp):
     """What the read-only support role may see (#87): owner and login email
     addresses and phones, sign-in IPs and user agents, and Stripe ids are
-    masked in every /admin/api/ read answered to a support login."""
+    masked in every /admin JSON read answered to a support login.
+
+    Since the re-audit (10/20/26, R7-11) it is also registered app-wide
+    (hosted_dashboard), so it covers every blueprint under /admin — the
+    onboarding console's partner and provisioning reads had no hook — and
+    every /admin JSON GET, not only /admin/api/ (alert contacts and staff
+    availability answered support unmasked). It fails CLOSED for support: a
+    body that cannot be masked is a 500, never the unmasked body. Applied
+    once per response (X-Redacted)."""
     try:
-        if (request.method == "GET" and (request.path or "").startswith("/admin/api/") and resp.status_code == 200
-                and resp.mimetype == "application/json" and not resp.headers.get("Content-Encoding")
-                and not resp.direct_passthrough and _admin_ops_c.viewer_role() == "support"):
-            data = resp.get_json(silent=True)
-            if data is not None:
-                resp.set_data(json.dumps(_admin_ops_c.redact_for_support(data), default=str))
-                resp.headers["X-Redacted"] = "support"
+        if (request.method != "GET" or not (request.path or "").startswith("/admin")
+                or resp.status_code != 200 or resp.mimetype != "application/json"
+                or resp.headers.get("X-Redacted")):
+            return resp
+        role = _admin_ops_c.viewer_role()
     except Exception:
-        pass
-    return resp
+        return resp
+    if role != "support":
+        return resp
+    try:
+        if resp.headers.get("Content-Encoding") or resp.direct_passthrough:
+            raise ValueError("an encoded or streamed body cannot be masked")
+        data = resp.get_json(silent=True)
+        if data is not None:
+            resp.set_data(json.dumps(_admin_ops_c.redact_for_support(data), default=str))
+        resp.headers["X-Redacted"] = "support"
+        return resp
+    except Exception as e:
+        _ops.capture(e, job="support_redaction", context=f"path={request.path}")
+        refused = jsonify(ok=False, error="This page couldn't be shown with personal details masked.")
+        refused.status_code = 500
+        refused.headers["X-Redacted"] = "refused"
+        return refused
 
 
 def _page_args():
@@ -6666,6 +6733,46 @@ def admin_api_ai_reset_breaker(current_user):
              before={p: b["state"] for p, b in before.items()}, after={p: b["state"] for p, b in after.items()},
              summary=f"AI breaker reset ({provider or 'all providers'}) by {current_user.get('username')}")
     return jsonify(ok=True, breakers=after)
+
+
+@admin_bp.route("/admin/api/ai/emergency-stop", methods=["POST"])
+@admin_required
+def admin_api_ai_emergency_stop(current_user):
+    """Arm (body {"armed": true, "reason": "..."}) or clear ({"armed":
+    false}) the emergency stop: every model call for every client refused,
+    in every process within seconds, no deploy (blind re-audit 10/20/26
+    R4-02). AI_EMERGENCY_STOP in the environment still holds while set."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import ai_utils
+    body = request.get_json(silent=True) or {}
+    armed = body.get("armed") in (True, 1, "1", "true", "yes")
+    before = ai_utils.emergency_stop_armed()
+    if armed:
+        ai_utils.arm_emergency_stop(actor=current_user.get("username"),
+                                    reason=str(body.get("reason") or "")[:200] or None)
+    else:
+        ai_utils.clear_emergency_stop(actor=current_user.get("username"))
+    after = ai_utils.emergency_stop_armed()
+    _g_audit(current_user, "ai.emergency_stop", target="all", before={"armed": before}, after={"armed": after},
+             summary=f"AI emergency stop {'armed' if armed else 'cleared'} by {current_user.get('username')}")
+    return jsonify(ok=True, emergency_stop=after, env_armed=ai_utils._env_emergency_stop())
+
+
+@admin_bp.route("/admin/api/ai/fleet-brake/release", methods=["POST"])
+@admin_required
+def admin_api_ai_fleet_brake_release(current_user):
+    """Release the automatic fleet brake (R4-02): the paused background AI
+    work resumes, and the brake does not re-arm by itself for
+    AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires)."""
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    import ai_utils
+    before = ai_utils.fleet_brake_scope()
+    ai_utils.release_fleet_brake(actor=current_user.get("username"))
+    _g_audit(current_user, "ai.fleet_brake_release", target="all", before={"brake": before},
+             after={"brake": None}, summary=f"AI fleet brake released by {current_user.get('username')}")
+    return jsonify(ok=True, fleet_brake=ai_utils.fleet_brake_scope())
 
 
 @admin_bp.route("/admin/api/ai/quality")

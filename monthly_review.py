@@ -20,6 +20,7 @@ import logging
 from datetime import date, timedelta
 
 import metrics
+from models import in_read_scope
 import review_common
 from review_common import fmt as _fmt, cost_of_waiting  # shared with the other review
 
@@ -51,6 +52,11 @@ def _months_back(day, n):
     return date(y, m, 1)
 
 
+# One unit of work (blind re-audit 10/20/26 R2-12): the restaurant row and
+# client_data read once for the whole build (models.read_scope) — off a
+# request (the scheduler's precompute, a delivery) it was read ~190 times,
+# each a round trip on Postgres.
+@in_read_scope
 def build(restaurant_id, today=None, restaurant=None, db_path=None, months=1):
     """The month that just ended: {"month", "metrics", "results", "goals",
     "priorities", "prime_cost"}. `today` is any day in the month AFTER the

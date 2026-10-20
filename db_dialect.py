@@ -91,6 +91,23 @@ PARTITIONED = {
     "pos_punches": "business_date",
     "ai_usage": "created_at",
     "schedule_model_calls": "created_at",
+    # Blind re-audit 10/20/26 R2-11: the growing per-store tables.
+    # Partitioned by a copy, or on the live database by
+    # pg_partitions.convert_to_partitioned in the write freeze; until then
+    # the dialect reads each table's real key, so a plain one works as
+    # before. pos_item_daily, menu_item_sales, dsr_metrics and
+    # bar_sales_nights already carry the date in every unique key;
+    # pos_payments' and pos_payouts' keys gain it, as the tickets' did, and
+    # their one writer (pos_archive) deletes a re-dated record's other copy
+    # first (_drop_redated, R2-08). Not ai_calls (an upsert by call_id) or
+    # job_period_claims (claimed once by key): a date in their keys would
+    # break the rule.
+    "pos_payments": "business_date",
+    "pos_payouts": "business_date",
+    "pos_item_daily": "business_date",
+    "menu_item_sales": "business_date",
+    "dsr_metrics": "business_date",
+    "bar_sales_nights": "business_date",
 }
 
 # Python functions the app registers on SQLite connections, defined in SQL
@@ -203,6 +220,17 @@ def _literal(arg):
 _INTERVAL = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s+(second|minute|hour|day|month|year)s?\s*$", re.I)
 
 
+def _is_julian(arg) -> bool:
+    """Whether a date function's time value is a Julian day number:
+    julianday(…), or MAX / MIN / AVG of one."""
+    sig = _significant(arg)
+    k = 0
+    while k + 1 < len(sig) and sig[k].kind == "word" and sig[k].upper in ("MAX", "MIN", "AVG") \
+            and sig[k + 1].kind == "op" and sig[k + 1].text == "(":
+        k += 2
+    return k < len(sig) and sig[k].kind == "word" and sig[k].upper == "JULIANDAY"
+
+
 def _timestamp(args, tr) -> str:
     """The timestamp expression for SQLite's (timevalue, modifiers...)."""
     if not args:
@@ -212,6 +240,12 @@ def _timestamp(args, tr) -> str:
     unix = any((_literal(m) or "").strip().lower() == "unixepoch" for m in mods)
     if base is not None and base.lower() == "now":
         expr = _NOW_TS
+    elif _is_julian(args[0]):
+        # datetime(MAX(julianday(x))): SQLite reads a number as a Julian day
+        # (how the console orders mixed stamp formats as instants). As text
+        # it was no date, so every owner's last sign-in and last request read
+        # NULL on Postgres (blind re-audit 10/20/26 R9-02).
+        expr = f"timezone('UTC', to_timestamp(({tr(args[0]).strip()} - 2440587.5) * 86400.0))"
     elif unix:
         expr = f"timezone('UTC', to_timestamp(CAST({tr(args[0]).strip()} AS double precision)))"
     else:
@@ -327,7 +361,12 @@ CONFLICT_REPLACE = {
 }
 
 _COMPARISON_OPS = {"=", "==", "!=", "<>", "<", ">", "<=", ">="}
-_BOOLEAN_WORDS = {"IS", "IN", "LIKE", "ILIKE", "GLOB", "NOTGLOB", "BETWEEN", "EXISTS", "NOT", "AND", "OR"}
+# A literal that is a date / time stamp (or empty): orders the same under
+# any collation, so _binary_ranges leaves it alone.
+_DML = re.compile(r"^\s*(INSERT|UPDATE|DELETE)\b", re.I)
+_DATEISH = re.compile(r"^[0-9 :.\-T+Z]*$")
+_BOOLEAN_WORDS = {"IS", "IN", "LIKE", "ILIKE", "GLOB", "NOTGLOB", "BETWEEN", "EXISTS", "NOT", "AND", "OR",
+                  "IS NOT DISTINCT FROM", "IS DISTINCT FROM", "\x03"}
 _ORDER_END_WORDS = {"LIMIT", "OFFSET", "FETCH", "FOR", "UNION", "EXCEPT", "INTERSECT", "ROWS", "RANGE",
                     "GROUPS", "RETURNING", "ON"}
 _LIKE_END_WORDS = {"AND", "OR", "THEN", "ELSE", "END", "WHEN", "ORDER", "GROUP", "LIMIT", "HAVING", "UNION",
@@ -353,7 +392,22 @@ def _sig_index(toks, start, step):
 def _is_boolean(toks) -> bool:
     """True when the expression `toks` is a comparison / predicate at its
     own top level (outside parentheses and CASE … END): SQLite gives it the
-    value 0/1, Postgres a boolean that SUM() and friends refuse."""
+    value 0/1, Postgres a boolean that SUM() and friends refuse. A predicate
+    wrapped whole in parentheses — SUM((a AND b)), from an f-string that
+    parenthesises its piece — is one too (blind re-audit 10/20/26 R9-02:
+    ops._reclaim_dead_run's SUM((…)) raised on every call on Postgres)."""
+    sig = _significant(toks)
+    if len(sig) >= 2 and sig[0].kind == "op" and sig[0].text == "(" and sig[-1].kind == "op" and sig[-1].text == ")":
+        depth = 0
+        for k, t in enumerate(sig):
+            if t.kind == "op" and t.text == "(":
+                depth += 1
+            elif t.kind == "op" and t.text == ")":
+                depth -= 1
+                if depth == 0:
+                    if k == len(sig) - 1:
+                        return _is_boolean(sig[1:-1])
+                    break
     depth = case = 0
     for t in toks:
         if t.kind == "op" and t.text == "(":
@@ -369,6 +423,30 @@ def _is_boolean(toks) -> bool:
                 return True
             if t.kind == "word" and t.upper in _BOOLEAN_WORDS:
                 return True
+    return False
+
+
+def _simple_case_when(toks, when_index) -> bool:
+    """Whether the WHEN at `when_index` belongs to a simple CASE (`CASE x
+    WHEN 1 THEN …`, whose WHEN holds a value to compare) rather than a
+    searched one (`CASE WHEN cond THEN …`)."""
+    depth = case_depth = 0
+    for k in range(when_index - 1, -1, -1):
+        t = toks[k]
+        if t.kind == "op" and t.text == ")":
+            depth += 1
+        elif t.kind == "op" and t.text == "(":
+            if depth == 0:
+                return False
+            depth -= 1
+        elif depth == 0 and t.kind == "word" and t.upper == "END":
+            case_depth += 1
+        elif depth == 0 and t.kind == "word" and t.upper == "CASE":
+            if case_depth:
+                case_depth -= 1
+                continue
+            n = _sig_index(toks, k, 1)
+            return not (n is not None and toks[n].kind == "word" and toks[n].upper == "WHEN")
     return False
 
 
@@ -410,6 +488,99 @@ def _operand_start(toks, end):
                 start = q
                 continue
         return start
+
+
+# `col IS ?` (SQLite's NULL-safe equality) — IS NOT DISTINCT FROM on
+# Postgres, which no btree index serves: every AI call's ai_calls trim
+# (restaurant_id IS ?) and the ai_runs lookups scanned the fleet's rows
+# (blind re-audit 10/20/26 R2-04; EXPLAIN on 600k rows: Seq Scan 15-37 ms,
+# the form below a Bitmap Index Scan at 1 ms, under a generic plan too).
+# The translation marks the column and its parameter (_IS_A col _IS_B %s);
+# bind_is decides per execution: a value -> `(col = %s AND col IS NOT NULL)`
+# (NULL-safe: false, never NULL, for a NULL column — and indexable), None ->
+# `col IS NULL` with the parameter dropped. Only a plain column (t.col)
+# compared with a bare `?`, standing alone between a condition's own words;
+# anything else stays IS NOT DISTINCT FROM.
+_IS_A, _IS_B = "\x02", "\x03"
+_IS_MARK = re.compile(r"%%|%s|\x02(.*?)\x03\s*%s", re.S)
+_IS_PREV_WORDS = {"WHERE", "AND", "OR", "ON", "WHEN", "NOT", "HAVING", "THEN", "ELSE"}
+_IS_NEXT_WORDS = {"AND", "OR", "THEN", "ELSE", "END", "WHEN", "ORDER", "GROUP", "LIMIT", "HAVING", "UNION",
+                  "EXCEPT", "INTERSECT", "OFFSET", "RETURNING"}
+_IS_NOT_COLUMNS = _SQL_KEYWORDS | {"NULL", "TRUE", "FALSE", "ROWID", "CASE", "SELECT", "EXISTS", "DISTINCT"}
+
+
+def _is_param_operand(out, toks, v):
+    """For `col IS ?` — `out` the tokens emitted up to IS, toks[v] the value
+    — the index in `out` where the plain column `col` / `t.col` starts, or
+    None when the comparison is anything else."""
+    val = toks[v]
+    if val.kind != "param" or val.text != "?":
+        return None
+    n = _sig_index(toks, v, 1)
+    if n is not None:
+        nx = toks[n]
+        if not ((nx.kind == "word" and nx.upper in _IS_NEXT_WORDS) or (nx.kind == "op" and nx.text in (")", ",", ";"))):
+            return None
+    k = len(out) - 1
+    while k >= 0 and out[k].kind in ("ws", "comment"):
+        k -= 1
+    if k < 0 or out[k].kind not in ("word", "qid") or (out[k].kind == "word" and out[k].upper in _IS_NOT_COLUMNS):
+        return None
+    start = k
+    p = _sig_index(out, start, -1)
+    if p is not None and out[p].kind == "op" and out[p].text == ".":
+        q = _sig_index(out, p, -1)
+        if q is None or out[q].kind not in ("word", "qid"):
+            return None
+        start = q
+        p = _sig_index(out, start, -1)
+    if p is None or not ((out[p].kind == "word" and out[p].upper in _IS_PREV_WORDS)
+                         or (out[p].kind == "op" and out[p].text in ("(", ","))):
+        return None
+    return start
+
+
+def bind_is(text, params):
+    """(text, params) with each marked `col IS ?` decided by its value (see
+    _IS_A). `params` None: the statement as a value would bind it (what
+    PREPARE checks — scripts/pg_sql_audit.py)."""
+    if _IS_A not in text:
+        return text, params
+    have = None if params is None else tuple(params)
+    out, new, i, last = [], [], 0, 0
+    for m in _IS_MARK.finditer(text):
+        g = m.group(0)
+        if g == "%%":
+            continue
+        if g == "%s":
+            if have is not None and i < len(have):
+                new.append(have[i])
+            i += 1
+            continue
+        col = m.group(1).strip()
+        out.append(text[last:m.start()])
+        last = m.end()
+        if have is not None and i >= len(have):
+            out.append(f"{col} IS NOT DISTINCT FROM %s")      # a short tuple: the driver says so
+        elif have is not None and have[i] is None:
+            out.append(f"{col} IS NULL")
+        else:
+            out.append(f"({col} = %s AND {col} IS NOT NULL)")
+            if have is not None:
+                new.append(have[i])
+        i += 1
+    out.append(text[last:])
+    if have is not None:
+        new.extend(have[i:])
+    return "".join(out), (None if have is None else tuple(new))
+
+
+def static_is(text):
+    """A marked text with every `col IS ?` as IS NOT DISTINCT FROM — one
+    statement for parameter rows that may differ (executemany)."""
+    if _IS_A not in text:
+        return text
+    return re.sub("\x02(.*?)\x03\\s*", lambda m: f"{m.group(1).strip()} IS NOT DISTINCT FROM ", text, flags=re.S)
 
 
 class Translator:
@@ -479,6 +650,19 @@ class Translator:
                 val = toks[v] if v is not None else None
                 if val is not None and not (val.kind == "word" and val.upper in ("NULL", "TRUE", "FALSE",
                                                                                   "DISTINCT", "JSON")):
+                    start = None if neg else _is_param_operand(out, toks, v)
+                    if start is not None:
+                        # `col IS ?`: decided per execution (bind_is) — no
+                        # index serves IS NOT DISTINCT FROM (blind re-audit
+                        # 10/20/26 R2-04: ai_calls seq-scanned per AI call).
+                        k = len(out) - 1
+                        while out[k].kind in ("ws", "comment"):
+                            k -= 1
+                        out[start:k + 1] = [Tok("ws", _IS_A)] + out[start:k + 1] + [Tok("word", _IS_B)]
+                        del out[start + (k + 1 - start) + 2:]
+                        out.append(Tok("ws", " "))
+                        i = v
+                        continue
                     out.extend([Tok("word", "IS DISTINCT FROM" if neg else "IS NOT DISTINCT FROM"), Tok("ws", " ")])
                     i = v
                     continue
@@ -665,10 +849,14 @@ class Translator:
         """A parameter standing alone as a condition (`CASE WHEN ? THEN`,
         `AND ?`) is SQLite's truthiness of whatever it is; Postgres wants a
         boolean and refuses the smallint a Python int binds as. It becomes
-        `CAST(? AS integer) <> 0` (NULL stays unknown)."""
+        `CAST(? AS integer) <> 0` (NULL stays unknown). A number standing
+        alone the same way (`WHERE 0`, `AND 1`, a fragment builder's "match
+        nothing") becomes `(1 = 0)` / `(1 = 1)`: Postgres refused
+        `WHERE 0` and the console's Recommendations read nothing (blind
+        re-audit 10/20/26 R9-02)."""
         out = list(toks)
         for k, t in enumerate(toks):
-            if t.kind != "param":
+            if t.kind not in ("param", "num"):
                 continue
             p, n = _sig_index(toks, k, -1), _sig_index(toks, k, 1)
             prev = toks[p] if p is not None else None
@@ -684,6 +872,11 @@ class Translator:
                 bb = _sig_index(toks, b, -1) if b is not None else None
                 if bb is not None and toks[bb].kind == "word" and toks[bb].upper == "BETWEEN":
                     continue                     # x BETWEEN ? AND ?
+            if prev.upper == "WHEN" and _simple_case_when(toks, p):
+                continue                         # CASE x WHEN 1 THEN: a value, not a condition
+            if t.kind == "num":
+                out[k] = Tok("other", "(1 = 0)" if float(t.text) == 0 else "(1 = 1)")
+                continue
             out[k] = Tok("other", f"CAST({_P} AS integer) <> 0")
         return out
 
@@ -734,6 +927,39 @@ class Translator:
                         continue
             out.append(t)
             i += 1
+        return out
+
+    def _binary_ranges(self, toks) -> list:
+        """`metric >= 'sales.cat:' AND metric < 'sales.cat;'` — the prefix
+        range the app reads a family of keys with. SQLite compares text
+        byte by byte (BINARY); Postgres by the database's collation, and a
+        non-C locale (en_US) ignores punctuation at the first level, so
+        'sales.cat:' and 'sales.cat;' compare as the same string and the
+        range is EMPTY: the Bar's and Food Cost's sales by category, the
+        DSR's departments and the shadow-review spend read nothing (blind
+        re-audit 10/20/26 R9-02, found by the Postgres mode). A range
+        comparison of a text column of the statement's table with a string
+        literal that is not a date or a time gets COLLATE "C" — SQLite's
+        own comparison. A date literal is left alone: its digits order the
+        same under any collation, and a partition's pruning reads it."""
+        out = list(toks)
+        hits = []
+        for k, t in enumerate(out):
+            if t.kind != "op" or t.text not in ("<", "<=", ">", ">="):
+                continue
+            n, p = _sig_index(out, k, 1), _sig_index(out, k, -1)
+            if n is None or p is None or out[n].kind != "str" or _DATEISH.match(out[n].text[1:-1]):
+                continue
+            col = out[p]
+            if col.kind not in ("word", "qid") or col.upper in _SQL_KEYWORDS or not self._table:
+                continue
+            types = self.types_lookup(self._table) or {}
+            name = col.text.strip('"')
+            typ = str(types.get(name) or types.get(name.lower()) or "").lower()
+            if "text" in typ or "char" in typ:
+                hits.append(n)
+        for n in reversed(hits):
+            out[n + 1:n + 1] = [Tok("ws", " "), Tok("word", "COLLATE"), Tok("ws", " "), Tok("other", '"C"')]
         return out
 
     def _like_escape(self, toks) -> list:
@@ -1066,7 +1292,10 @@ class Translator:
 
     # ── the statement ───────────────────────────────────────────────────────
 
-    def translate(self, sql) -> str:
+    def translate(self, sql, marked=False) -> str:
+        """`sql` in Postgres's SQL. `marked`: each `col IS ?` left for
+        bind_is to decide by its value (what PgConnection runs); else as IS
+        NOT DISTINCT FROM (static_is)."""
         sql = re.sub(r"\bNOT\s+GLOB\b", "NOTGLOB", sql or "", flags=re.I)
         toks = tokenize(sql)
         sig = _significant(toks)
@@ -1092,6 +1321,7 @@ class Translator:
         toks = self._having_alias(toks)
         toks = self._case_bool(toks)
         toks = self._qualify_upsert(toks)
+        toks = self._binary_ranges(toks)
         toks = self._like_escape(toks)
         toks = self._index_nulls(toks) if is_index else self._order_nulls(toks)
         toks = self._rewrite(toks, ddl=is_index)
@@ -1156,7 +1386,8 @@ class Translator:
                            else col)
             else:
                 out.append(t.text)
-        return "".join(out).replace("LIMIT -1", "LIMIT ALL")
+        text = "".join(out).replace("LIMIT -1", "LIMIT ALL")
+        return text if marked else static_is(text)
 
     def _index_nulls(self, toks) -> list:
         """CREATE INDEX: each nullable column in SQLite's NULL order (NULLS
@@ -1453,6 +1684,11 @@ class PgCursor:
     def close(self):
         pass
 
+    @property
+    def connection(self):
+        """sqlite3.Cursor.connection: the connection that made it."""
+        return self._conn
+
     def execute(self, sql, params=()):
         return self._conn.execute(sql, params, _cursor=self)
 
@@ -1481,6 +1717,12 @@ def _map_error(e):
         return sqlite3.OperationalError(f"no such column: {msg}")
     if "UndefinedTable" in name or re.search(r"\brelation \S+ does not exist", msg):
         return sqlite3.OperationalError(f"no such table or column: {msg}")
+    if "LockNotAvailable" in name or "lock timeout" in msg:
+        # lock_timeout passed: SQLite's busy_timeout passing, "database is
+        # locked" — what every `"locked" in str(e)` retry and the /health
+        # probe's busy reading test for (blind re-audit 10/20/26 R2-05:
+        # read as a failure, /health answered 500 db_not_writable).
+        return sqlite3.OperationalError(f"database is locked: {msg}")
     return sqlite3.OperationalError(msg)
 
 
@@ -1672,6 +1914,40 @@ _PRAGMA = re.compile(r"^\s*PRAGMA\s+(\w+)\s*(?:\(\s*['\"]?(\w+)['\"]?\s*\)|=\s*(
 _BEGIN = re.compile(r"^\s*BEGIN(\s+(DEFERRED|IMMEDIATE|EXCLUSIVE))?(\s+TRANSACTION)?\s*;?\s*$", re.I)
 _TRIGGER = re.compile(r"^\s*(CREATE|DROP)\s+TRIGGER\b", re.I)
 _END = re.compile(r"^\s*(COMMIT|END|ROLLBACK)(\s+TRANSACTION)?\s*;?\s*$", re.I)
+# A boot's `ALTER TABLE t ADD [COLUMN] c …` (blind re-audit 10/20/26 R2-09).
+_ADD_COLUMN = re.compile(r"^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?\"?([A-Za-z_]\w*)\"?\s+ADD\s+(?:COLUMN\s+)?"
+                         r"(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z_]\w*)\"?", re.I)
+_NOT_A_COLUMN = {"CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "EXCLUDE", "COLUMN"}
+
+# Schema changes wait for their table's lock at most DDL_LOCK_TIMEOUT_MS at
+# a time, DDL_LOCK_TRIES times: an ALTER or a partition's CREATE/DETACH
+# queued behind an open reader holds every later reader of the table behind
+# it (Postgres's lock queue) — for the whole 30 s lock_timeout, then failed
+# the boot (R2-09). Waits of 3 s with a pause between let readers through.
+DDL_LOCK_TIMEOUT_MS = 3000
+DDL_LOCK_TRIES = 8
+
+
+def run_ddl_bounded(conn, run):
+    """`run()` (one DDL statement on the PgConnection `conn`) under
+    DDL_LOCK_TIMEOUT_MS, retried on a lock timeout up to DDL_LOCK_TRIES
+    times; the session's own lock_timeout restored after. Returns run()'s
+    result; raises its last error."""
+    prev = conn.execute_native("SELECT current_setting('lock_timeout')").fetchone()[0]
+    try:
+        for attempt in range(DDL_LOCK_TRIES):
+            conn.execute_native("SELECT set_config('lock_timeout', %s, true)", (f"{int(DDL_LOCK_TIMEOUT_MS)}ms",))
+            try:
+                return run()
+            except sqlite3.OperationalError as e:
+                if "database is locked" not in str(e) or attempt == DDL_LOCK_TRIES - 1:
+                    raise
+            time.sleep(min(4.0, 0.25 * 2 ** attempt))
+    finally:
+        try:
+            conn.execute_native("SELECT set_config('lock_timeout', %s, true)", (str(prev),))
+        except Exception:
+            pass
 # Called with every statement before it runs (models._note_write: a write
 # drops what an open read scope froze of its table — blind re-audit 10/11/26
 # SCALE-24), as the SQLite connection does.
@@ -1700,7 +1976,10 @@ class PgConnection:
 
     @property
     def total_changes(self):
-        return 0
+        """sqlite3's: rows inserted, updated or deleted through this
+        connection. It answered 0, so people's handoff questions counted
+        none asked on Postgres (blind re-audit 10/20/26 R9-02)."""
+        return getattr(self, "_changes", 0)
 
     def cursor(self):
         return PgCursor(self, None)
@@ -1793,6 +2072,23 @@ class PgConnection:
             return cur
         if _CREATE_TABLE.match(sql):
             return self._create_table(sql, cur)
+        m = _ADD_COLUMN.match(sql)
+        if m and m.group(2).upper() not in _NOT_A_COLUMN:
+            # The boot re-runs ~1,000 ADD COLUMNs and reads "duplicate
+            # column" as applied. Postgres takes the table's ACCESS
+            # EXCLUSIVE lock before it finds the column is there, so each
+            # one waited behind any open reader and stalled every reader
+            # after it (R2-09). A column that exists is answered from the
+            # catalog, SQLite's error, no lock taken; a new one waits
+            # bounded (run_ddl_bounded).
+            if self._has_column(m.group(1), m.group(2)):
+                raise sqlite3.OperationalError(f"duplicate column name: {m.group(2)}")
+            try:
+                text = _translate_cached(self, sql)[0]
+            except TranslationError as e:
+                raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+            run_ddl_bounded(self, lambda: self._run(text, params, cur))
+            return cur
         m = _UPDATE_OR.match(sql)
         if m:
             return self._update_or_ignore(m, sql, params, cur)
@@ -1800,12 +2096,23 @@ class PgConnection:
             text, returning = _translate_cached(self, sql)
         except TranslationError as e:
             raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+        text, params = bind_is(text, params)
         self._run(text, params, cur)
+        if _DML.match(text) and (cur.rowcount or 0) > 0:
+            self._changes = getattr(self, "_changes", 0) + cur.rowcount
         if returning:
             got = cur.fetchone()
             cur.lastrowid = got[0] if got else None
             cur._rows, cur._pos = [], 0
         return cur
+
+    def _has_column(self, table, column) -> bool:
+        """Whether `table` (this schema's) has `column` — the catalog read,
+        no table lock."""
+        row = self.execute_native(
+            "SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass(%s) AND attname = %s "
+            "AND attnum > 0 AND NOT attisdropped", (f'"{table.lower()}"', column.lower())).fetchone()
+        return row is not None
 
     def _update_or_ignore(self, m, sql, params, cur):
         """SQLite's UPDATE OR IGNORE: rows the change would make collide
@@ -1843,12 +2150,20 @@ class PgConnection:
     def _final_text(self, sql):
         """(the statement in Postgres's SQL, whether it carries a RETURNING
         of the integer key the wrapper added for `lastrowid`)."""
-        text = self._tr.translate(sql)
+        text = self._tr.translate(sql, marked=True)
         sig = _significant(tokenize(text))
         if bool(sig) and sig[0].upper == "INSERT" and \
                 not any(t.kind == "word" and t.upper == "RETURNING" for t in sig):
             table = _main_table(sig)
             pk = self._catalog.primary_key(table) if table else None
+            part = PARTITIONED.get(str(table or "").strip('"').lower())
+            if pk and part and len(pk) == 2 and part.lower() in [c.lower() for c in pk]:
+                # A partitioned table's key gained its partition column
+                # (pg_copy): its SQLite rowid is the key without it. Without
+                # this every insert's lastrowid was None (blind re-audit
+                # 10/20/26 R2-07: ai_calls.usage_id NULL, log_blocked's
+                # coalescing never matched — a row per refusal).
+                pk = [c for c in pk if c.lower() != part.lower()]
             if pk and len(pk) == 1 and self._catalog.is_integer(table, pk[0]):
                 return text.rstrip().rstrip(";") + f" RETURNING {pk[0]}", True
         return text, False
@@ -1925,7 +2240,7 @@ class PgConnection:
             cur.rowcount = total
             return cur
         try:
-            text = _translate_cached(self, sql)[0]
+            text = static_is(_translate_cached(self, sql)[0])
         except TranslationError as e:
             raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
         # The RETURNING _final_text adds for lastrowid has no use here
@@ -2290,6 +2605,14 @@ def _driver_connect(url):
             f"-c lock_timeout={_env_int(os.getenv('PG_LOCK_TIMEOUT_MS'), 30000)}",
             f"-c statement_timeout={_env_int(os.getenv('PG_STATEMENT_TIMEOUT_MS'), 300000)}",
             f"-c idle_in_transaction_session_timeout={_env_int(os.getenv('PG_IDLE_TX_TIMEOUT_MS'), 300000)}"]
+    # PG_WORK_MEM (e.g. 16MB): the memory one sort or hash of this app's
+    # sessions may take before it spills to disk — the server's default is
+    # 4 MB (blind re-audit 10/20/26 R2-10). Unset: the server's own value.
+    # shared_buffers / effective_cache_size are the server's, set on Railway
+    # (docs/ops/POSTGRES_CUTOVER.md).
+    wm = (os.getenv("PG_WORK_MEM") or "").strip()
+    if re.fullmatch(r"\d{1,7}(kB|MB|GB)?", wm):
+        opts.append(f"-c work_mem={wm}")
     # PG_CONNECT_TIMEOUT_S (5): a server that does not answer a connect is
     # given up on this soon (it was 10 s, and every request thread waited
     # it out in turn while the database restarted - DB-22).
@@ -2403,7 +2726,7 @@ class _Pool:
                         f"database connection pool exhausted ({self.base} + {self.overflow} in use; "
                         f"PG_POOL_MAX={cap_base}, PG_POOL_OVERFLOW={cap_over})")
                 self.cond.wait(left)
-        held[self.url] = held.get(self.url, 0) + 1
+        _held_add(held, self.url, 1)
         try:
             raw = self._reuse(life, idle_s)
             if raw is None:
@@ -2413,9 +2736,10 @@ class _Pool:
             c = PgConnection(raw[0])
         except BaseException:
             self._give_back(kind, None, None)
-            held[self.url] -= 1
+            _held_add(held, self.url, -1)
             raise
         c._url, c._born, c._slot = self.url, raw[1], kind
+        c._held = held
         return c
 
     # ── a database that restarts (DB-22, 10/19/26) ──────────────────────────
@@ -2462,9 +2786,9 @@ class _Pool:
         return raw
 
     def checkin(self, conn):
-        held = _held()
-        if held.get(self.url, 0) > 0:
-            held[self.url] -= 1
+        # The count of the thread that checked it out (closed from another
+        # thread, it is still that thread's connection that ended).
+        _held_add(getattr(conn, "_held", None) or _held(), self.url, -1)
         raw, keep = conn._raw, True
         try:
             raw.rollback()
@@ -2519,6 +2843,16 @@ def _held():
     return h
 
 
+# A thread's held counts change from that thread (checkout, close) and from
+# a collected connection's finalizer, which may run on another thread.
+_held_lock = threading.Lock()
+
+
+def _held_add(held, url, n):
+    with _held_lock:
+        held[url] = max(0, held.get(url, 0) + n)
+
+
 def pool(url=None) -> "_Pool":
     url = url or database_url()
     with _pools_lock:
@@ -2550,18 +2884,21 @@ def connect(url=None) -> PgConnection:
         raise sqlite3.OperationalError("DATABASE_URL is not a Postgres URL")
     p = pool(url)
     c = p.checkout()
-    c._finalizer = weakref.finalize(c, _collected, p, c._raw, c._slot, c._born, threading.get_ident())
+    c._finalizer = weakref.finalize(c, _collected, p, c._raw, c._slot, c._born, c._held)
     return c
 
 
-def _collected(p, raw, slot, born, tid):
+def _collected(p, raw, slot, born, held):
     """A PgConnection collected without close(): its transaction rolled
     back and the connection closed — never pooled (the thread that held it
-    may be gone) — and its slot freed."""
+    may be gone) — its slot freed, and its thread's held count taken down
+    (it was not: that thread's every later checkout counted as nested and
+    drew only overflow slots — blind re-audit 10/20/26 R2-13)."""
     try:
         raw.rollback()
     except Exception:
         pass
+    _held_add(held, p.url, -1)
     p._give_back(slot, None, born, drop=raw)
 
 

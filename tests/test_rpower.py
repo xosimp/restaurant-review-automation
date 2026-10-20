@@ -319,17 +319,45 @@ def test_paging_walks_until_a_short_page(db_path, monkeypatch):
     assert out == {"2026-09-10": float(rpower.PAGE_SIZE + 1)}
 
 
-def test_an_overlapping_page_is_deduplicated_not_double_counted(db_path, monkeypatch):
+def test_an_overlapping_page_is_read_again_and_refused_when_it_persists(db_path, monkeypatch):
     """RPOWER's description of page 2 as "records 2000-2999" skips 1000-1999,
     so either the prose or the API is wrong. Rows are keyed rather than
-    trusted, so an off-by-one-page server cannot double a day's sales."""
+    trusted, so an off-by-one-page server cannot double a day's sales — and
+    (blind re-audit 10/20/26 R3-04) a page that partly repeats the one
+    before means as many rows were never returned: the read starts again
+    from page 1 once, and an overlap that persists fails the read rather
+    than returning a short day. Updated: this pinned the old dedupe-and-
+    continue, which returned 1,500 of a page-arithmetic's rows as whole."""
     rid = _connected(db_path)
     page1 = [_ticketsale("100", 1.0, menuitem=f"i{n}") for n in range(rpower.PAGE_SIZE)]
     # Page 2 repeats the last 500 of page 1 and adds 500 genuinely new rows.
     page2 = page1[-500:] + [_ticketsale("100", 1.0, menuitem=f"n{n}") for n in range(500)]
+    asked = []
 
     def handler(params):
+        asked.append(int(params.get("pagenumber", 1)))
         return {1: page1, 2: page2}.get(int(params.get("pagenumber", 1)), [])
+
+    _stub_api(monkeypatch, {"salestype/getbycg": [SALE],
+                            "ticketsales/getbybusinessdate": handler})
+    with pytest.raises(rpower.RPowerError, match="could not be read whole"):
+        rpower.fetch_business_days(rid, "2026-09-10", "2026-09-10")
+    assert asked == [1, 2, 1, 2], "read again from page 1 once, then refused"
+
+
+def test_an_overlap_that_clears_on_the_second_read_returns_the_whole_set(db_path, monkeypatch):
+    rid = _connected(db_path)
+    page1 = [_ticketsale("100", 1.0, menuitem=f"i{n}") for n in range(rpower.PAGE_SIZE)]
+    moved = page1[-10:] + [_ticketsale("100", 1.0, menuitem=f"n{n}") for n in range(490)]
+    clean = [_ticketsale("100", 1.0, menuitem=f"n{n}") for n in range(500)]
+    reads = {"n": 0}
+
+    def handler(params):
+        page = int(params.get("pagenumber", 1))
+        if page == 1:
+            reads["n"] += 1
+            return page1
+        return (moved if reads["n"] == 1 else clean) if page == 2 else []
 
     _stub_api(monkeypatch, {"salestype/getbycg": [SALE],
                             "ticketsales/getbybusinessdate": handler})
@@ -642,6 +670,7 @@ def test_a_rejected_token_raises_a_distinct_error(db_path, monkeypatch):
         headers = {}
     monkeypatch.setattr("requests.get", lambda *a, **k: _Resp())
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
+    monkeypatch.setattr(rpower, "FLEET_RPS", 0)             # the fleet ceiling stands alone (R3-08)
     with pytest.raises(rpower.RPowerAuthError):
         rpower._request("bad-token", "store/get")
 
@@ -659,6 +688,7 @@ def test_a_server_error_is_retried_then_reported(db_path, monkeypatch):
 
     monkeypatch.setattr("requests.get", fake_get)
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
+    monkeypatch.setattr(rpower, "FLEET_RPS", 0)             # the fleet ceiling stands alone (R3-08)
     monkeypatch.setattr(rpower, "RETRY_BACKOFF", 1.0)
     monkeypatch.setattr("time.sleep", lambda s: None)
     with pytest.raises(rpower.RPowerError):
@@ -674,6 +704,7 @@ def test_a_non_json_body_is_an_error_not_a_guess(db_path, monkeypatch):
             raise ValueError("not json")
     monkeypatch.setattr("requests.get", lambda *a, **k: _Resp())
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
+    monkeypatch.setattr(rpower, "FLEET_RPS", 0)             # the fleet ceiling stands alone (R3-08)
     with pytest.raises(rpower.RPowerError, match="non-JSON"):
         rpower._request("tok", "store/get")
 

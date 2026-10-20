@@ -116,9 +116,11 @@ AI_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_GLOBAL_PER_CLIENT_USD", "150"))
 # An absolute ceiling only when one is set deliberately (0 = none, the
 # default since 10/10/26; it was $10,000).
 AI_GLOBAL_MAX_MONTHLY_BUDGET_USD = float(os.getenv("AI_GLOBAL_MAX_MONTHLY_BUDGET_USD", "0"))
-# The manually armed stop: "1" refuses every model call for every client
-# until it is cleared. Never set by the code.
-AI_EMERGENCY_STOP = os.getenv("AI_EMERGENCY_STOP", "").strip().lower() in ("1", "true", "yes", "on")
+# The manually armed stop, AI_EMERGENCY_STOP=1, refuses every model call for
+# every client until it is cleared — read at CALL time (emergency_stop_armed,
+# blind re-audit 10/20/26 R4-02: it was read once at import, so arming or
+# clearing it took a restart), and armable without a deploy from the admin
+# console (the shared `emergency_stop` row). Never set by the code.
 
 # The spend-rate runaway detector (SCALE-11). A restaurant's workflow whose
 # last hour cost at least the larger of AI_RUNAWAY_MIN_USD, AI_RUNAWAY_RUNS
@@ -126,8 +128,11 @@ AI_EMERGENCY_STOP = os.getenv("AI_EMERGENCY_STOP", "").strip().lower() in ("1", 
 # times its own hourly rate over the last AI_RUNAWAY_BASELINE_DAYS is paused
 # — that workflow, for that restaurant, until its last hour is back under the
 # line — and Will is paged once an hour. The fleet's last hour past
-# AI_RUNAWAY_FACTOR times its own rate (and AI_RUNAWAY_FLEET_MIN_USD) pages
-# too, naming the workflows behind it; it stops nothing by itself.
+# AI_RUNAWAY_FACTOR times the larger of its own rate and what the client
+# restaurants are expected to spend (and AI_RUNAWAY_FLEET_MIN_USD) pages,
+# naming the workflows behind it — and, held past AI_FLEET_BRAKE_CONFIRM_
+# SECONDS, arms the FLEET BRAKE (R4-02): the unattended work behind it is
+# paused automatically (fleet_brake_check).
 AI_RUNAWAY_FACTOR = float(os.getenv("AI_RUNAWAY_FACTOR", "6"))
 AI_RUNAWAY_MIN_USD = float(os.getenv("AI_RUNAWAY_MIN_USD", "5"))
 AI_RUNAWAY_RUNS = float(os.getenv("AI_RUNAWAY_RUNS", "4"))
@@ -315,37 +320,39 @@ AI_TRIAL_POOL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MONTHLY_USD", "500"))
 # $500 a month for every trial together met normal use (~$15 a restaurant a
 # month) at ~33 trials — and Simple EJ's itself is a trial: an RPOWER
 # rollout provisioned as trials would have stopped every trial's Ask, DSR,
-# drafts and diagnoses mid-month. The pool now grows by
+# drafts and diagnoses mid-month. The pool grows by
 # AI_TRIAL_POOL_PER_TRIAL_DAILY_USD / _MONTHLY_USD a non-demo trial (half a
 # trial's own ceiling: a fleet of trials ALL at their own ceiling still
-# meets it, a fleet in normal use never does), up to the absolute
-# AI_TRIAL_POOL_MAX_DAILY_USD / _MONTHLY_USD — the runaway backstop for a
-# provisioning bug or a scripted signup (0 = none). At ~$15 a trial a month
-# the default maximum binds near 330 trials: raise it, or provision a
-# rollout as paying (`active`), before then. 80% of either still pages.
+# meets it, a fleet in normal use never does). 80% of either still pages.
+#
+# NO ABSOLUTE MAXIMUM (blind re-audit 10/20/26 R4-01, Critical). The pool had
+# one ($500 a day, $5,000 a month), which met normal use near ~330 trials and
+# then refused AI for EVERY trial store — and how RPOWER-onboarded stores are
+# billed is undecided, so a rollout may well be provisioned as trials. The
+# maximum is gone for good (owner decision 10/20/26: the trial pool never
+# has an absolute fleet maximum); AI_TRIAL_POOL_MAX_DAILY_USD / _MONTHLY_USD
+# are no longer read. A provisioning bug or a scripted signup is bounded
+# instead by each trial's own $5 day / $50 month, the per-restaurant runaway
+# pause, and the FLEET BRAKE (fleet_brake_check, R4-02), which pauses the
+# unattended work behind a fleet spend rate far past what the client
+# restaurants are expected to spend.
 AI_TRIAL_POOL_PER_TRIAL_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_PER_TRIAL_DAILY_USD", "2.5"))
 AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD", "25"))
-AI_TRIAL_POOL_MAX_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_MAX_DAILY_USD", "500"))
-AI_TRIAL_POOL_MAX_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MAX_MONTHLY_USD", "5000"))
 
 
 def trial_pool_budgets(db_path=None):
     """(daily, monthly) ceilings of every trial's spend together: the floor,
-    or the per-trial allowance times the non-demo trials, at most the
-    absolute maximum when one is set (A4-05). A floor of 0 disables that
+    or the per-trial allowance times the non-demo trials, whichever is
+    larger — never an absolute maximum (R4-01). A floor of 0 disables that
     window, as before."""
     trials = _trial_client_count(db_path)
     out = []
-    for floor, per, cap in ((AI_TRIAL_POOL_DAILY_USD, AI_TRIAL_POOL_PER_TRIAL_DAILY_USD, AI_TRIAL_POOL_MAX_DAILY_USD),
-                            (AI_TRIAL_POOL_MONTHLY_USD, AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD,
-                             AI_TRIAL_POOL_MAX_MONTHLY_USD)):
+    for floor, per in ((AI_TRIAL_POOL_DAILY_USD, AI_TRIAL_POOL_PER_TRIAL_DAILY_USD),
+                       (AI_TRIAL_POOL_MONTHLY_USD, AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD)):
         if not floor:
             out.append(0.0)
             continue
-        v = max(floor, trials * max(0.0, per))
-        if cap and cap > 0:
-            v = min(v, max(cap, floor))
-        out.append(float(v))
+        out.append(float(max(floor, trials * max(0.0, per))))
     return out[0], out[1]
 
 # Google Places is a data API, not AI, and has its own per-restaurant ceiling
@@ -404,7 +411,24 @@ AI_BUDGET_WARN_PCT = float(os.getenv("AI_BUDGET_WARN_PCT", "80"))
 # pool's client count: past-due spend draws on the pool AND is counted in it.
 _PAID_BILLING_STATES = frozenset({"active", "past_due", "internal"})
 _PAID_STATES_SQL = "(" + ",".join("'%s'" % s for s in sorted(_PAID_BILLING_STATES)) + ")"
-_TRIAL_BILLING_STATES = frozenset({"trial"})
+
+
+def _bulk_trial_states():
+    """The billing status bulk / partner provisioning gives a store
+    (BULK_PROVISION_BILLING_STATUS — bulk_provisioning owns the setting, and
+    its default is today's 'trial') when it is not a paying state: such a
+    store is budgeted as a TRIAL for AI — its own trial ceilings, counted in
+    the trial pool, which scales with it — never as an unpaid prospect on $2
+    a day, whatever status the setting names (blind re-audit 10/20/26 R4-01:
+    the AI side safe for any status). A paying status ('active') is budgeted
+    as paid, as it always was. Read once, at import, like every ceiling here."""
+    raw = (os.getenv("BULK_PROVISION_BILLING_STATUS", "") or "").strip().lower()
+    if not raw or raw in _PAID_BILLING_STATES or not re.match(r"^[a-z_]{1,32}$", raw):
+        return frozenset()
+    return frozenset({raw})
+
+
+_TRIAL_BILLING_STATES = frozenset({"trial"}) | _bulk_trial_states()
 _TRIAL_STATES_SQL = "(" + ",".join("'%s'" % s for s in sorted(_TRIAL_BILLING_STATES)) + ")"
 # The trial pool's scopes in a budget status, and the words a refusal uses.
 # _record_budget_stop and _note_budget_warnings page on these.
@@ -938,10 +962,11 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
     if scope in _TRIAL_POOL_SCOPES.values():
         _page(f"budget_stop:trial_pool:{vendor}", "Cavnar AI: AI is paused for every trial account (budget)",
               [f"The {scope} was reached — every trial's AI calls are refused until it resets or the "
-               f"ceiling is raised (AI_TRIAL_POOL_MAX_DAILY_USD / AI_TRIAL_POOL_MAX_MONTHLY_USD, or the "
-               f"per-trial allowance AI_TRIAL_POOL_PER_TRIAL_*).",
-               "Paying clients are not affected. If these are real trials, raise the ceiling; if not, "
-               "look at who created them. Open the admin console → Operations → AI to see what spent it."])
+               f"per-trial allowance (AI_TRIAL_POOL_PER_TRIAL_DAILY_USD / _MONTHLY_USD) is raised. The pool "
+               f"grows with every trial and has no absolute maximum, so this is trials spending far past "
+               f"their own allowance, not growth.",
+               "Paying clients are not affected. If the spend is real, raise the allowance; if not, look at "
+               "what spent it (a loop, or who created the trials). Admin console → Operations → AI."])
     if scope == PLACES_GLOBAL_LABEL:
         _page("budget_stop:google_places", "Cavnar AI: Google lookups are paused for every client (budget)",
               [f"The {scope} was reached — every Google Places request except the review fetch is refused "
@@ -994,8 +1019,8 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                                                      f"{int(AI_BUDGET_WARN_PCT)}%",
                   [f"All trial accounts together: {detail}.",
                    "At 100% every trial's AI calls are refused until it resets; paying clients are not "
-                   "affected. Raise AI_TRIAL_POOL_MAX_DAILY_USD / AI_TRIAL_POOL_MAX_MONTHLY_USD if the trials "
-                   "are real."])
+                   "affected. The pool grows with every trial, so this is trials spending past their own "
+                   "allowance: raise AI_TRIAL_POOL_PER_TRIAL_DAILY_USD / _MONTHLY_USD if the spend is real."])
         if scope == "global_month" and vendor == "google_places":
             _page("budget_warn:google_places", "Cavnar AI: the platform Google Places budget is past "
                                               f"{int(AI_BUDGET_WARN_PCT)}%",
@@ -1141,19 +1166,170 @@ def runaway_threshold(restaurant_id, action, db_path=None) -> float:
                AI_RUNAWAY_FACTOR * _baseline_hourly(restaurant_id, action, db_path))
 
 
-def runaway_refusal(restaurant_id, action, db_path=None, trigger=None):
-    """Why this call is refused before it is sent — the manually armed
-    AI_EMERGENCY_STOP, or this restaurant's workflow spending past its
-    runaway line in the last hour — as words, or None. An admin's run is
-    never paused by the rate (it answers to the global pool, #148). Fails
-    open, like the budget check."""
-    if AI_EMERGENCY_STOP:
-        return "emergency stop"
-    if not action or not AI_RUNAWAY_FACTOR:
+# ── the emergency stop and the fleet brake (blind re-audit 10/20/26 R4-02) ──
+#
+# Both live in shared rows of `ai_breakers` (model_gateway.breaker_row /
+# write_breaker — the table the provider breakers already share), read by
+# every process at most every FLEET_CONTROL_SYNC_SECONDS, so the console arms
+# or clears them for every process without a deploy:
+#
+#   emergency_stop     armed while open_until is in the future (the console's
+#                      "Stop all AI"); AI_EMERGENCY_STOP=1 in the environment
+#                      arms it too, read at call time.
+#   fleet_brake        armed by the code (fleet_brake_check) for
+#                      AI_FLEET_BRAKE_MINUTES; reason holds its scope as JSON
+#                      {"all": bool, "actions": [...], "restaurants": [...]}.
+#   fleet_brake_watch  when the fleet was first seen over its line (opened_at).
+#   fleet_brake_ack    the console released the brake: no automatic re-arm
+#                      until open_until (AI_FLEET_BRAKE_ACK_HOURS); it still pages.
+#
+# The brake pauses UNATTENDED calls only (the scheduler's and the system's —
+# never an owner waiting on an answer, never an admin): a fleet-wide loop is
+# a job, and an owner pressing a button is not what burns $15,000 a night.
+
+EMERGENCY_STOP_ROW = "emergency_stop"
+FLEET_BRAKE_ROW = "fleet_brake"
+FLEET_BRAKE_WATCH_ROW = "fleet_brake_watch"
+FLEET_BRAKE_ACK_ROW = "fleet_brake_ack"
+FLEET_CONTROL_SYNC_SECONDS = float(os.getenv("AI_FLEET_CONTROL_SYNC_SECONDS", "5") or 5)
+# Off switch for the automatic brake (the page still fires).
+AI_FLEET_BRAKE = os.getenv("AI_FLEET_BRAKE", "1").strip().lower() not in ("0", "false", "no", "off")
+# What one client restaurant (paying, or a non-demo trial) is expected to
+# spend on AI a day — the fleet line never sits below AI_RUNAWAY_FACTOR times
+# this for every client restaurant, so a rollout that outgrows last week's
+# baseline is not read as a runaway. EJ's measured ~$0.5-0.7 a day of AI.
+AI_FLEET_EXPECTED_PER_CLIENT_DAILY_USD = float(os.getenv("AI_FLEET_EXPECTED_PER_CLIENT_DAILY_USD", "1") or 0)
+# The fleet must be over its line on two checks this far apart before the
+# brake arms (one tick's burst is not a runaway).
+AI_FLEET_BRAKE_CONFIRM_SECONDS = float(os.getenv("AI_FLEET_BRAKE_CONFIRM_SECONDS", "120") or 0)
+# How long an armed brake holds; renewed while the fleet stays over its line.
+AI_FLEET_BRAKE_MINUTES = float(os.getenv("AI_FLEET_BRAKE_MINUTES", "60") or 60)
+# After the console releases a brake, how long it is not re-armed by itself.
+AI_FLEET_BRAKE_ACK_HOURS = float(os.getenv("AI_FLEET_BRAKE_ACK_HOURS", "6") or 0)
+_UNATTENDED_TRIGGERS = ("scheduler", "system")
+_FAR_FUTURE_SECONDS = 10 * 365 * 86400
+
+_control_cache = {}
+_control_lock = threading.Lock()
+
+
+def _control_row(name):
+    """A shared control row (dict) or None — cached FLEET_CONTROL_SYNC_SECONDS
+    in this process. Never raises (a row that cannot be read is unarmed)."""
+    now = time.time()
+    with _control_lock:
+        hit = _control_cache.get(name)
+    if hit and now - hit[0] < FLEET_CONTROL_SYNC_SECONDS:
+        return hit[1]
+    try:
+        import model_gateway as _mg_ctl
+        row = _mg_ctl.breaker_row(name)
+    except Exception:
+        row = None
+    with _control_lock:
+        _control_cache[name] = (now, row)
+    return row
+
+
+def _write_control(name, open_until, reason=None, opened_at=None, failures=0):
+    import model_gateway as _mg_ctl
+    _mg_ctl.write_breaker(name, open_until, opened_at=opened_at, reason=reason, failures=failures)
+    with _control_lock:
+        _control_cache.pop(name, None)
+
+
+def _row_armed(row, now=None) -> bool:
+    return bool(row) and float(row.get("open_until") or 0) > (now or time.time())
+
+
+def _env_emergency_stop() -> bool:
+    return (os.getenv("AI_EMERGENCY_STOP", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def emergency_stop_armed() -> bool:
+    """Whether every model call is refused now: AI_EMERGENCY_STOP in the
+    environment (read at call time) or the console's shared stop."""
+    return _env_emergency_stop() or _row_armed(_control_row(EMERGENCY_STOP_ROW))
+
+
+def arm_emergency_stop(actor=None, reason=None):
+    """Stop every model call for every client, in every process within
+    FLEET_CONTROL_SYNC_SECONDS, until clear_emergency_stop. Recorded and paged."""
+    why = (reason or f"armed by {actor or 'an admin'}")[:300]
+    _write_control(EMERGENCY_STOP_ROW, time.time() + _FAR_FUTURE_SECONDS, reason=why, opened_at=time.time())
+    record_health_event("anthropic", "emergency_stop", detail=why)
+    _page("emergency_stop", "Cavnar AI: every AI call is stopped (emergency stop armed)",
+          [f"The emergency stop was armed ({why}). Every model call for every client is refused until it "
+           "is cleared on the admin console → Operations → AI."])
+
+
+def clear_emergency_stop(actor=None):
+    """Clear the console's stop (AI_EMERGENCY_STOP in the environment, if set,
+    still holds until it is removed)."""
+    _write_control(EMERGENCY_STOP_ROW, 0.0, reason=f"cleared by {actor or 'an admin'}"[:300])
+    record_health_event("anthropic", "emergency_stop_cleared", detail=f"cleared by {actor or 'an admin'}")
+
+
+def fleet_brake_scope():
+    """The armed fleet brake's scope {"all", "actions", "restaurants",
+    "until", "detail"}, or None while it is not armed."""
+    row = _control_row(FLEET_BRAKE_ROW)
+    if not _row_armed(row):
         return None
+    try:
+        scope = json.loads(row.get("reason") or "{}")
+    except (TypeError, ValueError):
+        scope = {}
+    return {"all": bool(scope.get("all")), "actions": list(scope.get("actions") or []),
+            "restaurants": [int(r) for r in (scope.get("restaurants") or []) if r is not None],
+            "until": float(row.get("open_until") or 0), "detail": scope.get("detail")}
+
+
+def _fleet_brake_refusal(restaurant_id, action, trigger):
+    """"fleet brake" when the armed brake covers this unattended call."""
+    if trigger not in _UNATTENDED_TRIGGERS:
+        return None
+    scope = fleet_brake_scope()
+    if not scope:
+        return None
+    if scope["all"] or (action and action in scope["actions"]) or \
+            (restaurant_id is not None and int(restaurant_id) in scope["restaurants"]):
+        return "fleet brake"
+    return None
+
+
+def release_fleet_brake(actor=None):
+    """The console's release: the brake off now, and not re-armed by itself
+    for AI_FLEET_BRAKE_ACK_HOURS (the fleet page still fires)."""
+    now = time.time()
+    _write_control(FLEET_BRAKE_ROW, 0.0, reason=json.dumps({"released_by": actor}))
+    _write_control(FLEET_BRAKE_WATCH_ROW, 0.0)
+    if AI_FLEET_BRAKE_ACK_HOURS > 0:
+        _write_control(FLEET_BRAKE_ACK_ROW, now + AI_FLEET_BRAKE_ACK_HOURS * 3600, reason=f"released by {actor}",
+                       opened_at=now)
+    record_health_event("anthropic", "fleet_brake_released", detail=f"released by {actor or 'an admin'}")
+
+
+def runaway_refusal(restaurant_id, action, db_path=None, trigger=None):
+    """Why this call is refused before it is sent — the emergency stop
+    (AI_EMERGENCY_STOP or the console's), the fleet brake for an unattended
+    call it covers, or this restaurant's workflow spending past its runaway
+    line in the last hour — as words, or None. An admin's run is never
+    paused by a rate (it answers to the global pool, #148). Fails open, like
+    the budget check."""
+    if emergency_stop_armed():
+        return "emergency stop"
     try:
         if trigger is None:
             trigger = _attribution()[0]
+        braked = _fleet_brake_refusal(restaurant_id, action, trigger)
+        if braked:
+            return braked
+    except Exception as e:
+        log.warning("fleet brake check failed (rid=%s, %s): %s", restaurant_id, action, e)
+    if not action or not AI_RUNAWAY_FACTOR:
+        return None
+    try:
         if trigger == "admin":
             return None
         spent = _hour_spend(restaurant_id, action, db_path)
@@ -1188,11 +1364,22 @@ def _note_runaway(restaurant_id, action, spent, line):
            "Open the admin console → Operations → AI."])
 
 
+def expected_fleet_hourly(db_path=None) -> float:
+    """What the client restaurants (paying, and non-demo trials) are expected
+    to spend on AI an hour together: AI_FLEET_EXPECTED_PER_CLIENT_DAILY_USD
+    each (R4-02)."""
+    clients = _paying_client_count(db_path) + _trial_client_count(db_path)
+    return clients * max(0.0, AI_FLEET_EXPECTED_PER_CLIENT_DAILY_USD) / 24.0
+
+
 def check_fleet_rate(db_path=None) -> dict:
-    """The fleet's last hour against its own hourly rate: {spent, rate,
-    line, over, top}. Past the line, one page an hour naming the workflows
-    and restaurants behind it — it stops nothing (per-restaurant pauses do).
-    Run by the scheduler every tick (cheap: two indexed sums, cached)."""
+    """The fleet's last hour against the larger of its own hourly rate and
+    what its client restaurants are expected to spend: {spent, rate,
+    expected, line, over, top, brake}. Past the line, one page an hour
+    naming the workflows and restaurants behind it, and — held past
+    AI_FLEET_BRAKE_CONFIRM_SECONDS — the fleet brake (fleet_brake_check,
+    R4-02). Run every scheduler tick through the status checks (cheap: two
+    indexed sums, cached)."""
     from models import get_conn, DB_PATH
     key = ("fleet_hour", _memo_db(db_path))
     hit, spent = _rate_get(key, _RATE_CACHE_SECS)
@@ -1204,16 +1391,25 @@ def check_fleet_rate(db_path=None) -> dict:
             spent = float(row["s"] or 0.0)
             _rate_put(key, spent)
         rate = _baseline_hourly(None, None, db_path)
-        line = max(AI_RUNAWAY_FLEET_MIN_USD, AI_RUNAWAY_FACTOR * rate)
-        out = {"spent": round(spent, 2), "rate": round(rate, 4), "line": round(line, 2),
-               "over": bool(AI_RUNAWAY_FACTOR) and spent >= line, "top": []}
+        try:
+            expected = expected_fleet_hourly(db_path)
+        except Exception:
+            expected = 0.0
+        line = max(AI_RUNAWAY_FLEET_MIN_USD, AI_RUNAWAY_FACTOR * max(rate, expected))
+        out = {"spent": round(spent, 2), "rate": round(rate, 4), "expected": round(expected, 4),
+               "line": round(line, 2), "over": bool(AI_RUNAWAY_FACTOR) and spent >= line, "top": []}
         if out["over"]:
-            out["top"] = [dict(r) for r in conn.execute(
-                "SELECT restaurant_id, action, ROUND(SUM(cost_usd), 2) AS spent FROM ai_usage "
+            out["top"] = [dict(r, spent=round(float(r["spent"] or 0), 2)) for r in conn.execute(
+                "SELECT restaurant_id, action, SUM(cost_usd) AS spent FROM ai_usage "
                 "WHERE created_at >= datetime('now', '-60 minutes') GROUP BY restaurant_id, action "
                 "ORDER BY SUM(cost_usd) DESC LIMIT 5").fetchall()]
     finally:
         conn.close()
+    try:
+        out["brake"] = fleet_brake_check(out, db_path)
+    except Exception as e:
+        log.warning("fleet brake check failed: %s", e)
+        out["brake"] = None
     if out["over"]:
         try:
             import ops
@@ -1226,11 +1422,91 @@ def check_fleet_rate(db_path=None) -> dict:
                        f"(line ${out['line']:.2f}).",
                        "Biggest: " + "; ".join(f"restaurant {t['restaurant_id']} {t['action']} ${t['spent']}"
                                                for t in out["top"]),
-                       "Each restaurant's runaway workflow pauses itself; set AI_EMERGENCY_STOP=1 to stop "
-                       "everything."])
+                       "Each restaurant's runaway workflow pauses itself, and held past "
+                       f"{int(AI_FLEET_BRAKE_CONFIRM_SECONDS)}s the fleet brake pauses the background work "
+                       "behind it. Stop everything from the admin console → Operations → AI."])
         except Exception as e:
             log.warning("fleet runaway page failed: %s", e)
     return out
+
+
+def _fleet_brake_target(rate, db_path=None) -> dict:
+    """What the brake pauses (R4-02): the workflows whose fleet-wide last
+    hour is past the larger of AI_RUNAWAY_MIN_USD and AI_RUNAWAY_FACTOR times
+    their own fleet-wide hourly rate over AI_RUNAWAY_BASELINE_DAYS, and the
+    restaurants whose last hour is past AI_RUNAWAY_FACTOR times what a client
+    restaurant is expected to spend an hour; with neither singled out, every
+    unattended call ("all"). Admin-run spend is never counted."""
+    from models import get_conn, DB_PATH
+    days = max(1, int(AI_RUNAWAY_BASELINE_DAYS))
+    conn = get_conn(db_path or DB_PATH)
+    try:
+        hour = {r["action"]: float(r["s"] or 0) for r in conn.execute(
+            "SELECT action, SUM(cost_usd) AS s FROM ai_usage WHERE created_at >= datetime('now', '-60 minutes') "
+            "AND COALESCE(\"trigger\",'') <> 'admin' GROUP BY action").fetchall()}
+        base = {r["action"]: float(r["s"] or 0) / (days * 24.0) for r in conn.execute(
+            "SELECT action, SUM(cost_usd) AS s FROM ai_usage WHERE created_at >= datetime('now', ?) "
+            "AND created_at < datetime('now', '-60 minutes') AND COALESCE(\"trigger\",'') <> 'admin' "
+            "GROUP BY action", (f"-{days} days",)).fetchall()}
+        per_client = max(0.0, AI_FLEET_EXPECTED_PER_CLIENT_DAILY_USD) / 24.0
+        tenant_line = max(AI_RUNAWAY_MIN_USD, AI_RUNAWAY_FACTOR * per_client)
+        tenants = [int(r["restaurant_id"]) for r in conn.execute(
+            "SELECT restaurant_id, SUM(cost_usd) AS s FROM ai_usage WHERE created_at >= datetime('now', '-60 minutes') "
+            "AND restaurant_id IS NOT NULL AND COALESCE(\"trigger\",'') <> 'admin' GROUP BY restaurant_id "
+            "HAVING SUM(cost_usd) >= ? ORDER BY SUM(cost_usd) DESC LIMIT 100", (tenant_line,)).fetchall()]
+    finally:
+        conn.close()
+    actions = sorted(a for a, s in hour.items()
+                     if a and s >= max(AI_RUNAWAY_MIN_USD, AI_RUNAWAY_FACTOR * base.get(a, 0.0)))
+    detail = (f"${rate.get('spent', 0):.2f} in the last hour against a line of ${rate.get('line', 0):.2f}")
+    return {"all": not actions and not tenants, "actions": actions, "restaurants": tenants, "detail": detail}
+
+
+def fleet_brake_check(rate, db_path=None):
+    """Arm, renew or stand down the fleet brake from a fleet-rate reading
+    (check_fleet_rate's `out`). Over the line on two readings at least
+    AI_FLEET_BRAKE_CONFIRM_SECONDS apart — the brake arms for
+    AI_FLEET_BRAKE_MINUTES over the unattended work behind the excess
+    (_fleet_brake_target), with a health event and a page; while the fleet
+    stays over, it is renewed; under the line, the first sighting is
+    forgotten and the brake simply runs out. Not while AI_FLEET_BRAKE is off
+    or the console released it within AI_FLEET_BRAKE_ACK_HOURS. Returns the
+    scope in force (fleet_brake_scope) or None."""
+    now = time.time()
+    current = fleet_brake_scope()
+    if not rate.get("over"):
+        watch = _control_row(FLEET_BRAKE_WATCH_ROW)
+        if _row_armed(watch, now):
+            _write_control(FLEET_BRAKE_WATCH_ROW, 0.0)
+        return current
+    if not AI_FLEET_BRAKE or _row_armed(_control_row(FLEET_BRAKE_ACK_ROW), now):
+        return current
+    hold = AI_FLEET_BRAKE_MINUTES * 60.0
+    if current:
+        if current["until"] - now < hold / 2:
+            row = _control_row(FLEET_BRAKE_ROW) or {}
+            _write_control(FLEET_BRAKE_ROW, now + hold, reason=row.get("reason"), opened_at=row.get("opened_at"))
+        return fleet_brake_scope()
+    watch = _control_row(FLEET_BRAKE_WATCH_ROW)
+    if not _row_armed(watch, now):
+        _write_control(FLEET_BRAKE_WATCH_ROW, now + 3600, reason="over the fleet line", opened_at=now)
+        return None
+    if now - float(watch.get("opened_at") or now) < AI_FLEET_BRAKE_CONFIRM_SECONDS:
+        return None
+    target = _fleet_brake_target(rate, db_path)
+    _write_control(FLEET_BRAKE_ROW, now + hold, reason=json.dumps(target), opened_at=now)
+    what = ("every background (unattended) AI call" if target["all"] else
+            "; ".join(x for x in (("workflows: " + ", ".join(target["actions"])) if target["actions"] else "",
+                                  ("restaurants: " + ", ".join(str(r) for r in target["restaurants"][:20]))
+                                  if target["restaurants"] else "") if x))
+    record_health_event("anthropic", "fleet_brake", detail=f"{target['detail']}; paused {what}"[:400])
+    _page("fleet_brake", "Cavnar AI: background AI work was paused automatically (fleet brake)",
+          [f"The platform's AI spend rate stayed far past normal: {target['detail']}.",
+           f"Paused for {int(AI_FLEET_BRAKE_MINUTES)} minutes (renewed while it stays over): {what}. "
+           "Owners' own requests are not paused.",
+           "If the spend is real, release the brake on the admin console → Operations → AI (it then stays "
+           f"off for {AI_FLEET_BRAKE_ACK_HOURS:g} hours); if not, find the loop."])
+    return fleet_brake_scope()
 
 
 def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None, action=None):
@@ -1296,20 +1572,104 @@ def note_ai_spend(cost_usd, restaurant_id=None, vendor=None, trigger=None, actio
 # too, and "Reset breaker" reaches every process. Consecutive failures are
 # still counted per process. A budget stop is NOT a provider failure and
 # never trips it.
+#
+# PER MODEL FAMILY, AND PER TENANT FOR ITS OWN TIMEOUTS (blind re-audit
+# 10/20/26 R4-04). The provider meters and overloads each model apart (the
+# gateway already keeps its minute per family, A4-02), but the breaker was
+# one per provider: five exhausted Opus overloads, or one owner's five
+# oversized invoices timing out, stopped every Sonnet and Haiku feature
+# fleet-wide for a minute. Now an Anthropic call answers to three breakers:
+#   "anthropic"                 the provider — a revoked key or an empty
+#                               balance (trip_breaker), and connection
+#                               failures (the network to it, not one model);
+#   "anthropic/<family>"        that model family's overloads, server errors
+#                               and timeouts — shared across processes like
+#                               the provider's (its own `ai_breakers` row);
+#   "anthropic/<family>#r<id>"  one restaurant's own timeouts on that family
+#                               (CB_TENANT_THRESHOLD of them), in this process
+#                               only — that restaurant waits, nobody else.
+# A timeout counts toward the FAMILY only once AI_BREAKER_TIMEOUT_TENANTS
+# distinct restaurants (unattributed calls count as one) timed out on it
+# within AI_BREAKER_TIMEOUT_WINDOW_SECONDS: one tenant's huge requests are
+# that tenant's problem, two tenants' are the model's.
 CB_FAILURE_THRESHOLD = int(os.getenv("AI_BREAKER_THRESHOLD", "5"))
 CB_OPEN_SECONDS = int(os.getenv("AI_BREAKER_OPEN_SECONDS", "60"))
+CB_TENANT_THRESHOLD = max(1, int(os.getenv("AI_BREAKER_TENANT_THRESHOLD", "3") or 3))
+CB_TIMEOUT_TENANTS = max(1, int(os.getenv("AI_BREAKER_TIMEOUT_TENANTS", "2") or 2))
+CB_TIMEOUT_WINDOW_SECONDS = float(os.getenv("AI_BREAKER_TIMEOUT_WINDOW_SECONDS", "300") or 300)
 
 _breakers = {}
 _breaker_lock = threading.Lock()
 BREAKER_SYNC_SECONDS = float(os.getenv("AI_BREAKER_SYNC_SECONDS", "5"))
 _breaker_synced = {}            # provider -> (time read, the row's updated_at seen)
+_timeouts_seen = {}             # family key -> {restaurant id (or None): last timeout time}
+
+_TENANT_DOWN_MESSAGE = ("Cavnar AI couldn't get answers for this restaurant in time just now — nothing is lost; "
+                        "try again in a minute.")
+
+
+def family_breaker_key(model, provider="anthropic"):
+    """The breaker of `model`'s family ("anthropic/claude-sonnet-5-5"), or
+    None for no model."""
+    if not model or model == "unknown":
+        return None
+    try:
+        import model_gateway as _mg_f
+        return f"{provider}/{_mg_f.model_family(model)}"
+    except Exception:
+        return None
+
+
+def _tenant_breaker_key(family_key, restaurant_id):
+    if not family_key or restaurant_id is None:
+        return None
+    return f"{family_key}#r{int(restaurant_id)}"
+
+
+def _local_only(key):
+    """A tenant breaker lives in this process only (never shared or paged)."""
+    return "#" in str(key or "")
+
+
+def _count_timeout(family_key, restaurant_id) -> bool:
+    """Note a restaurant's exhausted timeout on a family; True when enough
+    distinct restaurants timed out on it inside the window for it to count
+    against the family's breaker."""
+    now = time.time()
+    with _breaker_lock:
+        seen = _timeouts_seen.setdefault(family_key, {})
+        seen[restaurant_id] = now
+        for rid in [r for r, t in seen.items() if now - t > CB_TIMEOUT_WINDOW_SECONDS]:
+            seen.pop(rid, None)
+        if len(_timeouts_seen) > 200:
+            _timeouts_seen.clear()
+            _timeouts_seen[family_key] = {restaurant_id: now}
+        return len(seen) >= CB_TIMEOUT_TENANTS
+
+
+def _shared_breaker_keys(provider):
+    """Every shared family breaker row of `provider` (for a reset that must
+    reach families this process never saw). Never raises."""
+    try:
+        from models import get_conn, DB_PATH
+        conn = get_conn(DB_PATH)
+        try:
+            return [r["provider"] for r in conn.execute(
+                "SELECT provider FROM ai_breakers WHERE provider LIKE ?", (f"{provider}/%",)).fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return []
 
 
 def _breaker_sync(provider):
     """Adopt another process's breaker transition (the shared `ai_breakers`
     row) when it is newer than what this process last saw: an open breaker
     opens here too, a reset or a close closes it. At most one read every
-    BREAKER_SYNC_SECONDS per provider; never raises."""
+    BREAKER_SYNC_SECONDS per provider; never raises. A tenant's breaker is
+    this process's own (never read)."""
+    if _local_only(provider):
+        return
     now = time.time()
     seen = _breaker_synced.get(provider)
     if seen and now - seen[0] < BREAKER_SYNC_SECONDS:
@@ -1337,7 +1697,10 @@ def _breaker_sync(provider):
 
 
 def _breaker_publish(provider):
-    """Write this process's breaker to the shared row (a transition)."""
+    """Write this process's breaker to the shared row (a transition) — not a
+    tenant's, which stays in this process."""
+    if _local_only(provider):
+        return
     with _breaker_lock:
         b = dict(_breakers.get(provider) or {})
     try:
@@ -1414,9 +1777,13 @@ def breaker_state(provider="anthropic"):
 
 def breakers():
     """Every provider's breaker in this process: {provider: {state,
-    seconds_remaining, failures, opened_at, reason}}."""
+    seconds_remaining, failures, opened_at, reason}} — and each model
+    family breaker this process knows ("anthropic/<family>", R4-04)."""
     out = {}
-    for p in BREAKER_PROVIDERS:
+    with _breaker_lock:
+        families = {k for k in _breakers if "/" in k and not _local_only(k)}
+    families |= set(_shared_breaker_keys("anthropic"))
+    for p in list(BREAKER_PROVIDERS) + sorted(families):
         state, remaining = breaker_state(p)
         with _breaker_lock:
             b = dict(_breakers.get(p) or {})
@@ -1425,14 +1792,19 @@ def breakers():
     return out
 
 
-def breaker_open(provider):
+def breaker_open(provider, model=None):
     """True while `provider` is refusing calls (open, or a probe in flight) —
-    the fail-fast check for a caller that is not about to call itself."""
-    return breaker_state(provider)[0] != "closed"
+    the fail-fast check for a caller that is not about to call itself. With
+    `model`, its family's breaker counts too (R4-04)."""
+    if breaker_state(provider)[0] != "closed":
+        return True
+    fam = family_breaker_key(model, provider) if model else None
+    return bool(fam) and breaker_state(fam)[0] != "closed"
 
 
-def _breaker_check(provider):
-    """Raise if the breaker is open. Lets exactly one probe through after.
+def _breaker_check(provider, message=None):
+    """Raise if the breaker is open. Lets exactly one probe through after;
+    True when this call became that probe.
 
     Single-flight (AI-13): the first caller after the window expires becomes
     the probe and marks the breaker half-open; every other caller is refused
@@ -1444,17 +1816,81 @@ def _breaker_check(provider):
     with _breaker_lock:
         b = _breakers.get(provider)
         if not b:
-            return
+            return False
         if b.get("probe_until", 0) > now:
-            raise AIProviderDown(_PROVIDER_DOWN_MESSAGE)
+            raise AIProviderDown(message or _PROVIDER_DOWN_MESSAGE)
         if not b.get("open_until"):
-            return
+            return False
         if now < b["open_until"]:
-            raise AIProviderDown(_PROVIDER_DOWN_MESSAGE)
+            raise AIProviderDown(message or _PROVIDER_DOWN_MESSAGE)
         # Window expired: allow this one call through as the probe.
         b["open_until"] = 0.0
         b["failures"] = CB_FAILURE_THRESHOLD - 1
         b["probe_until"] = now + CB_PROBE_SECONDS
+        return True
+
+
+def _breakers_check(keys):
+    """_breaker_check for each key in order (the provider, the family, the
+    tenant); when one refuses, a probe an earlier key gave this call is
+    handed back, so a refused call never holds another breaker half-open."""
+    took = []
+    try:
+        for key in keys:
+            if key and _breaker_check(key, _TENANT_DOWN_MESSAGE if _local_only(key) else None):
+                took.append(key)
+    except AIProviderDown:
+        for key in took:
+            _breaker_release_probe(key)
+        raise
+
+
+def _release_probes(keys):
+    for key in keys:
+        if key:
+            _breaker_release_probe(key)
+
+
+def _record_call_success(keys):
+    """A call answered: every breaker it answered to counts a success (the
+    first, the provider's, always; a family's or a tenant's only when this
+    process has one, so a tenant breaker is never made just to be closed)."""
+    for i, key in enumerate(keys):
+        if not key:
+            continue
+        if i:
+            with _breaker_lock:
+                known = key in _breakers
+            if not known:
+                continue
+        _breaker_record(key, True)
+
+
+def _record_call_failure(keys, reason, restaurant_id):
+    """An exhausted retry budget (R4-04): a connection failure counts against
+    the provider; a timeout against the restaurant's own breaker, and against
+    the family only once CB_TIMEOUT_TENANTS distinct restaurants timed out on
+    it in the window; anything else (overloaded, a server error) against the
+    family. A breaker this call did not count against has its probe handed
+    back."""
+    provider, fam, tenant = (tuple(keys) + (None, None, None))[:3]
+    counted = []
+    if reason == "connection" or not fam:
+        counted.append(provider)
+    elif reason == "timeout":
+        if tenant:
+            counted.append(tenant)
+        if _count_timeout(fam, restaurant_id):
+            counted.append(fam)
+    else:
+        counted.append(fam)
+    for key in keys:
+        if not key:
+            continue
+        if key in counted:
+            _breaker_record(key, False, reason=reason)
+        else:
+            _breaker_release_probe(key)
 
 
 def _breaker_release_probe(provider):
@@ -1486,7 +1922,7 @@ def _breaker_record(provider, ok, reason=None):
             b["failures"] += 1
             if reason:
                 b["reason"] = reason
-            if b["failures"] >= CB_FAILURE_THRESHOLD:
+            if b["failures"] >= (CB_TENANT_THRESHOLD if _local_only(provider) else CB_FAILURE_THRESHOLD):
                 was_open = bool(b.get("opened_at"))
                 b["open_until"] = time.time() + CB_OPEN_SECONDS
                 if not was_open:
@@ -1518,7 +1954,16 @@ def trip_breaker(provider, reason):
 
 
 def _note_breaker_transition(provider, kind, failures, reason):
-    label = VENDOR_LABELS.get(provider, provider)
+    if _local_only(provider):
+        # One restaurant's own timeouts (R4-04): that restaurant waits; it
+        # is not a platform event and pages nobody.
+        log.warning("ai breaker %s %s (%s failures, %s)", provider, kind, failures, reason)
+        return
+    if "/" in provider:
+        base, fam = provider.split("/", 1)
+        label = f"{VENDOR_LABELS.get(base, base)} {fam}"
+    else:
+        label = VENDOR_LABELS.get(provider, provider)
     if kind == "open":
         detail = (f"{failures} consecutive failures ({reason or 'provider errors'}) — "
                   f"calls fail fast for {CB_OPEN_SECONDS}s, then one probe")
@@ -1537,13 +1982,22 @@ def reset_breaker(provider=None, actor=None):
     With an actor the reset is recorded. It clears this process's breaker at
     once and publishes the reset (the shared `ai_breakers` row), so every
     other process closes its own within BREAKER_SYNC_SECONDS (scheduler audit
-    10/10/26 SCALE-24)."""
+    10/10/26 SCALE-24). A provider's reset closes its model-family and
+    tenant breakers too (R4-04), including families only another process
+    opened (their shared rows)."""
+    bases = [provider] if provider else list(BREAKER_PROVIDERS)
     with _breaker_lock:
         if provider:
-            _breakers.pop(provider, None)
+            for k in [k for k in _breakers if k == provider or k.startswith(provider + "/")]:
+                _breakers.pop(k, None)
         else:
             _breakers.clear()
-    for p in ([provider] if provider else BREAKER_PROVIDERS):
+        for k in [k for k in _timeouts_seen if any(k.startswith(b + "/") for b in bases)]:
+            _timeouts_seen.pop(k, None)
+    families = []
+    for b in bases:
+        families += [k for k in _shared_breaker_keys(b) if k not in families]
+    for p in bases + families:
         _breaker_publish(p)
     if actor:
         for p in ([provider] if provider else BREAKER_PROVIDERS):
@@ -2819,10 +3273,26 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
         log_blocked(restaurant_id, action, model, "budget", detail=paused, **attribution)
         raise AIBudgetExceeded(
             "AI is paused for everyone for a moment — try again shortly." if paused == "emergency stop" else
+            "Cavnar AI's background work is paused for a moment — it will pick up again shortly."
+            if paused == "fleet brake" else
             "This AI task is paused for now — it has run far more than usual in the last hour. "
             "Contact support@cavnar.ai if this looks wrong.")
+    # The orchestrated run's own caps, judged before every call (blind
+    # re-audit 10/20/26 R4-10; ai_orchestrator.run_cap_refusal).
     try:
-        _breaker_check("anthropic")
+        import ai_orchestrator as _orch_cap
+        capped = _orch_cap.run_cap_refusal()
+    except Exception:
+        _orch_cap, capped = None, None
+    if capped:
+        log_blocked(restaurant_id, action, model, "run_cap", detail=capped, **attribution)
+        raise AIRefused(f"This AI task stopped — {capped}.")
+    # The provider's breaker, the model family's and this restaurant's own
+    # on that family (R4-04).
+    _fam_key = family_breaker_key(model)
+    _bkeys = ("anthropic", _fam_key, _tenant_breaker_key(_fam_key, restaurant_id))
+    try:
+        _breakers_check(_bkeys)
     except AIProviderDown:
         log_blocked(restaurant_id, action, model, "breaker", detail="the provider breaker is open", **attribution)
         raise
@@ -2836,7 +3306,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
             # If the breaker check above let this call through as its one
             # probe, hand the probe back: a busy server proves nothing about
             # the provider, and the next caller should probe at once.
-            _breaker_release_probe("anthropic")
+            _release_probes(_bkeys)
             log_blocked(restaurant_id, action, model, "busy",
                         detail=f"all {INTERACTIVE_AI_SLOTS} interactive slots were in use", **attribution)
             raise AIBusy(_BUSY_MESSAGE)
@@ -2875,11 +3345,12 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
     except _mg.GatewayBusy as busy:
         if took_slot:
             release_interactive_slot()
-        _breaker_release_probe("anthropic")
+        _release_probes(_bkeys)
         log_blocked(restaurant_id, action, model, "busy",
                     detail=f"the {busy.klass} class's tokens for this minute were spent", **attribution)
         raise AIBusy(_BUSY_MESSAGE) from busy
     held = _INTERACTIVE_HELD.set(True) if took_slot else None
+    _run_cost = None          # set once a request went out: the run's call count (R4-10)
     try:
         call_id = _new_call_id()
         attempt = 0
@@ -2897,6 +3368,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 # one back after (job_queue.model_wait — blind re-audit
                 # 10/11/26 SCALE-1). Outside a queue job, nothing.
                 import job_queue as _jq_wait
+                _run_cost = 0.0 if _run_cost is None else _run_cost
                 with _jq_wait.model_wait():
                     message = _send(client, kwargs, stream, deadline=deadline, on_stream=on_stream)
             except CallDeadlineExceeded as e:
@@ -2909,7 +3381,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                               effort=sent_effort)
                 _record_trace_safe(call_id, kwargs, e.partial, restaurant_id, action, "truncated", attribution,
                                    attempts=attempt + 1, latency_ms=latency)
-                _breaker_release_probe("anthropic")
+                _release_probes(_bkeys)
                 raise
             except Exception as e:
                 reason = classify_error(e)
@@ -2954,13 +3426,15 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                         # every restaurant for a minute. The call is refused;
                         # the gateway's allocation (GATEWAY_ORG_*) is the
                         # throttle, and the event is recorded once a minute.
-                        _breaker_release_probe("anthropic")
+                        _release_probes(_bkeys)
                         _note_rate_limited(e)
                         raise
                     # Only an EXHAUSTED retry budget counts toward the breaker:
                     # one transient 5xx that the retry absorbed is the system
-                    # working, not a provider that is down.
-                    _breaker_record("anthropic", False, reason=reason)
+                    # working, not a provider that is down. Counted against
+                    # the model family, or the restaurant's own breaker for
+                    # its own timeouts (R4-04) — never every model at once.
+                    _record_call_failure(_bkeys, reason, restaurant_id)
                     raise
                 # Not retryable (bad request, auth, a malformed response) — still
                 # a failed AI call the admin console should see next to the
@@ -2976,15 +3450,24 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                     # A revoked key or an empty balance fails every call alike:
                     # stop sending them, and let the probe find the fix.
                     trip_breaker("anthropic", reason)
+                    _release_probes(_bkeys[1:])
                 else:
-                    _breaker_release_probe("anthropic")
+                    _release_probes(_bkeys)
                 raise
             latency_ms = int((time.time() - started) * 1000)
             usage_id = _log_usage_safe(message, model, restaurant_id, action, latency_ms=latency_ms,
                                        attempts=attempt + 1, call_id=call_id, attribution=attribution,
                                        effort=sent_effort)
             _mg.settle(ticket, message)
-            _breaker_record("anthropic", True)
+            _record_call_success(_bkeys)
+            try:
+                _u = message.usage
+                _run_cost = _estimate_cost(model, getattr(_u, "input_tokens", 0) or 0,
+                                           getattr(_u, "output_tokens", 0) or 0,
+                                           getattr(_u, "cache_creation_input_tokens", 0) or 0,
+                                           getattr(_u, "cache_read_input_tokens", 0) or 0)
+            except Exception:
+                pass
             if getattr(message, "usage", None) is not None:
                 _record_trace_safe(call_id, kwargs, message, restaurant_id, action, outcome_of(message), attribution,
                                    attempts=attempt + 1, latency_ms=latency_ms, usage_id=usage_id)
@@ -2997,6 +3480,8 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
     finally:
         # A call that failed before an answer gives its reservation back.
         _mg.settle(ticket, None)
+        if _run_cost is not None and _orch_cap is not None:
+            _orch_cap.note_run_call(_run_cost)
         if took_slot:
             _INTERACTIVE_HELD.reset(held)
             release_interactive_slot()
@@ -4939,8 +5424,11 @@ def ai_health(db_path=None):
             "error_rate_1h": round(100.0 * errors / calls, 1) if calls else None,
             "blocked_1h": int(r.get("blocked") or 0),
             "last_error": last_err.get(v), "last_ok_at": last_ok.get(v),
+            # Each model family's own breaker (R4-04): {family: state}.
+            "breaker_families": {k.split("/", 1)[1]: b["state"] for k, b in brk.items()
+                                 if k.startswith(v + "/")},
         }
-    auth_events = [e for (v, k), e in last_events.items() if k == "auth"]
+    auth_events =[e for (v, k), e in last_events.items() if k == "auth"]
     out["last_auth_error"] = max(auth_events, key=lambda e: e["id"]) if auth_events else None
     out["events"] = events
     try:
@@ -4953,7 +5441,10 @@ def ai_health(db_path=None):
     # platform monitor's every pass, which pages once an hour past the line.
     try:
         out["rate"] = check_fleet_rate(db_path)
-        out["emergency_stop"] = AI_EMERGENCY_STOP
+        out["emergency_stop"] = emergency_stop_armed()
+        out["fleet_brake"] = fleet_brake_scope()
+        import model_gateway as _mg_h
+        out["gateway_enabled"] = _mg_h.enabled()
     except Exception:
         out["rate"] = {}
     out["status"], out["reason"] = _service_status(out)
@@ -5038,7 +5529,47 @@ def check_ai_alerts(db_path=None):
                   "and no call has succeeded since.",
                   "Check the provider's status page and the errors on Operations → AI."]):
             paged.append(vendor)
+    if _gateway_off_warning(db_path):
+        paged.append("gateway")
     return paged
+
+
+# The fleet size past which running with the model gateway off is worth a
+# page (blind re-audit 10/20/26 R4-05): the allocator (GATEWAY_ORG_* /
+# GATEWAY_FAMILY_LIMITS) is off by default, and the 429 design leans on it
+# shaping bursts once many restaurants share the organisation's per-model
+# limits. 0 switches the warning off.
+AI_GATEWAY_WARN_CLIENTS = int(os.getenv("AI_GATEWAY_WARN_CLIENTS", "100") or 0)
+
+
+def _gateway_off_warning(db_path=None) -> bool:
+    """One health event and one page a day while the gateway's allocator is
+    off and the client restaurants (paying and non-demo trials) number at
+    least AI_GATEWAY_WARN_CLIENTS (R4-05). True when it paged. Never raises."""
+    try:
+        if AI_GATEWAY_WARN_CLIENTS <= 0:
+            return False
+        import model_gateway
+        if model_gateway.enabled():
+            return False
+        clients = _paying_client_count(db_path) + _trial_client_count(db_path)
+        if clients < AI_GATEWAY_WARN_CLIENTS:
+            return False
+        import ops
+        from datetime import datetime, timezone
+        if not ops.claim_period("ai_gateway_off", f"{datetime.now(timezone.utc):%Y-%m-%d}"):
+            return False
+        record_health_event("anthropic", "gateway_off", detail=f"{clients} client restaurants, gateway allocator off")
+        return _page("gateway_off", "Cavnar AI: the model gateway is off with a large fleet",
+                     [f"{clients} client restaurants share the organisation's per-model rate limits and nothing "
+                      "shapes their bursts: the gateway's allocator is off (GATEWAY_ORG_OTPM / GATEWAY_ORG_ITPM / "
+                      "GATEWAY_FAMILY_LIMITS unset).",
+                      "Set GATEWAY_FAMILY_LIMITS to ~80% of the organisation's real per-model limits (Anthropic "
+                      "console → Limits) and GATEWAY_TENANT_OTPM to ~10% of the Sonnet output limit. "
+                      "docs/ops/ENVIRONMENT.md has the values."])
+    except Exception as e:
+        log.warning("gateway warning check failed: %s", e)
+        return False
 
 
 def ai_service_status(db_path=None):
@@ -5575,6 +6106,8 @@ def reset_process_state(db_path=None):
     with _budget_lock:
         _budget_cache.clear()
         _budget_memo.clear()
+    with _control_lock:
+        _control_cache.clear()
     _warned_memo.clear()
     with _blocked_lock:
         _blocked_memo.clear()

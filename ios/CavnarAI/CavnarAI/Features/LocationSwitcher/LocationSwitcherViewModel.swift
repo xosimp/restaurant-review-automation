@@ -69,10 +69,28 @@ final class LocationSwitcherViewModel {
                                                               query: fresh ? ["fresh": "1"] : [:],
                                                               hapticOnError: false)
             group = g.ok ? g : nil
+            scheduleGroupRetry(g.ok && !g.preparing.isEmpty, attempt: 1)
         } catch let error as APIClient.APIError where fresh {
             errorMessage = error.message
         } catch {
             if !fresh { group = nil }
+        }
+    }
+
+    /// Location rows still being built on the server (R6-F10) are read
+    /// again — 4, 8, 12, 16, then 20 seconds on — never built on the request.
+    private var groupRetry: Task<Void, Never>?
+    private func scheduleGroupRetry(_ needed: Bool, attempt: Int) {
+        groupRetry?.cancel()
+        guard needed, attempt <= 5 else { return }
+        groupRetry = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(4 * attempt) * 1_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            guard let g: LocationGroupBrief = try? await self.client.send("/mobile/api/home/brief/group",
+                                                                          hapticOnError: false),
+                  g.ok, !Task.isCancelled else { return }
+            self.group = g
+            self.scheduleGroupRetry(!g.preparing.isEmpty, attempt: attempt + 1)
         }
     }
 

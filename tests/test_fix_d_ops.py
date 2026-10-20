@@ -293,6 +293,7 @@ def test_the_prune_is_chunked_and_bounded_and_returns_counts(db_path, monkeypatc
     assert ops.prune_ledgers(db_path)["hit_bound"] is True
 
 
+@pytest.mark.sqlite_only     # sqlite_stat1 is SQLite's own planner table (ANALYZE on Postgres)
 def test_the_prune_refreshes_planner_statistics(db_path):
     ops.prune_ledgers(db_path)
     assert _q(db_path, "SELECT name FROM sqlite_master WHERE name='sqlite_stat1'")

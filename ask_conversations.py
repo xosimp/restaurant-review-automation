@@ -322,6 +322,36 @@ def last_answer_read_public(restaurant_id, conversation_id, viewer_id=None, db_p
         return True
 
 
+def chat_read_public(restaurant_id, conversation_id, viewer_id=None, db_path=None, limit=200) -> bool:
+    """Whether ANY answer in this chat (the newest `limit`) read text a
+    member of the public wrote (blind re-audit 10/20/26 R7-20): the replayed
+    history keeps an answer's quotes for twelve messages and the rolling
+    summary keeps what they said for good, so a quoted instruction outlives
+    the one-turn carry of last_answer_read_public. Read for the actions that
+    persist (ask_cavnar_tools.TAINT_PERSISTENT_TOOLS). True when the chat
+    cannot be read (fail closed)."""
+    if not conversation_id:
+        return False
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT meta_json FROM ask_cavnar_messages WHERE restaurant_id=? AND conversation_id=? "
+                "AND role='assistant' AND (? IS NULL OR user_id=?) ORDER BY id DESC LIMIT ?",
+                (restaurant_id, conversation_id, viewer_id, viewer_id, int(limit))).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return True
+    for r in rows:
+        try:
+            if (json.loads(r["meta_json"] or "{}") or {}).get("read_public_text"):
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
 # ── the last answer's reads, replayed (AI cost audit 10/7/26 #65) ───────────
 #
 # A follow-up ("and last week?", "why?") was told what the last answer read

@@ -8,6 +8,18 @@ docs/ops/POSTGRES_CUTOVER.md step 1). The remaining port is this list.
     python scripts/pg_sql_audit.py --database-url postgresql://…/scratch
                                               # + every statement PREPAREd
                                               #   on a real Postgres
+    python scripts/pg_sql_audit.py --database-url postgresql://…/scratch \
+        --recorded DIR                        # + every statement the suite
+                                              #   ran (CAVNAR_RECORD_SQL=DIR)
+
+The source can only PREPARE a statement whose text is fully written there.
+One built at run time — an f-string's hole, a joined IN list, a CASE built
+from a registry — is not, and that is where the Postgres-only failures
+hid (blind re-audit 10/20/26 R9-01/R9-02: the notification badge's CASE
+WHEN on an integer, swallowed by its route, read 0 for every login). With
+--recorded, every distinct statement the SQLite suite actually executed
+through a models connection (tests/conftest.py, CAVNAR_RECORD_SQL) is
+translated and PREPAREd too: `recorded_prepared`, `recorded_failed`.
 
 Reading the text is not running it (blind re-audit 10/11/26, SCALE-10: the
 text-level "0 untranslatable" missed SUM(<boolean>), COLLATE NOCASE, a
@@ -109,9 +121,10 @@ def static_statements(root=ROOT):
 
 
 # Modules whose SQL is Postgres's own (the dialect layer's catalog reads, the
-# copy, the shadow's typed writes): never translated, so not audited as
+# copy, the shadow's typed writes, the partition upkeep — every statement
+# of pg_partitions runs through execute_native): never translated, so not audited as
 # SQLite.
-_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py"}
+_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py"}
 
 
 def _nodes(root=ROOT):
@@ -129,6 +142,8 @@ def _nodes(root=ROOT):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not node.args:
                     continue
+                if isinstance(node.func, ast.Attribute) and node.func.attr == "execute_native":
+                    continue          # Postgres's own SQL, sent untranslated (db_dialect)
                 if isinstance(node.func, ast.Attribute) and node.func.attr in ("execute", "executemany"):
                     cands = node.args[:1]
                 else:
@@ -186,36 +201,105 @@ def prepare_check(url, root=ROOT, build=True) -> dict:
     out = {"prepared": 0, "prepare_failed": [], "skipped": 0, "runtime_tables": 0}
     try:
         for path, line, sql in static_statements(root):
-            if _SKIP_PREPARE.match(sql):
-                out["skipped"] += 1
-                continue
-            if RUNTIME_TABLES.search(sql):
-                out["runtime_tables"] += 1
-                continue
-            m = db_dialect._UPDATE_OR.match(sql)
-            if m:
-                # Run row by row (db_dialect): the SET and WHERE are checked.
-                sql = re.sub(r"^\s*UPDATE\s+OR\s+\w+", "UPDATE", sql, flags=re.I)
-            try:
-                text, _ret = conn._final_text(sql)
-            except Exception as e:
-                out["prepare_failed"].append({"at": f"{path}:{line}", "error": f"translate: {e}"[:200],
-                                              "sql": sql[:160]})
-                continue
-            n = [0]
-
-            def _dollar(_m):
-                n[0] += 1
-                return f"${n[0]}"
-            text = re.sub(r"%s", _dollar, text).replace("%%", "%")
-            try:
-                with contextlib.redirect_stderr(io.StringIO()):
-                    raw.execute(f"PREPARE cavnar_audit AS {text}", prepare=False)
-                raw.execute("DEALLOCATE cavnar_audit", prepare=False)
+            got = _prepare_one(conn, raw, sql)
+            if got in ("skipped", "runtime_tables"):
+                out[got] += 1
+            elif got is None:
                 out["prepared"] += 1
-            except Exception as e:
-                out["prepare_failed"].append({"at": f"{path}:{line}", "error": str(e).split("\n")[0][:200],
-                                              "sql": sql[:160]})
+            else:
+                out["prepare_failed"].append({"at": f"{path}:{line}", "error": got, "sql": sql[:160]})
+    finally:
+        raw.close()
+        conn.close()
+    return out
+
+
+def _prepare_one(conn, raw, sql):
+    """None when `sql` (SQLite's dialect) translates and PREPAREs on the
+    Postgres behind `conn` / `raw`; "skipped" (DDL, control) or
+    "runtime_tables"; else the error, in words."""
+    import contextlib
+    import io
+    import db_dialect
+    if _SKIP_PREPARE.match(sql):
+        return "skipped"
+    if RUNTIME_TABLES.search(sql):
+        return "runtime_tables"
+    if db_dialect._UPDATE_OR.match(sql):
+        # Run row by row (db_dialect): the SET and WHERE are checked.
+        sql = re.sub(r"^\s*UPDATE\s+OR\s+\w+", "UPDATE", sql, flags=re.I)
+    try:
+        text, _ret = conn._final_text(sql)
+        # `col IS ?` as a value binds it (db_dialect.bind_is, R2-04).
+        text = db_dialect.bind_is(text, None)[0]
+    except Exception as e:
+        return f"translate: {e}"[:200]
+    n = [0]
+
+    def _dollar(_m):
+        n[0] += 1
+        return f"${n[0]}"
+    text = re.sub(r"%s", _dollar, text).replace("%%", "%")
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            raw.execute(f"PREPARE cavnar_audit AS {text}", prepare=False)
+        raw.execute("DEALLOCATE cavnar_audit", prepare=False)
+        return None
+    except Exception as e:
+        return str(e).split("\n")[0][:200] or type(e).__name__
+
+
+def recorded_statements(directory) -> list:
+    """[(sql, at)] — every distinct statement the suite recorded
+    (tests/conftest.py, CAVNAR_RECORD_SQL) in `directory`'s sql-*.jsonl."""
+    seen = {}
+    for name in sorted(os.listdir(directory)):
+        if not (name.startswith("sql-") and name.endswith(".jsonl")):
+            continue
+        with open(os.path.join(directory, name), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if item.get("sql") and item["sql"] not in seen:
+                    seen[item["sql"]] = item.get("at") or "?"
+    return list(seen.items())
+
+
+# A table the app creates on first use rather than at boot, or a test
+# creates for itself: PREPARE meets no such relation in the boot's catalog.
+# Reported apart (recorded_unknown_table), never as a dialect failure.
+_NO_RELATION = re.compile(r'relation "([^"]+)" does not exist')
+
+
+def prepare_recorded(url, directory, build=True) -> dict:
+    """prepare_check over the statements the suite actually ran — the
+    run-time-built SQL the source audit cannot read. {"recorded": n,
+    "recorded_prepared": n, "recorded_failed": [{at, error, sql}],
+    "recorded_unknown_table": [{at, table}], "recorded_skipped": n}."""
+    import db_dialect
+    import psycopg
+    if build:
+        _boot_on(url)
+    rows = recorded_statements(directory)
+    conn = db_dialect.connect(url)
+    raw = psycopg.connect(url, autocommit=True, connect_timeout=10)
+    out = {"recorded": len(rows), "recorded_prepared": 0, "recorded_failed": [], "recorded_unknown_table": [],
+           "recorded_skipped": 0}
+    try:
+        for sql, at in rows:
+            got = _prepare_one(conn, raw, sql)
+            if got in ("skipped", "runtime_tables"):
+                out["recorded_skipped"] += 1
+            elif got is None:
+                out["recorded_prepared"] += 1
+            else:
+                m = _NO_RELATION.search(got)
+                if m:
+                    out["recorded_unknown_table"].append({"at": at, "table": m.group(1)})
+                else:
+                    out["recorded_failed"].append({"at": at, "error": got, "sql": sql[:300]})
     finally:
         raw.close()
         conn.close()
@@ -339,19 +423,25 @@ def main(argv=None):
     if "--database-url" in argv:
         url = argv[argv.index("--database-url") + 1]
         rep.update(prepare_check(url))
+        if "--recorded" in argv:
+            rep.update(prepare_recorded(url, argv[argv.index("--recorded") + 1], build=False))
     if "--json" in argv:
         print(json.dumps(rep, indent=2))
-        return 1 if rep.get("prepare_failed") else 0
+        return 1 if rep.get("prepare_failed") or rep.get("recorded_failed") else 0
     print(f"{rep['statements']} SQL statements read")
     keys = ["untranslatable", "dynamic", "ported", "double_quoted", "sqlite_only", "reserved_columns"]
     if url:
         print(f"{rep['prepared']} PREPAREd on Postgres, {rep['skipped']} DDL / control skipped")
         keys.append("prepare_failed")
+    if "recorded" in rep:
+        print(f"{rep['recorded']} statements the suite ran: {rep['recorded_prepared']} PREPAREd, "
+              f"{rep['recorded_skipped']} DDL / control skipped")
+        keys += ["recorded_unknown_table", "recorded_failed"]
     for k in keys:
         print(f"\n{k}: {len(rep[k])}")
         for item in rep[k]:
             print("  ", item if isinstance(item, str) else " — ".join(str(v) for v in item.values()))
-    return 1 if rep.get("prepare_failed") else 0
+    return 1 if rep.get("prepare_failed") or rep.get("recorded_failed") else 0
 
 
 if __name__ == "__main__":

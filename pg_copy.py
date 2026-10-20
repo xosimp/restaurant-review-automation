@@ -493,21 +493,75 @@ def _pg_public_tables(pg) -> dict:
     return out
 
 
+def _pg_partitions(pg) -> dict:
+    """{partitioned parent: [its leaf partitions, by name]} — a
+    sub-partitioned level is walked down to the leaves that hold rows."""
+    cur = pg.cursor()
+    cur.execute(
+        "WITH RECURSIVE tree AS ("
+        " SELECT i.inhparent AS root, i.inhrelid AS rel FROM pg_inherits i "
+        " JOIN pg_class p ON p.oid = i.inhparent JOIN pg_namespace n ON n.oid = p.relnamespace "
+        " WHERE n.nspname = current_schema() AND p.relkind = 'p' AND NOT p.relispartition "
+        " UNION ALL SELECT t.root, i.inhrelid FROM tree t JOIN pg_inherits i ON i.inhparent = t.rel) "
+        "SELECT r.relname, c.relname FROM tree t JOIN pg_class r ON r.oid = t.root JOIN pg_class c ON c.oid = t.rel "
+        "WHERE c.relkind = 'r' ORDER BY r.relname, c.relname")
+    out = {}
+    for parent, leaf in cur.fetchall():
+        out.setdefault(parent, []).append(leaf)
+    return out
+
+
+def _quoted(names):
+    return ", ".join('"' + c + '"' for c in names)
+
+
+def _export_rows(pg, out, source, name, cols, cursor_name) -> int:
+    """Stream `source` (a quoted table or partition) into the SQLite table
+    `name` through a server-side cursor, BATCH_ROWS at a time."""
+    col_list = _quoted(cols)
+    marks = ", ".join("?" * len(cols))
+    n = 0
+    with pg.cursor(name=cursor_name) as cur:
+        cur.itersize = BATCH_ROWS
+        cur.execute(f"SELECT {col_list} FROM {source}")
+        while True:
+            rows = cur.fetchmany(BATCH_ROWS)
+            if not rows:
+                break
+            out.executemany(f'INSERT INTO "{name}" ({col_list}) VALUES ({marks})', [tuple(r) for r in rows])
+            n += len(rows)
+    return n
+
+
 def export_to_sqlite(dst_path, url=None, pg=None) -> dict:
-    """A consistent snapshot of the Postgres database in a fresh SQLite file
-    at `dst_path`: the app's own migrations build it (models.init_db,
-    ensure_columns), and EVERY table Postgres holds is copied in one
-    REPEATABLE READ transaction — a table the migrations do not build
-    (auth's users and sessions, the guest tables, webhooks, push… are made
-    by other boot steps) is created from Postgres's own column list, so
-    nothing is left behind (scale re-audit 10/20/26 R8-01: the export
-    copied only what init_db built and dropped 53 tables, users among them).
-    Rows stream through a server-side cursor, BATCH_ROWS at a time — a
-    client-side cursor held a whole table in the web process's memory
-    (R8-02). Every table's copied count is checked against Postgres's in the
-    same snapshot; a mismatch raises, so the backup fails and pages instead
-    of shipping a partial copy. Returns {tables: {name: rows}, created: [...],
-    verify: {ok}}."""
+    """A snapshot of the Postgres database in a fresh SQLite file at
+    `dst_path`: the app's own migrations build it (models.init_db,
+    ensure_columns), and EVERY table Postgres holds is copied — a table the
+    migrations do not build (auth's users and sessions, the guest tables,
+    webhooks, push… are made by other boot steps) is created from Postgres's
+    own column list, so nothing is left behind (scale re-audit 10/20/26
+    R8-01: the export copied only what init_db built and dropped 53 tables,
+    users among them). Rows stream through a server-side cursor, BATCH_ROWS
+    at a time — a client-side cursor held a whole table in memory (R8-02).
+
+    Snapshots (scale re-audit 10/20/26 R8-17). Every ordinary table is
+    copied in ONE REPEATABLE READ transaction — the accounts, settings,
+    ledgers and queues stay consistent with each other. A PARTITIONED table
+    (db_dialect.PARTITIONED: the append-mostly fact tables, the bulk of the
+    data) is copied partition by partition AFTER it, each partition in its
+    own short REPEATABLE READ transaction: one transaction over the whole
+    export held back vacuum on every high-churn table (the rate buckets, the
+    queue, the claims) for the export's whole run — hours at fleet scale.
+    The cost is skew, and only there: a fact row written while the export
+    runs may be in a later partition's copy and not an earlier one's, or
+    point at a restaurant created after the main snapshot. A restore reads
+    rows that each existed; nothing in it is half a transaction of the
+    accounts tables.
+
+    Every table's (and partition's) copied count is checked against
+    Postgres's in the same snapshot; a mismatch raises, so the backup fails
+    and pages instead of shipping a partial copy. Returns {tables: {name:
+    {rows, partitions?}}, created: [...], verify: {ok}}."""
     import models
     if os.path.exists(dst_path):
         os.unlink(dst_path)
@@ -521,14 +575,16 @@ def export_to_sqlite(dst_path, url=None, pg=None) -> dict:
     try:
         pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         pg_tables = _pg_public_tables(pg)
+        partitions = _pg_partitions(pg)
         have = {n for n, _sql in sqlite_tables(out)}
         report = {"tables": {}, "created": [], "verify": {"ok": True, "mismatch": {}}}
+        later = []
         for name, pg_cols in pg_tables.items():
             if _SKIP.match(name):
                 continue
             if name not in have:
                 # Untyped columns: SQLite keeps each value as Postgres gave it.
-                out.execute(f'CREATE TABLE "{name}" ({", ".join(chr(34) + c + chr(34) for c in pg_cols)})')
+                out.execute(f'CREATE TABLE "{name}" ({_quoted(pg_cols)})')
                 report["created"].append(name)
             sqlite_cols = {c[0] for c in table_columns(out, name)}
             cols = [c for c in pg_cols if c in sqlite_cols]
@@ -536,26 +592,33 @@ def export_to_sqlite(dst_path, url=None, pg=None) -> dict:
                 if c not in sqlite_cols:
                     out.execute(f'ALTER TABLE "{name}" ADD COLUMN "{c}"')
                     cols.append(c)
-            col_list = ", ".join(chr(34) + c + chr(34) for c in cols)
             out.execute(f'DELETE FROM "{name}"')
-            n = 0
-            with pg.cursor(name=f"export_{len(report['tables'])}") as cur:
-                cur.itersize = BATCH_ROWS
-                cur.execute(f'SELECT {col_list} FROM "{name}"')
-                while True:
-                    rows = cur.fetchmany(BATCH_ROWS)
-                    if not rows:
-                        break
-                    out.executemany(f'INSERT INTO "{name}" ({col_list}) VALUES ({", ".join("?" * len(cols))})',
-                                    [tuple(r) for r in rows])
-                    n += len(rows)
+            if name in partitions:
+                later.append((name, cols))
+                continue
+            n = _export_rows(pg, out, f'"{name}"', name, cols, f"export_{len(report['tables'])}")
             want = pg.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
             report["tables"][name] = {"rows": n}
             if int(want) != n:
                 report["verify"]["ok"] = False
                 report["verify"]["mismatch"][name] = {"postgres": int(want), "copied": n}
         out.commit()
-        pg.rollback()
+        pg.rollback()                       # the main snapshot ends here
+        for name, cols in later:
+            total = 0
+            for i, part in enumerate(partitions[name]):
+                pg.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                try:
+                    n = _export_rows(pg, out, f'"{part}"', name, cols, f"export_{name}_{i}")
+                    want = pg.execute(f'SELECT COUNT(*) FROM "{part}"').fetchone()[0]
+                finally:
+                    pg.rollback()
+                if int(want) != n:
+                    report["verify"]["ok"] = False
+                    report["verify"]["mismatch"][f"{name}/{part}"] = {"postgres": int(want), "copied": n}
+                total += n
+            out.commit()
+            report["tables"][name] = {"rows": total, "partitions": len(partitions[name])}
         if not report["verify"]["ok"]:
             raise RuntimeError(f"export_to_sqlite: copied counts differ from Postgres: {report['verify']['mismatch']}")
         return report

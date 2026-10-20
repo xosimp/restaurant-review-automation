@@ -405,7 +405,7 @@ def test_a_restart_mid_batch_does_not_lose_the_days_alerts(db_path, sent, monkey
     _labor_over(db_path, rid)
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path, local_hour=10)
-    notify._batch = None                                  # the deploy
+    notify.discard_daily_batch()                          # the deploy
     notify.begin_daily_batch()
     notify.check_daily_alerts(db_path=db_path, local_hour=10)
     notify.flush_daily_batch(db_path=db_path)
@@ -476,6 +476,7 @@ def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     assert sorted(got) == [f"tok-{i}" for i in range(5)]
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_the_per_alert_push_lookups_use_an_index(db_path):
     """MOD-NOT-13 — brief_pushed_today and get_device_tokens run on every
     alert; neither may be a full-table scan."""

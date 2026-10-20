@@ -55,19 +55,42 @@ The same tests run with their database on Postgres when `CAVNAR_TEST_PG_URL`
 names a scratch server (never production's; a throwaway local cluster or CI's
 service): `tests/conftest.py` routes the default database and every
 `db_path` to a database of its own (`models._PG_ROUTES`), copied per test
-from a template the real boot built, and dropped after. A test that reads the
-SQLite file itself (a snapshot, `EXPLAIN QUERY PLAN`, `PRAGMA query_only`, a
-direct `sqlite3.connect`) is marked `@pytest.mark.sqlite_only` and skipped
-there. `tests/test_q2_postgres.py`'s live half (the boot twice in its own
-process, the copy then the boot, every static statement PREPAREd, the
-dialect's semantics) runs only in this mode. CI's `postgres` job runs it and
-the database-heavy files listed in `.github/workflows/ci.yml`; locally:
+from a template, and dropped after. The template is built the way
+production's database was (blind re-audit 10/20/26 R9-02): the boot's
+migrations on SQLite, `pg_copy.copy_database` into Postgres (so the fact
+tables in `db_dialect.PARTITIONED` are month-partitioned, their keys
+carrying the partition column), then the boot again on Postgres. A test's
+own `sqlite3.connect(<its db_path>)` — seeding a fixture, reading a row back
+— is served by that same Postgres database, rows shaped as sqlite3's; the
+app's own `sqlite3.connect` calls are never redirected. Postgres enforces
+foreign keys SQLite's `PRAGMA foreign_keys=OFF` let a fixture skip: a
+fixture names real parent rows.
+
+What cannot run on Postgres is listed in ONE place, with its reason: a test
+that reads the SQLite file itself (a snapshot, `EXPLAIN QUERY PLAN`, `PRAGMA
+query_only`, the file's bytes) is marked `@pytest.mark.sqlite_only`, and a
+whole such file goes in `PG_MODE_SKIP_FILES` in `tests/conftest.py`. A file
+that fails on Postgres for a reason production would meet is a bug to fix,
+never an entry. `tests/test_q2_postgres.py`'s live half (the boot twice in
+its own process, the copy then the boot, every static statement PREPAREd,
+the dialect's semantics) runs only in this mode. CI's `postgres` job runs
+EVERY test file this way (it was a hand-picked list of ~40, and the
+notification badge's Postgres-only failure sat outside it); locally:
 
 ```
 CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres \
     python -m pytest -q -p no:warnings -n 3 --dist loadfile tests/test_q2_postgres.py tests/test_models.py
 python scripts/pg_sql_audit.py --database-url postgresql://postgres@127.0.0.1:55432/scratch
 ```
+
+**The statements built at run time.** The source audit PREPAREs only SQL
+whose text is fully written in the source. `CAVNAR_RECORD_SQL=<dir>` on a
+SQLite run records every distinct statement the app executed through a
+models connection (f-string holes filled, IN lists folded to one shape) into
+`<dir>/sql-<pid>.jsonl`; `pg_sql_audit.py --database-url … --recorded <dir>`
+translates and PREPAREs each (`recorded_failed` must be empty; a table the
+boot does not build is listed apart as `recorded_unknown_table`). CI's
+`test` job records, and its `postgres-recorded-sql` job PREPAREs.
 
 ## A gotcha worth knowing about before you distrust a revert-check
 

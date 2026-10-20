@@ -491,7 +491,7 @@ def test_m8_track_starts_a_real_tracker_on_the_modules_metric(db_path, monkeypat
     rec_ledger_title = "Answer every 3-star review within a day"
     import rec_ledger
     rec_ledger.present(rid, "insight_review:xyz", "reviews", "reviews", title=rec_ledger_title)
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None: (4.3, "30 reviews"))
+    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None, **_kw: (4.3, "30 reviews"))
     out, st = _rec_event(rid, {"key": "insight_review:xyz", "event": "accepted", "surface": "reviews",
                                "module": "reviews"}, monkeypatch)
     assert st == 200 and out["tracking"]["metric"] == "avg_rating"

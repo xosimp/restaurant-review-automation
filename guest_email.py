@@ -1105,8 +1105,12 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
         person = {"email": row["email"], "name": row["name"], "email_token": row["email_token"]}
         message_id, retryable = None, None
         try:
-            result = _emails.deliver(_render(restaurant, person, nl["subject"], paragraphs, base, design, image_url),
-                                     restaurant_id=nl["restaurant_id"], email_type="guest_newsletter")
+            # One key for this newsletter to this guest, so retry_failed
+            # never mails twice what Resend took before a timeout (R9-15).
+            with _emails.send_key(f"newsletter:{newsletter_id}:{row['id']}"):
+                result = _emails.deliver(_render(restaurant, person, nl["subject"], paragraphs, base, design,
+                                                 image_url),
+                                         restaurant_id=nl["restaurant_id"], email_type="guest_newsletter")
             ok = bool(getattr(result, "ok", result))
             status, err = "sent", None
             if not ok:

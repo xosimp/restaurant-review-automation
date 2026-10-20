@@ -1424,7 +1424,7 @@ function onbBoard(b){
   const bf = b.backfill || {}, held = (bf.active||[]).filter(x=>x.held_reason);
   const stuck = (b.stuck||[]).slice(0,8).map(x=>`<a href="#client/${x.id}">${esc(x.name)}</a> <span class="dim">· ${esc(x.stage)} · day ${x.days}</span>`).join('<br>');
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Fleet onboarding</h2><span class="sub">POS history backfill: <span class="n">${bf.used==null?'—':bf.used}</span> of <span class="n">${bf.cap==null?'—':bf.cap}</span> slots${held.length?` · <span style="color:var(--amber-t)">${held.length} held: ${esc(held[0].held_reason)}</span>`:''}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Fleet onboarding</h2><span class="sub">POS history backfill: <span class="n">${bf.used==null?'—':bf.used}</span> of <span class="n">${bf.cap==null?'—':bf.cap}</span> slots${held.length?` · <span style="color:var(--amber-t)">${held.length} held: ${esc(held[0].held_reason)}</span>`:''}${bf.old?` · <span style="color:var(--amber-t)"><span class="n">${bf.old}</span> held over ${bf.old_after_days} days</span>`:''}</span></div>
     <div style="display:flex;gap:12px;flex-wrap:wrap">${st}</div>
     ${stuck?`<div class="muted" style="font-size:12.5px"><span class="lbl">Not live after ${b.stuck_after_days} days</span><br>${stuck}</div>`:''}</div>`;
 }
@@ -1444,14 +1444,15 @@ async function bulkPartners(){
     (d.partners||[]).forEach(p=>{ const o = document.createElement('option'); o.value = p.id; o.textContent = p.name + (p.billing_mode==='partner'?' (billed by partner)':''); sel.appendChild(o); }); }catch(e){}
 }
 function bulkRows(rows){
-  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 async function bulkDry(){
   const d = await post('/admin/api/onboarding/provision/dry-run', {csv: $('bulk-csv').value});
   if(!d.ok){ $('bulk-out').innerHTML = `<div class="warnline">${esc(d.error||'The list could not be read')}</div>`; $('bulk-apply').disabled = true; return; }
-  const c = d.counts || {};
-  $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix</div>` + bulkRows(d.rows);
-  $('bulk-apply').disabled = !(c.create > 0);
+  const c = d.counts || {}, bl = d.billing || {};
+  $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix${d.joins_owner?` · <span class="n">${d.joins_owner}</span> join an existing owner's group`:''}</div>`
+    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '') + bulkRows(d.rows);
+  $('bulk-apply').disabled = !(c.create > 0) || bl.ok === false;
 }
 async function bulkApply(){
   const n = $('bulk-out').querySelectorAll('tbody tr').length;
@@ -3099,19 +3100,21 @@ function opsAI(d){
   const oc = d.outcomes || {}, ocTot = OUT_KEYS.reduce((n, x) => n + (oc[x] || 0), 0), vmx = Math.max(0.0001, ...(d.by_vendor || []).map(v => v.cost || 0));
   const win = _aid === 1 ? 'today (UTC)' : _aid + ' days';
   const hTone = h.status === 'outage' ? 'bad' : h.status === 'degraded' ? 'warn' : h.status === 'operational' ? 'good' : 'neu';
-  const vendors = Object.keys(hv).map(v => { const x = hv[v], br = BRK[x.breaker] || ['neu', x.breaker || '—'];
+  const vendors = Object.keys(hv).map(v => { const x = hv[v], br = BRK[x.breaker] || ['neu', x.breaker || '—'], fams = Object.keys(x.breaker_families || {}).filter(f => x.breaker_families[f] !== 'closed');
     return `<div class="li" style="padding:12px 0;gap:12px;align-items:flex-start"><div class="tt"><b>${esc(x.label || v)}</b>
       <span>${x.key_configured ? '' : '<span style="color:var(--red-t)">no key set · </span>'}${x.calls_1h ? `${fmtN(x.errors_1h)} of ${fmtN(x.calls_1h)} failed · last hour${x.error_rate_1h != null ? ' (' + x.error_rate_1h + '%)' : ''}` : 'no calls in the last hour'}${x.blocked_1h ? ' · ' + fmtN(x.blocked_1h) + ' stopped before sending' : ''}${x.last_ok_at ? ' · last worked ' + agoWord(x.last_ok_at) : ''}</span>
       ${x.last_error ? `<span style="color:var(--red-t)">${esc(String(x.last_error.error || x.last_error.reason || '').slice(0, 160))} · ${agoWord(x.last_error.at)}</span>` : ''}
-      ${x.breaker_reason && x.breaker !== 'closed' ? `<span class="dim">${esc(x.breaker_reason)}</span>` : ''}</div>
+      ${x.breaker_reason && x.breaker !== 'closed' ? `<span class="dim">${esc(x.breaker_reason)}</span>` : ''}
+      ${fams.length ? `<span style="color:var(--amber-t)">paused for ${esc(fams.join(', '))} only — other models still answer</span>` : ''}</div>
       ${pill(br[0], 'breaker ' + esc(br[1]) + (x.breaker === 'open' && x.breaker_seconds ? ' · ' + fmtN(Math.round(x.breaker_seconds)) + 's' : ''))}
-      ${x.breaker !== 'closed' ? `<button class="btn s w" onclick="aiResetBreaker('${jsq(v)}','${jsq(x.label || v)}')">Reset</button>` : ''}</div>`; }).join('');
+      ${x.breaker !== 'closed' || fams.length ? `<button class="btn s w" onclick="aiResetBreaker('${jsq(v)}','${jsq(x.label || v)}')">Reset</button>` : ''}</div>`; }).join('');
   const watch = d.budget_watch || [], SCOPE = {ai_day:"today's AI", ai_month:"this month's AI", places_day:"today's Places", places_month:"this month's Places"};
   const anomalies = d.anomalies || [], KIND = {loop:['bad', 'loop'], spike:['warn', 'spike'], cost:['warn', 'cost'], rate:['warn', 'rate']};
   V().innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span class="muted" style="font-size:12.5px">Windows are UTC days, like the ceilings.</span><div class="seg">${[1, 7, 30, 90].map(n => `<button class="${_aid === n ? 'on' : ''}" onclick="_aid=${n};route()">${n === 1 ? 'Today' : n + ' days'}</button>`).join('')}</div></div>
     <div class="card" style="padding:4px 18px 8px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:14px"><div style="display:flex;align-items:center;gap:10px"><h2>AI health</h2>${pill(hTone, esc({operational:'Operational', degraded:'Degraded', outage:'Outage'}[h.status] || 'Unknown'))}</div>
-      <span style="display:flex;gap:8px;align-items:center">${h.reason ? `<span class="muted" style="font-size:12.5px">${esc(h.reason)}</span>` : ''}${Object.keys(hv).some(v => hv[v].breaker !== 'closed') ? `<button class="btn s w" onclick="aiResetBreaker('','every provider')">Reset all</button>` : ''}</span></div>
+      <span style="display:flex;gap:8px;align-items:center">${h.reason ? `<span class="muted" style="font-size:12.5px">${esc(h.reason)}</span>` : ''}${Object.keys(hv).some(v => hv[v].breaker !== 'closed') ? `<button class="btn s w" onclick="aiResetBreaker('','every provider')">Reset all</button>` : ''}${h.emergency_stop ? `${pill('bad', 'Emergency stop on')}<button class="btn s w" onclick="aiEmergencyStop(false)">Clear stop</button>` : `<button class="btn s g w" onclick="aiEmergencyStop(true)">Stop all AI</button>`}</span></div>
+      ${h.fleet_brake ? `<div class="warnline" style="margin:8px 0;display:flex;justify-content:space-between;gap:10px;align-items:center"><span>${ico('alert','xs')} Fleet brake on — background AI paused (${esc(h.fleet_brake.all ? 'every unattended call' : [(h.fleet_brake.actions || []).join(', '), (h.fleet_brake.restaurants || []).length ? (h.fleet_brake.restaurants.length + ' restaurant(s)') : ''].filter(Boolean).join(' · '))})${h.fleet_brake.detail ? ' · ' + esc(h.fleet_brake.detail) : ''}</span><button class="btn s w" onclick="aiReleaseBrake()">Release</button></div>` : ''}
       <div class="lst">${vendors || `<div class="empty">${h.status ? 'No provider recorded.' : 'AI health could not be read.'}</div>`}</div>
       ${h.last_auth_error ? `<div class="warnline" style="margin:8px 0">${ico('alert','xs')} Last credential failure: ${esc(h.last_auth_error.vendor || '')} — ${esc(h.last_auth_error.event || '')}${h.last_auth_error.detail ? ' · ' + esc(String(h.last_auth_error.detail).slice(0, 140)) : ''} · ${fmtDT(h.last_auth_error.created_at || h.last_auth_error.at)}</div>` : ''}</div>
     <section class="card strip">
@@ -3158,6 +3161,13 @@ function opsAI(d){
 }
 async function aiResetBreaker(provider, label){
   await opsWrite('/admin/api/ai/reset-breaker', provider ? {provider: provider} : {}, `Reset the breaker for ${label}? Calls go straight to the provider again — if it is still failing, the breaker opens again.`, () => { _opsFresh = true; route(); }, 'Breaker reset for ' + label);
+}
+// The emergency stop and the fleet brake (blind re-audit 10/20/26 R4-02): shared rows, every process within seconds.
+async function aiEmergencyStop(armed){
+  await opsWrite('/admin/api/ai/emergency-stop', {armed: armed}, armed ? 'Stop every AI call for every client now? Nothing reaches a model until you clear it.' : 'Clear the emergency stop? AI calls go to the provider again (AI_EMERGENCY_STOP in Railway still holds while it is set).', () => { _opsFresh = true; route(); }, armed ? 'Emergency stop armed' : 'Emergency stop cleared');
+}
+async function aiReleaseBrake(){
+  await opsWrite('/admin/api/ai/fleet-brake/release', {}, 'Release the fleet brake? The paused background AI work resumes, and the brake will not re-arm by itself for a few hours (the page still fires).', () => { _opsFresh = true; route(); }, 'Fleet brake released');
 }
 // The AI Quality panel (#69, #58): findings as rates, never as failed jobs.
 function aiQuality(q){

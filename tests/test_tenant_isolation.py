@@ -86,6 +86,7 @@ def test_a_refetch_of_the_same_review_is_still_deduped(db_path):
     assert save_reviews([_google_review(rid)], db_path=db_path)[0] == 0
 
 
+@pytest.mark.sqlite_only     # reads sqlite_master's CREATE TABLE text
 def test_the_reviews_table_carries_the_per_restaurant_key(db_path):
     conn = models.get_conn(db_path)
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").fetchone()[0]
@@ -485,7 +486,7 @@ def test_a_conversation_is_still_refused_across_restaurants(db_path):
 
 def test_a_view_as_session_is_marked_and_not_mistaken_for_the_clients_own(db_path, monkeypatch):
     from admin_routes import admin_bp, view_as_client
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will", "reauth_at": auth.sql_utc()})
     rid = _loc(db_path, "Chicago")
     create_user(rid, "client", "client@x.test", "pw", db_path=db_path)
 

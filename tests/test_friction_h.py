@@ -237,7 +237,7 @@ def test_needs_attention_has_one_more_button_at_its_foot():
     rows = SRC[SRC.index("  function hbIssueRows(iss){"):SRC.index("  function hbAttnMoreBtn(")]
     assert "data-iss-more" not in rows, "the issues no longer carry a button of their own"
     assert "card.querySelectorAll('.hb-attn-more,.hb-iss-more')" in SRC
-    sets = SRC[SRC.index("  function hbAttnSetIssues(iss){"):]
+    sets = SRC[SRC.index("  function hbAttnSetIssues(iss,failed){"):]
     assert "foot.innerHTML=hbAttnMoreBtn(" in sets[:sets.index("\n  }")], "redrawn when the issues land"
 
 

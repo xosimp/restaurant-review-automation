@@ -118,7 +118,8 @@ def test_a_request_reads_only_the_materialised_medians(db, monkeypatch):
     assert _rows(db) == []
     c = models.get_conn(db)
     try:
-        fans = [r["restaurant_id"] for r in c.execute("SELECT DISTINCT restaurant_id FROM event_outcomes")]
+        fans = [r["restaurant_id"] for r in c.execute("SELECT DISTINCT restaurant_id FROM event_outcomes "
+                                                      "ORDER BY restaurant_id")]
     finally:
         c.close()
     for rid in fans:

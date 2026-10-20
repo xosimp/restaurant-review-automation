@@ -36,11 +36,14 @@ def get_auth_url(restaurant_id: int, nonce: str) -> str:
     )
 
 
-def get_mobile_auth_url(restaurant_id: int) -> str:
+def get_mobile_auth_url(restaurant_id: int, bind: str = None) -> str:
     """Mobile equivalent of get_auth_url — the app has no session cookie to
     bind a CSRF nonce to (see verify_mobile_state), so state here is a
-    signed, self-verifying token instead of a bare nonce."""
-    state = sign_mobile_state(restaurant_id)
+    signed, self-verifying token instead of a bare nonce. With `bind`
+    ("u<login id>", the app's flow since the re-audit 10/20/26 R7-16) the
+    state names the login that started it, and the callback hands that
+    login a sealed ticket to confirm instead of saving (seal_connect_ticket)."""
+    state = sign_bound_state(restaurant_id, bind) if bind else sign_mobile_state(restaurant_id)
     return (
         "https://accounts.google.com/o/oauth2/v2/auth"
         f"?client_id={GOOGLE_CLIENT_ID}"
@@ -146,6 +149,39 @@ def verify_bound_state(state: str):
         return int(rid_s), bind
     except (ValueError, AttributeError, RuntimeError):
         return None
+
+
+CONNECT_TICKET_TTL_SECONDS = 15 * 60
+
+
+def _connect_fernet():
+    import base64
+    import hashlib
+    from cryptography.fernet import Fernet
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"gmb-connect:" + _state_secret()).digest()))
+
+
+def seal_connect_ticket(restaurant_id: int, bind: str, fields: dict) -> str:
+    """The app's Google connect result, sealed (Fernet under SECRET_KEY,
+    CONNECT_TICKET_TTL_SECONDS): the restaurant, the login that started the
+    flow and the fields to save. Nothing is stored until that login confirms
+    it (open_connect_ticket) — a restaurant-only state let one tenant hand
+    Google's authorize URL to another tenant's owner and receive their
+    refresh token (R7-16, Instagram's SEC-09 pattern)."""
+    import json as _json
+    return _connect_fernet().encrypt(_json.dumps(
+        {"kind": "gmb_confirm", "rid": int(restaurant_id), "u": str(bind)[1:], "fields": fields}).encode()).decode()
+
+
+def open_connect_ticket(ticket: str):
+    """The sealed ticket's {rid, u, fields}, or None when it is forged,
+    another kind or older than CONNECT_TICKET_TTL_SECONDS."""
+    import json as _json
+    try:
+        data = _json.loads(_connect_fernet().decrypt(str(ticket or "").encode(), ttl=CONNECT_TICKET_TTL_SECONDS))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) and data.get("kind") == "gmb_confirm" else None
 
 
 class GoogleTokenRevoked(RuntimeError):

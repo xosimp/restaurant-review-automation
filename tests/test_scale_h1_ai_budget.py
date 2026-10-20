@@ -108,7 +108,8 @@ def test_a_workflows_own_usual_rate_and_run_cap_set_its_line(db_path):
 
 def test_the_emergency_stop_refuses_every_call(db_path, monkeypatch):
     _paying(db_path, 4)
-    monkeypatch.setattr(ai_utils, "AI_EMERGENCY_STOP", True)
+    # Read at call time (re-audit 10/20/26 R4-02), not at import.
+    monkeypatch.setenv("AI_EMERGENCY_STOP", "1")
     with pytest.raises(AIBudgetExceeded, match="everyone"):
         _call(4, "review_reply")
     assert ai_utils.runaway_refusal(None, "anything") == "emergency stop"

@@ -105,19 +105,15 @@ def _clock_minutes(value):
 
 
 def _span(row):
-    """(start, end) minutes from the business day's midnight; a shift that
-    starts before the business day begins (00:30) is tonight's, after
-    midnight, and one that ends at or before its start ran past midnight."""
-    from time_utils import BUSINESS_DAY_START_HOUR
-    start, end = _clock_minutes(row.get("shift_start")), _clock_minutes(row.get("shift_end"))
-    if start is None or end is None:
-        return None
-    if start < BUSINESS_DAY_START_HOUR * 60:
-        start += 1440
-        end += 1440
-    if end <= start:
-        end += 1440
-    return start, end
+    """(start, end) minutes from the business day's midnight — the one
+    placement every schedule reader uses (schedule_time.span): a start in
+    the small hours of the night (00:30) is tonight's, after midnight; a
+    4:30am baker's start is the morning's prep, not the night's tail (blind
+    re-audit 10/20/26 R9-20: the 5am business-day line read it as after
+    midnight, and "93% of labor hours after 6pm" for a 36% night); an end
+    at or before its start ran past midnight."""
+    import schedule_time
+    return schedule_time.span(row)
 
 
 def _hours_after(rows, hour=EVENING_HOUR):

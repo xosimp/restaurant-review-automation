@@ -23,10 +23,12 @@ Ask Cavnar on exactly that question.
 import logging
 import os
 import threading
+import time
 import config
 from datetime import date, datetime, timedelta
 
 from models import DB_PATH
+from models import in_read_scope
 
 log = logging.getLogger(__name__)
 
@@ -495,6 +497,11 @@ def _prime_stamp(pp, health):
     return f" ({'; '.join(bits)})" if bits else ""
 
 
+# One unit of work (blind re-audit 10/20/26 R2-12): the restaurant row and
+# client_data read once for the whole build (models.read_scope) — off a
+# request (the scheduler's precompute, a delivery) it was read ~190 times,
+# each a round trip on Postgres.
+@in_read_scope
 def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
     """The brief as structured lines. Each line: {"key", "text", "tone", "ask"}.
     tone is good | bad | neutral | action.
@@ -1774,16 +1781,16 @@ def _email_brief(restaurant_id, u, brief, name, today, db_path=DB_PATH):
 def _keep_for_home(restaurant_id, u, brief_date, full, restaurant, db_path=DB_PATH):
     """The brief as GET /morning-brief builds it for `u` (before the send's
     dedupe), kept as their Home snapshot for the day (scale audit 10/19/26
-    FE-01). Never raises past _safe."""
-    # The account holder's only: off a request every build reads as the
-    # owner's (models.viewer_sees_salaries), so a manager's brief built
-    # here could carry what their own Home read would not.
-    from permissions import is_principal
-    if not is_principal(u):
-        return
+    FE-01). Never raises past _safe.
+
+    Every recipient's, managers' too (blind re-audit 10/20/26 R6-F4): each
+    build runs in that recipient's own salary view (deliver, R6-F3b), so a
+    manager's kept brief carries what their own Home read would — it used
+    to be the account holder's only, and a manager's first open built it on
+    a request thread."""
     import home_snapshots
     home_snapshots.keep("morning_brief", restaurant_id, home_snapshots.viewer_scope(u), brief_date, full,
-                        restaurant=restaurant, db_path=None if db_path == DB_PATH else db_path)
+                        restaurant=restaurant, db_path=None if db_path == DB_PATH else db_path, viewer=u)
 
 
 def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
@@ -2008,7 +2015,7 @@ def _brief_queue(db_path=DB_PATH):
     return due, missed
 
 
-def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
+def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS, hold=None):
     """Scheduler entry point: send each restaurant's brief once, at or after
     its own local brief hour, and never after LATEST_SEND_HOUR local.
 
@@ -2016,7 +2023,12 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
     restaurant on every five-minute tick with no bound. A restaurant whose
     window closed today with no brief claimed is recorded as a missed window
     (#131) — "no brief today" used to look exactly like a quiet morning.
-    Returns the standard counts."""
+
+    `hold(restaurant_id) -> bool` (scheduler._brief_hold — blind re-audit
+    10/20/26 R1-03): a restaurant whose own morning inputs are not settled
+    yet is left unclaimed this pass (`held`), the rest go now. Each brief's
+    time is measured (`deliver_ms_avg`, `deliver_ms_max` — R1-11: what sizes
+    BRIEF_WORKERS). Returns the standard counts."""
     import ops
     from models import get_restaurant
     due, missed = _brief_queue(db_path)
@@ -2024,6 +2036,10 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
         ops.record_missed_window("morning_brief", rid, day, detail=f"window closed at {LATEST_SEND_HOUR}:00 local")
     c = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False, "sent": 0,
          "missed": len(missed)}
+    if due and hold is not None:
+        kept = [d for d in due if not hold(d[0])]
+        c["held"] = len(due) - len(kept)
+        due = kept
     if not due:
         return c
     # Rotated to start after the last restaurant the previous tick reached.
@@ -2049,10 +2065,15 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
             _add(skipped=1)
             return
         _add(attempted=1)
+        began = time.monotonic()
         try:
             r = get_restaurant(rid, db_path=db_path)
             from datetime import date as _date
             out = deliver(rid, restaurant=r, today=_date.fromisoformat(day), db_path=db_path)
+            took = int((time.monotonic() - began) * 1000)
+            with lock:
+                c["deliver_ms_max"] = max(c.get("deliver_ms_max", 0), took)
+                c["_deliver_ms_total"] = c.get("_deliver_ms_total", 0) + took
             _add(sent=1 if out.get("sent") else 0)
             if out.get("retry") and any(ops.claim_period(f"morning_brief_retry:{rid}", f"{day}#{n}")
                                         for n in range(BRIEF_RETRIES_PER_DAY)):
@@ -2075,6 +2096,9 @@ def run_due(db_path=DB_PATH, now_utc=None, max_seconds=BRIEF_MAX_SECONDS):
     import scheduler as _sched
     done, hit = _sched.bounded_map(due, _one, BRIEF_WORKERS, max_seconds)
     c["hit_bound"] = bool(hit)
+    total = c.pop("_deliver_ms_total", 0)
+    if c.get("attempted"):
+        c["deliver_ms_avg"] = int(total / c["attempted"])
     reached = due[done - 1][0] if done else None
     if reached is not None:
         conn = get_conn(db_path)

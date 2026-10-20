@@ -79,3 +79,23 @@ def test_each_morning_brief_is_built_in_its_recipients_salary_view(monkeypatch):
     src = inspect.getsource(morning_brief.deliver)
     assert "salary_view(sees)" in src and "_is_principal_mb(u)" in src
     assert "frozenset(), sees)" in src, "a manager never shares the owner's built brief"
+
+
+def test_a_salary_sensitive_goal_is_judged_on_its_basis_and_its_figures_hidden(monkeypatch):
+    # G9's note: goals.progress read a manager's hourly labor % against the
+    # owner's all-in target ("met") and showed the figure beside it.
+    import goals
+    import metrics
+    seen = []
+    monkeypatch.setattr(metrics, "trailing", lambda rid, key, **kw: seen.append(kw.get("with_salaries"))
+                        or {"value": 31.0, "detail": "all-in"})
+    monkeypatch.setattr(goals, "target_band", lambda *a, **k: {})
+    monkeypatch.setattr(goals, "get_conn", lambda *a, **k: type("C", (), {
+        "execute": lambda self, *a: type("R", (), {"fetchall": lambda s: [
+            {"id": 1, "metric": "labor_pct", "target": 30.0, "status": "active", "deadline": None,
+             "baseline_value": 33.0}]})(),
+        "close": lambda self: None})())
+    with models.salary_view(False):
+        g = goals.progress(5)[0]
+    assert seen == [True] and g["current"] is None and g["gap"] is None and g["figures_hidden"]
+    assert g["state"] != "met"

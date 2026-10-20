@@ -259,7 +259,7 @@ def test_health_500s_only_on_an_unreadable_database(monkeypatch, db_path):
     problem on top of it."""
     import status_manager
     monkeypatch.setattr(status_manager, "disk_state",
-                        lambda p=None: {"state": "critical", "free_mb": 3, "pct_free": 0.1})
+                        lambda p=None, **_kw: {"state": "critical", "free_mb": 3, "pct_free": 0.1})
     payload, status = status_manager.health_snapshot(db_path)
     assert status == 200
     assert payload["status"] == "degraded"
@@ -374,6 +374,7 @@ def test_writes_without_a_version_keep_last_write_wins(db_path):
 
 # ── the backup is actually restorable ───────────────────────────────────────
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_the_local_snapshot_keeps_credentials_and_the_emailed_copy_does_not(db_path, tmp_path):
     """Redaction used to be applied to the LOCAL snapshot, which is the
     primary restore artifact. That nulled every OAuth credential and deleted

@@ -336,7 +336,8 @@ def test_pos_16_a_failed_change_read_does_not_serve_recent_days_as_fresh(db_path
     conn.execute("UPDATE pos_archive_days SET archived_at=datetime('now','-2 hours')")
     conn.commit()
     conn.close()
-    monkeypatch.setattr(rpower, "changed_business_dates", lambda *a: (_ for _ in ()).throw(RuntimeError("down")))
+    # The archive asks for the dates with their newest write stamps (R3-02).
+    monkeypatch.setattr(rpower, "changed_business_stamps", lambda *a: (_ for _ in ()).throw(RuntimeError("down")))
     monkeypatch.setattr(pos_archive, "archive_day", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
     assert recent.isoformat() not in pos_archive.ready_dates(rid, "rpower", [recent])
 

@@ -2199,6 +2199,54 @@ function aiJobAwait(d, opts){
   });
 }
 window.aiJobAwait = aiJobAwait;
+/* The Schedule Studio's heavy reads may run off the web server's request
+   threads (studio_offload, blind re-audit 10/20/26 R5-03): every /api/ call
+   says this page can wait for one (X-Cavnar-Offload), and an answer of 202
+   with a ticket is polled here until the route's own answer - its body and
+   status code - comes back, so every caller reads it as before. */
+(function () {
+  var nativeFetch = window.fetch;
+  if (!nativeFetch || window.__cavOffload) return;
+  window.__cavOffload = true;
+  function apiPath(input) {
+    var u = typeof input === 'string' ? input : (input && input.url) || '';
+    if (u.indexOf(location.origin) === 0) u = u.slice(location.origin.length);
+    return u.indexOf('/api/') === 0;
+  }
+  function settle(first, init) {
+    var limit = Date.now() + 150000;
+    function next(d) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, Math.max(250, Math.min(+d.retry_after_ms || 1000, 5000)));
+      }).then(function () {
+        return nativeFetch.call(window, d.poll, {credentials: (init && init.credentials) || 'same-origin', headers: {'X-Cavnar-Offload': '1'}});
+      }).then(function (r) {
+        if (r.status !== 202 || !r.headers.get('X-Cavnar-Ticket')) return r;
+        if (Date.now() > limit) {
+          return new Response(JSON.stringify({ok: false, error: 'That check is taking longer than it should. Try again in a moment.'}),
+                              {status: 504, headers: {'Content-Type': 'application/json'}});
+        }
+        return r.json().then(next);
+      });
+    }
+    return first.clone().json().then(function (d) {
+      return (d && d.poll) ? next(d) : first;
+    }, function () { return first; });
+  }
+  window.fetch = function (input, init) {
+    if (!apiPath(input)) return nativeFetch.call(window, input, init);
+    init = init || {};
+    var h = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+    h.set('X-Cavnar-Offload', '1');
+    var opts = {};
+    for (var k in init) { if (Object.prototype.hasOwnProperty.call(init, k)) opts[k] = init[k]; }
+    opts.headers = h;
+    return nativeFetch.call(window, input, opts).then(function (r) {
+      if (r.status === 202 && r.headers.get('X-Cavnar-Ticket')) return settle(r, opts);
+      return r;
+    });
+  };
+})();
 /* The poll cadence for work running off the request thread: 1.5 s, then
    3 s, then every 5 s. */
 var AI_POLL_STEPS = [1500, 3000, 5000];
@@ -2277,6 +2325,71 @@ function loadFailed(el, d){
     document.body.appendChild(box);
   }
   window.cavSessionEnded = function(){ return ended; };
+  /* The account holder's step-up (re-audit 10/20/26 R7-03): a security
+     change answered 403 {reauth_required} asks for the password once
+     (POST /api/account/reauth), then the change is sent again. One prompt
+     at a time; Cancel leaves the refusal to the caller. */
+  var stepUpWait = null;
+  function stepUpModal(){
+    var m = document.getElementById('stepup-modal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'stepup-modal';
+    m.className = 'cmodal so-modal';
+    m.style.display = 'none';
+    m.setAttribute('role', 'dialog');
+    m.setAttribute('aria-modal', 'true');
+    m.setAttribute('aria-labelledby', 'stepup-t');
+    m.innerHTML = '<div class="so-card"><div class="hb-kicker">Security</div>'
+      + '<h3 id="stepup-t">Confirm it’s you</h3><p id="stepup-msg"></p>'
+      + '<input class="ac-input" id="stepup-pw" type="password" autocomplete="current-password" '
+      + 'placeholder="Your password" aria-label="Your password">'
+      + '<p class="load-err" id="stepup-err" role="status" aria-live="polite"></p>'
+      + '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" id="stepup-no">Cancel</button>'
+      + '<button type="button" class="cbtn cbtn-primary" id="stepup-go">Confirm</button></div></div>';
+    document.body.appendChild(m);
+    return m;
+  }
+  function stepUp(info){
+    if (stepUpWait) return stepUpWait;
+    stepUpWait = new Promise(function(done){
+      var m = stepUpModal();
+      var pw = document.getElementById('stepup-pw');
+      var err = document.getElementById('stepup-err');
+      var settled = false;
+      function finish(ok){
+        if (settled) return;
+        settled = true;
+        m.style.display = 'none';
+        stepUpWait = null;
+        done(ok);
+      }
+      window.cavStepUpCancel = function(){ finish(false); };
+      document.getElementById('stepup-msg').textContent = 'This change to sign-in security needs your password. '
+        + 'It stays confirmed for ' + ((info && info.window_minutes) || 15) + ' minutes.';
+      err.textContent = '';
+      pw.value = '';
+      document.getElementById('stepup-no').onclick = function(){ finish(false); };
+      function send(){
+        if (!pw.value) return;
+        _fetch.call(window, '/api/account/reauth', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw.value})})
+          .then(function(r){ return r.json().then(function(d){ return {status: r.status, d: d}; }); })
+          .then(function(x){
+            if (x.d && x.d.ok) { finish(true); return; }
+            if (x.status === 401) { finish(false); ended = true; showEnded(); return; }
+            err.textContent = (x.d && x.d.error) || 'That password isn’t right.';
+            pw.value = '';
+            pw.focus();
+          }, function(){ err.textContent = 'Couldn’t check that. Try again.'; });
+      }
+      document.getElementById('stepup-go').onclick = send;
+      pw.onkeydown = function(e){ if (e.key === 'Enter') send(); };
+      if (window.cModal) window.cModal.open('stepup-modal', {close: 'cavStepUpCancel'});
+      else m.style.display = 'flex';
+    });
+    return stepUpWait;
+  }
   window.fetch = function(input, init){
     var mine = sameOrigin(input);
     if (ended && mine) {
@@ -2284,6 +2397,12 @@ function loadFailed(el, d){
         {status: 401, headers: {'Content-Type': 'application/json'}}));
     }
     return _fetch.apply(window, arguments).then(function(r){
+      if (r.status === 403 && mine) {
+        return r.clone().json().then(function(d){
+          if (!d || !d.reauth_required || String(d.reauth_url || '') !== '/api/account/reauth') return r;
+          return stepUp(d).then(function(ok){ return ok ? _fetch.call(window, input, init) : r; });
+        }, function(){ return r; });
+      }
       if (r.status !== 401 || !mine) return r;
       return r.clone().json().then(function(d){
         if (d && d.session_expired) { ended = true; showEnded(); }
@@ -5049,7 +5168,7 @@ svg:hover .hb-xh{opacity:1}
       t.setAttribute('aria-expanded',open?'true':'false');
       t.textContent=open?'Show fewer':'+'+t.getAttribute('data-attn-more')+' more';
     }
-    else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);}
+    else{var m=document.getElementById('hb-mile');if(m&&m.parentNode)m.parentNode.removeChild(m);hbMilestone.closed=1;}
   });
   // The reason picker (recReasonPicker) under a Home answer: below a card's
   // footer, below a Needs-attention row, below the focus card's footer.
@@ -5994,9 +6113,13 @@ svg:hover .hb-xh{opacity:1}
   }
   // The open issues land after the first render: into the same card, with
   // the count and the all-clear line kept honest.
-  function hbAttnSetIssues(iss){
+  function hbAttnSetIssues(iss,failed){
     _hbIssues=iss||[];
     var box=document.getElementById('hb-attn-issues');if(!box)return;
+    // The open issues could not be read (R6-F13): said, with a retry, and no
+    // "All clear" under it - a failed read is not a quiet day.
+    if(failed){box.innerHTML=hbFailedLine('open issues');
+      var fclr=document.getElementById('hb-attn-clear');if(fclr&&fclr.parentNode)fclr.parentNode.removeChild(fclr);return;}
     var shown=hbIssuesNotShown(_hbIssues,_hbAttnItems);
     box.innerHTML=hbIssueRows(shown);
     var card=document.getElementById('hb-attn-card'),n=(card?+card.getAttribute('data-attn-n')||0:0)+shown.length;
@@ -6186,31 +6309,67 @@ svg:hover .hb-xh{opacity:1}
     return r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch');
   }
   var RESULTTONE={improved:'good',worsened:'critical'};
-  // Each read's own address: the fallback, and where a block the combined
-  // read has not kept yet is read on its own.
-  var HB_FOLLOW_URL={brief:'/api/morning-brief?view=home',issues:'/api/issues?status=unresolved',goals:'/api/goals',outcomes:'/api/outcomes',
-    actions:'/api/actions',closeout:'/api/closeout',value:'/api/value',cross:'/api/cross-module',news:'/api/good-news',miles:'/api/milestones',
-    loss:'/api/loss-signals',month:'/api/monthly-review',
-    // The record behind the check-in (which result belongs to which
-    // recommendation) and "What worked for you" (rec-ROI #21, #28).
-    timeline:'/api/recs/timeline?limit=40',worked:'/api/recs/what-worked?days=180'};
+  // The blocks GET /api/home/follow answers in one read (scale audit
+  // 10/19/26 FE-01): the morning brief, open issues, goals, results, actions,
+  // the close-out, the value figures, the cross-module links, good news,
+  // milestones, comps & voids, last month, the record and what worked.
+  var HB_FOLLOW_KEYS=['brief','issues','goals','outcomes','actions','closeout','value','cross','news','miles',
+    'loss','month','timeline','worked'];
+  // A block that could not be read (R6-F13): drawn as "Couldn't load",
+  // never as a week with nothing in it.
+  var HB_FAILED={failed:true};
+  // How many times a block still being built (or rebuilt after a change) is
+  // read again before it is said to have failed.
+  var HB_FOLLOW_TRIES=5;
   function hbFollow(){
-    var got={},left=15,k;
-    // The status line under the greeting draws the moment the report row
-    // lands, not after all fifteen reads (density fix #1).
-    function done(k,v){got[k]=v;left--;if(k==='dsr')hbStatus(v);if(!left)renderFollow(got);}
-    function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
-    function each(){for(var key in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(key))get(key,HB_FOLLOW_URL[key]);}}
-    get('dsr','/api/dsr?limit=1');
-    // The other fourteen in one read (scale audit 10/19/26 FE-01). A block
-    // not kept for today yet comes back in 'missing' and is read on its own.
-    fetch('/api/home/follow',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
-      if(!d||!d.ok||!d.blocks){each();return;}
-      var miss=d.missing||[],i;
-      for(k in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(k)&&miss.indexOf(k)<0)done(k,d.blocks[k]||null);}
-      for(i=0;i<miss.length;i++){if(HB_FOLLOW_URL[miss[i]])get(miss[i],HB_FOLLOW_URL[miss[i]]);}
-    }).catch(function(){each();});
+    var got={},pend={dsr:1},shown=false,tries=0,waited=false,i;
+    for(i=0;i<HB_FOLLOW_KEYS.length;i++)pend[HB_FOLLOW_KEYS[i]]=1;
+    // Home renders once every block has landed; a block that lands later
+    // (built, or rebuilt after the owner's own change) redraws it.
+    function land(map){
+      for(var k in map){if(!map.hasOwnProperty(k))continue;got[k]=map[k];delete pend[k];
+        // The status line under the greeting draws the moment the report row
+        // lands, not after all fifteen reads (density fix #1).
+        if(k==='dsr')hbStatus(map[k]);}
+      if(shown){renderFollow(got);return;}
+      for(var p in pend){if(pend.hasOwnProperty(p))return;}
+      shown=true;renderFollow(got);
+    }
+    function all(keys,v){var m={};for(var j=0;j<keys.length;j++)m[keys[j]]=v;return m;}
+    fetch('/api/dsr?limit=1',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){land({dsr:d&&d.ok?d:null});}).catch(function(){land({dsr:null});});
+    // The other fourteen in one read. A block not built for today yet is in
+    // 'missing' (its build is queued on the server, never run on a request
+    // thread) and one rebuilt after a change in 'stale': both are read again
+    // by name after retry_after. A failed read is never answered with the
+    // fourteen reads one by one (R6-F8): under load that turned one refused
+    // request into fourteen. A 429 waits out its Retry-After once.
+    function follow(only){
+      var want=only||HB_FOLLOW_KEYS;
+      fetch('/api/home/follow'+(only?'?only='+only.join(','):''),{credentials:'same-origin'}).then(function(r){
+        if(r.status===429&&!waited){waited=true;var ra=parseInt(r.headers.get('Retry-After'),10);
+          setTimeout(function(){follow(only);},Math.min(Math.max(ra||5,1),30)*1000);return 'wait';}
+        return r.ok?r.json():null;
+      }).then(function(d){
+        if(d==='wait')return;
+        if(!d||!d.ok||!d.blocks){land(all(want,HB_FAILED));return;}
+        var miss=d.missing||[],stale=d.stale||[],fail=d.failed||[],m={},again=[],j,key;
+        for(j=0;j<want.length;j++){key=want[j];
+          if(miss.indexOf(key)>=0)m[key]=(got[key]&&!got[key].failed&&!got[key].preparing)?got[key]:{preparing:true};
+          else if(fail.indexOf(key)>=0)m[key]=HB_FAILED;
+          else m[key]=d.blocks[key]||null;}
+        again=miss.concat(stale);
+        if(again.length&&tries<HB_FOLLOW_TRIES){tries++;
+          setTimeout(function(){follow(again);},Math.min((+d.retry_after||4)*tries,20)*1000);}
+        else for(j=0;j<miss.length;j++){if(!m[miss[j]]||m[miss[j]].preparing)m[miss[j]]=HB_FAILED;}
+        land(m);
+      }).catch(function(){land(all(want,HB_FAILED));});
+    }
+    follow(null);
   }
+  // "Retry" on a block that could not be read reads Home's blocks again.
+  document.addEventListener('click',function(e){
+    var t=e.target&&e.target.closest?e.target.closest('[data-hb-retry]'):null;if(!t)return;
+    e.preventDefault();if(window.cbtnBusy)cbtnBusy(t);hbFollow();});
   // ── last month, in the app ────────────────────────────────────────────────
   // The monthly review only ever went out as an email on the 1st. An owner
   // who wants to show a partner "how did August go" had to find it in an
@@ -6248,7 +6407,13 @@ svg:hover .hb-xh{opacity:1}
   // innocent explanation for every signal - rendering the headline without
   // its alternative reading would turn a question into an accusation about a
   // named person.
+  // A Home block that could not be read, with a way to read it again
+  // (R6-F13): a failed read must not look like a clean week.
+  function hbFailedLine(what){
+    return '<div class="hb-empty">Couldn’t load '+esc(what)+'. <button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-hb-retry="1">Retry</button></div>';
+  }
   function renderLoss(l){
+    if(l&&l.failed)return '<section class="hb-card rail hb-rise" style="margin-top:16px" aria-label="Worth reviewing"><div class="hb-h3"><span>Worth reviewing</span><span class="cnt">comps, voids and refunds</span></div>'+hbFailedLine('comps, voids and refunds')+'</section>';
     if(!l||!l.available)return '';
     var flags=l.flagged||[];
     if(!flags.length)return '';
@@ -6292,8 +6457,13 @@ svg:hover .hb-xh{opacity:1}
   // before, so it still happens once on every device.
   function hbMilestone(m){
     if(!m)return '';
-    fetch('/api/milestones/seen',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({key:m.key})}).catch(function(){});
+    // Home redraws when a late block lands (R6-F4): the milestone is marked
+    // seen once a page load, and one dismissed stays dismissed.
+    if(hbMilestone.closed)return '';
+    hbMilestone.sent=hbMilestone.sent||{};
+    if(!hbMilestone.sent[m.key]){hbMilestone.sent[m.key]=1;
+      fetch('/api/milestones/seen',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:m.key})}).catch(function(){});}
     return '<section class="hb-card rail good hb-rise hb-mile" id="hb-mile" aria-label="A milestone"><div class="hb-h3"><span>'+esc(MILESTONE_KICKER[m.kind]||'A milestone')+'</span><button type="button" class="hb-x" aria-label="Dismiss" data-mile-close="1">✕</button></div>'
       +'<div class="lead">'+esc(m.title||'')+'</div>'+(m.body?'<div class="why">'+num(m.body)+'</div>':'')
       // The research line belongs to the response-rate milestone only.
@@ -6717,12 +6887,17 @@ svg:hover .hb-xh{opacity:1}
     if(evening)day+=renderCloseout();
     var h='<div class="hb-sh first"><div><div class="k">Today</div><h2>'+esc(weekdayName(d.local_now))+' <small>'+esc(dateKicker(d.local_now))+'</small></h2></div></div>';
     h+=renderLastNight(g.dsr);
-    hbAttnSetIssues(iss);
+    hbAttnSetIssues(iss,!!(g.issues&&g.issues.failed));
     h+='<div class="hb-grid" style="margin-top:14px">';
     // The brief as a timeline - a rail with a tone dot per line - rather
     // than a list: it is read top to bottom once, before service.
     h+='<div class="hb-card hb-rise" style="--i:0"><div class="hb-h3"><span>Before service</span>'+(lines.length?'<span class="cnt n">'+lines.length+'</span>':'')+'</div>';
-    if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
+    // Still being built on the server (R6-F4), or not readable (R6-F13):
+    // said as such, never "fills in as your numbers come in".
+    var bst=g.brief||{};
+    if(bst.preparing)h+='<div class="dr-pulse" role="status" aria-label="Preparing today’s brief"><i></i></div><div class="hb-empty">Preparing today’s brief</div>';
+    else if(bst.failed)h+=hbFailedLine('today’s brief');
+    else if(!lines.length)h+='<div class="hb-empty">Your brief fills in as your numbers come in.</div>';
     // A keyed line the owner can answer carries Done / Not for us (re-audit
     // K6): the server records these lines as shown on Home, so the answer
     // belongs beside them. Not Track - a brief line names a move, not a
@@ -7206,7 +7381,9 @@ svg:hover .hb-xh{opacity:1}
     h+='<div style="overflow-x:auto"><table class="hb-tbl" data-sortable="group-locations"><thead><tr><th>Location</th><th class="r">Last night</th><th class="r">Labor</th><th class="r">Reviews · 30d</th><th class="r hide-m">Food cost</th><th class="r hide-m" data-sort-type="text">Last active</th><th></th></tr></thead><tbody>';
     for(var j=0;j<g.locations.length;j++){var r=g.locations[j];var rv=r.reviews||{};
       h+='<tr class="'+esc(r.health)+(r.active?' active':'')+'" onclick="hbSwitchLoc('+(+r.id)+')" tabindex="0" onkeydown="if(event.key===\'Enter\')hbSwitchLoc('+(+r.id)+')">';
-      h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
+      // A location whose row is still being built (R6-F10): a pulse, never
+      // the empty row of a healthy location.
+      h+='<td><div class="nm"><span class="d"></span>'+esc(r.name)+(r.active?' <span class="dim" style="font-weight:400">· viewing</span>':'')+'</div>'+(r.preparing?'<div class="iss"><span class="dr-pulse" role="status" aria-label="Checking this location"><i></i></span></div>':'')+(r.issues.length?'<div class="iss">'+num(r.issues[0].text)+(r.issues.length>1?' <span class="hb-num">+'+(r.issues.length-1)+'</span>':'')+'</div>':'')+'</td>';
       h+='<td class="r hb-num">'+hbNightCell(r.last_night)+'</td>';
       h+='<td class="r hb-num">'+(r.labor?r.labor.pct.toFixed(1)+'%'+(r.labor.over>3?' <span class="up">+'+r.labor.over.toFixed(1)+'</span>':(r.labor.over<=0&&r.labor.pct>0&&!r.labor.stale&&!r.labor.partial)?' <i class="cv-ok" aria-hidden="true"></i>':''):'<span class="dim">—</span>')+'</td>';
       var rvb=[];
@@ -7225,7 +7402,12 @@ svg:hover .hb-xh{opacity:1}
     var body=document.getElementById('hb-body');if(body)body.innerHTML='<div class="hb-fade">'+h+'</div>';
     hbReveal();
     hbSwitcherFill(g);
+    // Rows still being built are read again (R6-F10), a few times, backing off.
+    if((g.preparing||[]).length&&_hbGroupTries<4){_hbGroupTries++;
+      setTimeout(function(){if(_hbScope==='group')hbLoad(false);},Math.min((+g.retry_after||4)*_hbGroupTries,20)*1000);}
+    else if(!(g.preparing||[]).length)_hbGroupTries=0;
   }
+  var _hbGroupTries=0;
   // The header's location switcher, one row per location with its status
   // dot, how many things need you there and last night's net (density fix
   // #19), from the group read (cached server-side), fetched the first time
@@ -17298,6 +17480,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
                Studio's AI tab and on What to order this week. #}
             <div class="ac-row" id="as-autodraft-day-row" hidden><div class="l"><b>Draft day</b><span>It drafts your next week, on your own week start, from 6am that day &mdash; any day but the day before your week starts. Publish it for me goes the day after.</span></div>
               <div class="c"><select id="as-autodraft-day" class="ac-select" onchange="saveAutoDraftDay(this)" aria-label="Day Cavnar AI drafts the schedule"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option></select></div></div>
+            {# The labor setup steps that hold the weekly draft, the owner's
+               to confirm (scale re-audit 10/20/26 R8-11; GET/POST
+               /api/account-settings/setup). Shown only while one is open. #}
+            <div class="ac-row" id="as-setup-row" hidden><div class="l"><b>Confirm your setup before the first draft</b><span>The weekly draft waits until each of these is confirmed. Where your POS suggested an answer, it is shown.</span></div></div>
+            <div id="as-setup-list" hidden></div>
             <div class="ac-row" id="as-weeklyplan-row"><div class="l"><b>Plan my week for me</b><span>Monday mornings Cavnar AI reads the week &mdash; brief, issues, goals, results, what connects &mdash; and files up to three owned actions under Still open. Nobody is texted.</span></div>
               <div class="c"><label class="ac-switch"><input type="checkbox" id="as-weeklyplan" onchange="saveWeeklyPlan()" aria-label="Plan my week automatically"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div></div>
             <div class="ac-row" id="as-senddelay-row"><div class="l"><b>Give me a moment before anything goes out</b><span>A supplier order or a published schedule waits this long with an Undo in the Cavnar AI strip before it leaves the building.</span></div>
@@ -25777,8 +25964,11 @@ function generateSchedule(btn, opts) {
       // One poll at a time: the next is asked 2 s after this one answers
       // (scale audit 10/19/26 A5-F5 - a 2 s interval stacked polls on a slow
       // server). _schedPollInterval holds the waiting timer; null is stopped.
-      var _schedNext = function() {
-        if (_schedPollInterval !== null) _schedPollInterval = setTimeout(_schedPoll, 2000);
+      // The server says when to ask again: longer the more presses are queued
+      // ahead (blind re-audit 10/20/26 R5-03 - a backlog's 2 s polls were
+      // their own load).
+      var _schedNext = function(after) {
+        if (_schedPollInterval !== null) _schedPollInterval = setTimeout(_schedPoll, (+after > 0) ? Math.min(+after, 15000) : 2000);
       };
       var _schedPoll = function() {
         fetch('/api/schedule-status/' + jobId)
@@ -25795,7 +25985,7 @@ function generateSchedule(btn, opts) {
               // The days the draft has finished so far, counted from the
               // answer as it streams (AI cost audit 10/7/26 #36).
               _schedProgress = pollData.progress || null;
-              _schedNext();
+              _schedNext(pollData.retry_after_ms);
               return;
             }
             clearTimeout(_hardTimeout);
@@ -26379,7 +26569,19 @@ function _schedRecheckSettled(ok) {
   if (!ok && typeof _schedRenderTable === 'function') _schedRenderTable();
   if (window.psLabel) psLabel();
 }
+// One recheck in flight at a time; edits made while it runs are checked by
+// ONE trailing recheck carrying the rows on screen when it starts (blind
+// re-audit 10/20/26 R6-F7: six quick edits started six multi-second checks,
+// and one manager editing could hold every request thread of the platform).
+var _schedRecheckBusy = 0, _schedRecheckAgain = false;
+function _schedRecheckDone() {
+  _schedRecheckBusy = 0;
+  if (_schedRecheckAgain) { _schedRecheckAgain = false; _schedRecheck(); }
+}
 function _schedRecheck() {
+  // (A recheck unanswered after a minute no longer holds the next one.)
+  if (_schedRecheckBusy && new Date().getTime() - _schedRecheckBusy < 60000) { _schedRecheckAgain = true; return; }
+  _schedRecheckBusy = new Date().getTime();
   var base = [];
   try { base = JSON.parse(_schedSaved) || []; } catch (e) { base = []; }
   var sent = _swRowsSig(_schedRows);
@@ -26387,6 +26589,10 @@ function _schedRecheck() {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({rows: _schedRows, baseline_rows: base, history_id: _schedHistoryId || null})
   }).then(apiJson).then(function (d) {
+    // A newer recheck is waiting: this answer is for rows since edited, so
+    // it settles nothing and starts no review - the trailing one will.
+    if (_schedRecheckAgain && sent !== _swRowsSig(_schedRows)) { _schedRecheckDone(); return; }
+    _schedRecheckDone();
     if (!(d && d.ok)) { _schedRecheckSettled(false); _schedRenderCost(null); return; }
     // Only an answer for the rows still on screen settles them; a late one
     // for rows since edited waits for the next recheck.
@@ -26400,7 +26606,11 @@ function _schedRecheck() {
     // edited (or another week's) waits for the next recheck.
     if (d && d.ok && d.hours && sent === _swRowsSig(_schedRows)) { _swHours = {sig: sent, v: d.hours}; if (typeof swLive === 'function') swLive(); if (typeof swRenderGrid === 'function') swRenderGrid(); }
     _schedRenderCost(d && d.ok ? d.cost : null);
-  }).catch(function () { _schedRecheckSettled(false); _schedRenderCost(null); });
+  }).catch(function () {
+    var newer = _schedRecheckAgain;
+    _schedRecheckDone();
+    if (!newer) { _schedRecheckSettled(false); _schedRenderCost(null); }
+  });
 }
 
 // "+6h · +$90 · 2h overtime" — what the edits on screen move against the
@@ -32287,10 +32497,52 @@ function loadOpsSettings() {
     var row = document.getElementById('as-autodraft-row');
     if (row && !d.external_tool) row.hidden = false;
     document.getElementById('as-autodraft').checked = !!d.enabled;
-    if (!d.external_tool) { asDraftDay(d); loadAutoPublish(); }
+    if (!d.external_tool) { asDraftDay(d); loadAutoPublish(); loadOwnerSetup(); }
     loadAutoOrder();
     loadWeeklyPlanAndDelay();
   }).catch(function() {});
+}
+
+/* The labor setup steps that hold the weekly draft (scale re-audit 10/20/26
+   R8-11): the owner confirms each here instead of waiting for Cavnar AI to.
+   Owner-only on the server; anyone else gets a 403 and the row stays hidden. */
+var AS_SETUP_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+function loadOwnerSetup() {
+  fetch('/api/account-settings/setup', {credentials: 'same-origin'}).then(apiJson).then(asRenderSetup)
+    .catch(function() {});
+}
+function asRenderSetup(d) {
+  var row = document.getElementById('as-setup-row'), list = document.getElementById('as-setup-list');
+  if (!row || !list) return;
+  if (!d || !d.ok || !d.pending || !d.pending.length) { row.hidden = true; list.hidden = true; return; }
+  var h = '';
+  for (var i = 0; i < (d.items || []).length; i++) {
+    var it = d.items[i];
+    if (it.done) continue;
+    var sug = it.suggested && it.suggested.label ? '<span>Suggested: ' + _escHtml(it.suggested.label) + '</span>' : '';
+    var ctl = '';
+    if (it.key === 'week_start') {
+      var pick = it.suggested && it.suggested.week_start_day != null ? it.suggested.week_start_day : 0;
+      ctl = '<select id="as-setup-weekday" class="ac-select" aria-label="Day the payroll week starts">';
+      for (var j = 0; j < 7; j++) ctl += '<option value="' + j + '"' + (j === pick ? ' selected' : '') + '>' + AS_SETUP_DAYS[j] + '</option>';
+      ctl += '</select> ';
+    }
+    h += '<div class="ac-row"><div class="l"><b>' + _escHtml(it.label) + '</b>' + sug + '</div>'
+      + '<div class="c">' + ctl + '<button type="button" class="cbtn cbtn-soft cbtn-sm" onclick="asConfirmSetup(\'' + it.key + '\')">Confirm</button></div></div>';
+  }
+  list.innerHTML = h;
+  row.hidden = false;
+  list.hidden = false;
+}
+function asConfirmSetup(step) {
+  var body = {step: step};
+  if (step === 'week_start') {
+    var sel = document.getElementById('as-setup-weekday');
+    body.value = sel ? parseInt(sel.value, 10) : null;
+  }
+  asPost('/api/account-settings/setup/confirm', body, 'as-auto-ops-status', 'Confirmed').then(function(d) {
+    if (d && d.ok) asRenderSetup(d);
+  });
 }
 
 // "Is push actually working on my phone?" had no answer short of reaching
@@ -34739,6 +34991,10 @@ function closeEmailModal(){
   document.getElementById('email-modal').style.display='none';
   document.getElementById('email-new').value='';
   document.getElementById('email-pw').value='';
+  var codeEl=document.getElementById('email-code');
+  if(codeEl){codeEl.value='';codeEl.style.display='none';}
+  var goEl=document.getElementById('email-go');
+  if(goEl)goEl.textContent='Update email';
   var st=document.getElementById('email-status');
   st.style.display='none';st.textContent='';
 }
@@ -34749,8 +35005,21 @@ function updateEmail(){
   if(!newEmail){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a new email address';return;}
   if(newEmail.indexOf('@')<1||newEmail.indexOf('.')<0){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a valid email address';return;}
   if(!pw){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter your current password';return;}
+  // The change is confirmed with a code sent to the NEW address (re-audit
+  // 10/20/26 R7-17): the first answer asks for it, the second carries it.
+  var codeEl=document.getElementById('email-code');
+  var code=(codeEl&&codeEl.style.display!=='none')?codeEl.value.trim():'';
   st.style.display='block';st.style.color='var(--ink3)';st.textContent='Updating...';
-  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(apiJson).then(function(d){
+  var payload={new_email:newEmail,current_password:pw};
+  if(code)payload.code=code;
+  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(apiJson).then(function(d){
+    if(d.verify_required){
+      if(codeEl){codeEl.style.display='block';codeEl.value='';codeEl.focus();}
+      var goEl=document.getElementById('email-go');
+      if(goEl)goEl.textContent='Confirm new email';
+      st.style.display='block';st.style.color='var(--ink3)';st.textContent=d.error||'Enter the code we emailed to the new address.';
+      return;
+    }
     if(d.ok){
       closeEmailModal();
       var disp=document.getElementById('acct-email-display');
@@ -37861,7 +38130,8 @@ document.addEventListener('click', function(e) {
     <div style="display:flex;flex-direction:column;gap:10px">
       <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:16px">
       <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:16px">
-      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="updateEmail()">Update email</button>
+      <input class="form-input" type="text" id="email-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code from the new address" style="font-size:16px;display:none">
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" id="email-go" onclick="updateEmail()">Update email</button>
       <div id="email-status" style="font-size:15px;text-align:center;display:none"></div>
     </div>
   </div>
@@ -39764,7 +40034,7 @@ window._cuRole=window.CAV_BOOT.role;
     jsend('/api/labor/pos-schedule-push',{schedule_id:id},function(d){
       done();
       if(!d.ok){toast(d.error||'It didn’t all go through: each shift says why','error');}
-      else toast(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS','success');
+      else toast(d.status==='queued'?'Sending to the POS now':(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS'),'success');
       floorPreview(id,btn);
     });
   };
@@ -43082,7 +43352,7 @@ window.cavPalette = cavPalette;
    a check that failed (TRUST-19). */
 (function () {
   var S = {hid: null, data: null, busy: false, err: null, overrides: {}, answers: {}, dismissed: {}, form: null,
-           timer: null, seq: 0, stale: false, fallback: false};
+           timer: null, seq: 0, stale: false, fallback: false, inflight: null, again: false, waiting: []};
   window._prState = S;
   var POST_PATHS = {'labor/crew-matrix': 1, 'labor/standby/ask': 1, 'labor/rules': 1};
   function $id(id) { return document.getElementById(id); }
@@ -43151,10 +43421,27 @@ window.cavPalette = cavPalette;
     for (k = 0; k < keys.length; k++) if (d[keys[k]] !== undefined) cur[keys[k]] = d[keys[k]];
     cur.explain_pending = false;
   }
+  // One review of a week in flight at a time (blind re-audit 10/20/26
+  // R6-F7): a call while one runs is folded into ONE trailing review of the
+  // rows on screen when it starts, and its callback answered by that one.
+  function settle(hid) {
+    if (S.inflight !== hid) return;
+    S.inflight = null;
+    if (!S.again) return;
+    S.again = false;
+    var w = S.waiting;
+    S.waiting = [];
+    window.prRefresh(w.length ? function (d) { for (var i = 0; i < w.length; i++) w[i](d); } : null);
+  }
   window.prRefresh = function (cb) {
     if (!_schedHistoryId) return;
+    // (A review unanswered after a minute no longer holds the next one.)
+    if (S.inflight && S.inflight === _schedHistoryId && new Date().getTime() - S.inflightAt < 60000) {
+      S.again = true; if (cb) S.waiting.push(cb); return;
+    }
     var hid = _schedHistoryId, seq = ++S.seq;
     if (hid !== S.hid) reset(hid);
+    S.inflight = hid; S.inflightAt = new Date().getTime();
     S.busy = true; prRender();
     var after = function () {
       prRender();
@@ -43163,24 +43450,28 @@ window.cavPalette = cavPalette;
       if (_ssOpen && _ssStage === 'summary' && window.ssRenderSummary) ssRenderSummary();
     };
     var done = function (d) {
-      if (seq !== S.seq || _schedHistoryId !== hid) return;
+      if (seq !== S.seq || _schedHistoryId !== hid) { settle(hid); return; }
       S.busy = false; S.stale = false;
       if (!d || !d.ok) { fallback(d); return; }
       if (d.schedule_id) { S.err = null; S.fallback = false; S.data = d; prune(d); window._psCheck = compat(d); }
       after();
-      if (d.explain_pending) explain(seq, hid);
+      // The explanations are for these rows; with a trailing review coming
+      // they would be for rows no longer on screen.
+      if (d.explain_pending && !S.again) explain(seq, hid);
       if (cb) cb(d);
+      settle(hid);
     };
     // The review failed (an error, a timeout on a big week): the gate's own
     // list stands in and Send stays possible - the phone already did this.
     var fallback = function (d) {
       S.err = (d && d.error) || 'The full check couldn’t run just now.';
       fetch('/api/labor/publish-check?schedule_id=' + hid, {credentials: 'same-origin'}).then(apiJson).then(function (c) {
-        if (seq !== S.seq || _schedHistoryId !== hid) return;
+        if (seq !== S.seq || _schedHistoryId !== hid) { settle(hid); return; }
         if (c && c.ok && c.schedule_id) { var fd = fromCheck(c); S.fallback = true; S.data = fd; prune(fd); window._psCheck = compat(fd); }
         after();
         if (cb) cb(d);
-      }).catch(function () { after(); if (cb) cb(d); });
+        settle(hid);
+      }).catch(function () { after(); if (cb) cb(d); settle(hid); });
     };
     var fail = function () { done({ok: false, error: 'The check couldn’t run - check your connection.'}); };
     if (_schedDirty) {

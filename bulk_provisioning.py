@@ -39,9 +39,28 @@ RPOWER suggests is a setup confirmation, never applied (ONB-11).
 No DocuSign envelope and no checkout are sent from here: a direct store's
 contract is sent from its billing tab, and a store under a partner billed
 by the partner needs neither (onboarding.skips_direct_contract, ONB-10).
+
+Scale re-audit 10/20/26:
+  * BILLING (R8-07): every store a list creates starts at ONE billing status,
+    BULK_PROVISION_BILLING_STATUS (default `trial`, as before — how RPOWER-
+    onboarded stores are billed is not decided yet). The dry run says which,
+    and what it means for the AI pools, before anything is created.
+  * HISTORY (R8-10): a store bound with the batch's token gets its onboarding
+    archive queued (strategy_jobs.enqueue_pos_onboard), as a store connected
+    by hand does — its first nightly sync no longer reads 60 days live.
+  * ONE APPLY AT A TIME (R8-19): an apply takes the batch ledger's write lock
+    to start, and refuses while another batch started in the last
+    APPLY_STALE_MINUTES is still running; each row is checked again just
+    before it is created, so a double submit or two admins can never bind
+    one RPOWER store to two restaurants.
+  * OWNER MATCH (R7-12, CONFIRMED-DIFFERENT): a row whose owner email already
+    signs in as an owner joins that owner's group — intended for a
+    multi-location owner, and now SHOWN in the dry run (joins_owner) instead
+    of reading as a plain create. Admin logins never match.
 """
 import csv
 import io
+import os
 import re
 import secrets
 
@@ -52,6 +71,35 @@ MODULE_KEYS = ("reviews", "labor", "inventory", "marketing")
 COLUMNS = ("restaurant_name", "owner_email", "owner_name", "owner_phone", "timezone", "google_place_id",
            "modules", "location_group", "location_name", "rpower_cg", "rpower_store_mid")
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+
+# The billing status every store a list creates starts at (R8-07). `trial`
+# (the default, the column's own default) draws on the trial AI pool;
+# `active` is a paying store — the paying pool, and the nightly Stripe
+# reconcile then reports each one with no Stripe customer unless a group or
+# partner bills it. The choice is the owner's, per rollout (docs/ops/
+# ENVIRONMENT.md); anything else is refused at the dry run.
+BILLING_STATUSES = ("trial", "active")
+# An apply still `running` after this long is a crashed one, not a live one.
+APPLY_STALE_MINUTES = 120
+
+
+def billing_status() -> str:
+    return (os.getenv("BULK_PROVISION_BILLING_STATUS") or "trial").strip().lower()
+
+
+def billing_note() -> dict:
+    """What the dry run says about billing: {status, ok, note}."""
+    st = billing_status()
+    if st not in BILLING_STATUSES:
+        return {"status": st, "ok": False,
+                "note": f"BULK_PROVISION_BILLING_STATUS is {st!r}; it must be one of {', '.join(BILLING_STATUSES)}."}
+    if st == "trial":
+        note = ("Each new store starts as a trial (BULK_PROVISION_BILLING_STATUS=trial): its AI draws on the "
+                "shared trial pool until it is moved to paying.")
+    else:
+        note = ("Each new store starts as paying (BULK_PROVISION_BILLING_STATUS=active): its AI draws on the "
+                "paying pool, and the nightly Stripe check lists any store with no Stripe customer.")
+    return {"status": st, "ok": True, "note": note}
 
 
 def get_conn(db_path=None):
@@ -103,13 +151,16 @@ def store_key(row) -> str:
 
 
 def _existing(row, db_path=None):
-    """The id of the restaurant this row already is, or None."""
+    """The id of the restaurant this row already is, or None. An RPOWER row
+    is matched on its consolidation group AND store (R7-12: a store id alone
+    can repeat across groups)."""
     conn = get_conn(db_path)
     try:
         if row.get("rpower_store_mid"):
             hit = conn.execute("SELECT id FROM restaurants WHERE TRIM(COALESCE(rpower_store_mid,''))=? "
+                               "AND (rpower_cg IS NULL OR CAST(rpower_cg AS TEXT)=?) "
                                "AND COALESCE(is_demo,0)=0 ORDER BY id LIMIT 1",
-                               (row["rpower_store_mid"].strip(),)).fetchone()
+                               (row["rpower_store_mid"].strip(), str(row.get("rpower_cg") or "").strip())).fetchone()
             if hit:
                 return int(hit["id"])
         hit = conn.execute("SELECT id FROM restaurants WHERE LOWER(TRIM(owner_email))=? AND LOWER(TRIM(name))=? "
@@ -126,7 +177,8 @@ def _owner_login(email, db_path=None):
     try:
         u = conn.execute("SELECT u.id, u.restaurant_id, COALESCE(u.role,'client') AS role, r.owner_email, "
                          "r.location_group, r.name FROM users u JOIN restaurants r ON r.id = u.restaurant_id "
-                         "WHERE LOWER(u.email)=? AND u.is_active=1 ORDER BY u.id LIMIT 1", (email,)).fetchone()
+                         "WHERE LOWER(u.email)=? AND u.is_active=1 AND COALESCE(u.is_admin,0)=0 "
+                         "ORDER BY u.id LIMIT 1", (email,)).fetchone()
     finally:
         conn.close()
     if not u:
@@ -162,8 +214,11 @@ def check_row(row, db_path=None):
 
 def plan(rows, db_path=None) -> dict:
     """The dry run: [{line, store_key, action, restaurant_id, error,
-    restaurant_name, owner_email, rpower_store_mid}] and counts. Nothing is
-    written."""
+    restaurant_name, owner_email, rpower_store_mid, joins_owner}] and counts,
+    and the billing status the new stores start at. Nothing is written.
+    `joins_owner` ({restaurant_id, name, group}) on a create row whose owner
+    email already signs in as an owner: the new store joins that owner's
+    group and login (R7-12) — shown, so it is never a surprise."""
     out, seen = [], {}
     for row in rows:
         item = {"line": row["line"], "restaurant_name": row.get("restaurant_name"),
@@ -187,9 +242,15 @@ def plan(rows, db_path=None) -> dict:
         err = _conflicts(row, db_path)
         if err:
             item.update(action="error", error=err)
+        else:
+            u, is_owner = _owner_login(row["owner_email"].strip().lower(), db_path)
+            if u and is_owner:
+                item["joins_owner"] = {"restaurant_id": u.get("restaurant_id"), "name": u.get("name"),
+                                       "group": (u.get("location_group") or "").strip() or u.get("name")}
         out.append(item)
     counts = {a: sum(1 for i in out if i["action"] == a) for a in ("create", "exists", "error")}
-    return {"ok": True, "rows": out, "counts": counts}
+    return {"ok": True, "rows": out, "counts": counts, "billing": billing_note(),
+            "joins_owner": sum(1 for i in out if i.get("joins_owner"))}
 
 
 def _conflicts(row, db_path=None):
@@ -242,6 +303,7 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
     try:
         uid = None
         updates = {f"module_{k}": (1 if k in keys else 0) for k in MODULE_KEYS}
+        updates["billing_status"] = billing_status()
         updates["reviews_live"] = 1 if ((row.get("google_place_id") or "").strip() and "reviews" in keys) else 0
         if u and is_owner:
             group = (u.get("location_group") or "").strip() or (u.get("name") or "").strip() or email
@@ -294,6 +356,15 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
             import ops
             ops.capture(e, job="bulk_provision_rollback", context=f"restaurant_id={rid}")
         raise
+    if row.get("rpower_store_mid") and stores is not None:
+        # Bound with the batch's token: its onboarding archive and first sync
+        # now, on the pos_io lane, as an RPOWER connect by hand does (R8-10).
+        try:
+            import strategy_jobs
+            strategy_jobs.enqueue_pos_onboard(rid, f"{row['rpower_cg']}:{row['rpower_store_mid']}")
+        except Exception as e:
+            import ops
+            ops.capture(e, job="bulk_provision_onboard", context=f"restaurant_id={rid}")
     if send_welcome and uid:
         try:
             import billing_jobs
@@ -310,6 +381,8 @@ def apply(rows, actor, partner_id=None, rpower_token=None, send_welcome=True, db
     recorded and left alone. One provision_batches row; returns {ok,
     batch_id, counts, rows, error?}."""
     stores = None
+    if not billing_note()["ok"]:
+        return {"ok": False, "error": billing_note()["note"]}
     token = (rpower_token or "").strip() or None
     if token and any(r.get("rpower_store_mid") for r in rows):
         import rpower
@@ -317,40 +390,88 @@ def apply(rows, actor, partner_id=None, rpower_token=None, send_welcome=True, db
         if not probe.get("ok"):
             return {"ok": False, "error": f"RPOWER refused the token: {probe.get('error')}"}
         stores = probe.get("stores") or []
-    planned = plan(rows, db_path)
-    by_line = {r["line"]: r for r in rows}
+    batch_id, busy = _start_batch(actor, partner_id, len(rows), db_path)
+    if batch_id is None:
+        return {"ok": False, "error": busy}
+    try:
+        planned = plan(rows, db_path)
+        by_line = {r["line"]: r for r in rows}
+        results = _apply_rows(planned, by_line, partner_id, stores, token, send_welcome, actor, db_path)
+    except BaseException:
+        _finish_batch(batch_id, [], {"created": 0, "exists": 0, "error": 0}, "failed", db_path)
+        raise
+    counts = {a: sum(1 for i in results if i["action"] == a) for a in ("created", "exists", "error")}
+    _finish_batch(batch_id, results, counts, "done", db_path)
+    return {"ok": True, "batch_id": batch_id, "counts": counts, "rows": results}
+
+
+def _start_batch(actor, partner_id, n_rows, db_path=None):
+    """(batch id, None), or (None, why) while another apply is running — the
+    check and the new batch row in ONE write transaction (R8-19)."""
+    import db_dialect
     conn = get_conn(db_path)
     try:
+        db_dialect.begin_write(conn, "provision_batches", "apply")
+        busy = conn.execute("SELECT id, created_by FROM provision_batches WHERE status='running' "
+                            "AND created_at >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+                            (f"-{APPLY_STALE_MINUTES} minutes",)).fetchone()
+        if busy:
+            conn.rollback()
+            return None, (f"Another list (batch {busy['id']}, by {busy['created_by']}) is being applied now; "
+                          "apply this one when it finishes.")
         cur = conn.execute("INSERT INTO provision_batches (created_by, partner_id, rows_total) VALUES (?,?,?)",
-                           ((actor or "admin")[:120], partner_id, len(rows)))
+                           ((actor or "admin")[:120], partner_id, int(n_rows)))
         batch_id = int(cur.lastrowid)
         conn.commit()
+        return batch_id, None
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+
+
+def _apply_rows(planned, by_line, partner_id, stores, token, send_welcome, actor, db_path=None):
     results = []
     for item in planned["rows"]:
         if item["action"] == "create":
+            row = by_line[item["line"]]
+            # Checked again just before it is made (R8-19): a store created
+            # since the plan (an earlier batch) is left alone.
+            rid = _existing(row, db_path)
+            err = None if rid else _conflicts(row, db_path)
+            if rid:
+                item.update(action="exists", restaurant_id=rid)
+                results.append(item)
+                continue
+            if err:
+                item.update(action="error", error=err)
+                results.append(item)
+                continue
             try:
-                item["restaurant_id"] = _create_one(by_line[item["line"]], partner_id, stores, token, send_welcome,
+                item["restaurant_id"] = _create_one(row, partner_id, stores, token, send_welcome,
                                                     actor, db_path=db_path)
                 item["action"] = "created"
             except Exception as e:
                 item.update(action="error", error=str(e)[:300])
         results.append(item)
-    counts = {a: sum(1 for i in results if i["action"] == a) for a in ("created", "exists", "error")}
+    return results
+
+
+def _finish_batch(batch_id, results, counts, status, db_path=None):
     conn = get_conn(db_path)
     try:
-        conn.executemany("INSERT INTO provision_rows (batch_id, line, store_key, restaurant_id, status, error) "
-                         "VALUES (?,?,?,?,?,?)",
-                         [(batch_id, i["line"], i.get("store_key"), i.get("restaurant_id"), i["action"], i.get("error"))
-                          for i in results])
-        conn.execute("UPDATE provision_batches SET finished_at=datetime('now'), status='done', rows_created=?, "
+        if results:
+            conn.executemany("INSERT INTO provision_rows (batch_id, line, store_key, restaurant_id, status, error) "
+                             "VALUES (?,?,?,?,?,?)",
+                             [(batch_id, i["line"], i.get("store_key"), i.get("restaurant_id"), i["action"],
+                               i.get("error")) for i in results])
+        conn.execute("UPDATE provision_batches SET finished_at=datetime('now'), status=?, rows_created=?, "
                      "rows_existing=?, rows_failed=? WHERE id=?",
-                     (counts["created"], counts["exists"], counts["error"], batch_id))
+                     (status, counts["created"], counts["exists"], counts["error"], batch_id))
         conn.commit()
     finally:
         conn.close()
-    return {"ok": True, "batch_id": batch_id, "counts": counts, "rows": results}
 
 
 def batches(limit=20, db_path=None) -> list:

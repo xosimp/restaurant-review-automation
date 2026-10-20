@@ -504,6 +504,7 @@ def test_the_secret_is_ciphertext_at_rest_and_in_no_audit_row_or_log(app, db_pat
     assert not any("totp" in k or "secret" in k for k in auth.get_user_by_id(uid, db_path=db_path))
 
 
+@pytest.mark.sqlite_only     # the off-site copy of the SQLite file
 def test_the_off_site_copy_empties_the_secrets(app, db_path, sent, tmp_path):
     import offsite_backup
     uid, _secret = _signed_in_admin_on_app(app, db_path, sent)

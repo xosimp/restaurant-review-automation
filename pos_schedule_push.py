@@ -502,9 +502,16 @@ def run_push(push_id, now_local=None, db_path=None) -> dict:
     else:
         status = "failed"
     auth = "refused the schedule push" in str(res.get("error") or "")
-    _finish(push_id, status, out_shifts, error=res.get("error"), payload=h if n_sent else None,
-            people=people if n_sent else None, retry=(status == "failed" and not auth), attempts=attempts,
-            db_path=db_path)
+    # The baseline the next push is compared with is what the POS HOLDS: the
+    # shifts that went, never ones that failed or the POS skipped (blind
+    # re-audit 10/20/26 R5-04). A partial push stored the hash of every
+    # sendable shift, so "Push again" after the owner fixed a job mapping
+    # answered "unchanged" and the failed shifts never reached the clock.
+    went = [s for s in out_shifts if s["status"] == "sent"]
+    _finish(push_id, status, out_shifts, error=res.get("error"),
+            payload=payload_hash(went) if n_sent else None,
+            people={s["employee"] for s in went} if n_sent else None,
+            retry=(status == "failed" and not auth), attempts=attempts, db_path=db_path)
     if status in ("failed", "partial"):
         _tell_failure(rid, row, res.get("error") or f"{n_failed} shift(s) didn't go through", db_path)
     try:
@@ -515,6 +522,42 @@ def run_push(push_id, now_local=None, db_path=None) -> dict:
     except Exception:
         pass
     return {"status": status, "sent": n_sent, "error": res.get("error")}
+
+
+def send_now(restaurant_id, push_id) -> bool:
+    """Hand a queued push to the job queue so it is sent within seconds, off
+    the web request thread (blind re-audit 10/20/26 R3-07: the owner's
+    "Send this week now" ran the preview and a 30-second POST on one of the
+    four request threads). True when queued; a push not handed over still
+    goes with the `pos_schedule_push` job's next 10-minute run. Never
+    raises."""
+    try:
+        import time as _t
+        import job_queue
+        _qid, _created = job_queue.enqueue(
+            "pos_schedule_push", {"push_id": int(push_id)}, restaurant_id=int(restaurant_id),
+            priority_class="interactive",
+            # A double press in the same minute is one send.
+            idempotency_key=f"pos_schedule_push_now:{int(push_id)}:{int(_t.time() // 60)}")
+        return True
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="pos_schedule_push", context=f"restaurant_id={restaurant_id} push={push_id} hand-off")
+        except Exception:
+            pass
+        return False
+
+
+def run_queued_push(job):
+    """job_queue's handler for `pos_schedule_push`: one push, sent
+    (run_push — it claims the row, so the 10-minute job never sends it
+    twice)."""
+    pid = (job.payload or {}).get("push_id")
+    if not pid:
+        return {"skipped": "no push"}
+    out = run_push(int(pid))
+    return {"status": out.get("status"), "sent": out.get("sent")}
 
 
 def _tell_failure(restaurant_id, row, why, db_path=None):

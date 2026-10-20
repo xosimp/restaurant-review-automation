@@ -2014,6 +2014,10 @@ struct GeneratedSchedule: Codable {
     var calls: Int? = nil
     /// A pending poll's time left on the job's own deadline (P-22).
     var secondsLeft: Int? = nil
+    /// When a pending poll asks again: longer the more presses are queued
+    /// ahead (blind re-audit 10/20/26 R5-03 — a backlog's 2 s polls were
+    /// their own load on the server).
+    var retryAfterMs: Int? = nil
     /// A pending poll's days drafted so far, counted from the answer as it
     /// streams (AI cost audit 10/7/26 #36).
     var progress: GenerationProgress? = nil
@@ -2186,6 +2190,7 @@ struct GeneratedSchedule: Codable {
         case regeneratedDates = "regenerated_dates"
         case calls, partial, requirements
         case secondsLeft = "seconds_left"
+        case retryAfterMs = "retry_after_ms"
         case progress
         case managerPlan = "manager_plan"
         case managerCoverage = "manager_coverage"
@@ -2316,6 +2321,7 @@ extension GeneratedSchedule {
         _chunked = try c.decode(LenientBool.self, forKey: .chunked)
         calls = field(Int.self, .calls)
         secondsLeft = field(Int.self, .secondsLeft)
+        retryAfterMs = field(Int.self, .retryAfterMs)
         progress = field(GenerationProgress.self, .progress)
         roster = field([String].self, .roster)
         publishedAt = field(String.self, .publishedAt)
@@ -3560,7 +3566,25 @@ final class LaborViewModel {
 
     /// "+6h · +$90 · 2h overtime" for the rows on screen against the
     /// baseline. Read-only; nothing is stored. Silent on failure.
+    ///
+    /// One check in flight at a time (blind re-audit 10/20/26 R6-F7): edits
+    /// made while it runs are checked by ONE trailing check of the rows on
+    /// screen when it starts — six quick edits used to send six multi-second
+    /// checks at once, and one manager editing could hold every request
+    /// thread of the platform.
+    private var editCostInFlight = false
+    private var editCostAgain = false
     func refreshEditCost() async {
+        if editCostInFlight { editCostAgain = true; return }
+        editCostInFlight = true
+        defer { editCostInFlight = false }
+        repeat {
+            editCostAgain = false
+            await refreshEditCostOnce()
+        } while editCostAgain
+    }
+
+    private func refreshEditCostOnce() async {
         guard let rows = scheduleResult?.previewRows, let base = baselineRows, !rows.isEmpty else {
             editCost = nil
             return
@@ -5434,10 +5458,11 @@ final class LaborViewModel {
             forgetRunningGeneration()
         }
         var attempt = 0
+        var nextPollMs = 2000
         while true {
             if attempt > 0 || !firstCheckWithoutWaiting {
                 do {
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: .milliseconds(nextPollMs))
                 } catch {
                     return      // the screen went away; the job runs on
                 }
@@ -5448,6 +5473,7 @@ final class LaborViewModel {
                     "/mobile/api/labor/schedule-status/\(jobId)"
                 )
                 transientFailures = 0
+                nextPollMs = min(max(result.retryAfterMs ?? 2000, 1000), 15000)
                 if result.status == "pending" {
                     // The job's own clock: keep waiting while it has time.
                     if let left = result.secondsLeft, left > 0 {

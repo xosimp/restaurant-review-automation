@@ -533,6 +533,7 @@ def _counting(monkeypatch):
 
 
 @pytest.mark.parametrize("seasons", [2, 4])
+@pytest.mark.sqlite_only     # counts statements with sqlite3's trace callback
 def test_a_home_load_reads_each_night_once_and_no_more_as_seasons_accumulate(db, monkeypatch, seasons):
     monkeypatch.setattr(engine, "PAST_GAMES_PER_CLASS", 6)
     r = _restaurant(db)

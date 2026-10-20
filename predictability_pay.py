@@ -112,6 +112,13 @@ def _hours(r):
 
 
 def _start_dt(r):
+    """When the shift really starts, on its business date's timeline: a
+    start in the small hours of the row's night (schedule_time.night_offset
+    — a 12:30am start dated Friday is Saturday 00:30) is the next calendar
+    day. It was read as the dated day's own small hours, so a change cut
+    Thursday 10pm counted 2.5 h of notice instead of 26.5 h and recorded a
+    premium that was not owed (blind re-audit 10/20/26 R9-10)."""
+    from schedule_time import night_offset
     m = _min(r.get("shift_start"))
     try:
         d = datetime.strptime(str(r.get("date"))[:10], "%Y-%m-%d")
@@ -119,7 +126,7 @@ def _start_dt(r):
         return None
     if m is None:
         return d
-    return d + timedelta(minutes=m)
+    return d + timedelta(minutes=m + night_offset(m))
 
 
 def _shift(r):

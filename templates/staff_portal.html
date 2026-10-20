@@ -2075,12 +2075,28 @@
       if (!q) { $('ask-err').textContent = 'Type a question.'; return; }
       S.askA = null;
       busyBtn(btn, 'Looking it up');
-      postJson('/staff/api/ask', {question: q}).then(function(d){
+      /* The answer is written off the request (re-audit 10/20/26 R4-08): the
+         route answers with a turn to poll, then the answer as before. */
+      function shown(d){
         unbusyBtn(btn);
         if (d.ok) S.askA = d;
         else if (d.suggest_message) S.askA = {answered: false, answer: errText(d), suggest_message: true, sources: []};
         else { $('ask-err').textContent = errText(d); return; }
         refreshDisc('docs', docsBody);
+      }
+      function poll(tid, tries){
+        api('/staff/api/ask/turn/' + encodeURIComponent(tid)).then(function(d){
+          if (d.ok && d.done === false && tries < 120) {
+            setTimeout(function(){ poll(tid, tries + 1); }, d.poll_after_ms || 700);
+            return;
+          }
+          if (d.ok && d.done === false) d = {ok: false, suggest_message: true, error: 'That took too long — ask your manager.'};
+          shown(d);
+        });
+      }
+      postJson('/staff/api/ask', {question: q, async: true}).then(function(d){
+        if (d.ok && d.pending && d.turn_id) { poll(d.turn_id, 0); return; }
+        shown(d);
       });
     },
     'ask-manager': function(){ openMessages(null, S.askQ || ''); },

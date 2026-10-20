@@ -243,7 +243,9 @@ def test_the_push_is_registered_everywhere_an_alert_type_must_be(db):
     import push
     import scheduler
     assert jobs_registry.JOBS["event_push"]["target"] == ("event_intel.gameday", "run_event_push")
-    assert '_ops.run_job("event_push", run_event_push' in inspect.getsource(scheduler.scheduler_loop)
+    # On the intraday lane's chain since the blind re-audit of 10/20/26 (R1-02).
+    assert '_intraday_item("event_push", run_event_push' in inspect.getsource(scheduler._intraday_items)
+    assert "_submit_intraday(_ops, now)" in inspect.getsource(scheduler.scheduler_loop)
     assert push.NOTIFICATION_MODULE["event_ahead"] == "ask" and push.PRIORITY["event_ahead"] == push.P3_INFO
     assert "event_ahead" in models.NON_ALERT_TYPES
     assert nav.for_notification("event_ahead").startswith("ask")

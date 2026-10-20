@@ -24,6 +24,7 @@ _json_object_guard(auth_bp)
 _login_attempts = {}
 _MAX_ATTEMPTS   = 5      # max failures before lockout
 _LOCKOUT_SECS   = 300    # 5 minute lockout
+_LOGIN_ATTEMPTS_MAX_KEYS = 10000   # the fallback dict's bound (R7-15)
 
 def _get_client_ip():
     """The client address the proxy vouches for: ProxyFix (one hop,
@@ -67,7 +68,10 @@ def _throttle_context(username):
 def _is_rate_limited(ip, username=None):
     """Durable, keyed by IP and account (security.py). The in-memory dict
     this replaced reset on deploy and never saw an attacker rotate
-    addresses; it was also the reason gunicorn could not run two workers."""
+    addresses; it was also the reason gunicorn could not run two workers.
+    An IPv6 address counts as its /64 (request_limits.ip_key, R7-15)."""
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
     try:
         import security
         internal, known = _throttle_context(username)
@@ -82,7 +86,17 @@ def _is_rate_limited(ip, username=None):
         return len(recent) >= _MAX_ATTEMPTS
 
 def _record_failed_attempt(ip, username=None):
-    _login_attempts.setdefault(ip, []).append(time.time())
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
+    # The fallback's memory is pruned on every write now (R7-15): it used to
+    # grow with every address that ever failed, for the life of the process.
+    now = time.time()
+    _login_attempts[ip] = [t for t in _login_attempts.get(ip, []) if now - t < _LOCKOUT_SECS] + [now]
+    if len(_login_attempts) > _LOGIN_ATTEMPTS_MAX_KEYS:
+        for k in [k for k, v in _login_attempts.items() if not v or now - v[-1] >= _LOCKOUT_SECS]:
+            _login_attempts.pop(k, None)
+        while len(_login_attempts) > _LOGIN_ATTEMPTS_MAX_KEYS:
+            _login_attempts.pop(min(_login_attempts, key=lambda k: _login_attempts[k][-1]), None)
     try:
         import security
         internal = _throttle_context(username)[0] if username else False
@@ -96,6 +110,8 @@ def _clear_attempts(ip, username=None, clear_key=False):
     login on the attacker's own account wiped the budget they were spending
     guessing someone else's codes (SEC-3). `clear_key` clears a
     purpose-specific key such as "2fa:<ip>"."""
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
     try:
         import security
         security.clear_login_failures(ip=ip if clear_key else None, username=username,
@@ -440,6 +456,14 @@ def verify_2fa():
         # secret is fixed, so guesses from many addresses add up (R10).
         from auth import second_factor_throttle_key as _sftk, check_sign_in_code as _csic
         _app_key = _sftk(_pending_user)
+        # Per login, from every address (re-audit 10/20/26 R7-01).
+        from auth import second_factor_lock_left as _sfll, SECOND_FACTOR_LOCKED_MESSAGE as _SFLM
+        if _sfll(pending_user_id):
+            resp_lk = make_response(render_template('two_fa.html',
+                masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error=_SFLM,
+                pending_token=pending_token, next_url=next_url, csrf_token=csrf4), 429)
+            resp_lk.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+            return resp_lk
         if _app_key and _is_rate_limited(_app_key):
             resp_lim = make_response(render_template('two_fa.html',
                 masked_email=masked, channel=channel_v, backup_mode=_backup_mode,
@@ -456,6 +480,8 @@ def verify_2fa():
                 _record_failed_attempt("2fa:" + ip)
                 if _app_key:
                     _record_failed_attempt(_app_key)
+                from auth import note_second_factor_failure as _nsff
+                _nsff(_pending_user, uid, ip)
                 resp_err = make_response(render_template('two_fa.html',
                     masked_email=masked, channel=channel_v, backup_mode=_backup_mode, error="Incorrect code. Try again.",
                     pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
@@ -711,12 +737,23 @@ def toggle_2fa(current_user):
         return denied
     data = request.get_json() or {}
     enabled = 1 if data.get("enabled") else 0
+    # Turning it off asks for the password again, never in view-as, and
+    # every account holder hears (re-audit 10/20/26 R7-03).
+    if not enabled:
+        from auth import account_step_up_refusal
+        refused = account_step_up_refusal(current_user)
+        if refused:
+            return jsonify(**refused[0]), refused[1]
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": enabled})
     try:
         from client_api import log_account_event
         log_account_event(current_user["restaurant_id"], "two_fa_enabled" if enabled else "two_fa_disabled", current_user)
     except Exception:
         pass
+    if not enabled:
+        from auth import notify_account_holders
+        notify_account_holders(current_user["restaurant_id"], "two_fa_disabled",
+                               detail=current_user.get("username"))
     return jsonify(ok=True)
 
 
@@ -748,54 +785,99 @@ def change_password(current_user):
 @csrf_required
 @login_required
 def update_email_route(current_user):
-    data = request.get_json()
+    """The web's email change — one body with the app's (_do_update_email).
+    Refusals answer 200 {ok: false} as this route always has."""
+    payload, status = _do_update_email(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), (200 if status == 400 else status)
+
+
+def _do_update_email(current_user, data):
+    """A login's email change, web and app (re-audit 10/20/26 R7-17): the
+    current password, then a 6-digit code sent to the NEW address
+    (auth.start_email_change); the change is made only when that code comes
+    back with the same address (`code`, auth.finish_email_change). The
+    first call answers {ok: false, verify_required: true, sent_to} — false so
+    an app build from before this round shows the sentence instead of
+    "updated". Moves restaurants.owner_email only for the account holder
+    whose address it is (SEC-13); the OLD address is told once it is done.
+    Returns (payload, status)."""
+    import re as _re_email
+    from auth import start_email_change, finish_email_change, _mask_email
     new_email = (data.get("new_email") or "").strip().lower()
     current_pw = data.get("current_password", "")
+    code = str(data.get("code") or "").strip()
     if not new_email:
-        return jsonify(ok=False, error="Email address is required")
-    import re as _re_email
+        return {"ok": False, "error": "Email address is required"}, 400
     if not _re_email.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", new_email):
-        return jsonify(ok=False, error="Enter a valid email address")
-    # Verify current password
+        return {"ok": False, "error": "Enter a valid email address"}, 400
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return {"ok": False, "error": "The sign-in email is the account holder's to change, not in view-as."}, 403
     user = verify_password(current_user["username"], current_pw)
     if not user:
-        return jsonify(ok=False, error="Current password is incorrect")
-    # Check email not already taken by another user
+        return {"ok": False, "error": "Current password is incorrect"}, 400
     conn = get_conn()
-    existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (new_email, current_user["id"])).fetchone()
-    if existing:
+    try:
+        existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?",
+                                (new_email, current_user["id"])).fetchone()
+    finally:
         conn.close()
-        return jsonify(ok=False, error="That email is already in use")
-    old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
-    old_email = old_email_row["email"] if old_email_row else None
-    # Update users.email
-    conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
-    # The restaurant's contact address (2FA codes, alerts, the owner
-    # match that keeps a location in its group) moves only when the account
-    # holder whose address it is changes theirs. Any login's change used to
-    # rewrite it (SEC-13).
-    from permissions import is_principal as _is_principal_em
-    _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (current_user["restaurant_id"],)).fetchone()
-    _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
-                      and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
-    # Update restaurant.owner_email so notifications/digest still work
-    if _moves_contact:
-        # Bumps row_version like update_restaurant does (DATA-28).
-        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
-                     (new_email, current_user["restaurant_id"]))
-    conn.commit()
-    conn.close()
+    if existing:
+        return {"ok": False, "error": "That email is already in use"}, 400
+    if not code:
+        sent = None
+        try:
+            from emails import send_email_change_code
+            sent = send_email_change_code(new_email, start_email_change(current_user["id"], new_email),
+                                          restaurant_id=current_user.get("restaurant_id"))
+        except Exception:
+            sent = None
+        if not getattr(sent, "ok", False):
+            return {"ok": False, "error": "We couldn't email a code to that address. Check it and try again."}, 502
+        return {"ok": False, "verify_required": True, "sent_to": _mask_email(new_email),
+                "error": f"We emailed a 6-digit code to {_mask_email(new_email)}. Enter it to finish."}, 200
+    verdict = finish_email_change(current_user["id"], new_email, code)
+    if verdict != "ok":
+        return {"ok": False, "verify_required": verdict == "wrong",
+                "error": ("That code isn't right." if verdict == "wrong"
+                          else "That code expired. Ask for a new one.")}, 400
+    conn = get_conn()
+    try:
+        old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
+        old_email = old_email_row["email"] if old_email_row else None
+        conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
+        # The restaurant's contact address (2FA codes, alerts, the owner
+        # match that keeps a location in its group) moves only when the
+        # account holder whose address it is changes theirs (SEC-13).
+        from permissions import is_principal as _is_principal_em
+        _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?",
+                                (current_user["restaurant_id"],)).fetchone()
+        _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
+                          and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
+        if _moves_contact:
+            # Bumps row_version like update_restaurant does (DATA-28).
+            conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
+                         (new_email, current_user["restaurant_id"]))
+        conn.commit()
+    finally:
+        conn.close()
     import models as _models_inv
     _models_inv._invalidate_request_cache(current_user["restaurant_id"])
+    try:
+        from client_api import log_account_event
+        log_account_event(current_user["restaurant_id"], "email_changed", current_user, new_email)
+    except Exception:
+        pass
     if old_email and old_email != new_email:
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email,
+                                     restaurant.owner_name if restaurant else None,
+                                     tz=restaurant.timezone if restaurant else None,
                                      restaurant_id=restaurant.id if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
-    return jsonify(ok=True)
+    return {"ok": True}, 200
 
 @auth_bp.route("/api/sessions", methods=["GET"])
 @login_required
@@ -895,9 +977,27 @@ def list_sessions(current_user):
 @csrf_required
 @login_required
 def revoke_other_sessions_route(current_user):
+    # A stolen session must not be able to sign the real owner out (R7-03).
+    from auth import account_step_up_refusal
+    refused = account_step_up_refusal(current_user)
+    if refused:
+        return jsonify(**refused[0]), refused[1]
     token = request.cookies.get("session_token", "")
     revoke_other_sessions(current_user["id"], current_token=token)
     return jsonify(ok=True)
+
+
+@auth_bp.route("/api/account/reauth", methods=["POST"])
+@csrf_required
+@login_required
+def account_reauth_route(current_user):
+    """The account holder's step-up (re-audit 10/20/26 R7-03): the password
+    again, then this session may make sign-in security changes for 15
+    minutes (auth.account_reauth; twin /mobile/api/account/reauth)."""
+    from auth import account_reauth
+    data = request.get_json(silent=True) or {}
+    payload, status = account_reauth(current_user, data.get("password") or "", _get_client_ip())
+    return jsonify(**payload), status
 
 
 @auth_bp.route("/api/toggle-login-notify", methods=["POST"])
@@ -1111,8 +1211,9 @@ def gmb_mobile_callback():
     google_sso_callback already uses for mobile login, so no new URL
     scheme registration is needed — GMBConnectCoordinator.swift just
     listens for a different path on it."""
-    from gmb import exchange_code, find_gmb_location, verify_mobile_state, MOBILE_REDIRECT_URI
-    from models import update_restaurant, get_restaurant
+    from gmb import (exchange_code, find_gmb_location, verify_bound_state, seal_connect_ticket,
+                     MOBILE_REDIRECT_URI)
+    from models import get_restaurant
     from datetime import datetime, timezone, timedelta
     import urllib.parse
 
@@ -1135,9 +1236,12 @@ def gmb_mobile_callback():
     if error or not code or not state:
         return _finish("error", error or "No code returned")
 
-    restaurant_id = verify_mobile_state(state)
-    if restaurant_id is None:
+    # The state names the login that started the flow (re-audit 10/20/26
+    # R7-16); a restaurant-only state is no longer issued to the app.
+    bound = verify_bound_state(state)
+    if bound is None or not str(bound[1]).startswith("u"):
         return _finish("error", "Connection expired — please try again")
+    restaurant_id, bind = bound
 
     try:
         tokens        = exchange_code(code, redirect_uri=MOBILE_REDIRECT_URI)
@@ -1152,14 +1256,16 @@ def gmb_mobile_callback():
             print(f"[GMB] mobile connect refused for rid={restaurant_id}: {match.get('error')}")
             return _finish("nomatch")
 
-        update_restaurant(restaurant_id, {
+        # Saved only when the login that started it confirms the sealed
+        # ticket (/mobile/api/connections/google/confirm).
+        ticket = seal_connect_ticket(restaurant_id, bind, {
             "gmb_access_token":  access_token,
             "gmb_refresh_token": refresh_token,
             "gmb_token_expires": expires_at,
             "gmb_account_id":    match["account"],
             "gmb_location_id":   match["location"],
         })
-        return _finish("connected")
+        return redirect("cavnarai://gmb-callback?status=confirm&ticket=" + urllib.parse.quote(ticket, safe=""))
     except Exception as e:
         print(f"[GMB] Mobile OAuth callback error: {e}")
         return _finish("error", "Connection error")
@@ -1452,7 +1558,23 @@ def login_not_me(token):
     email = not_me_aftercare(user)
     return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
                    "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
-                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (_esc_nm(email),))
+                   "%s"
+                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>"
+                   % (_esc_nm(email), _suspended_line(user)))
+
+
+def _suspended_line(user) -> str:
+    """The co-owner logins the report suspended (auth._suspend_recent_principals,
+    R7-03), named so the owner can tell a stranger's from a partner's."""
+    from markupsafe import escape as _esc_sl
+    names = [n for n in (user or {}).get("suspended_logins") or [] if n]
+    if not names:
+        return ""
+    return ("<p>We also suspended the co-owner login%s added in the last few days, in case whoever signed in "
+            "added %s: <strong>%s</strong>. If one is a real partner, add them again from Account &rarr; Team "
+            "once you have reset your password.</p>"
+            % ("s" if len(names) > 1 else "", "them" if len(names) > 1 else "it",
+               ", ".join(str(_esc_sl(n)) for n in names)))
 
 
 # ── Passkeys and Sign in with Apple on the web (owner, 9/30/26) ──────────────
@@ -1517,13 +1639,23 @@ def passkey_login_options():
     return jsonify(**payload), status
 
 
+PASSKEY_OPTIONS_PER_MINUTE = 10
+
+
 def _do_passkey_login_options(host):
     """The sign-in challenge — one body for the login page and the app's
     /mobile/api/passkey/options (which passes passkeys.app_host())."""
     import passkeys
+    import request_limits
     ip = _get_client_ip()
     if _is_rate_limited("passkey:" + ip):
         return {"ok": False, "error": "Too many attempts. Please wait 5 minutes and try again."}, 429
+    # Each call writes a challenge row, and the limiter above counts only
+    # failures: an anonymous flood was a write per call on the shared
+    # database. Filtered in memory before anything is written (re-audit
+    # 10/20/26 R7-07; request_limits.memory_limited, SEC-08's class).
+    if request_limits.memory_limited(f"passkey-opt:{ip}", PASSKEY_OPTIONS_PER_MINUTE, 60):
+        return {"ok": False, "error": "Too many attempts. Please wait a minute and try again."}, 429
     try:
         return {"ok": True, "options": passkeys.authentication_options(host)}, 200
     except passkeys.PasskeyError as e:

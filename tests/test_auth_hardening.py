@@ -129,7 +129,7 @@ def test_a_pin_hash_records_the_pepper_version_it_was_written_under(db_path):
     stored = conn.execute("SELECT pin_hash FROM memberships WHERE id=?", (m["id"],)).fetchone()["pin_hash"]
     conn.close()
     assert stored.startswith("pepv1$")
-    assert "8317" not in stored
+    assert "8317" not in stored.split("$")             # never a field of the hash (a hex digest can contain the digits)
 
 
 def test_rotating_the_pepper_does_not_lock_everyone_out(db_path, monkeypatch):

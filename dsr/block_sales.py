@@ -291,6 +291,19 @@ def collect(ctx):
         return dsr.block(dsr.AWAITING, source=provider, block_name="sales",
                          reason="The POS closed the day but its tickets haven't arrived yet",
                          detail={"waiting_for": "tickets", "closed_by": closed})
+    # A night read while its checks were still reaching the POS's cloud copy
+    # is not the whole night (blind re-audit 10/20/26 R3-05): it waits for
+    # the next pass's re-check rather than going out FINAL on part of it.
+    try:
+        import pos_archive
+        settled, why = pos_archive.night_settled(ctx.restaurant_id, provider, ctx.business_date,
+                                                 db_path=ctx.db_path or pos_archive.DB_PATH)
+    except Exception:
+        settled, why = True, None
+    if not settled:
+        return dsr.block(dsr.AWAITING, source=provider, block_name="sales",
+                         reason="The POS is still receiving tonight's checks",
+                         detail={"waiting_for": "tickets_settling", "why": why, "closed_by": closed})
     return _ready(ctx, data, provider, closed)
 
 

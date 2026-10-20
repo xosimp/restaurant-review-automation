@@ -279,7 +279,7 @@ def test_this_wasnt_me_signs_the_login_out_everywhere(db_path, mobile, monkeypat
     report = auth.create_login_report(uid, None, db_path=db_path)
     # A passkey added from the compromised session (re-audit 10/8/26).
     conn = get_conn(db_path)
-    conn.execute("INSERT INTO user_passkeys (user_id, credential_id, public_key) VALUES (?, 'cred-x', x'00')", (uid,))
+    conn.execute("INSERT INTO user_passkeys (user_id, credential_id, public_key) VALUES (?, 'cred-x', ?)", (uid, b"\x00"))
     conn.commit()
     conn.close()
     r = mobile.post("/mobile/api/account/not-me", json={"login_user_id": uid}, headers=h)

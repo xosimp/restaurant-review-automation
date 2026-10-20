@@ -327,7 +327,8 @@ def test_home_has_no_ask_card_and_one_attention_card_holding_open_issues():
     assert "toggleAskCavnar" in ask and "sendAskCavnar" in ask
     attn = panel[panel.index("function renderAttention"):][:6000]
     assert 'id="hb-attn-issues"' in attn and "hbIssueRows(" in attn
-    assert "hbAttnSetIssues(iss)" in panel
+    # (and says so when the issues could not be read: R6-F13)
+    assert "hbAttnSetIssues(iss,!!(g.issues&&g.issues.failed))" in panel
 
 
 def test_hero_chips_say_what_their_figure_is(db_path):

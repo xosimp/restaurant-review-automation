@@ -83,7 +83,7 @@ def _events(db_path, kind):
 
 def _open(app, db_path, support=False):
     actor, rid, owner = _world(db_path, support=support)
-    admin_tok = create_session(actor, db_path=db_path)
+    admin_tok = create_session(actor, db_path=db_path, password_verified_at=True)   # step-up (R7-03)
     c = _client(app, admin_tok)
     r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF}, data={"reason": "checking a ticket for them"})
     assert r.status_code == 302

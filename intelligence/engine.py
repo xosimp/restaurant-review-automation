@@ -941,6 +941,15 @@ def _location_context(restaurant_id, db_path, today=None) -> dict:
             (restaurant_id, me.get("organization_id"), me.get("location_group") or "",
              me.get("owner_email") or "")).fetchall()
         mine = privacy.org_key(me)
+        # Siblings only inside a real group — an organisation, or a location
+        # group under the same owner email (models.get_location_group's rule).
+        # The owner email alone was enough before (blind re-audit 10/20/26
+        # R7-22), and an owner email is set by hand: two unrelated ungrouped
+        # restaurants sharing one each saw the other's per-location figures
+        # and name. The email-only key still joins them for the privacy
+        # floors (privacy.org_key), where over-joining is the safe side.
+        if not (mine.startswith("o") or mine.startswith("g")):
+            cands = [c for c in cands if c["id"] == restaurant_id]
         sibs = [dict(c) for c in cands if privacy.org_key(dict(c)) == mine]
         rows = {}
         if len(sibs) >= LOCATION_MIN:

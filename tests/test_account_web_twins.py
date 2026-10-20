@@ -53,7 +53,7 @@ def _restaurant(db_path, name="Twin Co", **kw):
 def _web_as(monkeypatch, rid, uid=7, email="o@x.test"):
     monkeypatch.setattr(auth, "get_current_user",
                         lambda: {"id": uid, "restaurant_id": rid, "is_admin": 0, "role": "client",
-                                 "username": "owner", "email": email})
+                                 "username": "owner", "email": email, "reauth_at": auth.sql_utc()})
 
 
 def _mobile_token(client, db_path, rid, username="alice"):

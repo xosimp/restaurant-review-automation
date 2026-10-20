@@ -304,6 +304,7 @@ def test_login_history_has_an_index_for_its_prune(db_path):
     assert "idx_login_history_created" in {r["name"] for r in rows}
 
 
+@pytest.mark.sqlite_only     # SQLite's typeof()
 def test_session_expiries_stay_text_the_prune_compares(db_path):
     rid = _rid(db_path)
     uid = _owner_login(db_path, rid)

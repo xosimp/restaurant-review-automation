@@ -82,7 +82,7 @@ def test_the_platform_check_pages_on_broken_messaging_but_health_does_not_read_i
     import status_manager
     monkeypatch.setattr(status_manager, "DB_PATH", db)
     status_manager.record_scheduler_heartbeat(loop_completed=True)
-    monkeypatch.setattr(status_manager, "disk_state", lambda p=None: {"state": "ok"})
+    monkeypatch.setattr(status_manager, "disk_state", lambda p=None, **_kw: {"state": "ok"})
     monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: True)
     monkeypatch.setattr(ops, "backup_status", lambda db_path=None: {"state": "ok"})
     asked = []

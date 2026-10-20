@@ -366,6 +366,7 @@ def _usage_at(db_path, stamp, cost=0.5):
     c.close()
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_the_rollup_finds_and_reads_days_by_range(db_path):
     ai_utils.init_ai_ops(db_path)
     _usage_at(db_path, "2026-10-01 08:00:00")
@@ -411,8 +412,11 @@ def test_the_long_ai_jobs_are_on_the_ai_lane():
     loop = inspect.getsource(scheduler.scheduler_loop)
     # "sweep" joined for the 4-6am restaurant sweeps (AI cost audit 10/7/26
     # #54, tests/test_ai_cost_sched_1007.py); "dsr", "pos" and "fetch" for the
-    # DSR sweep, the 3am POS chain and the review fetch (scale audit 10/19/26).
-    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch"}
+    # DSR sweep, the 3am POS chain and the review fetch (scale audit 10/19/26);
+    # "minute", "live" and "brief" for the minute jobs and the morning briefs
+    # (blind re-audit 10/20/26 R1-02, R1-11).
+    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch", "minute", "live", "intraday",
+                                     "brief"}
     for name in _AI_LANE_JOBS:
         assert f'_ops.run_in_lane("ai", "{name}"' in loop, name
         assert f'_ops.run_job("{name}"' not in loop, f"{name} still runs on the loop thread"
@@ -437,7 +441,7 @@ def loop(db_path, monkeypatch):
             ran.append((name, threading.current_thread().name))
             return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
         return fn
-    for mod, attr in ((strategy_jobs, "run_auto_draft_schedules"), (strategy_jobs, "run_weekly_plan"),
+    for mod, attr in ((strategy_jobs, "run_auto_draft_schedules"), (strategy_jobs, "fan_out_weekly_plan"),
                       (strategy_jobs, "run_recipe_drafts"), (scheduler, "run_weekly_digests"),
                       (scheduler, "_minute_duties")):
         monkeypatch.setattr(mod, attr, rec(attr))
@@ -460,7 +464,7 @@ def loop(db_path, monkeypatch):
 
 @pytest.mark.parametrize("claim, fn, now", [
     ("auto_draft_schedule", "run_auto_draft_schedules", datetime(2026, 10, 8, 6, 5)),
-    ("weekly_plan", "run_weekly_plan", datetime(2026, 10, 5, 7, 5)),          # a Monday
+    ("weekly_plan", "fan_out_weekly_plan", datetime(2026, 10, 5, 7, 5)),      # a Monday (queued, R4-09)
     ("recipe_drafts", "run_recipe_drafts", datetime(2026, 10, 6, 5, 5)),      # a Tuesday
     ("weekly_digest", "run_weekly_digests", datetime(2026, 10, 5, 9, 5)),
 ])
@@ -556,6 +560,7 @@ def live(tmp_path, db_path, monkeypatch):
     return tmp_path / "backups"
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_the_local_snapshot_is_gzip_and_restores_whole(live, tmp_path, db_path):
     with pytest.raises(scheduler.BackupFailed):      # no key: no off-site copy (#1), local still written
         scheduler.backup_db()
@@ -574,6 +579,7 @@ def test_the_local_snapshot_is_gzip_and_restores_whole(live, tmp_path, db_path):
     assert "VACUUM INTO" in inspect.getsource(scheduler._write_consistent_snapshot)
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot restore
 def test_restore_from_takes_a_gzipped_snapshot(live, tmp_path, monkeypatch):
     import db_restore
     with pytest.raises(scheduler.BackupFailed):
@@ -603,6 +609,7 @@ def test_a_corrupt_gzipped_snapshot_changes_nothing(tmp_path, monkeypatch):
     assert target.read_bytes() == b"live" and not (tmp_path / "reviews.db.restoring").exists()
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot drill
 def test_the_restore_drill_reads_a_gzipped_snapshot(live, monkeypatch):
     import emails
     monkeypatch.setattr(emails, "deliver", lambda **k: True)

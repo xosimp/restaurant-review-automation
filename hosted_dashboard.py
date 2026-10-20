@@ -259,6 +259,10 @@ for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpow
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
+# Support's masking on every blueprint under /admin, not only admin_bp's
+# (re-audit 10/20/26 R7-11; applied once per response).
+from admin_routes import _admin_support_redaction as _support_mask
+app.after_request(_support_mask)
 from sales_audit_routes import audit_bp
 if not getattr(audit_bp, "_csrf_wired", False):
     csrf_protect(audit_bp)
@@ -628,9 +632,6 @@ def index(current_user):
                "week_start":"—","week_end":"—","last_updated":"—",
                "banner_gradient":"linear-gradient(to right,#2a0808 0%,#0d331f 100%)",
                "is_live":False,"price_watch":[]}
-    # Show welcome banner if user has never logged in before (last_login is None)
-    from auth import get_user_by_id
-    _user_row = get_user_by_id(current_user["id"]) if not current_user.get("is_admin") else None
     show_welcome = False   # welcome modal retired with the rest of onboarding
 
     # Getting-started checklist: real completion state per step, shown until
@@ -710,27 +711,13 @@ def index(current_user):
         mkt_stats = {"generated": 0, "published": 0, "this_month": 0,
                      "months_active": 1, "agency_value": 0, "avg_per_month": 0}
 
-    # ── Value: measured, avoided, available ───────────────────────────────────
-    # This block used to compute the banner's "Total Value Delivered" inline,
-    # and value_delivered.py carried a second copy of the same arithmetic by
-    # explicit admission. Both were wrong in the same way: labor and food
-    # cost contributed their GAP TO TARGET — money the restaurant was still
-    # losing — as money delivered, so the figure fell when an owner fixed
-    # their scheduling and peaked for the worst-run restaurant on the
-    # platform. See value_delivered.py's docstring for the full account.
-    #
-    # There is now ONE implementation, and the three figures it returns are
-    # never summed into each other.
+    # ── Value ─────────────────────────────────────────────────────────────────
+    # The page no longer computes value_delivered.breakdown (blind re-audit
+    # 10/20/26 R6-F14, ~0.3 s a load): the template read none of what it fed
+    # (the measured total, wins, avoided dollars and hours, the reply line and
+    # the opportunity). Home's value block reads GET /api/value, the one
+    # implementation, whose four figures are never summed into each other.
     _mod_l = int(restaurant.module_labor or 0)
-    try:
-        from value_delivered import breakdown as _value_breakdown
-        value = _value_breakdown(rid)
-    except Exception as _ve:
-        print(f"[value] breakdown unavailable: {_ve}")
-        value = {"delivered": {"monthly": 0, "wins": 0, "evaluated": 0, "in_flight": 0,
-                               "by_module": {}, "biggest": None, "caveat": ""},
-                 "avoided": {"items": [], "dollars": 0, "hours": 0},
-                 "opportunity": {"items": [], "monthly": 0}}
 
     # Labor-tab context figures. These are NOT value delivered and never were
     # — they stay here because the Labor tab renders them as context beside
@@ -746,30 +733,8 @@ def index(current_user):
     # (gSalesLiftYr); that reader and the unreachable .review-rate-count line
     # are a candidate for future cleanup after additional verification.
     _sales_lift_yr = 0
-    import value_delivered as _vd_rates
     savings_breakdown = {
-        # The banner: measured monthly dollars only.
-        "total":            int(round((value["delivered"] or {}).get("monthly") or 0)),
-        "wins":             (value["delivered"] or {}).get("wins") or 0,
-        "in_flight":        (value["delivered"] or {}).get("in_flight") or 0,
-        "avoided_dollars":  int(round((value["avoided"] or {}).get("dollars") or 0)),
-        "avoided_hours":    (value["avoided"] or {}).get("hours") or 0,
-        # The Reviews tab shows its own cost-avoidance line. Read from the
-        # same place as everything else so the rate has one definition.
-        # next() needs its default OUTSIDE the generator's parentheses: with
-        # `next((x for ...), 0)` mis-bracketed as `round(next(x for ...), 0)`,
-        # a restaurant with no responded review raised StopIteration here and
-        # the whole dashboard shell was a 500 — every new account, both demo
-        # accounts as seeded. Since f41e2e5; found by the Sep 21 re-audit.
-        "reviews_avoided":  int(round(next(((i["dollars"] or 0)
-                                            for i in (value["avoided"] or {}).get("items") or []
-                                            if i.get("key") == "replies"), 0))),
-        # The stated rate behind that line, from its one definition, so the
-        # line's own caption states it from here too (rec-ROI #12).
-        "reply_rate":       _vd_rates.REPLY_RATE,
-        "reply_rate_basis": _vd_rates.REPLY_RATE_BASIS,
-        "opportunity":      int(round((value["opportunity"] or {}).get("monthly") or 0)),
-        # Labor-tab context, unchanged.
+        # Labor-tab context only (the value keys left 10/20/26, R6-F14).
         "labor_monthly":    _labor_sb_row["labor_monthly"] if _mod_l else 0,
         "inv_monthly":      _inv_value     if int(restaurant.module_inventory or 0) else 0,
         "labor_annual":     _labor_sb_row["labor_annual"] if _mod_l else 0,
@@ -1434,6 +1399,13 @@ def _post_boot():
     # A crash loop pages Will (at most hourly) — off the boot path.
     threading.Thread(target=_pm_boot.page_if_crash_looping, args=(_BOOT_ID,), daemon=True,
                      name="boot-crash-check").start()
+    # The boot backfills init_db left for after the boot when it ran past
+    # BOOT_BACKFILL_BUDGET_SECONDS (models._boot_backfill — blind re-audit
+    # 10/20/26 R1-14), off the worker's boot path.
+    import models as _models_deferred
+    if _models_deferred._DEFERRED_BOOT_BACKFILLS:
+        threading.Thread(target=_models_deferred.run_deferred_boot_backfills, daemon=True,
+                         name="boot-deferred-backfills").start()
 
     supervisor = _pm_boot.PlatformSupervisor(
         scheduler_thread=_SCHED_THREAD if _RUN_SCHEDULER_IN_WEB else None,

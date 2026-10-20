@@ -96,6 +96,9 @@ def test_the_week_names_its_reasons_and_the_manager(db_path, monkeypatch):
     _stub(monkeypatch, lines)
     # sync reads back from yesterday: pinned, or 9/22 fell out of its 14 days on 10/7/26.
     monkeypatch.setattr(loss_detection, "date", type("D", (date,), {"today": staticmethod(lambda: date(2026, 9, 29))}))
+    # Since 10/20/26 the window ends on the restaurant's last complete night
+    # (blind re-audit R3-09), never the server's date: pinned the same way.
+    monkeypatch.setattr(pos, "local_complete_through", lambda r: date(2026, 9, 28))
     out = loss_detection.sync(rid, days=14)
     assert out["ok"] and out["provider"] == "rpower"
     conn = models.get_conn(db_path)
@@ -128,6 +131,9 @@ def test_rows_from_before_the_fix_are_re_read_so_no_false_spike(db_path, monkeyp
              for m, rng in (("08", range(1, 32)), ("09", range(1, 29))) for d in rng]
     _stub(monkeypatch, lines)
     monkeypatch.setattr(loss_detection, "date", type("D", (date,), {"today": staticmethod(lambda: date(2026, 9, 29))}))
+    # Since 10/20/26 the window ends on the restaurant's last complete night
+    # (blind re-audit R3-09), never the server's date: pinned the same way.
+    monkeypatch.setattr(pos, "local_complete_through", lambda r: date(2026, 9, 28))
     out = loss_detection.sync(rid)
     assert out["days"] == 7 * (loss_detection.BASELINE_WEEKS + 1)
     sig = loss_detection.signals(rid, today=date(2026, 9, 29))

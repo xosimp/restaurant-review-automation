@@ -19,6 +19,16 @@ to the quote that closes it.
 
     python3 scripts/check_tenant_scope.py            # compare, exit 1 on a new one
     python3 scripts/check_tenant_scope.py --update   # rewrite the baseline (after review)
+
+Reads too (blind re-audit 10/20/26 R7-18): a new `SELECT ... FROM <tenant
+table> ... WHERE id=?` that does not name restaurant_id is counted the same
+way against `scripts/tenant_scope_reads_baseline.json` (125 when it began;
+the audit traced none that cross
+tenants). At 1,500 tenants a new read helper called with a request-supplied
+id is a cross-tenant leak no other test catches; Postgres row-level security
+is the stronger guard, not on yet.
+
+    python3 scripts/check_tenant_scope.py --update-reads   # rewrite the reads baseline
 """
 import json
 import os
@@ -28,6 +38,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(ROOT, "scripts", "tenant_scope_baseline.json")
+READS_BASELINE = os.path.join(ROOT, "scripts", "tenant_scope_reads_baseline.json")
+_FROM = re.compile(r"\bFROM\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.I)
+_DELETE_BEFORE = re.compile(r"DELETE\s*$", re.I)
 _STMT = re.compile(r"\b(UPDATE|DELETE\s+FROM)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.I)
 _BY_ID = re.compile(r"WHERE\s+(?:[a-z_]+\.)?id\s*=\s*\?", re.I)
 # Where a statement's SQL string ends: a closing quote, then its arguments
@@ -80,12 +93,42 @@ def scan(tables=None):
     return counts
 
 
+def scan_reads(tables=None):
+    """{"file::table": n} for SELECTs from a tenant table by primary key that
+    do not name restaurant_id (the reads half of the ratchet, R7-18)."""
+    tables = tables if tables is not None else tenant_tables()
+    counts = {}
+    for path in _sources():
+        lines = open(os.path.join(ROOT, path), encoding="utf-8").read().splitlines()
+        for i, line in enumerate(lines):
+            for m in _FROM.finditer(line):
+                table = m.group(1).lower()
+                if table not in tables or _DELETE_BEFORE.search(line[:m.start()]):
+                    continue
+                window = " ".join(lines[i:i + 3])
+                tail = window[window.find(m.group(0)):]
+                end = _END.search(tail)
+                tail = tail[:end.start()] if end else tail
+                if not _BY_ID.search(tail) or "restaurant_id" in tail:
+                    continue
+                key = f"{path}::{table}"
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def compare(counts, baseline):
     """[(key, now, allowed)] for every key over its baseline."""
     return [(k, n, baseline.get(k, 0)) for k, n in sorted(counts.items()) if n > baseline.get(k, 0)]
 
 
 def main(argv):
+    if "--update-reads" in argv:
+        reads = scan_reads()
+        with open(READS_BASELINE, "w", encoding="utf-8") as fh:
+            json.dump(dict(sorted(reads.items())), fh, indent=1)
+            fh.write("\n")
+        print(f"reads baseline written: {sum(reads.values())} unscoped id reads in {len(reads)} places")
+        return 0
     counts = scan()
     if "--update" in argv:
         with open(BASELINE, "w", encoding="utf-8") as fh:
@@ -98,9 +141,15 @@ def main(argv):
     for k, n, allowed in over:
         print(f"NEW unscoped write: {k} has {n} (baseline {allowed}) — add AND restaurant_id=?, "
               "or raise the baseline naming the ownership check above it")
-    if over:
+    reads = scan_reads()
+    over_reads = compare(reads, json.load(open(READS_BASELINE, encoding="utf-8")))
+    for k, n, allowed in over_reads:
+        print(f"NEW unscoped read: {k} has {n} (baseline {allowed}) — add AND restaurant_id=?, "
+              "or raise the reads baseline naming the ownership check above it")
+    if over or over_reads:
         return 1
-    print(f"tenant scope ratchet OK — {sum(counts.values())} unscoped id writes, none new")
+    print(f"tenant scope ratchet OK — {sum(counts.values())} unscoped id writes and "
+          f"{sum(reads.values())} reads, none new")
     return 0
 
 

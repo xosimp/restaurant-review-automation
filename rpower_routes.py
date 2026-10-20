@@ -38,10 +38,40 @@ import admin_events as _admin_events
 _admin_events.register_audit(rpower_bp)
 
 
+def _rpower_state(kwargs):
+    """What an RPOWER admin write changes, for its typed audit row (R7-13):
+    the binding and whether a token is held — never the token."""
+    from models import get_restaurant
+    r = get_restaurant(kwargs.get("restaurant_id"))
+    if not r:
+        return {}
+    return {"token_set": bool((getattr(r, "rpower_token", None) or "").strip()),
+            "cg": getattr(r, "rpower_cg", None), "store_mid": getattr(r, "rpower_store_mid", None),
+            "store_name": getattr(r, "rpower_store_name", None)}
+
+
 @rpower_bp.route("/admin/rpower/save/<int:restaurant_id>", methods=["POST"])
 @admin_required
 @recent_auth_required()
 def save_rpower_token(restaurant_id, current_user):
+    """Typed audit around the save (R7-13; the Toast, Square and Clover
+    twins already had one): the binding before and after, never the token."""
+    return _audited_rpower("rpower.token_saved", restaurant_id, current_user, _save_rpower_token)
+
+
+def _audited_rpower(action, restaurant_id, current_user, body):
+    before = _rpower_state({"restaurant_id": restaurant_id})
+    resp = body(restaurant_id, current_user)
+    status = resp[1] if isinstance(resp, tuple) else getattr(resp, "status_code", 200)
+    _admin_events.record_admin_action(
+        current_user, action, restaurant_id=restaurant_id, target=f"restaurant:{restaurant_id}",
+        before=before, after=_rpower_state({"restaurant_id": restaurant_id}),
+        result="ok" if int(status or 200) < 400 else "failed",
+        summary=f"{current_user.get('username') or 'admin'} {action} ({status})")
+    return resp
+
+
+def _save_rpower_token(restaurant_id, current_user):
     """Save a token, after checking it actually works.
 
     The token is verified against /store/get before anything is written, so a
@@ -106,6 +136,10 @@ def save_rpower_token(restaurant_id, current_user):
 @recent_auth_required()
 def bootstrap_rpower(restaurant_id, current_user):
     """Bind this restaurant to one of the stores the token can see."""
+    return _audited_rpower("rpower.bootstrapped", restaurant_id, current_user, _bootstrap_rpower)
+
+
+def _bootstrap_rpower(restaurant_id, current_user):
     import rpower
     data = request.get_json(silent=True) or {}
     store_mid = (data.get("store_mid") or "").strip() or None
@@ -147,11 +181,13 @@ def disconnect_rpower(restaurant_id, current_user):
     behind, it decayed to 0% freshness under every labor and food card
     (re-audit B6#1).
     """
-    update_restaurant(restaurant_id, {
-        "rpower_token": None, "rpower_cg": None, "rpower_store_mid": None,
-        "rpower_store_name": None, "rpower_verified_at": None,
-        "rpower_sync_error": None, "rpower_last_synced": None})
-    return jsonify(ok=True, message="RPOWER disconnected.")
+    def _clear(rid, _user):
+        update_restaurant(rid, {
+            "rpower_token": None, "rpower_cg": None, "rpower_store_mid": None,
+            "rpower_store_name": None, "rpower_verified_at": None,
+            "rpower_sync_error": None, "rpower_last_synced": None})
+        return jsonify(ok=True, message="RPOWER disconnected.")
+    return _audited_rpower("rpower.disconnected", restaurant_id, current_user, _clear)
 
 
 @rpower_bp.route("/api/rpower/sync", methods=["POST"])

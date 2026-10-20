@@ -67,7 +67,7 @@ def test_its_own_learners_read_its_own_record():
         conn.execute("INSERT INTO marketing_edits (restaurant_id, channel, source, ref_id, original_body, "
                      "final_body, edit_category, edit_signals, words_before, words_after, authority) "
                      "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                     (rid, "social", "post", f"p{i}", "Come in tonight!!", "Come in tonight.", "light",
+                     (rid, "social", "post", 4000 + i, "Come in tonight!!", "Come in tonight.", "light",
                       json.dumps(["removed_exclamations"]), 3, 3, "principal"))
     conn.commit()
     conn.close()

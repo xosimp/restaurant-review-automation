@@ -23,9 +23,15 @@ CREATE OR REPLACE VIEW sqlite_master AS
 -- stamp failed the whole query (blind re-audit 10/11/26, SCALE-9). An
 -- offset is honoured and the answer is UTC, as SQLite's is (the session
 -- runs in UTC: db_dialect._driver_connect).
+-- 'now' arriving at run time (julianday(COALESCE(?, 'now')) — a literal
+-- 'now' db_dialect translates itself) is the current UTC time, as SQLite
+-- reads it: it was NULL here, and ops.jobs_overdue, which measures every
+-- job's lateness that way, found no job overdue on Postgres (blind
+-- re-audit 10/20/26 R9-02). Re-created every boot (install_compat).
 CREATE OR REPLACE FUNCTION cavnar_ts(v text) RETURNS timestamp
     LANGUAGE sql STABLE PARALLEL SAFE AS $$
-    SELECT CASE WHEN v ~ '^\s*[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([ T]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?)?\s*(Z|[+-][0-9]{2}(:?[0-9]{2})?)?\s*$'
+    SELECT CASE WHEN lower(btrim(v)) = 'now' THEN timezone('UTC', now())
+                WHEN v ~ '^\s*[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])([ T]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?)?\s*(Z|[+-][0-9]{2}(:?[0-9]{2})?)?\s*$'
                 THEN timezone('UTC', CAST(v AS timestamptz)) END
 $$;
 

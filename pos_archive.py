@@ -26,7 +26,11 @@ until_utc)`. Nightly (run_nightly, the `pos_archive` job):
      time, newest first.
 
 A day is replaced whole, in one transaction: a re-read never leaves a line
-the POS has since removed.
+the POS has since removed — but an empty or short re-read never replaces a
+stored night (ArchiveShrunk, blind re-audit 10/20/26 R3-05), and a stored
+night is read again only when the POS wrote to it after it was stored
+(the change read's newest write per date against the day's `max_stamp`,
+R3-02).
 """
 import logging
 import os
@@ -118,8 +122,10 @@ def init_pos_catalog(db_path=None):
                             RPOWER's last_cost, plu, upc and aqu_count (POS
                             cost per item where a store keeps one; a
                             theoretical pour cost needs no recipe then).
-    Both are replaced per store on each read; 0 / "" are kept as RPOWER
-    sends them (no value), never read as a measurement here."""
+    Both are kept in step with each read — only rows that changed, appeared
+    or went are written (R3-11), `seen_at` when a row last changed; 0 / ""
+    are kept as RPOWER sends them (no value), never read as a measurement
+    here."""
     conn = get_conn(db_path)
     try:
         conn.execute("""CREATE TABLE IF NOT EXISTS pos_sales_categories (
@@ -169,30 +175,73 @@ def sync_catalog(restaurant_id, db_path=DB_PATH) -> dict:
     cats, items = cat.get("categories") or [], cat.get("items") or []
     if not cats and not items:
         return {"ok": False, "reason": "the POS listed no sales categories"}
+    # Only what changed is written (blind re-audit 10/20/26 R3-11): every
+    # category and menu item was deleted and inserted again nightly, ~600
+    # rows a store of WAL for a catalog that changes a few times a month.
+    # `seen_at` is when a row last CHANGED (bar.cache keys on it).
+    cat_rows = {str(c["category_id"]): (c.get("name"), c.get("department_id"), c.get("department"),
+                                        int(c.get("is_bar") or 0), c.get("alt_qty_unit"), c.get("alt_rpt_unit"),
+                                        c.get("aqu_in_aru")) for c in cats if c.get("category_id")}
+    item_rows = {str(i["item_id"]): (i.get("name"), i.get("category_id"), int(i.get("is_mod") or 0),
+                                     i.get("last_cost"), i.get("plu"), i.get("upc"), i.get("aqu_count"))
+                 for i in items if i.get("item_id")}
+    changed = {"categories": 0, "items": 0, "removed": 0}
     conn = get_conn(db_path)
     try:
-        conn.execute("DELETE FROM pos_sales_categories WHERE restaurant_id=? AND provider=?", (restaurant_id, name))
-        conn.executemany(
-            "INSERT INTO pos_sales_categories (restaurant_id, provider, category_id, name, department_id, department, "
-            "is_bar, alt_qty_unit, alt_rpt_unit, aqu_in_aru, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-            [(restaurant_id, name, c["category_id"], c.get("name"), c.get("department_id"), c.get("department"),
-              int(c.get("is_bar") or 0), c.get("alt_qty_unit"), c.get("alt_rpt_unit"), c.get("aqu_in_aru"))
-             for c in cats if c.get("category_id")])
-        conn.execute("DELETE FROM pos_menu_catalog WHERE restaurant_id=? AND provider=?", (restaurant_id, name))
-        conn.executemany(
-            "INSERT INTO pos_menu_catalog (restaurant_id, provider, item_id, name, category_id, is_mod, last_cost, "
-            "plu, upc, aqu_count, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-            [(restaurant_id, name, i["item_id"], i.get("name"), i.get("category_id"), int(i.get("is_mod") or 0),
-              i.get("last_cost"), i.get("plu"), i.get("upc"), i.get("aqu_count")) for i in items if i.get("item_id")])
+        for table, key, cols, want, label in (
+                ("pos_sales_categories", "category_id",
+                 ("name", "department_id", "department", "is_bar", "alt_qty_unit", "alt_rpt_unit", "aqu_in_aru"),
+                 cat_rows, "categories"),
+                ("pos_menu_catalog", "item_id",
+                 ("name", "category_id", "is_mod", "last_cost", "plu", "upc", "aqu_count"), item_rows, "items")):
+            have = {str(r[0]): tuple(r[1:]) for r in conn.execute(
+                f"SELECT {key}, {', '.join(cols)} FROM {table} WHERE restaurant_id=? AND provider=?",
+                (restaurant_id, name)).fetchall()}
+            gone = sorted(set(have) - set(want))
+            for i in range(0, len(gone), 500):
+                chunk = gone[i:i + 500]
+                conn.execute(f"DELETE FROM {table} WHERE restaurant_id=? AND provider=? "
+                             f"AND {key} IN ({','.join('?' for _ in chunk)})", (restaurant_id, name, *chunk))
+            put = [(k, v) for k, v in want.items() if k not in have or not _same_row(have[k], v)]
+            if put:
+                conn.executemany(
+                    f"INSERT INTO {table} (restaurant_id, provider, {key}, {', '.join(cols)}, seen_at) "
+                    f"VALUES (?,?,?,{','.join('?' for _ in cols)},datetime('now')) "
+                    f"ON CONFLICT(restaurant_id, provider, {key}) DO UPDATE SET "
+                    f"{', '.join(f'{c}=excluded.{c}' for c in cols)}, seen_at=excluded.seen_at",
+                    [(restaurant_id, name, k, *v) for k, v in put])
+            changed[label] = len(put)
+            changed["removed"] += len(gone)
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
-    return {"ok": True, "categories": len(cats), "items": len(items),
+    return {"ok": True, "categories": len(cats), "items": len(items), "changed": changed,
             "bar_categories": sum(1 for c in cats if c.get("is_bar")),
             "costed_items": sum(1 for i in items if (i.get("last_cost") or 0) > 0)}
+
+
+def _same_row(stored, new) -> bool:
+    """Whether a stored catalog row holds the same values as a fresh one
+    (numbers compared as numbers: the database hands 1.0 back for 1)."""
+    if len(stored) != len(new):
+        return False
+    for a, b in zip(stored, new):
+        if a is None or b is None:
+            if a is not b and not (a is None and b is None):
+                return False
+            continue
+        if isinstance(a, (int, float)) or isinstance(b, (int, float)):
+            try:
+                if abs(float(a) - float(b)) > 1e-9:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        elif str(a) != str(b):
+            return False
+    return True
 
 
 def provider_for(restaurant_id):
@@ -258,6 +307,61 @@ class ArchiveBusy(RuntimeError):
 # for the first to store the day and returns what it stored.
 ARCHIVE_CLAIM_MINUTES = 10
 ARCHIVE_WAIT_SECONDS = 120
+# The claim is renewed this often while the day is being read (blind
+# re-audit 10/20/26 R3-15): a read starved by the request budget (about 12
+# requests, each allowed 60 s for its slot) outlasted the 10 minutes, and a
+# second caller re-claimed the day and downloaded it again.
+ARCHIVE_CLAIM_RENEW_SECONDS = 60
+
+
+class ArchiveShrunk(RuntimeError):
+    """A re-read returned an empty or short night against the one stored
+    (blind re-audit 10/20/26 R3-05): the stored night is kept, the short
+    read is recorded on it (`suspect`), and the day is read again later.
+    No `retry_after`: it stops no other day's read."""
+    kept = True
+
+
+# A re-read is SHORT when it has fewer lines than the stored night by more
+# than max(SHRINK_LINES, SHRINK_SHARE x stored) or fewer tickets by more
+# than max(SHRINK_TICKETS, SHRINK_SHARE x stored). An empty re-read of a
+# stored night is never taken. A short one is taken only when the same
+# short read comes back SHRINK_CONFIRM_MINUTES or more after the first and
+# it reconciles with the POS's own ticket totals — the POS's own figure
+# moved (a ticket re-dated at the store), not a read made mid-repost.
+SHRINK_LINES = 3
+SHRINK_TICKETS = 1
+SHRINK_SHARE = 0.02
+SHRINK_CONFIRM_MINUTES = 30
+# A night read while its rows were still arriving — its newest POS write
+# within this many minutes of when it was read or last checked — is not
+# settled (pos_archive.night_settled): the nightly report does not go out
+# FINAL on it, and the readers check it again after this long rather than
+# RECHECK_MINUTES (R3-05: the cloud copy trails the store's close).
+SETTLE_MINUTES = float(os.getenv("POS_SETTLE_MINUTES", "10") or 0)
+
+
+class _ClaimKeeper:
+    """Renew a claim_cooldown claim every ARCHIVE_CLAIM_RENEW_SECONDS while
+    the work inside runs (R3-15)."""
+
+    def __init__(self, claim):
+        import threading
+        self.claim, self.stop = claim, threading.Event()
+        self.thread = threading.Thread(target=self._beat, name="pos-archive-claim", daemon=True)
+
+    def _beat(self):
+        import ops
+        while not self.stop.wait(ARCHIVE_CLAIM_RENEW_SECONDS):
+            ops.renew_cooldown(self.claim)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        return False
 
 
 def _utc_stamp():
@@ -355,9 +459,86 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
             return got
         raise ArchiveBusy(f"{iso} is being archived elsewhere for restaurant {restaurant_id}")
     try:
-        return _archive_day(restaurant_id, day, iso, name, mod, db_path)
+        with _ClaimKeeper(claim):
+            return _archive_day(restaurant_id, day, iso, name, mod, db_path)
     finally:
         ops.release_period("cooldown", claim)
+
+
+_REDATE_CHUNK = 500
+
+
+def _drop_redated(conn, table, key_col, restaurant_id, provider, iso, want) -> set:
+    """Delete this day's records stored under ANOTHER business date (a
+    ticket closed after midnight, a restatement); returns those dates.
+
+    On SQLite the key is (restaurant_id, provider, <id>), so INSERT OR
+    REPLACE moved a re-dated record. A partitioned table's key on Postgres
+    gained business_date (pg_copy), so the old copy stayed on its old day
+    beside the new one — counted twice in sales and labor (blind re-audit
+    10/20/26 R2-08). Measure with: SELECT restaurant_id, ticket_id,
+    COUNT(DISTINCT business_date) FROM pos_tickets GROUP BY 1, 2 HAVING
+    COUNT(DISTINCT business_date) > 1 (punch_id in pos_punches likewise)."""
+    ids = sorted({str(r.get(key_col)) for r in want if r.get(key_col) is not None})
+    days = set()
+    for i in range(0, len(ids), _REDATE_CHUNK):
+        part = ids[i:i + _REDATE_CHUNK]
+        marks = ",".join("?" for _ in part)
+        where = (f"restaurant_id=? AND provider=? AND business_date<>? AND {key_col} IN ({marks})")
+        args = (restaurant_id, provider, iso, *part)
+        found = conn.execute(f"SELECT DISTINCT business_date FROM {table} WHERE {where}", args).fetchall()
+        if found:
+            days.update(str(r[0]) for r in found)
+            conn.execute(f"DELETE FROM {table} WHERE {where}", args)
+    return days
+
+
+def _short_read(prev, tickets, lines) -> bool:
+    """Whether a re-read of (tickets, lines) is short against the stored
+    night `prev` (see SHRINK_*)."""
+    pt, pl = int(prev["tickets"] or 0), int(prev["lines"] or 0)
+    if not (pt or pl):
+        return False
+    if not (tickets or lines):
+        return True
+    return (pl - lines > max(SHRINK_LINES, SHRINK_SHARE * pl)
+            or pt - tickets > max(SHRINK_TICKETS, SHRINK_SHARE * pt))
+
+
+def _refuse_short(conn, restaurant_id, name, iso, prev, tickets, lines, net, gap):
+    """Keep the stored night against a short re-read (R3-05), unless this is
+    the same short read seen SHRINK_CONFIRM_MINUTES or more ago and it
+    reconciles. Returns True when the read may be stored; otherwise records
+    it on the day (`suspect`), tells the operator once per night and read,
+    commits, and raises ArchiveShrunk."""
+    import json as _json
+    sig = f"{tickets}|{lines}|{net:.2f}"
+    now = datetime.now(timezone.utc)
+    try:
+        seen = _json.loads(prev["suspect"] or "{}") if prev["suspect"] else {}
+    except (TypeError, ValueError):
+        seen = {}
+    first = _utc(seen.get("at")) if seen.get("sig") == sig else None
+    reconciles = gap is None or abs(float(gap)) <= RECONCILE_TOLERANCE
+    if (tickets or lines) and first is not None and reconciles \
+            and now - first >= timedelta(minutes=SHRINK_CONFIRM_MINUTES):
+        return True
+    conn.execute("UPDATE pos_archive_days SET suspect=? WHERE restaurant_id=? AND provider=? AND business_date=?",
+                 (_json.dumps({"sig": sig, "tickets": tickets, "lines": lines, "net_sales": net,
+                               "at": (first or now).strftime("%Y-%m-%d %H:%M:%S")}), restaurant_id, name, iso))
+    conn.commit()
+    try:
+        import ops
+        if ops.claim_period(f"pos_archive_short:{restaurant_id}:{iso}", sig):
+            ops.capture(RuntimeError(
+                f"POS re-read of {iso} came back short ({tickets} tickets, {lines} lines, ${net:,.2f}) against the "
+                f"stored night ({prev['tickets']} tickets, {prev['lines']} lines, ${float(prev['net_sales'] or 0):,.2f})"
+                f"; the stored night is kept and read again later"), job="pos_archive",
+                context=f"restaurant_id={restaurant_id} date={iso}", restaurant_id=restaurant_id)
+    except Exception:
+        pass
+    raise ArchiveShrunk(f"{iso}: a re-read came back short ({tickets} tickets, {lines} lines against "
+                        f"{prev['tickets']} and {prev['lines']} stored); the stored night is kept")
 
 
 def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
@@ -375,12 +556,21 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
         # the database has one writer).
         import db_dialect
         db_dialect.lock(conn, "pos_archive", restaurant_id)
-        prev = conn.execute("SELECT max_stamp, restated FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
-                            "AND business_date=?", (restaurant_id, name, iso)).fetchone()
+        prev = conn.execute("SELECT max_stamp, restated, tickets, lines, net_sales, suspect FROM pos_archive_days "
+                            "WHERE restaurant_id=? AND provider=? AND business_date=?",
+                            (restaurant_id, name, iso)).fetchone()
+        # An empty or short re-read never replaces a stored night (R3-05): a
+        # read during a store's repost, or a page lost, stored the night
+        # short and the nightly report re-pulled it as a lower FINAL.
+        if prev is not None and _short_read(prev, len(rows["tickets"]), len(rows["lines"])):
+            _refuse_short(conn, restaurant_id, name, iso, prev, len(rows["tickets"]), len(rows["lines"]), net, gap)
+        moved = set()                  # other days a record of this one was moved from
         for table, cols, key in _TABLES:
             conn.execute(f"DELETE FROM {table} WHERE restaurant_id=? AND provider=? AND business_date=?",
                          (restaurant_id, name, iso))
             want = rows.get(key) or []
+            if table in db_dialect.PARTITIONED:
+                moved.update(_drop_redated(conn, table, cols[0], restaurant_id, name, iso, want))
             marks = ",".join("?" for _ in range(len(cols) + 2))
             dflt = _not_null_defaults(conn, table)
             conn.executemany(
@@ -393,6 +583,20 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
                                f"AND business_date=?", (restaurant_id, name, iso)).fetchone()[0]
             if int(got) != len(want):
                 raise ArchiveCountMismatch(f"{table} {iso}: {len(want)} records from the POS, {got} stored")
+            if table == "pos_punches" and want:
+                # A punch is filed on ONE business date. One the neighbouring
+                # night holds (stored before the 4am boundary, rpower.
+                # punch_business_date) moves here: Postgres's partitioned key
+                # carries the date, so it would otherwise stay on both and
+                # labor would count it twice.
+                ids = sorted({str(r["punch_id"]) for r in want if r.get("punch_id")})
+                d0 = date.fromisoformat(iso)
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i + 500]
+                    conn.execute(f"DELETE FROM pos_punches WHERE restaurant_id=? AND provider=? "
+                                 f"AND business_date IN (?, ?) AND punch_id IN ({','.join('?' for _ in chunk)})",
+                                 (restaurant_id, name, (d0 - timedelta(days=1)).isoformat(),
+                                  (d0 + timedelta(days=1)).isoformat(), *chunk))
         restated = bool(prev and prev["max_stamp"] and rows.get("max_stamp")
                         and rows["max_stamp"] != prev["max_stamp"])
         conn.execute(
@@ -403,10 +607,16 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
             "lines=excluded.lines, punches=excluded.punches, net_sales=excluded.net_sales, "
             "max_stamp=excluded.max_stamp, restated=pos_archive_days.restated + ?, version=excluded.version, "
             "links_ok=excluded.links_ok, recon_gap=excluded.recon_gap, unknown_sales=excluded.unknown_sales, "
-            "archived_at=datetime('now'), item_rollup=NULL, punches_read_at=datetime('now')",
+            "archived_at=datetime('now'), item_rollup=NULL, punches_read_at=datetime('now'), "
+            "checked_at=NULL, suspect=NULL",
             (restaurant_id, name, iso, len(rows["tickets"]), len(rows["lines"]), len(rows["punches"]), net,
              rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, links_ok, gap, unknown,
              1 if restated else 0))
+        # A day a record moved away from is rolled again (its item totals
+        # counted the record), as a restated day is.
+        for other in sorted(moved):
+            conn.execute("UPDATE pos_archive_days SET item_rollup=NULL WHERE restaurant_id=? AND provider=? "
+                         "AND business_date=?", (restaurant_id, name, other))
         # The day's lines by item (pos_item_daily, DB-11) in the same
         # transaction. A failure leaves the day unrolled (item_rollup NULL,
         # set just above): readers read its lines and the nightly roll
@@ -433,6 +643,66 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
     return {"date": iso, "tickets": len(rows["tickets"]), "lines": len(rows["lines"]),
             "punches": len(rows["punches"]), "net_sales": net, "restated": restated,
             "links_ok": links_ok, "recon_gap": gap, "unknown_sales": unknown}
+
+
+def ensure_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
+    """archive_day's counts for a night, read from the POS only when the
+    archive does not already hold it at the current layout with its links
+    (blind re-audit 10/20/26 R3-02): the nightly report's service block
+    archived the night again on every pass, seconds after the Sales block's
+    read had stored it. A night a re-read came back short for keeps its
+    stored copy (ArchiveShrunk) and is answered from it. `stored` True when
+    nothing was read."""
+    name, mod = provider or provider_for(restaurant_id)
+    if mod is None:
+        raise LookupError("no connected POS can archive tickets")
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+
+    def _from(row):
+        return {"date": iso, "tickets": row["tickets"], "lines": row["lines"], "punches": row["punches"],
+                "net_sales": row["net_sales"], "restated": False, "links_ok": row.get("links_ok"),
+                "recon_gap": row.get("recon_gap"), "unknown_sales": row.get("unknown_sales"), "stored": True}
+    if iso in archived_dates(restaurant_id, name, db_path):
+        row = _stored_row(restaurant_id, name, iso, db_path)
+        if row:
+            return _from(row)
+    try:
+        return archive_day(restaurant_id, day, db_path=db_path, provider=(name, mod))
+    except ArchiveShrunk:
+        row = _stored_row(restaurant_id, name, iso, db_path)
+        if row:
+            return _from(row)
+        raise
+
+
+def night_settled(restaurant_id, provider, day, now_utc=None, db_path=DB_PATH):
+    """(settled, why) — whether the archive's copy of a night can be taken as
+    the whole night (R3-05): not when its newest POS write landed within
+    SETTLE_MINUTES before it was read or last checked (the cloud copy was
+    still filling; the readers check it again after SETTLE_MINUTES). A
+    night the archive does not hold, or whose stamps read in another clock
+    (a newest write after the read), is settled as far as this can say —
+    the caller's own rules stand."""
+    if SETTLE_MINUTES <= 0:
+        return True, None
+    iso = day.isoformat() if hasattr(day, "isoformat") else str(day)[:10]
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT max_stamp, archived_at, checked_at FROM pos_archive_days WHERE restaurant_id=? "
+                           "AND provider=? AND business_date=?", (restaurant_id, provider, iso)).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["max_stamp"]:
+        return True, None
+    newest = _utc(str(row["max_stamp"]).replace("T", " ")[:19])
+    looked = max([t for t in (_utc(row["archived_at"]), _utc(row["checked_at"])) if t is not None], default=None)
+    if newest is None or looked is None:
+        return True, None
+    lag = looked - newest
+    if timedelta(0) <= lag < timedelta(minutes=SETTLE_MINUTES):
+        return False, (f"the POS was still writing this night's checks {int(lag.total_seconds() // 60)} min "
+                       "before it was read")
+    return True, None
 
 
 # ── the lines by item and day (scale audit 10/19/26 DB-11, DB-02) ─────────
@@ -617,27 +887,75 @@ PRICE_SYNC_DAYS = int(__import__("os").getenv("POS_PRICE_SYNC_DAYS", "7"))
 
 def _prices_due(restaurant_id, provider, night_iso, db_path) -> bool:
     """Whether tonight's run reads the POS's price list: never read, last
-    read PRICE_SYNC_DAYS or more ago, or a sale line of `night_iso` rang at a
-    price the kept list has a different figure for (item and level)."""
+    read PRICE_SYNC_DAYS or more ago, or PRICE_MOVED_MIN_ITEMS or more items
+    of `night_iso` rang at a price the kept list has a different figure for
+    (item and level) on lines that rang at the item's own price — not a
+    fraction (a half pour), not an override (a regular price apart from the
+    price charged): one override read the 11-page list again any night
+    (blind re-audit 10/20/26 R3-18). The manager on a line is not used: its
+    id may be a placeholder on every line, as the punches' edit manager is
+    at Simple EJ's."""
     if PRICE_SYNC_DAYS <= 1:
         return True
     conn = get_conn(db_path)
     try:
-        last = conn.execute("SELECT MAX(seen_at) FROM pos_menu_prices WHERE restaurant_id=? AND provider=?",
-                            (restaurant_id, provider)).fetchone()[0]
+        last = _prices_read_at(conn, restaurant_id, provider)
         if not last:
             return True
         age = datetime.now(timezone.utc) - (_utc(last) or datetime.now(timezone.utc))
         if age >= timedelta(days=PRICE_SYNC_DAYS):
             return True
         moved = conn.execute(
-            "SELECT 1 FROM pos_ticket_lines l JOIN pos_menu_prices p ON p.restaurant_id=l.restaurant_id "
-            "AND p.provider=l.provider AND p.item_id=l.item_id AND p.level_id=l.price_level_id "
+            "SELECT COUNT(DISTINCT l.item_id) FROM pos_ticket_lines l JOIN pos_menu_prices p "
+            "ON p.restaurant_id=l.restaurant_id AND p.provider=l.provider AND p.item_id=l.item_id "
+            "AND p.level_id=l.price_level_id "
             "WHERE l.restaurant_id=? AND l.provider=? AND l.business_date=? AND l.kind='sale' AND l.price > 0 "
-            "AND ABS(l.price - p.price) >= 0.01 LIMIT 1", (restaurant_id, provider, night_iso)).fetchone()
-        return moved is not None
+            "AND (l.fraction IS NULL OR l.fraction = 0 OR l.fraction = 1) "
+            "AND (l.regular_price IS NULL OR l.regular_price = 0 OR ABS(l.regular_price - l.price) < 0.01) "
+            "AND ABS(l.price - p.price) >= 0.01", (restaurant_id, provider, night_iso)).fetchone()[0]
+        return int(moved or 0) >= PRICE_MOVED_MIN_ITEMS
     finally:
         conn.close()
+
+
+PRICE_MOVED_MIN_ITEMS = 2
+
+
+def _prices_read_at(conn, restaurant_id, provider):
+    """When the price list was last read: pos_archive_state.prices_read_at,
+    else (before 10/20/26) the newest price row's seen_at."""
+    try:
+        row = conn.execute("SELECT prices_read_at FROM pos_archive_state WHERE restaurant_id=? AND provider=?",
+                           (restaurant_id, provider)).fetchone()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return conn.execute("SELECT MAX(seen_at) FROM pos_menu_prices WHERE restaurant_id=? AND provider=?",
+                        (restaurant_id, provider)).fetchone()[0]
+
+
+def _keep_orders_due(restaurant_id, mod, today) -> None:
+    """The next fortnight's orders due (catering, scheduled pick-up), read
+    once a night for a store whose owner's questions have asked for them —
+    a kept snapshot exists — so an owner's read on a web request answers
+    from it and never reads RPOWER (blind re-audit 10/20/26 R3-07). Never
+    raises."""
+    fn = getattr(mod, "fetch_orders_due", None)
+    if not callable(fn):
+        return
+    try:
+        kind = str(getattr(mod, "ORDERS_DUE_KIND", "orders_due"))
+        conn = get_conn()
+        try:
+            asked = conn.execute("SELECT 1 FROM pos_live_snapshot WHERE restaurant_id=? AND (kind=? OR kind LIKE ?) "
+                                 "LIMIT 1", (restaurant_id, kind, kind + ":%")).fetchone()
+        finally:
+            conn.close()
+        if asked:
+            fn(restaurant_id, today, today + timedelta(days=int(getattr(mod, "ORDERS_DUE_KEEP_DAYS", 14))))
+    except Exception as e:
+        log.warning("pos_archive: orders due not kept for %s: %s", restaurant_id, e)
 
 
 def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
@@ -680,32 +998,40 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
     # Restated days: rewritten in the POS since the last look.
     since = _utc(state.get("changes_checked_to")) or (now_utc - timedelta(hours=FIRST_CHANGE_LOOKBACK_HOURS))
     changed_dates, read_at = None, now_utc
-    changed = getattr(mod, "changed_business_dates", None)
-    if callable(changed):
+    if _reads_changes(mod):
         try:
-            changed_dates, read_at = _changed_since(restaurant_id, mod, since, now_utc, provider=name,
-                                                    db_path=db_path, with_time=True)
+            changed_dates, read_at = _changed_stamps(restaurant_id, mod, since, now_utc, provider=name,
+                                                     db_path=db_path)
         except Exception as e:                      # the night's archive still runs
             log.warning("pos_archive: change read failed for %s: %s", restaurant_id, e)
+    try:
+        pending = [d for d in __import__("json").loads(state.get("restate_pending") or "[]") if isinstance(d, str)]
+    except ValueError:
+        pending = []
     waiting, todo, skipped = [], [], []
     y_iso = yesterday.isoformat()
+    # The newest POS write each stored day was read with: a date the change
+    # read names is read again only when it carries a write AFTER that
+    # (blind re-audit 10/20/26 R3-02). Every line of last night was written
+    # after the previous night's cursor, so "named by the change read" alone
+    # re-read last night every night — the third download of one night.
+    stamps = _stored_stamps(restaurant_id, name, set(changed_dates or ()) | set(pending) | {y_iso}, db_path)
     if yesterday >= today - timedelta(days=1) and not _closed(mod, restaurant_id, yesterday):
         waiting.append(y_iso)
-    elif (y_iso in have and changed_dates is not None and y_iso not in changed_dates):
+    elif (y_iso in have and changed_dates is not None and not _moved(y_iso, changed_dates, stamps)):
         skipped.append(y_iso)          # stored after its close, unchanged since: not read again
     else:
         todo.append(yesterday)
     read_stamp = read_at.strftime("%Y-%m-%d %H:%M:%S")
 
-    def _owed(iso):
+    def _owed(iso, owed_before):
         # Stored before the change read looked: re-store it. Stored after
         # (an earlier try of this row already did): nothing new to read.
-        return iso in have and iso < y_iso and str(have_at.get(iso) or "") < read_stamp
-    try:
-        pending = [d for d in __import__("json").loads(state.get("restate_pending") or "[]") if isinstance(d, str)]
-    except ValueError:
-        pending = []
-    restated_dates = [date.fromisoformat(d) for d in sorted(set(changed_dates or ()) | set(pending)) if _owed(d)]
+        if not (iso in have and iso < y_iso and str(have_at.get(iso) or "") < read_stamp):
+            return False
+        return owed_before or _moved(iso, changed_dates or {}, stamps)
+    restated_dates = [date.fromisoformat(d) for d in sorted(set(changed_dates or ()) | set(pending))
+                      if _owed(d, d in pending)]
     todo += restated_dates
     # Backfill, newest first, toward BACKFILL_DAYS.
     floor = yesterday - timedelta(days=BACKFILL_DAYS - 1)
@@ -727,24 +1053,41 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
         todo += tonight
     else:
         tonight = []
-    done, restated, failed, retry_after = [], 0, [], None
+    done, restated, failed, kept, retry_after = [], 0, [], [], None
+    import pos_io
+    history = {d for d in tonight if d not in restated_dates and d != yesterday}
     for d in dict.fromkeys(todo):
         if retry_after is not None:
             failed.append(d.isoformat())
             continue
         try:
-            out = archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
+            # A backfilled night is the "bulk" lane of the request budget;
+            # last night and restated days stay "nightly" (R3-01).
+            with pos_io.lane("bulk" if d in history else None):
+                out = archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
             done.append(out["date"])
             restated += 1 if out["restated"] else 0
+        except ArchiveShrunk as e:
+            # The stored night is kept against a short re-read (R3-05); it
+            # is owed again tomorrow, and fails nothing else tonight.
+            log.warning("pos_archive: %s %s kept: %s", restaurant_id, d, e)
+            kept.append(d.isoformat())
         except Exception as e:
             log.warning("pos_archive: %s %s failed: %s", restaurant_id, d, e)
             failed.append(d.isoformat())
             if getattr(e, "retry_after", None):
                 retry_after = float(e.retry_after)         # the provider asked us to wait: stop asking
     if changed_dates is not None:
-        owed = sorted(d.isoformat() for d in restated_dates if d.isoformat() in failed)
+        owed = sorted(d.isoformat() for d in restated_dates if d.isoformat() in failed or d.isoformat() in kept)
         _set_state(restaurant_id, name, db_path, changes_checked_to=read_stamp,
                    restate_pending=__import__("json").dumps(owed))
+        # Every recent stored day the read found unchanged is checked as of
+        # it, so the readers after this run do not ask the change feed the
+        # same question again (R3-03).
+        _mark_checked(restaurant_id, name, read_stamp, db_path,
+                      floor_iso=(today - timedelta(days=FRESH_DAYS)).isoformat(),
+                      exclude={d for d in changed_dates if _moved(d, changed_dates, stamps)}
+                      | {d.isoformat() for d in todo} | set(kept))
     catalog = backfill_restated = None
     roles = prices = None
     if retry_after is None:
@@ -773,7 +1116,8 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
                       else {"ok": True, "skipped": f"read within {PRICE_SYNC_DAYS} days and no sold price moved"})
         except Exception as e:
             log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
-    return {"ok": not failed, "archived": done, "restated": restated, "failed": failed,
+        _keep_orders_due(restaurant_id, mod, today)
+    return {"ok": not failed, "archived": done, "restated": restated, "failed": failed, "kept": kept,
             "not_closed": waiting, "unchanged": skipped, "retry_after": retry_after,
             "backfill_left": max(0, len(missing) - len(tonight)),
             "backfill_held": None if admission.get("admit") or not missing else admission.get("reason"),
@@ -817,11 +1161,13 @@ def onboard(restaurant_id, days=None, max_seconds=None, db_path=DB_PATH) -> dict
         todo = todo[1:]
     started = _t.monotonic()
     done, failed, retry_after = [], [], None
+    import pos_io
     for i, d in enumerate(todo):
         if _t.monotonic() - started > limit:
             break
         try:
-            archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
+            with pos_io.lane("bulk"):              # history: never ahead of a live read (R3-01)
+                archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
             done.append(d.isoformat())
         except Exception as e:
             log.warning("pos_archive: onboarding %s %s failed: %s", restaurant_id, d, e)
@@ -920,6 +1266,11 @@ def refresh_punches(restaurant_id, provider, by_day, db_path=DB_PATH) -> dict:
                 old = [dict(r) for r in conn.execute(
                     f"SELECT {', '.join(_PUNCH_COLS)} FROM pos_punches WHERE restaurant_id=? AND provider=? "
                     f"AND business_date=?", (restaurant_id, provider, iso)).fetchall()]
+                if old and not new:
+                    # An empty answer never wipes a stored day, and does not
+                    # settle it either: it stays unsettled and is read again.
+                    conn.rollback()
+                    continue
                 same = sorted(map(_punch_key, old)) == sorted(map(_punch_key, new))
                 if not same:
                     conn.execute("DELETE FROM pos_punches WHERE restaurant_id=? AND provider=? AND business_date=?",
@@ -1062,17 +1413,29 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
             "AND business_date>=? AND price_level_id IS NOT NULL GROUP BY price_level_id "
             "ORDER BY COUNT(*) DESC LIMIT 1", (restaurant_id, name, since)).fetchone()
         main = main[0] if main else None
-        have = {(r["item_id"], r["level_id"]): r["price"] for r in conn.execute(
-            "SELECT item_id, level_id, price FROM pos_menu_prices WHERE restaurant_id=? AND provider=?",
-            (restaurant_id, name)).fetchall()}
+        stored = {(r["item_id"], r["level_id"]): (r["price"], r["item_name"], r["level"]) for r in conn.execute(
+            "SELECT item_id, level_id, price, item_name, level FROM pos_menu_prices WHERE restaurant_id=? "
+            "AND provider=?", (restaurant_id, name)).fetchall()}
+        have = {k: v[0] for k, v in stored.items()}
         baseline = not have
         changes = [(r, have[(r["item_id"], r["level_id"])]) for r in rows
                    if (r["item_id"], r["level_id"]) in have and abs(have[(r["item_id"], r["level_id"])] - r["price"]) >= 0.005]
-        conn.executemany(
-            "INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price, seen_at) "
-            "VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, provider, item_id, level_id) DO UPDATE "
-            "SET item_name=excluded.item_name, level=excluded.level, price=excluded.price, seen_at=excluded.seen_at",
-            [(restaurant_id, name, r["item_id"], r["level_id"], r["item_name"], r["level"], r["price"]) for r in rows])
+        # Only a price (or its names) that moved, or is new, is written (blind
+        # re-audit 10/20/26 R3-11): every tracked price was upserted on each
+        # read; when the list was read is kept on pos_archive_state.
+        put = [r for r in rows if not ((r["item_id"], r["level_id"]) in stored and _same_row(
+            stored[(r["item_id"], r["level_id"])], (r["price"], r["item_name"], r["level"])))]
+        if put:
+            conn.executemany(
+                "INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price, "
+                "seen_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(restaurant_id, provider, item_id, "
+                "level_id) DO UPDATE SET item_name=excluded.item_name, level=excluded.level, price=excluded.price, "
+                "seen_at=excluded.seen_at",
+                [(restaurant_id, name, r["item_id"], r["level_id"], r["item_name"], r["level"], r["price"])
+                 for r in put])
+        conn.execute("INSERT INTO pos_archive_state (restaurant_id, provider, prices_read_at) "
+                     "VALUES (?, ?, datetime('now')) ON CONFLICT(restaurant_id, provider) DO UPDATE SET "
+                     "prices_read_at=excluded.prices_read_at", (restaurant_id, name))
         conn.commit()
     finally:
         conn.close()
@@ -1145,41 +1508,133 @@ def _business_today(restaurant_id):
     return business_date(r, restaurant_now(r, naive=True))
 
 
-def _changed_since(restaurant_id, mod, since_utc, now_utc, provider=None, db_path=DB_PATH, with_time=False):
-    """The provider's changed business dates since `since_utc`, remembered
-    for CHANGE_MEMO_SECONDS so the readers in a row ask once — in this
-    process, and (scale audit 10/19/26 A3-08) in every process: the last
-    read is kept on pos_archive_state (`change_read_at`, the moment it
-    looked from, the dates), so the web process, the scheduler thread and
-    the queue worker each reading the same night no longer read the feeds
-    four or five times. A kept read is used only when it looked from no
-    later than `since_utc`. `with_time`: (dates, the read's own UTC time)."""
+def _reads_changes(mod) -> bool:
+    """Whether a provider has a change read (dates, or dates with stamps)."""
+    return any(callable(getattr(mod, n, None)) for n in ("changed_business_stamps", "changed_business_dates"))
+
+
+def _norm_stamp(value):
+    """A POS write stamp as comparable text ("YYYY-MM-DD HH:MM:SS"), or ''."""
+    return str(value or "").replace("T", " ")[:19]
+
+
+def _stamp_map(found) -> dict:
+    """{date: newest write stamp or None} from a provider's change read — a
+    dict (rpower: the newest write per date) or a set of dates (a stamp not
+    known: the date counts as moved)."""
+    if isinstance(found, dict):
+        return {str(k)[:10]: (_norm_stamp(v) or None) for k, v in found.items()}
+    return {str(k)[:10]: None for k in (found or ())}
+
+
+def _stored_stamps(restaurant_id, provider, dates, db_path) -> dict:
+    """{date: the newest POS write the stored day was read with} for `dates`."""
+    dates = sorted({str(d)[:10] for d in dates if d})
+    if not dates:
+        return {}
+    conn = get_conn(db_path)
+    try:
+        out = {}
+        for i in range(0, len(dates), 500):
+            chunk = dates[i:i + 500]
+            for r in conn.execute(f"SELECT business_date, max_stamp FROM pos_archive_days WHERE restaurant_id=? "
+                                  f"AND provider=? AND business_date IN ({','.join('?' for _ in chunk)})",
+                                  (restaurant_id, provider, *chunk)).fetchall():
+                out[str(r[0])[:10]] = _norm_stamp(r[1]) or None
+        return out
+    finally:
+        conn.close()
+
+
+def _moved(iso, changed, stored) -> bool:
+    """Whether the change read says `iso` was written to after the stored
+    copy was read (R3-02): named, and with a write stamp past the stored
+    day's newest one — or with no stamp to compare on either side."""
+    if iso not in (changed or {}):
+        return False
+    stamp, have = changed.get(iso), (stored or {}).get(iso)
+    return not stamp or not have or stamp > have
+
+
+def _mark_checked(restaurant_id, provider, at_stamp, db_path, floor_iso=None, exclude=(), only=None) -> None:
+    """Stamp `checked_at` = `at_stamp` on stored days a change read made at
+    that moment found unchanged — `only` those dates, else every day from
+    `floor_iso` on outside `exclude` — so the readers' re-check of a recent
+    day is not repeated until RECHECK_MINUTES after it (R3-03). A day stored
+    after the read keeps its own time. Never raises."""
+    try:
+        sql = ("UPDATE pos_archive_days SET checked_at=? WHERE restaurant_id=? AND provider=? "
+               "AND archived_at <= ? AND (checked_at IS NULL OR checked_at < ?)")
+        args = [at_stamp, restaurant_id, provider, at_stamp, at_stamp]
+        if only is not None:
+            only = sorted({str(d)[:10] for d in only})
+            if not only:
+                return
+            sql += f" AND business_date IN ({','.join('?' for _ in only)})"
+            args += only
+        else:
+            sql += " AND business_date >= ?"
+            args.append(floor_iso)
+            ex = sorted({str(d)[:10] for d in exclude or ()})
+            if ex:
+                sql += f" AND business_date NOT IN ({','.join('?' for _ in ex)})"
+                args += ex
+        conn = get_conn(db_path)
+        try:
+            conn.execute(sql, args)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("pos_archive: checked days not stamped for %s: %s", restaurant_id, e)
+
+
+def _changed_stamps(restaurant_id, mod, since_utc, now_utc, provider=None, db_path=DB_PATH):
+    """({date: newest write stamp or None}, the read's own UTC time) — the
+    provider's change read since `since_utc`, remembered for
+    CHANGE_MEMO_SECONDS so the readers in a row ask once — in this process,
+    and (scale audit 10/19/26 A3-08) in every process: the last read is kept
+    on pos_archive_state (`change_read_at`, the moment it looked from, the
+    dates with their newest stamps), so the web process, the scheduler
+    thread and the queue worker each reading the same night no longer read
+    the feeds four or five times. A kept read is used only when it looked
+    from no later than `since_utc`."""
     import json as _json
     import time as _t
     hit = _change_memo.get(restaurant_id)
     if hit and _t.monotonic() - hit[0] < CHANGE_MEMO_SECONDS and hit[1] <= since_utc:
-        return (hit[2], hit[3]) if with_time else hit[2]
+        return dict(hit[2]), hit[3]
     if provider:
         try:
             st = _state(restaurant_id, provider, db_path)
             at, lo = _utc(st.get("change_read_at")), _utc(st.get("change_read_since"))
             if (at and lo and lo <= since_utc and timedelta(0) <= now_utc - at < timedelta(seconds=CHANGE_MEMO_SECONDS)
                     and st.get("change_read_dates") is not None):
-                out = set(_json.loads(st["change_read_dates"]) or [])
+                out = _stamp_map(_json.loads(st["change_read_dates"]) or [])
                 _remember_change(restaurant_id, lo, out, at)
-                return (out, at) if with_time else out
+                return dict(out), at
         except Exception as e:                       # the kept read is an optimisation
             log.warning("pos_archive: kept change read unreadable for %s: %s", restaurant_id, e)
-    out = set(mod.changed_business_dates(restaurant_id, since_utc, now_utc))
+    # A provider that says when each date was last written (rpower) is asked
+    # for that; one that names dates only, for the dates.
+    read = getattr(mod, "changed_business_stamps", None)
+    out = _stamp_map((read if callable(read) else mod.changed_business_dates)(restaurant_id, since_utc, now_utc))
     _remember_change(restaurant_id, since_utc, out, now_utc)
     if provider:
         try:
             _set_state(restaurant_id, provider, db_path, change_read_at=now_utc.strftime("%Y-%m-%d %H:%M:%S"),
                        change_read_since=since_utc.strftime("%Y-%m-%d %H:%M:%S"),
-                       change_read_dates=_json.dumps(sorted(out)))
+                       change_read_dates=_json.dumps(dict(sorted(out.items()))))
         except Exception as e:
             log.warning("pos_archive: change read not kept for %s: %s", restaurant_id, e)
-    return (out, now_utc) if with_time else out
+    return dict(out), now_utc
+
+
+def _changed_since(restaurant_id, mod, since_utc, now_utc, provider=None, db_path=DB_PATH, with_time=False):
+    """The dates of _changed_stamps (a set); `with_time`: (dates, the read's
+    own UTC time)."""
+    out, at = _changed_stamps(restaurant_id, mod, since_utc, now_utc, provider=provider, db_path=db_path)
+    return (set(out), at) if with_time else set(out)
 
 
 def _remember_change(restaurant_id, since_utc, out, at):
@@ -1190,14 +1645,22 @@ def _remember_change(restaurant_id, since_utc, out, at):
             _change_memo.pop(k, None)
         while len(_change_memo) >= CHANGE_MEMO_MAX:
             _change_memo.pop(next(iter(_change_memo)), None)
-    _change_memo[restaurant_id] = (_t.monotonic(), since_utc, out, at)
+    _change_memo[restaurant_id] = (_t.monotonic(), since_utc, dict(out), at)
 
 
 def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None, live=True) -> set:
     """ISO dates among `dates` the archive can answer for, archiving closed
     days it lacks (ON_DEMAND_MAX per call) and re-storing a recent day the POS
     changed. An empty set means "read the POS", never an error. `live=False`
-    (a web request): the stored days only, and no POS request of any kind."""
+    (a web request): the stored days only, and no POS request of any kind.
+
+    A recent day is re-checked RECHECK_MINUTES after it was stored or last
+    checked — SETTLE_MINUTES when it was read while its checks were still
+    arriving (night_settled) — and re-stored only when the change read names
+    a write after the stored copy's newest one (R3-02); a check that finds
+    it unchanged stamps `checked_at`, so the next reader does not ask the
+    same question again (R3-03). A re-store that comes back short keeps the
+    stored day, which is served (R3-05)."""
     import os
     if os.getenv("POS_ARCHIVE_READS", "1").strip() in ("0", "false", "off", "no"):
         return set()                 # the switch: every reader goes to the POS, as before 9/29/26
@@ -1213,11 +1676,14 @@ def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None, l
     today = _business_today(restaurant_id)
     conn = get_conn(db_path)
     try:
-        stored = {r[0]: r[1] for r in conn.execute(
-            "SELECT business_date, archived_at FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
-            "AND COALESCE(version, 1) >= ?", (restaurant_id, provider, READ_MIN_VERSION)).fetchall()}
+        rows = conn.execute(
+            "SELECT business_date, archived_at, checked_at, max_stamp FROM pos_archive_days WHERE restaurant_id=? "
+            "AND provider=? AND COALESCE(version, 1) >= ?", (restaurant_id, provider, READ_MIN_VERSION)).fetchall()
     finally:
         conn.close()
+    stored = {r[0]: r[1] for r in rows}
+    checked = {r[0]: r[2] for r in rows}
+    newest = {r[0]: _norm_stamp(r[3]) or None for r in rows}
     if not live:
         return {d.isoformat() for d in dates if d.isoformat() in stored}
     ready, todo = set(), []
@@ -1239,30 +1705,39 @@ def ready_dates(restaurant_id, provider, dates, db_path=DB_PATH, now_utc=None, l
     for iso in ready:
         if iso < recent_floor:
             continue
-        try:
-            at = datetime.fromisoformat(stored[iso]).replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
+        looked = max([t for t in (_utc(stored[iso]), _utc(checked.get(iso))) if t is not None], default=None)
+        if looked is None:
             continue
-        if now_utc - at > timedelta(minutes=RECHECK_MINUTES):
-            stale[iso] = at
-    if stale and callable(getattr(mod, "changed_business_dates", None)):
+        settled, _why = (True, None) if SETTLE_MINUTES <= 0 else night_settled(restaurant_id, provider, iso,
+                                                                               db_path=db_path)
+        wait = timedelta(minutes=RECHECK_MINUTES if settled else SETTLE_MINUTES)
+        if now_utc - looked > wait:
+            stale[iso] = looked
+    if stale and _reads_changes(mod):
         try:
-            changed = _changed_since(restaurant_id, mod, min(stale.values()), now_utc, provider=provider, db_path=db_path)
+            changed, at = _changed_stamps(restaurant_id, mod, min(stale.values()), now_utc, provider=provider,
+                                          db_path=db_path)
         except Exception as e:
             # Unchecked is not unchanged (POS-16): the recent days the check
             # was for go to the POS this time, never served as fresh.
             log.warning("pos_archive: change read failed for %s: %s", restaurant_id, e)
             for iso in stale:
                 ready.discard(iso)
-            changed = set()
-        for iso, at in stale.items():
-            if iso in changed:
+            changed, at = None, None
+        if changed is not None:
+            moved = {iso for iso in stale if _moved(iso, changed, newest)}
+            for iso in moved:
                 ready.discard(iso)
                 todo.append(date.fromisoformat(iso))
+            _mark_checked(restaurant_id, provider, at.strftime("%Y-%m-%d %H:%M:%S"), db_path,
+                          only=set(stale) - moved)
     for d in sorted(todo, reverse=True)[:ON_DEMAND_MAX]:
         try:
             archive_day(restaurant_id, d, db_path=db_path, provider=(name, mod))
             ready.add(d.isoformat())
+        except ArchiveShrunk:
+            if d.isoformat() in stored:
+                ready.add(d.isoformat())             # the stored, larger night is the answer (R3-05)
         except Exception as e:
             log.warning("pos_archive: on-demand archive of %s %s failed: %s", restaurant_id, d, e)
     return ready

@@ -69,6 +69,17 @@ readout says the experiment is paused and why. The 50/50 hash gave Simple
 EJ's (the only live client) the model's assignment on three of its first
 four weeks for a readout that could never arrive.
 
+A customer-exposed SWITCHBACK (design "switchback": learning_v1, learning_v2)
+never starts by itself (blind re-audit 10/20/26 R5-02): reaching
+MIN_RESTAURANTS_PER_ARM used to switch the learned memory off on one week in
+four, and every learned input off on one in eight, for every restaurant with
+no admin action — the corrections a manager taught came back as edits the
+next week. It runs its hash only once an admin lists it in
+SCHEDULE_SWITCHBACKS (comma-separated experiment keys, or "all"); until then
+every week takes its `until_powered` arm, pinned with pin_source
+"not_started" and never counted, and the readout says so. The offline
+learning ablation answers the memory question meanwhile with no exposure.
+
 Promotion (ROI audit #46): once the readout calls a winner, an admin
 promotes it — a reviewed step, recorded in schedule_experiment_promotions
 with who promoted it, when, the verdict it rested on and a note. From then
@@ -206,6 +217,21 @@ EXPERIMENTS = (
 DEFAULT_FLAGS = {"solver": True, "reassign": True, "learned": True, "draft_source": "solver", "learning": True}
 PIN_ENV = "SCHEDULE_EXPERIMENT_PIN"
 OFF = "off"
+# The explicit admin start a switchback needs before its hash runs (R5-02):
+# comma-separated experiment keys, or "all". Unset: none run.
+SWITCHBACKS_ENV = "SCHEDULE_SWITCHBACKS"
+
+
+def switchback_started(exp) -> bool:
+    """Whether a customer-exposed switchback was started by an admin
+    (SWITCHBACKS_ENV). An experiment of any other design needs no start."""
+    if exp.get("design") != "switchback":
+        return True
+    raw = (os.environ.get(SWITCHBACKS_ENV) or "").strip().lower()
+    if not raw:
+        return False
+    keys = {k.strip() for k in raw.split(",") if k.strip()}
+    return "all" in keys or str(exp["key"]).lower() in keys
 
 MIN_WEEKS_PER_ARM = 20
 MIN_RESTAURANTS_PER_ARM = 5
@@ -246,7 +272,8 @@ RULE = (f"A winner is called only when every arm has at least {MIN_WEEKS_PER_ARM
         f"each restaurant counts at most {MAX_WEEKS_PER_RESTAURANT} weeks per arm, demo and test accounts are "
         "left out, and pinned weeks are not counted. Until "
         f"{MIN_RESTAURANTS_PER_ARM} restaurants that may teach generate schedules (the last {POWER_WINDOW_DAYS} "
-        "days), an experiment that cannot conclude is paused: every week runs its stated arm, pinned.")
+        "days), an experiment that cannot conclude is paused: every week runs its stated arm, pinned. A "
+        f"switchback never starts by itself: it runs only once an admin lists it in {SWITCHBACKS_ENV}.")
 
 
 def experiment(key):
@@ -378,6 +405,11 @@ def arms_for(restaurant_id, week_start, db_path=DB_PATH) -> list:
             source = "restaurant"
         if arm is None and exp["key"] in promoted and _arm_def(exp, promoted[exp["key"]]["arm"]):
             arm, source = promoted[exp["key"]]["arm"], "promoted"
+        if arm is None and exp.get("until_powered") and _arm_def(exp, exp["until_powered"]) \
+                and not switchback_started(exp):
+            # A switchback no admin started (R5-02): every week its stated
+            # arm, pinned and not counted — however many restaurants generate.
+            arm, source = exp["until_powered"], "not_started"
         if arm is None and exp.get("until_powered") and _arm_def(exp, exp["until_powered"]):
             # Not enough restaurants for a verdict ever to arrive: no week is
             # spent on the coin flip, and none of them counts.
@@ -1044,7 +1076,12 @@ def readout(db_path=DB_PATH) -> dict:
         power = None
         if exp.get("active") and exp.get("until_powered"):
             power = _power_or_pin(db_path)
-            if not power.get("powered") and call.get("state") != "winner":
+            if not switchback_started(exp) and call.get("state") != "winner":
+                label = (_arm_def(exp, exp["until_powered"]) or {}).get("label") or exp["until_powered"]
+                call = {"call": None, "state": "paused",
+                        "text": (f"Not started: every restaurant runs {label} until an admin lists "
+                                 f"{key} in {SWITCHBACKS_ENV}; those weeks are pinned and not counted.")}
+            elif not power.get("powered") and call.get("state") != "winner":
                 label = (_arm_def(exp, exp["until_powered"]) or {}).get("label") or exp["until_powered"]
                 have = power.get("restaurants")
                 call = {"call": None, "state": "paused",

@@ -282,10 +282,24 @@ actor APIClient {
         let grant = isLongCall ? await BackgroundGrant.begin(path) : nil
         defer { if let grant { Task { await grant.end() } } }
 
-        let data: Data
-        let response: URLResponse
+        var data: Data
+        var response: URLResponse
         do {
             (data, response) = try await Self.perform(request, on: transport, mayRetry: mayRetry)
+            // A Studio read the server ran off its request threads
+            // (studio_offload, blind re-audit 10/20/26 R5-03): a 202 with a
+            // ticket is polled until the route's own answer comes back.
+            if let http = response as? HTTPURLResponse, http.statusCode == 202,
+               http.value(forHTTPHeaderField: Self.offloadTicketHeader) != nil {
+                (data, response) = try await settleOffloaded(data, transport: transport)
+            }
+            // A sign-in security change this session has not confirmed (re-audit
+            // 10/20/26 R7-03): ask for the password, confirm it with the
+            // server, send the change once more. Cancel keeps the refusal.
+            if let info = Self.stepUpRefusal(data, response), !Task.isCancelled,
+               let again = try await stepUpAndResend(request, on: transport, info: info, mayRetry: mayRetry) {
+                (data, response) = again
+            }
         } catch {
             // A request cancelled because its view went away (a `.task`
             // torn down by tapping Back, or by leaving a module screen
@@ -861,14 +875,76 @@ actor APIClient {
     private static func perform(
         _ request: URLRequest, on session: URLSession, mayRetry: Bool
     ) async throws -> (Data, URLResponse) {
+        var answer: (Data, URLResponse)
         do {
-            return try await session.data(for: request)
+            answer = try await session.data(for: request)
         } catch {
             guard mayRetry, isTransient(error), !Task.isCancelled else { throw error }
             try? await Task.sleep(for: .milliseconds(400))
             try Task.checkCancellation()
-            return try await session.data(for: request)
+            answer = try await session.data(for: request)
         }
+        // The server's in-flight share (re-audit 10/20/26 R7-02): a 429
+        // {in_flight: true} means this login already had its share of the
+        // server's request threads running, and the request was refused
+        // BEFORE it ran — so even a write is safe to send again. A few short
+        // waits, then the refusal stands like any other 429.
+        var tries = 0
+        while tries < 3, isInFlightRefusal(answer), !Task.isCancelled {
+            tries += 1
+            try? await Task.sleep(for: .milliseconds(350 * tries + Int.random(in: 0...250)))
+            try Task.checkCancellation()
+            answer = try await session.data(for: request)
+        }
+        return answer
+    }
+
+    struct StepUpInfo: Sendable {
+        let url: String
+        let minutes: Int
+    }
+
+    private struct ReauthBody: Encodable { let password: String }
+
+    /// A 403 `{reauth_required, reauth_url}` naming this API's own step-up
+    /// route, or nil.
+    nonisolated static func stepUpRefusal(_ data: Data, _ response: URLResponse) -> StepUpInfo? {
+        guard let http = response as? HTTPURLResponse, http.statusCode == 403,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (object["reauth_required"] as? Bool) == true,
+              let url = object["reauth_url"] as? String, url.hasPrefix("/mobile/api/") else { return nil }
+        return StepUpInfo(url: url, minutes: (object["window_minutes"] as? Int) ?? 15)
+    }
+
+    /// Asks for the password (up to three tries), posts it to the step-up
+    /// route and, once it is confirmed, sends `original` again. nil when the
+    /// person cancelled — the caller keeps the refusal it already has.
+    private func stepUpAndResend(
+        _ original: URLRequest, on transport: URLSession, info: StepUpInfo, mayRetry: Bool
+    ) async throws -> (Data, URLResponse)? {
+        var problem: String?
+        for _ in 0..<3 {
+            let message = "This change to sign-in security needs your password. It stays confirmed for "
+                + "\(info.minutes) minutes. Signed in with Google or Apple? Sign out and back in instead."
+            guard let password = await StepUpPrompt.ask(message: message, error: problem) else { return nil }
+            let confirm = try buildRequest(path: info.url, method: HTTPMethod.post.rawValue,
+                                           body: ReauthBody(password: password), query: [:])
+            let (body, reply) = try await Self.perform(confirm, on: session, mayRetry: false)
+            let status = (reply as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 {
+                return try await Self.perform(original, on: transport, mayRetry: mayRetry)
+            }
+            if status == 401 { return (body, reply) }     // too many tries: the session ended
+            let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            problem = (object?["error"] as? String) ?? "That password isn\u{2019}t right."
+        }
+        return nil
+    }
+
+    nonisolated static func isInFlightRefusal(_ answer: (Data, URLResponse)) -> Bool {
+        guard let http = answer.1 as? HTTPURLResponse, http.statusCode == 429,
+              let object = try? JSONSerialization.jsonObject(with: answer.0) as? [String: Any] else { return false }
+        return (object["in_flight"] as? Bool) == true
     }
 
     /// The request URL: `path` under the base, then `query` as real query
@@ -906,7 +982,51 @@ actor APIClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder.cavnar.encode(body)
         }
+        // This client can wait for a Studio read run off the server's request
+        // threads (studio_offload, R5-03): it polls the ticket a 202 carries.
+        request.setValue("1", forHTTPHeaderField: Self.offloadHeader)
         return request
+    }
+
+    static let offloadHeader = "X-Cavnar-Offload"
+    static let offloadTicketHeader = "X-Cavnar-Ticket"
+
+    /// A 202 ticket's body: where to poll and how soon.
+    private struct OffloadTicket: Decodable {
+        let poll: String?
+        let retryAfterMs: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case poll
+            case retryAfterMs = "retry_after_ms"
+        }
+    }
+
+    /// Polls an offloaded read's ticket until the route's own answer — its
+    /// body and status code — comes back (at most 150 s).
+    private func settleOffloaded(_ first: Data, transport: URLSession) async throws -> (Data, URLResponse) {
+        var body = first
+        let limit = Date().addingTimeInterval(150)
+        while true {
+            guard let ticket = try? JSONDecoder.cavnar.decode(OffloadTicket.self, from: body),
+                  let poll = ticket.poll, !poll.isEmpty else {
+                throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
+            }
+            let wait = min(max(ticket.retryAfterMs ?? 1000, 250), 5000)
+            try await Task.sleep(for: .milliseconds(wait))
+            let request = try buildRequest(path: poll, method: HTTPMethod.get.rawValue, body: nil, query: [:])
+            let (polled, response) = try await Self.perform(request, on: transport, mayRetry: true)
+            if let http = response as? HTTPURLResponse, http.statusCode == 202,
+               http.value(forHTTPHeaderField: Self.offloadTicketHeader) != nil {
+                if Date() > limit {
+                    throw APIError(kind: .timedOut,
+                                   message: "That check is taking longer than it should. Try again in a moment.")
+                }
+                body = polled
+                continue
+            }
+            return (polled, response)
+        }
     }
 
     /// A call made before any session exists — the staff portal's roster,

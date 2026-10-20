@@ -146,8 +146,11 @@ def test_every_push_carries_its_module_and_location(db_path, monkeypatch):
     monkeypatch.setattr(push, "get_device_tokens", lambda *a, **k: [{"user_id": 1, "restaurant_id": 99}])
     push.fire_push(rid, "critical_low", "t", "b", data={"x": 1}, db_path=db_path)
     # `nav` joined the payload with the friction audit (#3): where it opens.
+    # `collapse_id` (R9-14/R9-22) is fixed here for every device and a
+    # restart's re-drive; it rides the APNs header, not the payload.
     assert got == [("critical_low", {"x": 1, "restaurant_id": rid, "module": "inventory",
-                                     "nav": "inventory/order"})]
+                                     "nav": "inventory/order",
+                                     "collapse_id": push._collapse_id(rid, "critical_low", {})})]
 
 
 def test_the_sound_follows_the_location_the_alert_is_about(db_path, monkeypatch):

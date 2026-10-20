@@ -538,6 +538,10 @@ def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
         _qid, created = job_queue.enqueue(
             "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
             priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            # A deadline, so a provider's "wait" (an outage, a Retry-After)
+            # reschedules the row without using up its tries (job_queue.fail,
+            # blind re-audit 10/20/26 R3-13) and the deadline bounds it.
+            deadline=_bulk_deadline(),
             idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
         return bool(created)
     except Exception as e:
@@ -1180,6 +1184,53 @@ def plan_item_repeat(restaurant_id, item, history=None, db_path=DB_PATH):
     return None
 
 
+def _weekly_plan_due(r):
+    """The ISO week `r`'s Monday plan is due for, claimed — or None: off,
+    not Monday 7-11 local, already claimed this week, or its attempts for
+    the week are spent. Claimed before the work so two passes cannot both
+    run it; a failed run gives the claim back (weekly_plan_one)."""
+    import ops
+    from time_utils import restaurant_now
+    if not getattr(r, "weekly_plan_enabled", 0):
+        return None
+    local = restaurant_now(r, naive=True)
+    if local.weekday() != 0 or not (7 <= local.hour < 11):
+        return None
+    week = local.strftime("%G-W%V")
+    if not ops.claim_period(f"weekly_plan:{r.id}", week):
+        return None
+    for n in range(WEEKLY_PLAN_MAX_ATTEMPTS):
+        if ops.claim_period(f"weekly_plan_attempt:{r.id}", f"{week}#{n}"):
+            return week, n
+    return None     # attempts for this week are spent; the claim stays
+
+
+def fan_out_weekly_plan(db_path=DB_PATH):
+    """The scheduler's Monday plan pass as queue work (blind re-audit
+    10/20/26 R4-09): each restaurant whose plan is due (_weekly_plan_due,
+    claimed) becomes one `learner` row (bulk class) running weekly_plan_one,
+    keyed on the restaurant, the week and the attempt. The serial pass held
+    the one "ai" lane thread for 45-minute stretches every Monday hour — at
+    ~30 s a plan, ~360-630 plans a Monday, the weekly digests squeezed
+    behind it; the queue workers now drain the plans in parallel, fairly
+    across tenants, and the lane is held for seconds. Standard counts:
+    `attempted` / `ok` are the rows queued now."""
+    import job_queue
+    items = []
+    walk = _BoundedWalk("weekly_plan", _restaurants(db_path), db_path, WEEKLY_PLAN_MAX_SECONDS)
+    for r in walk:
+        due = _weekly_plan_due(r)
+        if not due:
+            continue
+        week, n = due
+        items.append({"payload": {"learner": "weekly_plan", "restaurant_id": r.id, "day": week},
+                      "restaurant_id": r.id, "deadline": _bulk_deadline(),
+                      "idempotency_key": f"learner:weekly_plan:{r.id}:{week}#{n}"})
+    created = job_queue.enqueue_many("learner", items, priority_class="bulk",
+                                     db_path=None if db_path == DB_PATH else db_path) if items else 0
+    return _counts(created, created, 0, len(items) - created, walk.hit_bound, queued=created)
+
+
 def run_weekly_plan(db_path=DB_PATH):
     """Monday 7am local: the agent — not a script — reads the week and files
     up to three owned actions as issues (notify=False: they appear on Home,
@@ -1187,96 +1238,107 @@ def run_weekly_plan(db_path=DB_PATH):
     the one place the model is asked to hold the why across modules. Off
     unless weekly_plan_enabled; claimed per ISO week.
 
-    Unattended, so it is offered read tools only (no direct actions, no
-    proposals, no memory writes), an item whose figures failed verification
-    is not filed, and a run that fails gives its claim back so the next tick
-    retries it (AI-17)."""
-    import ops, issues
-    from time_utils import restaurant_now
+    The scheduler runs it as queue work (fan_out_weekly_plan, R4-09); this
+    is the same pass inline, one restaurant after another (a direct call, a
+    script)."""
     filed = 0
     tally = {"attempted": 0, "failed": 0}
-    # Bounded and resumable (#84): an Ask-with-tools run per restaurant,
-    # serially, with no bound, inside one Monday tick.
+    # Bounded and resumable (#84).
     walk = _BoundedWalk("weekly_plan", _restaurants(db_path), db_path, WEEKLY_PLAN_MAX_SECONDS)
     for r in walk:
-        if not getattr(r, "weekly_plan_enabled", 0):
+        due = _weekly_plan_due(r)
+        if not due:
             continue
-        local = restaurant_now(r, naive=True)
-        if local.weekday() != 0 or not (7 <= local.hour < 11):
-            continue
-        week = local.strftime("%G-W%V")
-        # Claimed before the call so two ticks cannot both run it; given
-        # back below if the run fails, within a bounded number of attempts.
-        if not ops.claim_period(f"weekly_plan:{r.id}", week):
-            continue
-        if not any(ops.claim_period(f"weekly_plan_attempt:{r.id}", f"{week}#{n}")
-                   for n in range(WEEKLY_PLAN_MAX_ATTEMPTS)):
-            continue    # attempts for this week are spent; the claim stays
+        out = weekly_plan_one(r.id, db_path=db_path, week=due[0], restaurant=r)
         tally["attempted"] += 1
-        try:
-            from ask_cavnar import ask_with_tools
-            # The readiness gate, per module (DH5-2): a module whose data
-            # can't be stood on this week is held — the plan is told so, and
-            # an item about it is not filed — while the others still plan.
-            holds = plan_holds(r, db_path=db_path)
-            question = WEEKLY_PLAN_PROMPT
-            # Last week's plan and what became of it (memory audit, weekly_plan),
-            # and what Cavnar AI remembers about the restaurant (memory_context
-            # surface "weekly_plan": the owner's rules, constraints, goals, its
-            # last claims and what followed, decisions, what worked, events).
-            # A system block and part of the verified corpus, not the question:
-            # a measured figure found only in the question could never back an
-            # item (memory re-audit 9/29/26, PROMPTS-3).
-            history = plan_history(r.id, week, db_path=db_path)
-            plan_mem = (plan_memory_block(history) + plan_memory(r.id, db_path=db_path)).strip()
-            if holds:
-                question += ("\n\nHELD THIS WEEK — the data behind these isn't current, so propose no action "
-                             "about them: " + "; ".join(f"{m.replace('_', ' ')} ({why})" for m, why in holds.items())
-                             + ".")
-            # Its own ledger action and one correlation id per run (#148):
-            # the Monday plan was filed as "ask_cavnar", so its spend could
-            # not be told apart from the owner's questions.
-            import ai_utils as _ai_wp
-            with _ai_wp.ai_context(trigger="scheduler", correlation_id=f"weekly_plan:{r.id}:{week}"):
-                answer, _trunc, _props, _meta = ask_with_tools(r, question, history=[], user=None,
-                                                               read_only=True, delivery="unattended",
-                                                               action="weekly_plan", memory_block=plan_mem)
-            # The FULL list (R6, B5 #6): unverified_figures is cut to five for
-            # the screen, and the sixth invented figure was filed unattended.
-            unverified = (_meta or {}).get("unverified_all")
-            if unverified is None:
-                unverified = (_meta or {}).get("unverified_figures") or []
-            # The Response Validation Layer's context for every item (surface
-            # "weekly_plan", unattended): the stored causes with their
-            # strengths, the review text as untrusted, other tenants' names,
-            # and what Ask's own validation carried in meta.
-            ctx = _plan_context(r.id, _plan_anchors(r.id, db_path=db_path),
-                                _guest_texts(r.id, db_path=db_path), _meta)
-            names = (_meta or {}).get("unsupported_names") or []
-            for i, item in enumerate(_parse_plan(answer)):
-                held = plan_item_held(item, holds)
-                why_not = (f"it is about {held.replace('_', ' ')}, whose data isn't current ({holds[held]})"
-                           if held else (plan_item_repeat(r.id, item, history=history, db_path=db_path)
-                                         or _plan_item_problem(item, unverified, ctx, unsupported_names=names)))
-                if why_not:
-                    # An AI-quality finding (fix round G #58), not a failing job.
-                    _ai_wp.record_quality_event("weekly_plan", "item_dropped", restaurant_id=r.id,
-                                                action="weekly_plan", detail=f"weekly plan item not filed: {why_not}")
-                    continue
-                issues.create_issue(
-                    r.id, "plan", item["title"],
-                    detail=f"{item['why']} Owner: {item['owner']}. Due in {item['due_days']} days.",
-                    severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path,
-                    meta={"modules": plan_item_modules(item)})
-                filed += 1
-        except Exception as e:
-            tally["failed"] += 1
-            ops.release_period(f"weekly_plan:{r.id}", week)
-            from ai_utils import AIBudgetExceeded
-            if not isinstance(e, AIBudgetExceeded):
-                ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
+        tally["failed"] += int(out.get("failed") or 0)
+        filed += int(out.get("filed") or 0)
     return _counts(tally["attempted"], tally["attempted"] - tally["failed"], tally["failed"],
                    hit_bound=walk.hit_bound, filed=filed)
+
+
+def weekly_plan_one(restaurant_id, db_path=DB_PATH, week=None, restaurant=None):
+    """One restaurant's Monday plan — the `learner` queue row's body
+    (fan_out_weekly_plan, R4-09) and run_weekly_plan's step. Its week was
+    claimed by _weekly_plan_due. Unattended, so it is offered read tools
+    only (no direct actions, no proposals, no memory writes), an item whose
+    figures failed verification is not filed, and a run that fails gives its
+    claim back so the next pass retries it (AI-17) — it never raises, so the
+    queue never pays for a second run of a failed one."""
+    import ops, issues
+    from time_utils import restaurant_now
+    r = restaurant
+    if r is None:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id) if db_path == DB_PATH else get_restaurant(restaurant_id, db_path=db_path)
+    if r is None:
+        return _counts(skipped=1)
+    if week is None:
+        week = restaurant_now(r, naive=True).strftime("%G-W%V")
+    filed = 0
+    try:
+        from ask_cavnar import ask_with_tools
+        # The readiness gate, per module (DH5-2): a module whose data
+        # can't be stood on this week is held — the plan is told so, and
+        # an item about it is not filed — while the others still plan.
+        holds = plan_holds(r, db_path=db_path)
+        question = WEEKLY_PLAN_PROMPT
+        # Last week's plan and what became of it (memory audit, weekly_plan),
+        # and what Cavnar AI remembers about the restaurant (memory_context
+        # surface "weekly_plan": the owner's rules, constraints, goals, its
+        # last claims and what followed, decisions, what worked, events).
+        # A system block and part of the verified corpus, not the question:
+        # a measured figure found only in the question could never back an
+        # item (memory re-audit 9/29/26, PROMPTS-3).
+        history = plan_history(r.id, week, db_path=db_path)
+        plan_mem = (plan_memory_block(history) + plan_memory(r.id, db_path=db_path)).strip()
+        if holds:
+            question += ("\n\nHELD THIS WEEK — the data behind these isn't current, so propose no action "
+                         "about them: " + "; ".join(f"{m.replace('_', ' ')} ({why})" for m, why in holds.items())
+                         + ".")
+        # Its own ledger action and one correlation id per run (#148):
+        # the Monday plan was filed as "ask_cavnar", so its spend could
+        # not be told apart from the owner's questions.
+        import ai_utils as _ai_wp
+        with _ai_wp.ai_context(trigger="scheduler", correlation_id=f"weekly_plan:{r.id}:{week}"):
+            answer, _trunc, _props, _meta = ask_with_tools(r, question, history=[], user=None,
+                                                           read_only=True, delivery="unattended",
+                                                           action="weekly_plan", memory_block=plan_mem)
+        # The FULL list (R6, B5 #6): unverified_figures is cut to five for
+        # the screen, and the sixth invented figure was filed unattended.
+        unverified = (_meta or {}).get("unverified_all")
+        if unverified is None:
+            unverified = (_meta or {}).get("unverified_figures") or []
+        # The Response Validation Layer's context for every item (surface
+        # "weekly_plan", unattended): the stored causes with their
+        # strengths, the review text as untrusted, other tenants' names,
+        # and what Ask's own validation carried in meta.
+        ctx = _plan_context(r.id, _plan_anchors(r.id, db_path=db_path),
+                            _guest_texts(r.id, db_path=db_path), _meta)
+        names = (_meta or {}).get("unsupported_names") or []
+        for i, item in enumerate(_parse_plan(answer)):
+            held = plan_item_held(item, holds)
+            why_not = (f"it is about {held.replace('_', ' ')}, whose data isn't current ({holds[held]})"
+                       if held else (plan_item_repeat(r.id, item, history=history, db_path=db_path)
+                                     or _plan_item_problem(item, unverified, ctx, unsupported_names=names)))
+            if why_not:
+                # An AI-quality finding (fix round G #58), not a failing job.
+                _ai_wp.record_quality_event("weekly_plan", "item_dropped", restaurant_id=r.id,
+                                            action="weekly_plan", detail=f"weekly plan item not filed: {why_not}")
+                continue
+            issues.create_issue(
+                r.id, "plan", item["title"],
+                detail=f"{item['why']} Owner: {item['owner']}. Due in {item['due_days']} days.",
+                severity="normal", source_key=f"plan:{week}:{i}", notify=False, db_path=db_path,
+                meta={"modules": plan_item_modules(item)})
+            filed += 1
+    except Exception as e:
+        ops.release_period(f"weekly_plan:{r.id}", week)
+        from ai_utils import AIBudgetExceeded
+        if not isinstance(e, AIBudgetExceeded):
+            ops.capture(e, job="weekly_plan", context=f"restaurant_id={r.id}")
+        return _counts(1, 0, 1, filed=filed)
+    return _counts(1, 1, 0, filed=filed)
 
 
 def run_recipe_drafts(db_path=DB_PATH):
@@ -1724,6 +1786,21 @@ def _release_auto_draft_attempt(restaurant_id, target, attempt):
         ops.release_period(f"auto_draft_attempt:{restaurant_id}", f"{target}#{attempt}")
 
 
+def _week_taken(restaurant_id, week_start) -> bool:
+    """Whether the week now has a schedule of its own (_week_has_schedule),
+    read fresh; False when it cannot be told."""
+    if not week_start:
+        return False
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            return _week_has_schedule(conn, restaurant_id, week_start)
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, batch=True):
     """One restaurant's auto-draft and, when it saved, the owner's nudge.
 
@@ -1799,12 +1876,21 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
         # (on_auto_draft_expired). The week it claimed was resolved before
         # it ran: across midnight it built the week after (BUGSGEN-11).
         with generation_scope(job_id, restaurant_id=r.id):
-            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"])
+            # Saved only over a week that is still empty (R5-01): a draft the
+            # owner made, edited or sent while this ran is never replaced.
+            _se._run_schedule_job(job_id, r.id, week_start=_request["week_start"], empty_week_only=True)
         # _run_schedule_job reports its own failures into the job row rather
         # than raising, so the push below must wait on that verdict — telling
         # an owner a draft is waiting when none was saved is worse than silence.
         state = ops.read_async_job(job_id, restaurant_id=r.id) or {}
         if state.get("status") != "done":
+            if _week_taken(r.id, _request.get("week_start")):
+                # The owner's own draft (or a sent week) is the week's
+                # schedule now (R5-01): nothing to retry, nobody to tell.
+                if target:
+                    ops.claim_period(f"auto_draft_done:{r.id}", target)
+                _bump("skipped")
+                return
             # Ended without a draft (SCALE-3): the day is handed back so a
             # later pass — today, or the fallback day — tries again while
             # the week's attempts last; the last one tells the owner.
@@ -2052,6 +2138,13 @@ def _enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, a
                "batch": bool(batch), "answer": answer, "answers_job": answers_job,
                "attribution": {"trigger": "scheduler", "actor_user_id": None,
                                "correlation_id": f"auto_draft:{r.id}:{target}"}}
+    try:
+        # Its footprint by roster (blind re-audit 10/20/26 R5-06): admitted
+        # by it against the container's memory.
+        import schedule_engine as _se_mem
+        payload["mem_mb"] = _se_mem.generation_memory_mb(r.id)
+    except Exception:
+        pass
     key = f"auto_draft:{r.id}:{target}#{attempt}" + (":answered" if (answer is not None or answers_job) else
                                                       ":sync" if not batch else "")
     # The pass's own row (the first half) starts at the restaurant's place in
@@ -2082,7 +2175,16 @@ def run_queued_auto_draft(job):
     if r is None or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
         return {"skipped": "not opted in"}
     target = p.get("target")
-    if target and (p.get("answer") is not None or p.get("answers_job")):
+    # Every row re-checks the week when it RUNS, not only a batched answer
+    # (blind re-audit 10/20/26 R5-01): it was checked when the pass queued it,
+    # up to hours earlier, and an owner who drafted, edited or sent the week
+    # meanwhile had it superseded by a fresh generation (or, on a sent week, a
+    # new working copy). The save itself re-checks inside its write
+    # (empty_week_only) for a draft that appears while this one runs.
+    if target:
+        import ops as _ops_ad
+        if _ops_ad.period_claimed(f"auto_draft_done:{r.id}", target):
+            return {"skipped": "week already drafted"}
         conn = get_conn(DB_PATH)
         try:
             if _week_has_schedule(conn, r.id, target):
@@ -2183,6 +2285,9 @@ LEARNERS = {
     # The DSR's nights before it started, one row per restaurant (scale audit
     # 10/19/26 ONB-5): the serial walk filled ~15 new stores a night.
     "dsr_backfill": "strategy_jobs:dsr_backfill_one",
+    # The Monday plan (blind re-audit 10/20/26 R4-09): serial on the one
+    # "ai" lane thread it reached ~360-630 restaurants a Monday.
+    "weekly_plan": "strategy_jobs:weekly_plan_one",
 }
 # Learners whose body takes the row's `today` (the restaurant's own date the
 # fan-out chose), as people_nightly does.
@@ -2219,14 +2324,16 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     return _counts(created, created, 0, len(items) - created, False, queued=created)
 
 
-def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
+def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None, priority_class="bulk"):
     """`name`'s per-restaurant work for `ids` as `learner` queue rows (bulk
     class), keyed on the name, the restaurant and `day` so a pass run twice
     queues nothing new — the fan_out_learner pattern for any LEARNERS entry
     (food & bar audit 10/16/26 SCALE-07). `today_by_id` {rid: date} hands a
     body that takes it (LEARNERS_TAKE_TODAY) the restaurant's own date.
-    Standard counts: `attempted` / `ok` are the rows queued now; `skipped`
-    the rows already queued for `day`."""
+    `priority_class` "scheduled" serves the rows ahead of every bulk learner
+    row (the food cost diagnoses a morning brief reads — blind re-audit
+    10/20/26 R1-03 / R1-08). Standard counts: `attempted` / `ok` are the
+    rows queued now; `skipped` the rows already queued for `day`."""
     import job_queue
     if name not in LEARNERS:
         raise KeyError(f"no learner {name!r}")
@@ -2239,9 +2346,36 @@ def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
         items.append({"payload": payload, "restaurant_id": int(rid), "not_before": not_before,
                       "deadline": _bulk_deadline(not_before),
                       "idempotency_key": f"learner:{name}:{int(rid)}:{day}"})
-    created = job_queue.enqueue_many("learner", items, priority_class="bulk",
+    created = job_queue.enqueue_many("learner", items, priority_class=priority_class,
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
     return _counts(created, created, 0, len(items) - created, False, queued=created)
+
+
+def on_learner_expired(job):
+    """A learner row that never started before its deadline
+    (BULK_ROW_DEADLINE_HOURS): recorded as that restaurant's missed run of
+    the learner for its day (ops.record_missed_window — the console's
+    missed-window count and the failure digest read it), never a silent
+    skip (blind re-audit 10/20/26 R1-08). The next night queues it again."""
+    import ops
+    p = job.payload or {}
+    name, rid, day = p.get("learner") or "learner", p.get("restaurant_id"), p.get("day")
+    ops.record_missed_window(f"learner:{name}", rid, day or "",
+                             detail="its queue row expired unstarted (the bulk queue was behind)")
+
+
+def open_restaurants(name, day, db_path=DB_PATH) -> set:
+    """The restaurants whose `name` queue row for `day` is still queued or
+    running — what each restaurant's morning brief waits on for itself
+    (scheduler._brief_hold, R1-03), never the whole fleet's rows."""
+    import models as _models_or
+    conn = _models_or.get_conn() if db_path in (None, DB_PATH) else _models_or.get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT restaurant_id FROM jobs WHERE kind='learner' AND state IN ('queued', 'running') "
+                            "AND idempotency_key LIKE ?", (f"learner:{name}:%:{str(day)[:10]}",)).fetchall()
+        return {int(r[0]) for r in rows if r[0] is not None}
+    finally:
+        conn.close()
 
 
 def open_rows(name, day, db_path=DB_PATH) -> int:
@@ -4174,7 +4308,7 @@ def _submit_quiet_night_post(r, topic):
         state = marketing.content_prompt("instagram_post", topic, restaurant_id=r.id, topic_is_owner=False)
         run_id = ai_orchestrator.new_run_id("marketing_content")
         cid = f"qn-{int(r.id)}-{uuid.uuid4().hex[:12]}"
-        res = ai_batches.submit(QUIET_NIGHT_BATCH_WORKFLOW, [{
+        res = ai_batches.submit(QUIET_NIGHT_BATCH_WORKFLOW, group=True, items=[{
             "custom_id": cid, "restaurant_id": r.id, "action": "marketing_content",
             "request": marketing.social_post_request(state["prompt"],
                                                      wf.route_for(wf.policy("marketing_content"), 0)),

@@ -85,6 +85,10 @@ class Request:
     gate: bool = True
     instruction: str = None
     keep_locked: bool = True
+    # The auto-draft (blind re-audit 10/20/26 R5-01): the save goes ahead only
+    # while the week is still empty — never over an owner's draft, an edited
+    # copy or a week that went out.
+    empty_week_only: bool = False
 
     @property
     def redo(self) -> bool:
@@ -217,6 +221,10 @@ def _check_stop(clock) -> None:
     """Between two stages: the owner's Stop is ScheduleStopped (said as
     stopped); a job a poll already called dead starts nothing more and is
     "didn't finish in time"."""
+    import job_queue as _jq_lease
+    # A row whose lease another consumer took stops here, settling nothing
+    # (R5-12): it runs there now.
+    _jq_lease.raise_if_lease_lost()
     if clock is None:
         return
     if clock.stop_requested():
@@ -2422,6 +2430,7 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
         stage_seconds=timer.as_dict(),
         base=(int(base.history_id), base.csv) if base is not None else None,
         week_copy=week_copy,
+        empty_week_only=bool(req.empty_week_only and base is None and not req.redo),
         in_transaction=_with_the_week,
     )
     if not history_id:
@@ -2430,7 +2439,14 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
         raise se.ScheduleGenerationError(se._SAVE_FAILED_MESSAGE)
     job.history_id = history_id
     payload = dict(winner.payload, history_id=history_id, version=gen_box.get("version"))
+    if gen_box.get("csv"):
+        payload["schedule_csv"] = gen_box["csv"]
     job.payload = payload
+    # The commit point as a queue checkpoint AT the commit (blind re-audit
+    # 10/20/26 R5-11): it was written only at the end of the after-save
+    # steps, so a deploy between the two re-ran the whole generation and
+    # saved a second draft. _after_save writes it again with the timings.
+    _checkpoint_saved(job, winner, history_id)
     try:
         _after_save(job, winner, history_id, gen_box, _t_save)
     except Exception as _hist_ex:
@@ -2539,13 +2555,18 @@ def _after_save(job: GenerationRun, winner: Candidate, history_id: int, gen_box:
             _ai_q.record_quality_event("labor_schedule", "line_dropped", restaurant_id=rid,
                                        action="labor_schedule", n=len(c.dropped_rows),
                                        detail=f"{len(c.dropped_rows)} malformed schedule row(s) dropped")
+    # The job's commit point as a queue checkpoint, again with the timings: a
+    # try a deploy kills from here on is finished by the next try with this
+    # draft (schedule_resume), never generated and paid for again.
+    _checkpoint_saved(job, winner, history_id)
+
+
+def _checkpoint_saved(job: GenerationRun, winner: Candidate, history_id: int) -> None:
+    """The queue's `saved` checkpoint with the job's payload (soft)."""
     try:
-        # The job's commit point as a queue checkpoint: a try a deploy kills
-        # from here on is finished by the next try with this draft
-        # (schedule_resume), never generated and paid for again.
         import schedule_resume as _sres
-        _sres.checkpoint_saved(history_id, se._json_ready(payload),
-                               week_start=(result.get("week_dates") or [None])[0] or req.week_start)
+        _sres.checkpoint_saved(history_id, se._json_ready(job.payload),
+                               week_start=(winner.result.get("week_dates") or [None])[0] or job.req.week_start)
     except Exception as _cpx:
         _degraded(f"saved checkpoint not kept: {_cpx!r}", _cpx)
 
@@ -2597,6 +2618,30 @@ def run_queued_ablation(job, db_path=None) -> dict:
 
 # ── a resumed try that had saved (schedule_resume's saved stage) ─────────────
 
+def _finish_saved_without_checkpoint(job) -> bool:
+    """A resumed try whose earlier try committed its save (saved_ref) but
+    never wrote its checkpoint: finished as ops.SAVED_UNFINISHED with the
+    saved draft's id. True when it was settled here."""
+    import ops
+    import models
+    p = job.payload if hasattr(job, "payload") else (job.get("payload") or {})
+    job_id = p.get("job_id")
+    if not job_id:
+        return False
+    try:
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT saved_ref, status FROM async_jobs WHERE job_id=?", (str(job_id),)).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        _degraded(f"saved_ref unreadable for {job_id}: {e!r}", e)
+        return False
+    if row is None or row["saved_ref"] is None or row["status"] != "pending":
+        return False
+    ops.finish_async_job(job_id, "error", dict(ops.SAVED_UNFINISHED, history_id=int(row["saved_ref"])))
+    return True
+
 def finish_from_checkpoint(job) -> bool:
     """A resumed try whose earlier try reached the saved stage: the job is
     finished with that try's payload (`resumed: true`) — `done`, or, when
@@ -2613,7 +2658,11 @@ def finish_from_checkpoint(job) -> bool:
     import schedule_resume as _sres
     cp = job.checkpoint if hasattr(job, "checkpoint") else (job.get("checkpoint") or {})
     if "saved" not in (cp.get("stages") or []) or not cp.get("payload_z"):
-        return False
+        # No checkpoint, but the save itself committed (async_jobs.saved_ref,
+        # written in the save's own transaction): the draft is in force, so
+        # the week is never generated and saved a second time (R5-11) — the
+        # job ends with the provisional "saved but didn't finish" verdict.
+        return _finish_saved_without_checkpoint(job)
     payload = _sres.unpack(cp["payload_z"])
     if not isinstance(payload, dict):
         return False

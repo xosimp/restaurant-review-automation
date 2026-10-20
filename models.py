@@ -1939,6 +1939,16 @@ def ensure_columns(db_path: str = DB_PATH):
         # takes the rollup only for a window whose every day is at
         # pos_archive.ITEM_ROLLUP_VERSION.
         ("pos_archive_days", "item_rollup", "INTEGER"),
+        # Blind re-audit 10/20/26 (pos_archive): when a change read last found
+        # the day unchanged (UTC; R3-03 — a reader's recheck that found
+        # nothing is not repeated), and the short re-read that was refused
+        # (R3-05: JSON {sig, tickets, lines, net_sales, at} — an empty or
+        # short read never replaces a stored night; NULL = none).
+        ("pos_archive_days", "checked_at", "TEXT"),
+        ("pos_archive_days", "suspect", "TEXT"),
+        # When the POS's price list was last read (UTC; R3-11): unchanged
+        # prices are no longer rewritten, so MAX(seen_at) no longer says it.
+        ("pos_archive_state", "prices_read_at", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -2475,6 +2485,8 @@ def adopt_legacy_db(db_path: str = DB_PATH):
 
 
 def init_db(db_path: str = DB_PATH):
+    import time as _time_boot
+    _boot_t0 = _time_boot.monotonic()        # the deferrable backfills' budget starts here (R1-14)
     adopt_legacy_db(db_path)
     conn = boot_conn(db_path)
     import db_dialect as _dialect
@@ -4995,6 +5007,9 @@ def init_db(db_path: str = DB_PATH):
     # only the trackers that changed (memory audit PLATFORM-18) — after
     # init_outcomes, so every column the stamp watches exists.
     ensure_tracker_change_stamps(db_path)
+    # Postgres: the foreign keys the app breaks on purpose (a deleted
+    # restaurant's tombstoned learning) are not enforced there either.
+    _relax_by_design_foreign_keys(db_path)
     # A feature row written without a definition version is stamped the
     # current one (memory audit PLATFORM-5).
     from intelligence.features import init_feature_versions
@@ -5167,11 +5182,8 @@ def init_db(db_path: str = DB_PATH):
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
-    # days carry their provenance.
-    try:
-        backfill_labor_periods(db_path=db_path)
-    except Exception as e:
-        print(f"[labor periods] boot backfill skipped: {e}")
+    # days carry their provenance. Deferrable past the boot budget (R1-14).
+    _boot_backfill(_boot_t0, "labor periods", lambda: backfill_labor_periods(db_path=db_path))
     # The two boot backfills below find their rows through partial indexes
     # (scale audit 10/19/26 DB-16): each read the whole schedule_history —
     # every week's CSV — on every boot, inside the healthcheck window, for
@@ -5205,28 +5217,78 @@ def init_db(db_path: str = DB_PATH):
     # Each stored week's shift projection (schedule_shifts, ARCH-7): newest
     # weeks first, bounded; the marker table is its own cursor, so the next
     # boot resumes where this one stopped (a reader uses the week's text for
-    # a week not projected yet).
-    try:
+    # a week not projected yet). Deferrable past the boot budget (R1-14).
+    def _shift_projection():
         import schedule_shifts as _ss_boot
         _ss_boot.backfill(db_path=db_path)
-    except Exception as e:
-        print(f"[schedule shifts] projection backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "schedule shifts projection", _shift_projection)
+
     # Requests from before they kept their shift's id, matched once (ARCH-6).
-    try:
+    def _shift_ids():
         import shift_requests as _srq_boot
         _srq_boot.backfill_shift_ids(db_path=db_path)
-    except Exception as e:
-        print(f"[shift requests] shift-id backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "shift-request shift ids", _shift_ids)
+
     # Every restaurant with staff gets its people once — from its shift
     # history's names and every store — bounded; the nightly people job
     # reaches whatever this did not (memory audit 9/29/26, identity).
-    try:
+    def _people_and_facts():
         _people_boot.backfill_people(db_path=db_path, max_seconds=15)
         import shift_facts as _sf_boot
         _sf_boot.backfill_from_csv(db_path=db_path, max_seconds=15)
-    except Exception as e:
-        print(f"[people] boot backfill skipped: {e}")
+    _boot_backfill(_boot_t0, "people", _people_and_facts)
     print(f"Database initialised at {db_path}")
+
+
+# Boot work vs the worker timeout (blind re-audit 10/20/26 R1-14): init_db
+# runs inside the gunicorn worker at import, under `--timeout 120` and the
+# 120-second Railway healthcheck — a worker that has not reached its loop by
+# then is killed and re-forked, and runs the whole boot again. The schema
+# (every ALTER, every index) always runs inline; the data backfills at the
+# end of init_db that their readers do without (each says so above) run
+# inline only while init_db is inside BOOT_BACKFILL_BUDGET_SECONDS, and past
+# it go to a thread the web process starts once it is serving
+# (run_deferred_boot_backfills). boot_events.boot_ms is the measure.
+BOOT_BACKFILL_BUDGET_SECONDS = float(os.getenv("BOOT_BACKFILL_BUDGET_SECONDS", "45") or 45)
+_DEFERRED_BOOT_BACKFILLS = []
+_deferred_boot_lock = threading.Lock()
+
+
+def _boot_backfill(boot_started, name, fn) -> bool:
+    """Run one deferrable boot backfill now, or — init_db past its budget —
+    keep it for run_deferred_boot_backfills. A failure is logged, never
+    raised (as each was). Returns whether it ran now."""
+    import time as _time_boot
+    _log = logging.getLogger(__name__)
+    if boot_started is not None and _time_boot.monotonic() - boot_started > BOOT_BACKFILL_BUDGET_SECONDS:
+        with _deferred_boot_lock:
+            _DEFERRED_BOOT_BACKFILLS.append((name, fn))
+        _log.warning("boot past %ss: the %s backfill runs after the boot", int(BOOT_BACKFILL_BUDGET_SECONDS), name)
+        return False
+    try:
+        fn()
+    except Exception as e:
+        _log.warning("[%s] boot backfill skipped: %s", name, e)
+    return True
+
+
+def run_deferred_boot_backfills() -> int:
+    """The boot backfills init_db left for after the boot (R1-14), one at a
+    time, on the caller's thread (hosted_dashboard starts one once the
+    worker serves). Returns how many ran."""
+    _log = logging.getLogger(__name__)
+    n = 0
+    while True:
+        with _deferred_boot_lock:
+            if not _DEFERRED_BOOT_BACKFILLS:
+                return n
+            name, fn = _DEFERRED_BOOT_BACKFILLS.pop(0)
+        try:
+            fn()
+            n += 1
+            _log.info("deferred boot backfill done: %s", name)
+        except Exception as e:
+            _log.warning("[%s] deferred boot backfill skipped: %s", name, e)
 
 
 def _auto_seed_demo_clients():
@@ -6037,6 +6099,119 @@ def _tombstone_learning(conn, rid, restaurant_row) -> dict:
     return kept
 
 
+# Foreign keys a row breaks by design: a deleted restaurant's tombstoned
+# learning points at no restaurant (restaurant_id = -learning_tombstones.id).
+# SQLite never checks them (delete_restaurant turns its checks off and skips
+# tombstones); a Postgres enforces every key it holds, so the tombstone, and
+# with it every restaurant delete, failed there (blind re-audit 10/20/26
+# R9-02: the Postgres mode found it). The boot drops these on Postgres.
+_BY_DESIGN_FKS = (("intel_rec_events", "restaurant_id", "restaurants"),)
+
+
+def _relax_by_design_foreign_keys(db_path: str = DB_PATH) -> int:
+    """Boot (init_db), Postgres only: drop the keys in _BY_DESIGN_FKS.
+    Returns how many were dropped. Never raises into the boot."""
+    try:
+        conn = boot_conn(db_path)
+    except Exception:
+        return 0
+    n = 0
+    try:
+        import db_dialect as _dl
+        if not _dl.is_postgres(conn):
+            return 0
+        for table, col, parent in _BY_DESIGN_FKS:
+            for (name,) in conn.execute_native(
+                    "SELECT c.conname FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                    "AND a.attnum = c.conkey[1] WHERE c.contype = 'f' AND c.conrelid = to_regclass(%s) "
+                    "AND c.confrelid = to_regclass(%s) AND a.attname = %s AND array_length(c.conkey, 1) = 1",
+                    (table, parent, col)).fetchall():
+                conn.execute_native(f'ALTER TABLE "{table}" DROP CONSTRAINT IF EXISTS "{name}"')
+                n += 1
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning("by-design foreign keys not relaxed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return n
+
+
+def _pg_delete_rows(conn, rid, tables) -> dict:
+    """delete_restaurant on Postgres, where foreign keys cannot be switched
+    off for a transaction: every row the SQLite path removes — each table's
+    rows with this restaurant_id (not _KEEP_ON_RESTAURANT_DELETE), the
+    restaurants row, then any row pointing (by a key that neither cascades
+    nor nulls) at one of those, to the end of the chain — deleted children
+    first, so no statement leaves a dangling key. {table: rows deleted}."""
+    rid = int(rid)
+    have_rid = set()
+    for t in tables:
+        if t in _KEEP_ON_RESTAURANT_DELETE:
+            continue
+        if "restaurant_id" in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            have_rid.add(t)
+    # Keys that leave the child row behind (NO ACTION / RESTRICT): the
+    # child's rows pointing at a deleted parent row must go first.
+    edges = [(c, cc, p, pc) for c, cc, p, pc in conn.execute_native(
+        "SELECT cl.relname, ca.attname, pl.relname, pa.attname FROM pg_constraint k "
+        "JOIN pg_class cl ON cl.oid = k.conrelid JOIN pg_class pl ON pl.oid = k.confrelid "
+        "JOIN pg_namespace n ON n.oid = cl.relnamespace "
+        "JOIN pg_attribute ca ON ca.attrelid = k.conrelid AND ca.attnum = k.conkey[1] "
+        "JOIN pg_attribute pa ON pa.attrelid = k.confrelid AND pa.attnum = k.confkey[1] "
+        "WHERE k.contype = 'f' AND array_length(k.conkey, 1) = 1 AND k.confdeltype IN ('a', 'r') "
+        "AND n.nspname = current_schema() AND NOT cl.relispartition").fetchall()
+        if c != p and c not in _KEEP_ON_RESTAURANT_DELETE]
+    preds = {t: [f"restaurant_id = {rid}"] for t in have_rid}
+    preds.setdefault("restaurants", []).append(f"id = {rid}")
+
+    def where(t, depth=0):
+        own = list(preds.get(t, []))
+        if depth < 6:
+            for c, cc, p, pc in edges:
+                if c == t and p in plan:
+                    sub = where(p, depth + 1)
+                    if sub:
+                        own.append(f'"{cc}" IN (SELECT "{pc}" FROM "{p}" WHERE {sub})')
+        return " OR ".join(f"({x})" for x in own)
+
+    # Every table some row of which may go: the seeds, then anything keyed
+    # to one of them, to the end of the chain.
+    plan = set(preds)
+    grew = True
+    while grew:
+        grew = False
+        for c, _cc, p, _pc in edges:
+            if p in plan and c not in plan:
+                plan.add(c)
+                grew = True
+    # Children before parents (a cycle, if any, keeps its found order).
+    order, done = [], set()
+
+    def visit(t, path=()):
+        if t in done or t in path:
+            return
+        for c, _cc, p, _pc in edges:
+            if p == t and c in plan:
+                visit(c, path + (t,))
+        done.add(t)
+        order.append(t)
+    for t in sorted(plan):
+        visit(t)
+    deleted = {}
+    for t in order:
+        w = where(t)
+        if not w:
+            continue
+        n = conn.execute(f'DELETE FROM "{t}" WHERE {w}').rowcount
+        if n:
+            deleted[t] = n
+    return deleted
+
+
 def _internal_home_ids_on(conn) -> set:
     """_internal_home_ids on a connection already open (inside a write
     transaction — no second connection)."""
@@ -6128,6 +6303,23 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             n = _bm_del2.strip_member_hashes(conn, _band_hashes)
             if n:
                 deleted["intel_benchmarks.members"] = n
+        # preferences keys its scope by text, not restaurant_id: a location's
+        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
+        if "preferences" in tables:
+            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
+                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
+            if n:
+                deleted["preferences"] = n
+        import db_dialect as _dl_del
+        if _dl_del.is_postgres(conn):
+            # Postgres enforces every key in every statement: the same rows,
+            # children first (_pg_delete_rows) — the orphan sweep below
+            # reads SQLite's PRAGMA foreign_key_check (blind re-audit
+            # 10/20/26 R9-02: every delete failed there).
+            deleted.update(_pg_delete_rows(conn, rid, tables))
+            conn.commit()
+            _invalidate_request_cache(rid)
+            return deleted
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -6136,13 +6328,6 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
                 if n:
                     deleted[t] = n
-        # preferences keys its scope by text, not restaurant_id: a location's
-        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
-        if "preferences" in tables:
-            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
-                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
-            if n:
-                deleted["preferences"] = n
         n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
         if n:
             deleted["restaurants"] = n
@@ -11696,6 +11881,13 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     # Ends every session and clears must_reset_password (SEC-7, SEC-8).
     from auth import update_password
     update_password(user["id"], new_password, db_path=db_path)
+    # A reset proved the mailbox: the per-login sign-in-code lock a password
+    # holder ran up is lifted with the password they no longer have (R7-01).
+    try:
+        import security
+        security.clear_second_factor_failures(user["id"], db_path=db_path)
+    except Exception:
+        pass
     return True
 
 
@@ -12414,6 +12606,13 @@ class DraftChanged(Exception):
         self.current_csv = current_csv
 
 
+class WeekAlreadyDrafted(Exception):
+    """An auto-draft's save found the week already has a draft in force or
+    went out (blind re-audit 10/20/26 R5-01): the owner drafted, edited or
+    sent it while the queued auto-draft waited or ran, so nothing is
+    written over it."""
+
+
 def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_scheduled: float, hours_budget: float, labor_target: float,
                            schedule_csv: str, summary: list, quality: dict = None,
@@ -12421,7 +12620,8 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           job_id: str = None, in_transaction=None, week_copy: tuple = None) -> int:
+                           job_id: str = None, in_transaction=None, week_copy: tuple = None,
+                           empty_week_only: bool = False) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -12465,6 +12665,9 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     working copy is another row, or its text moved, since — a manager's
     Studio save while it ran — nothing is written and DraftChanged is
     raised (scale audit 10/19/26 A5-F16; it was superseded unconditionally).
+    `empty_week_only` (the auto-draft, R5-01): written only while the week
+    has no draft in force and never went out, checked inside the write —
+    else WeekAlreadyDrafted and nothing is written.
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -12506,6 +12709,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                     raise DraftChanged(int(base[0]), None if now is None else (now["schedule_csv"] or ""))
                 prior_text = now["schedule_csv"] or ""
             elif week_start:
+                if empty_week_only and conn.execute(
+                        "SELECT 1 FROM schedule_history WHERE restaurant_id=? AND week_start=? "
+                        "AND (superseded_by IS NULL OR published_at IS NOT NULL) LIMIT 1",
+                        (restaurant_id, week_start)).fetchone() is not None:
+                    raise WeekAlreadyDrafted(f"restaurant {restaurant_id} week {week_start} already has a schedule")
                 cur_copy = week_draft(conn, restaurant_id, week_start)
                 if week_copy is not None:
                     now_copy = ((int(cur_copy["id"]), cur_copy["schedule_csv"] or "") if cur_copy is not None
@@ -16041,6 +16249,10 @@ ACCOUNT_EVENT_TYPES = (
     # access transparency (scale audit 10/19/26, SEC-12).
     "support_access_opened", "support_access_closed",
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
+    # Re-audit 10/20/26 R7-01 / R7-03: a login's sign-in codes locked after
+    # too many wrong ones; "This wasn't me" suspending the co-owner logins
+    # added in the days before it.
+    "two_factor_locked", "principal_logins_suspended",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "auto_draft_changed", "auto_draft_day_changed", "auto_order_day_changed",
@@ -16055,6 +16267,9 @@ ACCOUNT_EVENT_TYPES = (
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
+    # The owner confirmed a labor setup step from Account (scale re-audit
+    # 10/20/26 R8-11; client_api._do_setup_confirmations).
+    "setup_confirmed",
     "pos_connected", "pos_disconnected", "supplier_order_sent", "schedule_published",
     # Data the owner's figures rest on stopped arriving (CA3 F6, F13): the
     # POS failing 2+ days running (pos.note_sync_failure) and reviews Google
@@ -16101,12 +16316,15 @@ ACCOUNT_EVENT_LABELS = {
     "trusted_device_revoked": "Trusted device removed",
     "trusted_devices_cleared": "All trusted devices removed",
     "login_reported_not_me": "Sign-in reported as not you",
+    "two_factor_locked": "Sign-in codes paused after too many wrong ones",
+    "principal_logins_suspended": "New co-owner logins suspended after a sign-in was reported",
     "data_exported": "Data export emailed",
     "alert_settings_saved": "Alert settings saved",
     "login_notify_changed": "Sign-in notifications changed",
     "marketing_emails_changed": "Product update emails changed",
     "auto_approve_changed": "Auto-approve rule changed",
     "hours_changed": "Hours updated",
+    "setup_confirmed": "Setup step confirmed",
     "data_retention_changed": "Data retention changed",
     "profile_updated": "Profile updated",
     # `detail` carries which POS ("Square" / "Clover" / "Toast").
@@ -16522,8 +16740,11 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
     """
     conn = get_conn(db_path)
     runs = conn.execute(
-        "SELECT DISTINCT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs "
-        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC LIMIT 2",
+        # Newest first, the later run winning a tie on the second (the order
+        # of tied groups is the database's own: Postgres picked the older
+        # one — blind re-audit 10/20/26 R9-02).
+        "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT 2",
         (restaurant_id,)).fetchall()
     if len(runs) < 2:
         conn.close()
@@ -16550,8 +16771,9 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
     conn = get_conn(db_path)
     try:
         run_rows = conn.execute(
-            "SELECT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs WHERE restaurant_id=? "
-            "GROUP BY run_id ORDER BY at DESC LIMIT ?", (restaurant_id, int(runs))).fetchall()
+            "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+            "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT ?",
+            (restaurant_id, int(runs))).fetchall()
         ids = [r["run_id"] for r in run_rows][::-1]
         if not ids:
             return {"runs": [], "queries": []}

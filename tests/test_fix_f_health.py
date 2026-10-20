@@ -37,7 +37,7 @@ def _body(payload):
 
 
 def _ok_disk(monkeypatch):
-    monkeypatch.setattr(sm, "disk_state", lambda p=None: {"state": "ok", "free_mb": 9000, "pct_free": 80.0})
+    monkeypatch.setattr(sm, "disk_state", lambda p=None, **_kw: {"state": "ok", "free_mb": 9000, "pct_free": 80.0})
 
 
 # ── read-only (#94, RELIABILITY-4) ───────────────────────────────────────────
@@ -77,7 +77,7 @@ def test_the_monitor_keyword_appears_exactly_when_the_platform_is_ok(db, schedul
     body = _body(payload)
     assert body.count('"status":"ok"') == 1
 
-    monkeypatch.setattr(sm, "disk_state", lambda p=None: {"state": "low", "free_mb": 120, "pct_free": 4.0})
+    monkeypatch.setattr(sm, "disk_state", lambda p=None, **_kw: {"state": "low", "free_mb": 120, "pct_free": 4.0})
     payload, status = sm.health_snapshot(db)
     assert status == 200, "degraded stays a 200: the deploy check must not fail on it"
     assert payload["status"] == "degraded" and "disk_low" in payload["problems"]
@@ -128,6 +128,7 @@ def test_without_the_backup_ledger_the_backup_block_says_unknown(db, scheduler_h
 
 # ── the write probe (#105) ───────────────────────────────────────────────────
 
+@pytest.mark.sqlite_only     # SQLite's file write lock
 def test_a_held_write_lock_reads_busy_and_degraded_not_down(db, scheduler_heartbeat, monkeypatch):
     scheduler_heartbeat(1)
     _ok_disk(monkeypatch)
@@ -145,6 +146,7 @@ def test_a_held_write_lock_reads_busy_and_degraded_not_down(db, scheduler_heartb
     assert elapsed < 5, "the probe waits its own short timeout, never the 30-second one"
 
 
+@pytest.mark.sqlite_only     # SQLite's PRAGMA data_version
 def test_the_write_probe_writes_nothing(db):
     """data_version changes, for every other connection, whenever a
     connection commits a change to the file."""
@@ -197,6 +199,7 @@ def test_the_probe_never_touches_a_callers_open_transaction(db):
         conn.close()
 
 
+@pytest.mark.sqlite_only     # SQLite's journal mode
 def test_a_database_not_in_wal_mode_is_degraded(db, scheduler_heartbeat, monkeypatch):
     """get_conn asks for WAL on every connection, and SQLite answers with
     the mode it is actually in when it cannot switch (a read-only volume
@@ -218,6 +221,7 @@ def test_a_database_not_in_wal_mode_is_degraded(db, scheduler_heartbeat, monkeyp
 
 # ── disk against the database's size (#28) ──────────────────────────────────
 
+@pytest.mark.sqlite_only  # the SQLite file's size sets the thresholds; on Postgres /health reads pg_database_size
 def test_disk_thresholds_scale_with_the_database(db, monkeypatch):
     import shutil
     from collections import namedtuple

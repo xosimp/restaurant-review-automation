@@ -1005,28 +1005,56 @@ final class AccountViewModel {
     var updateEmailError: String?
     var updateEmailSucceeded = false
 
+    /// The server emailed a code to the new address and waits for it
+    /// (re-audit 10/20/26 R7-17): the sheet shows a code field.
+    var updateEmailNeedsCode = false
+    var updateEmailNotice: String?
+
     private struct UpdateEmailBody: Encodable {
         let newEmail: String
         let currentPassword: String
+        let code: String?
         enum CodingKeys: String, CodingKey {
             case newEmail = "new_email"
             case currentPassword = "current_password"
+            case code
         }
     }
 
-    func updateEmail(newEmail: String, currentPassword: String) async {
+    private struct UpdateEmailResponse: Decodable {
+        let ok: Bool
+        let error: String?
+        let verifyRequired: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case verifyRequired = "verify_required"
+        }
+    }
+
+    func updateEmail(newEmail: String, currentPassword: String, code: String? = nil) async {
         isUpdatingEmail = true
         updateEmailError = nil
+        updateEmailNotice = nil
         updateEmailSucceeded = false
         defer { isUpdatingEmail = false }
         do {
-            let response: OKErrorResponse = try await client.send(
+            let typed = code?.trimmingCharacters(in: .whitespaces)
+            let response: UpdateEmailResponse = try await client.send(
                 "/mobile/api/account/update-email", method: .post,
-                body: UpdateEmailBody(newEmail: newEmail, currentPassword: currentPassword)
+                body: UpdateEmailBody(newEmail: newEmail, currentPassword: currentPassword,
+                                      code: (typed?.isEmpty ?? true) ? nil : typed)
             )
             if response.ok {
                 updateEmailSucceeded = true
+                updateEmailNeedsCode = false
                 await load()
+            } else if response.verifyRequired == true {
+                updateEmailNeedsCode = true
+                if (typed?.isEmpty ?? true) {
+                    updateEmailNotice = response.error
+                } else {
+                    updateEmailError = response.error ?? "That code isn't right."
+                }
             } else {
                 updateEmailError = response.error ?? "Couldn't update your email."
             }
@@ -1118,7 +1146,16 @@ final class AccountViewModel {
                 connectGoogleError = response.error ?? "Couldn't start Google connect."
                 return
             }
-            try await GMBConnectCoordinator().connect(authorizeURL: url)
+            // The callback saves nothing for the app: this login confirms
+            // the connection it started (re-audit 10/20/26 R7-16).
+            if let ticket = try await GMBConnectCoordinator().connect(authorizeURL: url) {
+                let confirmed: APIClient.OKResponse = try await client.send(
+                    "/mobile/api/connections/google/confirm", method: .post, body: ["ticket": ticket])
+                guard confirmed.ok else {
+                    connectGoogleError = confirmed.error ?? "Couldn't connect Google Business."
+                    return
+                }
+            }
             await load()
         } catch let error as GMBConnectError {
             switch error {

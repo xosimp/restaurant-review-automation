@@ -1310,32 +1310,29 @@ def _read_schedule_rules(restaurant_id):
     }
 
 
-def _set_staff_contact(restaurant_id, employee_name=None, email=None, phone=None):
+def _set_staff_contact(restaurant_id, employee_name=None, email=None, phone=None, _viewer=None):
     """Add or correct how a member of staff is reached.
 
-    Direct rather than proposed: it changes a private contact record, sends
-    nothing, and is trivially reversible. It also unblocks publish_schedule,
-    which otherwise proposes a send that reaches nobody because the roster
-    has no addresses on it.
+    Direct rather than proposed: it sends nothing and is reversible. It also
+    unblocks publish_schedule, which otherwise proposes a send that reaches
+    nobody because the roster has no addresses on it. Through the REST
+    route's own body (mobile_api._do_set_staff_contact, re-audit 10/20/26
+    R7-19): the same permission (SCHEDULE_PUBLISH or TEAM_INVITE — a
+    member login could point an employee's schedule link and forgot-PIN
+    texts at itself), the change history and the employee's notice at the
+    address they had. What the model did not give is kept (MOD-EMP-4).
     """
-    from models import set_staff_contact
-    from staff_settings import clean_phone
-    name = (employee_name or "").strip()
-    if not name:
-        return {"ok": False, "error": "Which member of staff?"}
-    # What the model did not give is kept: adding a phone used to erase the
-    # stored email, and the phone went in unchecked (MOD-EMP-4).
-    email = (email or "").strip() or None
-    if email and "@" not in email:
-        return {"ok": False, "error": "That doesn't look like an email address."}
+    user = getattr(_viewer, "_ask_dsr_user", None) if _viewer is not None else None
+    if not user:
+        return {"ok": False, "error": "Changing where staff are reached needs a signed-in login."}
+    data = {"employee_name": employee_name}
+    if (email or "").strip():
+        data["email"] = email
     if phone is not None:
-        phone, perr = clean_phone(phone)
-        if perr:
-            return {"ok": False, "error": perr}
-        phone = phone or None
-    if not set_staff_contact(restaurant_id, name, email, phone):
-        return {"ok": False, "error": "Couldn't save that contact."}
-    return {"ok": True, "employee_name": name, "email": email}
+        data["phone"] = phone
+    import mobile_api
+    payload, _status = mobile_api._do_set_staff_contact(dict(user, restaurant_id=restaurant_id), data)
+    return payload
 
 
 def _generate_marketing_content(restaurant_id, content_type="instagram_post", topic=""):
@@ -3100,6 +3097,7 @@ TOOLS = [
         "kind": "action",
         "fn": _set_staff_contact,
         "module": "module_labor",
+        "wants_viewer": True,
         "spec": {
             "name": "set_staff_contact",
             "description": (
@@ -4093,6 +4091,15 @@ def tool_allowed(name, restaurant):
             from permissions import is_principal
             if not is_principal(user):
                 return False
+    if name in _STAFF_CONTACT_TOOLS:
+        # The REST route's rule (R7-19): a login that may not change where
+        # staff are reached is not offered the tool, and the tool's body
+        # asks again (mobile_api._do_set_staff_contact).
+        user = getattr(restaurant, "_ask_dsr_user", None)
+        if user is not None:
+            import mobile_api
+            if not mobile_api.may_set_staff_contact(user):
+                return False
     if name in _TEAM_SETTINGS_TOOLS:
         # The staff-settings route saves for a login that manages the team.
         user = getattr(restaurant, "_ask_dsr_user", None)
@@ -4131,6 +4138,14 @@ def is_write_tool(name):
     An "action" tool is a direct write and deliberately not in this set."""
     tool = _BY_NAME.get(name)
     return bool(tool and tool["kind"] == "write")
+
+
+# Direct actions whose effect persists and steers later output — a memory
+# line every generator reads, a setting, where a member of staff is reached.
+# They are refused for the whole chat once any answer in it read text the
+# public wrote (ask_conversations.chat_read_public, re-audit 10/20/26 R7-20);
+# every other action keeps the one-turn carry.
+TAINT_PERSISTENT_TOOLS = frozenset({"remember", "change_setting", "set_staff_contact"})
 
 
 def is_action_tool(name):
@@ -4501,6 +4516,8 @@ _CONSTRAINT_CARDS = ("add_closed_date", "set_staff_unavailable", "set_staff_hour
 # Write tools whose route needs the login to manage the team (TEAM_RATE):
 # a card a login could never confirm is not offered to it.
 _TEAM_SETTINGS_TOOLS = {"set_staff_hours"}
+# Where a member of staff is reached: SCHEDULE_PUBLISH or TEAM_INVITE (R7-19).
+_STAFF_CONTACT_TOOLS = {"set_staff_contact"}
 _PART_WORDS = {"morning": "lunch/day", "night": "dinner/night"}
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 

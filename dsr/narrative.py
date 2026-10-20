@@ -3054,7 +3054,7 @@ def submit_batch(ctx, facts, custom_id, context=None):
         run_id = orch.new_run_id(PURPOSE)
         route = wf.route_for(wf.policy(PURPOSE), 0)
         with ai_utils.ai_context(correlation_id=run_id):
-            out = ai_batches.submit(BATCH_WORKFLOW, [{
+            out = ai_batches.submit(BATCH_WORKFLOW, group=True, items=[{
                 "custom_id": custom_id, "restaurant_id": rid, "action": PURPOSE,
                 "request": request_for(prep["system"], prep["user"], _ready, route=route), "readiness": _ready,
                 "callback": BATCH_CALLBACK, "context": dict(context or {}, state=state, run_id=run_id)}])

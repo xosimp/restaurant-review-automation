@@ -368,3 +368,32 @@ def test_a_reservation_system_plugs_in_with_one_registration_and_a_bad_row_store
     reservation_feeds.register_provider("sevenrooms", "SevenRooms", lambda r, s, e: [{"date": "nope", "covers": 1}])
     assert "sync failed" in reservation_feeds.sync(rid)["error"]
     assert {p["code"]: p["live"] for p in reservation_feeds.available()}["opentable"] is False
+
+
+def test_a_partial_push_sends_its_failed_shifts_again_on_the_next_push(db, monkeypatch):
+    """Blind re-audit 10/20/26 R5-04: a partial push stored the hash of every
+    sendable shift, so "Push again" after the owner fixed the cause answered
+    "unchanged" and the failed shifts never reached the clock."""
+    class _Partial(_FakePOS):
+        def __init__(self):
+            super().__init__()
+            self.fail_bo = True
+
+        def push_labor_schedule(self, rid, shifts, job_codes=None):
+            self.pushed.append([dict(s) for s in shifts])
+            failed = [{"employee": s["employee"], "start": s["start"], "why": "unknown job code"}
+                      for s in shifts if s["employee"] == "Bo"] if self.fail_bo else []
+            return {"ok": True, "failed": failed, "skipped": []}
+    fake = _Partial()
+    rid, hid, told = _push_week(db, monkeypatch, fake)
+    floor_settings.save(rid, {"pos_push": True})
+    out = pos_schedule_push.run_push(pos_schedule_push.enqueue(rid, hid), now_local=NOW)
+    assert out["status"] == "partial" and out["sent"] == 1 and told
+    # The owner fixes the job code and pushes again: Bo's shift goes.
+    fake.fail_bo = False
+    assert pos_schedule_push.preview(rid, hid, now_local=NOW)["unchanged"] is False
+    again = pos_schedule_push.run_push(pos_schedule_push.enqueue(rid, hid), now_local=NOW)
+    assert again["status"] == "sent" and len(fake.pushed) == 2
+    assert "Bo" in {s["employee"] for s in fake.pushed[1]}
+    # Now the POS holds the whole week: the next push is unchanged.
+    assert pos_schedule_push.run_push(pos_schedule_push.enqueue(rid, hid), now_local=NOW)["status"] == "unchanged"

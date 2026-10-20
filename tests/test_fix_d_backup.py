@@ -532,14 +532,16 @@ def test_the_backup_records_its_stage_seconds_and_says_when_it_nears_its_bound(m
     bound is captured before the night it no longer fits."""
     import ops
     run = {"_detail": {}}
-    ticks = iter([0.0, 10.0, 12.0, 40.0, 2000.0])
+    # The bound is four hours since the backup moved to the queue worker
+    # (scale re-audit 10/20/26 R8-03): half of it is 7,200 seconds.
+    ticks = iter([0.0, 10.0, 12.0, 40.0, 8000.0])
     monkeypatch.setattr(scheduler.time, "monotonic", lambda: next(ticks))
     for stage in ("snapshot", "snapshot", "gzip", "scrub", "encrypt"):
         scheduler._backup_lap(run, stage)
-    assert run["_detail"]["stage_seconds"] == {"snapshot": 10.0, "gzip": 2.0, "scrub": 28.0, "encrypt": 1960.0}
+    assert run["_detail"]["stage_seconds"] == {"snapshot": 10.0, "gzip": 2.0, "scrub": 28.0, "encrypt": 7960.0}
     captured = []
     monkeypatch.setattr(ops, "capture", lambda e, **k: captured.append(str(e)))
     monkeypatch.setattr(scheduler, "scheduling_allowed", lambda: False)
     scheduler._backup_too_slow(run)
-    assert run["_detail"]["slow"] is True and run["_detail"]["total_seconds"] == 2000.0
+    assert run["_detail"]["slow"] is True and run["_detail"]["total_seconds"] == 8000.0
     assert captured and "over 50%" in captured[0]

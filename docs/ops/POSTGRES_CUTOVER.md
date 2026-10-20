@@ -58,7 +58,7 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   the intel version, the append-only ledgers); a CREATE TABLE's foreign
   keys are added once their target exists; ALTER TABLE ADD COLUMN gets
   CREATE TABLE's types.
-- **SQL semantics:** SUM/AVG of a predicate, `COLLATE NOCASE` (as lower()),
+- **SQL semantics:** SUM/AVG of a predicate (one wrapped whole in parentheses too), a text range against a non-date literal compared byte by byte as SQLite does (`COLLATE "C"`: a non-C database collation ignores punctuation, and `metric >= 'sales.cat:' AND metric < 'sales.cat;'` read empty), a bare `0`/`1` as a condition (`WHERE 0`), `datetime(MAX(julianday(x)))` (a Julian day), `'now'` arriving at run time (`cavnar_ts`), `lastrowid` from a partitioned table (its key without the partition column), `total_changes` (blind re-audit 10/20/26 R9-02), `COLLATE NOCASE` (as lower()),
   NULL ordering (NULLS FIRST ascending, LAST descending — and indexes built
   the same way), NULL-preserving `MAX(a, b)`, `LIKE … ESCAPE ''`, typed
   `json_extract`, NULL for a date read of `''`, `x IS ?`, a bare
@@ -142,8 +142,11 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    on the prefix `cavnar-blobs/model-calls/`: expire after 100 days
    (`schedule_model_calls` keeps 90). Set `BLOB_S3_ENDPOINT` (https),
    `BLOB_S3_BUCKET`, `BLOB_S3_ACCESS_KEY_ID`, `BLOB_S3_SECRET_ACCESS_KEY`,
-   then `BLOB_STORE=s3`. New calls and evaluations go to the bucket at once;
-   the `blob_offload` job (2am) moves the old inline rows, 5 minutes a night.
+   then `BLOB_STORE=s3`. New model calls go to the bucket at once; an
+   evaluation saved inside a schedule save's transaction stays inline (no
+   network call under the write lock — blind re-audit 10/20/26 R2-06), and
+   the `blob_offload` job (2am) moves it with the old inline rows, 5 minutes
+   a night.
    Rollback: `BLOB_STORE=db` (new writes inline again; existing pointers
    keep reading from the bucket — never delete the bucket while any row
    points into it).
@@ -256,3 +259,54 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
   at most `PARTITION_DROPS_PER_PASS` = 1 a table a night, after the table's
   rollup and with a records hold respected), then deletes in chunks what is
   left (the partial month, the DEFAULT partition). Nothing to do here.
+
+### Partitioning a growing table (blind re-audit 10/20/26 R2-11)
+
+The copy partitioned the seven fact tables of 10/19/26. `db_dialect.PARTITIONED`
+now also names `pos_payments`, `pos_payouts`, `pos_item_daily`,
+`menu_item_sales`, `dsr_metrics` and `bar_sales_nights`; on the live database
+they stay plain (everything works either way) until converted — worth doing
+before ~100 stores, when their retention becomes a nightly row delete
+instead of a month drop. In a quiet window, with the write freeze on
+(`MAINTENANCE_READ_ONLY=1`, step 4) and a fresh PITR point noted:
+
+```
+python scripts/run_pg_copy.py --database-url "$DATABASE_URL" \
+    --partition-tables pos_payments,pos_payouts,pos_item_daily,menu_item_sales,dsr_metrics,bar_sales_nights
+```
+
+Each table is rebuilt partitioned (`pg_partitions.convert_to_partitioned`:
+same columns, defaults, keys with `business_date` added, checks, foreign keys,
+indexes, rows; ids from a sequence set past the highest), swapped in under
+its name in one transaction, the old one kept as `<table>__old`. It refuses a
+table whose row count moved during the copy, one with triggers, views or
+foreign keys pointing at it. Check the counts it printed, lift the freeze,
+and a day later drop the old copies (`DROP TABLE <table>__old` per table;
+`--drop-old` drops each as it converts, for a rehearsal). `ai_calls` and
+`job_period_claims` are deliberately not on the list (a date in their keys
+would break an upsert by call id and the claim-once rule).
+
+### Server memory (blind re-audit 10/20/26 R2-10)
+
+Production ran the image's defaults: `shared_buffers` 128 MB, `work_mem`
+4 MB. Fine while the database (546 MB at the cutover) sits in the OS cache;
+not once a month of POS lines is tens of GB. These are the server's, not
+the app's — set them on the Postgres service once its RAM is known (Railway
+→ the Postgres service → Metrics shows the memory limit), as the database
+owner, then restart the Postgres service (shared_buffers needs a restart;
+the rest take effect on reload):
+
+```sql
+ALTER SYSTEM SET shared_buffers = '<25% of RAM>';          -- e.g. '2GB' on 8 GB
+ALTER SYSTEM SET effective_cache_size = '<70% of RAM>';    -- a planner hint only
+ALTER SYSTEM SET maintenance_work_mem = '256MB';           -- vacuum, index builds
+ALTER SYSTEM SET autovacuum_vacuum_scale_factor = 0.05;    -- big partitions vacuumed sooner
+ALTER SYSTEM SET autovacuum_analyze_scale_factor = 0.02;
+SELECT pg_reload_conf();
+```
+
+`work_mem` the app sets for its own sessions: `PG_WORK_MEM` (ENVIRONMENT.md;
+16MB is a sane first value — it is per sort or hash, per connection, and
+the process ceiling is `PG_POOL_MAX + PG_POOL_OVERFLOW` connections).
+Check with `SHOW shared_buffers; SHOW work_mem;` from a `railway connect`
+session.

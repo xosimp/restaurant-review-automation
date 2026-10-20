@@ -495,6 +495,7 @@ SCRUB_TABLES = {
 # column (read at call time, so a field added there is scrubbed here).
 SCRUB_COLUMNS = {
     ("users", "reset_token"), ("users", "reset_token_expires"), ("users", "recovery_email_code"),
+    ("users", "email_change_code"),
     ("restaurants", "temp_password"), ("restaurants", "two_fa_device_token"),
     # The share link itself, encrypted under CREDENTIAL_KEY so the admin can
     # copy it again (fix round B2): a working public link once decrypted, and
@@ -834,11 +835,31 @@ def redact(path):
             conn.execute(f'UPDATE "{t}" SET "{c}"={blank} WHERE "{c}" IS NOT NULL AND "{c}" != \'\'')
         rows = _scrub_rows(conn)
         conn.commit()
-        conn.execute("VACUUM")
-        return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified,
-                "rows": rows, "sealed": sealed}
+        # The old pages go too: a compacted copy written BESIDE this file and
+        # renamed over it (scale re-audit 10/20/26 R8-18). A plain VACUUM
+        # builds its copy in SQLite's temp directory — the container's own
+        # disk, outside every free-space check — so past that disk's size
+        # the off-site copy failed every night. Beside the file it is on the
+        # volume the backup's off-site check measured (at most the file's
+        # size, inside BACKUP_OFFSITE_SPACE_FACTOR).
+        compact = path + ".vacuum"
+        for leftover in (compact, compact + "-journal"):
+            try:
+                os.unlink(leftover)
+            except FileNotFoundError:
+                pass
+        conn.execute("VACUUM INTO ?", (compact,))
+        result = {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified,
+                  "rows": rows, "sealed": sealed}
     finally:
         conn.close()
+    os.replace(compact, path)
+    for leftover in (path + "-journal", path + "-wal", path + "-shm"):
+        try:
+            os.unlink(leftover)
+        except FileNotFoundError:
+            pass
+    return result
 
 
 def describe_scrub(scrubbed) -> dict:

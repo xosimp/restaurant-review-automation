@@ -30,6 +30,10 @@ the scheduler thread and the queue worker see one picture:
                       LIVE_SNAPSHOT_SECONDS serves live labor, the coverage
                       check, the hourly capture and the /labor/live page.
 
+Each request also carries a LANE (live, close, nightly, bulk — `lane` /
+`current_lane` below): the request budget serves live reads ahead of the
+nightly and bulk work (blind re-audit 10/20/26 R3-01).
+
 Every table is created at boot (models.init_db -> init_pos_io) and none of
 these functions raises into a caller: a control that cannot reach the
 database falls back to "allow" (the breaker) or "not kept" (the caches) and
@@ -126,6 +130,59 @@ def init_pos_io(db_path=None):
         conn.commit()
     finally:
         conn.close()
+
+
+# ── request lanes (blind re-audit 10/20/26 R3-01) ──────────────────────────
+#
+# Every RPOWER request shares one token's budget. A request carries the lane
+# of the work that made it, and the budget (rpower._sleep_for_spacing) serves
+# them in that order:
+#   live     the store during service: live labor, the coverage check, the
+#            hourly capture (pos._live_read), and any web request;
+#   close    the night's report at the POS close (dsr.pipeline);
+#   nightly  the nightly jobs (archive, labor sync, loss, depletion) — the
+#            default off a request thread;
+#   bulk     onboarding and history backfill.
+# nightly and bulk are BACKGROUND: they never jump a live or close request
+# waiting in this process, and while live/close requests are being made on
+# a bucket (anywhere, LIVE_ACTIVE_SECONDS) background work may use only
+# RPOWER_BACKGROUND_SHARE of it; bulk never more than that share at all.
+LANES = ("live", "close", "nightly", "bulk")
+BACKGROUND_LANES = ("nightly", "bulk")
+_lane_ctx = threading.local()
+
+
+class lane:
+    """`with pos_io.lane("live"):` — the POS requests made inside, on this
+    thread, are this lane's (an unknown name is ignored)."""
+
+    def __init__(self, name):
+        self.name = name if name in LANES else None
+
+    def __enter__(self):
+        self.prev = getattr(_lane_ctx, "name", None)
+        if self.name:
+            _lane_ctx.name = self.name
+        return self
+
+    def __exit__(self, *exc):
+        _lane_ctx.name = self.prev
+        return False
+
+
+def current_lane() -> str:
+    """This thread's lane: the one set by `lane`, else "live" on a web
+    request thread (an owner is waiting), else "nightly"."""
+    name = getattr(_lane_ctx, "name", None)
+    if name:
+        return name
+    try:
+        from flask import has_request_context
+        if has_request_context():
+            return "live"
+    except Exception:
+        pass
+    return "nightly"
 
 
 def reset_for_tests():
@@ -501,13 +558,22 @@ def catalog_get(provider, scope, path, db_path=None):
 
 
 def catalog_put(provider, scope, path, rows, db_path=None) -> None:
+    """Keep a list read afresh. A list that has not changed since it was kept
+    has only its `fetched_at` moved (blind re-audit 10/20/26 R3-11): the
+    whole JSON — 0.5 MB and more for a group's menu or employees — was
+    rewritten on every refresh, all of it WAL on an archived Postgres."""
     try:
+        payload = json.dumps(rows, default=str)
+        now = time.time()
         conn = get_conn(db_path)
         try:
-            conn.execute("INSERT INTO pos_catalogs (provider, scope, path, payload, rows_n, fetched_at) "
-                         "VALUES (?,?,?,?,?,?) ON CONFLICT(provider, scope, path) DO UPDATE SET "
-                         "payload=excluded.payload, rows_n=excluded.rows_n, fetched_at=excluded.fetched_at",
-                         (provider, str(scope), path, json.dumps(rows, default=str), len(rows or []), time.time()))
+            same = conn.execute("UPDATE pos_catalogs SET fetched_at=? WHERE provider=? AND scope=? AND path=? "
+                                "AND payload=?", (now, provider, str(scope), path, payload)).rowcount
+            if not same:
+                conn.execute("INSERT INTO pos_catalogs (provider, scope, path, payload, rows_n, fetched_at) "
+                             "VALUES (?,?,?,?,?,?) ON CONFLICT(provider, scope, path) DO UPDATE SET "
+                             "payload=excluded.payload, rows_n=excluded.rows_n, fetched_at=excluded.fetched_at",
+                             (provider, str(scope), path, payload, len(rows or []), now))
             conn.commit()
         finally:
             conn.close()

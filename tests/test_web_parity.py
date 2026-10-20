@@ -43,7 +43,8 @@ def _restaurant(db_path, **kw):
 
 def _web_user(monkeypatch, db_path, rid):
     uid = create_user(rid, "parity", "p@x.com", "parity-pass-1", db_path=db_path)
-    user = {"id": uid, "restaurant_id": rid, "is_admin": 0, "username": "parity", "email": "p@x.com", "role": "client"}
+    user = {"id": uid, "restaurant_id": rid, "is_admin": 0, "username": "parity", "email": "p@x.com", "role": "client",
+            "reauth_at": auth.sql_utc()}   # a session that just typed its password (R7-03 step-up)
     monkeypatch.setattr(auth, "get_current_user", lambda: user)
     return user
 
@@ -68,11 +69,11 @@ def test_web_account_parity_routes_answer(client, db_path, monkeypatch):
 def test_web_profile_edit_writes_the_same_fields_as_the_phone(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     _web_user(monkeypatch, db_path, rid)
-    r = client.post("/api/account/profile", json={"owner_name": "Ada", "owner_phone": "555-0100",
+    r = client.post("/api/account/profile", json={"owner_name": "Ada", "owner_phone": "312-555-0100",
                                                   "timezone": "America/Denver", "sign_off_name": "Ada & team"})
     assert r.status_code == 200 and r.get_json()["ok"]
     rest = get_restaurant(rid)
-    assert (rest.owner_name, rest.owner_phone, rest.timezone) == ("Ada", "555-0100", "America/Denver")
+    assert (rest.owner_name, rest.owner_phone, rest.timezone) == ("Ada", "(312) 555-0100", "America/Denver")
 
 
 def test_reply_tone_no_longer_settable_even_if_sent(client, db_path, monkeypatch):

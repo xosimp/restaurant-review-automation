@@ -48,7 +48,9 @@ def _one_tick_with_a_long_fetch(monkeypatch):
     released = threading.Event()
 
     # A long INLINE job: the review fetch was one until it moved to its own
-    # lane (scale audit 10/19/26 INF-9); the nightly backup still is.
+    # lane (scale audit 10/19/26 INF-9), then the nightly backup until the
+    # queue worker took it (scale re-audit 10/20/26 R8-03); the retention
+    # prune still is.
     monkeypatch.setattr(scheduler, "_chi_now",
                         lambda: datetime(2026, 9, 22, 2, 5, tzinfo=ZoneInfo("America/Chicago")))
 
@@ -56,7 +58,8 @@ def _one_tick_with_a_long_fetch(monkeypatch):
         events.append("lease")
         return True
     monkeypatch.setattr(scheduler._ops, "acquire_scheduler_lease", lease)
-    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "backup_db")
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "prune_ledgers")
+    monkeypatch.setattr(scheduler, "_backup_settled", lambda *a, **k: True)
     monkeypatch.setattr(scheduler._ops, "run_job", lambda name, fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(scheduler._ops, "capture", lambda *a, **k: None)
 
@@ -67,8 +70,7 @@ def _one_tick_with_a_long_fetch(monkeypatch):
         released.wait(0.1)
         events.append("fetch_end")
         return {"processed": 0}
-    monkeypatch.setattr(scheduler, "backup_db", long_fetch)
-    monkeypatch.setattr(scheduler, "run_nightly_retention", lambda *a, **k: {"attempted": 0})
+    monkeypatch.setattr(scheduler, "run_nightly_retention", long_fetch)
 
     def release_due_alerts(*a, **k):
         events.append("release_due_alerts")
@@ -123,6 +125,7 @@ def _insert_restaurants(db_path, n):
     c.commit(); c.close()
 
 
+@pytest.mark.sqlite_only     # sqlite3.Row's own keys()
 def test_hydrating_every_restaurant_calls_row_keys_a_bounded_number_of_times_per_row(monkeypatch, db_path):
     _insert_restaurants(db_path, 200)
     counter = {"n": 0}
@@ -181,6 +184,7 @@ def test_claiming_a_period_runs_no_schema_ddl(monkeypatch, db_path):
     assert not [s for s in statements if "CREATE TABLE" in s.upper()], statements
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_the_claim_prune_uses_an_index(monkeypatch, db_path):
     _traced(monkeypatch, db_path)
     ops.claim_period("edge_job", "2026-09-22")  # the table exists after a claim, whoever creates it
@@ -219,6 +223,7 @@ def test_run_due_executes_due_actions_oldest_first_and_only_once(monkeypatch, re
 
 # ── MOD-PERF-5: a malformed row must not vanish silently ────────────────────
 
+@pytest.mark.sqlite_only     # a malformed value Postgres's typed column refuses at write
 def test_a_restaurant_with_a_malformed_numeric_column_is_kept_or_reported(monkeypatch, redirect):
     good = models.create_restaurant(models.Restaurant(name="Good", owner_email="g@x.com"), db_path=redirect)
     bad = models.create_restaurant(models.Restaurant(name="Bad", owner_email="b@x.com"), db_path=redirect)
@@ -249,6 +254,7 @@ _HOT_QUERIES = {
 
 
 @pytest.mark.parametrize("table", sorted(_HOT_QUERIES))
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_a_per_restaurant_hot_query_does_not_scan_the_whole_table(db_path, table):
     c = sqlite3.connect(db_path)
     plan = [r[3] for r in c.execute("EXPLAIN QUERY PLAN " + _HOT_QUERIES[table], (1,))]

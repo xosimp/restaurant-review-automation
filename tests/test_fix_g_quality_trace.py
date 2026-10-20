@@ -106,7 +106,7 @@ def test_the_moved_capture_sites_no_longer_write_job_failures():
     import reporter
     import strategy_jobs
     for fn, needle in ((labor._drop_note_bullets, "schedule note bullet dropped"),
-                       (strategy_jobs.run_weekly_plan, "weekly plan item not filed"),
+                       (strategy_jobs.weekly_plan_one, "weekly plan item not filed"),
                        (competitor._validate_bullets, "strength/weakness"),
                        (reporter.generate_ai_digest_summary, "line dropped")):
         src = inspect.getsource(fn)

@@ -117,8 +117,25 @@ struct HomeNeedsYou: View {
                     .cavnarText(.secondary, color: .cavnarRedText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Today's brief is still being built on the server (blind
+            // re-audit 10/20/26 R6-F4): the pulse, read again shortly.
+            if day.briefPreparing {
+                HStack(spacing: CavnarSpace.xs) {
+                    CavnarSkeletonBar(height: 3).frame(width: 72)
+                    Text("Preparing today\u{2019}s brief").cavnarText(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            // A read that failed is said (R6-F13): never an "All clear"
+            // over open issues or comps & voids nobody could read.
+            let failed = Self.failedLine(day: day, followThrough: followThrough)
+            if let failed {
+                Text(failed)
+                    .cavnarText(.secondary, color: .cavnarRedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if all.isEmpty {
-                emptyState
+                if failed == nil { emptyState }
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(all.prefix(cap).enumerated()), id: \.element.id) { index, entry in
@@ -195,6 +212,18 @@ struct HomeNeedsYou: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(count > 0 ? "Needs you, \(count)" : "Needs you")
+    }
+
+    /// "Couldn't load open issues and comps & voids. Pull down to try
+    /// again." — the reads behind this card that failed, or nil.
+    static func failedLine(day: HomeDayViewModel, followThrough: HomeFollowThroughViewModel) -> String? {
+        var what: [String] = []
+        if day.briefFailed { what.append("today\u{2019}s brief") }
+        if day.issuesFailed { what.append("open issues") }
+        if followThrough.lossFailed { what.append("comps & voids") }
+        guard !what.isEmpty else { return nil }
+        return "Couldn\u{2019}t load " + ListFormatter.localizedString(byJoining: what)
+            + ". Pull down to try again."
     }
 
     @ViewBuilder

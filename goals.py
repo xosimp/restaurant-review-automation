@@ -282,10 +282,20 @@ def progress(restaurant_id, db_path=DB_PATH, today=None, include_retired=False):
             (restaurant_id,)).fetchall()]
     finally:
         conn.close()
+    from models import viewer_sees_salaries
+    sees = viewer_sees_salaries()
     out = []
     for g in rows:
         info = metrics.describe(g["metric"])
-        now = metrics.trailing(restaurant_id, g["metric"], end=today, db_path=db_path)
+        # A salary-sensitive goal (labor % is all-in for the owner) is judged
+        # on its own basis for everyone, and its figures are shown only to a
+        # viewer who may see salaries: read on the viewer's hourly basis it
+        # read "met" against the owner's all-in target, and the figure next
+        # to the target gave the salaries away (blind re-audit 10/20/26, G9's
+        # note on goals.progress).
+        hide = metrics.salary_sensitive(g["metric"]) and not sees
+        now = metrics.trailing(restaurant_id, g["metric"], end=today, db_path=db_path,
+                               with_salaries=True if hide else None)
         current = now["value"]
         g.update({"label": info["label"], "unit": info["unit"],
                   "lower_is_better": info["lower_is_better"],
@@ -313,6 +323,8 @@ def progress(restaurant_id, db_path=DB_PATH, today=None, include_retired=False):
                 if not include_retired and -days_left > MISSED_GRACE_DAYS:
                     continue            # past its grace: retired, whether or not the sweep has run
         g["gap"] = (round(current - g["target"], 2) if current is not None else None)
+        if hide:
+            g.update(current=None, current_detail=None, gap=None, band=None, figures_hidden=True)
         out.append(g)
     return out
 

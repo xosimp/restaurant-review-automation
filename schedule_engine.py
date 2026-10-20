@@ -696,12 +696,33 @@ def _enqueue_generation(job_id, restaurant_id, prior_draft_id=None, rejection=No
         _degraded(f"attribution_for_thread failed — went on without it: {_sx!r}", _sx)
         attribution = {}
     payload = {"job_id": str(job_id), "restaurant_id": restaurant_id, "prior_draft_id": prior_draft_id,
-               "rejection": rej, "kwargs": dict(job_kwargs), "attribution": attribution}
+               "rejection": rej, "kwargs": dict(job_kwargs), "attribution": attribution,
+               # What it holds at its peak, by its roster (R5-06): the queue
+               # admits it by this against the container's memory.
+               "mem_mb": generation_memory_mb(restaurant_id)}
     qid, _created = _jq.enqueue("schedule_generate", payload, restaurant_id=restaurant_id,
                                 external_id=str(job_id), idempotency_key=f"schedule_generate:{job_id}", wake=False)
     fut = _jq.local_future(qid)
     _jq.kick("generation")
     return fut
+
+
+def generation_memory_mb(restaurant_id) -> float:
+    """job_queue.generation_memory_mb of the restaurant's roster (its people
+    not merged away and active) — GEN_SLOT_MB's figure when unreadable."""
+    import job_queue as _jq_mem
+    try:
+        from models import get_conn as _gc_mem
+        conn = _gc_mem()
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM people WHERE restaurant_id=? AND merged_into IS NULL "
+                             "AND active=1", (int(restaurant_id),)).fetchone()[0]
+        finally:
+            conn.close()
+    except Exception as e:
+        _degraded(f"roster size unreadable for the memory estimate: {e!r}", e)
+        n = None
+    return _jq_mem.generation_memory_mb(n)
 
 
 def run_queued_generation(job):
@@ -740,8 +761,14 @@ def run_queued_generation(job):
         _ops.capture(e, job="schedule_generate", context=f"restaurant_id={restaurant_id} job={job_id}")
         _ops.finish_async_job(job_id, "error", {"ok": False, "error": generation_error_message(e)})
     finally:
-        _settle_rejection(job_id, restaurant_id, p.get("rejection"))
-        notify_generation_watchers(job_id, restaurant_id)
+        # A copy whose queue lease was lost (job_queue.LeaseLost, blind
+        # re-audit 10/20/26 R1-05) leaves the settling and the watchers to
+        # the consumer now running the row: taking them here pushed nothing
+        # and left that consumer no one to tell.
+        import job_queue as _jq_lost
+        if not _jq_lost.lease_lost(job):
+            _settle_rejection(job_id, restaurant_id, p.get("rejection"))
+            notify_generation_watchers(job_id, restaurant_id)
     state = _ops.read_async_job(job_id, restaurant_id=restaurant_id) or {}
     res = state.get("result") if isinstance(state.get("result"), dict) else {}
     return {"status": state.get("status"), "history_id": res.get("history_id"), "resumed": bool(resumed)}
@@ -8612,7 +8639,8 @@ def what_if_seconds():
 
 
 @in_restaurant_dayparts
-def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, frozen=None, **extra):
+def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=None, frozen=None, sweep_out=None,
+                            **extra):
     """Score the finished schedule, then see whether a better one existed.
 
     The what-if pass only ever trades two people between shifts of the same
@@ -8626,6 +8654,11 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
     `frozen` — (signals, weights) a generation already read for these rows'
     week: scored on them, with `extra` (the rows' own hard breaches, flags)
     laid over, instead of reading every signal again.
+
+    `sweep_out` — a dict this call's own rule sweep of `rows` is handed back
+    in (["violations"], the Studio's kept sweep): never left on the shared
+    `prepared` entry, where another editor's overlapping score of the same
+    week read it after the lock was let go (blind re-audit 10/20/26 R9-17).
     """
     import shift_quality as _sq
     import schedule_fixes as _fixes_wi
@@ -8637,10 +8670,13 @@ def _score_schedule_quality(restaurant_id, rows, result, what_if=True, prepared=
         if lock is not None:
             lock.acquire()
         try:
-            quality, signals, weights = _score_prepared(restaurant_id, rows, result, prepared, extra, profiles)
+            quality, signals, weights, _viols = _score_prepared(restaurant_id, rows, result, prepared, extra,
+                                                                profiles)
         finally:
             if lock is not None:
                 lock.release()
+        if sweep_out is not None:
+            sweep_out["violations"] = _viols
     else:
         quality, signals, weights = _score_fresh(restaurant_id, rows, result, extra, profiles, frozen=frozen)
 
@@ -8762,7 +8798,8 @@ def _score_fresh(restaurant_id, rows, result, extra, profiles, frozen=None) -> t
 
 
 def _score_prepared(restaurant_id, rows, result, prepared, extra, profiles) -> tuple:
-    """(quality, signals, weights) of `rows` over the Studio's kept inputs:
+    """(quality, signals, weights, violations) of `rows` over the Studio's kept inputs
+    — the violations this call's own (R9-17), never stored on `prepared`:
     the kept sweep, and — the week's rules being there — the kept exact
     scorer (shift_quality.LocalScorer.evaluate: score_rows' answer,
     re-scoring only the dates the edit moved)."""
@@ -8775,11 +8812,10 @@ def _score_prepared(restaurant_id, rows, result, prepared, extra, profiles) -> t
     signals = dict(prepared["signals"])
     signals.update(extra)
     weights = prepared["weights"]
-    prepared["violations"] = viols
     if viols is None:
         # No rules to keep a sweep of (the week's constraints could not be
         # built): nothing to gain from keeping the scorer either.
-        return _sq.score_rows(rows, profiles=profiles, weights=weights, **signals), signals, weights
+        return _sq.score_rows(rows, profiles=profiles, weights=weights, **signals), signals, weights, None
     if prepared.get("scorer") is None:
         prepared["scorer"] = _sq.LocalScorer(rows, profiles=profiles, weights=weights, exact=True,
                                              cache_limit=STUDIO_SCORER_DATES,
@@ -8788,7 +8824,7 @@ def _score_prepared(restaurant_id, rows, result, prepared, extra, profiles) -> t
     quality = prepared["scorer"].evaluate(rows, flagged=signals.get("flagged") or set(),
                                           hard_breaches=signals.get("hard_breaches") or {})
     _studio_reweigh(prepared)
-    return quality, signals, weights
+    return quality, signals, weights, viols
 
 
 def mark_next_week_built(restaurant_id, history_id) -> int:
@@ -11259,7 +11295,7 @@ def _in_frozen_inputs(fn):
 @_in_schedule_run
 @_in_frozen_inputs
 def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_history_id=None,
-                      focus=None, gate=True, instruction=None, keep_locked=True):
+                      focus=None, gate=True, instruction=None, keep_locked=True, empty_week_only=False):
     """The generation job — every caller's entry point (the press's queue row,
     the old pool, the auto-draft, tests). week_start picks the week (any date
     in it); keep_locked False (the Generate button's "Start fresh") drops the
@@ -11269,7 +11305,9 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     prompt; gate allows the quality gate's passes on a whole week — never on a
     redo the owner asked for, which must touch only the days they chose.
     instruction is what the owner asked for with this draft, their reason for
-    a redo joined on (with_redo_reason).
+    a redo joined on (with_redo_reason). empty_week_only (the auto-draft,
+    blind re-audit 10/20/26 R5-01) saves only while the week has no draft
+    in force and never went out — checked inside the save's write.
 
     The job itself is schedule_job.run: a pipeline of named stages over one
     GenerationRun, each pass held in memory and only the winner saved, once.
@@ -11278,9 +11316,12 @@ def _run_schedule_job(job_id, restaurant_id, week_start=None, dates=None, base_h
     import schedule_job
     schedule_job.run(schedule_job.Request(job_id, restaurant_id, week_start=week_start, dates=dates,
                                           base_history_id=base_history_id, focus=focus, gate=gate,
-                                          instruction=instruction, keep_locked=keep_locked))
+                                          instruction=instruction, keep_locked=keep_locked,
+                                          empty_week_only=empty_week_only))
 
 
+WEEK_TAKEN_MESSAGE = ("This week already has a schedule, so the automatic draft wasn't saved over it — "
+                      "yours is kept.")
 _TIMED_OUT_MESSAGE = ("The schedule didn't finish in the time a generation is given, so nothing was saved. "
                       "Try again.")
 _SAVE_FAILED_MESSAGE = ("The schedule was written but couldn't be saved — the database was busy — so it isn't in "
@@ -11308,13 +11349,17 @@ def _save_durably(job_id, clock, *args, **kwargs):
     to finish "ok" with no history id, a draft on screen that could never
     be saved or sent."""
     import sqlite3
-    from models import save_schedule_history, DraftChanged, JobNotPending
+    from models import save_schedule_history, DraftChanged, JobNotPending, WeekAlreadyDrafted
     last = None
     for attempt in range(SAVE_ATTEMPTS):
         try:
             return save_schedule_history(*args, job_id=job_id, **kwargs)
         except DraftChanged:
             raise
+        except WeekAlreadyDrafted:
+            # The auto-draft's week was drafted or sent while it ran (R5-01):
+            # the owner's copy stands, nothing is written.
+            raise ScheduleGenerationError(WEEK_TAKEN_MESSAGE)
         except JobNotPending as stop:
             if stop.stop or (clock is not None and clock.stop_requested()):
                 raise ScheduleStopped(STOPPED_MESSAGE)

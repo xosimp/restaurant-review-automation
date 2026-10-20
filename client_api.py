@@ -6493,6 +6493,12 @@ def _do_request_account_deletion(rid, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "owner_only": True,
                 "error": "Only the account owner can ask to close the account."}, 403
+    # The password again, never in view-as (re-audit 10/20/26 R7-03).
+    if current_user is not None:
+        from auth import account_step_up_refusal
+        refused = account_step_up_refusal(current_user)
+        if refused:
+            return refused
     from models import request_account_deletion, get_deletion_requested_at
     restaurant = get_restaurant(rid)
     if not restaurant:
@@ -10722,9 +10728,12 @@ def _count_notifications_unread(current_user, scope=None):
             stamp, strict = notification_unread_bound(uid, i)
             parts.append(f"(w.restaurant_id = ? AND COALESCE(w.fired_at, '') {'>' if strict else '>='} ?)")
             bound_args += [i, stamp]
-        past_mark = "(" + " OR ".join(parts) + ")" if parts else "0"
+        past_mark = "(" + " OR ".join(parts) + ")" if parts else "(1 = 0)"
     else:
-        past_mark, bound_args = "1", []
+        # A boolean, not 1/0: `past_mark AND NOT opened` below is a boolean
+        # AND, which Postgres refuses on an integer (blind re-audit 10/20/26
+        # R9-02 — the Postgres mode found it).
+        past_mark, bound_args = "(1 = 1)", []
     conn = get_conn()
     try:
         have = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
@@ -11119,6 +11128,36 @@ def _auto_approve_trust_safe(rid):
         return {str(k): v for k, v in auto_approve_trust(rid).items()}
     except Exception:
         return {}
+
+
+def _do_setup_confirmations(rid, data=None, current_user=None):
+    """The owner's own setup confirmations (scale re-audit 10/20/26 R8-11):
+    `data` None reads them; {step, value?} confirms one — the same
+    onboarding.confirm the console's Setup uses (week_start applies its day),
+    recorded as the owner's and in the account's activity. Owner-only: the
+    payroll week and the rates are the account holder's judgments, and a
+    confirmation releases the weekly auto-draft."""
+    import onboarding
+    from permissions import is_principal
+    if current_user is not None and not is_principal(current_user):
+        return {"ok": False, "owner_only": True,
+                "error": "Only the account owner can confirm the setup."}, 403
+    r = get_restaurant(rid)
+    if r is None:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    if data is None:
+        return dict(onboarding.owner_setup(r), ok=True), 200
+    step = (data or {}).get("step")
+    if step not in onboarding.OWNER_STEPS or not getattr(r, "module_labor", 0):
+        return {"ok": False, "error": "That isn't a setup step for this restaurant."}, 400
+    who = f"owner:{(current_user or {}).get('username') or (current_user or {}).get('email') or 'owner'}"
+    out = onboarding.confirm(rid, step, value=(data or {}).get("value"), who=who)
+    if not out.get("ok"):
+        return out, 400
+    log_account_event(rid, "setup_confirmed", current_user,
+                      detail=f"{step}" + (f": {out['value'].get('label')}" if isinstance(out.get("value"), dict)
+                                          and out["value"].get("label") else ""))
+    return dict(onboarding.owner_setup(get_restaurant(rid)), ok=True, applied=out.get("applied") or {}), 200
 
 
 def _do_auto_approve(rid, data, current_user=None):
@@ -11551,6 +11590,23 @@ def brand_voice(current_user):
                        # Read-only for anyone but an account holder (PROMPTS-9).
                        can_edit=_is_principal_bv(current_user))
     payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/setup")
+@login_required
+def account_setup_confirmations(current_user):
+    """The labor setup steps that hold the weekly auto-draft, owner-only
+    (client_api._do_setup_confirmations, R8-11)."""
+    payload, status = _do_setup_confirmations(current_user["restaurant_id"], None, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/setup/confirm", methods=["POST"])
+@login_required
+def account_setup_confirm(current_user):
+    payload, status = _do_setup_confirmations(current_user["restaurant_id"],
+                                              request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
 

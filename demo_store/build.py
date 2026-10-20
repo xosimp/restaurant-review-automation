@@ -943,18 +943,41 @@ def _refresh_kitchen(rid, start, end) -> dict:
     return {"days": len(days), "counts": counted}
 
 
+# The simulated ticket archive is kept to the window the showcase shows
+# (ARCHIVE_DAYS) and a month over (blind re-audit 10/20/26 R3-17): it was
+# kept for HISTORY_DAYS + 30, about a year of simulated checks — 35–40% of
+# the production database and of every backup. The daily sales and labor
+# history (HISTORY_DAYS) are other tables and are kept. A day removed here
+# is removed whole (its archive row and item rollup with its lines), so no
+# reader takes it for a stored night with no checks.
+ARCHIVE_KEEP_DAYS = ARCHIVE_DAYS + 30
+PRUNE_CHUNK_DAYS = 31                     # one month a transaction, oldest first
+
+
 def _prune(rid) -> int:
     import models
-    cutoff = (api.business_today() - timedelta(days=HISTORY_DAYS + 30)).isoformat()
+    if not demo_store.is_simulated(rid):
+        return 0                          # never a real store's archive
+    cutoff = api.business_today() - timedelta(days=ARCHIVE_KEEP_DAYS)
+    tables = ("pos_ticket_lines", "pos_tickets", "pos_punches", "pos_payments", "pos_payouts", "pos_item_daily",
+              "pos_archive_days")
     conn = models.get_conn()
     n = 0
     try:
-        for t in ("pos_ticket_lines", "pos_tickets", "pos_punches", "pos_payments", "pos_payouts", "pos_archive_days"):
+        oldest = conn.execute("SELECT MIN(business_date) FROM pos_archive_days WHERE restaurant_id=?",
+                              (rid,)).fetchone()[0]
+        lo = date.fromisoformat(str(oldest)[:10]) if oldest else cutoff
+        while lo < cutoff:
+            hi = min(lo + timedelta(days=PRUNE_CHUNK_DAYS), cutoff)
             try:
-                n += conn.execute(f"DELETE FROM {t} WHERE restaurant_id=? AND business_date<?", (rid, cutoff)).rowcount
+                for t in tables:
+                    n += conn.execute(f"DELETE FROM {t} WHERE restaurant_id=? AND business_date>=? "
+                                      f"AND business_date<?", (rid, lo.isoformat(), hi.isoformat())).rowcount
+                conn.commit()
             except Exception:
-                pass
-        conn.commit()
+                conn.rollback()
+                raise
+            lo = hi
     finally:
         conn.close()
     return n
