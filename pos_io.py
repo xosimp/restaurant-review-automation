@@ -156,6 +156,19 @@ def _hour_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00:00")
 
 
+def _flush_at_exit():
+    try:
+        flush()
+    except Exception:
+        pass
+
+
+# A deploy or a recycled worker writes what it counted (never more than one
+# flush interval is lost to a crash).
+import atexit as _atexit
+_atexit.register(_flush_at_exit)
+
+
 def record(provider, restaurant_id, endpoint, outcome, ms=None, rows=None):
     """One request (or one refused before it was sent: outcome 'skipped')
     into this process's hourly aggregate. Never raises, never blocks on the

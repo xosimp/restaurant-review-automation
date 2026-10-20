@@ -84,6 +84,9 @@ RETRY_BACKOFF = 2.0
 # not 45, and one socket read may take 30 s. 45 s for both meant one dead
 # request held a job thread for minutes across its three tries.
 TIMEOUT_SECONDS = (3.05, 30)
+# Small answers get a short read (INF-11): the DSR sweep polls closeday every
+# 10 minutes per closing store, and one hung poll held the serial sweep.
+TIMEOUT_BY_PATH = {"closeday/getbybusinessdate": (3.05, 10), "store/get": (3.05, 10)}
 # A 429's Retry-After is slept up to this many seconds, never more (food &
 # bar audit 10/16/26 POS-13): an uncapped header could hold a thread for as
 # long as the server liked. A longer one is no longer cut short and retried
@@ -499,7 +502,8 @@ def _request(token: str, path: str, params: dict = None) -> object:
             raise
         t0 = time.monotonic()
         try:
-            resp = requests.get(url, headers=headers, params=params or {}, timeout=TIMEOUT_SECONDS)
+            resp = requests.get(url, headers=headers, params=params or {},
+                                timeout=TIMEOUT_BY_PATH.get(path, TIMEOUT_SECONDS))
         except Exception as e:
             ms = (time.monotonic() - t0) * 1000.0
             pos_io.record("rpower", rid, path, "transport", ms)
