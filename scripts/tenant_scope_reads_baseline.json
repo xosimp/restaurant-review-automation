@@ -23,6 +23,7 @@
  "guest_email.py::guest_newsletters": 2,
  "guest_marketing.py::guest_campaign_drafts": 1,
  "guest_marketing.py::guest_campaigns": 2,
+ "home_snapshots.py::users": 1,
  "inventory_ledger.py::ingredients": 2,
  "inventory_ledger.py::menu_items": 1,
  "issues.py::ops_issues": 3,

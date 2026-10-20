@@ -654,7 +654,13 @@ def test_sentry_events_are_scrubbed():
     for secret in ("AIzaSECRET", "shh", "abc123", "zzz", "sk-live-123"):
         assert secret not in flat, secret
     src = open(os.path.join(ROOT, "sentry_setup.py"), encoding="utf-8").read()
-    assert "include_local_variables=False" in src and "before_send=scrub_event" in src
+    assert "include_local_variables=False" in src and "before_send=_scrub_then_sample" in src
+    # One before_send: the scrub first, then G1's sampling ceiling (R1-06).
+    seen = []
+    import unittest.mock as _m
+    with _m.patch.object(sentry_setup, "before_send", lambda e, h=None: seen.append(repr(e)) or e):
+        sentry_setup._scrub_then_sample(event)
+    assert seen and "AIzaSECRET" not in seen[0]
 
 
 # ── R7-13: the remaining admin writes record themselves, typed ─────────────

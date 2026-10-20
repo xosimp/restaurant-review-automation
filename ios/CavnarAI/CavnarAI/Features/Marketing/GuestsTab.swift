@@ -214,15 +214,23 @@ final class GuestsTabViewModel {
     }
 
     private struct HostAdd: Encodable {
-        let name: String, phone: String, party: Int?, invite: Bool, asked: Bool
+        let name: String
+        let phone: String
+        let party: Int?
+        let invite: Bool
+        let asked: Bool
     }
 
     private struct FollowSave: Encodable {
-        let enabled: Bool, message: String
+        let enabled: Bool
+        let message: String
         let review_link: Bool
     }
 
-    private struct ReplyBody: Encodable { let phone: String, body: String }
+    private struct ReplyBody: Encodable {
+        let phone: String
+        let body: String
+    }
 
     func load() async {
         isLoading = true
