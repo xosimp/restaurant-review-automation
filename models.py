@@ -15758,6 +15758,9 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 # those are admin telemetry, not "what changed on my account".
 ACCOUNT_EVENT_TYPES = (
     # Security events the owner should see without asking (security audit).
+    # Cavnar AI's own staff opening and closing the dashboard (view-as) —
+    # access transparency (scale audit 10/19/26, SEC-12).
+    "support_access_opened", "support_access_closed",
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
@@ -15800,6 +15803,8 @@ ACCOUNT_EVENT_TYPES = (
 )
 
 ACCOUNT_EVENT_LABELS = {
+    "support_access_opened": "Cavnar AI support opened your dashboard",
+    "support_access_closed": "Cavnar AI support closed your dashboard",
     "login": "Signed in",
     "password_changed": "Password changed",
     "email_changed": "Email address changed",

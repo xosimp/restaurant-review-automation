@@ -195,7 +195,7 @@ def test_reading_ask_history_through_view_as_is_recorded(db_path):
     c = app.test_client()
     c.set_cookie("session_token", create_session(actor, db_path=db_path))
     c.set_cookie("csrf_js", CSRF)
-    assert c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF}).status_code == 302
+    assert c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF}, data={"reason": "checking a ticket for them"}).status_code == 302
     r = c.get("/api/ask-cavnar/conversations")
     assert r.status_code == 200
     assert r.get_json()["conversations"] == [], "support does not page through the owner's chats"

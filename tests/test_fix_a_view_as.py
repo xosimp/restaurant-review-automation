@@ -85,7 +85,7 @@ def _open(app, db_path, support=False):
     actor, rid, owner = _world(db_path, support=support)
     admin_tok = create_session(actor, db_path=db_path)
     c = _client(app, admin_tok)
-    r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF})
+    r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF}, data={"reason": "checking a ticket for them"})
     assert r.status_code == 302
     return c, actor, rid, owner, admin_tok
 
@@ -144,7 +144,7 @@ def test_view_as_refuses_a_restaurant_with_no_owner_login(app, db_path):
     mgr = create_user(rid, "mgr", "m@x.test", "Manager-pass-2026", role="manager", db_path=db_path)
     upsert_membership(mgr, rid, "manager", db_path=db_path)
     c = _client(app, create_session(admin, db_path=db_path))
-    r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF})
+    r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": CSRF}, data={"reason": "checking a ticket for them"})
     assert r.status_code == 404
     conn = models.get_conn(db_path)
     assert conn.execute("SELECT COUNT(*) FROM sessions WHERE device_type='admin-view-as'").fetchone()[0] == 0
@@ -211,7 +211,7 @@ csrf = c.get_cookie("csrf_js").value if c.get_cookie("csrf_js") else ""
 if not csrf:
     c.get("/admin/view-as/%d" % rid)
     csrf = c.get_cookie("csrf_js").value
-r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": csrf})
+r = c.post("/admin/view-as/%d" % rid, headers={"X-CSRF": csrf}, data={"reason": "checking a ticket for them"})
 out["view_as"] = r.status_code
 html = c.get("/").get_data(as_text=True)
 out["banner"] = 'id="view-as-banner"' in html

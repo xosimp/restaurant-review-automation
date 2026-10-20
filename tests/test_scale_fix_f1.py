@@ -255,6 +255,28 @@ def test_sec11_owners_of_new_restaurants_sign_in_with_a_second_factor(monkeypatc
     assert not auth.login_needs_second_factor(nowhere, gone), "never a lock-out: no address, no requirement"
 
 
+def test_sec12_the_tenant_sees_support_access_and_why(db_path, monkeypatch):
+    import inspect
+    import admin_routes
+    import models
+    from models import Restaurant, create_restaurant
+    real = models.get_conn
+    monkeypatch.setattr(models, "get_conn", lambda *a, **k: real(db_path))
+    assert admin_routes.view_as_reason("  ") == "" and admin_routes.view_as_reason("fix") == ""
+    assert admin_routes.view_as_reason("Ticket 41: schedule won't publish") == "Ticket 41: schedule won't publish"
+    rid = create_restaurant(Restaurant(name="Seen Co", owner_email="s@x.test"), db_path=db_path)
+    admin_routes.tell_tenant_support_access(rid, "opened", {"username": "will"}, "Ticket 41", read_only=False)
+    admin_routes.tell_tenant_support_access(rid, "closed", {"username": "will"})
+    events = models.get_account_activity(rid, db_path=db_path)
+    kinds = [e["type"] for e in events]
+    assert "support_access_opened" in kinds and "support_access_closed" in kinds
+    opened = [e for e in events if e["type"] == "support_access_opened"][0]
+    assert "will" in opened["detail"] and "Ticket 41" in opened["detail"]
+    assert opened["label"] == "Cavnar AI support opened your dashboard"
+    src = inspect.getsource(admin_routes.view_as_client)
+    assert "view_as_reason(" in src and "tell_tenant_support_access(" in src and ", 400" in src
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api

@@ -3976,10 +3976,14 @@ def mobile_admin_view_as(restaurant_id, current_user):
     refused = _internal_login_refusal(current_user)
     if refused:
         return refused
-    from admin_routes import _principal_login_id, _audit_admin_action
+    from admin_routes import _principal_login_id, _audit_admin_action, view_as_reason, tell_tenant_support_access
     user_id = _principal_login_id(restaurant_id)
     if not user_id:
         return jsonify(ok=False, error="This restaurant has no owner login to view as."), 404
+    # A reason the tenant sees (scale audit 10/19/26, SEC-12). App builds
+    # from before it send none: recorded as such, never refused, so an
+    # admin's phone still opens a view.
+    reason = view_as_reason((request.get_json(silent=True) or {}).get("reason")) or "opened from the app (no reason given)"
     from auth import create_view_as_session, get_session_user, VIEW_AS_HOURS, sql_utc
     from datetime import datetime as _dt_mva, timedelta as _td_mva, timezone as _tz_mva
     read_only = not current_user.get("is_admin")
@@ -3993,10 +3997,11 @@ def mobile_admin_view_as(restaurant_id, current_user):
     _audit_admin_action(current_user, "view_as_started", restaurant_id=restaurant_id,
                         target=f"user:{user_id}",
                         after={"target_user_id": user_id, "read_only": read_only, "hours": VIEW_AS_HOURS,
-                               "ends_at": sql_utc(ends), "surface": "ios"},
+                               "ends_at": sql_utc(ends), "surface": "ios", "reason": reason},
                         summary=(f"{current_user.get('username')} opened a "
                                  f"{'read-only ' if read_only else ''}view-as session from the app "
                                  f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"))
+    tell_tenant_support_access(restaurant_id, "opened", current_user, reason, read_only=read_only)
     rest = get_restaurant(restaurant_id)
     return jsonify(ok=True, token=token, user=_public_user(viewing), restaurant_id=restaurant_id,
                    restaurant_name=(rest.name if rest else None) or f"Restaurant {restaurant_id}",
@@ -4025,6 +4030,9 @@ def mobile_admin_stop_viewing():
                         after={"view_as": False, "surface": "ios"},
                         summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
                                 f"{viewing.get('username')} from the app")
+    from admin_routes import tell_tenant_support_access
+    tell_tenant_support_access(viewing.get("restaurant_id"), "closed",
+                               {"username": viewing.get("acting_admin") or "Cavnar AI support"})
     return jsonify(ok=True, stopped=True)
 
 

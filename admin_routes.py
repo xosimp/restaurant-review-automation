@@ -2641,6 +2641,9 @@ def view_as_client(restaurant_id, current_user):
                 "that has the owner's login, or add one first."), 404
     if request.method != "POST":
         return _view_as_confirm_page(restaurant_id)
+    reason = view_as_reason(request.form.get("reason"))
+    if not reason:
+        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE), 400
     from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
     from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
     read_only = not current_user.get("is_admin")
@@ -2652,10 +2655,12 @@ def view_as_client(restaurant_id, current_user):
     _audit_admin_action(current_user, "view_as_started", restaurant_id=restaurant_id,
                         target=f"user:{user_id}",
                         after={"target_user_id": user_id, "read_only": read_only, "hours": VIEW_AS_HOURS,
-                               "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS))},
+                               "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS)),
+                               "reason": reason},
                         summary=(f"{current_user.get('username')} opened a "
                                  f"{'read-only ' if read_only else ''}view-as session "
-                                 f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"))
+                                 f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h): {reason}"[:300]))
+    tell_tenant_support_access(restaurant_id, "opened", current_user, reason, read_only=read_only)
     resp = make_response(redirect("/"))
     # The cookie ends when the session does: VIEW_AS_HOURS, absolute.
     resp.set_cookie("session_token", token, max_age=VIEW_AS_HOURS * 3600,
@@ -2670,12 +2675,36 @@ def view_as_client(restaurant_id, current_user):
     return resp
 
 
+VIEW_AS_REASON_MESSAGE = "Say why you're opening their dashboard (a ticket, their request, a fix) — they see it."
+
+
+def view_as_reason(raw):
+    """The reason a view-as is opened, or '' when it is missing or too
+    short to mean anything (scale audit 10/19/26, SEC-12)."""
+    text = " ".join(str(raw or "").split())[:200]
+    return text if len(text) >= 8 else ""
+
+
+def tell_tenant_support_access(restaurant_id, what, admin, reason=None, read_only=False):
+    """The restaurant's own Account → Security → Activity says Cavnar AI
+    staff opened (or closed) its dashboard, who and why — access
+    transparency the operator's trail alone never gave the tenant
+    (SEC-12). Never raises."""
+    try:
+        from models import log_account_event as _lae
+        name = (admin or {}).get("username") or (admin or {}).get("acting_admin") or "Cavnar AI support"
+        detail = (f"{name}" + (" (read-only)" if read_only else "") + (f": {reason}" if reason else ""))[:240]
+        _lae(restaurant_id, f"support_access_{what}", {"username": name}, detail=detail)
+    except Exception as e:
+        _ops.capture(e, job="support_access_notice", context=f"restaurant_id={restaurant_id}")
+
+
 # The admin's own session token while a view-as is open, readable only by
 # /admin/stop-viewing (path-scoped, HttpOnly, SameSite=Strict).
 _VIEW_AS_RETURN_COOKIE = "cavnar_admin_return"
 
 
-def _view_as_confirm_page(restaurant_id):
+def _view_as_confirm_page(restaurant_id, error=None):
     """The GET half of view-as: a button that POSTs, carrying the csrf_js
     double-submit token (minted here when this browser has none yet —
     ensure_csrf_cookie leaves a response that already sets one alone)."""
@@ -2694,7 +2723,11 @@ def _view_as_confirm_page(restaurant_id):
         f"you make is recorded under your name.</p>"
         f"<form method='post' action='/admin/view-as/{int(restaurant_id)}'>"
         f"<input type='hidden' name='csrf_token' value='{_esc_va(csrf_tok)}'>"
-        f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
+        f"<p><label for='va-reason'>Why? They see this in their account activity.</label><br>"
+        f"<input id='va-reason' name='reason' required minlength='8' maxlength='200' "
+        f"style='width:100%;max-width:420px' placeholder='Ticket, their request, the fix you are checking'></p>"
+        + (f"<p style='color:var(--bad)'>{_esc_va(error)}</p>" if error else "")
+        + f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
         f"<p style='margin-top:16px'><a href='/admin'>Back to the admin console</a></p>")
     resp = make_response(body)
     if not request.cookies.get(CSRF_COOKIE):
@@ -2747,6 +2780,8 @@ def stop_viewing():
                         after={"view_as": False},
                         summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
                                 f"{viewing.get('username')}")
+    tell_tenant_support_access(viewing.get("restaurant_id"), "closed",
+                               {"username": viewing.get("acting_admin") or "Cavnar AI support"})
     own = request.cookies.get(_VIEW_AS_RETURN_COOKIE, "")
     back = get_session_user(own) if own else None
     from auth import is_internal_login as _iil_sv, session_cookie_max_age as _scma_sv
