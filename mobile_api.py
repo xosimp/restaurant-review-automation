@@ -6051,6 +6051,18 @@ def mobile_guests_import(current_user):
         return refused
     d = request.get_json(silent=True) or {}
     text = str(d.get("csv") or "")
+    if d.get("xlsx_b64"):
+        # An Excel workbook (.xlsx), read server-side (guest_hub.xlsx_to_csv).
+        import base64
+        try:
+            raw = base64.b64decode(str(d.get("xlsx_b64")).split(",", 1)[-1], validate=False)
+            if len(raw) > 5_000_000:
+                return jsonify(ok=False, error="That workbook is too big. Keep it under 5 MB."), 400
+            text = guest_hub.xlsx_to_csv(raw)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 400
+        except Exception:
+            return jsonify(ok=False, error="That workbook couldn't be read. Save it as .xlsx or CSV and try again."), 400
     if len(text) > 2_000_000:
         return jsonify(ok=False, error="That file is too big. Split it into files under 2 MB."), 400
     res = guest_hub.import_guests(rid, text, commit=bool(d.get("commit")), attest_consent=bool(d.get("attest")),

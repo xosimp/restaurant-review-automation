@@ -1088,6 +1088,13 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .gx-file-in:focus-visible+label.cbtn{box-shadow:0 0 0 2px var(--cb-ring-gap),0 0 0 4px var(--cb-accent)}
 .gx-fname{flex:1 1 160px;min-width:0;font-size:15px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
 .gx-fname.on{color:var(--ink)}
+.gx-prev{display:flex;flex-direction:column;gap:12px;margin-top:4px;padding-top:16px;border-top:1px solid var(--cp-line)}
+.gx-prev-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:16px;color:var(--ink)}
+.gx-prev-h b{font-size:20px}
+.gx-cols{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.gx-st{border:1px solid var(--cp-line);border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden}
+.gx-st th,.gx-st td{padding:9px 14px;font-size:14px}
+.gx .gx-go{height:44px}
 .gx-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:stretch}
 .gx-sh{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .gx-sh .k{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -15579,12 +15586,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       <div class="cp-h"><div class="k">Bring in</div><h2 id="gx-imp-h">Your guest spreadsheet</h2></div>
       <div class="cp-card gx-imp">
         <div class="gx-row">
-          <input type="file" id="gx-file" accept=".csv,text/csv" class="gx-file-in" aria-label="Spreadsheet saved as CSV" onchange="gxFilePicked(this)">
+          <input type="file" id="gx-file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="gx-file-in" aria-label="Guest spreadsheet (Excel or CSV)" onchange="gxFilePicked(this)">
           <label for="gx-file" class="cbtn cbtn-secondary">Choose spreadsheet</label>
           <span class="gx-fname" id="gx-fname">No file chosen</span>
           <button type="button" class="cbtn cbtn-primary" onclick="gxImport(false)">Preview</button>
         </div>
-        <p class="gx-sub">Save the sheet as CSV. Phone is required; name, email, visit date and a &ldquo;replied yes&rdquo; column are read if present.</p>
+        <p class="gx-sub">Excel (.xlsx) or CSV. A phone column is required; name, email, visit date and a &ldquo;replied yes&rdquo; column are read if present.</p>
         <div id="gx-imp-res"></div>
       </div>
       <p class="gx-sub" id="gx-tock"></p>
@@ -19956,25 +19963,41 @@ function gxFilePicked(inp) {
 }
 function gxImport(commit) {
   var res = document.getElementById('gx-imp-res'), f = document.getElementById('gx-file').files[0];
-  if (!commit && !f) { res.innerHTML = '<p class="gx-msg bad">Pick the spreadsheet first (saved as CSV).</p>'; return; }
-  function send(text) {
-    var att = document.getElementById('gx-imp-att');
-    gxPost('/api/guests/import', {csv: text, commit: !!commit, attest: !!(att && att.checked)}).then(function (d) {
+  if (!commit && !f) { res.innerHTML = '<p class="gx-msg bad">Choose the spreadsheet first.</p>'; return; }
+  function send(payload) {
+    var att = document.getElementById('gx-imp-att'), body = {commit: !!commit, attest: !!(att && att.checked)};
+    if (payload.xlsx) body.xlsx_b64 = payload.xlsx; else body.csv = payload.csv;
+    if (!commit) res.innerHTML = mktLoading('Reading your sheet\u2026', 32);
+    gxPost('/api/guests/import', body).then(function (d) {
       if (!d || !d.ok) { res.innerHTML = '<p class="gx-msg bad">' + _escHtml((d && d.error) || 'That file couldn’t be read.') + '</p>'; return; }
       if (commit) {
+        document.getElementById('gx-file').value = ''; gxFilePicked(document.getElementById('gx-file'));
         res.innerHTML = '<p class="gx-msg good">Brought in ' + d.imported + ' guests' + (d.visits ? ', ' + d.visits + ' visits' : '') + (d.consented ? ', ' + d.consented + ' already joined texts' : '') + '.</p>';
-        _gx.imp = null; document.getElementById('gx-file').value = ''; gxLoad(); return;
+        gxLoad(); return;
       }
-      var h = '<p class="gx-sub"><b class="hb-num">' + d.rows + '</b> guests found' + (d.skipped ? ', ' + d.skipped + ' rows without a usable phone skipped' : '') + '.</p>';
-      if (d.said_yes) h += '<label class="gx-ask"><input type="checkbox" id="gx-imp-att"><span><b>' + d.said_yes + ' are marked as having said yes.</b> I confirm each of them replied yes to our texts before. Leave this unticked and they come in as guests who haven’t joined.</span></label>';
-      h += '<div class="gx-acts"><button type="button" class="cbtn cbtn-primary" onclick="gxImport(true)">Bring in ' + d.rows + ' guests</button></div>';
+      var COLS = {name: 'Name', first: 'First name', last: 'Last name', phone: 'Phone', email: 'Email', date: 'Visit date', consent: 'Said yes'};
+      var cols = (d.columns || []).map(function (c) { return COLS[c] || c; });
+      var h = '<div class="gx-prev"><div class="gx-prev-h"><span><b class="hb-num">' + d.rows + '</b> ' + (d.rows === 1 ? 'guest' : 'guests') + ' found</span>'
+        + (d.skipped ? '<span class="gx-sub">' + d.skipped + ' ' + (d.skipped === 1 ? 'row' : 'rows') + ' without a phone number skipped</span>' : '') + '</div>'
+        + '<div class="gx-cols"><span class="gx-sub">Read as</span>' + cols.map(function (c) { return '<span class="cp-chip">' + _escHtml(c) + '</span>'; }).join('') + '</div>';
+      if ((d.sample || []).length) {
+        h += '<div class="gx-scroll"><table class="gx-t gx-st"><thead><tr><th>Guest</th><th>Phone</th><th>Visit</th>' + (d.said_yes ? '<th>Said yes</th>' : '') + '</tr></thead><tbody>';
+        for (var si = 0; si < d.sample.length; si++) {
+          var x = d.sample[si];
+          h += '<tr><td>' + _escHtml(x.name || '—') + '</td><td class="hb-num">' + _escHtml(x.phone) + '</td><td class="hb-num">' + (x.date ? _escHtml(mdy(x.date)) : '—') + '</td>'
+            + (d.said_yes ? '<td>' + (x.consent ? 'Yes' : '—') + '</td>' : '') + '</tr>';
+        }
+        h += '</tbody></table></div>' + (d.rows > d.sample.length ? '<p class="gx-sub">The first ' + d.sample.length + ' of ' + d.rows + '.</p>' : '');
+      }
+      if (d.said_yes) h += '<label class="gx-ask"><input type="checkbox" id="gx-imp-att"><span><b>' + d.said_yes + ' ' + (d.said_yes === 1 ? 'is' : 'are') + ' marked as having said yes.</b> I confirm each of them replied yes to our texts before. Leave this unticked and they come in as guests who haven’t joined.</span></label>';
+      h += '<div class="gx-acts"><button type="button" class="cbtn cbtn-primary gx-go" onclick="gxImport(true)">Bring in ' + d.rows + ' ' + (d.rows === 1 ? 'guest' : 'guests') + '</button></div></div>';
       res.innerHTML = h;
     }).catch(function () { res.innerHTML = '<p class="gx-msg bad">That file couldn’t be sent. Check your connection.</p>'; });
   }
   if (commit && _gx.imp != null) { send(_gx.imp); return; }
-  var r = new FileReader();
-  r.onload = function () { _gx.imp = String(r.result || ''); send(_gx.imp); };
-  r.readAsText(f);
+  var isX = /\.xlsx$/i.test(f.name || ''), r = new FileReader();
+  r.onload = function () { _gx.imp = isX ? {xlsx: String(r.result || '')} : {csv: String(r.result || '')}; send(_gx.imp); };
+  if (isX) r.readAsDataURL(f); else r.readAsText(f);
 }
 document.addEventListener('click', function (e) {
   var t = e.target && e.target.closest ? e.target.closest('[data-gx-view],[data-gx-phone]') : null; if (!t) return;

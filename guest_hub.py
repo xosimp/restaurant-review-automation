@@ -658,7 +658,21 @@ _COLS = {
     "date": ("date", "visit", "visitdate", "visited", "lastvisit", "datevisited", "day"),
     "consent": ("consent", "optin", "optedin", "repliedyes", "yes", "texts", "subscribed", "replied", "sms"),
 }
-_YES = {"yes", "y", "true", "1", "x", "opted in", "optedin", "replied yes", "subscribed", "✓", "✔"}
+_YES = {"yes", "y", "true", "1", "x", "opted in", "optedin", "replied yes", "subscribed", "✓", "✔", "ok", "okay"}
+# A header that isn't one of the exact names above is matched by what it
+# contains, in this order, so "Last Visit" is a date before it can be a last
+# name and "Cell #" is a phone (owner's sheet, 10/20/26: headers are whatever
+# the hosts typed).
+_CONTAINS = (
+    ("phone", ("phone", "cell", "mobile", "tel")),
+    ("email", ("email", "mail")),
+    ("date", ("date", "visit", "came", "dined")),
+    ("consent", ("consent", "optin", "opted", "replied", "subscrib", "textok", "oktotext", "smsok", "texts",
+                 "textme", "agree")),
+    ("first", ("firstname", "first")),
+    ("last", ("lastname", "surname")),
+    ("name", ("name", "guest", "customer")),
+)
 
 
 def _parse_date(s):
@@ -669,6 +683,79 @@ def _parse_date(s):
         except ValueError:
             continue
     return None
+
+
+def xlsx_to_csv(data: bytes) -> str:
+    """The first sheet of an Excel workbook (.xlsx — Excel, Google Sheets,
+    Numbers all export it) as CSV text, read with the standard library: a
+    sheet is zipped XML. Shared and inline strings, numbers, and a date
+    column's serial numbers as M/D/YYYY. ValueError for anything else."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    rel_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError("That isn't an Excel file (.xlsx).")
+    names = set(z.namelist())
+    shared = []
+    if "xl/sharedStrings.xml" in names:
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+            shared.append("".join(t.text or "" for t in si.iter("{%s}t" % ns["m"])))
+    sheet = "xl/worksheets/sheet1.xml"
+    try:
+        wb = ET.fromstring(z.read("xl/workbook.xml"))
+        first = wb.find("m:sheets/m:sheet", ns)
+        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        rid = first.get(rel_ns) if first is not None else None
+        for r in rels:
+            if r.get("Id") == rid:
+                t = r.get("Target").lstrip("/")
+                sheet = t if t.startswith("xl/") else "xl/" + t
+    except (KeyError, ET.ParseError, AttributeError):
+        pass
+    if sheet not in names:
+        raise ValueError("That workbook has no sheet to read.")
+    def col_index(ref):
+        n = 0
+        for ch in re.match(r"[A-Z]+", ref).group(0):
+            n = n * 26 + ord(ch) - 64
+        return n - 1
+    rows = []
+    for row in ET.fromstring(z.read(sheet)).iter("{%s}row" % ns["m"]):
+        vals = {}
+        for c in row.findall("m:c", ns):
+            t, ref = c.get("t"), c.get("r") or ""
+            v = c.find("m:v", ns)
+            if t == "s" and v is not None:
+                val = shared[int(v.text)] if v.text and int(v.text) < len(shared) else ""
+            elif t == "inlineStr":
+                val = "".join(x.text or "" for x in c.iter("{%s}t" % ns["m"]))
+            else:
+                val = v.text if v is not None and v.text is not None else ""
+            if ref:
+                vals[col_index(ref)] = val
+        if vals:
+            rows.append([vals.get(i, "") for i in range(max(vals) + 1)])
+    if not rows:
+        raise ValueError("The first sheet is empty.")
+    # A date column holds Excel serial numbers (days since 12/30/1899).
+    head = [_nk(h) for h in rows[0]]
+    date_cols = [i for i, k in enumerate(head) if any(b in k for b in ("date", "visit", "came", "dined"))]
+    for r in rows[1:]:
+        for i in date_cols:
+            if i < len(r) and re.fullmatch(r"\d{5}(\.\d+)?", str(r[i]).strip()):
+                d = date(1899, 12, 30) + timedelta(days=int(float(r[i])))
+                r[i] = f"{d.month}/{d.day}/{d.year}"
+    # A phone stored as a number comes back as 6305550101 or 6.305550101E9.
+    for r in rows[1:]:
+        for i, v in enumerate(r):
+            if re.fullmatch(r"\d(\.\d+)?E\+?\d+", str(v)):
+                r[i] = str(int(float(v)))
+    out = io.StringIO()
+    csv.writer(out).writerows(rows)
+    return out.getvalue()
 
 
 def parse_import(csv_text) -> dict:
@@ -686,6 +773,16 @@ def parse_import(csv_text) -> dict:
         for field, names in _COLS.items():
             if field not in cols and k in names:
                 cols[field] = i
+    taken = set(cols.values())
+    for i, h in enumerate(header):
+        k = _nk(h)
+        if i in taken or not k:
+            continue
+        for field, bits in _CONTAINS:
+            if field not in cols and any(b in k for b in bits):
+                cols[field] = i
+                taken.add(i)
+                break
     if "phone" not in cols:
         return {"columns": cols, "rows": [], "skipped": 0,
                 "error": "No phone column found. Name a column Phone (or Cell, Mobile, Number)."}
@@ -718,7 +815,7 @@ def import_guests(rid, csv_text, commit=False, attest_consent=False, user_id=Non
     rows = parsed["rows"]
     said_yes = sum(1 for r in rows if r["consent"])
     preview = {"ok": True, "rows": len(rows), "skipped": parsed["skipped"], "said_yes": said_yes,
-               "columns": sorted(parsed["columns"]),
+               "columns": [f for f, _i in sorted(parsed["columns"].items(), key=lambda kv: kv[1])],
                "sample": [{"name": r["name"] or "", "phone": phone_display(r["phone"]),
                            "date": r["date"].isoformat() if r["date"] else None, "consent": r["consent"]}
                           for r in rows[:5]]}

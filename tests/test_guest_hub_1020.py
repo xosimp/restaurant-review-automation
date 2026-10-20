@@ -226,3 +226,37 @@ def test_a_check_with_a_real_customer_is_a_visit_and_the_placeholder_is_not(rid)
     assert gh.match_pos_visits(rid, day, customers=customers)["matched"] == 0
     assert gh.usual_items(rid, [c["id"]]) == {c["id"]: ["Wings"]}
     assert _contact(rid, "+16305550112") is None
+
+
+def test_a_sheet_is_read_by_what_its_headers_say_not_their_exact_words():
+    p = gh.parse_import("Guest,Phone Number,E-mail,Last Visit,Texts OK?\n"
+                        "Ana Cruz,(630) 555-0103,a@x.co,10/18/26,Yes\nBen,630.555.0104,,10/19/2026,\n")
+    assert p["columns"] == {"name": 0, "phone": 1, "email": 2, "date": 3, "consent": 4}
+    assert [(r["phone"], r["consent"]) for r in p["rows"]] == [("+16305550103", True), ("+16305550104", False)]
+
+
+def test_an_excel_workbook_reads_like_its_csv():
+    import io
+    import zipfile
+    m = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    files = {
+        "xl/workbook.xml": f'<workbook xmlns="{m}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+                           'relationships"><sheets><sheet name="Guests" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels": '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                      '<Relationship Id="rId1" Target="worksheets/sheet1.xml" Type="x"/></Relationships>',
+        "xl/sharedStrings.xml": f'<sst xmlns="{m}"><si><t>Name</t></si><si><t>Cell</t></si><si><t>Date</t></si>'
+                                '<si><t>Opted in</t></si><si><t>Dana Kim</t></si><si><t>yes</t></si></sst>',
+        "xl/worksheets/sheet1.xml": f'<worksheet xmlns="{m}"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c>'
+                                    '<c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c>'
+                                    '</row><row r="2"><c r="A2" t="s"><v>4</v></c><c r="B2"><v>6.305550111E9</v></c>'
+                                    '<c r="C2"><v>46313</v></c><c r="D2" t="s"><v>5</v></c></row></sheetData></worksheet>',
+    }
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        for n, c in files.items():
+            z.writestr(n, c)
+    rows = gh.parse_import(gh.xlsx_to_csv(b.getvalue()))["rows"]
+    assert [(r["name"], r["phone"], r["date"].isoformat(), r["consent"]) for r in rows] == \
+        [("Dana Kim", "+16305550111", "2026-10-18", True)]
+    with pytest.raises(ValueError):
+        gh.xlsx_to_csv(b"not a workbook")
