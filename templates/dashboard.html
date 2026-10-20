@@ -1081,6 +1081,13 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .gx-pill.waiting{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}
 .gx-pill.stopped{color:var(--red);background:color-mix(in srgb,var(--red) 12%,transparent)}
 .gx-empty{padding:22px;font-size:15px;color:var(--ink3)}
+/* The Guests cards hold forms, not one action: no press-in (owner, 10/20/26 - Choose File sank the whole card). */
+.gx .cp-card:active,[data-theme="dark"] .gx .cp-card:active{transform:none!important}
+.gx-file-in{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.gx-row label.cbtn{height:44px;cursor:pointer}
+.gx-file-in:focus-visible+label.cbtn{box-shadow:0 0 0 2px var(--cb-ring-gap),0 0 0 4px var(--cb-accent)}
+.gx-fname{flex:1 1 160px;min-width:0;font-size:15px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
+.gx-fname.on{color:var(--ink)}
 .gx-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;align-items:stretch}
 .gx-sh{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .gx-sh .k{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ember)}
@@ -15571,7 +15578,12 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
     <section class="cp-sec" aria-labelledby="gx-imp-h">
       <div class="cp-h"><div class="k">Bring in</div><h2 id="gx-imp-h">Your guest spreadsheet</h2></div>
       <div class="cp-card gx-imp">
-        <div class="gx-row"><input type="file" id="gx-file" accept=".csv,text/csv" class="ac-input" aria-label="Spreadsheet saved as CSV"><button type="button" class="cbtn cbtn-secondary" onclick="gxImport(false)">Preview</button></div>
+        <div class="gx-row">
+          <input type="file" id="gx-file" accept=".csv,text/csv" class="gx-file-in" aria-label="Spreadsheet saved as CSV" onchange="gxFilePicked(this)">
+          <label for="gx-file" class="cbtn cbtn-secondary">Choose spreadsheet</label>
+          <span class="gx-fname" id="gx-fname">No file chosen</span>
+          <button type="button" class="cbtn cbtn-primary" onclick="gxImport(false)">Preview</button>
+        </div>
         <p class="gx-sub">Save the sheet as CSV. Phone is required; name, email, visit date and a &ldquo;replied yes&rdquo; column are read if present.</p>
         <div id="gx-imp-res"></div>
       </div>
@@ -19936,6 +19948,11 @@ function gxReply() {
     if (!d || !d.ok) { toast((d && d.error) || 'That reply didn’t send.', 'error'); return; }
     inp.value = ''; gxOpen(_gx.phone, document.getElementById('gx-th-name').textContent);
   }).catch(function () { toast('That reply didn’t send. Check your connection.', 'error'); });
+}
+function gxFilePicked(inp) {
+  var f = inp.files && inp.files[0], el = document.getElementById('gx-fname');
+  el.textContent = f ? f.name : 'No file chosen'; el.classList.toggle('on', !!f);
+  _gx.imp = null; document.getElementById('gx-imp-res').innerHTML = '';
 }
 function gxImport(commit) {
   var res = document.getElementById('gx-imp-res'), f = document.getElementById('gx-file').files[0];
