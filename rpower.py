@@ -2889,8 +2889,8 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
     try:
         items = _paged(token, "ticketitem/getbybusinessdate",
                        {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    except RPowerAuthError:
-        raise
+    except (RPowerAuthError, RPowerTryLater):
+        raise                    # a paused RPOWER ends the night's read whole, never a night stored without links
     except Exception as e:
         log.warning("[rpower] ticketitem links unread for %s: %s", iso, e)
         return None
