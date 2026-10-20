@@ -851,7 +851,7 @@ def followup_one(rid, now=None, db_path=DB_PATH, deadline=None) -> dict:
                          "AND contact_id=? AND visit_date=?", ("sent" if ok else "failed", stamp if ok else None,
                                                               None if ok else "not sent", rid, g["id"], yday))
             if ok:
-                conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=?", (stamp, g["id"]))
+                conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=? AND restaurant_id=?", (stamp, g["id"], rid))
                 conn.execute("INSERT INTO guest_inbox (restaurant_id, phone, contact_id, direction, body, kind, status) "
                              "VALUES (?,?,?,'out',?,'followup','sent')", (rid, g["phone"], g["id"], body))
             conn.commit()

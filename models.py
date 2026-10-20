@@ -13038,19 +13038,49 @@ def salaried_week_share(restaurant, week_dates, closed_dates=()) -> dict:
             "trading_days": days, "per_day": round(float(share), 2)}
 
 
+# Whose salary view a piece of work carries when it runs off the request
+# that asked for it (an AI read refreshed on a pool, a kept Home block
+# rebuilt): set by salary_view(), inherited by contextvars-copying runners
+# (ai_utils.attributed / context_runner). None = decide from the request.
+_SALARY_VIEW = __import__("contextvars").ContextVar("cavnar_salary_view", default=None)
+
+
+class salary_view:
+    """with salary_view(False): ... — the work inside reads as a viewer who
+    may (True) or may not (False) see the salaries, wherever it runs."""
+
+    def __init__(self, sees):
+        self.sees = None if sees is None else bool(sees)
+        self._tok = None
+
+    def __enter__(self):
+        self._tok = _SALARY_VIEW.set(self.sees)
+        return self
+
+    def __exit__(self, *exc):
+        _SALARY_VIEW.reset(self._tok)
+        return False
+
+
 def viewer_sees_salaries() -> bool:
     """Whether this read may carry the salaries. Salaries are people's pay
     and the owner's alone (dsr.access OWNER_ONLY_PREFIXES): an all-in labor
-    % beside the hourly one gives them away. Outside a request (a job
-    reporting to the owner) - yes; in a request, only for the account
-    holder (permissions.is_principal)."""
+    % beside the hourly one gives them away. Work that carries a viewer's
+    view (salary_view) - that view; in a request, only the account holder
+    (permissions.is_principal), and NOT when the request has no login on it
+    (blind re-audit 10/20/26 R6-F1: the dashboard page's own login check set
+    none, and None read as yes); outside a request with no view set (a job
+    reporting to the owner) - yes."""
     try:
+        carried = _SALARY_VIEW.get()
+        if carried is not None:
+            return carried
         from flask import g, has_request_context
         if not has_request_context():
             return True
         user = getattr(g, "cavnar_current_user", None)
         if user is None:
-            return True
+            return False
         from permissions import is_principal
         return bool(is_principal(user))
     except Exception:

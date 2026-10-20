@@ -985,3 +985,89 @@ def test_health_probes_writes_on_postgres(scratch_db, tmp_path, monkeypatch):
     assert code == 200, body
     assert body["database"]["write"] == "ok" and body["database"]["backend"] == "postgres"
     assert body["database"]["size_mb"] > 0
+
+
+@live
+def test_the_nightly_export_carries_every_table_and_its_rows(scratch_db, tmp_path):
+    # Scale re-audit 10/20/26 R8-01: the export copied only the tables
+    # models.init_db builds - auth's users and sessions, the guest tables,
+    # webhooks and push (made by other boot steps) were left out of every
+    # Postgres backup. The production boot builds the database here.
+    import pg_copy
+    _boot(tmp_path, scratch_db)
+    c = db_dialect.connect(scratch_db)
+    try:
+        rid = c.execute("INSERT INTO restaurants (name, owner_email) VALUES ('Exp', 'e@x.com') RETURNING id").fetchone()[0]
+        c.execute("INSERT INTO users (restaurant_id, username, email, password_hash) VALUES (?, 'exp', 'e@x.com', 'h')",
+                  (rid,))
+        c.commit()
+        pg_tables = {r[0] for r in c.execute_native(
+            "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition").fetchall()}
+    finally:
+        c.close()
+    dst = str(tmp_path / "export.db")
+    rep = pg_copy.export_to_sqlite(dst, url=scratch_db)
+    assert rep["verify"]["ok"]
+    s = sqlite3.connect(dst)
+    try:
+        lite = {r[0] for r in s.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert pg_tables - lite == set(), sorted(pg_tables - lite)[:10]
+        assert s.execute("SELECT COUNT(*) FROM users WHERE username='exp'").fetchone()[0] == 1
+        assert "users" in rep["tables"] and "sessions" in lite
+    finally:
+        s.close()
+
+
+@live
+def test_rowid_on_a_partitioned_table_names_one_row_not_one_place_in_every_month(scratch_db, tmp_path):
+    # Blind re-audit 10/20/26 R2-01 / R2-02: on a partitioned table (a key of
+    # (id, date)) "rowid" became ctid - a row's place in ONE partition, the
+    # same in every month. The retention prune's DELETE ... WHERE rowid IN
+    # (SELECT rowid ... old rows) deleted current rows of every month and
+    # restaurant; UPDATE OR IGNORE (the shift sync's name respell) renamed
+    # rows in other restaurants.
+    import contextlib
+    import io
+    import pg_copy
+    import psycopg
+    db_path = str(tmp_path / "source.db")
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+        models.ensure_columns(db_path)
+    a = models.create_restaurant(models.Restaurant(name="A", owner_email="a@x.com"), db_path=db_path)
+    b = models.create_restaurant(models.Restaurant(name="B", owner_email="b@x.com"), db_path=db_path)
+    s = sqlite3.connect(db_path)
+    for rid, month in ((a, "2026-06"), (b, "2026-09"), (b, "2026-10")):
+        for i in range(5):
+            s.execute("INSERT INTO ai_usage (restaurant_id, action, model, cost_usd, created_at) "
+                      "VALUES (?, 't', 'm', 0.01, ?)", (rid, f"{month}-0{i + 1} 12:00:00"))
+            s.execute("INSERT INTO shift_facts (restaurant_id, business_date, employee_name, employee_key, source) "
+                      "VALUES (?, ?, 'Jon Smith', 'jon smith', 'pos')", (rid, f"{month}-0{i + 1}"))
+    s.commit()
+    s.close()
+    models.checkpoint(db_path)
+    dst = psycopg.connect(scratch_db, autocommit=False)
+    try:
+        assert pg_copy.copy_database(db_path, dst, today=date(2026, 10, 20))["verify"]["ok"]
+    finally:
+        dst.close()
+    c = db_dialect.connect(scratch_db)
+    try:
+        # The prune's statement (ops._chunked_delete): only June's rows are old.
+        c.execute("DELETE FROM ai_usage WHERE rowid IN (SELECT rowid FROM ai_usage WHERE created_at < ? LIMIT 5000)",
+                  ("2026-07-01",))
+        c.commit()
+        left = dict(c.execute("SELECT restaurant_id, COUNT(*) FROM ai_usage GROUP BY restaurant_id").fetchall())
+        assert left == {b: 10}, left
+        # The respell (shift_facts._respell_facts): A's rows only.
+        c.execute("UPDATE OR IGNORE shift_facts SET employee_name=?, employee_key=? WHERE restaurant_id=? "
+                  "AND employee_key=?", ("Jonathan Smith", "jonathan smith", a, "jon smith"))
+        c.commit()
+        names = dict(c.execute("SELECT restaurant_id, MIN(employee_name) FROM shift_facts GROUP BY restaurant_id").fetchall())
+        assert names == {a: "Jonathan Smith", b: "Jon Smith"}, names
+        # A qualified rowid on a partitioned table with a wider key (the POS lines).
+        sql = c._tr.translate("SELECT l.rowid FROM pos_ticket_lines l WHERE l.restaurant_id=?")
+        assert "ctid" not in sql or "tableoid" in sql, sql
+    finally:
+        c.close()

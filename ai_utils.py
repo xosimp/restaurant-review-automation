@@ -2237,9 +2237,14 @@ def attributed(fn):
     A new thread starts with no ai_context and no request, so its calls read
     as 'system' and nobody's (#148, G's integration request)."""
     attr = {k: v for k, v in attribution_for_thread().items() if v is not None}
+    # And whose salary view it carries: off the request, every read counted
+    # as the owner's, so a manager's refresh came back all-in (blind
+    # re-audit 10/20/26 R9-05).
+    import models as _models_sv
+    sees = _models_sv.viewer_sees_salaries()
 
     def _run(*args, **kwargs):
-        with ai_context(**attr):
+        with ai_context(**attr), _models_sv.salary_view(sees):
             return fn(*args, **kwargs)
     _run.__name__ = getattr(fn, "__name__", "attributed")
     return _run

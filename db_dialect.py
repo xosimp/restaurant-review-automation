@@ -1117,7 +1117,34 @@ class Translator:
                         owner = _alias_table(_significant(toks), toks[q].text) or table
                 pk = self.pk_lookup(owner) if owner else None
                 have = [c.lower() for c in (self.columns_lookup(owner) or [])] if owner else []
-                col = "rowid" if "rowid" in have else (pk[0] if pk and len(pk) == 1 else "ctid")
+                col = "rowid" if "rowid" in have else (pk[0] if pk and len(pk) == 1 else None)
+                if col is None and pk and owner and str(owner).lower() in PARTITIONED:
+                    # A partitioned table's key gained its partition column
+                    # (pg_copy); its SQLite rowid is the key without it. ctid
+                    # is a row's place in ONE partition - the same ctid names
+                    # a row in every month, so a delete or update "by rowid"
+                    # hit rows of every partition, every restaurant (blind
+                    # re-audit 10/20/26 R2-01 / R2-02).
+                    rest = [c for c in pk if c.lower() != PARTITIONED[str(owner).lower()].lower()]
+                    if len(rest) == 1:
+                        col = rest[0]
+                    else:
+                        # Else the partition AND the place in it: unique
+                        # across the whole partitioned table. A qualified
+                        # `t.rowid` already wrote its `t.`: taken back and
+                        # put on both halves.
+                        qual = ""
+                        if prev is not None and prev.text == ".":
+                            while out and not out[-1].strip():
+                                out.pop()
+                            if out and out[-1] == ".":
+                                out.pop()
+                                while out and not out[-1].strip():
+                                    out.pop()
+                                qual = (out.pop() + ".") if out else ""
+                        col = f"({qual}tableoid::text || ':' || {qual}ctid::text)"
+                if col is None:
+                    col = "ctid"
                 # Selected bare, it is still read back as row["rowid"].
                 selected = prev is not None and ((prev.kind == "word" and prev.upper in ("SELECT", "DISTINCT"))
                                                  or (prev.kind == "op" and prev.text == ","))
@@ -1797,12 +1824,16 @@ class PgConnection:
         n_set = sum(1 for t in toks[set_at + 1:(where if where is not None else len(toks))] if t.kind == "param")
         params = tuple(params or ())
         cond = _render(toks[where + 1:]) if where is not None else "1=1"
-        ids = [r[0] for r in self.execute(f"SELECT ctid FROM {table} WHERE {cond}", params[n_set:]).fetchall()]
+        # A row is its partition AND its place in it: ctid alone repeats in
+        # every partition of a partitioned table, so this updated rows of
+        # other months and other restaurants (blind re-audit 10/20/26 R2-02).
+        ids = [(r[0], r[1]) for r in self.execute(f"SELECT tableoid, ctid FROM {table} WHERE {cond}",
+                                                  params[n_set:]).fetchall()]
         n = 0
-        for ctid in ids:
+        for toid, ctid in ids:
             try:
-                n += self.execute(f"UPDATE {table} SET {set_part} WHERE ctid = CAST(? AS tid)",
-                                  params[:n_set] + (ctid,)).rowcount or 0
+                n += self.execute(f"UPDATE {table} SET {set_part} WHERE tableoid = CAST(? AS oid) "
+                                  f"AND ctid = CAST(? AS tid)", params[:n_set] + (toid, ctid)).rowcount or 0
             except sqlite3.IntegrityError:
                 continue
         cur._load()

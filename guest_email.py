@@ -1245,6 +1245,12 @@ def run_newsletter_sends(db_path: str = DB_PATH, max_seconds=None) -> dict:
         if left <= 0:
             break
         out = _send_batch(newsletter_id, max_seconds=left, db_path=db_path)
+        if out.get("paused"):
+            # One restaurant's guest mail paused (its complaint or bounce
+            # rate): its newsletter waits, the others go - a break here
+            # held every restaurant's sends for the pause's 7 days (blind
+            # re-audit 10/20/26 R9-03).
+            continue
         if out.get("held"):
             break
         totals["newsletters"] += 1
