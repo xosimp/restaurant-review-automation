@@ -24,6 +24,7 @@ _json_object_guard(auth_bp)
 _login_attempts = {}
 _MAX_ATTEMPTS   = 5      # max failures before lockout
 _LOCKOUT_SECS   = 300    # 5 minute lockout
+_LOGIN_ATTEMPTS_MAX_KEYS = 10000   # the fallback dict's bound (R7-15)
 
 def _get_client_ip():
     """The client address the proxy vouches for: ProxyFix (one hop,
@@ -67,7 +68,10 @@ def _throttle_context(username):
 def _is_rate_limited(ip, username=None):
     """Durable, keyed by IP and account (security.py). The in-memory dict
     this replaced reset on deploy and never saw an attacker rotate
-    addresses; it was also the reason gunicorn could not run two workers."""
+    addresses; it was also the reason gunicorn could not run two workers.
+    An IPv6 address counts as its /64 (request_limits.ip_key, R7-15)."""
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
     try:
         import security
         internal, known = _throttle_context(username)
@@ -82,7 +86,17 @@ def _is_rate_limited(ip, username=None):
         return len(recent) >= _MAX_ATTEMPTS
 
 def _record_failed_attempt(ip, username=None):
-    _login_attempts.setdefault(ip, []).append(time.time())
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
+    # The fallback's memory is pruned on every write now (R7-15): it used to
+    # grow with every address that ever failed, for the life of the process.
+    now = time.time()
+    _login_attempts[ip] = [t for t in _login_attempts.get(ip, []) if now - t < _LOCKOUT_SECS] + [now]
+    if len(_login_attempts) > _LOGIN_ATTEMPTS_MAX_KEYS:
+        for k in [k for k, v in _login_attempts.items() if not v or now - v[-1] >= _LOCKOUT_SECS]:
+            _login_attempts.pop(k, None)
+        while len(_login_attempts) > _LOGIN_ATTEMPTS_MAX_KEYS:
+            _login_attempts.pop(min(_login_attempts, key=lambda k: _login_attempts[k][-1]), None)
     try:
         import security
         internal = _throttle_context(username)[0] if username else False
@@ -96,6 +110,8 @@ def _clear_attempts(ip, username=None, clear_key=False):
     login on the attacker's own account wiped the budget they were spending
     guessing someone else's codes (SEC-3). `clear_key` clears a
     purpose-specific key such as "2fa:<ip>"."""
+    import request_limits as _rl_ip
+    ip = _rl_ip.ip_key(ip)
     try:
         import security
         security.clear_login_failures(ip=ip if clear_key else None, username=username,
@@ -721,12 +737,23 @@ def toggle_2fa(current_user):
         return denied
     data = request.get_json() or {}
     enabled = 1 if data.get("enabled") else 0
+    # Turning it off asks for the password again, never in view-as, and
+    # every account holder hears (re-audit 10/20/26 R7-03).
+    if not enabled:
+        from auth import account_step_up_refusal
+        refused = account_step_up_refusal(current_user)
+        if refused:
+            return jsonify(**refused[0]), refused[1]
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": enabled})
     try:
         from client_api import log_account_event
         log_account_event(current_user["restaurant_id"], "two_fa_enabled" if enabled else "two_fa_disabled", current_user)
     except Exception:
         pass
+    if not enabled:
+        from auth import notify_account_holders
+        notify_account_holders(current_user["restaurant_id"], "two_fa_disabled",
+                               detail=current_user.get("username"))
     return jsonify(ok=True)
 
 
@@ -905,9 +932,27 @@ def list_sessions(current_user):
 @csrf_required
 @login_required
 def revoke_other_sessions_route(current_user):
+    # A stolen session must not be able to sign the real owner out (R7-03).
+    from auth import account_step_up_refusal
+    refused = account_step_up_refusal(current_user)
+    if refused:
+        return jsonify(**refused[0]), refused[1]
     token = request.cookies.get("session_token", "")
     revoke_other_sessions(current_user["id"], current_token=token)
     return jsonify(ok=True)
+
+
+@auth_bp.route("/api/account/reauth", methods=["POST"])
+@csrf_required
+@login_required
+def account_reauth_route(current_user):
+    """The account holder's step-up (re-audit 10/20/26 R7-03): the password
+    again, then this session may make sign-in security changes for 15
+    minutes (auth.account_reauth; twin /mobile/api/account/reauth)."""
+    from auth import account_reauth
+    data = request.get_json(silent=True) or {}
+    payload, status = account_reauth(current_user, data.get("password") or "", _get_client_ip())
+    return jsonify(**payload), status
 
 
 @auth_bp.route("/api/toggle-login-notify", methods=["POST"])
@@ -1462,7 +1507,23 @@ def login_not_me(token):
     email = not_me_aftercare(user)
     return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
                    "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
-                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (_esc_nm(email),))
+                   "%s"
+                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>"
+                   % (_esc_nm(email), _suspended_line(user)))
+
+
+def _suspended_line(user) -> str:
+    """The co-owner logins the report suspended (auth._suspend_recent_principals,
+    R7-03), named so the owner can tell a stranger's from a partner's."""
+    from markupsafe import escape as _esc_sl
+    names = [n for n in (user or {}).get("suspended_logins") or [] if n]
+    if not names:
+        return ""
+    return ("<p>We also suspended the co-owner login%s added in the last few days, in case whoever signed in "
+            "added %s: <strong>%s</strong>. If one is a real partner, add them again from Account &rarr; Team "
+            "once you have reset your password.</p>"
+            % ("s" if len(names) > 1 else "", "them" if len(names) > 1 else "it",
+               ", ".join(str(_esc_sl(n)) for n in names)))
 
 
 # ── Passkeys and Sign in with Apple on the web (owner, 9/30/26) ──────────────
@@ -1527,13 +1588,23 @@ def passkey_login_options():
     return jsonify(**payload), status
 
 
+PASSKEY_OPTIONS_PER_MINUTE = 10
+
+
 def _do_passkey_login_options(host):
     """The sign-in challenge — one body for the login page and the app's
     /mobile/api/passkey/options (which passes passkeys.app_host())."""
     import passkeys
+    import request_limits
     ip = _get_client_ip()
     if _is_rate_limited("passkey:" + ip):
         return {"ok": False, "error": "Too many attempts. Please wait 5 minutes and try again."}, 429
+    # Each call writes a challenge row, and the limiter above counts only
+    # failures: an anonymous flood was a write per call on the shared
+    # database. Filtered in memory before anything is written (re-audit
+    # 10/20/26 R7-07; request_limits.memory_limited, SEC-08's class).
+    if request_limits.memory_limited(f"passkey-opt:{ip}", PASSKEY_OPTIONS_PER_MINUTE, 60):
+        return {"ok": False, "error": "Too many attempts. Please wait a minute and try again."}, 429
     try:
         return {"ok": True, "options": passkeys.authentication_options(host)}, 200
     except passkeys.PasskeyError as e:

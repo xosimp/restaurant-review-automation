@@ -73,7 +73,7 @@ def test_only_an_internal_login_lists_clients_or_opens_a_view(client, db_path):
 
 def test_the_list_is_the_restaurants_with_an_owner_login(client, db_path):
     rid, owner, bare, admin, sup = _setup(db_path)
-    tok = create_session(admin, device_type="ios", db_path=db_path)
+    tok = create_session(admin, device_type="ios", db_path=db_path, password_verified_at=True)
     body = client.get("/mobile/api/admin/clients", headers=_bearer(tok)).get_json()
     ids = [c["id"] for c in body["clients"]]
     assert rid in ids and bare not in ids
@@ -82,7 +82,7 @@ def test_the_list_is_the_restaurants_with_an_owner_login(client, db_path):
 
 def test_an_admin_opens_a_writable_view_on_the_owner_login_and_it_is_audited(client, db_path):
     rid, owner, bare, admin, sup = _setup(db_path)
-    tok = create_session(admin, device_type="ios", db_path=db_path)
+    tok = create_session(admin, device_type="ios", db_path=db_path, password_verified_at=True)
     body = client.post(f"/mobile/api/admin/view-as/{rid}", headers=_bearer(tok)).get_json()
     assert body["ok"] and body["read_only"] is False and body["restaurant_name"] == "Simple EJ's"
     assert body["user"]["id"] == owner and body["user"]["is_admin"] is False
@@ -107,13 +107,13 @@ def test_a_support_login_is_not_let_into_the_app_to_open_one(client, db_path):
 
 def test_a_restaurant_with_no_owner_login_is_refused(client, db_path):
     rid, owner, bare, admin, sup = _setup(db_path)
-    tok = create_session(admin, device_type="ios", db_path=db_path)
+    tok = create_session(admin, device_type="ios", db_path=db_path, password_verified_at=True)
     assert client.post(f"/mobile/api/admin/view-as/{bare}", headers=_bearer(tok)).status_code == 404
 
 
 def test_a_view_never_files_the_phone_as_the_clients_device(client, db_path, monkeypatch):
     rid, owner, bare, admin, sup = _setup(db_path)
-    tok = create_session(admin, device_type="ios", db_path=db_path)
+    tok = create_session(admin, device_type="ios", db_path=db_path, password_verified_at=True)
     view = client.post(f"/mobile/api/admin/view-as/{rid}", headers=_bearer(tok)).get_json()["token"]
     import push
     filed = []
@@ -132,7 +132,7 @@ def test_a_view_never_files_the_phone_as_the_clients_device(client, db_path, mon
 
 def test_stopping_ends_only_a_view_and_records_it(client, db_path):
     rid, owner, bare, admin, sup = _setup(db_path)
-    tok = create_session(admin, device_type="ios", db_path=db_path)
+    tok = create_session(admin, device_type="ios", db_path=db_path, password_verified_at=True)
     view = client.post(f"/mobile/api/admin/view-as/{rid}", headers=_bearer(tok)).get_json()["token"]
     # An ordinary session is never signed out from here.
     assert client.post("/mobile/api/admin/stop-viewing", headers=_bearer(tok)).get_json()["stopped"] is False

@@ -485,7 +485,7 @@ def test_a_conversation_is_still_refused_across_restaurants(db_path):
 
 def test_a_view_as_session_is_marked_and_not_mistaken_for_the_clients_own(db_path, monkeypatch):
     from admin_routes import admin_bp, view_as_client
-    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will"})
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 999, "is_admin": 1, "username": "will", "reauth_at": auth.sql_utc()})
     rid = _loc(db_path, "Chicago")
     create_user(rid, "client", "client@x.test", "pw", db_path=db_path)
 

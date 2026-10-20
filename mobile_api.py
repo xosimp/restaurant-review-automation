@@ -832,6 +832,9 @@ def mobile_logout(current_user):
 @mobile_bp.route("/sessions/revoke-others", methods=["POST"])
 @mobile_login_required
 def mobile_revoke_other_sessions(current_user):
+    refused = _step_up(current_user)
+    if refused:
+        return refused
     revoke_other_sessions(current_user["id"], _bearer_token())
     _log_account_event(current_user["restaurant_id"], "sessions_revoked_others", current_user)
     return jsonify(ok=True)
@@ -2131,9 +2134,12 @@ def mobile_not_me(current_user):
         return jsonify(ok=False, error="That login no longer exists."), 404
     import auth_routes
     email = auth_routes.not_me_aftercare(user)
-    return jsonify(ok=True, signed_out=True,
+    suspended = [n for n in user.get("suspended_logins") or [] if n]
+    return jsonify(ok=True, signed_out=True, suspended_logins=suspended,
                    message=("Signed out everywhere. Nobody can sign in until the password is reset"
-                            + (f" — the link is on its way to {email}." if email else ".")))
+                            + (f" — the link is on its way to {email}." if email else ".")
+                            + (f" Co-owner logins added in the last few days were suspended: {', '.join(suspended)}."
+                               if suspended else "")))
 
 
 # The push surfaces a tap can be an "opened" on, and the surface a push type
@@ -2465,31 +2471,48 @@ def mobile_set_staff_contact(current_user):
     member login holds let it point an employee's /s/ link, which accepts
     availability, at itself. Every change is on the change history (who,
     before, after) and the employee is told at the address they had."""
+    payload, status = _do_set_staff_contact(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
+
+
+def may_set_staff_contact(user) -> bool:
+    """SCHEDULE_PUBLISH or TEAM_INVITE (or an admin): who may change where a
+    member of staff is reached — the REST route's rule, and Ask's tool's
+    (re-audit 10/20/26 R7-19)."""
+    from permissions import has_permission, SCHEDULE_PUBLISH, TEAM_INVITE
+    return bool(user and (user.get("is_admin") or has_permission(user, SCHEDULE_PUBLISH)
+                          or has_permission(user, TEAM_INVITE)))
+
+
+def _do_set_staff_contact(current_user, data):
+    """The one body behind POST labor/staff-contacts (web and app) and Ask's
+    set_staff_contact tool (R7-19 — the tool wrote the contact directly,
+    past this permission, the change history and the employee's notice):
+    the permission, the change history and the notice at the old address.
+    Returns (payload, status)."""
     from models import set_staff_contact, get_staff_contacts
     from staff_settings import clean_phone
-    from permissions import has_permission, SCHEDULE_PUBLISH, TEAM_INVITE
-    if not (current_user.get("is_admin") or has_permission(current_user, SCHEDULE_PUBLISH)
-            or has_permission(current_user, TEAM_INVITE)):
-        return jsonify(ok=False, error="Your login can't change where staff are contacted. "
-                                       "Ask whoever sends the schedule."), 403
-    data = request.get_json(silent=True) or {}
+    if not may_set_staff_contact(current_user):
+        return {"ok": False, "error": "Your login can't change where staff are contacted. "
+                                      "Ask whoever sends the schedule."}, 403
+    data = data or {}
     name = (data.get("employee_name") or "").strip()
     # A field the form did not send is kept, not erased (MOD-EMP-4).
     email = (data.get("email") or "").strip() if "email" in data else None
     if not name:
-        return jsonify(ok=False, error="Which member of staff?"), 400
+        return {"ok": False, "error": "Which member of staff?"}, 400
     if email and "@" not in email:
-        return jsonify(ok=False, error="That doesn't look like an email address"), 400
+        return {"ok": False, "error": "That doesn't look like an email address"}, 400
     phone = None
     if "phone" in data:
         phone, perr = clean_phone(data.get("phone"))
         if perr:
-            return jsonify(ok=False, error=perr), 400
+            return {"ok": False, "error": perr}, 400
     rid = current_user["restaurant_id"]
     key = " ".join(name.split()).casefold()
     before = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
     if not set_staff_contact(rid, name, email, phone, pos_id=(str(data.get("pos_id") or "").strip() or None)):
-        return jsonify(ok=False, error="Couldn't save that contact."), 400
+        return {"ok": False, "error": "Couldn't save that contact."}, 400
     after = next((c for c in get_staff_contacts(rid) if " ".join(c["employee_name"].split()).casefold() == key), None)
     was = {"email": (before or {}).get("email") or "", "phone": (before or {}).get("phone") or ""}
     now = {"email": (after or {}).get("email") or "", "phone": (after or {}).get("phone") or ""}
@@ -2514,7 +2537,7 @@ def mobile_set_staff_contact(current_user):
                 people._send_staff_text(rid, was["phone"], text)
         except Exception as e:
             print(f"[staff contact] employee not told rid={rid}: {e!r}")
-    return jsonify(ok=True)
+    return {"ok": True, "employee_name": name, "email": now["email"] or None}, 200
 
 
 @mobile_bp.route("/labor/publish-schedule", methods=["POST"])
@@ -4002,6 +4025,14 @@ def mobile_admin_view_as(restaurant_id, current_user):
     from auth import create_view_as_session, get_session_user, VIEW_AS_HOURS, sql_utc
     from datetime import datetime as _dt_mva, timedelta as _td_mva, timezone as _tz_mva
     read_only = not current_user.get("is_admin")
+    # A view that can make changes asks for the admin's password within the
+    # step-up window (re-audit 10/20/26 R7-03), answered through the app's
+    # step-up route like an owner's.
+    from auth import reauth_is_recent, RECENT_AUTH_MINUTES
+    if not read_only and not reauth_is_recent(current_user):
+        return jsonify(ok=False, reauth_required=True, reauth_url="/mobile/api/account/reauth",
+                       window_minutes=RECENT_AUTH_MINUTES,
+                       error="Enter your password again to open a view that can make changes."), 403
     ends = _dt_mva.now(_tz_mva.utc) + _td_mva(hours=VIEW_AS_HOURS)
     token = create_view_as_session(user_id, current_user, read_only=read_only,
                                    ip_address=_get_client_ip(),
@@ -7919,6 +7950,22 @@ def mobile_update_profile(current_user):
     # so a teammate's save leaves them as they are — and a change to one is
     # refused, not silently dropped.
     from permissions import is_principal as _is_principal_up
+    # The owner's phone is where an account holder's sign-in codes are
+    # texted: changing it asks for the password again, never in view-as
+    # (re-audit 10/20/26 R7-03). Compared by digits, as below.
+    if "owner_phone" in updates and _is_principal_up(current_user):
+        _cur_p = getattr(get_restaurant(current_user["restaurant_id"]), "owner_phone", None) or ""
+        if "".join(ch for ch in (updates["owner_phone"] or "") if ch.isdigit()) != \
+                "".join(ch for ch in _cur_p if ch.isdigit()):
+            # Only a number Cavnar AI texts (R7-09): it is where sign-in
+            # codes go, and a code is never sent abroad.
+            import notify as _notify_op
+            if updates["owner_phone"] and not _notify_op.sms_country_allowed(updates["owner_phone"]):
+                return jsonify(ok=False, error="Enter a US or Canadian mobile number. Sign-in codes are "
+                                               "only texted there."), 400
+            refused = _step_up(current_user)
+            if refused:
+                return refused
     if not _is_principal_up(current_user):
         current = get_restaurant(current_user["restaurant_id"])
         def _same(key, sent, saved):
@@ -8310,6 +8357,28 @@ def _require_account_holder(current_user):
     return jsonify(ok=False, error="Only the account owner can change sign-in security."), 403
 
 
+def _step_up(current_user):
+    """The account holder's step-up (re-audit 10/20/26 R7-03): None when this
+    session typed its password (or signed in) in the last 15 minutes and is
+    not a view-as; else the 403 both clients answer by asking for the
+    password (auth.account_step_up_refusal)."""
+    from auth import account_step_up_refusal
+    refused = account_step_up_refusal(current_user)
+    if refused:
+        return jsonify(**refused[0]), refused[1]
+    return None
+
+
+@mobile_bp.route("/account/reauth", methods=["POST"])
+@mobile_login_required
+def mobile_account_reauth(current_user):
+    """Twin of /api/account/reauth (auth.account_reauth)."""
+    from auth import account_reauth
+    data = request.get_json(silent=True) or {}
+    payload, status = account_reauth(current_user, data.get("password") or "", _get_client_ip())
+    return jsonify(**payload), status
+
+
 def _require_two_fa_holder(current_user):
     """The restaurant's two-factor switch: the account holder's, and never an
     internal login's — an admin's own second factor lives on his users row
@@ -8326,11 +8395,13 @@ def _require_two_fa_holder(current_user):
 @mobile_bp.route("/account/2fa/disable", methods=["POST"])
 @mobile_login_required
 def mobile_disable_2fa(current_user):
-    denied = _require_two_fa_holder(current_user)
+    denied = _require_two_fa_holder(current_user) or _step_up(current_user)
     if denied:
         return denied
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 0})
     _log_account_event(current_user["restaurant_id"], "two_fa_disabled", current_user)
+    from auth import notify_account_holders
+    notify_account_holders(current_user["restaurant_id"], "two_fa_disabled", detail=current_user.get("username"))
     return jsonify(ok=True)
 
 
@@ -8346,12 +8417,15 @@ def mobile_backup_codes_status(current_user):
 def mobile_regenerate_backup_codes(current_user):
     """Invalidates every previously-issued code and mints a fresh set —
     shown once here, same as at initial 2FA setup."""
-    denied = _require_two_fa_holder(current_user)
+    denied = _require_two_fa_holder(current_user) or _step_up(current_user)
     if denied:
         return denied
     from models import generate_backup_codes
     codes = generate_backup_codes(current_user["restaurant_id"])
     _log_account_event(current_user["restaurant_id"], "backup_codes_regenerated", current_user)
+    from auth import notify_account_holders
+    notify_account_holders(current_user["restaurant_id"], "backup_codes_regenerated",
+                           detail=current_user.get("username"))
     return jsonify(ok=True, backup_codes=codes)
 
 
@@ -8467,13 +8541,23 @@ def mobile_invite_team_member(current_user):
     email = (data.get("email") or "").strip()
     if not name or "@" not in email:
         return jsonify(ok=False, error="Enter a name and a valid email."), 400
-    from auth import invite_team_member, TEAM_ROLES
+    from auth import invite_team_member, TEAM_ROLES, _PRINCIPAL_ROLES
     role = (data.get("role") or "member").strip()
     if role not in TEAM_ROLES:
         return jsonify(ok=False, error="Pick Co-owner, Manager or Teammate."), 400
+    # A co-owner can change sign-in security and remove the owner: adding one
+    # asks for the password again, never in view-as (re-audit 10/20/26 R7-03).
+    if role in _PRINCIPAL_ROLES:
+        refused = _step_up(current_user)
+        if refused:
+            return refused
     result = invite_team_member(current_user["restaurant_id"], name, email, role=role)
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error", "Couldn't add that teammate.")), 400
+    if role in _PRINCIPAL_ROLES:
+        from auth import notify_account_holders
+        notify_account_holders(current_user["restaurant_id"], "principal_added", detail=f"{name} ({email})",
+                               exclude_user_id=result.get("user_id"))
     invite_sent, invite_error = False, None
     try:
         from emails import send_team_invite_email
@@ -8516,12 +8600,34 @@ def mobile_revoke_team_member(current_user, user_id):
     from permissions import TEAM_REVOKE, has_permission
     if not has_permission(current_user, TEAM_REVOKE):
         return jsonify(ok=False, error="Only the account owner can remove team members."), 403
+    # Removing an account holder asks for the password again (R7-03).
+    if _team_login_is_principal(current_user["restaurant_id"], user_id):
+        refused = _step_up(current_user)
+        if refused:
+            return refused
     from auth import revoke_team_member
     result = revoke_team_member(current_user["restaurant_id"], user_id, current_user["id"])
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error", "Couldn't remove that teammate.")), 400
     _log_account_event(current_user["restaurant_id"], "team_member_revoked", current_user, detail=str(user_id))
     return jsonify(ok=True)
+
+
+def _team_login_is_principal(restaurant_id, user_id) -> bool:
+    """Whether the login `user_id` at this restaurant is an account holder
+    (owner or co-owner) — by its membership here, else users.role."""
+    from models import get_conn as _gc_tp
+    conn = _gc_tp()
+    try:
+        row = conn.execute("SELECT m.role AS mrole, u.role AS urole FROM users u LEFT JOIN memberships m "
+                           "ON m.user_id=u.id AND m.restaurant_id=? WHERE u.id=?",
+                           (restaurant_id, user_id)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return False
+    role = (row["mrole"] or row["urole"] or "client").strip().lower()
+    return role in ("client", "owner")
 
 
 # ── Staff accounts (owner side) ───────────────────────────────────────────
@@ -8536,6 +8642,37 @@ def _require_team_admin(current_user):
     from permissions import TEAM_INVITE, has_permission
     if not has_permission(current_user, TEAM_INVITE):
         return jsonify(ok=False, error="Only the account owner can manage staff accounts."), 403
+    return None
+
+
+# The membership tiers the staff-account routes may act on: staff and the
+# console tiers below an account holder.
+_STAFF_ROUTE_TIERS = ("employee", "member", "manager")
+
+
+def _staff_target_refusal(current_user, membership_id):
+    """The staff-account routes (update, PIN, unlock, deactivate, unlink) act
+    only on a staff or subordinate console membership at this restaurant,
+    and never on the caller's own (blind re-audit 10/20/26 R7-23): they
+    matched any membership id here, so a co-owner — or a stolen co-owner
+    session — could demote or deactivate the owner past every guard Team's
+    own routes keep (no self-revoke, never the last owner). An account
+    holder is managed under Team. 404 for an id not at this restaurant."""
+    from models import get_conn as _gc_st
+    conn = _gc_st()
+    try:
+        row = conn.execute("SELECT m.user_id, LOWER(COALESCE(m.role,'')) AS role, COALESCE(u.is_admin,0) AS is_admin "
+                           "FROM memberships m LEFT JOIN users u ON u.id = m.user_id "
+                           "WHERE m.id=? AND m.restaurant_id=?",
+                           (membership_id, current_user["restaurant_id"])).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify(ok=False, error="Not found"), 404
+    if row["user_id"] == current_user.get("id"):
+        return jsonify(ok=False, error="You can't change your own login here."), 403
+    if row["is_admin"] or row["role"] not in _STAFF_ROUTE_TIERS:
+        return jsonify(ok=False, error="That's an account holder's login. Manage it under Team."), 403
     return None
 
 
@@ -8609,7 +8746,7 @@ def mobile_update_staff(current_user, membership_id):
     Accepts POST as well as PATCH because the web fetch() layer and some
     proxies treat PATCH as exotic; the semantics are identical either way.
     """
-    denied = _require_team_admin(current_user)
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
     if denied:
         return denied
     from auth import update_membership_details
@@ -8734,7 +8871,7 @@ def mobile_create_staff(current_user):
 @mobile_bp.route("/account/staff/<int:membership_id>/pin", methods=["POST"])
 @mobile_login_required
 def mobile_reset_staff_pin(current_user, membership_id):
-    denied = _require_team_admin(current_user)
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
     if denied:
         return denied
     from auth import PinError, set_membership_pin, validate_pin
@@ -8755,7 +8892,7 @@ def mobile_reset_staff_pin(current_user, membership_id):
 @mobile_bp.route("/account/staff/<int:membership_id>/unlock", methods=["POST"])
 @mobile_login_required
 def mobile_unlock_staff(current_user, membership_id):
-    denied = _require_team_admin(current_user)
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
     if denied:
         return denied
     from auth import unlock_membership_pin
@@ -8767,15 +8904,17 @@ def mobile_unlock_staff(current_user, membership_id):
 @mobile_bp.route("/account/staff/<int:membership_id>/deactivate", methods=["POST"])
 @mobile_login_required
 def mobile_deactivate_staff(current_user, membership_id):
-    denied = _require_team_admin(current_user)
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
     if denied:
         return denied
-    from auth import set_membership_active
+    from auth import set_membership_active, rotate_join_code
     if not set_membership_active(membership_id, current_user["restaurant_id"], False):
         return jsonify(ok=False, error="Not found"), 404
     _log_account_event(current_user["restaurant_id"], "staff_account_deactivated",
                        current_user, detail=str(membership_id))
-    return jsonify(ok=True)
+    # Whoever left knew the restaurant code: a new one (R7-05). The staff
+    # link and everyone's PIN are unchanged.
+    return jsonify(ok=True, join_code=rotate_join_code(current_user["restaurant_id"]), join_code_rotated=True)
 
 
 @mobile_bp.route("/account/staff/<int:membership_id>/unlink", methods=["POST"])
@@ -8788,15 +8927,15 @@ def mobile_unlink_staff(current_user, membership_id):
     belongs to can take it, while the phone that took it is refused if it
     tries again.
     """
-    denied = _require_team_admin(current_user)
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
     if denied:
         return denied
-    from auth import unlink_claimed_membership
+    from auth import unlink_claimed_membership, rotate_join_code
     if not unlink_claimed_membership(membership_id, current_user["restaurant_id"]):
         return jsonify(ok=False, error="Not found"), 404
     _log_account_event(current_user["restaurant_id"], "staff_account_unlinked",
                        current_user, detail=str(membership_id))
-    return jsonify(ok=True)
+    return jsonify(ok=True, join_code=rotate_join_code(current_user["restaurant_id"]), join_code_rotated=True)
 
 
 @mobile_bp.route("/account/staff/portal-link/rotate", methods=["POST"])
@@ -8848,14 +8987,25 @@ def mobile_set_team_role(current_user, user_id):
     from permissions import TEAM_INVITE, has_permission
     if not has_permission(current_user, TEAM_INVITE):
         return jsonify(ok=False, error="Only an owner can change roles."), 403
-    from auth import set_team_role, TeamAccessError, TEAM_ROLES
+    from auth import set_team_role, TeamAccessError, TEAM_ROLES, _PRINCIPAL_ROLES
     role = str((request.get_json(silent=True) or {}).get("role") or "")
     rid = current_user["restaurant_id"]
+    # Making or unmaking an account holder asks for the password again (R7-03).
+    was_principal = _team_login_is_principal(rid, user_id)
+    if role in _PRINCIPAL_ROLES or was_principal:
+        refused = _step_up(current_user)
+        if refused:
+            return refused
     try:
         new_role = set_team_role(rid, user_id, role, current_user["id"])
     except TeamAccessError as e:
         return jsonify(ok=False, error=e.message), 400
     _log_account_event(rid, "team_role_changed", current_user, detail=f"{user_id}:{new_role}")
+    if new_role in _PRINCIPAL_ROLES and not was_principal:
+        from auth import notify_account_holders, get_user_by_id
+        _u = get_user_by_id(user_id) or {}
+        notify_account_holders(rid, "principal_added", detail=_u.get("email") or _u.get("username"),
+                               exclude_user_id=user_id)
     try:
         import home_brief
         home_brief.invalidate(rid)
@@ -9233,15 +9383,22 @@ def mobile_account_activity(current_user):
 @mobile_bp.route("/account/2fa/trusted-devices")
 @mobile_login_required
 def mobile_trusted_devices(current_user):
+    """The restaurant's remembered devices for an account holder; a
+    teammate sees only their own (re-audit 10/20/26 R7-25: a manager could
+    list the owner's devices and send the owner back through 2FA)."""
     from auth import get_trusted_devices
-    return jsonify(ok=True, devices=get_trusted_devices(current_user["restaurant_id"]))
+    from permissions import is_principal
+    mine = None if is_principal(current_user) else current_user["id"]
+    return jsonify(ok=True, devices=get_trusted_devices(current_user["restaurant_id"], user_id=mine))
 
 
 @mobile_bp.route("/account/2fa/trusted-devices/<int:device_id>/revoke", methods=["POST"])
 @mobile_login_required
 def mobile_revoke_trusted_device(current_user, device_id):
     from auth import revoke_trusted_device
-    if not revoke_trusted_device(current_user["restaurant_id"], device_id):
+    from permissions import is_principal
+    mine = None if is_principal(current_user) else current_user["id"]
+    if not revoke_trusted_device(current_user["restaurant_id"], device_id, user_id=mine):
         return jsonify(ok=False, error="That device wasn't found."), 404
     _log_account_event(current_user["restaurant_id"], "trusted_device_revoked", current_user)
     return jsonify(ok=True)
@@ -9250,7 +9407,11 @@ def mobile_revoke_trusted_device(current_user, device_id):
 @mobile_bp.route("/account/2fa/trusted-devices/revoke-all", methods=["POST"])
 @mobile_login_required
 def mobile_revoke_all_trusted_devices(current_user):
-    from auth import revoke_all_trusted_devices
+    from auth import revoke_all_trusted_devices, revoke_own_trusted_devices
+    from permissions import is_principal
+    if not is_principal(current_user):
+        revoke_own_trusted_devices(current_user["restaurant_id"], current_user["id"])
+        return jsonify(ok=True, own_only=True)
     revoke_all_trusted_devices(current_user["restaurant_id"])
     _log_account_event(current_user["restaurant_id"], "trusted_devices_cleared", current_user)
     return jsonify(ok=True)

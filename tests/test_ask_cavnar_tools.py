@@ -856,13 +856,19 @@ def test_tool_names_are_unique():
 
 def test_set_staff_contact_validates_before_saving(db_path):
     rid = _restaurant(db_path)
+    # The tool runs as the login asking (re-audit 10/20/26 R7-19): an owner here.
+    view = models.get_restaurant(rid, db_path=db_path)
+    view._ask_dsr_user = {"id": 1, "role": "client", "restaurant_id": rid}
     ok = json.loads(tools.run_read_tool("set_staff_contact", rid,
-                                        {"employee_name": "Sofia R.", "email": "sofia@x.test"}))
+                                        {"employee_name": "Sofia R.", "email": "sofia@x.test"}, view))
     assert ok["ok"] is True
     assert json.loads(tools.run_read_tool("set_staff_contact", rid,
-                                          {"employee_name": "X", "email": "notanemail"}))["ok"] is False
+                                          {"employee_name": "X", "email": "notanemail"}, view))["ok"] is False
     assert json.loads(tools.run_read_tool("set_staff_contact", rid,
-                                          {"email": "a@b.test"}))["ok"] is False
+                                          {"email": "a@b.test"}, view))["ok"] is False
+    # Without a signed-in login (an unattended Ask) it changes nothing.
+    assert json.loads(tools.run_read_tool("set_staff_contact", rid,
+                                          {"employee_name": "Sofia R.", "email": "x@y.test"}))["ok"] is False
 
 
 def _drafted_review(db_path, rid, draft="We're sorry to hear this."):

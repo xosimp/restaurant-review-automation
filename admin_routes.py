@@ -2646,11 +2646,30 @@ def view_as_client(restaurant_id, current_user):
     if not user_id:
         return ("This restaurant has no owner login to view as. Open it from the location "
                 "that has the owner's login, or add one first."), 404
+    import auth as _auth_va
+    # A view that can make changes is the owner's whole account: it asks for
+    # the admin's password within the step-up window, like every other
+    # sensitive admin action (re-audit 10/20/26 R7-03). A support login's
+    # read-only view does not.
+    needs_pw = bool(current_user.get("is_admin")) and not _auth_va.reauth_is_recent(current_user)
     if request.method != "POST":
-        return _view_as_confirm_page(restaurant_id)
+        return _view_as_confirm_page(restaurant_id, ask_password=needs_pw)
     reason = view_as_reason(request.form.get("reason"))
     if not reason:
-        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE), 400
+        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE, ask_password=needs_pw), 400
+    if needs_pw:
+        _tok_va = _auth_va.current_session_token()
+        if not (_tok_va and _auth_va.password_matches(current_user["id"], request.form.get("password") or "")):
+            import security as _sec_va
+            if _tok_va:
+                misses = _sec_va.record_reauth_miss("reauth:" + _auth_va.hash_session_token(_tok_va)[:24],
+                                                    request.remote_addr)
+                if misses >= REAUTH_MAX_MISSES:
+                    _auth_va.delete_session(_tok_va)
+                    return redirect("/login")
+            return _view_as_confirm_page(restaurant_id, error="Enter your password to open a view that can make "
+                                                              "changes.", ask_password=True), 403
+        _auth_va.mark_reauthenticated(_tok_va)
     from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
     from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
     read_only = not current_user.get("is_admin")
@@ -2711,7 +2730,7 @@ def tell_tenant_support_access(restaurant_id, what, admin, reason=None, read_onl
 _VIEW_AS_RETURN_COOKIE = "cavnar_admin_return"
 
 
-def _view_as_confirm_page(restaurant_id, error=None):
+def _view_as_confirm_page(restaurant_id, error=None, ask_password=False):
     """The GET half of view-as: a button that POSTs, carrying the csrf_js
     double-submit token (minted here when this browser has none yet —
     ensure_csrf_cookie leaves a response that already sets one alone)."""
@@ -2733,6 +2752,9 @@ def _view_as_confirm_page(restaurant_id, error=None):
         f"<p><label for='va-reason'>Why? They see this in their account activity.</label><br>"
         f"<input id='va-reason' name='reason' required minlength='8' maxlength='200' "
         f"style='width:100%;max-width:420px' placeholder='Ticket, their request, the fix you are checking'></p>"
+        + ("<p><label for='va-pw'>Your password (this view can make changes)</label><br>"
+           "<input id='va-pw' name='password' type='password' required autocomplete='current-password' "
+           "style='width:100%;max-width:420px'></p>" if ask_password else "")
         + (f"<p style='color:var(--bad)'>{_esc_va(error)}</p>" if error else "")
         + f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
         f"<p style='margin-top:16px'><a href='/admin'>Back to the admin console</a></p>")
@@ -5042,6 +5064,9 @@ def admin_api_reset_two_factor(user_id, current_user):
     if _auth_rt.is_internal_login(full):
         before = {"two_fa_enabled": _auth_rt.user_two_factor_enrolled(full), "method": full.get("two_fa_method")}
         _clear_user_two_factor(user_id)
+        # A reset is what a lost or compromised phone gets: the views that
+        # login opened end with it (re-audit 10/20/26 R7-06).
+        _auth_rt.end_view_as_opened_by(user_id)
         scope = "login"
     else:
         r = get_restaurant(row["restaurant_id"])

@@ -282,10 +282,17 @@ actor APIClient {
         let grant = isLongCall ? await BackgroundGrant.begin(path) : nil
         defer { if let grant { Task { await grant.end() } } }
 
-        let data: Data
-        let response: URLResponse
+        var data: Data
+        var response: URLResponse
         do {
             (data, response) = try await Self.perform(request, on: transport, mayRetry: mayRetry)
+            // A sign-in security change this session has not confirmed (re-audit
+            // 10/20/26 R7-03): ask for the password, confirm it with the
+            // server, send the change once more. Cancel keeps the refusal.
+            if let info = Self.stepUpRefusal(data, response), !Task.isCancelled,
+               let again = try await stepUpAndResend(request, on: transport, info: info, mayRetry: mayRetry) {
+                (data, response) = again
+            }
         } catch {
             // A request cancelled because its view went away (a `.task`
             // torn down by tapping Back, or by leaving a module screen
@@ -883,6 +890,48 @@ actor APIClient {
             answer = try await session.data(for: request)
         }
         return answer
+    }
+
+    struct StepUpInfo: Sendable {
+        let url: String
+        let minutes: Int
+    }
+
+    private struct ReauthBody: Encodable { let password: String }
+
+    /// A 403 `{reauth_required, reauth_url}` naming this API's own step-up
+    /// route, or nil.
+    nonisolated static func stepUpRefusal(_ data: Data, _ response: URLResponse) -> StepUpInfo? {
+        guard let http = response as? HTTPURLResponse, http.statusCode == 403,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (object["reauth_required"] as? Bool) == true,
+              let url = object["reauth_url"] as? String, url.hasPrefix("/mobile/api/") else { return nil }
+        return StepUpInfo(url: url, minutes: (object["window_minutes"] as? Int) ?? 15)
+    }
+
+    /// Asks for the password (up to three tries), posts it to the step-up
+    /// route and, once it is confirmed, sends `original` again. nil when the
+    /// person cancelled — the caller keeps the refusal it already has.
+    private func stepUpAndResend(
+        _ original: URLRequest, on transport: URLSession, info: StepUpInfo, mayRetry: Bool
+    ) async throws -> (Data, URLResponse)? {
+        var problem: String?
+        for _ in 0..<3 {
+            let message = "This change to sign-in security needs your password. It stays confirmed for "
+                + "\(info.minutes) minutes. Signed in with Google or Apple? Sign out and back in instead."
+            guard let password = await StepUpPrompt.ask(message: message, error: problem) else { return nil }
+            let confirm = try buildRequest(path: info.url, method: HTTPMethod.post.rawValue,
+                                           body: ReauthBody(password: password), query: [:])
+            let (body, reply) = try await Self.perform(confirm, on: session, mayRetry: false)
+            let status = (reply as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 {
+                return try await Self.perform(original, on: transport, mayRetry: mayRetry)
+            }
+            if status == 401 { return (body, reply) }     // too many tries: the session ended
+            let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            problem = (object?["error"] as? String) ?? "That password isn\u{2019}t right."
+        }
+        return nil
     }
 
     nonisolated static func isInFlightRefusal(_ answer: (Data, URLResponse)) -> Bool {

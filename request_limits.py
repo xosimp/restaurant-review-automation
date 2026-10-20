@@ -60,21 +60,72 @@ def enabled() -> bool:
     return (os.environ.get("REQUEST_LIMITS") or "1").strip().lower() not in ("0", "false", "no", "off")
 
 
-def _sweep(store):
-    if len(store) > _MAX_KEYS:
-        for k in list(store)[: len(store) // 2]:
+# When a store is full, what is idle goes first, then the least recently
+# used (re-audit 10/20/26 R7-15). The old sweep dropped the oldest-INSERTED
+# half of every key, so a caller rotating addresses evicted the busiest live
+# windows — the portal flood filter, the guest join form — by volume alone.
+_window_secs: dict = {}      # key -> its window, so an idle one is known
+_touched: dict = {}          # key -> monotonic stamp of its last use
+
+
+def _sweep(store, now=None):
+    if len(store) < _MAX_KEYS:
+        return
+    now = time.monotonic() if now is None else now
+    if store is _windows:
+        for k in [k for k, q in store.items() if not q or now - q[-1] >= _window_secs.get(k, 3600)]:
             store.pop(k, None)
+            _window_secs.pop(k, None)
+    else:
+        for k in [k for k, b in store.items() if now - b[1] >= 3600]:
+            store.pop(k, None)
+    if len(store) > int(_MAX_KEYS * 0.9):
+        ranked = sorted(store, key=lambda k: _touched.get(k, 0.0))
+        for k in ranked[: len(store) - int(_MAX_KEYS * 0.9)]:
+            store.pop(k, None)
+            _window_secs.pop(k, None)
+    for k in [k for k in _touched if k not in _windows and k not in _buckets]:
+        _touched.pop(k, None)
+
+
+def ip_key(value: str) -> str:
+    """`value` with any IPv6 address in it collapsed to its /64 (R7-15): one
+    subscriber's /64 holds 2^64 addresses, so a per-address limit keyed on
+    the whole address bounded nothing. "portal:2001:db8::1" →
+    "portal:2001:db8::/64"; IPv4 and anything that is not an address are
+    unchanged."""
+    s = str(value or "")
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(s)
+    except ValueError:
+        addr = None
+    if addr is not None:
+        if addr.version == 6:
+            mapped = addr.ipv4_mapped
+            if mapped is not None:
+                return str(mapped)
+            return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+        return s
+    if ":" in s:
+        head, rest = s.split(":", 1)
+        return head + ":" + ip_key(rest)
+    return s
 
 
 def memory_limited(key: str, max_calls: int, window_secs: float, now: float = None) -> bool:
     """True when `key` has made `max_calls` calls in the last `window_secs`
-    (this call is then not counted); else counts it and answers False."""
+    (this call is then not counted); else counts it and answers False. An
+    IPv6 address in the key counts as its /64 (`ip_key`)."""
     now = time.monotonic() if now is None else now
+    key = ip_key(key)
     with _lock:
+        _touched[key] = now
         q = _windows.get(key)
         if q is None:
-            _sweep(_windows)
+            _sweep(_windows, now)
             q = _windows[key] = deque()
+            _window_secs[key] = window_secs
         while q and now - q[0] >= window_secs:
             q.popleft()
         if len(q) >= max_calls:
@@ -85,8 +136,9 @@ def memory_limited(key: str, max_calls: int, window_secs: float, now: float = No
 
 def _take(key, cost, capacity, rate, now):
     b = _buckets.get(key)
+    _touched[key] = now
     if b is None:
-        _sweep(_buckets)
+        _sweep(_buckets, now)
         b = _buckets[key] = [capacity, now]
     b[0] = min(capacity, b[0] + (now - b[1]) * rate)
     b[1] = now
@@ -308,5 +360,7 @@ def reset():
         _windows.clear()
         _buckets.clear()
         _inflight.clear()
+        _window_secs.clear()
+        _touched.clear()
     _measured["at"] = 0.0
     _measured["routes"] = frozenset()
