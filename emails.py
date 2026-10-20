@@ -518,6 +518,40 @@ def esc(value) -> str:
     return _h.escape("" if value is None else str(value), quote=True)
 
 
+# Mail sent in waves rather than in answer to a person (R7-10): it shares
+# RESEND_BULK_PER_SECOND (rate_bucket "resend:bulk", every process), set
+# below the Resend team's rate so the rest is the lane for security and
+# transactional mail. Security mail (_SUPPRESSION_EXEMPT) and operator mail
+# never wait on it.
+BULK_EMAIL_TYPES = frozenset({
+    "guest_newsletter", "guest_review_request", "digest", "owner_digest", "send_morning_brief",
+    "send_monthly_summary_email", "send_quarterly_summary", "send_value_recap_email", "while_away",
+    "staff_announcement", "send_dsr_email", "send_onboarding_day2", "send_onboarding_day7",
+    "send_onboarding_day30", "send_onboarding_nudge", "send_reactivation_email", "referral",
+})
+RESEND_BULK_PER_SECOND_DEFAULT = 1.5
+BULK_SLOT_MAX_WAIT = 30.0
+
+
+def _pace_bulk(email_type) -> None:
+    """Take a bulk-lane slot for a bulk type (waits up to BULK_SLOT_MAX_WAIT
+    seconds; a bucket that cannot be reached, or a wait that runs out, sends
+    anyway — pacing is to leave room, never to drop mail)."""
+    if email_type not in BULK_EMAIL_TYPES:
+        return
+    try:
+        rate = float(os.environ.get("RESEND_BULK_PER_SECOND") or RESEND_BULK_PER_SECOND_DEFAULT)
+    except ValueError:
+        rate = RESEND_BULK_PER_SECOND_DEFAULT
+    if rate <= 0 or not _resend_key():
+        return
+    try:
+        import rate_bucket
+        rate_bucket.wait_for("resend:bulk", rate, burst=max(1.0, rate * 2), max_wait=BULK_SLOT_MAX_WAIT)
+    except Exception as e:
+        log.warning("bulk email pacing unavailable: %s", e)
+
+
 def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
     """Send one email through Resend, with retry on transient failures, and
     record the real outcome in email_log.
@@ -612,6 +646,13 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                 recipients, to_email = kept, kept[0]
         except Exception as e:
             log.warning("suppression check failed for %s: %s", to_email, e)
+
+    # The bulk lane (re-audit 10/20/26 R7-10): newsletters, digests, briefs,
+    # summaries and onboarding mail take a slot from one shared bucket below
+    # Resend's team rate, so a 20,000-contact newsletter or Monday's digest
+    # wave leaves room for sign-in codes and resets, which never wait.
+    if not operator and email_type not in _SUPPRESSION_EXEMPT:
+        _pace_bulk(email_type)
 
     # One Idempotency-Key for every attempt of THIS send, a new one for the
     # next. The loop retries timeouts and 5xx, and a timeout is often a send

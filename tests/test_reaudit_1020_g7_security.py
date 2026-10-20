@@ -747,6 +747,25 @@ def test_an_email_change_waits_on_a_code_sent_to_the_new_address(db_path, client
     assert models.get_restaurant(rid, db_path=db_path).owner_email == "thief@evil.test"
 
 
+# ── R7-10: bulk mail paced, security mail never waits ─────────────────────
+
+def test_bulk_mail_takes_the_shared_lane_and_security_mail_never_waits(monkeypatch):
+    import emails
+    import rate_bucket
+    import guest_marketing
+    taken = []
+    monkeypatch.setattr(emails, "_resend_key", lambda: "re_test")
+    monkeypatch.setattr(rate_bucket, "wait_for", lambda key, rate, **k: taken.append((key, rate)) or True)
+    emails._pace_bulk("guest_newsletter")
+    emails._pace_bulk("send_2fa_code")
+    emails._pace_bulk("send_password_reset_email")
+    assert taken == [("resend:bulk", emails.RESEND_BULK_PER_SECOND_DEFAULT)]
+    assert not (emails.BULK_EMAIL_TYPES & emails._SUPPRESSION_EXEMPT)
+    import inspect
+    assert "_pace_bulk(email_type)" in inspect.getsource(emails.deliver)
+    assert guest_marketing.GUEST_SMS_FLEET_PER_SECOND_DEFAULT > 0
+
+
 # ── R7-22: per-location comparison only inside a real group ──────────────
 
 def test_ungrouped_restaurants_sharing_an_email_are_not_siblings(db_path):

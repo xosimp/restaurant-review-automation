@@ -2174,6 +2174,12 @@ GUEST_CAMPAIGN_RESUME_HOURS = 24
 # handed over at once sat in Twilio's queue behind — and ahead of — every
 # other restaurant's review requests on the shared number (MB-13).
 GUEST_SMS_PER_SECOND_DEFAULT = 2.0
+# The fleet bucket is ON by default since the re-audit (10/20/26 R7-10): with
+# it off, every restaurant's campaign drained at 2/s into one shared Twilio
+# queue. 4/s is two restaurants at full speed; set GUEST_SMS_FLEET_PER_SECOND
+# from the guest campaign's registered MPS (Twilio console), below it so
+# single texts keep their lane; 0 switches it off.
+GUEST_SMS_FLEET_PER_SECOND_DEFAULT = 4.0
 # Fleet pacing and fair shares (scale audit 10/19/26, SEC-03). Every
 # restaurant's campaigns leave on ONE guest messaging service, whose carrier
 # throughput is the campaign's registered rate: 2/s per campaign times every
@@ -2181,8 +2187,8 @@ GUEST_SMS_PER_SECOND_DEFAULT = 2.0
 # until it expired — review requests included. Now each restaurant's campaign
 # texts share one bucket at GUEST_SMS_PER_SECOND (across all its campaigns and
 # processes), and all campaign texts share one fleet bucket at
-# GUEST_SMS_FLEET_PER_SECOND (off at 0, the default, until it is set from the
-# campaign's registered MPS). Single texts — review requests, join
+# GUEST_SMS_FLEET_PER_SECOND (GUEST_SMS_FLEET_PER_SECOND_DEFAULT since R7-10;
+# set it from the campaign's registered MPS). Single texts — review requests, join
 # confirmations — never take from these: they are the priority lane, so set
 # the fleet rate below the registered rate to leave them room. A drain that
 # cannot get a slot within GUEST_SMS_SLOT_MAX_WAIT seconds stops and the
@@ -2242,7 +2248,7 @@ def _take_campaign_slots(restaurant_id) -> bool:
         return True
     import rate_bucket
     mine = _rate_env("GUEST_SMS_PER_SECOND", GUEST_SMS_PER_SECOND_DEFAULT)
-    fleet = _rate_env("GUEST_SMS_FLEET_PER_SECOND", 0.0)
+    fleet = _rate_env("GUEST_SMS_FLEET_PER_SECOND", GUEST_SMS_FLEET_PER_SECOND_DEFAULT)
     for key, rate in ((f"guest_sms:r{int(restaurant_id)}", mine), ("guest_sms:fleet", fleet)):
         if rate <= 0:
             continue
