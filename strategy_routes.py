@@ -8060,7 +8060,8 @@ def _do_home_follow(u):
         except home_snapshots.SnapshotMiss:
             missing.append(key)
         except Exception as e:
-            print(f"[home-follow] {key} failed rid={_rid(u)}: {e}")
+            import logging
+            logging.getLogger(__name__).warning("home-follow %s failed rid=%s: %s", key, _rid(u), e)
             blocks[key] = None
     return {"ok": True, "blocks": blocks, "missing": missing}, 200
 

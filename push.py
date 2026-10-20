@@ -2096,7 +2096,8 @@ def _queue_silent(restaurant_id, reason, user_ids, delay, db_path=DB_PATH) -> bo
                           db_path=None if db_path == DB_PATH else db_path)
         return True
     except Exception as e:
-        print(f"[push] silent push not queued (rid={restaurant_id}, {reason}): {e}")
+        import logging
+        logging.getLogger(__name__).warning("silent push not queued (rid=%s, %s): %s", restaurant_id, reason, e)
         return False
 
 
