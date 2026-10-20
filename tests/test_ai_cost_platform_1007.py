@@ -437,7 +437,7 @@ def loop(db_path, monkeypatch):
             ran.append((name, threading.current_thread().name))
             return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
         return fn
-    for mod, attr in ((strategy_jobs, "run_auto_draft_schedules"), (strategy_jobs, "run_weekly_plan"),
+    for mod, attr in ((strategy_jobs, "run_auto_draft_schedules"), (strategy_jobs, "fan_out_weekly_plan"),
                       (strategy_jobs, "run_recipe_drafts"), (scheduler, "run_weekly_digests"),
                       (scheduler, "_minute_duties")):
         monkeypatch.setattr(mod, attr, rec(attr))
@@ -460,7 +460,7 @@ def loop(db_path, monkeypatch):
 
 @pytest.mark.parametrize("claim, fn, now", [
     ("auto_draft_schedule", "run_auto_draft_schedules", datetime(2026, 10, 8, 6, 5)),
-    ("weekly_plan", "run_weekly_plan", datetime(2026, 10, 5, 7, 5)),          # a Monday
+    ("weekly_plan", "fan_out_weekly_plan", datetime(2026, 10, 5, 7, 5)),      # a Monday (queued, R4-09)
     ("recipe_drafts", "run_recipe_drafts", datetime(2026, 10, 6, 5, 5)),      # a Tuesday
     ("weekly_digest", "run_weekly_digests", datetime(2026, 10, 5, 9, 5)),
 ])

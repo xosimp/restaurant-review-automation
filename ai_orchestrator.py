@@ -489,7 +489,7 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
     max_steps = max(1, min(n_rungs, 1 + int(pol.max_escalations)))
     token = _RUN.set({"run_id": run_id, "workflow": workflow, "depth": depth,
                       "restaurant_id": restaurant_id, "keep_request": _sampled_for_replay(workflow),
-                      "step": 0, "tier": None})
+                      "step": 0, "tier": None, "caps": caps, "calls": 0, "usd": 0.0})
     import ai_utils
     best = None
     notes = []
@@ -499,6 +499,11 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
         # attempts and the reviewer gate (platform re-audit 10/7/26 #6).
         with ai_utils.ai_context(correlation_id=run_id, restaurant_id=restaurant_id), ai_utils.interactive_run():
             for step in range(max_steps):
+                # Before an escalation the run's Caps are judged from the
+                # ledger; inside every rung's attempt — a single-rung run's
+                # too — each call is judged against them as it goes out
+                # (run_cap_refusal, blind re-audit 10/20/26 R4-10: a
+                # single-rung workflow never met its caps at all).
                 if step:
                     cost, _i, _o, calls = _spent(run_id, db_path)
                     if calls >= caps.calls or cost >= caps.usd or time.time() >= deadline:
@@ -521,15 +526,21 @@ def generate(workflow, restaurant_id, attempt, check=None, *, review=None, start
                 if cur_run is not None:
                     cur_run["step"], cur_run["tier"] = step, route.tier
                 t0 = time.time()
+                if cur_run is not None:
+                    cur_run["in_attempt"] = True
                 try:
                     result = attempt(route, list(notes))
                 except Exception as e:
+                    if cur_run is not None:
+                        cur_run["in_attempt"] = False
                     steps.append({"tier": route.tier, "model": route.model, "error": type(e).__name__,
                                   "ms": int((time.time() - t0) * 1000)})
                     rr.attempts += 1
                     rr.tier, rr.model = route.tier, route.model
                     error = e
                     break
+                if cur_run is not None:
+                    cur_run["in_attempt"] = False
                 rr.attempts += 1
                 rr.tier, rr.model = route.tier, route.model
                 v = check(result) if check else Verdict.passed()
@@ -649,6 +660,57 @@ def _store_request(run_id, seq, workflow, restaurant_id, tier, kwargs, db_path=N
         conn.commit()
     finally:
         conn.close()
+
+
+# Workflows that bound their own spend inside a run, with a finer rule than
+# Caps (the schedule: schedule_engine._run_cap_reached, its tier's dollars
+# and the job's deadline) — the per-call check below leaves them to it.
+SELF_CAPPED = ("labor_schedule",)
+
+
+# Inside one rung's attempt, a run stops at this multiple of its Caps (a
+# loop guard, never the normal bound — between rungs the Caps themselves
+# bind, as they always did).
+IN_ATTEMPT_CAP_FACTOR = 2.0
+
+
+def run_cap_refusal():
+    """Why the run in force may send no more calls, as words, or None
+    (blind re-audit 10/20/26 R4-10): its Caps were judged only before an
+    escalation, so a single-rung run — Ask's tool loop, any one-rung
+    workflow — never met them at all. ai_utils.create_with_retry asks before
+    every call: inside a rung's attempt, a run past IN_ATTEMPT_CAP_FACTOR
+    times its calls or dollars is stopped (a reviewer's gate call is never
+    refused here — a skipped gate must not read as a pass). The run's calls
+    and dollars are counted in memory (note_run_call), never by a ledger
+    scan. Never raises."""
+    cur = _RUN.get()
+    if not cur or not cur.get("in_attempt") or cur.get("workflow") in SELF_CAPPED:
+        return None
+    caps = cur.get("caps")
+    if caps is None:
+        return None
+    try:
+        if int(cur.get("calls") or 0) >= IN_ATTEMPT_CAP_FACTOR * int(caps.calls):
+            return f"{cur.get('workflow')} made {int(cur.get('calls') or 0)} calls in one run (cap {int(caps.calls)})"
+        if float(cur.get("usd") or 0.0) >= IN_ATTEMPT_CAP_FACTOR * float(caps.usd):
+            return f"{cur.get('workflow')} spent ${float(cur.get('usd') or 0):.2f} in one run (cap ${float(caps.usd):.2f})"
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def note_run_call(cost_usd=0.0):
+    """One call sent inside the run in force, and what it cost (0 for one
+    that failed) — run_cap_refusal's count. Never raises."""
+    cur = _RUN.get()
+    if not cur:
+        return
+    try:
+        cur["calls"] = int(cur.get("calls") or 0) + 1
+        cur["usd"] = float(cur.get("usd") or 0.0) + float(cost_usd or 0.0)
+    except (TypeError, ValueError):
+        pass
 
 
 def keep_request(kwargs, db_path=None):

@@ -729,5 +729,5 @@ def test_h16_every_insight_path_runs_the_cause_and_binding_checks():
     assert "digest_line_check(" in inspect.getsource(reporter.generate_ai_digest_summary)
     assert "rv.validate_lines(" in inspect.getsource(reporter.digest_line_check)
     assert "digest_line_problem(" in inspect.getsource(reporter.digest_line_check)
-    assert "_plan_item_problem(" in inspect.getsource(strategy_jobs.run_weekly_plan)
+    assert "_plan_item_problem(" in inspect.getsource(strategy_jobs.weekly_plan_one)
     assert "rv.validate_lines(" in inspect.getsource(strategy_jobs._plan_item_problem)

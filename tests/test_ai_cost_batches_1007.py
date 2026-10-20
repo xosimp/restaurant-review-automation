@@ -185,6 +185,9 @@ def test_only_the_schedulers_sweep_batches_the_read(db, batches, monkeypatch):
     with ai_utils.ai_context(trigger="scheduler"):
         out = competitor._submit_insight_batch(r, json.loads(json.dumps(COMPS)), {"vibe": "cozy"}, [], "d", [], {})
     assert out["ok"] and out["batched"]
+    # Grouped (re-audit 10/20/26 R4-06): sent with the pass by the collector's flush.
+    assert batches.created == []
+    ai_batches.flush_deferred()
     (row,) = _rows(db, "SELECT * FROM ai_batch_items WHERE workflow='competitor_insight'")
     ctx = json.loads(row["context_json"])
     assert row["cutoff_at"] and row["correlation_id"] == ctx["run_id"] and ctx["prompt"]
@@ -620,6 +623,7 @@ def test_one_batched_read_per_restaurant_per_day_and_a_duplicate_buys_nothing(db
     assert first["batched"] and not first.get("duplicate")
     # Batched, so run_competitor_analysis returns it — no synchronous read.
     assert again["ok"] and again["batched"] and again["duplicate"]
+    ai_batches.flush_deferred()
     assert len(batches.created) == 1
     (row,) = _rows(db, "SELECT custom_id, context_json FROM ai_batch_items WHERE workflow='competitor_insight'")
     assert row["custom_id"] == competitor.batch_custom_id(r.id)

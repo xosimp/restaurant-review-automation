@@ -2496,7 +2496,7 @@ def _submit_insight_batch(restaurant, competitors, profile, closed_custom, disco
                                         getattr(restaurant, "timezone", None), rid, ready=_insight_readiness(rid))
         run_id = ai_orchestrator.new_run_id(BATCH_WORKFLOW)
         cid = batch_custom_id(rid)
-        out = ai_batches.submit(BATCH_WORKFLOW, [{
+        out = ai_batches.submit(BATCH_WORKFLOW, group=True, items=[{
             "custom_id": cid, "restaurant_id": rid, "action": "competitor_insight",
             "request": _insight_request(prompt, wf.route_for(wf.policy(BATCH_WORKFLOW), 0)), "readiness": ready,
             "callback": BATCH_CALLBACK, "correlation_id": run_id,

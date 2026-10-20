@@ -6506,8 +6506,9 @@ def scheduler_loop():
 
             # Monday 7am local — the agent files the week's three actions.
             if now.weekday() == 0 and _ops.claim_period("weekly_plan", f"{today}-{now.hour}"):
-                from strategy_jobs import run_weekly_plan
-                if not _ops.run_in_lane("ai", "weekly_plan", run_weekly_plan):
+                # Queue rows, one per restaurant due (R4-09): the lane is held for seconds.
+                from strategy_jobs import fan_out_weekly_plan
+                if not _ops.run_in_lane("ai", "weekly_plan", fan_out_weekly_plan):
                     _ops.release_period("weekly_plan", f"{today}-{now.hour}")
 
             # Tuesday 5am local — recipe drafts for dishes with none.

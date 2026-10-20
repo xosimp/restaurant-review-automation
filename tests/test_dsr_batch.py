@@ -354,6 +354,9 @@ def test_the_batched_request_is_the_synchronous_one_and_its_answer_is_judged_the
     ctx = dsr.Context(rest, day, db_path=db)
     out = REAL_NARRATIVE.submit_batch(ctx, facts, cid, context={"report_id": rep["id"], "trigger": "sweep"})
     assert out == {"status": "submitted"}
+    # Grouped with the night's other narratives (re-audit 10/20/26 R4-06).
+    assert fake.created == [] and ai_batches.pending("dsr_narrative", cid)
+    ai_batches.flush_deferred()
     (sent,) = fake.created
     params = sent[0]["params"]
     assert params["system"][0]["cache_control"] == {"type": "ephemeral"}, "#77: the cache marker stays"

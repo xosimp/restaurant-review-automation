@@ -148,8 +148,12 @@ def test_exhausted_rate_limits_never_open_the_breaker(monkeypatch):
     for _ in range(ai_utils.CB_FAILURE_THRESHOLD):
         with pytest.raises(anthropic.InternalServerError):
             ai_utils.create_with_retry(_Failing(err), retries=0, model="m", max_tokens=5)
-    assert ai_utils.breaker_state("anthropic")[0] == "open"
+    # ...against the model's family breaker (re-audit 10/20/26 R4-04), never
+    # every model's: the provider's own stays closed.
+    assert ai_utils.breaker_state("anthropic/m")[0] == "open"
+    assert ai_utils.breaker_open("anthropic", "m") and ai_utils.breaker_state("anthropic")[0] == "closed"
     ai_utils.reset_breaker()
+    assert ai_utils.breaker_state("anthropic/m")[0] == "closed"
 
 
 def test_a_retry_waits_the_providers_retry_after_with_jitter(monkeypatch):
@@ -183,15 +187,18 @@ def test_the_places_pool_has_no_absolute_maximum_and_counts_trials(db_path, monk
     assert ai_utils.places_global_monthly_budget() == 3000.0, "a maximum set on purpose still binds"
 
 
-def test_the_trial_pool_grows_per_trial_up_to_its_backstop(db_path, monkeypatch):
+def test_the_trial_pool_grows_per_trial_with_no_absolute_maximum(db_path, monkeypatch):
     monkeypatch.setattr(ai_utils, "_trial_client_count", lambda db_path=None: 1)
     assert ai_utils.trial_pool_budgets() == (ai_utils.AI_TRIAL_POOL_DAILY_USD, ai_utils.AI_TRIAL_POOL_MONTHLY_USD)
     monkeypatch.setattr(ai_utils, "_trial_client_count", lambda db_path=None: 100)
     day, month = ai_utils.trial_pool_budgets()
     assert month == 100 * ai_utils.AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD and day == 250.0
+    # No absolute maximum (blind re-audit 10/20/26 R4-01): a rollout of
+    # trials is never refused AI by a fixed fleet cap.
     monkeypatch.setattr(ai_utils, "_trial_client_count", lambda db_path=None: 100000)
-    assert ai_utils.trial_pool_budgets() == (ai_utils.AI_TRIAL_POOL_MAX_DAILY_USD,
-                                             ai_utils.AI_TRIAL_POOL_MAX_MONTHLY_USD)
+    assert ai_utils.trial_pool_budgets() == (100000 * ai_utils.AI_TRIAL_POOL_PER_TRIAL_DAILY_USD,
+                                             100000 * ai_utils.AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD)
+    assert not hasattr(ai_utils, "AI_TRIAL_POOL_MAX_DAILY_USD")
 
 
 def test_the_trial_count_leaves_out_demos(db_path):

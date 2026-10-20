@@ -741,7 +741,22 @@ struct StaffDocsSheet: View {
         sourcesOpen = false
         defer { asking = false }
         do {
-            answer = try await staff.authed("/staff/api/ask", method: .post, body: StaffQuestionBody(question: q))
+            // Written off the server's request threads (re-audit 10/20/26
+            // R4-08): a turn comes back, polled until the answer is in.
+            var reply: StaffAskReply = try await staff.authed("/staff/api/ask", method: .post,
+                                                               body: StaffQuestionBody(question: q))
+            if reply.pending, let turn = reply.turnId {
+                var tries = 0
+                while reply.pending && tries < 120 {
+                    try await Task.sleep(nanoseconds: UInt64(max(300, reply.pollAfterMs)) * 1_000_000)
+                    reply = try await staff.authed("/staff/api/ask/turn/\(turn)")
+                    tries += 1
+                }
+            }
+            answer = reply.pending
+                ? StaffAskAnswer(answered: false, answer: "That took too long \u{2014} ask your manager.",
+                                 suggestMessage: true)
+                : reply.answer
         } catch let e as APIClient.APIError {
             // 429 still offers the thread (suggest_message).
             if let refused = e.decodeBody(StaffAskAnswer.self), refused.suggestMessage {
