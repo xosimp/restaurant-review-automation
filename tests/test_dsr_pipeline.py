@@ -712,6 +712,7 @@ def test_the_sweep_is_bounded_and_resumes_after_its_cursor(db, world, monkeypatc
         return {"ok": True, "action": "final"}
     monkeypatch.setattr(pipeline, "run_night", slow_night)
     monkeypatch.setattr(pipeline, "SWEEP_MAX_SECONDS", 0.01)
+    monkeypatch.setattr(pipeline, "SWEEP_WORKERS", 1)       # one at a time: the cursor's own behaviour
     first = pipeline.run_sweep(now_utc=U(4, 10), db_path=db)
     assert (first["done"], first["hit_bound"]) == (1, True) and ran == [rs[0].id]
     assert pipeline._read_cursor(db) == rs[0].id
@@ -729,6 +730,81 @@ def test_the_scheduler_runs_the_sweep_every_tick_claimed_per_ten_minutes():
     import scheduler
     import admin_ops
     src = inspect.getsource(scheduler.scheduler_loop)
-    assert re.search(r'claim_period\("dsr_sweep", f"\{today\}-\{now\.hour\}-\{now\.minute // 10\}"\)', src)
-    assert 'run_job("dsr_sweep", run_sweep)' in src
+    assert "_submit_dsr_sweep(_ops, now)" in src
+    # On its own lane since the scale audit (10/19/26 INF-1/INF-2), the slot
+    # claimed per ten minutes, a busy lane giving it back.
+    sub = inspect.getsource(scheduler._submit_dsr_sweep)
+    assert 'f"{now.date()}-{now.hour}-{now.minute // 10}"' in sub
+    assert 'claim_period("dsr_sweep", slot)' in sub and 'run_in_lane("dsr", "dsr_sweep", run_sweep)' in sub
+    assert 'release_period("dsr_sweep", slot)' in sub
     assert admin_ops.RUNNABLE_JOBS["dsr_sweep"]["target"] == ("dsr.pipeline", "run_sweep")
+
+
+# ── scale audit 10/19/26 INF-1 / INF-2 / A4-06: workers, EDF, its own lane ──
+
+def test_the_sweep_runs_restaurants_side_by_side_earliest_deadline_first(db, world, monkeypatch):
+    import threading
+    chicago = _restaurant(db, "Chicago")
+    ny = _restaurant(db, "New York")
+    update_restaurant(ny.id, {"timezone": "America/New_York"}, db_path=db)
+    late = _restaurant(db, "Late deadline", dsr_deadline_hour=6)
+    ran, lock, active = [], threading.Lock(), {"now": 0, "max": 0}
+
+    def slow_night(r, day, trigger, now_utc=None, db_path=None, force=False):
+        with lock:
+            ran.append(r.id)
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+        time.sleep(0.2)
+        with lock:
+            active["now"] -= 1
+        return {"ok": True, "action": "final"}
+    monkeypatch.setattr(pipeline, "run_night", slow_night)
+    # 5:10 UTC: New York closed at 3:00 UTC, Chicago at 4:00. Deadlines:
+    # 4am EDT (8:00 UTC), 4am CDT (9:00), 6am CDT (11:00).
+    monkeypatch.setattr(pipeline, "SWEEP_WORKERS", 1)
+    pipeline.run_sweep(now_utc=U(5, 10), db_path=db)
+    assert ran == [ny.id, chicago.id, late.id]
+    ran.clear()
+    monkeypatch.setattr(pipeline, "SWEEP_WORKERS", 3)
+    began = time.time()
+    out = pipeline.run_sweep(now_utc=U(5, 10), db_path=db)
+    assert sorted(ran) == sorted([ny.id, chicago.id, late.id]) and active["max"] == 3
+    assert time.time() - began < 0.5 and out["eligible"] == 3 and out["workers"] == 3 and out["ok"] == 3
+
+
+def test_the_dsr_sweep_is_submitted_to_its_lane_by_the_tick_and_the_pulse(monkeypatch):
+    import scheduler
+    calls = []
+
+    class _Ops:
+        def __init__(self, claim, lane):
+            self._claim, self._lane = claim, lane
+
+        def claim_period(self, job, period):
+            calls.append(("claim", job, period))
+            return self._claim
+
+        def run_in_lane(self, lane, job, fn):
+            calls.append(("lane", lane, job))
+            return self._lane
+
+        def release_period(self, job, period):
+            calls.append(("release", job, period))
+    now = datetime(2026, 10, 19, 23, 47)
+    assert scheduler._submit_dsr_sweep(_Ops(True, True), now) is True
+    assert calls == [("claim", "dsr_sweep", "2026-10-19-23-4"), ("lane", "dsr", "dsr_sweep")]
+    calls.clear()
+    assert scheduler._submit_dsr_sweep(_Ops(True, False), now) is False      # last slot's pass still running
+    assert calls[-1] == ("release", "dsr_sweep", "2026-10-19-23-4")
+    calls.clear()
+    assert scheduler._submit_dsr_sweep(_Ops(False, True), now) is False and calls == [
+        ("claim", "dsr_sweep", "2026-10-19-23-4")]
+    import inspect
+    pulse = inspect.getsource(scheduler._PulsedOps._pulse)
+    assert "_submit_dsr_sweep(self, _chi_now())" in pulse
+    import jobs_registry
+    assert jobs_registry.JOBS["dsr_sweep"]["lane"] == "dsr" and "dsr" in scheduler._LANES
+    for job in ("pos_sync", "loss_sync", "dsr_backfill"):
+        assert jobs_registry.JOBS[job]["lane"] == "pos", job
+    assert jobs_registry.JOBS["review_fetch"]["lane"] == "fetch"

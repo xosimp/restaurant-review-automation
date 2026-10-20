@@ -257,6 +257,9 @@ def test_briefs_come_from_a_due_queue_with_a_bound_and_a_cursor(db, monkeypatch)
     monkeypatch.setattr(time_utils, "restaurant_now", lambda tz=None, naive=False: datetime(2026, 9, 29, 8, 0))
     sent = []
     monkeypatch.setattr(morning_brief, "deliver", lambda rid, **k: sent.append(rid) or {"sent": 1})
+    # One at a time, to see the bound and the cursor themselves (the pass
+    # runs BRIEF_WORKERS at once since the scale audit, 10/19/26 INF-10).
+    monkeypatch.setattr(morning_brief, "BRIEF_WORKERS", 1)
     out = morning_brief.run_due(db_path=db, max_seconds=0)
     assert out["hit_bound"] and sent == [ids[0]]
     morning_brief.run_due(db_path=db)

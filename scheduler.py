@@ -4952,6 +4952,7 @@ class _PulsedOps:
     def _pulse(self, name, started, stop):
         started.wait()
         begun = time.monotonic()
+        pulse_lanes = name != "dsr_sweep"
         bound = jobs_registry.max_minutes(name) * 60.0
         overrun_told = False
         while not stop.is_set():
@@ -4971,6 +4972,14 @@ class _PulsedOps:
                 self.run_duties(renew_lease=True, vouch=within)
             except Exception as e:
                 log.error(f"Scheduler pulse failed: {e}")
+            # The DSR sweep owes its nights minutes: while this job holds the
+            # loop, its 10-minute slots are still submitted to the DSR lane
+            # (scale audit 10/19/26 INF-1, INF-2).
+            if pulse_lanes:
+                try:
+                    _submit_dsr_sweep(self, _chi_now())
+                except Exception as e:
+                    log.error(f"DSR sweep not submitted from the pulse: {e}")
             # Outside the duties' lock: a slow monitor never holds them up.
             if within and self._keeping_up():
                 _ops.ping_healthcheck()
@@ -5139,7 +5148,9 @@ class _Lane:
         finally:
             if on_done is not None:
                 on_done()
-            if self.name == "sweep":
+            if self.name in ("sweep", "pos"):
+                # A chained lane's next link starts SWEEP_FOLLOW_SECONDS
+                # after this one ends, not at the next tick.
                 _SWEEP_DONE.set()
 
     def _run_job(self, job_name, fn, args, kwargs):
@@ -5188,7 +5199,39 @@ class _Lane:
 # (_PulsedOps.settled), not by its place in the loop. Its own lane: a
 # Monday Intel sweep or an hour-long schedule draft must not hold the
 # chain the briefs read.
-_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep")}
+#
+# "dsr" (scale audit 10/19/26 INF-1, INF-2, A4-06): the DSR sweep, every ten
+# minutes, with its own workers inside (dsr.pipeline.SWEEP_WORKERS). It ran
+# on the loop thread, so the 3am POS block (pos_sync, loss_sync, the DSR
+# backfill — up to two hours at scale) and an 8pm review fetch froze it
+# across the East and Central deadlines. Submitted by the tick and by the
+# pulse of whatever inline job holds the loop (_submit_dsr_sweep).
+#
+# "pos" (INF-2): the 3am POS chain — pos_sync, then loss_sync and the DSR
+# backfill once it has settled — one at a time, as the loop ran them, so
+# RPOWER sees the same traffic; beside the loop instead of on it.
+#
+# "fetch" (INF-9): the review fetch, four times a day, up to its three-hour
+# bound; its 8pm slot overlapped the East Coast closes and held live labor
+# and the staff reminders.
+_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep"), "dsr": _Lane("dsr"),
+          "pos": _Lane("pos"), "fetch": _Lane("fetch")}
+
+
+def _submit_dsr_sweep(ops_, now):
+    """Claim this 10-minute slot of the DSR sweep and start it on the "dsr"
+    lane; a lane still running the last slot's pass gives the claim back,
+    so the next tick or pulse starts it. Called by the loop's tick and by
+    the pulse of an inline job (_PulsedOps._pulse). Returns whether a pass
+    was started."""
+    slot = f"{now.date()}-{now.hour}-{now.minute // 10}"
+    if not ops_.claim_period("dsr_sweep", slot):
+        return False
+    from dsr.pipeline import run_sweep
+    if ops_.run_in_lane("dsr", "dsr_sweep", run_sweep):
+        return True
+    ops_.release_period("dsr_sweep", slot)
+    return False
 
 
 # What the morning briefs read that the 5-6am chain writes (#54): the food
@@ -5465,10 +5508,12 @@ def scheduler_loop():
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
             # the POS close-day poll, block retries, the provisional
             # deadline and late-data versions. Bounded and resumable inside;
-            # each night claims (restaurant, business date, version).
-            if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
-                from dsr.pipeline import run_sweep
-                _ops.run_job("dsr_sweep", run_sweep)
+            # each night claims (restaurant, business date, version). On its
+            # own lane, submitted here AND by the pulse while an inline job
+            # holds the loop (_submit_dsr_sweep — scale audit 10/19/26 INF-1,
+            # INF-2): the 3am POS block and an 8pm review fetch froze it
+            # across the ET and CT deadlines.
+            _submit_dsr_sweep(_ops, now)
 
             # Every 10 minutes while the Postgres shadow is on (PG_SHADOW_WRITE,
             # scheduler audit 10/10/26 RM-13): the schedule revisions noted in
@@ -5629,9 +5674,16 @@ def scheduler_loop():
                                         retry_only=True, claim="ai_visibility_retry"):
                     _ops.release_period("ai_visibility_retry", str(today))
 
+            # 3am — the POS chain on the "pos" lane (scale audit 10/19/26
+            # INF-2): pos_sync, then loss_sync and the DSR backfill once it
+            # has settled, one at a time as before, but beside the loop: run
+            # inline they held it (and the DSR sweep, live labor, the staff
+            # reminders) for up to two hours at scale. A busy lane gives the
+            # claim back, so a later tick starts it.
             if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
-                _ops.run_job("pos_sync", run_toast_sync)
+                if not _ops.run_in_lane("pos", "pos_sync", run_toast_sync):
+                    _ops.release_period("pos_sync", str(today))
 
             # After the POS sync, on the AI lane — the Labor read written
             # ahead of the morning open for owners who open it (#100).
@@ -5647,9 +5699,11 @@ def scheduler_loop():
 
             # 3am+ — comps/voids/refunds from POSes that report them. After
             # pos_sync so the same night's data is settled first.
-            if _due(now, 3) and _ops.claim_period("loss_sync", str(today)):
+            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+                    _ops.claim_period("loss_sync", str(today)):
                 from strategy_jobs import run_loss_sync
-                _ops.run_job("loss_sync", run_loss_sync)
+                if not _ops.run_in_lane("pos", "loss_sync", run_loss_sync):
+                    _ops.release_period("loss_sync", str(today))
 
             # 3am+, once the POS sync has settled — the Daily Sales Report's
             # figures for the nights before it started (dsr.backfill), its
@@ -5657,7 +5711,8 @@ def scheduler_loop():
             if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
                     _ops.claim_period("dsr_backfill", str(today)):
                 from strategy_jobs import run_dsr_backfill
-                _ops.run_job("dsr_backfill", run_dsr_backfill)
+                if not _ops.run_in_lane("pos", "dsr_backfill", run_dsr_backfill):
+                    _ops.release_period("dsr_backfill", str(today))
 
             # 4am daily — the ticket-level POS archive (pos_archive): yesterday,
             # restated days, a week of backfill.
@@ -6010,11 +6065,15 @@ def scheduler_loop():
             # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time (a quiet
             # Places-only restaurant at 8am and 4pm only — run_daily_fetch,
             # AI cost audit 10/7/26 #45).
+            # On the "fetch" lane (scale audit 10/19/26 INF-9): up to its
+            # three-hour bound inline, the 8pm slot held live labor and the
+            # staff reminders through the East Coast closes.
             _fetch_slot = _latest_slot(now, (8, 12, 16, 20))
             if _fetch_slot is not None and _ops.claim_period("review_fetch", f"{today}-{_fetch_slot}"):
                 log.info(f"Running review fetch for the {_fetch_slot}:00 CT slot "
                          f"(now {now.hour}:{now.minute:02d})...")
-                _ops.run_job("review_fetch", run_daily_fetch)
+                if not _ops.run_in_lane("fetch", "review_fetch", run_daily_fetch):
+                    _ops.release_period("review_fetch", f"{today}-{_fetch_slot}")
 
             # Hourly — one authenticated, non-sending call per provider; a
             # provider that starts failing pages Will once (provider_health,

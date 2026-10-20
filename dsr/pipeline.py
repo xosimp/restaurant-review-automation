@@ -86,6 +86,7 @@ import importlib
 import json
 import logging
 import os
+import threading
 from datetime import date, datetime, time as _time, timedelta, timezone
 
 import dsr
@@ -108,6 +109,11 @@ LATE_DATA_MINUTES = 60             # how often a provisional night is re-checked
 LATE_DATA_HOURS = 48               # and for how long after its deadline
 STALE_RUN_MINUTES = 45             # a claim held this long with no progress is a dead run
 SWEEP_MAX_SECONDS = 20 * 60
+# Restaurants the sweep runs at once (scale audit 10/19/26 INF-1, A4-06): one
+# worker fitted ~55-100 narratives a pass, so 1,500 nights took 5-9 hours.
+# Each night claims (restaurant, business date, version) itself, so workers
+# never run one night twice. DSR_SWEEP_WORKERS=1 is the serial sweep.
+SWEEP_WORKERS = max(1, int(os.getenv("DSR_SWEEP_WORKERS", "4") or 4))
 SWEEP_CURSOR_KEY = "dsr_sweep_cursor"
 SWEEP_LOOKBACK_DAYS = 4            # nights the sweep still finishes or re-checks
 
@@ -1277,7 +1283,14 @@ def run_sweep(now_utc=None, db_path=None):
     recent report that was never created (_nights_for). Bounded by SWEEP_MAX_SECONDS and
     resumable: the restaurants run in id order starting after the cursor in
     job_cursors, which records the last one this pass finished — so a pass
-    that runs out of time is picked up where it stopped, not at the top."""
+    that runs out of time is picked up where it stopped, not at the top.
+
+    SWEEP_WORKERS restaurants at once, earliest deadline first (scale audit
+    10/19/26 INF-1, A4-06): a restaurant's place is the earliest provisional
+    deadline (deadline_at, in UTC) among the nights it needs now, so the
+    East Coast's 4am goes before the West Coast's and a night retrying
+    toward its deadline before one that just closed; the cursor's rotation
+    orders restaurants with the same deadline."""
     import ops
     import pos
     import scheduler as _sched          # bounded_map; reached lazily, as pos.sync_all does
@@ -1297,8 +1310,11 @@ def run_sweep(now_utc=None, db_path=None):
     # that have a night to run.
     ids = [rid for rid in sorted(work) if pos.connected_provider(rid)[0]]
     cursor = _read_cursor(db)
-    order = [i for i in ids if i > cursor] + [i for i in ids if i <= cursor]
+    rotated = [i for i in ids if i > cursor] + [i for i in ids if i <= cursor]
+    place = {rid: n for n, rid in enumerate(rotated)}
+    order = sorted(rotated, key=lambda rid: (_earliest_deadline(*work[rid]), place[rid]))
     actions = {}
+    lock = threading.Lock()
 
     def _one(rid):
         r, nights = work[rid]
@@ -1308,9 +1324,12 @@ def run_sweep(now_utc=None, db_path=None):
             except Exception as e:
                 ops.capture(e, job="dsr_sweep", context=f"restaurant_id={rid} business_date={night}")
                 out = {"action": "error"}
-            actions[out.get("action")] = actions.get(out.get("action"), 0) + 1
+            with lock:
+                actions[out.get("action")] = actions.get(out.get("action"), 0) + 1
 
-    done, hit_bound = _sched.bounded_map(order, _one, 1, SWEEP_MAX_SECONDS)
+    # Handed out in order and every one handed out finishes, so `done` is a
+    # prefix of `order` whatever the workers (scheduler.bounded_map).
+    done, hit_bound = _sched.bounded_map(order, _one, SWEEP_WORKERS, SWEEP_MAX_SECONDS)
     if done:
         _write_cursor(db, order[min(done, len(order)) - 1])
     # The sweep's own counts (#17): a night that errored or failed lived only
@@ -1321,7 +1340,21 @@ def run_sweep(now_utc=None, db_path=None):
     failed = sum(actions.get(a, 0) for a in _FAILED_ACTIONS)
     attempted = sum(actions.values()) - idle
     return {"restaurants": len(order), "done": done, "hit_bound": bool(hit_bound), "actions": actions,
-            "attempted": attempted, "ok": attempted - failed, "failed": failed, "skipped": idle}
+            "attempted": attempted, "ok": attempted - failed, "failed": failed, "skipped": idle,
+            "eligible": len(order), "workers": SWEEP_WORKERS}
+
+
+def _earliest_deadline(restaurant, nights):
+    """The earliest provisional deadline, in UTC, among `nights` — the
+    sweep's earliest-deadline-first key. datetime.max when unreadable."""
+    best = None
+    for night in nights:
+        try:
+            d = to_utc(restaurant, deadline_at(restaurant, night))
+        except Exception:
+            continue
+        best = d if best is None or d < best else best
+    return best or datetime.max
 
 
 # run_night actions that moved nothing (nothing to judge) and that failed.

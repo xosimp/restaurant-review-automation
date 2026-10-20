@@ -625,7 +625,8 @@ def test_dsr_backfill_failure_reaches_job_runs(db, monkeypatch):
     src = open(os.path.join(ROOT, "rpower.py"), encoding="utf-8").read()
     assert "_dsr_backfill.backfill(" not in src, "never again a swallowed side effect of the POS sync"
     sched = open(os.path.join(ROOT, "scheduler.py"), encoding="utf-8").read()
-    assert '_ops.run_job("dsr_backfill", run_dsr_backfill)' in sched
+    # Its own job, on the POS lane beside the loop (scale audit 10/19/26 INF-2).
+    assert '_ops.run_in_lane("pos", "dsr_backfill", run_dsr_backfill)' in sched
     assert rid
 
 

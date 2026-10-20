@@ -3322,7 +3322,16 @@ function engLatency(S, sE){
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2>Latency &amp; saturation</h2><span class="muted" style="font-size:12.5px">p95 by hour · last 24 hours</span></div>
     <span class="muted" style="font-size:12px;display:flex;gap:12px"><span><span style="color:var(--ember2)">━</span> customers</span><span><span style="color:var(--blue)">╌</span> console</span><span><span style="color:var(--red-t)">▬</span> every thread busy</span></span></div>
     ${body}
-    ${sE ? '' : `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px"><span><span class="n">${fmtN(r.saturated_minutes)}</span> <span class="dim">minutes with every thread busy</span></span><span><span class="n">${fmtN(r.peak_inflight)}</span> <span class="dim">peak in flight of ${fmtN(r.threads)}</span></span>${Object.keys(cls).map(k => `<span><span class="dim">${esc(k)}</span> <span class="n">${fmtN(cls[k].requests)}</span> <span class="dim">· p95 ≤${fmtN(cls[k].p95_le_ms)}ms · ${fmtN(cls[k].errors_5xx)} 5xx</span></span>`).join('')}</div>`}</div>`;
+    ${sE ? '' : `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px"><span><span class="n">${fmtN(r.saturated_minutes)}</span> <span class="dim">minutes with every thread busy</span></span><span><span class="n">${fmtN(r.peak_inflight)}</span> <span class="dim">peak in flight of ${fmtN(r.threads)}</span></span>${Object.keys(cls).map(k => `<span><span class="dim">${esc(k)}</span> <span class="n">${fmtN(cls[k].requests)}</span> <span class="dim">· p95 ≤${fmtN(cls[k].p95_le_ms)}ms · ${fmtN(cls[k].errors_5xx)} 5xx</span></span>`).join('')}</div>`}
+    ${sE ? '' : engTenants((r.tenants || {}))}</div>`;
+}
+// The busiest clients by server time, last 24 hours (scale audit 10/19/26
+// OPS-9): the route rollups carry no restaurant, so a noisy tenant could not
+// be found. Each hour keeps its busiest clients (a sample).
+function engTenants(t){
+  const rows = t.by_time || [];
+  if(!rows.length) return '';
+  return `<details class="more-d" style="margin:0 -18px"><summary>Busiest clients · server time · <span class="n">${rows.length}</span></summary><div style="padding:0 18px 12px">${table([{h:'Client', key:'name', cell:x => clientLink(x.restaurant_id, x.name || ('#' + x.restaurant_id))}, {h:'Requests', key:'requests', r:true, cell:x => `<span class="num">${fmtN(x.requests)}</span>`}, {h:'Server time', key:'total_seconds', r:true, cell:x => `<span class="num">${fmtN(Math.round(x.total_seconds))}s</span>`}, {h:'Avg', key:'avg_ms', r:true, cell:x => `<span class="num">${x.avg_ms == null ? '—' : fmtN(Math.round(x.avg_ms)) + 'ms'}</span>`}, {h:'5xx', key:'errors_5xx', r:true, cell:x => `<span class="num">${fmtN(x.errors_5xx)}</span>`}], rows, {id:'ten-t', sort:'total_seconds', limit:10})}</div></details>`;
 }
 // Schedule generations (schedule audit 10/3/26 B1-3): the generation p95 the
 // platform check pages on, and per week its stage timings and the repair

@@ -98,6 +98,23 @@ keeper, then the loop (`scheduler._run_scheduler_thread`, through
 `hosted_dashboard._restart_scheduler_loop`) — so a restarted loop keeps
 renewing its lease instead of looking abandoned after 4 minutes.
 
+## Option: `SCHEDULER_PROCESS=1` (one variable, the start command unchanged)
+
+Since the scale audit (10/19/26 INF-13) gunicorn's master can run the
+scheduler as its own process in the web container, the way it already runs
+the queue worker: set **`SCHEDULER_PROCESS=1`** on the service and redeploy.
+`gunicorn.conf.py` then supervises `worker.py --scheduler` (restarted with a
+growing pause whenever it exits, SIGTERM'd with the queue worker at a
+deploy), and `RUN_SCHEDULER_IN_WEB` defaults to 0 so the web process starts
+no scheduler thread — the loop, its lanes and pools leave the web process's
+GIL and its four request threads. `worker.py --scheduler` never runs
+`init_db`: like the queue worker it waits for a web boot since the container
+started (the schema is migrated), then runs the lease keeper and the loop.
+Off by default; measure first (request p95 during the long jobs — scale
+audit A1 §5 #7). **Rollback:** unset `SCHEDULER_PROCESS` and redeploy (an
+explicit `RUN_SCHEDULER_IN_WEB` still wins either way; the lease lets only
+one loop work).
+
 ## Option: a second process in the SAME service
 
 This does work, because both processes run in one container and see the one

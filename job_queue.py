@@ -101,6 +101,12 @@ def get_conn(db_path=None):
 # ── configuration ───────────────────────────────────────────────────────────
 
 CLASSES = ("interactive", "scheduled", "bulk")
+# The consumer groups, each with its own slots: "generation" (schedule
+# generations, CPU), "bulk" (the learners and other CPU work), "pos_io"
+# (network-bound POS reads — scale audit 10/19/26 INF-6: the nightly archive
+# rows held one of bulk's two CPU slots while they waited on RPOWER, so the
+# learners queued behind them).
+GROUPS = ("generation", "bulk", "pos_io")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -112,7 +118,7 @@ KINDS = {
     "email_intake": ("bulk", "bulk", 4),
     # The nightly POS archive, one row per restaurant (strategy_jobs.
     # run_pos_archive; bar audit 10/14/26 R2).
-    "pos_archive": ("bulk", "bulk", 2),
+    "pos_archive": ("pos_io", "bulk", 2),
     # The owner's notes and staff notes read into typed rules when they are
     # SAVED, one batched call (owner_rules.queue_read — blind re-audit
     # 10/11/26 AI-22): never in a generation's critical path.
@@ -208,6 +214,10 @@ def group_concurrency(grp) -> int:
         if cap:
             n = max(1, min(n, int(cap)))
         return n
+    if grp == "pos_io":
+        # Network-bound rows: their slots are not cores. RPOWER's own budget
+        # is its per-token bucket (rpower), not this count.
+        return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
 
 
@@ -831,7 +841,7 @@ def _dead_rows(conn, grp, now, expired) -> list:
     return out
 
 
-def claim(worker_id, groups=("generation", "bulk"), db_path=None):
+def claim(worker_id, groups=GROUPS, db_path=None):
     """The next row this consumer may run, claimed (state running, a lease,
     attempts + 1, holding a CPU slot) — or None when nothing is claimable
     within the bounds above. Rows expired unstarted on the way are handed
@@ -1392,11 +1402,15 @@ def tick(db_path=None) -> dict:
     rows a drain could not take when they arrived (every slot busy, a
     resumed row whose lease ran out) are started. Standard counts."""
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    # The web row is beaten every minute even while the worker consumes
+    # (scale audit 10/19/26 INF-4): it was beaten only here, after this
+    # return, so a day after the boot a worker's heartbeat pruned it and a
+    # recycled queue worker found no web boot to wait for.
+    heartbeat("web", db_path=db_path)
     if not this_process_consumes(db_path):
         out["skipped"] = 1
         return out
-    heartbeat("web", db_path=db_path)
-    for grp in ("generation", "bulk"):
+    for grp in GROUPS:
         if claimable(grp, db_path=db_path):
             out["attempted"] += 1
             if kick(grp, db_path=db_path) is not None:
@@ -1451,8 +1465,8 @@ def rss_mb():
         return None
 
 
-def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=None, max_jobs=None,
-               max_rss_mb=None) -> str:
+def run_worker(groups=GROUPS, stop=None, threads=None, db_path=None, max_jobs=None,
+               max_rss_mb=None, count_groups=None, on_recycle=None) -> str:
     """worker.py's consumer: `threads` per group (max_running by default —
     a row waiting on a model answer keeps its thread, not its CPU slot)
     claiming in a loop, a heartbeat every RENEW_SECONDS, woken by a slot
@@ -1461,14 +1475,30 @@ def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=N
     its resident memory passed `max_rss_mb` (blind re-audit 10/11/26
     SCALE-17/SCALE-18: a 250-person generation left 1.4 GB resident for
     good): it stops claiming, lets its running rows finish, and returns, so
-    worker.py's supervisor starts a fresh process."""
+    worker.py's supervisor starts a fresh process. `count_groups`: only rows
+    of these groups count toward `max_jobs` (worker.py: generations — scale
+    audit 10/19/26 A5-F3); None counts every row. `on_recycle` is called once
+    when the recycle starts (worker.py tells the supervisor, which starts
+    the replacement while this process drains)."""
     stop = stop or threading.Event()
     recycle = threading.Event()
     ran_total = [0]
     count_lock = threading.Lock()
     heartbeat("worker", db_path=db_path)
 
+    def _recycle():
+        with count_lock:
+            if recycle.is_set():
+                return
+            recycle.set()
+        if on_recycle is not None:
+            try:
+                on_recycle()
+            except Exception as e:
+                log.warning("on_recycle failed: %s", e)
+
     def _loop(grp):
+        counts = count_groups is None or grp in count_groups
         while not stop.is_set() and not _draining.is_set() and not recycle.is_set():
             try:
                 ran = drain((grp,), WORKER_ID, max_jobs=1, db_path=db_path)
@@ -1476,12 +1506,13 @@ def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=N
                 log.error("queue consumer %s failed: %s", grp, e)
                 ran = 0
             if ran:
+                due = False
                 with count_lock:
-                    ran_total[0] += ran
-                    if max_jobs and ran_total[0] >= int(max_jobs):
-                        recycle.set()
-                if max_rss_mb and (rss_mb() or 0) > float(max_rss_mb):
-                    recycle.set()
+                    if counts:
+                        ran_total[0] += ran
+                    due = bool(max_jobs and ran_total[0] >= int(max_jobs))
+                if due or (max_rss_mb and (rss_mb() or 0) > float(max_rss_mb)):
+                    _recycle()
             else:
                 _wake.clear()
                 _wake.wait(POLL_SECONDS)
@@ -1553,7 +1584,7 @@ def start_inprocess(db_path=None) -> None:
     register_shutdown()
     heartbeat("web", db_path=db_path)
     if this_process_consumes(db_path):
-        for grp in ("generation", "bulk"):
+        for grp in GROUPS:
             kick(grp, db_path=db_path)
 
 
@@ -1612,6 +1643,35 @@ def stats(window_seconds=3600, db_path=None) -> dict:
         out["expired_by_tenant"] = {r["t"]: int(r["n"]) for r in conn.execute(
             "SELECT tenant_key AS t, COUNT(*) AS n FROM jobs WHERE state='expired' AND finished_at>? "
             "GROUP BY tenant_key ORDER BY COUNT(*) DESC LIMIT 10", (now - window_seconds,)).fetchall()}
+        # Per kind (scale audit 10/19/26 INF-6, INF-7): what is waiting, how
+        # long the oldest row that MAY run has waited (from its not_before —
+        # a row spread to later is not a backlog), and what failed or expired
+        # in the last day. The bulk backlog alert reads the groups' figure.
+        out["kinds"] = {}
+
+        def _kind(kind, grp):
+            return out["kinds"].setdefault(kind, {"grp": grp, "queued": 0, "running": 0,
+                                                  "oldest_ready_seconds": None, "failed_24h": 0, "expired_24h": 0})
+        for r in conn.execute(
+                "SELECT kind, grp, state, COUNT(*) AS n, MIN(CASE WHEN not_before <= ? THEN "
+                "(CASE WHEN not_before > enqueued_at THEN not_before ELSE enqueued_at END) END) AS ready "
+                "FROM jobs WHERE state IN ('queued','running') GROUP BY kind, grp, state", (now,)).fetchall():
+            k = _kind(r["kind"], r["grp"])
+            k[r["state"]] += int(r["n"])
+            if r["state"] == "queued" and r["ready"] is not None:
+                age = round(now - float(r["ready"]), 1)
+                k["oldest_ready_seconds"] = max(k["oldest_ready_seconds"] or 0, age)
+                g = out["groups"].setdefault(r["grp"], {"queued": 0, "running": 0, "oldest_queued_seconds": None})
+                g["oldest_ready_seconds"] = max(g.get("oldest_ready_seconds") or 0, age)
+        for r in conn.execute("SELECT kind, state, COUNT(*) AS n FROM jobs WHERE state IN ('failed','expired') "
+                              "AND finished_at>? GROUP BY kind, state", (now - 86400,)).fetchall():
+            _kind(r["kind"], KINDS.get(r["kind"], ("bulk",))[0])[r["state"] + "_24h"] = int(r["n"])
+        # The queue worker process (INF-4): seconds since it last beat its
+        # heartbeat (None: none on record), and since this web process booted.
+        row = conn.execute("SELECT MAX(heartbeat_at) AS h FROM job_workers WHERE role='worker'").fetchone()
+        out["worker_heartbeat_age_seconds"] = round(now - float(row["h"]), 1) if row and row["h"] else None
+        row = conn.execute("SELECT MAX(started_at) AS s FROM job_workers WHERE role='web'").fetchone()
+        out["web_started_age_seconds"] = round(now - float(row["s"]), 1) if row and row["s"] else None
         return out
     finally:
         conn.close()

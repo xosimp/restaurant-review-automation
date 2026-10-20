@@ -74,8 +74,13 @@ def _x(db_path, sql, args=()):
 # ── the registry and the loop (#31, #40) ────────────────────────────────────
 
 def _loop_job_names():
-    names = set(re.findall(r'run_job\("([a-z_]+)"', _LOOP_SRC))
-    names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', _LOOP_SRC))
+    src = _LOOP_SRC
+    # The DSR sweep is submitted to its lane through one helper the loop and
+    # the pulse both call (scale audit 10/19/26 INF-1).
+    if "_submit_dsr_sweep(_ops, now)" in src:
+        src += inspect.getsource(scheduler._submit_dsr_sweep)
+    names = set(re.findall(r'run_job\("([a-z_]+)"', src))
+    names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', src))
     return names
 
 

@@ -134,9 +134,11 @@ def test_the_minute_sensitive_jobs_run_before_any_daily_job_in_the_tick():
     intraday must never wait behind the 2-6am work again."""
     loop = _loop_src()
     first_daily = loop.index('claim_period("backup_db"')
-    for job in ("ai_batch_collect", "dsr_sweep", "dsr_delivery", "staff_reminders", "intraday"):
+    for job in ("ai_batch_collect", "dsr_delivery", "staff_reminders", "intraday"):
         assert loop.index(f'claim_period("{job}"') < first_daily, job
-    assert loop.index('claim_period("ai_batch_collect"') < loop.index('claim_period("dsr_sweep"'), \
+    # The DSR sweep is submitted to its own lane (scale audit 10/19/26 INF-1).
+    assert loop.index("_submit_dsr_sweep(_ops, now)") < first_daily
+    assert loop.index('claim_period("ai_batch_collect"') < loop.index("_submit_dsr_sweep(_ops, now)"), \
         "the collector still runs before the DSR sweep, so a landed narrative finishes in the same tick"
     # The briefs: at the top when their inputs are settled, else at the end.
     assert loop.index('_ops.run_job("morning_brief"') < first_daily
@@ -145,7 +147,7 @@ def test_the_minute_sensitive_jobs_run_before_any_daily_job_in_the_tick():
 
 def test_the_long_morning_sweeps_run_on_the_sweep_lane_and_give_a_busy_claim_back():
     loop = _loop_src()
-    assert set(scheduler._LANES) == {"intel", "ai", "sweep"}
+    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch"}
     for job in _SWEEP_JOBS:
         assert f'_ops.run_in_lane("sweep", "{job}"' in loop, job
         assert f'_ops.run_job("{job}"' not in loop, f"{job} still runs on the loop thread"
