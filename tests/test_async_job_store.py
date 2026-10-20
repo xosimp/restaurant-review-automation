@@ -188,3 +188,10 @@ def test_a_pending_job_polls_as_pending_over_http(app, db_path):
     body = client.get("/mobile/api/labor/schedule-status/still-going",
                       headers={"Authorization": f"Bearer {token}"}).get_json()
     assert body["status"] == "pending"
+
+
+def test_a_job_with_no_restaurant_is_nobodys_through_a_scoped_read(db_path):
+    """Scale audit 10/19/26, SEC-18: the scope check failed open on NULL."""
+    ops.start_async_job("orphan", "schedule", None)
+    assert ops.read_async_job("orphan", restaurant_id=7) is None
+    assert ops.read_async_job("orphan")["status"] == "pending", "an unscoped (admin) read still sees it"

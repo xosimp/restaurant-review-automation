@@ -4206,7 +4206,12 @@ def run_read_tool(name, restaurant_id, tool_input, restaurant=None):
     if not tool_allowed(name, restaurant):
         return json.dumps({"error": f"{name} is not available to this login"})
     # Model input never carries the viewer: a leading underscore is ours.
-    kwargs = {k: v for k, v in (tool_input or {}).items() if v is not None and not str(k).startswith("_")}
+    # And only what the tool's schema declares (scale audit 10/19/26,
+    # SEC-17): a future tool function with a db_path, user or restaurant
+    # parameter must never be settable by the model.
+    allowed = set(((tool.get("spec") or {}).get("input_schema") or {}).get("properties") or {})
+    kwargs = {k: v for k, v in (tool_input or {}).items()
+              if v is not None and not str(k).startswith("_") and k in allowed}
     if tool.get("wants_viewer"):
         kwargs["_viewer"] = restaurant
     try:
