@@ -1829,13 +1829,20 @@ def deliver(restaurant_id, restaurant=None, today=None, db_path=DB_PATH):
         # "not for us" to something the other has not — and per login
         # whenever the restaurant keeps memory some logins may not read
         # (PEOPLE-9, _personal).
-        key = (_view_key(u), _safe(_own_silences, restaurant_id, u, db_path) or frozenset())
+        # Whose salary view: off a request every read was the owner's, so a
+        # manager's brief carried the all-in labor figure in its good news
+        # and goal lines (blind re-audit 10/20/26 R6-F3b).
+        from permissions import is_principal as _is_principal_mb
+        import models as _models_mb
+        sees = bool(_is_principal_mb(u))
+        key = (_view_key(u), _safe(_own_silences, restaurant_id, u, db_path) or frozenset(), sees)
         if _personal(restaurant_id, u, db_path):
             key = key + (("login", u["id"]),)
         if key not in built:
             # Deduped against the other surfaces BEFORE anything here is
             # presented: the brief's own showings never count against it.
-            full = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
+            with _models_mb.salary_view(sees):
+                full = build(restaurant_id, restaurant=restaurant, today=today, db_path=db_path, viewer=u)
             fulls[key] = full
             built[key] = _safe(_dedupe, restaurant_id, full, db_path) or full
         # The brief Home will show this login today, kept before they open it

@@ -71,3 +71,11 @@ def test_good_news_and_the_feed_are_kept_per_view():
         g.cavnar_current_user = {"id": 8, "role": "manager"}
         b = activity._viewer_key()
     assert a != b
+
+
+def test_each_morning_brief_is_built_in_its_recipients_salary_view(monkeypatch):
+    # R6-F3b: deliver() builds off a request, where every read was the owner's.
+    import morning_brief
+    src = inspect.getsource(morning_brief.deliver)
+    assert "salary_view(sees)" in src and "_is_principal_mb(u)" in src
+    assert "frozenset(), sees)" in src, "a manager never shares the owner's built brief"
