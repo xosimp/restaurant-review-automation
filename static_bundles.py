@@ -25,6 +25,7 @@ page loaded before the deploy can ask for (and a reload fixes).
 """
 import gzip
 import hashlib
+import os
 import re
 import threading
 
@@ -61,6 +62,122 @@ def _attr(attrs, name):
     return m.group(2).strip().lower() if m else None
 
 
+# ── versioned /static references (scale audit 10/19/26 FE-04) ───────────────
+#
+# Everything under /static/ was served by the web process with no max-age
+# (Flask's no-cache: every page load revalidated each asset — about 29
+# conditional requests per dashboard load on the four request threads),
+# because the files are referenced by bare path and a far-future expiry
+# would strand a fix in browser caches (CLAUDE.md). The references now carry
+# the file's content hash: every template's source has each literal
+# `/static/<file>` that names a file on disk rewritten to
+# `/static/<file>?v=<hash>` (before the dashboard's blocks are bundled, so a
+# bundle's own hash moves with the assets it names), and so does every
+# url(...) inside a /static stylesheet (the font faces). A request whose `v`
+# is the file's current hash is answered immutable for a year; a bare or an
+# out-of-date `v` request is answered exactly as before. A changed file is a
+# new URL. References built at run time ('lit-' + tone + '-v1.png', the
+# emails' absolute URLs) stay bare and are revalidated as before.
+STATIC_MAX_AGE = 31536000
+_STATIC_REF = re.compile(
+    r"(?<![\w/.])/static/([A-Za-z0-9_\-./]+\.(?:js|css|png|svg|jpe?g|webp|gif|ico|woff2?|ttf|json))(?![\w?.])")
+# The app's static folder (install); every reader below takes `root`, this
+# is its default.
+_static_root = None
+_versions = {}           # absolute path -> (mtime_ns, size, version)
+_css = {}                # absolute path -> (mtime_ns, size, rewritten bytes, version)
+
+
+def _static_file(rel, root=None):
+    root = root or _static_root
+    if not root or not rel or rel.startswith("/") or ".." in rel.split("/"):
+        return None
+    path = os.path.join(root, *rel.split("/"))
+    return path if os.path.isfile(path) else None
+
+
+def asset_version(rel, root=None):
+    """The content hash a reference to /static/<rel> carries, or None when
+    there is no such file. A stylesheet's is the hash of its rewritten text
+    (its own url()s versioned), so a changed font is a new stylesheet URL."""
+    root = root or _static_root
+    path = _static_file(rel, root)
+    if path is None:
+        return None
+    st = os.stat(path)
+    if rel.endswith(".css"):
+        return _css_text(rel, path, st, root)[1]
+    with _lock:
+        hit = _versions.get(path)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    with open(path, "rb") as f:
+        version = hashlib.sha256(f.read()).hexdigest()[:12]
+    with _lock:
+        _versions[path] = (st.st_mtime_ns, st.st_size, version)
+    return version
+
+
+def _css_text(rel, path, st, root):
+    with _lock:
+        hit = _css.get(path)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2], hit[3]
+    with open(path, "r", encoding="utf-8") as f:
+        text = version_refs(f.read(), root=root, skip=rel)
+    data = text.encode("utf-8")
+    version = hashlib.sha256(data).hexdigest()[:12]
+    with _lock:
+        _css[path] = (st.st_mtime_ns, st.st_size, data, version)
+    return data, version
+
+
+def version_refs(text, root=None, skip=None):
+    """`text` with each literal /static/<file> reference that names a file
+    on disk given its ?v=<hash>. Never raises: a reference it cannot version
+    is left as it was."""
+    root = root or _static_root
+    if not root or "/static/" not in (text or ""):
+        return text
+
+    def one(m):
+        rel = m.group(1)
+        if rel == skip:
+            return m.group(0)
+        try:
+            v = asset_version(rel, root)
+        except Exception:
+            v = None
+        return f"/static/{rel}?v={v}" if v else m.group(0)
+    return _STATIC_REF.sub(one, text)
+
+
+def _serve_static(root, view, filename):
+    """Flask's static view, with a stylesheet's url()s versioned and a
+    request carrying the file's current hash answered immutable."""
+    from flask import request, send_file
+    import io
+    rel = (filename or "").replace("\\", "/")
+    path = _static_file(rel, root)
+    version = None
+    if path is not None and rel.endswith(".css"):
+        data, version = _css_text(rel, path, os.stat(path), root)
+        resp = send_file(io.BytesIO(data), mimetype="text/css", etag=version, conditional=True,
+                         max_age=None, download_name=os.path.basename(rel))
+    else:
+        resp = view(filename=filename)
+    want = request.args.get("v")
+    if want and path is not None:
+        if version is None:
+            try:
+                version = asset_version(rel, root)
+            except Exception:
+                version = None
+        if want == version:
+            resp.headers["Cache-Control"] = f"public, max-age={STATIC_MAX_AGE}, immutable"
+    return resp
+
+
 def bundle_source(source, min_bytes=None):
     """`source` with every static script and style block of `min_bytes` or
     more replaced by a reference to its bundle. A block is static when it
@@ -95,12 +212,17 @@ class BundlingLoader(jinja2.BaseLoader):
     blocks lifted out (bundle_source), every other template as `inner`
     gives it."""
 
-    def __init__(self, inner, names=BUNDLED_TEMPLATES):
+    def __init__(self, inner, names=BUNDLED_TEMPLATES, static_root=None):
         self.inner = inner
         self.names = tuple(names)
+        self.static_root = static_root
 
     def get_source(self, environment, template):
         source, filename, uptodate = self.inner.get_source(environment, template)
+        # Every template's /static references carry their file's hash
+        # (FE-04) — first, so a bundle's hash covers the assets it names.
+        if self.static_root:
+            source = version_refs(source, root=self.static_root)
         if template in self.names:
             source = bundle_source(source)
         return source, filename, uptodate
@@ -110,8 +232,17 @@ class BundlingLoader(jinja2.BaseLoader):
 
 
 def install(app):
-    """Bundle the dashboard's static blocks on `app` and serve them."""
-    app.jinja_loader = BundlingLoader(app.jinja_loader)
+    """Bundle the dashboard's static blocks on `app` and serve them; version
+    every template's /static references and serve a versioned request
+    immutable (FE-04)."""
+    global _static_root
+    root = getattr(app, "static_folder", None)
+    if root:
+        _static_root = _static_root or root
+        view = app.view_functions.get("static")
+        if view is not None:
+            app.view_functions["static"] = lambda filename: _serve_static(root, view, filename)
+    app.jinja_loader = BundlingLoader(app.jinja_loader, static_root=root)
     app.add_url_rule(BUNDLE_PATH + "<name>", "static_bundle", lambda name: serve(app, name))
 
 
