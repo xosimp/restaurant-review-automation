@@ -660,3 +660,43 @@ def test_the_diagnosis_pass_is_scheduled_and_survives_one_restaurant_failing():
     loop = inspect.getsource(scheduler.run_scheduler) if hasattr(scheduler, "run_scheduler") else ""
     whole = inspect.getsource(scheduler)
     assert 'claim_period("review_diagnoses"' in whole
+
+
+# ── The stars of each week's reviews, rolling (owner, 10/20/26) ─────────────
+
+def test_weekly_stars_draws_the_trend_the_flat_public_rating_hid(db_path):
+    from datetime import date, timedelta
+    rid = _restaurant(db_path)
+    today = date.today()
+    # Ten weeks of reviews: 5★ early, 2★ in the latest four weeks.
+    n = 0
+    for wk in range(10):
+        for _ in range(3):
+            n += 1
+            _review(db_path, rid, ext=f"w{n}", rating=2 if wk < 4 else 5, days_ago=wk * 7)
+    out = ri.weekly_stars(rid, db_path=db_path, today=today)
+    assert out["available"] and out["reviews"] == 30
+    pts = [p for p in out["series"] if p["rolling"] is not None]
+    assert pts[0]["rolling"] == 5 and pts[-1]["rolling"] == 2
+    assert out["recent"] == {"avg": 2.0, "n": 12} and out["prior"]["avg"] == 5.0
+    assert out["change"] == -3.0
+    # Each week runs Monday to Sunday, oldest first, ending this week.
+    assert out["series"][-1]["week"] == (today - timedelta(days=today.weekday())).isoformat()
+
+
+def test_weekly_stars_waits_for_enough_weeks_and_reviews(db_path):
+    rid = _restaurant(db_path)
+    _review(db_path, rid, ext="a", rating=5, days_ago=1)
+    out = ri.weekly_stars(rid, db_path=db_path)
+    assert not out["available"] and "so far" in out["reason"]
+    assert ri.weekly_stars(999, db_path=db_path)["reason"] == "no reviews on file yet"
+
+
+def test_the_intel_page_charts_the_weekly_stars_and_never_says_0_since():
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("templates", "dashboard.html").read_text()
+    body = src[src.index("window.memIntelHistoryHtml"):src.index("/* ── Food Cost: pars to raise")]
+    assert "d.review_stars" in body and "weeks rolling" in body
+    assert "'★ since '" not in body  # "0★ since 9/28/26" on a rating that never moved
+    import mobile_api
+    assert "review_stars=_ri_weekly_stars(rid)" in pathlib.Path(mobile_api.__file__).read_text()

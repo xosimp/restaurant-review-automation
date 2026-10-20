@@ -2852,3 +2852,89 @@ def inbox_why(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             "as_of": d.get("as_of"),
         }
     return out
+
+
+# ── The stars guests are giving, week by week (owner, 10/20/26) ─────────────
+#
+# The Intel page drew the restaurant's public Google rating week by week:
+# a lifetime average that rounds to one decimal, so EJ's read 4.6 every week
+# — a flat line that shows no trend at all. The stars of the reviews that
+# arrived each week move; a rolling window over them is the trend an owner
+# can act on. The public rating stays the headline figure beside it.
+STARS_WEEKS = 52          # at most a year of weeks
+STARS_WINDOW = 4          # the rolling window, in weeks
+STARS_MIN_WEEKS = 6       # weeks on file before there is a trend to draw
+STARS_MIN_REVIEWS = 20    # reviews on file before there is a trend to draw
+
+
+def weekly_stars(restaurant_id: int, weeks: int = STARS_WEEKS, window: int = STARS_WINDOW,
+                 db_path: str = DB_PATH, today=None) -> dict:
+    """{"available", "series": [{"week" (its Monday, ISO), "n", "avg",
+    "rolling", "rolling_n"}], "recent": {"avg", "n"}, "prior": {"avg", "n"},
+    "change", "window", "reviews", "reason"} — the average stars of the
+    reviews that arrived each week, oldest first, from the first week with a
+    review (inside `weeks`) to this one. `rolling` is review-weighted over the
+    trailing `window` weeks (None until a review is inside it); `recent` is
+    the last `window` weeks, `prior` the `window` before them, and `change`
+    their difference when both hold a review. Never raises."""
+    from datetime import date as _date, timedelta as _td
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = _rows_raw(conn, f"SELECT {_AXIS} AS at, rating FROM reviews WHERE restaurant_id=? "
+                                   f"AND deleted_at IS NULL AND rating BETWEEN 1 AND 5", (restaurant_id,))
+        finally:
+            conn.close()
+    except Exception:
+        rows = []
+    if today is None:
+        try:
+            from time_utils import restaurant_now_by_id
+            today = restaurant_now_by_id(restaurant_id, naive=True).date()
+        except Exception:
+            today = _date.today()
+    this_monday = today - _td(days=today.weekday())
+    floor = this_monday - _td(weeks=max(1, int(weeks)) - 1)
+    by_week = {}
+    for r in rows:
+        try:
+            day = _date.fromisoformat(str(r[0])[:10])
+            stars = int(r[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        monday = day - _td(days=day.weekday())
+        if monday < floor or monday > this_monday:
+            continue
+        s, n = by_week.get(monday, (0, 0))
+        by_week[monday] = (s + stars, n + 1)
+    total = sum(n for _s, n in by_week.values())
+    if not by_week:
+        return {"available": False, "series": [], "reviews": 0, "window": window,
+                "reason": "no reviews on file yet"}
+    first = min(by_week)
+    series, wk = [], first
+    while wk <= this_monday:
+        s, n = by_week.get(wk, (0, 0))
+        series.append({"week": wk.isoformat(), "n": n, "sum": s, "avg": round(s / n, 2) if n else None})
+        wk += _td(weeks=1)
+    for i, p in enumerate(series):
+        tail = series[max(0, i - window + 1):i + 1]
+        rs, rn = sum(x["sum"] for x in tail), sum(x["n"] for x in tail)
+        p["rolling"], p["rolling_n"] = (round(rs / rn, 2) if rn else None), rn
+
+    def _span(chunk):
+        s, n = sum(x["sum"] for x in chunk), sum(x["n"] for x in chunk)
+        return {"avg": round(s / n, 2) if n else None, "n": n}
+
+    recent = _span(series[-window:])
+    prior = _span(series[-2 * window:-window]) if len(series) > window else {"avg": None, "n": 0}
+    for p in series:
+        p.pop("sum", None)
+    out = {"available": len(series) >= STARS_MIN_WEEKS and total >= STARS_MIN_REVIEWS,
+           "series": series, "recent": recent, "prior": prior, "window": window, "reviews": total,
+           "change": (round(recent["avg"] - prior["avg"], 2)
+                      if recent["avg"] is not None and prior["avg"] is not None else None)}
+    if not out["available"]:
+        out["reason"] = (f"the trend needs {STARS_MIN_WEEKS} weeks and {STARS_MIN_REVIEWS} reviews on file "
+                         f"— {len(series)} week{'s' if len(series) != 1 else ''} and {total} so far")
+    return out

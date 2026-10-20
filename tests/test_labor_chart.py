@@ -140,14 +140,17 @@ def test_no_caller_other_than_labor_passes_a_target():
     # sixth is the website-analytics line (a021c547, 10/2/26), also untargeted.
     # The seventh is the Bar's (glowChart, 10/17/26 — owner: the hero's pour-cost target dashed with red
     # above it): the one other caller that asks for the split, on purpose.
-    assert len(calls) == 7, "expected exactly the seven known glowLine call sites: " + str(len(calls))
+    # The eighth is Intel's weekly stars of the reviews, 4 weeks rolling
+    # (memIntelHistoryHtml, 10/20/26) — untargeted; the public rating's line
+    # stays as its fallback.
+    assert len(calls) == 8, "expected exactly the eight known glowLine call sites: " + str(len(calls))
 
     def _enclosing_fn(pos):
         prev = list(re.finditer(r"function (\w+)\(", s[:pos]))
         return prev[-1].group(1) if prev else None
 
     non_labor = [c for c in calls if _enclosing_fn(s.index(c)) not in ("renderLaborHero", "glowChart")]
-    assert len(non_labor) == 5
+    assert len(non_labor) == 6
     for c in non_labor:
         assert "target:" not in c, "a non-Labor caller now opts into the red-split fill: " + c[:120]
 

@@ -156,6 +156,16 @@ JOBS = {
         description="Text yesterday's opted-in guests the restaurant's thank-you, once each, inside the guest "
                     "sending hours (bounded, resumable)",
         target=("guest_hub", "run_followups"), max_minutes=10, retry=True),
+    "texting_setup_advance": dict(
+        # A restaurant's own texting registration (texting_setup, 10/20/26):
+        # poll the carriers' review of its brand and campaign, register the
+        # campaign once the brand is approved, and switch its guest texts to
+        # its own number once the campaign is verified.
+        cadence="hourly", sla_minutes=_H, sends=True, runnable=True,
+        label="Texting setup",
+        description="Move each restaurant's Twilio texting registration on a step: brand review, campaign, "
+                    "then its own number live (bounded, resumable)",
+        target=("texting_setup", "run_advance"), max_minutes=5, retry=True),
     "guest_pos_match": dict(
         # After the POS archive (4am): RPOWER checks with a customer attached
         # become guest visits and the guest's usual (guest_hub phase 3).

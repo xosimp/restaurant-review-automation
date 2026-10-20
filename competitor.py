@@ -474,6 +474,15 @@ REVIEWS_REUSE_HOURS = 24        # #15: the daily check's newest reviews stand in
 OWN_RATING_FRESH_HOURS = 24     # #24: a rating this fresh is not bought again
 REFRESH_FRESH_HOURS = 6         # #42: an owner Refresh inside this serves the stored read
 CUSTOM_COMPETITORS_MAX = 10     # #40: owner-added competitors, each a Details call every run
+# What a competitor is doing well or poorly NOW (owner, 10/20/26: "it says
+# 2 months ago — the window for taking advantage of these is likely over"):
+# a strength or complaint bullet stands only on a review from inside this
+# many days, and a low-star review from inside it is kept on the competitor
+# (`recent_low`) after Google's newest five have moved past it, so a fresh
+# complaint is never lost to five newer five-star reviews.
+BULLET_RECENT_DAYS = 30
+RECENT_LOW_KEEP = 3             # recent complaints kept per competitor beyond its newest five
+REVIEWS_SHOWN = 5 + RECENT_LOW_KEEP
 # One field set for every competitor lookup — the daily check, a run's
 # refresh of a stored competitor, the review lookup — so the Details cache
 # (ai_utils.places_request, #13) answers any of them from any other the same
@@ -1036,7 +1045,7 @@ def _insight_system():
 HOW THE MESSAGE IS LAID OUT — everything in it is this one restaurant's own record:
 - RESTAURANT and TODAY: who the report is for and the date it is written on, then any upcoming holidays or events and, when one is on file, the week's weather forecast where the restaurant is, with how far to lean on it.
 - About the restaurant: its concept, what it is known for and where it is, as the owner described it — and, when there is any, WHAT CAVNAR AI REMEMBERS ABOUT THIS RESTAURANT: the owner's rules, the last read and its verdict, and the answers the owner gave to earlier advice.
-- Nearby competitors and their recent customer reviews: each competitor's Google rating and review count, its Google price level, how far away it is, how it was selected, a note when its rating rests on too few reviews to compare against, and up to five of its reviews — each with an id ("R1", "R2", …), its star rating and how long ago it was written.
+- Nearby competitors and their recent customer reviews: each competitor's Google rating and review count, its Google price level, how far away it is, how it was selected, a note when its rating rests on too few reviews to compare against, and its newest five reviews, plus any recent low-star review kept from earlier checks — each with an id ("R1", "R2", …), its star rating and how long ago it was written.
 - GREETING: the line the report opens with, exactly as written.
 - DATA STATE, when present: how current each source behind the message is.
 
@@ -1049,7 +1058,7 @@ CRITICAL RULES:
 - Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews in the message, or a specific way to win over customers unhappy with a named competitor
 
 EVIDENCE RULES — these bound what you may claim:
-- Each review carries how long ago it was written. A review over a year old is NOT evidence of what a competitor is doing now. Prefer recent ones, and if you cite an older one, say when it was ("last year", "two years ago").
+- Each review carries how long ago it was written. A review marked OLDER was written more than {BULLET_RECENT_DAYS} days ago: it is history, not what a competitor is doing now, and the moment to act on it has passed. WHAT COMPETITORS ARE DOING WELL and WHAT COMPETITORS ARE DOING POORLY cite ONLY reviews not marked OLDER — when no such review supports a point, leave that section with no bullets. Recommendations prefer the newest reviews too.
 - Every competitor strength or weakness you state must trace to a review quoted in the message for THAT named competitor. Never attribute a complaint to a restaurant it was not written about.
 - Only name restaurants that appear in the competitor list in the message. Do not introduce any other business.
 - "How this one was selected" tells you how close a match each competitor is. One selected on a widened radius with no cuisine or price constraint is a weaker comparison — do not present it as a direct rival without saying so.
@@ -1126,7 +1135,7 @@ def _insight_prompt(restaurant_name, competitors, owner_name=None, restaurant_pr
     # rule review diagnoses follow with review ids (audit #31).
     _ref_n = 0
     for c in competitors:
-        for r in (c.get("reviews") or [])[:5]:
+        for r in (c.get("reviews") or [])[:REVIEWS_SHOWN]:
             _ref_n += 1
             r["ref"] = f"R{_ref_n}"
     for c in competitors:
@@ -1146,8 +1155,9 @@ def _insight_prompt(restaurant_name, competitors, owner_name=None, restaurant_pr
             # competitor is doing wrong now — and that is what the
             # "DOING POORLY" section was built from.
             reviews_text = "\n  ".join([
-                f'[{r.get("ref")} · {r["rating"]}★, {r.get("time") or "date unknown"}] "{r["text"][:250].strip()}"'
-                for r in rev_list[:5]
+                f'[{r.get("ref")} · {r["rating"]}★, {r.get("time") or "date unknown"}'
+                f'{"" if _is_recent(r) else " · OLDER"}] "{r["text"][:250].strip()}"'
+                for r in rev_list[:REVIEWS_SHOWN]
             ])
         else:
             reviews_text = "No recent reviews"
@@ -1310,7 +1320,7 @@ def _intel_context(prompt, competitors, restaurant_name="", restaurant_id=None, 
         facts.append(rv.Fact(f"competitor.{slug}.rating", c.get("rating"), "★", "measured", entity=name))
         facts.append(rv.Fact(f"competitor.{slug}.review_count", c.get("review_count"), "count", "measured",
                              entity=name))
-        for r in (c.get("reviews") or [])[:5]:
+        for r in (c.get("reviews") or [])[:REVIEWS_SHOWN]:
             t = str((r or {}).get("text") or "")[:250].strip()
             if t:
                 untrusted.append(t)
@@ -1448,7 +1458,7 @@ def _stored_intel_context(competitors) -> str:
         if c.get("match_basis"):
             line += f" How this one was selected: {c['match_basis']}"
         revs = [f'[{r.get("ref")} · {r.get("rating")}★, {r.get("time") or "date unknown"}] '
-                f'"{str(r.get("text") or "")[:250].strip()}"' for r in (c.get("reviews") or [])[:5] if isinstance(r, dict)]
+                f'"{str(r.get("text") or "")[:250].strip()}"' for r in (c.get("reviews") or [])[:REVIEWS_SHOWN] if isinstance(r, dict)]
         if revs:
             line += "\n  " + wrap_untrusted("\n  ".join(revs))
         lines.append(line)
@@ -1576,11 +1586,21 @@ def _cites_support(line, cites, competitors) -> bool:
     return bool(claim & cited)
 
 
+def _cites_recent(cites, competitors) -> bool:
+    """Whether a strength or complaint rests on at least one review from
+    inside BULLET_RECENT_DAYS (owner, 10/20/26): a two-month-old 1★ is not
+    what a neighbour is doing wrong now."""
+    by_ref = {str(r.get("ref")).upper(): r for c in competitors or [] for r in (c.get("reviews") or [])
+              if isinstance(r, dict) and r.get("ref")}
+    return any(_is_recent(by_ref.get(str(ref).upper())) for ref in cites or [])
+
+
 def _validate_bullets(text, competitors, restaurant_id=None):
     """The DOING WELL / DOING POORLY bullets, cite-checked (H11). Each bullet
     must name a competitor and end with the ids of that competitor's reviews
-    it rests on; one that cites nothing, an id never handed over, or another
-    restaurant's review is dropped. The ids are taken off the kept bullets
+    it rests on, at least one of them from inside BULLET_RECENT_DAYS; one
+    that cites nothing, an id never handed over, another restaurant's
+    review or only older reviews is dropped. The ids are taken off the kept bullets
     — the section reads as it always did — and a section left with no
     bullet is removed with its header."""
     import re as _re
@@ -1604,7 +1624,8 @@ def _validate_bullets(text, competitors, restaurant_id=None):
             body, cites = split_citations(st.lstrip("- ").strip())
             if (cites and all(c in known for c in cites) and _named_competitors(body, competitors)
                     and _cites_about_named(body, cites, competitors)
-                    and _cites_support(body, cites, competitors)):
+                    and _cites_support(body, cites, competitors)
+                    and _cites_recent(cites, competitors)):
                 if pending_header is not None:
                     out.append(pending_header)
                     pending_header = None
@@ -1848,6 +1869,52 @@ def _stars(review):
         return float(review.get("rating"))
     except (TypeError, ValueError, AttributeError):
         return None
+
+
+def _review_ts(review):
+    """A review's epoch second — its own `ts`, else the end of its ISO
+    `date` — or None when it carries neither."""
+    return _newest_ts([review]) if isinstance(review, dict) else None
+
+
+def _is_recent(review, now_ts=None, days=BULLET_RECENT_DAYS) -> bool:
+    """Whether a review was written inside the last `days`. A review with no
+    date is not: it cannot be shown to be what a competitor is doing now."""
+    import time as _t
+    ts = _review_ts(review)
+    return ts is not None and ts >= (now_ts if now_ts is not None else _t.time()) - days * 86400
+
+
+def _review_key(review):
+    return (str(review.get("author") or ""), _review_ts(review), str(review.get("text") or "")[:40])
+
+
+def _merge_recent_low(kept, latest, now_ts=None) -> list:
+    """The low-star reviews from inside BULLET_RECENT_DAYS a competitor keeps
+    beyond its newest five: those already kept plus any in `latest`, newest
+    first, at most RECENT_LOW_KEEP."""
+    seen, out = set(), []
+    for r in list(latest or []) + list(kept or []):
+        if not isinstance(r, dict) or _stars(r) is None or _stars(r) > LOW_STAR or not _is_recent(r, now_ts):
+            continue
+        k = _review_key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append({key: r.get(key) for key in ("author", "rating", "text", "time", "date", "ts")})
+    out.sort(key=lambda r: _review_ts(r) or 0, reverse=True)
+    return out[:RECENT_LOW_KEEP]
+
+
+def _with_recent_low(c, kept=None, now_ts=None) -> dict:
+    """A competitor whose reviews are its newest five plus any recent
+    complaint it kept that the five no longer hold — what the read is
+    handed, so the complaint it can act on is the latest one there is."""
+    reviews = [r for r in (c.get("reviews") or []) if isinstance(r, dict)]
+    low = _merge_recent_low(kept if kept is not None else c.get("recent_low"), reviews, now_ts)
+    have = {_review_key(r) for r in reviews}
+    extra = [dict(r) for r in low if _review_key(r) not in have]
+    return dict(c, reviews=reviews[:5] + extra, recent_low=low)
 
 
 def _custom_ids(restaurant) -> list:
@@ -2336,6 +2403,10 @@ def run_competitor_analysis(restaurant_id: int, rediscover=None) -> dict:
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
 
+        # Each competitor's newest five, plus any recent complaint the daily
+        # checks kept after newer reviews pushed it out of the five.
+        competitors = [_with_recent_low(c, (prev_by_id.get(c.get("place_id")) or {}).get("recent_low")
+                                        if c.get("recent_low") is None else None) for c in competitors]
         profile = {
             "vibe": restaurant.vibe or "",
             "known_for": restaurant.known_for or "",
@@ -2784,6 +2855,7 @@ def check_ratings(restaurant_id: int) -> dict:
                     elif newer >= NEWER_TURNOVER:
                         triggers.append(why)
                 c["latest_reviews"], c["latest_reviews_at"] = latest, _now_stamp()
+                c["recent_low"] = _merge_recent_low(c.get("recent_low"), latest + list(c.get("reviews") or []))
             if new_r is not None:
                 c["rating"] = new_r
             c["review_count"] = new_n

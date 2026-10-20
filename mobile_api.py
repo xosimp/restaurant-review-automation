@@ -6060,8 +6060,8 @@ def mobile_guests_import(current_user):
             if len(raw) > 5_000_000:
                 return jsonify(ok=False, error="That workbook is too big. Keep it under 5 MB."), 400
             text = guest_hub.xlsx_to_csv(raw)
-        except ValueError as e:
-            return jsonify(ok=False, error=str(e)), 400
+        except guest_hub.WorkbookError as e:
+            return jsonify(ok=False, error=e.args[0]), 400
         except Exception:
             return jsonify(ok=False, error="That workbook couldn't be read. Save it as .xlsx or CSV and try again."), 400
     if len(text) > 2_000_000:
@@ -6086,6 +6086,38 @@ def mobile_guests_followup(current_user):
     res = guest_hub.set_followup(rid, bool(d.get("enabled")), d.get("message"), bool(d.get("review_link")),
                                  user_id=current_user.get("id"))
     return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@mobile_bp.route("/guests/texting-setup", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guests_texting_setup(current_user):
+    """The restaurant's own guest texting, registered under Cavnar AI's
+    Twilio account (texting_setup): GET where it stands; POST {form,
+    submit} keeps the answers, and with submit=true sends them to Twilio.
+    The owner and anyone who may publish marketing set it up; the EIN is
+    theirs to see."""
+    import texting_setup
+    from permissions import may_connect_social
+    rid, refused = _guests_gate(current_user)
+    if refused:
+        return refused
+    may = may_connect_social(current_user)
+    if request.method == "GET":
+        st = texting_setup.status(rid)
+        if not may:
+            st["form"] = {k: v for k, v in (st.get("form") or {}).items() if k != "ein"}
+        return jsonify(ok=True, may_set_up=may, **st)
+    if not may:
+        return jsonify(ok=False, error="Only the owner or a marketing manager can set up texting."), 403
+    d = request.get_json(silent=True) or {}
+    form = d.get("form") if isinstance(d.get("form"), dict) else {}
+    if d.get("submit"):
+        res = texting_setup.submit(rid, form, user_id=current_user.get("id"))
+    else:
+        res = texting_setup.save(rid, form, user_id=current_user.get("id"))
+        if res.get("ok"):
+            res = {**res, **texting_setup.status(rid)}
+    return jsonify(res), (200 if res.get("ok") or res.get("problems") else 400)
 
 
 @mobile_bp.route("/guests/inbox", methods=["GET", "POST"])
@@ -7299,6 +7331,11 @@ def mobile_remove_task_template(current_user):
 MARKET_HISTORY_MAX = 30          # market events a movement payload carries, newest first
 
 
+def _ri_weekly_stars(rid):
+    import review_intelligence
+    return review_intelligence.weekly_stars(rid)
+
+
 @mobile_bp.route("/intel/movement")
 @mobile_login_required
 def mobile_intel_movement(current_user):
@@ -7326,6 +7363,9 @@ def mobile_intel_movement(current_user):
             days=days,
             market_history=event_memory.market_history(rid)[:MARKET_HISTORY_MAX],
             own_rating_history=event_memory.own_rating_trajectory(rid),
+            # The stars of the reviews that arrived each week, rolling: the
+            # public rating above barely moves (owner, 10/20/26).
+            review_stars=_ri_weekly_stars(rid),
             movement=moves,
             # Only the moves that clear the noise floor, for a client that
             # wants the short list rather than everything.
@@ -7338,7 +7378,7 @@ def mobile_intel_movement(current_user):
             # confidence_z is how far past that noise floor each one sits.
             claim_kinds={"movement": "measured", "significant": "measured",
                          "arrived": "measured", "gone": "measured", "market_history": "measured",
-                         "own_rating_history": "measured"},
+                         "own_rating_history": "measured", "review_stars": "measured"},
         )
     except Exception as e:
         return jsonify(ok=False, error=_safe_err(e), movement=[], significant=[],

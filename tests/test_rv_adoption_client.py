@@ -258,11 +258,15 @@ def test_the_stored_marketing_read_is_revalidated_without_a_model_call(db_path, 
 
 # ── Competitor intel ────────────────────────────────────────────────────────
 
+import time as _time
+_NOW = int(_time.time())
+# Every review inside competitor.BULLET_RECENT_DAYS (10/20/26): a strength or
+# complaint stands only on a recent one.
 _COMPS = [{"name": "Lou's Diner", "rating": 4.5, "review_count": 812, "price_level": 2,
-           "reviews": [{"rating": 2, "text": "Waited 40 minutes for eggs.", "time": "a week ago"},
-                       {"rating": 5, "text": "Great pancakes.", "time": "a month ago"}]},
+           "reviews": [{"rating": 2, "text": "Waited 40 minutes for eggs.", "time": "a week ago", "ts": _NOW - 7 * 86400},
+                       {"rating": 5, "text": "Great pancakes.", "time": "3 weeks ago", "ts": _NOW - 21 * 86400}]},
           {"name": "Maple House", "rating": 3.9, "review_count": 140, "price_level": 2,
-           "reviews": [{"rating": 1, "text": "Cold coffee, rude host.", "time": "2 weeks ago"}]}]
+           "reviews": [{"rating": 1, "text": "Cold coffee, rude host.", "time": "2 weeks ago", "ts": _NOW - 14 * 86400}]}]
 
 _INTEL = """Hi, here is your competitive landscape snapshot.
 

@@ -47,6 +47,15 @@ TIERS = {
     4: {"setup": 3000,  "monthly": 1199, "annual": 11990},
 }
 
+# Guest texting (texting_setup, owner 10/20/26). Every restaurant texts on
+# its own number and campaign, registered under Cavnar AI's Twilio account
+# and billed there. The plan includes it: the one-time registration ($4.50
+# brand + $15 campaign vetting) and the monthly campaign ($1.50) and number
+# ($1.15) are Cavnar AI's, and so are the texts up to this many a month —
+# about 1.2¢ each with carrier fees, so ~$12 at the full allowance. Past it,
+# usage() reports the overage for Will; nothing charges it automatically.
+TEXTS_INCLUDED_MONTHLY = 1000
+
 # Kept as names because sales_audit_engine imports them directly.
 STARTER = TIERS[1]
 FULL = TIERS[4]

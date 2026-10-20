@@ -12,18 +12,52 @@ struct IntelHistorySection: View {
 
     var body: some View {
         let own = movement.ownRatingHistory
+        let stars = movement.reviewStars
+        let starPoints = stars?.available == true ? (stars?.points ?? []) : []
         let events = movement.marketHistory
-        if own?.available == true || !events.isEmpty || own?.reason != nil {
+        if starPoints.count >= 2 || own?.available == true || !events.isEmpty || own?.reason != nil {
             VStack(alignment: .leading, spacing: 10) {
                 CavnarKicker("Over time")
                     .padding(.top, 10)
-                if let own { ownRating(own) }
+                if let stars, starPoints.count >= 2 {
+                    reviewStars(stars, points: starPoints, own: own)
+                } else if let own {
+                    ownRating(own)
+                }
                 if !events.isEmpty { marketList(events) }
             }
         }
     }
 
     // MARK: Your rating
+
+    /// The stars guests gave week by week, rolling — the public rating,
+    /// which barely moves, is the caption under it (owner, 10/20/26).
+    @ViewBuilder
+    private func reviewStars(_ stars: ReviewStars, points: [ReviewStars.Point], own: OwnRatingHistory?) -> some View {
+        let values = points.compactMap(\.rolling)
+        let hi = values.max() ?? 0, lo = values.min() ?? 0
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Your rating")
+                    .font(.cavnar(.label))
+                    .foregroundStyle(Color.cavnarInk)
+                Spacer(minLength: 8)
+                if let line = stars.changeLine {
+                    let ch = stars.change ?? 0
+                    HomeMixedText.make(line, role: .label,
+                                       color: abs(ch) < 0.05 ? .cavnarInk3 : (ch > 0 ? .cavnarGreen : .cavnarRedText))
+                }
+            }
+            RatingTrace(values: values, firstLabel: CavnarDate.mdy(points.first?.week ?? ""), decimals: 2)
+            HomeMixedText.make("Stars of your reviews, \(stars.window) weeks rolling \u{00B7} high "
+                               + ReviewStars.figure(hi) + "\u{2605}, low " + ReviewStars.figure(lo) + "\u{2605}"
+                               + (own?.latest.map { " \u{00B7} Google " + String(format: "%.1f", $0.rating) + "\u{2605}"
+                                   + ($0.reviewCount.map { " on \($0) reviews" } ?? "") } ?? ""),
+                               role: .caption)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
     @ViewBuilder
     private func ownRating(_ own: OwnRatingHistory) -> some View {
@@ -32,7 +66,7 @@ struct IntelHistorySection: View {
                 HomeMixedText.make("Your Google rating: " + line, role: .label, color: .cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if own.series.count >= 3 {
-                    OwnRatingTrace(points: own.series)
+                    RatingTrace(values: own.series.map(\.rating), firstLabel: own.series.first?.weekLabel ?? "")
                 }
                 HomeMixedText.make("Read from Google once a week \u{2014} \(own.weeks ?? own.series.count) weeks so far.", role: .caption)
                     .fixedSize(horizontal: false, vertical: true)
@@ -90,22 +124,25 @@ struct IntelHistorySection: View {
     }
 }
 
-/// The owner's weekly rating as one ember line, traced in once (motion 08,
-/// the sparkline trace), the latest week lit. Labels name values the line
-/// reaches: its first and latest readings.
-private struct OwnRatingTrace: View {
-    let points: [OwnRatingHistory.Point]
+/// A weekly rating as one ember line, traced in once (motion 08, the
+/// sparkline trace), the latest week lit. Labels name values the line
+/// reaches: its first reading and its first week.
+private struct RatingTrace: View {
+    let values: [Double]
+    let firstLabel: String
+    var decimals: Int = 1
+
+    private var fmt: String { "%.\(decimals)f" }
 
     var body: some View {
-        CavnarAnimatedCanvas(duration: 1.6, height: 92, replayKey: points.map(\.week).joined()) { ctx, size, t, _ in
+        CavnarAnimatedCanvas(duration: 1.6, height: 92, replayKey: firstLabel + values.map { String($0) }.joined()) { ctx, size, t, _ in
             draw(&ctx, size: size, t: t)
         }
         .accessibilityElement()
-        .accessibilityLabel("Rating by week, from \(String(format: "%.1f", points.first?.rating ?? 0)) to \(String(format: "%.1f", points.last?.rating ?? 0)) stars")
+        .accessibilityLabel("Rating by week, from \(String(format: fmt, values.first ?? 0)) to \(String(format: fmt, values.last ?? 0)) stars")
     }
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
-        let values = points.map(\.rating)
         guard values.count > 1 else { return }
         let plot = CGRect(x: 34, y: 10, width: size.width - 46, height: size.height - 24)
         let lo = (values.min() ?? 4) - 0.1, hi = (values.max() ?? 5) + 0.1
@@ -134,10 +171,10 @@ private struct OwnRatingTrace: View {
         if reveal >= 0.98, let last = pts.last {
             CavnarChart.hotDot(&ctx, at: last, radius: 3.5, halo: 9)
         }
-        CavnarChart.text(&ctx, CavnarChart.number(String(format: "%.1f", values.first ?? 0), size: CavnarType.tag,
+        CavnarChart.text(&ctx, CavnarChart.number(String(format: fmt, values.first ?? 0), size: CavnarType.tag,
                                                   color: .cavnarInk3),
                          at: CGPoint(x: plot.minX - 6, y: pts.first?.y ?? plot.midY), anchor: .trailing)
-        CavnarChart.text(&ctx, CavnarChart.label(points.first?.weekLabel ?? "", size: CavnarType.tag),
+        CavnarChart.text(&ctx, CavnarChart.label(firstLabel, size: CavnarType.tag),
                          at: CGPoint(x: plot.minX, y: size.height - 6), anchor: .leading)
         CavnarChart.text(&ctx, CavnarChart.label("now", size: CavnarType.tag),
                          at: CGPoint(x: plot.maxX, y: size.height - 6), anchor: .trailing)

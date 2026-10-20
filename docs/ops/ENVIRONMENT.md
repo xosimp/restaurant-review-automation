@@ -98,6 +98,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TWILIO_OTP_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for sign-in codes. | notify.py |
 | `TWILIO_GUEST_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for guest marketing texts. | notify.py |
 | `TOCK_WEBHOOK_TOKENS` | `""` | Tock webhook secrets, `rid:token` comma-separated (Simple EJ's: `5:<the value sent to Tock>`); Tock sends it as `X-Cavnar-Webhook-Token`. Unset: every Tock delivery is refused 401. | guest_hub.py |
+| `TWILIO_ISV_PROFILE_SID` | `""` | Cavnar AI's own Primary Customer Profile in Twilio Trust Hub (`BU…`, Business Type "ISV Reseller or Partner", Twilio Approved). Every restaurant's texting registration hangs off it. Unset: Set up texting answers "isn't switched on yet" and nothing is sent to Twilio. | texting_setup.py |
+| `TWILIO_TRUSTHUB_EMAIL` | `""` | The email on each restaurant's Trust Hub profile and A2P bundle — an address Cavnar AI owns (Twilio writes to it about reviews), not the restaurant's. Unset: setup stays off, as above. | texting_setup.py |
 | `RETAIN_TOCK_EVENTS_DAYS` | `90` | Days raw Tock webhook events are kept (`tock_events`). | ops.py |
 | `GUEST_FROM_EMAIL` | `""` | The address guest newsletters and review-request emails come from, on its own verified Resend domain (e.g. `news@guests.cavnar.ai`); unset keeps `FROM_EMAIL` / `reviews@cavnar.ai` (SEC-02). | config.py |
 | `GUEST_EMAIL_COMPLAINT_PAUSE_PCT` | `0.1` | A restaurant's guest mail pauses when more than this % of the last 7 days' accepted guest emails were marked spam (at least 50 accepted; `guest_email.guest_mail_paused`, SEC-02). | guest_email.py |

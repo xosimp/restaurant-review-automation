@@ -1826,6 +1826,9 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # Guests, host stand (guest_hub.host_add, 10/20/26): the guest's email is
+    # optional and neither host form asks for it.
+    ("/mobile/api/guests/host-add", "email"): _WEB_TOO + " (the guest's email; neither host form asks for it)",
     # Scale fix round 10/19/26: optional, and today's builds work without
     # them. A view-as reason (SEC-12) falls back to "opened from the app (no
     # reason given)"; `poll` (A4-01) asks for the polled Ask turn - without it

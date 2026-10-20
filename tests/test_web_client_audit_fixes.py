@@ -181,6 +181,8 @@ def test_owner_only_account_controls_render_for_the_owner_alone():
     assert not gm["principal"] and not gm["billing_card"] and gm["billing_note"], gm
     assert not gm["sub_item"] and not gm["qa_billing"] and not gm["close_card"], gm
     assert not gm["alerts_btn"] and gm["alerts_note"] and gm["notify_disabled"], gm
-    assert not gm["google_connect"] and not gm["ig_connect"] and not gm["pos_connect"], gm
+    # Instagram & Facebook: any login that may publish marketing connects
+    # them (owner, 10/20/26); Google Business and the POS stay the owner's.
+    assert not gm["google_connect"] and gm["ig_connect"] and not gm["pos_connect"], gm
     # Labor is in a manager's view; food cost margins are not (FOOD_COST_VIEW).
     assert gm["exp_labor"] and not gm["exp_food"], gm

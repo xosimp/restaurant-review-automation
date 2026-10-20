@@ -1084,6 +1084,18 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 /* The Guests cards hold forms, not one action: no press-in (owner, 10/20/26 - Choose File sank the whole card). */
 .gx .cp-card:active,[data-theme="dark"] .gx .cp-card:active{transform:none!important}
 .gx-file-in{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.gx-set{padding:20px 22px;display:flex;flex-direction:column;gap:18px}
+.gx-set-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.gx-set-top b{font-size:17px;color:var(--ink);font-weight:600}
+.gx-steps{display:flex;gap:8px;flex-wrap:wrap;list-style:none;margin:0;padding:0}
+.gx-steps li{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--ink3);padding:6px 12px;border-radius:999px;border:1px solid var(--cp-line)}
+.gx-steps li::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--cp-line)}
+.gx-steps li.done{color:var(--ink2)}.gx-steps li.done::before{background:var(--green)}
+.gx-steps li.cur{color:var(--ink);border-color:var(--ink3)}.gx-steps li.cur::before{background:var(--ink)}
+.gx-fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:14px}
+.gx-fgrid .gx-f.span{grid-column:1/-1}
+.gx-fgh{grid-column:1/-1;font-size:11.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-top:6px}
+.gx-use{font-size:15px;color:var(--ink2)}
 .gx-row label.cbtn{height:44px;cursor:pointer}
 .gx-file-in:focus-visible+label.cbtn{box-shadow:0 0 0 2px var(--cb-ring-gap),0 0 0 4px var(--cb-accent)}
 .gx-fname{flex:1 1 160px;min-width:0;font-size:15px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
@@ -15586,6 +15598,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
       </div>
     </section>
 
+    <section class="cp-sec" aria-labelledby="gx-set-h">
+      <div class="cp-h"><div class="k">Texting</div><h2 id="gx-set-h">Your own texting number</h2></div>
+      <div class="cp-card gx-set" id="gx-set"></div>
+    </section>
+
     <section class="cp-sec" aria-labelledby="gx-imp-h">
       <div class="cp-h"><div class="k">Bring in</div><h2 id="gx-imp-h">Your guest spreadsheet</h2></div>
       <div class="cp-card gx-imp">
@@ -19845,6 +19862,7 @@ function gxLoad() {
     var c = d.counts || {};
     gxNum('gx-k-yday', c.yesterday); gxNum('gx-k-joined', c.joined); gxNum('gx-k-waiting', c.waiting); gxNum('gx-k-total', c.total);
     gxList(d); gxFollowFill(d.followup || {}, d.can_publish); gxTexting(d.texting || {}, d.tock || {});
+    if (!_gx.setLoaded) { _gx.setLoaded = true; gxSetLoad(); }
     var un = document.getElementById('gx-unread');
     if (un) { un.hidden = !c.unread; un.textContent = c.unread + ' new'; }
     if (!_gx.phone) gxThreads();
@@ -19927,6 +19945,69 @@ function gxTexting(t, k) {
   // Connected only once Tock has actually sent something: a secret on file is
   // our half, not theirs (owner, 10/20/26).
   if (tk) tk.textContent = k.events ? 'Tock is connected: ' + k.events + ' updates, the last on ' + k.last_event + '.' : 'Tock isn\u2019t sending yet. Once it is, reservations and walk-ins add guests here on their own.';
+}
+/* Your own texting number (texting_setup, owner 10/20/26): one form, sent to
+   Twilio under Cavnar AI's account; the carriers review the business, then
+   the texting program, and guest texts move to the restaurant's own number. */
+var GX_SET_FIELDS = [
+  ['Business', null], ['legal_name', 'Legal business name', 'span'], ['ein', 'EIN', ''], ['business_type', 'Kind of business', 'sel:business_types'],
+  ['website', 'Website', ''], ['street', 'Street address', 'span'], ['street2', 'Suite or unit (optional)', ''], ['city', 'City', ''],
+  ['state', 'State', ''], ['zip', 'ZIP', ''], ['area_code', 'Area code you’d like (optional)', ''],
+  ['Who carriers may contact', null], ['first_name', 'First name', ''], ['last_name', 'Last name', ''], ['title', 'Title', ''],
+  ['job_position', 'Role', 'sel:job_positions'], ['email', 'Email', ''], ['phone', 'Phone', '']
+];
+function gxSetLoad() {
+  var box = document.getElementById('gx-set'); if (!box) return;
+  fetch('/api/guests/texting-setup', {credentials: 'same-origin'}).then(apiJson).then(function (d) {
+    if (!d || !d.ok) { box.innerHTML = '<p class="gx-sub">' + _escHtml((d && d.error) || 'Texting setup couldn’t be read just now.') + '</p>'; return; }
+    gxSetRender(d);
+  }).catch(function () { box.innerHTML = '<p class="gx-sub">Texting setup couldn’t be read just now. Check your connection.</p>'; });
+}
+function gxSetRender(d) {
+  var box = document.getElementById('gx-set'), h = '', i, u = d.usage || {}, f = d.form || {};
+  h += '<div class="gx-set-top"><b>' + _escHtml(d.headline) + '</b>' + (d.number ? '<span class="gx-use hb-num">' + _escHtml(d.number) + '</span>' : '') + '</div>';
+  h += '<ol class="gx-steps">';
+  for (i = 0; i < (d.steps || []).length; i++) h += '<li class="' + (d.steps[i].done ? 'done' : (d.steps[i].current ? 'cur' : '')) + '">' + _escHtml(d.steps[i].label) + '</li>';
+  h += '</ol>';
+  if (d.error) h += '<div class="gx-msg bad">' + _escHtml(d.error) + '</div>';
+  if (d.status === 'live') h += '<p class="gx-use">' + memNum((u.texts || 0) + ' of ' + (u.included || 0).toLocaleString() + ' texts used this month, included in your plan.') + '</p>';
+  else if (d.status === 'brand_review' || d.status === 'campaign_review') h += '<p class="gx-sub">Sent ' + _escHtml(d.submitted || '') + '. Carriers usually answer in 1–7 days; this updates on its own, and the owner gets an email when texting is live.</p>';
+  if (d.editable && d.may_set_up) {
+    h += '<p class="gx-sub">Guests then get texts from a local number registered to your business, not a shared one. Cavnar AI files it with the carriers and covers the fees. Use the details exactly as the IRS has them.</p><div class="gx-fgrid">';
+    for (i = 0; i < GX_SET_FIELDS.length; i++) {
+      var r = GX_SET_FIELDS[i];
+      if (!r[1]) { h += '<div class="gx-fgh">' + _escHtml(r[0]) + '</div>'; continue; }
+      var v = f[r[0]] || '', kind = r[2] || '';
+      h += '<label class="gx-f' + (kind === 'span' ? ' span' : '') + '"><span>' + _escHtml(r[1]) + '</span>';
+      if (kind.indexOf('sel:') === 0) {
+        var opts = d[kind.slice(4)] || [], j;
+        h += '<select class="ac-select" data-gx-set="' + r[0] + '"><option value="">—</option>';
+        for (j = 0; j < opts.length; j++) h += '<option' + (opts[j] === v ? ' selected' : '') + '>' + _escHtml(opts[j]) + '</option>';
+        h += '</select>';
+      } else {
+        h += '<input class="ac-input" data-gx-set="' + r[0] + '" value="' + _escHtml(v) + '" autocomplete="off"' + (r[0] === 'email' ? ' type="email"' : (r[0] === 'phone' ? ' type="tel"' : '')) + '>';
+      }
+      h += '</label>';
+    }
+    h += '</div><div class="gx-acts"><button type="button" class="cbtn cbtn-primary" id="gx-set-go" onclick="gxSetSend(true)">Send for approval</button>'
+      + '<button type="button" class="cbtn cbtn-secondary" id="gx-set-save" onclick="gxSetSend(false)">Save for later</button><span class="gx-msg" id="gx-set-msg" role="status" aria-live="polite"></span></div>';
+  } else if (d.editable) {
+    h += '<p class="gx-sub">The owner or a marketing manager sets this up.</p>';
+  }
+  box.innerHTML = h;
+}
+function gxSetSend(go) {
+  var form = {}, els = document.querySelectorAll('#gx-set [data-gx-set]'), i, btn = document.getElementById(go ? 'gx-set-go' : 'gx-set-save');
+  for (i = 0; i < els.length; i++) form[els[i].getAttribute('data-gx-set')] = els[i].value;
+  btn.disabled = true;
+  gxMsg('gx-set-msg', go ? 'Sending to the carriers…' : 'Saving…');
+  gxPost('/api/guests/texting-setup', {form: form, submit: !!go}).then(function (d) {
+    btn.disabled = false;
+    if (d && d.problems && d.problems.length) { gxMsg('gx-set-msg', (go ? 'Not sent. ' : 'Saved. Still needed: ') + d.problems.join(' '), go ? 'bad' : ''); return; }
+    if (!d || !d.ok) { gxMsg('gx-set-msg', (d && d.error) || 'Not sent. Try again.', 'bad'); return; }
+    if (go) { gxSetLoad(); return; }
+    gxMsg('gx-set-msg', 'Saved.', 'good');
+  }).catch(function () { btn.disabled = false; gxMsg('gx-set-msg', 'Not sent. Check your connection.', 'bad'); });
 }
 function gxThreads() {
   _gx.phone = null;
@@ -43603,8 +43684,8 @@ window.cavPalette = cavPalette;
 .mem-rating .fig small{font-size:15px;color:var(--ink3);margin-left:2px}
 .mem-rating .chg{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600}
 .mem-rating .chg.up{color:var(--hb-good)}.mem-rating .chg.down{color:var(--hb-bad)}.mem-rating .chg.flat{color:var(--ink3)}
-.mem-rating .hb-cl{height:92px;margin-top:8px}
-.mem-rating .hb-cl svg{width:100%;height:92px;display:block}
+.mem-rating .hb-cl{height:110px;margin-top:8px}
+.mem-rating .hb-cl svg{width:100%;height:110px;display:block}
 .mem-rating .ax{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3);margin-top:4px}
 .mem-mkt .row .m .hb-num{color:var(--ink2)}
 /* Marketing: what past texts did for the audience picked */
@@ -44488,13 +44569,32 @@ function memRetagBody(was, now) {
   /* ── Intel: your rating over time, and the market's history ── */
   window.memIntelHistoryHtml = function (d) {
     if (!d) return '';
-    var h = '', i, own = d.own_rating_history, C = window.CavnarCharts;
-    if (own && own.available && (own.series || []).length >= 2) {
+    var h = '', i, own = d.own_rating_history, C = window.CavnarCharts, st = d.review_stars;
+    // The stars guests gave, week by week, 4 weeks rolling (owner, 10/20/26):
+    // the public Google rating is a lifetime average that sat at 4.6 every
+    // week, so its line was flat. It stays the headline figure.
+    var pts = [];
+    if (st && st.available) { for (i = 0; i < (st.series || []).length; i++) if (st.series[i].rolling != null) pts.push(st.series[i]); }
+    if (pts.length >= 2) {
+      var sv = [], sl = [], lo = 5, hi = 0, sc = st.change, win = +st.window || 4, head = (own && own.latest) ? +own.latest.rating : +st.recent.avg;
+      for (i = 0; i < pts.length; i++) {
+        var rv = +pts[i].rolling; sv.push(rv); lo = Math.min(lo, rv); hi = Math.max(hi, rv);
+        sl.push('Week of ' + memMdy(pts[i].week) + ' · ' + pts[i].rolling_n + ' review' + (pts[i].rolling_n === 1 ? '' : 's'));
+      }
+      var scTxt = (sc == null || st.recent.avg == null) ? '' : (Math.abs(sc) < 0.05 ? 'Steady' : (sc > 0 ? '+' : '−') + memG(Math.abs(sc)) + '★') + ' last ' + win + ' weeks';
+      h += '<div class="mem-rating" aria-label="The stars of your reviews, week by week"><div class="hd"><div><div class="hb-kicker">Your rating over time</div>'
+        + '<div class="fig">' + memEsc(memG(head)) + '<small>★</small></div></div>'
+        + (scTxt ? '<span class="chg ' + (Math.abs(sc) < 0.05 ? 'flat' : (sc > 0 ? 'up' : 'down')) + '">' + memNum(scTxt) + '</span>' : '') + '</div>'
+        + (C && C.glowLine ? C.glowLine(sv, 600, 110, '#e8956a', {pad: 8, labels: sl, unit: '★', floor: lo - 0.1, ceil: hi + 0.1}) : '')
+        + '<div class="ax hb-num"><span>' + memEsc(memMdy(pts[0].week)) + '</span><span>' + memEsc(memMdy(pts[pts.length - 1].week)) + '</span></div>'
+        + '<div class="mem-ln">' + memNum('Stars of the reviews you got, ' + win + ' weeks rolling · high ' + memG(hi) + '★, low ' + memG(lo) + '★'
+        + (own && own.latest ? ' · Google ' + memG(own.latest.rating) + '★' + (own.latest.review_count ? ' on ' + own.latest.review_count + ' reviews' : '') : '')) + '</div></div>';
+    } else if (own && own.available && (own.series || []).length >= 2) {
       var vals = [], labels = [], ch = +own.change || 0;
       for (i = 0; i < own.series.length; i++) { vals.push(+own.series[i].rating); labels.push('Week of ' + memMdy(memIsoWeekDate(own.series[i].week))); }
       h += '<div class="mem-rating" aria-label="Your Google rating over time"><div class="hd"><div><div class="hb-kicker">Your rating over time</div>'
         + '<div class="fig">' + memEsc(memG(own.latest.rating)) + '<small>★</small></div></div>'
-        + '<span class="chg ' + (ch > 0 ? 'up' : (ch < 0 ? 'down' : 'flat')) + '">' + (ch > 0 ? '+' : (ch < 0 ? '−' : '')) + memEsc(memG(Math.abs(ch))) + '★ since ' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span></div>'
+        + '<span class="chg ' + (ch > 0 ? 'up' : (ch < 0 ? 'down' : 'flat')) + '">' + (ch ? (ch > 0 ? '+' : '−') + memEsc(memG(Math.abs(ch))) + '★' : 'Steady') + ' since ' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span></div>'
         + (C && C.glowLine ? C.glowLine(vals, 600, 92, '#e8956a', {pad: 8, labels: labels, unit: '★'}) : '')
         + '<div class="ax hb-num"><span>' + memEsc(memMdy(memIsoWeekDate(own.first.week))) + '</span><span>' + memEsc(memMdy(memIsoWeekDate(own.latest.week))) + '</span></div>'
         // The sentence under the chart only when the rating moved: "4.6★ to

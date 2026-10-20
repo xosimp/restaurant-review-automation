@@ -170,6 +170,9 @@ def init_guest_hub(db_path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
+    # The restaurant's own texting registration (texting_setup), at boot too.
+    import texting_setup
+    texting_setup.init_texting_setup(db_path)
 
 
 # ── small helpers ───────────────────────────────────────────────────────────
@@ -685,6 +688,11 @@ def _parse_date(s):
     return None
 
 
+class WorkbookError(ValueError):
+    """A workbook the import can't read, in words written for the owner —
+    the one exception a route may show as it is."""
+
+
 def xlsx_to_csv(data: bytes) -> str:
     """The first sheet of an Excel workbook (.xlsx — Excel, Google Sheets,
     Numbers all export it) as CSV text, read with the standard library: a
@@ -697,7 +705,7 @@ def xlsx_to_csv(data: bytes) -> str:
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
-        raise ValueError("That isn't an Excel file (.xlsx).")
+        raise WorkbookError("That isn't an Excel file (.xlsx).")
     names = set(z.namelist())
     shared = []
     if "xl/sharedStrings.xml" in names:
@@ -716,7 +724,7 @@ def xlsx_to_csv(data: bytes) -> str:
     except (KeyError, ET.ParseError, AttributeError):
         pass
     if sheet not in names:
-        raise ValueError("That workbook has no sheet to read.")
+        raise WorkbookError("That workbook has no sheet to read.")
     def col_index(ref):
         n = 0
         for ch in re.match(r"[A-Z]+", ref).group(0):
@@ -739,7 +747,7 @@ def xlsx_to_csv(data: bytes) -> str:
         if vals:
             rows.append([vals.get(i, "") for i in range(max(vals) + 1)])
     if not rows:
-        raise ValueError("The first sheet is empty.")
+        raise WorkbookError("The first sheet is empty.")
     # A date column holds Excel serial numbers (days since 12/30/1899).
     head = [_nk(h) for h in rows[0]]
     date_cols = [i for i, k in enumerate(head) if any(b in k for b in ("date", "visit", "came", "dined"))]

@@ -31,7 +31,7 @@ def test_a_skipped_card_offers_approve_only_as_a_secondary_action():
     sk = sk[:sk.index("{% else %}")]
     assert 'class="cbtn cbtn-secondary cbtn-sm" onclick="approveR({{ r.id }},false,true)">✓ Approve after all' in sk
     assert "cbtn-primary" not in sk
-    skip_js = DASH[DASH.index("function skipR(id){"):]
+    skip_js = DASH[DASH.index("function skipR(id,reason){"):]
     skip_js = skip_js[:skip_js.index("\n}\n")]
     assert "rvSetState(id,'mute','Skipped \\u00b7 no reply sent');" in skip_js and "Approve after all" in skip_js
 

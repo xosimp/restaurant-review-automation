@@ -316,12 +316,15 @@ struct IntelMovement: Decodable, Equatable {
     /// restaurant's own rating week by week. Empty / nil on an older server.
     var marketHistory: [MarketEvent] = []
     var ownRatingHistory: OwnRatingHistory? = nil
+    /// The stars of each week's reviews, rolling (10/20/26). Nil on an older server.
+    var reviewStars: ReviewStars? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok, days, significant, arrived, gone
         case comparedFrom = "compared_from"
         case marketHistory = "market_history"
         case ownRatingHistory = "own_rating_history"
+        case reviewStars = "review_stars"
     }
 
     init(from decoder: Decoder) throws {
@@ -335,6 +338,7 @@ struct IntelMovement: Decodable, Equatable {
         marketHistory = ((try? c.decodeIfPresent(HomeLenientList<MarketEvent>.self, forKey: .marketHistory)) ?? nil)?
             .items ?? []
         ownRatingHistory = (try? c.decodeIfPresent(OwnRatingHistory.self, forKey: .ownRatingHistory)) ?? nil
+        reviewStars = (try? c.decodeIfPresent(ReviewStars.self, forKey: .reviewStars)) ?? nil
     }
 
     var hasChanges: Bool { !arrived.isEmpty || !gone.isEmpty || !significant.isEmpty }

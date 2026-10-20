@@ -383,11 +383,15 @@ def test_r7_p07_dsr_spelled_out_money_is_traced():
 
 # ── R8 / R13: competitor fence, cite support, menu prices (p05, p17, p19) ───
 
+import time as _time
+_NOW = int(_time.time())
+# Every review is inside competitor.BULLET_RECENT_DAYS: a strength or
+# complaint stands only on a recent one (owner, 10/20/26).
 _COMPS = [{"name": "Lou's Diner", "rating": 4.5, "review_count": 812, "price_level": 2,
-           "reviews": [{"rating": 2, "text": "Waited 40 minutes for eggs.", "time": "a week ago"},
-                       {"rating": 5, "text": "Great pancakes.", "time": "a month ago"}]},
+           "reviews": [{"rating": 2, "text": "Waited 40 minutes for eggs.", "time": "a week ago", "ts": _NOW - 7 * 86400},
+                       {"rating": 5, "text": "Great pancakes.", "time": "3 weeks ago", "ts": _NOW - 21 * 86400}]},
           {"name": "Maple House", "rating": 3.9, "review_count": 140, "price_level": 2,
-           "reviews": [{"rating": 1, "text": "Cold coffee, rude host.", "time": "2 weeks ago"}]}]
+           "reviews": [{"rating": 1, "text": "Cold coffee, rude host.", "time": "2 weeks ago", "ts": _NOW - 14 * 86400}]}]
 _TRUE_FIG = """Hi, here is your competitive landscape snapshot.
 
 WHAT COMPETITORS ARE DOING WELL:
@@ -418,9 +422,9 @@ def test_r8_p05_true_competitor_figures_verify_and_invented_ones_do_not(monkeypa
 
 
 def test_r13_p19_a_bullet_cite_must_say_what_the_bullet_says():
-    comps = [{"name": "Lou's Diner", "reviews": [{"ref": "R1", "text": "slow eggs"},
-                                                 {"ref": "R2", "text": "great pancakes"}]},
-             {"name": "Maple House", "reviews": [{"ref": "R3", "text": "cold coffee, rude host"}]}]
+    comps = [{"name": "Lou's Diner", "reviews": [{"ref": "R1", "text": "slow eggs", "ts": _NOW},
+                                                 {"ref": "R2", "text": "great pancakes", "ts": _NOW}]},
+             {"name": "Maple House", "reviews": [{"ref": "R3", "text": "cold coffee, rude host", "ts": _NOW}]}]
     text = ("WHAT COMPETITORS ARE DOING WELL:\n- Lou's Diner is known for great pancakes [R2]\n"
             "- Maple House has the best patio in town [R3]\n\n"
             "WHAT COMPETITORS ARE DOING POORLY:\n- Lou's Diner is slow on weekends [R1]\n\nRecommendations:\n1. x [R2]")
@@ -689,3 +693,37 @@ def test_r4_five_star_hospital_mentions_stay_the_models_call():
     # a 4★ strong keyword is left to the model too (negation is common there)
     assert analyser._validate_analysis(_analysis("normal", "minor"), rating=4,
                                        text="No roach problem here, unlike next door.")["urgency"] == "normal"
+
+
+# ── 10/20/26: what a competitor is doing now, not two months ago ────────────
+
+def test_a_strength_or_complaint_on_only_an_older_review_is_dropped():
+    old = _NOW - (competitor.BULLET_RECENT_DAYS + 30) * 86400
+    comps = [{"name": "Fox Social", "reviews": [{"ref": "R1", "rating": 1, "text": "cold food, short pour", "ts": old}]},
+             {"name": "Maple House", "reviews": [{"ref": "R2", "rating": 1, "text": "cold coffee, rude host", "ts": _NOW}]}]
+    text = ("WHAT COMPETITORS ARE DOING POORLY:\n- Fox Social served cold food and a short pour [R1]\n"
+            "- Maple House guests report cold coffee [R2]\n\nRecommendations:\n1. x [R2]")
+    out = competitor._validate_bullets(text, comps)
+    assert "Maple House guests report cold coffee" in out and "Fox Social" not in out
+    # A section left with nothing recent goes with its header.
+    only_old = competitor._validate_bullets(text.replace("- Maple House guests report cold coffee [R2]\n", ""), comps)
+    assert "DOING POORLY" not in only_old
+    # A review with no date cannot be shown to be recent.
+    assert not competitor._is_recent({"rating": 1, "text": "x"})
+
+
+def test_the_read_marks_older_reviews_and_keeps_a_recent_complaint_past_the_newest_five():
+    old = _NOW - 60 * 86400
+    newest = [{"author": f"G{i}", "rating": 5, "text": "great", "ts": _NOW - i * 3600} for i in range(5)]
+    complaint = {"author": "Ann", "rating": 1, "text": "soggy fries, 40 minute wait", "ts": _NOW - 5 * 86400}
+    stale = {"author": "Bo", "rating": 1, "text": "rude", "ts": old}
+    kept = competitor._merge_recent_low([], [complaint, stale])
+    assert [r["author"] for r in kept] == ["Ann"]  # the stale one is never kept
+    c = competitor._with_recent_low({"name": "Fox Social", "reviews": newest}, kept)
+    assert len(c["reviews"]) == 6 and c["reviews"][-1]["author"] == "Ann"
+    # Already in the newest five: not added twice.
+    again = competitor._with_recent_low({"name": "Fox Social", "reviews": newest[:4] + [complaint]}, kept)
+    assert len(again["reviews"]) == 5
+    prompt, _ = competitor._insight_prompt("Test Cafe", [dict(c, rating=4.1, review_count=300, reviews=c["reviews"] + [dict(stale)])], ready={})
+    assert "soggy fries" in prompt and prompt.count("· OLDER") == 1
+    assert "not marked OLDER" in competitor.INSIGHT_SYSTEM

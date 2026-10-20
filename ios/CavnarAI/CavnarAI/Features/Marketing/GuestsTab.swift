@@ -162,12 +162,59 @@ enum GuestsView: String, CaseIterable, Identifiable {
     var key: String { rawValue.lowercased() }
 }
 
+/// The restaurant's own texting number, registered under Cavnar AI's Twilio
+/// account (GET /mobile/api/guests/texting-setup, 10/20/26). The form is on
+/// the web; the app shows where it stands.
+struct TextingSetup: Decodable, Hashable {
+    struct Step: Decodable, Hashable {
+        let label: String
+        let done: Bool
+        let current: Bool
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            label = c.sfText(.label) ?? ""
+            done = (try? c.decodeIfPresent(Bool.self, forKey: .done)) ?? false
+            current = (try? c.decodeIfPresent(Bool.self, forKey: .current)) ?? false
+        }
+        enum CodingKeys: String, CodingKey { case label, done, current }
+    }
+    var status = "draft"
+    var headline = ""
+    var steps: [Step] = []
+    var number: String?
+    var error: String?
+    var submitted: String?
+    var texts = 0
+    var included = 0
+    var maySetUp = false
+
+    enum CodingKeys: String, CodingKey { case status, headline, steps, number, error, submitted, usage
+        case maySetUp = "may_set_up" }
+    enum UsageKeys: String, CodingKey { case texts, included }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        status = c.sfText(.status) ?? "draft"
+        headline = c.sfText(.headline) ?? ""
+        steps = (try? c.decodeIfPresent([Step].self, forKey: .steps)) ?? []
+        number = c.sfText(.number)
+        error = c.sfText(.error)
+        submitted = c.sfText(.submitted)
+        maySetUp = (try? c.decodeIfPresent(Bool.self, forKey: .maySetUp)) ?? false
+        if let u = try? c.nestedContainer(keyedBy: UsageKeys.self, forKey: .usage) {
+            texts = u.sfInt(.texts) ?? 0
+            included = u.sfInt(.included) ?? 0
+        }
+    }
+}
+
 // MARK: - View model
 
 @Observable
 @MainActor
 final class GuestsTabViewModel {
     var payload: GuestsPayload?
+    var setup: TextingSetup?
     var threads: [GuestThread] = []
     var view: GuestsView = .all
     var query = ""
@@ -214,15 +261,23 @@ final class GuestsTabViewModel {
     }
 
     private struct HostAdd: Encodable {
-        let name: String, phone: String, party: Int?, invite: Bool, asked: Bool
+        let name: String
+        let phone: String
+        let party: Int?
+        let invite: Bool
+        let asked: Bool
     }
 
     private struct FollowSave: Encodable {
-        let enabled: Bool, message: String
+        let enabled: Bool
+        let message: String
         let review_link: Bool
     }
 
-    private struct ReplyBody: Encodable { let phone: String, body: String }
+    private struct ReplyBody: Encodable {
+        let phone: String
+        let body: String
+    }
 
     func load() async {
         isLoading = true
@@ -230,9 +285,11 @@ final class GuestsTabViewModel {
         async let p: GuestsPayload? = try? client.send("/mobile/api/guests", query: ["view": view.key, "q": query],
                                                        hapticOnError: false)
         async let t: ThreadsResponse? = try? client.send("/mobile/api/guests/inbox", hapticOnError: false)
-        let (pay, th) = await (p, t)
+        async let st: TextingSetup? = try? client.send("/mobile/api/guests/texting-setup", hapticOnError: false)
+        let (pay, th, set) = await (p, t, st)
         if let pay { payload = pay; lastLoadedAt = Date() }
         if let th { threads = th.threads }
+        if let set { setup = set }
         loadError = (pay == nil && payload == nil) ? "Couldn\u{2019}t load your guests. Pull to try again." : nil
     }
 
@@ -329,6 +386,7 @@ struct GuestsTabSection: View {
             listSection
             followCard
             repliesCard
+            setupCard
             footnotes
         }
         .onChange(of: viewModel.payload?.followup) { _, f in
@@ -564,6 +622,51 @@ struct GuestsTabSection: View {
             }
         }
         .cavnarCard()
+    }
+
+    // MARK: Your own texting number
+
+    @ViewBuilder
+    private var setupCard: some View {
+        if let st = viewModel.setup {
+            VStack(alignment: .leading, spacing: CavnarSpace.s) {
+                CavnarKicker("Your own texting number")
+                Text(st.headline).cavnarText(.label, color: .cavnarInk)
+                if let n = st.number {
+                    Text(n).font(.cavnarNumber(CavnarType.body, weight: 600)).foregroundStyle(Color.cavnarInk)
+                }
+                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                          alignment: .leading, spacing: 6) {
+                    ForEach(Array(st.steps.enumerated()), id: \.offset) { _, step in
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(step.done ? Color.cavnarGreen : (step.current ? Color.cavnarInk : Color.cavnarInk3.opacity(0.4)))
+                                .frame(width: 6, height: 6)
+                            Text(step.label)
+                                .font(.cavnar(.caption))
+                                .foregroundStyle(step.done || step.current ? Color.cavnarInk2 : Color.cavnarInk3)
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                    }
+                }
+                if let e = st.error { Text(e).cavnarText(.secondary, color: .cavnarRedText).fixedSize(horizontal: false, vertical: true) }
+                Group {
+                    switch st.status {
+                    case "live":
+                        HomeMixedText.make("\(st.texts) of \(st.included) texts used this month, included in your plan.", role: .caption)
+                    case "brand_review", "campaign_review":
+                        Text("Sent \(st.submitted ?? ""). Carriers usually answer in 1\u{2013}7 days; this updates on its own.")
+                    default:
+                        Text(st.maySetUp ? "Set it up from Marketing \u{2192} Guests on the web: your business details, once."
+                                         : "The owner or a marketing manager sets this up.")
+                    }
+                }
+                .cavnarText(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cavnarCard()
+        }
     }
 
     @ViewBuilder

@@ -1827,6 +1827,21 @@ def send_password_reset_email(to_email: str, reset_url: str, restaurant_id: int 
     """)
 
 
+def send_texting_live_email(to_email: str, restaurant_name: str, number: str,
+                            restaurant_id: int = None) -> "SendResult":
+    """Guest texting is live on the restaurant's own number and campaign
+    (texting_setup, 10/20/26) — sent once, when the carriers verify it."""
+    from html import escape as _e
+    return _send_branded(to_email, f"Guest texting is live for {restaurant_name}",
+                         email_type="send_texting_live_email", restaurant_id=restaurant_id,
+                         preheader=f"Your guest texts now come from {number}.",
+                         inner_html=f"""
+        <p style="color:{BRAND['strong']};font-size:18px;font-weight:700;margin:0 0 12px">Guest texting is live</p>
+        <p style="color:{BRAND['body']};font-size:14px;line-height:1.6;margin:0 0 12px">The carriers approved {_e(restaurant_name)}'s texting program. Your guest texts now go out from <b style="font-family:{_NUM}">{_e(number or '')}</b>, registered to your business.</p>
+        <p style="color:{BRAND['muted']};font-size:13px;line-height:1.6;margin:0">Thank-yous, offers and replies all use it. Guests' replies arrive in Marketing &rarr; Guests.</p>
+    """)
+
+
 def send_password_reset_code_email(to_email: str, code: str, restaurant_id: int = None) -> "SendResult":
     """The app's in-app reset: a 6-digit code typed into the sheet, instead
     of the web flow's emailed link. Expires with the same 1-hour window."""

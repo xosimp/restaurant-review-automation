@@ -5962,6 +5962,12 @@ def scheduler_loop():
                 from strategy_jobs import run_pos_archive
                 _ops.run_job("pos_archive", run_pos_archive)
 
+            # Hourly — each restaurant's texting registration moves on a step
+            # (texting_setup: the carriers' brand and campaign reviews).
+            if _ops.claim_period("texting_setup_advance", f"{today}-{now.hour}"):
+                from texting_setup import run_advance as _run_texting_advance
+                _ops.run_job("texting_setup_advance", _run_texting_advance)
+
             # 5am daily — yesterday's RPOWER checks that carry a customer
             # become guest visits (guest_hub phase 3). Sends nothing.
             if _due(now, 5) and _ops.claim_period("guest_pos_match", str(today)):

@@ -1439,6 +1439,80 @@ struct OwnRatingHistory: Codable, Hashable {
     }
 }
 
+/// The stars of the reviews that arrived each week, rolling over `window`
+/// weeks (GET /mobile/api/intel/movement's `review_stars`, owner 10/20/26):
+/// the public Google rating is a lifetime average that barely moves, so its
+/// weekly line was flat. `rolling` is nil until a review is inside the window.
+struct ReviewStars: Codable, Hashable {
+    struct Point: Codable, Hashable {
+        let week: String
+        let n: Int
+        let rolling: Double?
+        let rollingN: Int
+
+        enum CodingKeys: String, CodingKey {
+            case week, n, rolling
+            case rollingN = "rolling_n"
+        }
+
+        init(week: String, n: Int = 0, rolling: Double?, rollingN: Int = 0) {
+            self.week = week; self.n = n; self.rolling = rolling; self.rollingN = rollingN
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            guard let week = c.mrText(.week) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no week"))
+            }
+            self.week = week
+            n = c.mrInt(.n) ?? 0
+            rolling = c.mrDouble(.rolling)
+            rollingN = c.mrInt(.rollingN) ?? 0
+        }
+    }
+
+    let available: Bool
+    let series: [Point]
+    let change: Double?
+    let window: Int
+    let reason: String?
+
+    enum CodingKeys: String, CodingKey { case available, series, change, window, reason }
+
+    init(available: Bool, series: [Point] = [], change: Double? = nil, window: Int = 4, reason: String? = nil) {
+        self.available = available; self.series = series; self.change = change; self.window = window
+        self.reason = reason
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        series = c.mrList(Point.self, .series)
+        available = c.mrBool(.available) ?? false
+        change = c.mrDouble(.change)
+        window = c.mrInt(.window) ?? 4
+        reason = c.mrText(.reason)
+    }
+
+    /// The weeks that carry a rolling figure, oldest first.
+    var points: [Point] { series.filter { $0.rolling != nil } }
+
+    /// "+0.1★ last 4 weeks" / "Steady last 4 weeks" — nil without both spans.
+    var changeLine: String? {
+        guard let change else { return nil }
+        let head = abs(change) < 0.05 ? "Steady"
+            : (change > 0 ? "+" : "\u{2212}") + Self.figure(abs(change)) + "\u{2605}"
+        return head + " last \(window) weeks"
+    }
+
+    /// Up to two decimals, trailing zeros dropped: 4.5, 4.52, 0.1.
+    static func figure(_ v: Double) -> String {
+        var t = String(format: "%.2f", v)
+        while t.hasSuffix("0") { t.removeLast() }
+        if t.hasSuffix(".") { t.removeLast() }
+        return t
+    }
+}
+
 // MARK: - What Connects: a link's memory (GET /cross-module)
 
 /// How long a cross-module link has stood: "Found 3 weeks running, since

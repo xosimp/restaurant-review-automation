@@ -5674,6 +5674,13 @@ def guests_import_api(current_user):
     return _m("mobile_guests_import")(current_user)
 
 
+@client_bp.route("/api/guests/texting-setup", methods=["GET", "POST"])
+@login_required
+def guests_texting_setup_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_texting_setup."""
+    return _m("mobile_guests_texting_setup")(current_user)
+
+
 @client_bp.route("/api/guests/followup", methods=["GET", "POST"])
 @login_required
 def guests_followup_api(current_user):
