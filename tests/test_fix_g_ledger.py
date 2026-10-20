@@ -115,6 +115,9 @@ def test_a_success_after_two_retries_records_its_attempts_and_the_whole_wait(db_
     def sleep(s):
         clock["t"] += s
     monkeypatch.setattr(ai_utils.time, "sleep", sleep)
+    # Full jitter since the scale audit (10/19/26 A4-02): the wait is drawn
+    # up to the exponential step - pinned to the step so the sum is known.
+    monkeypatch.setattr(ai_utils.random, "uniform", lambda a, b: b)
     conn_err = anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
     ai_utils.create_with_retry(_Client([conn_err, conn_err, _msg()]), model="claude-sonnet-5", max_tokens=10,
                                restaurant_id=rid, action="t_retry")

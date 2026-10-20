@@ -18636,10 +18636,11 @@ window.sendAskCavnar = function() {
   // the server's request threads and read back here a few times a second.
   var _askPollMisses = 0;
   function _askPollTurn(tid, after) {
-    fetch('/api/ask-cavnar/turn/' + encodeURIComponent(tid) + '?after=' + after).then(function(r) {
-      return r.json();
-    }).then(function(d) {
+    fetch('/api/ask-cavnar/turn/' + encodeURIComponent(tid) + '?after=' + after).then(apiJson).then(function(d) {
       if (_askDone) return;
+      // A server-side miss (a deploy's 502, an unreadable answer) is a missed
+      // poll, retried below - not the end of the answer.
+      if (!d || (d.ok === false && d.http_status && d.http_status >= 500)) throw new Error('poll');
       _askPollMisses = 0;
       if (!d || !d.ok) { _finish({ok: false, error: (d && d.error) || 'Network error — try again.'}); return; }
       (d.events || []).forEach(_askDispatch);

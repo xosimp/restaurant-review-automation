@@ -105,8 +105,11 @@ def test_the_value_tile_nets_worse_results_and_shows_cumulative_only_when_measur
 # ── #28 on Home, #13/#20/#35 the record page, #21 the check-in ───────────────
 
 def test_home_reads_what_worked_and_the_timeline_for_the_check_in():
-    assert "get('worked','/api/recs/what-worked?days=180')" in SRC
-    assert "get('timeline','/api/recs/timeline?limit=40')" in SRC
+    # One combined read since the scale audit (10/19/26 FE-01, /api/home/follow);
+    # each block's own address is the fallback the map names.
+    assert "worked:'/api/recs/what-worked?days=180'" in SRC
+    assert "timeline:'/api/recs/timeline?limit=40'" in SRC
+    assert "HB_FOLLOW_URL[key]" in SRC
     worked = _fn("renderWorked")
     assert "w.sentences" in worked and "Not enough yet" in worked
 

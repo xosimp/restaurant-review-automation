@@ -36,7 +36,7 @@ def test_turn_on_two_factor_opens_the_setup_on_security():
 
 def test_popovers_close_from_anywhere_outside():
     assert "var open=document.querySelectorAll('details.ac-more[open]');if(!open.length" in SRC
-    feed = _between("window.aiFeedToggle = function () {", "  load();\n  pollTimer")
+    feed = _between("window.aiFeedToggle = function () {", "  pollTimer = setInterval(load")
     assert "if (e.target.closest('#ai-feed') || e.target.closest('#ai-strip')) return;" in feed
 
 

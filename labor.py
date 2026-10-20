@@ -415,7 +415,8 @@ def _history_stamp(restaurant_id):
         finally:
             conn.close()
         return tuple(row) if row else ()
-    except Exception:
+    except Exception as e:
+        log.debug("shift history stamp unreadable for %s, reading fresh: %s", restaurant_id, e)
         return None
 
 
@@ -423,7 +424,8 @@ def _in_request() -> bool:
     try:
         from flask import has_request_context
         return has_request_context()
-    except Exception:
+    except Exception as e:
+        log.debug("no request context check (%s): reading fresh", e)
         return False
 
 

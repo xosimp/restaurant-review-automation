@@ -215,7 +215,9 @@ def test_session_expiry_is_handled_outside_home(src):
 
 def _schedule_poll_catch(text):
     body = _function(text, "generateSchedule")
-    i = body.index("_schedPollInterval = setInterval(function")
+    # One poll at a time since the scale audit (10/19/26 A5-F5): the next is
+    # asked after this one answers (_schedPoll, chained by setTimeout).
+    i = body.index("var _schedPoll = function")
     tick = _block_from(body, i)
     catches = _catch_bodies(tick)
     assert catches, "the schedule poll has no catch"

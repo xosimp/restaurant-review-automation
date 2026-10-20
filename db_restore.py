@@ -135,7 +135,14 @@ def restore_if_requested(db_path=None) -> dict:
     got = _count_restaurants(db_path)
     if got < expected:
         raise RuntimeError(f"restore of {snapshot} came back with {got} restaurants, expected {expected}")
+    # The marker under the snapshot's name as the NEXT boot will see it too:
+    # the checkpoint above can rewrite the snapshot's main file, and a new
+    # mtime second gave the next boot a marker name nobody wrote - it
+    # restored again over every write since (found 10/20/26: the full
+    # suite's load moved the checkpoint across a second).
     open(marker, "w").close()
+    if os.path.isfile(snapshot):
+        open(_marker_path(db_path, snapshot), "w").close()
     log.warning("Restored %s over %s (%d restaurants). Remove RESTORE_FROM once confirmed.",
                 snapshot, db_path, got)
     return {"restored": True, "snapshot": snapshot, "restaurants": got, "unsealed": unsealed}

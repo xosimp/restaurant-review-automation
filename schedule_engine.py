@@ -4328,8 +4328,8 @@ def run_cap_usd(caps=None) -> float:
     try:
         if SCHEDULE_T3_RUN_CAP_USD > 0 and getattr(schedule_route(), "tier", None) == "T3":
             cap = min(cap, SCHEDULE_T3_RUN_CAP_USD)
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("run cap: the route's tier unreadable, the policy's cap stands: %s", e)
     return cap
 
 

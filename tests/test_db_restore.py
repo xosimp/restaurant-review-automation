@@ -112,3 +112,31 @@ def test_a_snapshot_that_fails_its_checks_is_never_prepared(tmp_path):
     with pytest.raises(RuntimeError):
         db_restore.prepare(snap, prepared)
     assert not os.path.exists(prepared) and not os.path.exists(prepared + ".prepared.json")
+
+
+def test_a_second_boot_does_not_restore_again_when_the_checkpoint_moved_the_snapshots_mtime(tmp_path, monkeypatch):
+    # The restore checkpoints the snapshot before copying it; when that moved
+    # its mtime past a second, the next boot looked for a marker nobody had
+    # written and restored again over every write since (10/20/26).
+    import time
+    import models
+    live, snap = str(tmp_path / "reviews.db"), str(tmp_path / "snap.db")
+    _db(live, restaurants=1)
+    _db(snap, restaurants=5)
+    monkeypatch.setenv("RESTORE_FROM", snap)
+    real = models.checkpoint
+
+    def checkpoint(path=None, *a, **k):
+        out = real(path, *a, **k)
+        if path == snap:
+            later = time.time() + 5
+            os.utime(snap, (later, later))
+        return out
+    monkeypatch.setattr(models, "checkpoint", checkpoint)
+    assert db_restore.restore_if_requested(live)["restored"]
+    conn = sqlite3.connect(live)
+    conn.execute("INSERT INTO restaurants (name, owner_email) VALUES ('New', 'n@x.test')")
+    conn.commit()
+    conn.close()
+    assert db_restore.restore_if_requested(live)["restored"] is False
+    assert _count(live) == 6
