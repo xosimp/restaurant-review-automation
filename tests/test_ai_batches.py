@@ -329,7 +329,9 @@ def test_the_collector_is_a_registered_job_and_its_tables_are_on_the_retention_r
     import ops
     spec = jobs_registry.JOBS["ai_batch_collect"]
     assert spec["target"] == ("ai_batches", "run_collector") and spec["sends"] is False
-    assert 'run_job("ai_batch_collect"' in inspect.getsource(scheduler.scheduler_loop)
+    # On the "minute" lane since the blind re-audit of 10/20/26 (R1-02).
+    assert '"ai_batch_collect"' in inspect.getsource(scheduler._submit_minute_jobs)
+    assert "_submit_minute_jobs(_ops, now)" in inspect.getsource(scheduler.scheduler_loop)
     for t, col in (("ai_batch_jobs", "submitted_at"), ("ai_batch_items", "created_at")):
         assert t in ops._RETENTION_DAYS and ops._RETENTION_COLUMN[t] == col
 

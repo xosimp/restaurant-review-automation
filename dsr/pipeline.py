@@ -113,7 +113,31 @@ SWEEP_MAX_SECONDS = 20 * 60
 # worker fitted ~55-100 narratives a pass, so 1,500 nights took 5-9 hours.
 # Each night claims (restaurant, business date, version) itself, so workers
 # never run one night twice. DSR_SWEEP_WORKERS=1 is the serial sweep.
-SWEEP_WORKERS = max(1, int(os.getenv("DSR_SWEEP_WORKERS", "4") or 4))
+#
+# Sized to the night's work unless pinned (blind re-audit 10/20/26 R1-07): a
+# fixed four, each holding its night through the model's narrative, fits
+# ~1,500 restaurants and leaves a third of the nights provisional at 5,000.
+# A pass now runs one worker per DSR_SWEEP_RESTAURANTS_PER_WORKER
+# restaurants with a night to run — never fewer than DSR_SWEEP_MIN_WORKERS
+# (4, today's behaviour) nor more than DSR_SWEEP_MAX_WORKERS (the database
+# pool and RPOWER's fleet budget are the real bounds past that). The work is
+# network- and model-bound, not CPU: cores do not size it.
+# DSR_SWEEP_WORKERS, when set, pins it (the operator's).
+SWEEP_WORKERS = (max(1, int(os.getenv("DSR_SWEEP_WORKERS") or 4))
+                 if (os.getenv("DSR_SWEEP_WORKERS") or "").strip() else None)
+SWEEP_MIN_WORKERS = max(1, int(os.getenv("DSR_SWEEP_MIN_WORKERS", "4") or 4))
+SWEEP_MAX_WORKERS = max(1, int(os.getenv("DSR_SWEEP_MAX_WORKERS", "12") or 12))
+SWEEP_RESTAURANTS_PER_WORKER = max(1, int(os.getenv("DSR_SWEEP_RESTAURANTS_PER_WORKER", "25") or 25))
+
+
+def sweep_workers(n_restaurants) -> int:
+    """How many restaurants this pass runs at once (R1-07): the pinned
+    DSR_SWEEP_WORKERS, else one per SWEEP_RESTAURANTS_PER_WORKER with work,
+    between SWEEP_MIN_WORKERS and SWEEP_MAX_WORKERS."""
+    if SWEEP_WORKERS:
+        return int(SWEEP_WORKERS)
+    want = -(-int(n_restaurants or 0) // SWEEP_RESTAURANTS_PER_WORKER)
+    return max(1, min(max(SWEEP_MIN_WORKERS, want), max(SWEEP_MIN_WORKERS, SWEEP_MAX_WORKERS)))
 SWEEP_CURSOR_KEY = "dsr_sweep_cursor"
 SWEEP_LOOKBACK_DAYS = 4            # nights the sweep still finishes or re-checks
 
@@ -1336,7 +1360,8 @@ def run_sweep(now_utc=None, db_path=None):
 
     # Handed out in order and every one handed out finishes, so `done` is a
     # prefix of `order` whatever the workers (scheduler.bounded_map).
-    done, hit_bound = _sched.bounded_map(order, _one, SWEEP_WORKERS, SWEEP_MAX_SECONDS)
+    workers = sweep_workers(len(order))
+    done, hit_bound = _sched.bounded_map(order, _one, workers, SWEEP_MAX_SECONDS)
     if done:
         _write_cursor(db, order[min(done, len(order)) - 1])
     # The sweep's own counts (#17): a night that errored or failed lived only
@@ -1348,7 +1373,7 @@ def run_sweep(now_utc=None, db_path=None):
     attempted = sum(actions.values()) - idle
     return {"restaurants": len(order), "done": done, "hit_bound": bool(hit_bound), "actions": actions,
             "attempted": attempted, "ok": attempted - failed, "failed": failed, "skipped": idle,
-            "eligible": len(order), "workers": SWEEP_WORKERS}
+            "eligible": len(order), "workers": workers}
 
 
 def _earliest_deadline(restaurant, nights):

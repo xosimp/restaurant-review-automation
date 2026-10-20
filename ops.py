@@ -103,10 +103,19 @@ def capture(exc, job="unknown", context="", db_path=None, restaurant_id=None, ki
 
     `restaurant_id` is the restaurant the failure is about; when it is not
     passed it is read from a "restaurant_id=N" / "rid=N" context (#67).
-    `kind` is one of CAPTURE_KINDS (job, request, ai_quality, audit)."""
+    `kind` is one of CAPTURE_KINDS (job, request, ai_quality, audit).
+
+    Sentry hears the first of each (job, exception type) per
+    SENTRY_CAPTURE_WINDOW_SECONDS, within an hourly ceiling
+    (sentry_setup.allow — blind re-audit 10/20/26 R1-06): every
+    per-restaurant failure of a provider outage used to be its own event,
+    and the month's quota went in hours. The job_failures row below is
+    written for every one, as before."""
     try:
-        import sentry_sdk
-        sentry_sdk.capture_exception(exc)
+        import sentry_setup
+        if sentry_setup.allow(f"{job}|{type(exc).__name__}"):
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
     except Exception:
         pass
     rid = restaurant_id
@@ -464,12 +473,23 @@ _MARKER_PATTERNS = ("rating_unreadable:*", "competitor_move_told:*", "data_sourc
                     "quality_calibration:[0-9]*:*")
 _MARKERS_CARRIED = "boot:claims_markers_carried_157"
 
-# A claim whose run started and never finished is taken to be dead after
-# this long, and the period may be claimed again (DATA-20). A run still
-# alive in THIS process is never reclaimed whatever its age (_running_jobs),
-# nor is one whose pulse (job_runs.pulse_at) shows another process still
-# running it.
+# A claim whose run started and never finished may be claimed again once
+# the run is DEAD (DATA-20): its pulse silent for RUN_DEAD_MINUTES, or — a
+# run with no pulse at all — started longer ago than the job's own bound
+# (jobs_registry.max_minutes), never more than CLAIM_RECLAIM_MINUTES. It
+# was a flat 120 minutes after the claim, so a deploy at 3:10 re-ran the
+# POS sync at 5:10, after the morning chain had read stale data; and a run
+# close_orphaned_runs had already closed as interrupted (a restart that
+# took over 10 minutes) was never reclaimed at all, so the job missed its
+# day (blind re-audit 10/20/26 R1-10). A run still alive in THIS process is
+# never reclaimed whatever its age (_running_jobs), nor is one whose pulse
+# (job_runs.pulse_at) shows another process still running it.
 CLAIM_RECLAIM_MINUTES = int(os.getenv("CLAIM_RECLAIM_MINUTES", "120"))
+# A job killed this many times in a day is not reclaimed again that day: a
+# job that takes its process down with it (an out-of-memory export) must
+# not become a crash loop (R1-01 / R1-10). The SLA and the digest say so.
+CLAIM_RECLAIMS_PER_DAY = int(os.getenv("CLAIM_RECLAIMS_PER_DAY", "3"))
+_INTERRUPTED = "interrupted"
 
 # How many runs of each job name run_job is executing in this process.
 _running_jobs = {}
@@ -638,6 +658,26 @@ def _classify_legacy_failures(conn):
             conn.execute("UPDATE job_failures SET kind=? WHERE id=?", (kind, fid))
 
 
+def _claims_fail_closed(error=None) -> bool:
+    """Whether a claim that cannot be checked is refused (blind re-audit
+    10/20/26 R1-09). On Postgres — production — always: a checkout that
+    timed out on the bounded pool ("connection pool exhausted", a normal
+    peak there, not an outage) or a connect breaker that is open says
+    nothing about whether an earlier tick claimed the period, and the
+    process memo then answered yes and re-sent a digest or a summary. The
+    next tick asks again, so a refusal delays the work by a tick; it never
+    loses the period. The memo below stays only for SQLite, whose failure
+    is a locked or read-only volume (DATA-22)."""
+    try:
+        import db_dialect
+        if db_dialect.backend() == "postgres":
+            return True
+    except Exception:
+        pass
+    text = str(error or "").lower()
+    return "pool exhausted" in text or "database unreachable" in text
+
+
 def _memo_claim(key, reason):
     """The in-memory answer while the claims table cannot be written: the
     first ask in this process runs the job, every later one refuses."""
@@ -688,30 +728,51 @@ def _reclaim_dead_run(conn, job, key):
     Only a claim with that evidence is reclaimed. One with no run row at
     all, or whose run finished (even with an error), or whose run another
     process is still pulsing, is left alone: re-sending a digest is worse
-    than missing one."""
+    than missing one. A run closed as interrupted (close_orphaned_runs, at
+    a boot or a takeover) is a run that never finished, not a finished one
+    (R1-10). Dead means its pulse has been silent RUN_DEAD_MINUTES — or,
+    with no pulse, it started more than the job's own bound ago (at most
+    CLAIM_RECLAIM_MINUTES) — never a flat two hours. A job killed
+    CLAIM_RECLAIMS_PER_DAY times in a day is left for its SLA to report."""
     with _running_lock:
         if _running_jobs.get(job):
             return False                       # still running here, however long
     row = conn.execute(
         "SELECT claimed_at FROM job_period_claims WHERE job_key=? AND claimed_at < datetime('now', ?)",
-        (key, f"-{int(CLAIM_RECLAIM_MINUTES)} minutes")).fetchone()
+        (key, f"-{int(RUN_DEAD_MINUTES)} minutes")).fetchone()
     if not row:
         return False
     claimed_at = row[0]
+    bound = max(int(RUN_DEAD_MINUTES), min(int(CLAIM_RECLAIM_MINUTES), int(jobs_registry.max_minutes(job))))
+    interrupted = f"{_INTERRUPTED}%"
     # The run is found by its job name OR the claim it ran under: the
     # "ops_digest" claim runs "ops_failure_digest", "intraday" runs six jobs,
     # and a lookup by claim key alone never found them (DH2-16).
     try:
         runs = conn.execute(
-            "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL), "
-            f"SUM({_run_alive_sql()}) FROM job_runs "
+            "SELECT SUM(CASE WHEN finished_at IS NULL OR COALESCE(error, '') LIKE ? THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN finished_at IS NOT NULL AND COALESCE(error, '') NOT LIKE ? THEN 1 ELSE 0 END), "
+            f"SUM(CASE WHEN {_run_alive_sql()} THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN finished_at IS NULL AND pulse_at IS NULL AND started_at >= datetime('now', ?) "
+            "THEN 1 ELSE 0 END) FROM job_runs "
             "WHERE (job=? OR claim_job=?) AND started_at >= datetime(?, '-5 minutes')",
-            (job, job, claimed_at)).fetchone()
+            (interrupted, interrupted, f"-{bound} minutes", job, job, claimed_at)).fetchone()
+        killed = conn.execute(
+            "SELECT COUNT(*) FROM job_runs WHERE (job=? OR claim_job=?) AND error LIKE ? "
+            "AND started_at >= datetime('now', '-1 day')", (job, job, interrupted)).fetchone()[0]
     except sqlite3.OperationalError:
         runs = conn.execute(
-            "SELECT SUM(finished_at IS NULL), SUM(finished_at IS NOT NULL), 0 FROM job_runs "
-            "WHERE job=? AND started_at >= datetime(?, '-5 minutes')", (job, claimed_at)).fetchone()
-    if not runs or not runs[0] or runs[1] or runs[2]:
+            "SELECT SUM(CASE WHEN finished_at IS NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN finished_at IS NOT NULL THEN 1 ELSE 0 END), 0, "
+            "SUM(CASE WHEN finished_at IS NULL AND started_at >= datetime('now', ?) THEN 1 ELSE 0 END) "
+            "FROM job_runs WHERE job=? AND started_at >= datetime(?, '-5 minutes')",
+            (f"-{bound} minutes", job, claimed_at)).fetchone()
+        killed = 0
+    if not runs or not runs[0] or runs[1] or runs[2] or runs[3]:
+        return False
+    if int(killed or 0) >= CLAIM_RECLAIMS_PER_DAY:
+        log.error(f"claim_period({key}): {job} was interrupted {killed} times in a day — not reclaimed again "
+                  "today (a job that takes its process down must not loop)")
         return False
     cur = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') "
                        "WHERE job_key=? AND claimed_at=?", (key, claimed_at))
@@ -771,12 +832,18 @@ def claim_period(job: str, period: str) -> bool:
     A claim whose run was killed before it finished is reclaimed after
     CLAIM_RECLAIM_MINUTES (_reclaim_dead_run). The table is created at boot
     (init_ops) and pruned by prune_ledgers, never here.
+
+    On Postgres a claim that cannot be checked is REFUSED, never memoised
+    (_claims_fail_closed, R1-09): the next tick asks again.
     """
     key = f"{job}:{period}"
     try:
         from models import get_conn
         conn = get_conn()
     except Exception as e:
+        if _claims_fail_closed(e):
+            log.error(f"claim_period({key}) could not be checked ({e}) — refused; the next tick asks again")
+            return False
         return _memo_claim(key, e)
     try:
         if key in _claim_fallback:
@@ -810,6 +877,9 @@ def claim_period(job: str, period: str) -> bool:
         if _claimed_on_read(conn, key):
             log.error(f"claim_period({key}) could not write ({e}); the period is already claimed — refused")
             return False
+        if _claims_fail_closed(e):
+            log.error(f"claim_period({key}) could not write ({e}) — refused; the next tick asks again")
+            return False
         return _memo_claim(key, e)
     finally:
         conn.close()
@@ -820,7 +890,9 @@ def claim_cooldown(key: str, minutes: float) -> bool:
     `minutes` — one atomic upsert on job_period_claims, so two presses at
     the same instant cannot both pass. For actions that must not repeat on a
     double-click but may be repeated deliberately later (an admin resending
-    a welcome email). Fails OPEN on a database error, like claim_period."""
+    a welcome email). Fails OPEN on a database error on SQLite; on
+    Postgres it fails CLOSED (R1-09: the supplier-order email's cooldown
+    re-sent on a pool timeout) — the person presses again."""
     try:
         from models import get_conn
         conn = get_conn()
@@ -835,6 +907,9 @@ def claim_cooldown(key: str, minutes: float) -> bool:
         finally:
             conn.close()
     except Exception as e:
+        if _claims_fail_closed(e):
+            log.error(f"claim_cooldown({key}) failed, refusing: {e}")
+            return False
         log.error(f"claim_cooldown({key}) failed, allowing: {e}")
         return True
 
@@ -843,7 +918,10 @@ def period_claimed(job: str, period: str) -> bool:
     """Whether `job` already holds `period`, without claiming it. For work
     that claims only once it has finished (notify's morning batch claims at
     flush), so a pass can skip what an earlier pass completed. Fails open
-    (False): run again rather than silently skip."""
+    (False) on SQLite: run again rather than silently skip. On Postgres it
+    fails closed (True, R1-09): the morning batch claims at flush, so "not
+    claimed" on a pool timeout re-sent what an earlier pass had sent; the
+    next pass asks again."""
     key = f"{job}:{period}"
     if key in _claim_fallback:
         return True
@@ -855,8 +933,8 @@ def period_claimed(job: str, period: str) -> bool:
                                 (key,)).fetchone() is not None
         finally:
             conn.close()
-    except Exception:
-        return False
+    except Exception as e:
+        return _claims_fail_closed(e)
 
 
 def release_period(job: str, period: str) -> None:
@@ -898,6 +976,79 @@ def renew_cooldown(key: str) -> bool:
         return False
 
 
+# ── a failed job's retry, kept across restarts (blind re-audit 10/20/26 R1-10)
+#
+# The loop's retry of a failed non-sending job (scheduler._PulsedOps._after:
+# the period back after RETRY_BACKOFF_MINUTES) lived in process memory, so a
+# deploy between the failure and its retry lost the retry and the job its
+# day. Each pending retry is a job_cursors row (key "retry:<claim>|<period>",
+# value {"attempt", "at": epoch seconds}); the runner reads them when it
+# takes the lease.
+_RETRY_KEY = "retry:"
+RETRY_KEEP_HOURS = 30
+
+
+def _retry_key(claim, period):
+    return f"{_RETRY_KEY}{claim}|{period}"
+
+
+def record_retry(claim, period, attempt, at_epoch) -> None:
+    """Keep a pending retry durably. Never raises."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (_retry_key(claim, period), json.dumps({"attempt": int(attempt), "at": float(at_epoch)})))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"retry of {claim}:{period} not kept durably: {e}")
+
+
+def clear_retry(claim, period) -> None:
+    """Forget a retry (the job succeeded, or gave up). Never raises."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM job_cursors WHERE key=?", (_retry_key(claim, period),))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"retry of {claim}:{period} not cleared: {e}")
+
+
+def pending_retries() -> list:
+    """[(claim, period, attempt, at_epoch)] of the retries kept in the last
+    RETRY_KEEP_HOURS; older rows are dropped (their period is over)."""
+    out = []
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM job_cursors WHERE key LIKE ? AND updated_at < datetime('now', ?)",
+                         (f"{_RETRY_KEY}%", f"-{int(RETRY_KEEP_HOURS)} hours"))
+            conn.commit()
+            rows = conn.execute("SELECT key, value FROM job_cursors WHERE key LIKE ?", (f"{_RETRY_KEY}%",)).fetchall()
+        finally:
+            conn.close()
+        for key, value in ((r[0], r[1]) for r in rows):
+            claim, sep, period = str(key)[len(_RETRY_KEY):].rpartition("|")
+            try:
+                v = json.loads(value or "{}")
+                if sep and claim:
+                    out.append((claim, period, int(v.get("attempt") or 1), float(v.get("at") or 0)))
+            except (TypeError, ValueError):
+                continue
+    except Exception as e:
+        log.warning(f"pending retries not read: {e}")
+    return out
+
+
 # ── permanent markers (#157) ────────────────────────────────────────────────
 
 def claim_marker(job: str, value: str) -> bool:
@@ -905,12 +1056,16 @@ def claim_marker(job: str, value: str) -> bool:
     "once, ever" facts (this competitor at this level was told; this reading
     was reported unreadable; this source was first seen at …). The same
     shape as claim_period, in a table that is never pruned. Falls back to
-    the process memo, like claim_period, when the table cannot be written."""
+    the process memo, like claim_period, when the table cannot be written —
+    on SQLite only; on Postgres an unwritable marker is refused (R1-09)."""
     key = f"{job}:{value}"
     try:
         from models import get_conn
         conn = get_conn()
     except Exception as e:
+        if _claims_fail_closed(e):
+            log.error(f"claim_marker({key}) could not be checked ({e}) — refused")
+            return False
         return _memo_claim(key, e)
     try:
         if key in _claim_fallback:
@@ -934,6 +1089,8 @@ def claim_marker(job: str, value: str) -> bool:
                 return False
         except Exception:
             pass
+        if _claims_fail_closed(e):
+            return False
         return _memo_claim(key, e)
     finally:
         conn.close()

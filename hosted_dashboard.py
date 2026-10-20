@@ -1426,6 +1426,13 @@ def _post_boot():
     # A crash loop pages Will (at most hourly) — off the boot path.
     threading.Thread(target=_pm_boot.page_if_crash_looping, args=(_BOOT_ID,), daemon=True,
                      name="boot-crash-check").start()
+    # The boot backfills init_db left for after the boot when it ran past
+    # BOOT_BACKFILL_BUDGET_SECONDS (models._boot_backfill — blind re-audit
+    # 10/20/26 R1-14), off the worker's boot path.
+    import models as _models_deferred
+    if _models_deferred._DEFERRED_BOOT_BACKFILLS:
+        threading.Thread(target=_models_deferred.run_deferred_boot_backfills, daemon=True,
+                         name="boot-deferred-backfills").start()
 
     supervisor = _pm_boot.PlatformSupervisor(
         scheduler_thread=_SCHED_THREAD if _RUN_SCHEDULER_IN_WEB else None,

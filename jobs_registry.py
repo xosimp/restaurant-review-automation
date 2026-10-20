@@ -55,8 +55,12 @@ lane          run on this bounded worker lane beside the loop, not on the
               submitted by the pulse too while an inline job holds the
               loop, "pos" the 3am POS chain (pos_sync, loss_sync, the DSR
               backfill) and "fetch" the review fetch (scale audit 10/19/26
-              INF-1, INF-2, INF-9). A lane run gets the loop's retry when
-              it fails
+              INF-1, INF-2, INF-9); "minute" the batch collector, the DSR
+              delivery and the staff reminders, "live" live labor and the
+              POS schedule push, "intraday" the service slot's nine jobs,
+              "brief" the morning briefs (blind re-audit 10/20/26 R1-02,
+              R1-11) — submitted by the pulse too. A lane
+              run gets the loop's retry when it fails
 queue         run as a job_queue row in the queue worker process (the
               "maintenance" group, one at a time), not on the loop or a
               lane: the loop claims its period and enqueues it
@@ -580,41 +584,41 @@ JOBS = {
     "intraday_capture": dict(
         cadence="every 20 minutes while open", sla_minutes=2 * 60, sends=False, runnable=True,
         label="Intraday capture", description="Net sales so far today, once an hour per open restaurant",
-        target=("strategy_jobs", "run_intraday_capture"), claim="intraday", max_minutes=15),
+        target=("strategy_jobs", "run_intraday_capture"), claim="intraday", max_minutes=15, lane="intraday"),
     "pre_dinner_pulse": dict(
         cadence="every 20 minutes (4pm local)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Pre-dinner pulse", description="One push before dinner when the day is materially off",
-        target=("strategy_jobs", "run_pre_dinner_pulse"), claim="intraday", max_minutes=10),
+        target=("strategy_jobs", "run_pre_dinner_pulse"), claim="intraday", max_minutes=10, lane="intraday"),
     "coverage_check": dict(
         cadence="every 20 minutes while open", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Coverage", description="Scheduled staff who have not clocked in",
-        target=("strategy_jobs", "run_coverage_check"), claim="intraday", max_minutes=10),
+        target=("strategy_jobs", "run_coverage_check"), claim="intraday", max_minutes=10, lane="intraday"),
     "preshift_nudge": dict(
         cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Pre-shift nudge", description="The pre-shift notes before service",
-        target=("strategy_jobs", "run_preshift_nudge"), claim="intraday", max_minutes=10),
+        target=("strategy_jobs", "run_preshift_nudge"), claim="intraday", max_minutes=10, lane="intraday"),
     "cert_reminders": dict(
         cadence="every 20 minutes (10am local, once a day)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Certificate reminders",
         description="Tell each person, and the owner, about a certificate expiring within 30 days",
-        target=("staff_knowledge", "run_cert_reminders"), claim="intraday", max_minutes=10),
+        target=("staff_knowledge", "run_cert_reminders"), claim="intraday", max_minutes=10, lane="intraday"),
     "task_sheets": dict(
         cadence="every 20 minutes", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Task sheets", description="Issue today's sheets from the published schedule, open critical-miss issues, close ended shifts",
-        target=("task_sheets", "run_job"), claim="intraday", max_minutes=10),
+        target=("task_sheets", "run_job"), claim="intraday", max_minutes=10, lane="intraday"),
     "closing_summary": dict(
         cadence="every 20 minutes (after close)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Closing summary", description="How tonight went, once the doors are shut",
-        target=("strategy_jobs", "run_closing_summary"), claim="intraday", max_minutes=10),
+        target=("strategy_jobs", "run_closing_summary"), claim="intraday", max_minutes=10, lane="intraday"),
     "event_push": dict(
         cadence="every 20 minutes (the afternoon before a big game)", sla_minutes=2 * 60, sends=True,
         runnable=True, label="Big-game heads-up",
         description="A push the afternoon before a followed game measured big here, once per game",
-        target=("event_intel.gameday", "run_event_push"), claim="intraday", max_minutes=10),
+        target=("event_intel.gameday", "run_event_push"), claim="intraday", max_minutes=10, lane="intraday"),
     "demand_opportunity": dict(
         cadence="every 20 minutes (weekly per restaurant)", sla_minutes=2 * 60, sends=True, runnable=True,
         label="Quiet-night heads-up", description="A quiet night two days out, once a week",
-        target=("strategy_jobs", "run_demand_opportunity"), claim="intraday", max_minutes=10),
+        target=("strategy_jobs", "run_demand_opportunity"), claim="intraday", max_minutes=10, lane="intraday"),
 
     # ── the Daily Sales Report, every 10 minutes ─────────────────────────
     "blob_offload": dict(
@@ -645,7 +649,7 @@ JOBS = {
     "dsr_delivery": dict(
         cadence="every 10 minutes", sla_minutes=60, sends=True, runnable=True,
         label="DSR delivery", description="Send the DSR pushes held through each restaurant's quiet hours, once they end",
-        target=("dsr.deliver", "release_held"), max_minutes=10),
+        target=("dsr.deliver", "release_held"), max_minutes=10, lane="minute"),
 
     # ── Message Batches, every 5 minutes (AI cost audit 10/7/26 #19) ─────
     "ai_batch_collect": dict(
@@ -655,7 +659,7 @@ JOBS = {
         label="AI batch collector",
         description="Read the Message Batches that have ended, ledger each answer at the batch rate and "
                     "hand it to its workflow (the nightly DSR narrative, the learner's shadow replays)",
-        target=("ai_batches", "run_collector"), max_minutes=10),
+        target=("ai_batches", "run_collector"), max_minutes=10, lane="minute"),
 
     # ── the AI orchestration learner (design 10/7/26, phase 6) ───────────
     "ai_shadow_arms": dict(
@@ -683,7 +687,7 @@ JOBS = {
         label="Staff reminders",
         description="Push each employee ~1 hour before a published shift and ~15 minutes before a critical "
                     "task line is due (claimed once per person), and send the staff texts held overnight",
-        target=("staff_reminders", "run_job"), max_minutes=10),
+        target=("staff_reminders", "run_job"), max_minutes=10, lane="minute"),
 
     # ── the schedule on the floor (schedule audit 10/10/26 MARKET-7/8/24) ──
     "pos_schedule_push": dict(
@@ -693,20 +697,20 @@ JOBS = {
         label="POS schedule push",
         description="Write each published week whose owner turned the POS push on to the POS time clock (preview "
                     "first, per-shift status, retries a POS-side failure; bounded, the queue is the cursor)",
-        target=("pos_schedule_push", "run_queue"), max_minutes=5),
+        target=("pos_schedule_push", "run_queue"), max_minutes=5, lane="live"),
     "live_labor": dict(
         cadence="every 15 minutes while open", sla_minutes=60, sends=True, runnable=True,
         label="Live labor",
         description="Labor to date and the day's projected labor % against sales, and the one legal, priced cut, "
                     "extension or call-in offered to the managers (or, earned, sent to the person) — bounded, "
                     "resumable",
-        target=("labor_live", "run_live_labor"), max_minutes=5),
+        target=("labor_live", "run_live_labor"), max_minutes=5, lane="live"),
 
     # ── every tick ──────────────────────────────────────────────────────
     "morning_brief": dict(
         cadence="every tick (each restaurant's own brief hour)", sla_minutes=60, sends=True, runnable=True,
         label="Morning brief", description="Each restaurant's brief, once, at or after its own local hour (bounded, resumable)",
-        target=("morning_brief", "run_due"), max_minutes=20),
+        target=("morning_brief", "run_due"), max_minutes=20, lane="brief"),
     "owed_sends": dict(
         cadence="every tick", sla_minutes=60, sends=True, runnable=True,
         label="Owed billing mail",

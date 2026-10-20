@@ -233,6 +233,10 @@ def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, 
                         lambda job, period: real_claim(job, period) if job.startswith("auto_draft") else False)
     import marketing_publish
     monkeypatch.setattr(marketing_publish, "run_due_posts", lambda **k: {})
+    # The briefs run on their own lane since 10/20/26 (R1-11): kept quiet
+    # here, so they never contend with the draft pass for the database.
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "run_due", lambda *a, **k: {"attempted": 0})
     monkeypatch.setattr(scheduler, "record_scheduler_heartbeat", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(scheduler, "run_health_checks", lambda *a, **k: None, raising=False)
     ticks = {"n": 0}
@@ -245,6 +249,8 @@ def test_a_time_bounded_auto_draft_pass_is_finished_later_the_same_thursday(db, 
     monkeypatch.setattr(scheduler.time, "sleep", next_tick)
     with pytest.raises(_StopLoop):
         scheduler.scheduler_loop()
+    for lane in scheduler._LANES.values():         # the draft pass runs on the "ai" lane
+        lane.join(10)
     # The pass claims and enqueues; the queue's consumer drafts (blind
     # re-audit 10/11/26 ARCH-10: the queue is the one path). Every restaurant
     # of the Thursday is queued by the ticks, once each, and nothing is

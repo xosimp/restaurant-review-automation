@@ -134,20 +134,26 @@ def test_the_minute_sensitive_jobs_run_before_any_daily_job_in_the_tick():
     intraday must never wait behind the 2-6am work again."""
     loop = _loop_src()
     first_daily = loop.index('claim_period("backup_db"')
-    for job in ("ai_batch_collect", "dsr_delivery", "staff_reminders", "intraday"):
-        assert loop.index(f'claim_period("{job}"') < first_daily, job
-    # The DSR sweep is submitted to its own lane (scale audit 10/19/26 INF-1).
+    assert loop.index("_submit_intraday(_ops, now)") < first_daily       # its own lane (R1-02)
+    # The collector, the DSR delivery, the reminders, live labor and the POS
+    # push are started on their own lanes first thing (blind re-audit
+    # 10/20/26 R1-02), and the DSR sweep on its own (scale audit 10/19/26
+    # INF-1); the collector is submitted before the DSR sweep.
+    assert loop.index("_submit_minute_jobs(_ops, now)") < first_daily
     assert loop.index("_submit_dsr_sweep(_ops, now)") < first_daily
-    assert loop.index('claim_period("ai_batch_collect"') < loop.index("_submit_dsr_sweep(_ops, now)"), \
-        "the collector still runs before the DSR sweep, so a landed narrative finishes in the same tick"
-    # The briefs: at the top when their inputs are settled, else at the end.
-    assert loop.index('_ops.run_job("morning_brief"') < first_daily
-    assert loop.count('_ops.run_job("morning_brief"') == 2 and "_briefs_ran" in loop
+    assert loop.index("_submit_minute_jobs(_ops, now)") < loop.index("_submit_dsr_sweep(_ops, now)")
+    minute = inspect.getsource(scheduler._submit_minute_jobs)
+    for job in ("ai_batch_collect", "dsr_delivery", "staff_reminders", "live_labor", "pos_schedule_push"):
+        assert f'claim_period("{job}"' in minute, job
+    # The briefs: on their own lane at the top, and again at the end (R1-11).
+    assert loop.index("_submit_briefs(_ops, now)") < first_daily
+    assert loop.count("_submit_briefs(") == 2
 
 
 def test_the_long_morning_sweeps_run_on_the_sweep_lane_and_give_a_busy_claim_back():
     loop = _loop_src()
-    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch"}
+    assert set(scheduler._LANES) == {"intel", "ai", "sweep", "dsr", "pos", "fetch", "minute", "live", "intraday",
+                                     "brief"}
     for job in _SWEEP_JOBS:
         assert f'_ops.run_in_lane("sweep", "{job}"' in loop, job
         assert f'_ops.run_job("{job}"' not in loop, f"{job} still runs on the loop thread"
@@ -281,7 +287,7 @@ def tick(db_path, monkeypatch):
     monkeypatch.setattr(status_manager, "DB_PATH", db_path)
     ops._claim_fallback.clear()
     briefs = []
-    monkeypatch.setattr(morning_brief, "run_due", lambda *a, **k: briefs.append(1) or {"attempted": 0})
+    monkeypatch.setattr(morning_brief, "run_due", lambda *a, hold=None, **k: briefs.append(hold) or {"attempted": 0})
     monkeypatch.setattr(scheduler, "_minute_duties", lambda *a, **k: {"attempted": 0, "ok": 0, "failed": 0,
                                                                       "skipped": 0, "hit_bound": False})
     import billing_jobs
@@ -300,16 +306,23 @@ def tick(db_path, monkeypatch):
             scheduler.scheduler_loop()
         for lane in scheduler._LANES.values():
             lane.join(5)
-        return len(briefs)
+        return list(briefs)
     return run
 
 
 def test_a_tick_holds_the_briefs_while_a_diagnosis_is_still_being_written(tick):
+    """Since the blind re-audit of 10/20/26 (R1-03) the pass always runs, on
+    its own lane, with a per-restaurant hold: an unsettled fleet sweep holds
+    each restaurant only until its own brief hour plus the grace
+    (scheduler._BriefHold) — never the whole fleet's pass."""
     from datetime import datetime
-    assert tick(datetime(2026, 10, 7, 6, 10), unsettled={"review_diagnoses"}) == 0
-    assert tick(datetime(2026, 10, 7, 6, 10)) == 1, "settled: once, at the top of the tick"
-    assert tick(datetime(2026, 10, 7, 8, 5), unsettled={"review_diagnoses"}) == 1, "never past 8am"
-    assert tick(datetime(2026, 10, 7, 14, 0)) == 1
+    held = tick(datetime(2026, 10, 7, 6, 10), unsettled={"review_diagnoses"})
+    assert held and all(h is not None and h.fleet_input == "review_diagnoses" for h in held)
+    settled = tick(datetime(2026, 10, 7, 6, 10))
+    assert settled and all(h is None for h in settled), "settled: nothing held"
+    late = tick(datetime(2026, 10, 7, 8, 5), unsettled={"review_diagnoses"})
+    assert late and all(h is None for h in late), "never past 8am"
+    assert tick(datetime(2026, 10, 7, 14, 0))
 
 
 # ── #53: the diagnoses, several restaurants at once ────────────────────────

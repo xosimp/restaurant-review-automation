@@ -2324,14 +2324,16 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     return _counts(created, created, 0, len(items) - created, False, queued=created)
 
 
-def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
+def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None, priority_class="bulk"):
     """`name`'s per-restaurant work for `ids` as `learner` queue rows (bulk
     class), keyed on the name, the restaurant and `day` so a pass run twice
     queues nothing new — the fan_out_learner pattern for any LEARNERS entry
     (food & bar audit 10/16/26 SCALE-07). `today_by_id` {rid: date} hands a
     body that takes it (LEARNERS_TAKE_TODAY) the restaurant's own date.
-    Standard counts: `attempted` / `ok` are the rows queued now; `skipped`
-    the rows already queued for `day`."""
+    `priority_class` "scheduled" serves the rows ahead of every bulk learner
+    row (the food cost diagnoses a morning brief reads — blind re-audit
+    10/20/26 R1-03 / R1-08). Standard counts: `attempted` / `ok` are the
+    rows queued now; `skipped` the rows already queued for `day`."""
     import job_queue
     if name not in LEARNERS:
         raise KeyError(f"no learner {name!r}")
@@ -2344,9 +2346,36 @@ def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
         items.append({"payload": payload, "restaurant_id": int(rid), "not_before": not_before,
                       "deadline": _bulk_deadline(not_before),
                       "idempotency_key": f"learner:{name}:{int(rid)}:{day}"})
-    created = job_queue.enqueue_many("learner", items, priority_class="bulk",
+    created = job_queue.enqueue_many("learner", items, priority_class=priority_class,
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
     return _counts(created, created, 0, len(items) - created, False, queued=created)
+
+
+def on_learner_expired(job):
+    """A learner row that never started before its deadline
+    (BULK_ROW_DEADLINE_HOURS): recorded as that restaurant's missed run of
+    the learner for its day (ops.record_missed_window — the console's
+    missed-window count and the failure digest read it), never a silent
+    skip (blind re-audit 10/20/26 R1-08). The next night queues it again."""
+    import ops
+    p = job.payload or {}
+    name, rid, day = p.get("learner") or "learner", p.get("restaurant_id"), p.get("day")
+    ops.record_missed_window(f"learner:{name}", rid, day or "",
+                             detail="its queue row expired unstarted (the bulk queue was behind)")
+
+
+def open_restaurants(name, day, db_path=DB_PATH) -> set:
+    """The restaurants whose `name` queue row for `day` is still queued or
+    running — what each restaurant's morning brief waits on for itself
+    (scheduler._brief_hold, R1-03), never the whole fleet's rows."""
+    import models as _models_or
+    conn = _models_or.get_conn() if db_path in (None, DB_PATH) else _models_or.get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT restaurant_id FROM jobs WHERE kind='learner' AND state IN ('queued', 'running') "
+                            "AND idempotency_key LIKE ?", (f"learner:{name}:%:{str(day)[:10]}",)).fetchall()
+        return {int(r[0]) for r in rows if r[0] is not None}
+    finally:
+        conn.close()
 
 
 def open_rows(name, day, db_path=DB_PATH) -> int:
