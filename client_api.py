@@ -9628,8 +9628,14 @@ def guest_qr_code(current_user):
     img.save(buf, format="PNG")
     buf.seek(0)
     download = request.args.get("download") == "1"
-    return send_file(buf, mimetype="image/png", as_attachment=download,
-                      download_name="guest-text-club-qr.png" if download else None)
+    resp = send_file(buf, mimetype="image/png", as_attachment=download,
+                     download_name="guest-text-club-qr.png" if download else None)
+    # The same code every time for this restaurant: kept by this browser for
+    # an hour instead of drawn on every page load (scale audit 10/19/26
+    # FE-14). Private - never a shared cache.
+    if not download:
+        resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
 
 
 # ── Public, unauthenticated: media, short links, newsletter unsubscribe ────

@@ -15399,7 +15399,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         </div>
         <div class="cp-card cp-qr">
           <div class="cp-qrhd">
-            <img src="/api/guest-qr" alt="QR code guests scan to join" width="164" height="164">
+            <img src="/api/guest-qr" alt="QR code guests scan to join" width="164" height="164" loading="lazy">
             <div><div class="t">Scan to join</div><div class="s">Guests opt in themselves &mdash; only they can.</div></div>
           </div>
           <div class="cp-places" aria-hidden="true">
@@ -20656,7 +20656,10 @@ function switchTab(n,btn){
   // navigation, and writes nothing while it is routing Back itself.
   if(window.cavHistory)cavHistory('#'+n);else history.replaceState(null,null,'#'+n);
   if(!_same&&window.cavScrollRestore)cavScrollRestore('panel-'+n);
-  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
+  // One row per tab per five minutes, not one per switch (scale audit
+  // 10/19/26 FE-14): flicking between two tabs wrote a row and the
+  // restaurants row on every click.
+  if(cavStale('log-activity:'+n,300000))fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
 }
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
