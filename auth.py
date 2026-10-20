@@ -2249,7 +2249,35 @@ def login_needs_second_factor(user, restaurant) -> bool:
     their restaurant's switch."""
     if is_internal_login(user):
         return user_two_factor_enrolled(user)
-    return bool(restaurant and getattr(restaurant, "two_fa_enabled", 0))
+    if restaurant and getattr(restaurant, "two_fa_enabled", 0):
+        return True
+    return principal_two_factor_required(user, restaurant)
+
+
+def principal_two_factor_required(user, restaurant) -> bool:
+    """An account holder (owner, co-owner) signs in with a second factor
+    whatever the restaurant's switch says, once the rollout reaches them
+    (scale audit 10/19/26, SEC-11): they hold the POS credentials, the guest
+    list, payroll and the webhooks, and 2FA was opt-in per restaurant.
+    PRINCIPAL_2FA_REQUIRED_SINCE=YYYY-MM-DD covers restaurants created on or
+    after that day (new tenants now); PRINCIPAL_2FA_REQUIRED=1 covers every
+    one (the existing ones, after their notice). Both unset: off. Never for a
+    login with nowhere to send a code — that would lock it out."""
+    if not user or not restaurant or is_internal_login(user):
+        return False
+    every = (os.environ.get("PRINCIPAL_2FA_REQUIRED") or "").strip().lower() in ("1", "true", "yes")
+    since = (os.environ.get("PRINCIPAL_2FA_REQUIRED_SINCE") or "").strip()
+    if not every:
+        created = str(getattr(restaurant, "created_at", "") or "")[:10]
+        if not since or not created or created < since:
+            return False
+    try:
+        from permissions import is_principal
+        if not is_principal(user):
+            return False
+        return two_fa_destination(user, restaurant, method="email") is not None
+    except Exception:
+        return False
 
 
 def session_cookie_max_age(user) -> int:

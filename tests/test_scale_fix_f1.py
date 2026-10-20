@@ -233,6 +233,28 @@ def test_sec14_plain_webhook_secrets_are_sealed_at_boot(db_path, monkeypatch):
     credentials._fernet_cache.clear()
 
 
+def test_sec11_owners_of_new_restaurants_sign_in_with_a_second_factor(monkeypatch):
+    import types
+    import auth
+    owner = {"id": 5, "role": "owner", "email": "o@x.test", "restaurant_id": 9, "is_admin": 0}
+    manager = {"id": 6, "role": "manager", "email": "m@x.test", "restaurant_id": 9, "is_admin": 0}
+    new = types.SimpleNamespace(id=9, two_fa_enabled=0, created_at="2026-11-02 10:00:00", owner_email="o@x.test",
+                                owner_phone=None, two_fa_method=None, name="New Co")
+    old = types.SimpleNamespace(**dict(vars(new), created_at="2025-06-01 10:00:00"))
+    for v in ("PRINCIPAL_2FA_REQUIRED", "PRINCIPAL_2FA_REQUIRED_SINCE"):
+        monkeypatch.delenv(v, raising=False)
+    assert not auth.login_needs_second_factor(owner, new), "off until configured"
+    monkeypatch.setenv("PRINCIPAL_2FA_REQUIRED_SINCE", "2026-10-20")
+    assert auth.login_needs_second_factor(owner, new)
+    assert not auth.login_needs_second_factor(owner, old), "existing tenants wait for their notice"
+    assert not auth.login_needs_second_factor(manager, new), "account holders only"
+    monkeypatch.setenv("PRINCIPAL_2FA_REQUIRED", "1")
+    assert auth.login_needs_second_factor(owner, old)
+    nowhere = dict(owner, email=None)
+    gone = types.SimpleNamespace(**dict(vars(old), owner_email=None))
+    assert not auth.login_needs_second_factor(nowhere, gone), "never a lock-out: no address, no requirement"
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api
