@@ -7341,7 +7341,6 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
     try:
         from schedule_publish import publish_review
         from models import get_conn as _gc
-        import people
         conn = _gc()
         try:
             row = conn.execute("SELECT id, published_at, superseded_by FROM schedule_history "
@@ -7355,13 +7354,10 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
         # warning or quality note the owner has not read (re-audit 10/8/26).
         if review is None:
             review = publish_review(rid, row["id"], unattended=True) or {}
-        if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
-            return False
-        import schedule_shifts as _ss_ot
-        from labor import employees_in_rows as _eir_ot
-        reach = people.reach_summary(people.reach(rid, _eir_ot(_ss_ot.rows_of(row["id"], "working",
-                                                                             restaurant_id=rid))))
-        return int(reach.get("total") or 0) > 0
+        # The one rule, shared with the Send's own check under its claim
+        # (schedule_publish.one_tap_ok — scale audit 10/19/26 A5-F14).
+        import schedule_publish as _sp_ot
+        return _sp_ot.one_tap_ok(rid, row["id"], review)
     except Exception as e:
         import ops
         ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={rid} schedule_id={schedule_id}")

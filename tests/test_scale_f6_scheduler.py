@@ -266,6 +266,151 @@ def test_a_code_draft_is_never_planned_for_a_batch(db, monkeypatch):
     assert not sj._drafted_in_code(rid, "2026-10-19")
 
 
+# ── A5-F14: publish claims before its gate; the outbox in fewer writes ──────
+
+def _publish_week(db_path, rid):
+    lines = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"]
+    lines += [f"2026-10-19,Monday,{n},Server,5:00pm,10:00pm,5," for n in ("Ana", "Bo", "Cy")]
+    return models.save_schedule_history(rid, "2026-10-19", "2026-10-25", 15, 0, 30, "\n".join(lines), [])
+
+
+def _claim_state(hid):
+    conn = models.get_conn()
+    try:
+        return dict(conn.execute("SELECT published_at, publishing_at FROM schedule_history WHERE id=?",
+                                 (hid,)).fetchone())
+    finally:
+        conn.close()
+
+
+def test_a_second_send_never_pays_for_the_gate_and_a_refusal_lets_the_claim_go(db, monkeypatch):
+    import schedule_publish as sp
+    rid = _restaurant(db, module_labor=1)
+    hid = _publish_week(db, rid)
+    gates = []
+    review = {"blockers": [{"key": "k1", "text": "Ana has no break", "tier": sp.MUST_FIX}], "soft": [], "notes": [],
+              "hours": None, "held_unattended": []}
+    monkeypatch.setattr(sp, "publish_review", lambda r, s, **k: gates.append(s) or review)
+    # Another manager's Send holds the week: this one is refused before the gate.
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE schedule_history SET publishing_at=datetime('now') WHERE id=?", (hid,))
+        conn.commit()
+    finally:
+        conn.close()
+    out, status = sp.publish(rid, hid, actor={"username": "mgr2"}, acknowledge=[])
+    assert status == 409 and out["in_progress"] and gates == []
+    # Free: the gate runs under the claim, and its refusal lets the claim go.
+    conn = models.get_conn()
+    try:
+        conn.execute("UPDATE schedule_history SET publishing_at=NULL WHERE id=?", (hid,))
+        conn.commit()
+    finally:
+        conn.close()
+    out, status = sp.publish(rid, hid, actor={"username": "mgr1"}, acknowledge=[])
+    assert out.get("needs_ack") and gates == [hid]
+    assert _claim_state(hid) == {"published_at": None, "publishing_at": None}
+
+
+def test_the_outbox_queues_a_staff_in_one_statement_each_and_claims_in_chunks(db, monkeypatch):
+    import schedule_publish as sp
+    rid = _restaurant(db, module_labor=1)
+    hid = _publish_week(db, rid)
+    names = [f"Person {i}" for i in range(23)]
+    conn = models.get_conn()
+    try:
+        sp.enqueue(conn, rid, hid, "2026-10-19", "b-old", [(n, "posted") for n in names[:5]])
+        sp.enqueue(conn, rid, hid, "2026-10-19", "b-new", [(n, "posted") for n in names])
+        conn.execute("UPDATE schedule_history SET published_at=datetime('now') WHERE id=?", (hid,))
+        conn.commit()
+        rows = conn.execute("SELECT batch, status FROM schedule_notices ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    # A person's earlier notice about the week is replaced by the new one.
+    assert [r["status"] for r in rows if r["batch"] == "b-old"] == ["cancelled"] * 5
+    assert len([r for r in rows if r["batch"] == "b-new" and r["status"] == "pending"]) == 23
+    claims = []
+    real_claim = sp._claim_notices
+    monkeypatch.setattr(sp, "_claim_notices", lambda chunk, db_path=None: claims.append(len(chunk))
+                        or real_claim(chunk, db_path))
+    monkeypatch.setattr(sp, "_deliver_one", lambda rid_, r, sid, rows_, name, ch, label, **k: (
+        "sent", {"employee_name": name, "channel": "push"}))
+    got = sp.deliver_notices(restaurant_id=rid, batch="b-new", budget_seconds=60)
+    assert len(got["sent"]) == 23 and not got["pending"]
+    assert claims == [10, 10, 3]                                       # three claim writes, not 23
+
+
+def test_a_chunk_the_bound_cuts_short_hands_its_notices_back(db, monkeypatch):
+    import schedule_publish as sp
+    rid = _restaurant(db, module_labor=1)
+    hid = _publish_week(db, rid)
+    conn = models.get_conn()
+    try:
+        sp.enqueue(conn, rid, hid, "2026-10-19", "b1", [(f"P{i}", "posted") for i in range(6)])
+        conn.execute("UPDATE schedule_history SET published_at=datetime('now') WHERE id=?", (hid,))
+        conn.commit()
+    finally:
+        conn.close()
+    clock = {"t": 0.0}
+    monkeypatch.setattr(sp._time, "monotonic", lambda: clock["t"])
+
+    def deliver(rid_, r, sid, rows_, name, ch, label, **k):
+        clock["t"] += 3.0                         # each person takes 3 s of an 8 s window
+        return "sent", {"employee_name": name}
+    monkeypatch.setattr(sp, "_deliver_one", deliver)
+    got = sp.deliver_notices(restaurant_id=rid, batch="b1", budget_seconds=8)
+    assert len(got["sent"]) == 3 and got["hit_bound"]
+    conn = models.get_conn()
+    try:
+        left = conn.execute("SELECT status, attempts, claimed_at FROM schedule_notices WHERE batch='b1' "
+                            "AND status<>'sent'").fetchall()
+    finally:
+        conn.close()
+    # Back as they were — due to the next pass at once, no try spent.
+    assert [(r["status"], r["attempts"], r["claimed_at"]) for r in left] == [("pending", 0, None)] * 3
+    queued = []
+    monkeypatch.setattr(sp, "queue_delivery", lambda r, b, round_=0: queued.append((r, b)))
+    clock["t"] = 0.0
+    monkeypatch.setattr(sp, "INLINE_SECONDS", 4.0)
+    sp.deliver_inline(rid, "b1")
+    assert queued == [(rid, "b1")]                # what the inline window left goes to the queue
+
+
+def test_the_queued_delivery_runs_the_batch_and_queues_the_rest(db, quiet, monkeypatch):
+    import schedule_publish as sp
+    jq = quiet
+    calls = []
+    monkeypatch.setattr(sp, "deliver_notices", lambda **k: calls.append(k) or {
+        "sent": [1], "failed": [], "unreachable": [], "pending": ["Bo"], "attempted": 1, "hit_bound": True})
+    sp.queue_delivery(7, "b9")
+    sp.queue_delivery(7, "b9")                                    # one row a round
+    job = jq.claim("w", groups=("bulk",))
+    assert job["kind"] == "schedule_notices" and job.payload == {"restaurant_id": 7, "batch": "b9", "round": 0}
+    out = jq.run_one(job)
+    assert out["pending"] == 1 and calls[0]["batch"] == "b9" and calls[0]["budget_seconds"] == sp.NOTICE_QUEUE_SECONDS
+    nxt = jq.claim("w", groups=("bulk",))
+    assert nxt is not None and nxt.payload["round"] == 1
+
+
+def test_auto_publish_fans_out_one_queue_row_a_restaurant(db, quiet, monkeypatch):
+    import scheduler
+    import time_utils
+    from datetime import datetime
+    rid = _restaurant(db, module_labor=1, auto_publish_schedule=1, auto_draft_weekday=3, auto_draft_weekday_chosen=1,
+                      billing_status="active")
+    monkeypatch.setattr(scheduler, "_served_client", lambda r: True)
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=True: datetime(2026, 10, 16, 10, 0))  # Friday
+    seen = []
+    monkeypatch.setattr(scheduler, "local_due", lambda r, *a, **k: seen.append(r.id) or False)
+    out = scheduler.run_auto_publish_schedules(enqueue=True)
+    assert out["queued"] == 1 and out["ok"] == 1 and seen == []      # no gate run on the scheduler thread
+    assert scheduler.run_auto_publish_schedules(enqueue=True)["queued"] == 0   # the same day queues nothing new
+    job = quiet.claim("w", groups=("bulk",))
+    assert job["kind"] == "auto_publish" and job.payload == {"restaurant_id": rid}
+    quiet.run_one(job)
+    assert seen == [rid]                                              # the row runs the restaurant's own check
+
+
 # ── A5-F15: a POS push a dead process left `sending` is tried again ─────────
 
 def test_a_push_left_sending_by_a_dead_process_is_tried_again(db, monkeypatch):

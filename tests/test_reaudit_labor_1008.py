@@ -93,16 +93,27 @@ def publishes(monkeypatch):
     return got
 
 
-def test_a_one_tap_send_the_gate_would_not_send_unread_is_refused(db, monkeypatch, publishes):
+def test_a_one_tap_send_the_gate_would_not_send_unread_is_refused(db, monkeypatch):
     rid = _rid(db)
     hid = _week(db, rid)
     c, h, _ = _client(db, rid, monkeypatch)
-    monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: False)
+    # Judged by the publish itself, on its one run of the gate under its
+    # claim (scale audit 10/19/26 A5-F14: the route ran the gate for the
+    # verdict and the publish ran it again).
+    gates = []
+    monkeypatch.setattr(schedule_publish, "publish_review", lambda r, s, **k: gates.append(s) or {
+        "blockers": [], "soft": ["Ana owes a meal break"], "notes": [], "hours": None})
     r = c.post("/mobile/api/labor/publish-schedule", headers=h,
                json={"schedule_id": hid, "acknowledge": True, "one_tap": True})
     body = r.get_json()
     assert r.status_code == 409 and body["one_tap_refused"] is True and body["schedule_id"] == hid
-    assert publishes == []
+    assert body["held"] == ["Ana owes a meal break"] and gates == [hid]
+    conn = models.get_conn()
+    try:
+        row = conn.execute("SELECT published_at, publishing_at FROM schedule_history WHERE id=?", (hid,)).fetchone()
+    finally:
+        conn.close()
+    assert row["published_at"] is None and row["publishing_at"] is None     # nothing sent, the claim let go
 
 
 def test_a_safe_one_tap_send_goes_and_acknowledges_nothing(db, monkeypatch, publishes):
@@ -136,7 +147,7 @@ def test_a_queued_one_tap_send_runs_the_unattended_gate_when_its_window_ends(db,
     hid = _week(db, rid)
     models.update_restaurant(rid, {"send_delay_minutes": 10}, db_path=db)
     c, h, _ = _client(db, rid, monkeypatch)
-    monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: True)
+    monkeypatch.setattr(schedule_publish, "one_tap_ok", lambda *a, **k: True)
     queued = []
     # The week's send is queued through queue_schedule_send since BUGSLIFE-9
     # (one pending send per week); this test patched the old delayed.schedule.
@@ -145,20 +156,17 @@ def test_a_queued_one_tap_send_runs_the_unattended_gate_when_its_window_ends(db,
     body = c.post("/mobile/api/labor/publish-schedule", headers=h,
                   json={"schedule_id": hid, "one_tap": True}).get_json()
     assert body["queued"] is True and queued[0]["one_tap"] is True and queued[0]["acknowledge"] == []
-    # When the window ends a soft flag has come up: held, the owner told.
-    monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: False)
-    monkeypatch.setattr(schedule_publish, "publish_review",
-                        lambda r, s, **k: {"blockers": [], "soft": ["Ana owes a meal break"], "notes": []})
+    # When the window ends a soft flag has come up: the publish's own
+    # one-tap verdict (under its claim — A5-F14) holds it, the owner told.
+    asked = []
+    monkeypatch.setattr(schedule_publish, "publish", lambda rid_, sid, actor=None, **k: asked.append(k) or (
+        schedule_publish.one_tap_refusal({"soft": ["Ana owes a meal break"]}, sid), 409))
     told = []
     monkeypatch.setattr(delayed, "_tell_owner_schedule_held",
                         lambda r, p, held, dbp, title=None, keys=None: told.append((held, keys)))
     out = delayed._run_schedule_publish(rid, queued[0], db)
     assert out["ok"] is False and "Ana owes a meal break" in out["error"]
-    assert told == [(["Ana owes a meal break"], None)] and publishes == []
-    # Still safe at the window's end: it goes.
-    monkeypatch.setattr(strategy_routes, "draft_one_tap_safe", lambda *a, **k: True)
-    delayed._run_schedule_publish(rid, queued[0], db)
-    assert publishes == [{"rid": rid, "sid": hid, "acknowledge": []}]
+    assert told == [(["Ana owes a meal break"], None)] and publishes == [] and asked[0]["one_tap"] is True
 
 
 def test_a_sheet_send_is_unchanged_by_the_one_tap_gate(db, monkeypatch, publishes):

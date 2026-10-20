@@ -123,6 +123,12 @@ KINDS = {
     # The Monday bar price push, one row per restaurant due at its own hour
     # (bar_signals.run_price_push; FC/Bar audit 10/16/26 SCALE-07).
     "bar_price_push": ("bulk", "bulk", 2),
+    # A Send's schedule notices its inline window did not reach (scale
+    # audit 10/19/26 A5-F14; schedule_publish.queue_delivery).
+    "schedule_notices": ("bulk", "bulk", 2),
+    # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
+    # scheduler.run_auto_publish_schedules fans out).
+    "auto_publish": ("bulk", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -135,6 +141,8 @@ HANDLERS = {
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
     "bar_price_push": "bar_signals:run_queued_price_push",
+    "schedule_notices": "schedule_publish:run_queued_notices",
+    "auto_publish": "scheduler:run_queued_auto_publish",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.

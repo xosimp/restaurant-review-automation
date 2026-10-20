@@ -4326,7 +4326,7 @@ def _drafted_today(generated_at, local_day, r) -> bool:
         return False
 
 
-def run_auto_publish_schedules():
+def run_auto_publish_schedules(enqueue=False, only=None):
     """9am local the day after the restaurant's draft day (Friday for the
     default Thursday draft; models.auto_publish_weekday): queue the draft to go to staff
     AUTO_PUBLISH_UNDO_MINUTES later, with those two hours as the undo window — for owners who turned it on AND
@@ -4335,7 +4335,14 @@ def run_auto_publish_schedules():
     shared, and made before today (a draft the auto-draft's fallback day
     made this morning waits for its owner). Nothing is sent here;
     delayed.run_due sends it, and the owner is told now so "undo" is a real
-    choice. Bounded and resumable (resumable_sweep, AUTO_PUBLISH_*)."""
+    choice. Bounded and resumable (resumable_sweep, AUTO_PUBLISH_*).
+
+    `enqueue` (the scheduler passes True — scale audit 10/19/26 A5-F14):
+    each restaurant due is one bulk `auto_publish` job_queue row (keyed on
+    it and its local day, its deadline the window's close) run by the queue
+    worker (run_queued_auto_publish → `only`), never a sweep of publish
+    gates on two threads of the web process. `only` — one restaurant's
+    check, as the row runs it."""
     import delayed
     from models import (get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH,
                         auto_publish_weekday)
@@ -4348,7 +4355,13 @@ def run_auto_publish_schedules():
             counts[key] += 1
 
     due = {}
-    for r in get_all_restaurants():
+    if only is not None:
+        from models import get_restaurant as _gr_ap
+        _one_r = _gr_ap(int(only))
+        candidates = [_one_r] if _one_r is not None else []
+    else:
+        candidates = get_all_restaurants()
+    for r in candidates:
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
         if not _served_client(r):
@@ -4506,11 +4519,44 @@ def run_auto_publish_schedules():
             _ops.capture(e, job="auto_publish_schedule_notice", context=f"restaurant_id={r.id}")
         return True
 
+    if only is not None:
+        for rid in sorted(due):
+            _one(rid)
+        return {"queued": counts["queued"], "skipped": counts["skipped"], "failed": counts["failed"],
+                "attempted": counts["queued"] + counts["failed"], "ok": counts["queued"], "hit_bound": False}
+    if enqueue:
+        # One bulk row per restaurant due, run by the queue worker: each check
+        # is a publish gate (10-40 s), and a morning of thousands held two
+        # threads of the web process for the job's 15 minutes (A5-F14).
+        import job_queue
+        import time as _t_ap
+        items = []
+        for rid in sorted(due):
+            r = due[rid]
+            local = restaurant_now(r, naive=True)
+            left = (local.replace(hour=AUTO_PUBLISH_UNTIL, minute=0, second=0, microsecond=0) - local).total_seconds()
+            items.append({"payload": {"restaurant_id": rid}, "restaurant_id": rid,
+                          "idempotency_key": f"auto_publish:{rid}:{local.date().isoformat()}",
+                          "deadline": _t_ap.time() + max(60.0, left)})
+        queued = job_queue.enqueue_many("auto_publish", items, priority_class="bulk") if items else 0
+        return {"queued": queued, "skipped": counts["skipped"] + len(items) - queued, "attempted": queued,
+                "ok": queued, "failed": 0, "hit_bound": False, "due": len(due)}
     _done, ran_out = resumable_sweep(AUTO_PUBLISH_CURSOR_KEY, sorted(due), _one, AUTO_PUBLISH_MAX_SECONDS,
                                      workers=AUTO_PUBLISH_WORKERS, job="auto_publish_schedule")
     return {"queued": counts["queued"], "skipped": counts["skipped"],
             "attempted": counts["queued"] + counts["failed"], "ok": counts["queued"], "failed": counts["failed"],
             "hit_bound": bool(ran_out), "due": len(due), "reached": int(_done)}
+
+
+def run_queued_auto_publish(job):
+    """job_queue's handler for `auto_publish`: one restaurant's auto-publish
+    check, claimed for its local day when it runs (local_due) — a row that
+    runs after the window closed does nothing (scale audit 10/19/26
+    A5-F14)."""
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    return run_auto_publish_schedules(only=rid)
 
 
 def run_restore_drill():
@@ -5993,9 +6039,11 @@ def scheduler_loop():
 
             # Hourly: 9am local the day after each restaurant's draft day
             # (Friday for a Thursday draft) — queue the unedited draft to
-            # publish at 11am with an undo window (run_auto_publish_schedules).
+            # publish at 11am with an undo window (run_auto_publish_schedules) —
+            # one queue row per restaurant due, run by the queue worker
+            # (scale audit 10/19/26 A5-F14).
             if _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
-                _ops.run_job("auto_publish_schedule", run_auto_publish_schedules)
+                _ops.run_job("auto_publish_schedule", run_auto_publish_schedules, enqueue=True)
 
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")

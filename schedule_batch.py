@@ -7,8 +7,11 @@ and held one of the two generation slots for every minute the model wrote.
 Here its model calls go through ai_batches at half the price, holding no slot
 while they wait:
 
-  PLAN (plan_requests, from submit_auto_draft before the pass claims a job).
-  The generation is built exactly as a press of Generate would build it —
+  PLAN (plan_requests, from submit_auto_draft before the pass claims a job;
+  never for a week whose draft source is a code source — the solver, the
+  default — which strategy_jobs._draft_one runs at once: planning built and
+  solved the whole week to find nothing to send, scale audit 10/19/26
+  A5-F13). The generation is built exactly as a press of Generate would build it —
   schedule_engine._build_schedule_result, every input, the route, the
   manager plan — up to its first round of model calls: the independent calls
   the engine sends together (one per department part, a part's first date
