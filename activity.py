@@ -400,8 +400,23 @@ def build(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
             "queued": queued, "last_run": last_run, "generated_at": _iso_z(_utc(now))}
 
 
+def _viewer_key():
+    """The login this feed is for: its memory lines are filtered per login
+    (owner_memory's audiences), so a kept feed is per login too — keyed by
+    restaurant alone it carried one login's private notes to another for
+    ACTIVITY_TTL (blind re-audit 10/20/26 R6-F2 / R9-06)."""
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            u = getattr(g, "cavnar_current_user", None) or {}
+            return (u.get("id"), u.get("role"), bool(getattr(g, "view_as", None)))
+    except Exception:
+        pass
+    return None
+
+
 def feed(restaurant_id, restaurant=None, db_path=DB_PATH, denied=frozenset()):
-    key = (restaurant_id, frozenset(denied), db_path)
+    key = (restaurant_id, frozenset(denied), db_path, _viewer_key())
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] < ACTIVITY_TTL:
         return hit[1]

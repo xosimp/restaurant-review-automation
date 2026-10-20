@@ -411,6 +411,12 @@ def login_required(f):
             return redirect("/admin")
         if _cd_shell(user):
             return redirect(url_for("staff.portal_home"))
+        # The login on flask.g, as auth.login_required puts it: the page's
+        # salary view (models.viewer_sees_salaries) read no login as the
+        # owner's and gave a manager "Labor with salaries" (blind re-audit
+        # 10/20/26 R6-F1).
+        from auth import _bind_log_context as _blc_shell
+        _blc_shell(user)
         return f(*args, **kwargs, current_user=user)
     return decorated
 

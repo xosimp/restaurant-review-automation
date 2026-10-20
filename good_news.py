@@ -427,8 +427,12 @@ def all_good_news(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
     """Every positive signal, best first. Records outrank streaks outrank
     stopped-complaints, because a record is news and a streak is a state."""
     import time as _time
+    # Whose salary view too: a record or streak on all-in labor is the
+    # owner's alone, and the shared entry carried it to a manager's Home
+    # (blind re-audit 10/20/26 R6-F3 / R9-16).
+    from models import viewer_sees_salaries as _vss_news
     key = (restaurant_id, str(today or date.today()), db_path,
-           frozenset(denied_modules or ()))
+           frozenset(denied_modules or ()), _vss_news())
     hit = _NEWS_CACHE.get(key)
     if hit and _time.time() - hit[0] < _NEWS_TTL:
         items = hit[1]

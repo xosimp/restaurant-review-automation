@@ -5051,7 +5051,15 @@ def labor_stale_read(rid, note=None):
     The process cache first, then the read stored in insight_store (parity
     #37): the process cache is gone after every deploy, and the stored read
     is what a stale-while-refresh answer serves while the new one is
-    written. `note(as_of)`, when given, is the stale_note instead."""
+    written. `note(as_of)`, when given, is the stale_note instead.
+
+    Only for a viewer who may see the salaries: the kept read is one per
+    restaurant and is the owner's all-in one as often as not, and served to
+    a manager it gave the salaries away beside their hourly figure (blind
+    re-audit 10/20/26 R9-05). Anyone else waits for the read built for them."""
+    from models import viewer_sees_salaries as _vss_stale
+    if not _vss_stale():
+        return None
     entry = _insight_cache.get(LABOR_INSIGHT_CACHE + str(rid))
     if not entry:
         try:
@@ -10717,7 +10725,7 @@ def _count_notifications_unread(current_user, scope=None):
                                WHERE o.alert_log_id = w.id AND o.user_id = ?) AS opened,
                        {past_mark} AS past_mark,
                        CASE
-                         WHEN w.review_id THEN COALESCE((
+                         WHEN COALESCE(w.review_id, 0) <> 0 THEN COALESCE((
                              SELECT CASE WHEN COALESCE(rv.deleted_at, '') != ''
                                               OR rv.response_status IN ('posted', 'approved', 'skipped')
                                          THEN 1 ELSE 0 END
