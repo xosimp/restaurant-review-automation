@@ -1168,7 +1168,9 @@ through `benchmark_views` (L2), which shapes and never compares:
 - **Location to location** (`benchmark_views.location_compare`, in the group
   Home and the phone's locations sheet): the engine's `location` kind (the
   siblings are the restaurant's `privacy.org_key` organisation, named by
-  `location_name`; a format or economics metric compares only locations in
+  `location_name` — and only a real group: an organisation, or a location
+  group under one owner email; an owner email alone, which is set by hand,
+  makes no siblings (blind re-audit 10/20/26 R7-22); a format or economics metric compares only locations in
   the same confirmed partition, and a location on the $26/hr default or
   with an irregular waste log is left out — "your locations serve
   differently" when that leaves fewer than two; closed without a viewer), each

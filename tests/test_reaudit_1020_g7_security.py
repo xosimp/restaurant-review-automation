@@ -721,6 +721,19 @@ def test_the_schedule_poller_never_returns_another_kind_of_job(db_path, client, 
     assert r.status_code == 404
 
 
+# ── R7-22: per-location comparison only inside a real group ──────────────
+
+def test_ungrouped_restaurants_sharing_an_email_are_not_siblings(db_path):
+    from intelligence import engine
+    a = create_restaurant(Restaurant(name="Alpha", owner_email="same@x.test"), db_path=db_path)
+    b = create_restaurant(Restaurant(name="Beta", owner_email="same@x.test"), db_path=db_path)
+    assert [s["id"] for s in engine._location_context(a, db_path)["sibs"]] in ([a], [])
+    update_restaurant(a, {"location_group": "Same Co"}, db_path=db_path)
+    update_restaurant(b, {"location_group": "Same Co"}, db_path=db_path)
+    ids = {s["id"] for s in engine._location_context(a, db_path)["sibs"]}
+    assert ids == {a, b}
+
+
 # ── R7-24: wages stay with the logins that see pay ────────────────────────
 
 def test_a_login_that_does_not_see_pay_gets_no_wage_from_the_schedule_checks(monkeypatch):
