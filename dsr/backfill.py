@@ -112,9 +112,13 @@ def backfill(restaurant, days=60, db_path=None, max_days=MAX_DAYS_PER_RUN) -> di
     mapping = store.category_map(rid, db_path=db_path)
     filled = failed = 0
     source = f"{provider}{SOURCE_SUFFIX}"
+    import pos_io
     for d in todo:
         try:
-            got = _day_metrics(restaurant, d, mapping, hist, shift_rows)
+            # History: the "bulk" lane of the POS request budget, never ahead
+            # of a live or close read (blind re-audit 10/20/26 R3-01).
+            with pos_io.lane("bulk"):
+                got = _day_metrics(restaurant, d, mapping, hist, shift_rows)
         except Exception as e:
             failed += 1
             log.warning("dsr backfill rid=%s %s: %s", rid, d, e)

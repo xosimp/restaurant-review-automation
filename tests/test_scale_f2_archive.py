@@ -277,6 +277,10 @@ def test_prices_are_read_weekly_or_when_a_sold_price_moved(monkeypatch):
     assert not pos_archive._prices_due(rid, "rpower", YDAY.isoformat(), models.DB_PATH)
     conn.execute("UPDATE pos_menu_prices SET price=12.0")
     conn.commit()
+    # One item rung at another price is an override, not a repricing
+    # (blind re-audit 10/20/26 R3-18): PRICE_MOVED_MIN_ITEMS (2) items are.
+    assert not pos_archive._prices_due(rid, "rpower", YDAY.isoformat(), models.DB_PATH), "one item is not enough"
+    monkeypatch.setattr(pos_archive, "PRICE_MOVED_MIN_ITEMS", 1)
     assert pos_archive._prices_due(rid, "rpower", YDAY.isoformat(), models.DB_PATH), "a sold price moved"
     conn.execute("UPDATE pos_menu_prices SET price=10.0, seen_at=datetime('now', '-8 days')")
     conn.commit()

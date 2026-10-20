@@ -112,7 +112,8 @@ JOBS = {
         target=("scheduler", "run_restore_drill"), max_minutes=30),
     "pos_sync": dict(
         cadence="3am CT nightly (POS lane)", sla_minutes=_D, sends=False, runnable=True,
-        label="POS sync", description="Pull yesterday's sales and labor from every connected POS, then inventory systems",
+        label="POS sync", description="Pull yesterday's sales and labor from every connected POS whose own clock has "
+                                     "reached 3am (the rest at their own hour, by the POS retry pass), then inventory systems",
         target=("scheduler", "run_toast_sync"), max_minutes=75, retry=True, lane="pos"),
     # The Labor read written ahead of the morning open (AI cost audit 10/7/26
     # #100), for restaurants whose owner opened it in the last week.
@@ -124,7 +125,8 @@ JOBS = {
         target=("scheduler", "run_labor_prewarm"), run_kwargs=_chi_now_kw, max_minutes=25, lane="ai"),
     "pos_retry": dict(
         cadence="hourly, until 11am local", sla_minutes=_H, sends=False, runnable=True,
-        label="POS retry", description="Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure)",
+        label="POS retry", description="Retry failed POS syncs whose retry is due (+1h, +3h, +6h; never an auth failure), "
+                                       "and sync each store the 3am pass left for its own local hour",
         target=("scheduler", "run_pos_retry"), max_minutes=25),
     "stripe_reconcile": dict(
         # Reads Stripe; never changes a billing status (billing_jobs, #115).

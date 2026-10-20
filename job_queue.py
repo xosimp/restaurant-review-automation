@@ -124,6 +124,11 @@ KINDS = {
     # concurrency of stores at once (strategy_jobs.run_queued_pos_onboard;
     # scale audit 10/19/26 ONB-6 / ONB-4).
     "pos_onboard": ("pos_io", "bulk", 2),
+    # An owner's "Send this week now": the POS schedule push, off the web
+    # request thread (pos_schedule_push.run_queued_push; blind re-audit
+    # 10/20/26 R3-07 — it held one of the four request threads on a 30-second
+    # RPOWER POST). One try: the push row keeps its own retries.
+    "pos_schedule_push": ("pos_io", "interactive", 1),
     # The owner's notes and staff notes read into typed rules when they are
     # SAVED, one batched call (owner_rules.queue_read — blind re-audit
     # 10/11/26 AI-22): never in a generation's critical path.
@@ -154,6 +159,7 @@ HANDLERS = {
     "email_intake": "email_intake:run_queued",
     "pos_archive": "strategy_jobs:run_queued_pos_archive",
     "pos_onboard": "strategy_jobs:run_queued_pos_onboard",
+    "pos_schedule_push": "pos_schedule_push:run_queued_push",
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
     "bar_price_push": "bar_signals:run_queued_price_push",
@@ -1176,22 +1182,33 @@ def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
     """A try that raised: queued again after RETRY_BACKOFF while tries are
     left (and `retry`), else failed. Returns the new state. An error that
     carries `retry_after` seconds (a provider's Retry-After, an open
-    breaker — rpower.RPowerTryLater) waits at least that long instead."""
+    breaker — rpower.RPowerTryLater) waits at least that long instead.
+
+    Such a wait is the provider's, not the row's failure (blind re-audit
+    10/20/26 R3-13): on a row with a deadline it does not use up a try — a
+    two-try POS archive row died in any outage longer than two breaker
+    cooldowns — and the deadline, not the attempt count, bounds it (a row
+    still queued past it expires)."""
     conn = get_conn(db_path)
     try:
-        row = conn.execute("SELECT attempts, max_attempts FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+        row = conn.execute("SELECT attempts, max_attempts, deadline FROM jobs WHERE id=?",
+                           (int(job_id),)).fetchone()
         if row is None:
             return "gone"
-        again = retry and int(row["attempts"] or 0) < int(row["max_attempts"] or 1)
+        try:
+            told = float(getattr(error, "retry_after", 0) or 0)
+        except (TypeError, ValueError):
+            told = 0.0
+        waited_out = (retry and told > 0 and row["deadline"] is not None
+                      and time.time() + min(told, 6 * 3600.0) < float(row["deadline"]))
+        again = retry and (waited_out or int(row["attempts"] or 0) < int(row["max_attempts"] or 1))
         if again:
-            wait = RETRY_BACKOFF[min(int(row["attempts"] or 1), len(RETRY_BACKOFF)) - 1]
-            try:
-                wait = max(wait, min(float(getattr(error, "retry_after", 0) or 0), 6 * 3600.0))
-            except (TypeError, ValueError):
-                pass
+            wait = RETRY_BACKOFF[max(1, min(int(row["attempts"] or 1), len(RETRY_BACKOFF))) - 1]
+            wait = max(wait, min(told, 6 * 3600.0))
             conn.execute("UPDATE jobs SET state='queued', not_before=?, error=?, lease_owner=NULL, lease_until=NULL, "
-                         "phase=NULL WHERE id=? AND lease_owner=?",
-                         (time.time() + wait, str(error)[:500], int(job_id), worker_id))
+                         "phase=NULL, attempts=CASE WHEN ? = 1 AND attempts > 0 THEN attempts - 1 ELSE attempts END "
+                         "WHERE id=? AND lease_owner=?",
+                         (time.time() + wait, str(error)[:500], 1 if waited_out else 0, int(job_id), worker_id))
         else:
             conn.execute("UPDATE jobs SET state='failed', error=?, finished_at=?, lease_owner=NULL, lease_until=NULL, "
                          "phase=NULL WHERE id=? AND lease_owner=?",

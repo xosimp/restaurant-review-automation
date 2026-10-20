@@ -39554,7 +39554,7 @@ window._cuRole=window.CAV_BOOT.role;
     jsend('/api/labor/pos-schedule-push',{schedule_id:id},function(d){
       done();
       if(!d.ok){toast(d.error||'It didn’t all go through: each shift says why','error');}
-      else toast(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS','success');
+      else toast(d.status==='queued'?'Sending to the POS now':(d.status==='unchanged'?'Already on the POS: nothing changed':'Sent to the POS'),'success');
       floorPreview(id,btn);
     });
   };

@@ -91,6 +91,7 @@ def test_rpower_reports_the_item_categories_inside_each_department(db_path, monk
     import test_dsr_pos_day as day
     monkeypatch.setattr(pos, "PROVIDERS", None)
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
+    monkeypatch.setattr(rpower, "FLEET_RPS", 0)             # the fleet ceiling stands alone (R3-08)
     rid = day._rpower(db_path)
     day._stub(monkeypatch)
     data, _ = pos.fetch_day_sales(rid, day.DAY)

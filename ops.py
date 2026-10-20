@@ -877,6 +877,27 @@ def release_period(job: str, period: str) -> None:
         log.error(f"release_period({key}) failed: {e}")
 
 
+def renew_cooldown(key: str) -> bool:
+    """Stamp a held claim_cooldown claim again (a heartbeat), so work that
+    outlasts the cooldown keeps it while it runs and a killed process's
+    claim still lapses one cooldown after its last beat (pos_archive's
+    single-flight day read, blind re-audit 10/20/26 R3-15). True when the
+    claim was there to renew. Never raises."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            n = conn.execute("UPDATE job_period_claims SET claimed_at=datetime('now') WHERE job_key=?",
+                             (f"cooldown:{key}",)).rowcount
+            conn.commit()
+            return bool(n)
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"renew_cooldown({key}) failed: {e}")
+        return False
+
+
 # ── permanent markers (#157) ────────────────────────────────────────────────
 
 def claim_marker(job: str, value: str) -> bool:

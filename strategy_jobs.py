@@ -538,6 +538,10 @@ def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
         _qid, created = job_queue.enqueue(
             "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
             priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            # A deadline, so a provider's "wait" (an outage, a Retry-After)
+            # reschedules the row without using up its tries (job_queue.fail,
+            # blind re-audit 10/20/26 R3-13) and the deadline bounds it.
+            deadline=_bulk_deadline(),
             idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
         return bool(created)
     except Exception as e:

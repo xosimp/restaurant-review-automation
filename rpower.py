@@ -31,9 +31,10 @@ trap that would otherwise produce confidently wrong numbers:
     own description of the parameter contradicts itself — "Sending a 1 ...
     will get you the first 1000 records. Sending a 2 will get you records
     2000-2999" skips 1000-1999. `_paged` below does not trust either reading:
-    it pages until a short page arrives and detects overlap by primary key,
-    so an off-by-one-page API returns correct data and a duplicate-emitting
-    one is caught rather than double-counted. See `PAGINATION_UNVERIFIED`.
+    it pages until a short page arrives and detects overlap by primary key:
+    an overlap is rows skipped as well as rows doubled, so the read starts
+    again once and is refused if it overlaps again (blind re-audit 10/20/26
+    R3-04) — never a short set returned as whole. See `PAGINATION_UNVERIFIED`.
 
 Not documented anywhere in RPOWER's 120 endpoints: rate limits, and any
 response code other than 200. Both are handled defensively here and both are
@@ -400,49 +401,175 @@ def _take_shared_slot(token: str, spacing: float, key: str = None):
         conn.close()
 
 
-def _wait_for_bucket(token, key, spacing, limit):
-    """Take one slot of bucket `key` under its process lock, waiting up to
-    `limit` seconds. Raises RPowerBudgetExceeded when none came in time."""
+# Lanes (blind re-audit 10/20/26 R3-01; pos_io.lane): live reads and the
+# night's report are served ahead of the nightly and bulk work. In this
+# process a background request never takes a slot while a live or close
+# request is waiting on the same bucket; across processes, while live or
+# close requests are being made on a bucket (its ":live" mark, younger than
+# LIVE_ACTIVE_SECONDS) background requests also pass a ":bg" bucket at
+# BACKGROUND_SHARE of its rate, so at least the rest is left for live reads.
+# Bulk (onboarding, history backfill) always passes it. The per-bucket lock
+# is held only to take a slot, never while waiting for one, and is acquired
+# with the request's own time limit (R3-07): a web request thread no longer
+# queues behind a job thread sleeping out a 60-second wait.
+BACKGROUND_SHARE = min(1.0, max(0.05, float(os.getenv("RPOWER_BACKGROUND_SHARE", "0.5") or 0.5)))
+LIVE_ACTIVE_SECONDS = 120.0
+_LIVE_MARK_EVERY = 5.0            # a process writes a bucket's live mark at most this often
+_LIVE_READ_EVERY = 2.0            # ...and reads it at most this often
+_priority_waiting = {}            # bucket -> live/close requests of this process waiting on it
+_live_marked = {}                 # bucket -> monotonic time this process last wrote its live mark
+_live_seen = {}                   # bucket -> (monotonic time read, live mark active)
+
+
+def _bucket_lock(key):
     with _rate_lock:
         lock = _token_locks.get(key)
         if lock is None:
             if len(_token_locks) > 4096:             # bounded: idle tokens' locks go
                 _token_locks.clear()
             lock = _token_locks[key] = threading.Lock()
-    with lock:                                       # this bucket's requests, one at a time
-        waited = 0.0
-        while True:
-            wait = _take_shared_slot(token, spacing, key=key)
-            if wait is None:                         # the local fallback
-                gap = time.monotonic() - _last_request_at.get(key, 0.0)
-                if gap < spacing:
-                    time.sleep(spacing - gap)
-                break
-            if wait <= 0:
-                break
-            if waited >= limit:
-                raise RPowerBudgetExceeded(f"no RPOWER request slot within {limit:.0f}s (our own budget)",
-                                           retry_after=max(wait, 5.0))
-            step = min(wait, 1.0, max(0.01, limit - waited))
-            time.sleep(step)
-            waited += step
+        return lock
+
+
+def _budget_refused(limit, wait=5.0, why="our own budget"):
+    return RPowerBudgetExceeded(f"no RPOWER request slot within {limit:.0f}s ({why})", retry_after=max(wait, 5.0))
+
+
+def _wait_for_bucket(token, key, spacing, limit, lane="nightly", deadline=None):
+    """Take one slot of bucket `key`, waiting up to `limit` seconds (or until
+    `deadline`, a time.monotonic() value). Raises RPowerBudgetExceeded when
+    none came in time. The bucket's process lock is held only while a slot
+    is taken, never while waiting for one."""
+    import pos_io
+    deadline = deadline if deadline is not None else time.monotonic() + float(limit)
+    priority = lane not in pos_io.BACKGROUND_LANES
+    lock = _bucket_lock(key)
+    if priority:
         with _rate_lock:
-            if len(_last_request_at) > 4096:
-                _last_request_at.clear()
-            _last_request_at[key] = time.monotonic()
+            _priority_waiting[key] = _priority_waiting.get(key, 0) + 1
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise _budget_refused(limit)
+            if not priority and _priority_waiting.get(key):
+                time.sleep(min(0.05, remaining))     # a live or close request goes first
+                continue
+            if not lock.acquire(timeout=remaining):
+                raise _budget_refused(limit, why="this process's queue for the bucket")
+            try:
+                wait = _take_shared_slot(token, spacing, key=key)
+                now = time.monotonic()
+                if wait is None:
+                    # The local fallback: reserve the next slot under the lock,
+                    # wait for it outside it.
+                    slot = max(now, _last_request_at.get(key, 0.0) + spacing)
+                    if slot - now > remaining:
+                        raise _budget_refused(limit, wait=slot - now)
+                    _last_request_at[key] = slot
+                    wait = slot - now
+                    if wait > 0:
+                        lock.release()
+                        try:
+                            time.sleep(wait)
+                        finally:
+                            lock.acquire()
+                    return
+                if wait <= 0:
+                    with _rate_lock:
+                        if len(_last_request_at) > 4096:
+                            _last_request_at.clear()
+                        _last_request_at[key] = now
+                    return
+            finally:
+                lock.release()
+            time.sleep(max(0.005, min(wait, 1.0, remaining)))
+    finally:
+        if priority:
+            with _rate_lock:
+                n = _priority_waiting.get(key, 0) - 1
+                if n > 0:
+                    _priority_waiting[key] = n
+                else:
+                    _priority_waiting.pop(key, None)
+
+
+def _mark_live(key):
+    """Note, for every process, that live or close requests are being made
+    on bucket `key` (its ":live" row; written at most every
+    _LIVE_MARK_EVERY seconds by a process). Never raises."""
+    now = time.monotonic()
+    if now - _live_marked.get(key, -1e9) < _LIVE_MARK_EVERY:
+        return
+    _live_marked[key] = now
+    _live_seen[key] = (now, True)
+    import models
+    try:
+        conn = models.get_conn()
+        try:
+            conn.execute("INSERT INTO rpower_rate_bucket (bucket, tokens, updated_at) VALUES (?, 0, ?) "
+                         "ON CONFLICT(bucket) DO UPDATE SET updated_at=excluded.updated_at",
+                         (key + ":live", time.time()))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _live_active(key) -> bool:
+    """Whether live or close requests were made on bucket `key` in the last
+    LIVE_ACTIVE_SECONDS (any process). Read at most every _LIVE_READ_EVERY
+    seconds; unreadable reads as not active (the background share is a
+    priority, not a safety limit — the bucket itself still holds)."""
+    now = time.monotonic()
+    seen = _live_seen.get(key)
+    if seen and now - seen[0] < _LIVE_READ_EVERY:
+        return seen[1]
+    active = False
+    import models
+    try:
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at FROM rpower_rate_bucket WHERE bucket=?", (key + ":live",)).fetchone()
+        finally:
+            conn.close()
+        active = bool(row) and time.time() - float(row[0]) < LIVE_ACTIVE_SECONDS
+    except Exception:
+        active = False
+    if len(_live_seen) > 4096:
+        _live_seen.clear()
+    _live_seen[key] = (now, active)
+    return active
+
+
+def _take_slot(token, key, spacing, limit, lane, deadline):
+    """One slot of bucket `key` for a request of `lane` (see Lanes above)."""
+    import pos_io
+    if lane == "bulk" or (lane in pos_io.BACKGROUND_LANES and _live_active(key)):
+        _wait_for_bucket(token, key + ":bg", spacing / BACKGROUND_SHARE, limit, lane=lane, deadline=deadline)
+    _wait_for_bucket(token, key, spacing, limit, lane=lane, deadline=deadline)
+    if lane not in pos_io.BACKGROUND_LANES:
+        _mark_live(key)
 
 
 def _sleep_for_spacing(token: str = ""):
-    """Wait for this request's slot in both budgets (see the note above)."""
+    """Wait for this request's slot in both budgets (see the note above),
+    in this thread's lane (pos_io.current_lane)."""
+    import pos_io
     spacing = float(REQUEST_SPACING_SECONDS or 0)
     # A page load waits a few seconds for its slot at most (POS-13); a job
     # waits up to RATE_MAX_WAIT_SECONDS.
     limit = RATE_REQUEST_THREAD_WAIT_SECONDS if on_request_thread() else RATE_MAX_WAIT_SECONDS
+    deadline = time.monotonic() + limit
+    lane = pos_io.current_lane()
     if spacing > 0:
         store = getattr(_io_ctx, "store", None) if BUDGET_PER_STORE else None
-        _wait_for_bucket(token, _bucket_key(token, store), spacing, limit)
-    if spacing > 0 and FLEET_RPS and FLEET_RPS > 0:
-        _wait_for_bucket(token, FLEET_BUCKET, 1.0 / float(FLEET_RPS), limit)
+        _take_slot(token, _bucket_key(token, store), spacing, limit, lane, deadline)
+    # The fleet ceiling stands on its own (R3-08): RPOWER saying it has no
+    # per-token limit (spacing 0) never switches the fleet-wide one off.
+    if FLEET_RPS and FLEET_RPS > 0:
+        _take_slot(token, FLEET_BUCKET, 1.0 / float(FLEET_RPS), limit, lane, deadline)
 
 
 def _backoff(attempt: int) -> float:
@@ -586,7 +713,33 @@ def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
     stops on the first short page, and keys every row: a page that repeats
     rows already seen means the server is not advancing the way the caller
     assumed, and that is raised rather than returned as a doubled total.
+
+    A page that PARTLY repeats the one before is rows lost, not only rows
+    doubled (blind re-audit 10/20/26 R3-04): pages are fixed 1,000-row
+    offsets, so k rows seen twice are k rows never returned — rows inserted
+    or re-sorted between two requests on a sort key that is not unique
+    (`date`, `time_stamp`; RPOWER documents no unique one). The whole read
+    starts again from page 1, once; a second overlap raises, so no caller
+    stores or reports a short set as whole.
     """
+    for attempt in range(PAGED_ATTEMPTS):
+        try:
+            return _paged_once(token, path, params, max_pages)
+        except _PageOverlap as e:
+            if attempt + 1 >= PAGED_ATTEMPTS:
+                raise RPowerError(f"{path} could not be read whole: {e}; nothing was kept from this read")
+            log.warning("[rpower] %s: %s — reading it again from page 1", path, e)
+
+
+# Reads of a paged set before an overlap is an error (R3-04).
+PAGED_ATTEMPTS = 2
+
+
+class _PageOverlap(Exception):
+    """A page shared rows with the pages before it: rows were skipped."""
+
+
+def _paged_once(token: str, path: str, params: dict, max_pages: int = 200) -> list:
     out, seen = [], set()
     for page in range(1, max_pages + 1):
         body = _request(token, path, {**params, "pagenumber": page})
@@ -619,9 +772,8 @@ def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
             log.warning("[rpower] %s page %s repeated entirely — stopping", path, page)
             break
         if duplicates:
-            log.warning("[rpower] %s page %s overlapped the previous page by %s rows "
-                        "— RPOWER's page arithmetic is not what the docs describe",
-                        path, page, duplicates)
+            raise _PageOverlap(f"page {page} repeated {duplicates} row(s) of the pages before it, so as many "
+                               "were never returned (rows moved between requests)")
         out.extend(fresh)
         if len(rows) < PAGE_SIZE:
             break
@@ -836,7 +988,8 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
 # not name reads that list afresh once (archive_rows: refresh on a miss), so
 # a sales type, item or employee added today is never filed as unknown.
 # A web request uses the kept copy at any age and never reads a list live
-# (A3-09) — except inside allow_live_reads() (an owner's push preview).
+# (A3-09) — except inside allow_live_reads(), which no web route uses since
+# the push preview went to the kept lists (blind re-audit 10/20/26 R3-07).
 CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "21600"))
 _list_cache = _LRU(CACHE_MAX_KEYED)
 
@@ -862,9 +1015,9 @@ def fresh_lists():
 
 
 def allow_live_reads():
-    """`with rpower.allow_live_reads():` — an owner's explicit action on a web
-    request (the schedule push preview) may read a list RPOWER has not
-    been asked for yet."""
+    """`with rpower.allow_live_reads():` — an explicit action on a web
+    request may read a list RPOWER has not been asked for yet. No route
+    uses it since 10/20/26 (R3-07: the push preview reads the kept lists)."""
     return _flag("allow_live")
 
 
@@ -872,7 +1025,7 @@ def _fresh() -> bool:
     return bool(getattr(_io_ctx, "fresh", False))
 
 
-def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name") -> list:
+def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name", extra=None) -> list:
     """Every row of one RPOWER configuration list for this store's group (or
     the store itself, `by_store`): this process's copy for
     CATALOG_CACHE_SECONDS, else the group's kept copy (pos_catalogs) while
@@ -894,6 +1047,7 @@ def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name
     if page_load:
         raise RPowerArchiveMiss(f"RPOWER's {path} list is not kept yet; not read live during a page load")
     params = dict(base) if by_store else {"cg": base["cg"]}
+    params.update(extra or {})
     if sortorder:
         params["sortorder"] = sortorder
     rows = _paged(token, path, params)
@@ -944,7 +1098,8 @@ _sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS)
 def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
-              _job_cat_cache, _list_cache, _archive_refreshed):
+              _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
+              _scope_cache):
         c.clear()
     try:
         import pos_io
@@ -1663,6 +1818,36 @@ def _punch_dt(raw) -> Optional[datetime]:
     return None if dt.year <= 2000 else dt
 
 
+def punch_business_date(t: datetime) -> date:
+    """The business date a punch that STARTS at local wall-clock `t` is
+    worked for — the schedule's own rule (schedule_time.NIGHT_TAIL_BEFORE: a
+    start before 4am is the small hours of the night before). Every RPOWER
+    punch path files by it: the live clock-ins, the archive's punches, the
+    nightly labor rows (blind re-audit 10/20/26 R3-10 / R9-09). The clock-in
+    and archive paths used 5am, so a 4:30am baker was "hasn't clocked in"
+    against a 4:30 shift and filed on the night before; the labor rows used
+    the calendar date, so a 12:10am job change was set against the next
+    day's sales."""
+    from schedule_time import NIGHT_TAIL_BEFORE
+    return t.date() - timedelta(days=1) if t.hour * 60 + t.minute < NIGHT_TAIL_BEFORE else t.date()
+
+
+def _punch_window(day) -> tuple:
+    """(start, end) local wall-clock of the punches worked for business date
+    `day` (punch_business_date's boundary to the same one the next morning)."""
+    from schedule_time import NIGHT_TAIL_BEFORE
+    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=NIGHT_TAIL_BEFORE)
+    return start, start + timedelta(days=1)
+
+
+def _is_closed_punch(e) -> bool:
+    """A finished punch: an out time that is a time. RPOWER writes an open
+    punch's out_dttm as 2000-01-01T00:00:00 — a truthy string, so a bare
+    `e.get("out_dttm")` counted every punch still on the clock as closed
+    (blind re-audit 10/20/26 R3-06)."""
+    return _punch_dt(e.get("out_dttm")) is not None
+
+
 # ── who each punch belongs to ───────────────────────────────────────────────
 #
 # A timeclock row names its person and job only by reference: `emp_mid` /
@@ -1937,29 +2122,36 @@ def fetch_sales_today(restaurant_id: int, business_date) -> float:
 def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
     """Everyone who has clocked in this business day: [{"employee", "role",
     "clocked_in_at", "external_id"}] — the shape intraday.coverage_gaps
-    reads. The day runs from BUSINESS_DAY_START_HOUR local to the same hour
-    the next morning (RPOWER's punch times are local wall clock), so a
-    12:30am clock-in during a late close is tonight's. Station logins (a
-    "Bar 1" record) are left out, as in the labor sync. `external_id` is the
-    employee's RPOWER id, which people.person_aliases keys the person on."""
-    from time_utils import BUSINESS_DAY_START_HOUR
+    reads. The day is the punches punch_business_date files on it (4am local
+    to 4am, the schedule's own boundary; RPOWER's punch times are local wall
+    clock), so a 12:30am clock-in during a late close is tonight's and a
+    4:30am baker's is this morning's. Station logins (a "Bar 1" record) are
+    left out, as in the labor sync. `external_id` is the employee's RPOWER
+    id, which people.person_aliases keys the person on.
+
+    A punch whose employee the kept lists do not name reads them afresh
+    once (_people_for); one still unnamed is counted as "Unknown employee
+    (POS …1234)" with `unknown` True — never a reason to refuse the whole
+    read (blind re-audit 10/20/26 R3-06: one new hire's punch blanked live
+    labor and the coverage check for up to six hours, or, among 21 or more
+    punches, vanished, and they were told "hasn't clocked in")."""
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
-    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
-    end = start + timedelta(days=1)
+    start, end = _punch_window(day)
     entries = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     if not entries:
         return []
-    people = _people_cached(restaurant_id)
-    _require_resolved(entries, people)
+    people = _people_for(restaurant_id, entries)
     stations = station_logins(entries, people)
     jobs, emps = people.get("jobs") or {}, people.get("employees") or {}
     rows = []
     for e in entries:
         mid = str(e.get("emp_mid") or "").strip()
-        if not mid or mid in stations or mid not in emps:
+        if not mid or mid in stations:
             continue
-        rows.append({"employee": emps[mid],
+        known = mid in emps
+        rows.append({"employee": emps[mid] if known else f"Unknown employee (POS …{mid[-4:]})",
+                     **({} if known else {"unknown": True}),
                      "role": jobs.get(str(e.get("job_mid") or "")) or (e.get("job_id") or "").strip() or "Staff",
                      "clocked_in_at": _punch_dt(e.get("in_dttm")).isoformat(),
                      # The punch's end once they clocked out, and its pay
@@ -1975,7 +2167,7 @@ def _require_resolved(entries: list, people: dict) -> None:
     """Refuse a pull whose punches mostly can't be matched to a person: saved
     under payroll codes they read as strangers and never merge with the
     names every other screen uses."""
-    closed = [e for e in entries or [] if e.get("out_dttm")]
+    closed = [e for e in entries or [] if _is_closed_punch(e)]
     if not closed:
         return
     names = people.get("employees") or {}
@@ -2027,7 +2219,9 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
         # every average down, so it is skipped rather than guessed at.
         if not end or end <= start:
             continue
-        day = start.date().isoformat()
+        # The business date the punch was worked for (R9-09): a 12:10am job
+        # change is the night before's, as the archive and live paths file it.
+        day = punch_business_date(start).isoformat()
         reg = float(e.get("reg_hours") or 0)
         ot = float(e.get("ot_hours") or 0)
         dt_h = float(e.get("dt_hours") or 0)
@@ -2048,7 +2242,7 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
         named = mid in emp_names
         rows.append({
             "date": day,
-            "day": _DOW_NAMES[start.weekday()],
+            "day": _DOW_NAMES[date.fromisoformat(day).weekday()],
             "employee": (emp_names.get(mid)
                          or (e.get("payroll_id") or e.get("emp_mid") or "").strip()),
             # The employee's own RPOWER ids (memory audit 9/29/26, identity):
@@ -2118,10 +2312,17 @@ def _labor_entries(restaurant_id: int, start, end) -> tuple:
     archived = []
     if covered:
         bdates = sorted({x.isoformat() for d in covered for x in (d, d - timedelta(days=1))})
+        held = set()
         for p in pos_archive.archived_punches(restaurant_id, "rpower", bdates):
             start_at = _punch_dt(p.get("clock_in"))
             if start_at is None or start_at.date() not in covered:
                 continue
+            # One punch is one entry: a punch stored under two business dates
+            # (a re-archive across the 10/20/26 boundary change; Postgres's
+            # partitioned key carries the date) is counted once.
+            if str(p["punch_id"]) in held:
+                continue
+            held.add(str(p["punch_id"]))
             archived.append({"rid": p["punch_id"], "emp_mid": p.get("employee_id"), "in_dttm": p.get("clock_in"),
                              "out_dttm": p.get("clock_out"), "job_mid": p.get("job_id"), "job_id": p.get("role") or "",
                              "reg_hours": p.get("reg_hours"), "ot_hours": p.get("ot_hours"),
@@ -2141,38 +2342,55 @@ def _labor_entries(restaurant_id: int, start, end) -> tuple:
     return live + archived, live, archived, runs
 
 
+# A store's people lists are read afresh for an unknown punch at most this
+# often (the live clock-ins run every 15 minutes during service: an id the
+# POS never lists must not re-read them every time).
+PEOPLE_REFRESH_SECONDS = 600
+_people_refreshed = _LRU(CACHE_MAX_RESTAURANTS)
+
+
 def _people_for(restaurant_id: int, entries: list) -> dict:
-    """The kept people lists, read afresh once when a finished punch names
-    an employee or job they do not hold (a hire since they were kept)."""
+    """The kept people lists, read afresh once (per PEOPLE_REFRESH_SECONDS)
+    when a punch — on the clock or finished — names an employee or job they
+    do not hold: a hire since they were kept. A new hire's first shift used
+    to read the six-hour-old list and blank live labor (R3-06)."""
     people = _people_cached(restaurant_id)
     emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
     if any((str(e.get("emp_mid") or "") not in emps or (_id(e.get("job_mid")) and str(_id(e.get("job_mid"))) not in jobs))
-           for e in entries if e.get("out_dttm") and not str(e.get("emp_mid") or "") in (people.get("station_names") or {})):
-        with fresh_lists():
-            people = _people_cached(restaurant_id)
+           for e in entries if _punch_dt(e.get("in_dttm")) is not None
+           and not str(e.get("emp_mid") or "") in (people.get("station_names") or {})):
+        hit = _people_refreshed.get(restaurant_id)
+        if hit is None or time.monotonic() - hit >= PEOPLE_REFRESH_SECONDS:
+            _people_refreshed[restaurant_id] = time.monotonic()
+            with fresh_lists():
+                people = _people_cached(restaurant_id)
     return people
 
 
 def _refresh_archived_punches(restaurant_id: int, live: list, runs: list, people: dict) -> None:
     """Store this live read's punches over the archive's for each archived
     business date it fully covered (its own calendar day and the next one,
-    where its after-midnight punches fall), stamping when they were read. A
-    date the read found no punch for is left alone (an empty answer never
-    wipes a stored day; it simply stays unsettled). Never raises."""
+    where its after-midnight punches fall), stamping when they were read.
+    A covered date the read found no punch for is passed as empty: a day the
+    archive also holds empty (a store closed on Mondays) is stamped read and
+    so settles — it was re-read live every night for 60 days, with the day
+    after it (blind re-audit 10/20/26 R3-14) — while an empty answer never
+    wipes a stored day that has punches (pos_archive.refresh_punches). Never
+    raises."""
     try:
-        from time_utils import BUSINESS_DAY_START_HOUR
         import pos_archive
         by_day = {}
         for e in live:
             t = _punch_dt(e.get("in_dttm"))
             if t is None:
                 continue
-            b = t.date() - timedelta(days=1) if t.hour < BUSINESS_DAY_START_HOUR else t.date()
-            by_day.setdefault(b, []).append(e)
+            by_day.setdefault(punch_business_date(t), []).append(e)
         span = {}
-        for b, rows in by_day.items():
-            if any(a <= b and b + timedelta(days=1) <= z for a, z in runs):
-                span[b.isoformat()] = _punch_records(rows, b.isoformat(), people)
+        for a, z in runs:
+            b = a
+            while b + timedelta(days=1) <= z:
+                span[b.isoformat()] = _punch_records(by_day.get(b) or [], b.isoformat(), people)
+                b += timedelta(days=1)
         if span:
             pos_archive.refresh_punches(restaurant_id, "rpower", span)
     except Exception as e:
@@ -2196,7 +2414,12 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     _require_resolved(entries, people)
     _refresh_archived_punches(restaurant_id, live, runs, people)
     sales = fetch_business_days(restaurant_id, start, end)
-    rows = normalise_entries(entries, sales, people)
+    # A punch before 4am on the window's first calendar day is the night
+    # before's (punch_business_date, R9-09) — a day outside this window that
+    # this read does not hold whole: left out, never stored as that day
+    # (shift_facts replaces the window the rows' dates span).
+    before = (start - timedelta(days=1)).isoformat()
+    rows = [r for r in normalise_entries(entries, sales, people) if r["date"] != before]
     left_out = station_logins(entries, people)
     if left_out:
         log.info("[rpower] rid=%s station logins left out of labor: %s",
@@ -2392,9 +2615,13 @@ def preview_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = N
     job). `problems` lists anything RPOWER would reject or misfile: a payroll
     id no current employee has, a job the store does not have or the person
     does not hold, a time not in RPOWER's format, a shift that ends before it
-    starts or runs past MAX_SHIFT_HOURS, two shifts of one person that overlap."""
-    with allow_live_reads():               # the owner asked for it: a list not kept yet may be read
-        return _preview_labor_schedule(restaurant_id, shifts, job_codes)
+    starts or runs past MAX_SHIFT_HOURS, two shifts of one person that overlap.
+
+    On a web request the lists are the kept copies only (blind re-audit
+    10/20/26 R3-07: the preview read them live, holding one of the four
+    request threads on RPOWER); a list never kept yet is RPowerArchiveMiss,
+    and the push itself (a queue row) reads what it needs."""
+    return _preview_labor_schedule(restaurant_id, shifts, job_codes)
 
 
 def _preview_labor_schedule(restaurant_id, shifts, job_codes=None):
@@ -2526,11 +2753,30 @@ CATALOG_CACHE_SECONDS = 600
 _catalog_cache = _LRU(CACHE_MAX_KEYED)
 
 
+_scope_cache = _LRU(CACHE_MAX_KEYED)
+
+
+def _list_scope(restaurant_id: int, by_store: bool = False) -> str:
+    """The pos_catalogs scope of a store's list: its consolidation group
+    (and store, `by_store`) — remembered for CATALOG_CACHE_SECONDS."""
+    key = (restaurant_id, bool(by_store))
+    hit = _scope_cache.get(key)
+    if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
+        return hit[1]
+    token, base = _ctx(restaurant_id)
+    scope = ("demo:" if str(token).startswith("demo-store:") else "") + str(base["cg"]) + (
+        f":{base['storemid']}" if by_store else "")
+    _scope_cache[key] = (time.monotonic(), scope)
+    return scope
+
+
 def _catalog(restaurant_id: int, path: str, by_store: bool = False) -> dict:
     """{mid: row} of one RPOWER list (tables, rooms, meal times, profit
     centers), read once per CATALOG_CACHE_SECONDS — through _list, so the
-    group's kept copy answers before RPOWER does."""
-    key = (restaurant_id, path)
+    group's kept copy answers before RPOWER does. Kept once per group (or
+    store) and list, not per restaurant (blind re-audit 10/20/26 R3-19: every
+    store of a group held its own copy of the same lists)."""
+    key = (_list_scope(restaurant_id, by_store), path)
     hit = _catalog_cache.get(key)
     if hit and not _fresh() and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
         return hit[1]
@@ -2578,10 +2824,9 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
 
     Reads ticket/, ticketsales/ and ticketpayment/getbybusinessdate,
     payout/getbydaterange and timeclock/getbydaterange (the day and the next,
-    kept to the business day: 5am local to 5am), and the lists: sales types,
+    kept to the business day: punch_business_date's 4am to 4am), and the lists: sales types,
     menu, void reasons, people, tables and rooms (table/room getbystore),
     meal times, profit centers, payment methods and payout categories."""
-    from time_utils import BUSINESS_DAY_START_HOUR
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
     token, base = _ctx(restaurant_id)
     iso = _d(day)
@@ -2593,8 +2838,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
                        {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
     raw_tickets = _paged(token, "ticket/getbybusinessdate",
                          {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
-    end = start + timedelta(days=1)
+    start, end = _punch_window(day)            # the schedule's boundary (R3-10)
     raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                    if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     raw_payments = _paged(token, "ticketpayment/getbybusinessdate",
@@ -2955,36 +3199,85 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
 CHANGE_FEEDS = ("ticketsales/getbytimestamp", "ticket/getbytimestamp")
 
 
+# Change reads ask with a time, not only a date (blind re-audit 10/20/26
+# R3-03): `startdate` / `enddate` as YYYY-MM-DDTHH:MM:SS — RPOWER's own
+# collection asks ticketitem/getbytimestamp that way. A date-only window was
+# whole UTC days (2–4 of them, about 7 pages) for a question about the last
+# half hour. Two allowances while RPOWER has not said how it reads the time
+# (Q5: UTC, or the store's local time):
+#   * the local filter keeps a write only when it is later than `since`
+#     less CHANGE_OVERLAP (clock skew between us and RPOWER);
+#   * the window asked for starts RPOWER_CHANGE_MARGIN_HOURS earlier still,
+#     so a server reading the time as US local (up to 10 hours behind UTC)
+#     still returns every write after `since`. Set it to 0 once RPOWER
+#     confirms the filter is UTC.
+# RPOWER_CHANGE_DATETIME=0 (or a datetime window answered with an error,
+# remembered for the process) goes back to date-only windows.
+CHANGE_DATETIME = os.getenv("RPOWER_CHANGE_DATETIME", "1").strip().lower() not in ("0", "false", "off", "no")
+CHANGE_MARGIN = timedelta(hours=max(0.0, float(os.getenv("RPOWER_CHANGE_MARGIN_HOURS", "10") or 0)))
+CHANGE_OVERLAP = timedelta(minutes=15)
+_change_datetime_refused = {"at": None}
+
+
 def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
     """Business dates with a sale line or a ticket written or rewritten in
-    RPOWER's database between two UTC moments — CHANGE_FEEDS, which RPOWER
-    documents as "when a record was last inserted or updated" (UTC). A store
-    re-posting a closed day moves its time_stamp, so a date already archived
-    shows up here and is archived again.
+    RPOWER's database between two UTC moments (changed_business_stamps)."""
+    return set(changed_business_stamps(restaurant_id, since_utc, until_utc))
+
+
+def changed_business_stamps(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> dict:
+    """{business date: its newest write stamp} for the sale lines and
+    tickets written or rewritten in RPOWER's database between two UTC
+    moments — CHANGE_FEEDS, which RPOWER documents as "when a record was
+    last inserted or updated" (UTC). A store re-posting a closed day moves
+    its time_stamp, so a date already archived shows up here; the archive
+    re-reads it only when that stamp is newer than the newest write it
+    stored the day with (pos_archive._moved, R3-02).
 
     Asked a week at a time (RPOWER's ask, MAX_RANGE_DAYS; bar audit 10/14/26
     RPW-17 / R26): after an outage `changes_checked_to` can fall weeks
     behind, and one request spanning all of it is exactly the oversized read
     the vendor asked us not to make. Each request's end is the next one's
-    start (enddate is treated as possibly exclusive, as the single request
-    always did with until + 1 day), so no day falls between two requests."""
+    start, so nothing falls between two requests. With a time in the window
+    (CHANGE_DATETIME, above) it runs from `since` less the margin to
+    `until`; date-only, from since's date to the day after until's (enddate
+    possibly exclusive)."""
     token, base = _ctx(restaurant_id)
-    lo = since_utc.strftime("%Y-%m-%d %H:%M:%S")
-    first = date.fromisoformat(_d(since_utc))
-    last = date.fromisoformat(_d(until_utc + timedelta(days=1)))
-    out = set()
-    cursor = first
+    lo = (since_utc - CHANGE_OVERLAP).strftime("%Y-%m-%d %H:%M:%S")
+    if CHANGE_DATETIME and _change_datetime_refused["at"] is None:
+        try:
+            return _change_read(token, base, lo, since_utc - CHANGE_OVERLAP - CHANGE_MARGIN,
+                                until_utc + timedelta(minutes=1), True)
+        except (RPowerAuthError, RPowerTryLater):
+            raise
+        except RPowerError as e:
+            if "HTTP 4" not in str(e):
+                raise
+            # RPOWER refused a time in the window: date-only from here on in
+            # this process (said once in the log).
+            _change_datetime_refused["at"] = time.time()
+            log.warning("[rpower] change read refused a datetime window (%s); date-only windows from now on", e)
+    return _change_read(token, base, lo, since_utc, until_utc + timedelta(days=1), False)
+
+
+def _change_read(token, base, lo, start, stop, with_time) -> dict:
+    fmt = (lambda v: v.strftime("%Y-%m-%dT%H:%M:%S")) if with_time else _d
+    if not with_time:
+        start = date.fromisoformat(_d(start))
+        stop = date.fromisoformat(_d(stop))
+    out = {}
+    cursor = start
     while True:
-        end = min(cursor + timedelta(days=MAX_RANGE_DAYS), last)
+        end = min(cursor + timedelta(days=MAX_RANGE_DAYS), stop)
         for feed in CHANGE_FEEDS:
             rows = _paged(token, feed, {
-                **base, "startdate": _d(cursor), "enddate": _d(end), "sortorder": "time_stamp"})
+                **base, "startdate": fmt(cursor), "enddate": fmt(end), "sortorder": "time_stamp"})
             for r in rows:
                 stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
                 day = _biz_date(r.get("date"))
                 if day and stamp and stamp > lo:
-                    out.add(day)
-        if end >= last:
+                    out[day] = max(out.get(day) or "", stamp)
+        if end >= stop:
             break
         cursor = end
     return out
@@ -2996,12 +3289,17 @@ def fetch_employee_jobs(restaurant_id: int) -> list:
     employeejob/getbystore (RPower endpoint audit, 9/29/26, High ROI #5).
     Who can work which job: 83 of Simple EJ's current staff hold two or
     more. RPOWER keeps job rows active for people long gone (429 employees
-    held jobs, 105 were current), so the caller keeps only people it knows."""
+    held jobs, 105 were current), so the caller keeps only people it knows.
+
+    Kept like every list (_list, pos_catalogs per store): the owner's push
+    preview on a web request reads the kept copy and never RPOWER (blind
+    re-audit 10/20/26 R3-07 — it read this list live on every open)."""
     token, base = _ctx(restaurant_id)
     ppl = _people_cached(restaurant_id)
     jobs, emps = ppl.get("jobs") or {}, ppl.get("employees") or {}
     out = []
-    for r in _paged(token, "employeejob/getbystore", {**base, "isinactive": 0, "sortorder": "mid"}):
+    for r in _list(restaurant_id, "employeejob/getbystore", by_store=True, sortorder="mid",
+                   extra={"isinactive": 0}):
         emp, job = _id(r.get("emp_mid")), _id(r.get("job_mid"))
         if not emp or not job or r.get("is_inactive") or not jobs.get(job):
             continue
@@ -3037,6 +3335,25 @@ def fetch_menu_prices(restaurant_id: int) -> list:
 
 
 ORDERS_DUE_CACHE_SECONDS = 3600
+ORDERS_DUE_KIND = "orders_due"
+ORDERS_DUE_KEEP_DAYS = 14          # the window the nightly run keeps (pos_archive.run_for)
+
+
+def _drop_dated_orders_due(restaurant_id):
+    """The store's snapshot rows from before 10/20/26, one per end date
+    ("orders_due:YYYY-MM-DD", R3-16). Never raises."""
+    import models
+    try:
+        conn = models.get_conn()
+        try:
+            conn.execute("DELETE FROM pos_live_snapshot WHERE restaurant_id=? AND kind LIKE 'orders_due:%'",
+                         (int(restaurant_id),))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("[rpower] old orders-due snapshots not dropped for %s: %s", restaurant_id, e)
+
 
 
 def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
@@ -3048,18 +3365,31 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
     token, base = _ctx(restaurant_id)
     # Kept for ORDERS_DUE_CACHE_SECONDS (scale audit 10/19/26 A3-18): Ask's
     # read_upcoming asked RPOWER on every question about the days ahead.
+    # One row per store (kind "orders_due", the window in its value — blind
+    # re-audit 10/20/26 R3-16: a kind per end date added a row per store per
+    # day, never pruned). A read for an owner (a web request, or Ask's
+    # archive-only read) takes the kept window at any age when it covers the
+    # days asked and never reads RPOWER (R3-07); the nightly archive run
+    # keeps it (pos_archive.run_for).
     import pos_io
-    kind = f"orders_due:{_d(end_date)}"
-    kept = pos_io.snapshot_get(restaurant_id, kind, _d(start_date))
-    if kept is not None and kept["age"] < ORDERS_DUE_CACHE_SECONDS and isinstance(kept["value"], list):
-        rows = kept["value"]
+    start_iso, end_iso = _d(start_date), _d(end_date)
+    kept = pos_io.snapshot_get(restaurant_id, ORDERS_DUE_KIND, start_iso)
+    value = kept["value"] if kept is not None else None
+    covers = (isinstance(value, dict) and isinstance(value.get("rows"), list)
+              and str(value.get("end") or "") >= end_iso)
+    if covers and (kept["age"] < ORDERS_DUE_CACHE_SECONDS or _reader_only()):
+        rows = value["rows"]
+    elif _reader_only():
+        raise RPowerArchiveMiss("orders due are not kept for these days yet; not read live for an owner's read")
     else:
-        rows = _paged(token, "ticket/getbyneeddatetime", {**base, "startdate": _d(start_date),
+        rows = _paged(token, "ticket/getbyneeddatetime", {**base, "startdate": start_iso,
                                                            "enddate": _d(end_date + timedelta(days=1)),
                                                            "sortorder": "need_dttm"})
-        pos_io.snapshot_put(restaurant_id, kind, _d(start_date),
-                            [{k: t.get(k) for k in ("need_dttm", "is_cancelled", "guest_count", "ticket", "items")}
-                             for t in rows])
+        pos_io.snapshot_put(restaurant_id, ORDERS_DUE_KIND, start_iso,
+                            {"end": end_iso,
+                             "rows": [{k: t.get(k) for k in ("need_dttm", "is_cancelled", "guest_count", "ticket",
+                                                             "items")} for t in rows]})
+        _drop_dated_orders_due(restaurant_id)
     out = []
     for t in rows:
         due = _punch_dt(t.get("need_dttm"))

@@ -517,6 +517,42 @@ def run_push(push_id, now_local=None, db_path=None) -> dict:
     return {"status": status, "sent": n_sent, "error": res.get("error")}
 
 
+def send_now(restaurant_id, push_id) -> bool:
+    """Hand a queued push to the job queue so it is sent within seconds, off
+    the web request thread (blind re-audit 10/20/26 R3-07: the owner's
+    "Send this week now" ran the preview and a 30-second POST on one of the
+    four request threads). True when queued; a push not handed over still
+    goes with the `pos_schedule_push` job's next 10-minute run. Never
+    raises."""
+    try:
+        import time as _t
+        import job_queue
+        _qid, _created = job_queue.enqueue(
+            "pos_schedule_push", {"push_id": int(push_id)}, restaurant_id=int(restaurant_id),
+            priority_class="interactive",
+            # A double press in the same minute is one send.
+            idempotency_key=f"pos_schedule_push_now:{int(push_id)}:{int(_t.time() // 60)}")
+        return True
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="pos_schedule_push", context=f"restaurant_id={restaurant_id} push={push_id} hand-off")
+        except Exception:
+            pass
+        return False
+
+
+def run_queued_push(job):
+    """job_queue's handler for `pos_schedule_push`: one push, sent
+    (run_push — it claims the row, so the 10-minute job never sends it
+    twice)."""
+    pid = (job.payload or {}).get("push_id")
+    if not pid:
+        return {"skipped": "no push"}
+    out = run_push(int(pid))
+    return {"status": out.get("status"), "sent": out.get("sent")}
+
+
 def _tell_failure(restaurant_id, row, why, db_path=None):
     """The owner hears a push that didn't land (the week is with staff; the
     clock won't enforce it), and the operator gets the error. Never raises."""

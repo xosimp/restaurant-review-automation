@@ -1889,6 +1889,16 @@ def ensure_columns(db_path: str = DB_PATH):
         # takes the rollup only for a window whose every day is at
         # pos_archive.ITEM_ROLLUP_VERSION.
         ("pos_archive_days", "item_rollup", "INTEGER"),
+        # Blind re-audit 10/20/26 (pos_archive): when a change read last found
+        # the day unchanged (UTC; R3-03 — a reader's recheck that found
+        # nothing is not repeated), and the short re-read that was refused
+        # (R3-05: JSON {sig, tickets, lines, net_sales, at} — an empty or
+        # short read never replaces a stored night; NULL = none).
+        ("pos_archive_days", "checked_at", "TEXT"),
+        ("pos_archive_days", "suspect", "TEXT"),
+        # When the POS's price list was last read (UTC; R3-11): unchanged
+        # prices are no longer rewritten, so MAX(seen_at) no longer says it.
+        ("pos_archive_state", "prices_read_at", "TEXT"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.

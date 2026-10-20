@@ -260,8 +260,10 @@ def day_closed(restaurant, day, now_utc, trigger=None):
     the button's word — and the route refuses that before close
     (manual_close_refusal) unless the owner says they closed early."""
     import pos
+    import pos_io
     try:
-        closed, _provider = pos.fetch_day_closed(restaurant.id, day)
+        with pos_io.lane("close"):             # the night's report: ahead of the nightly work (R3-01)
+            closed, _provider = pos.fetch_day_closed(restaurant.id, day)
         return "pos" if closed else None
     except pos.POSCapabilityError:
         if trigger == TRIGGER_MANUAL:
@@ -317,11 +319,16 @@ def _collect(name, ctx):
     that raises or returns something outside the contract is captured and
     comes back AWAITING so it is retried."""
     import ops
+    import pos_io
     try:
         mod = _import(f"dsr.block_{name}")
         if mod is None:
             return dsr.block(dsr.UNAVAILABLE, reason=NOT_AVAILABLE_YET, block_name=name), False
-        raw = mod.collect(ctx)
+        # A POS read the report makes is the "close" lane: served ahead of
+        # the nightly and bulk work on the same token (blind re-audit
+        # 10/20/26 R3-01), behind only the live reads during service.
+        with pos_io.lane("close"):
+            raw = mod.collect(ctx)
         if not isinstance(raw, dict) or raw.get("status") not in dsr.STATUSES:
             raise ValueError(f"dsr.block_{name}.collect returned {type(raw).__name__}, not a block")
         blk = dsr.block(raw["status"], source=raw.get("source"), reason=raw.get("reason"),
