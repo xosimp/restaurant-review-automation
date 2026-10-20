@@ -5535,7 +5535,7 @@ def _billing_blocked(user) -> bool:
 
 
 _BILLING_BLOCKED_MESSAGE = (
-    "This subscription is no longer active. Contact will@cavnar.ai to reactivate."
+    "This subscription is no longer active. Contact billing@cavnar.ai to reactivate."
 )
 
 
@@ -5842,7 +5842,7 @@ def _mdy(iso):
         return None
 
 
-_BILLING_HOLD_MESSAGE = ("Your account is on hold — contact Will at will@cavnar.ai to sort it out. "
+_BILLING_HOLD_MESSAGE = ("Your account is on hold — contact billing@cavnar.ai to sort it out. "
                          "Your data is safe in the meantime.")
 
 

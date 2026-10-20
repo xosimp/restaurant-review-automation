@@ -2859,7 +2859,7 @@ def privacy_page():
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:
-        html = "<h1>Privacy Policy</h1><p>Coming soon. Contact will@cavnar.ai</p>"
+        html = "<h1>Privacy Policy</h1><p>Coming soon. Contact privacy@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
 @admin_bp.route("/terms")
@@ -2871,7 +2871,7 @@ def terms_page():
         with open(html_path, "r") as f:
             html = f.read()
     except FileNotFoundError:
-        html = "<h1>Terms of Service</h1><p>Coming soon. Contact will@cavnar.ai</p>"
+        html = "<h1>Terms of Service</h1><p>Coming soon. Contact legal@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
 @admin_bp.route("/sms-optin-preview", methods=["GET", "POST"])
@@ -2997,7 +2997,7 @@ def _optin_preview_response(template, texts_confirm, no_texts_confirm, consent_e
 def security_txt():
     from flask import Response
     content = (
-        "Contact: mailto:will@cavnar.ai\n"
+        f"Contact: mailto:{__import__('config').security_email()}\n"
         "Preferred-Languages: en\n"
         "Policy: https://dashboard.cavnar.ai/privacy\n"
         "Expires: 2027-01-01T00:00:00.000Z\n"

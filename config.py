@@ -34,6 +34,42 @@ def sales_email() -> str:
     return (os.getenv("SALES_EMAIL") or DEFAULT_SALES_EMAIL).strip()
 
 
+DEFAULT_ROLE_EMAILS = {
+    "support": "support@cavnar.ai",    # owners' help, "this looks wrong"
+    "billing": "billing@cavnar.ai",    # payments, invoices, account holds
+    "security": "security@cavnar.ai",  # vulnerability reports, a login that wasn't you
+    "privacy": "privacy@cavnar.ai",    # data, deletion and privacy-rights requests
+    "legal": "legal@cavnar.ai",        # contracts and legal notices
+}
+
+
+def role_email(role: str) -> str:
+    """One of Cavnar AI's role addresses (10/20/26: each a Google Group that
+    delivers to Will today and to whoever takes the role later), overridable
+    as <ROLE>_EMAIL. sales@ is sales_email()."""
+    return (os.getenv(f"{role.upper()}_EMAIL") or DEFAULT_ROLE_EMAILS[role]).strip()
+
+
+def support_email() -> str:
+    return role_email("support")
+
+
+def billing_email() -> str:
+    return role_email("billing")
+
+
+def security_email() -> str:
+    return role_email("security")
+
+
+def privacy_email() -> str:
+    return role_email("privacy")
+
+
+def legal_email() -> str:
+    return role_email("legal")
+
+
 def from_email() -> str:
     """The address transactional mail is sent from (Resend sender)."""
     return os.getenv("FROM_EMAIL", DEFAULT_SENDER)

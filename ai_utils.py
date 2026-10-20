@@ -1555,7 +1555,7 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
 
     AIBudgetExceeded carries a deliberately written, actionable sentence
     ("AI is paused — this account has reached its monthly budget. Contact
-    will@cavnar.ai if this looks wrong."). The resiliency audit found it was
+    support@cavnar.ai if this looks wrong."). The resiliency audit found it was
     caught specifically in exactly ONE place in the product — the invoice
     scanner — so everywhere else, including Ask, a budget-paused account was
     told "try again", forever, about a condition that retrying cannot clear.
@@ -2810,7 +2810,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
         log_blocked(restaurant_id, action, model, "budget", detail=over, **attribution)
         raise AIBudgetExceeded(
             f"AI is paused — this account has reached its {over}. "
-            "Contact will@cavnar.ai if this looks wrong."
+            "Contact support@cavnar.ai if this looks wrong."
         )
     # The manually armed emergency stop, and a runaway workflow paused by
     # its own spend rate (SCALE-11) — never the whole fleet for one loop.
@@ -2820,7 +2820,7 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
         raise AIBudgetExceeded(
             "AI is paused for everyone for a moment — try again shortly." if paused == "emergency stop" else
             "This AI task is paused for now — it has run far more than usual in the last hour. "
-            "Contact will@cavnar.ai if this looks wrong.")
+            "Contact support@cavnar.ai if this looks wrong.")
     try:
         _breaker_check("anthropic")
     except AIProviderDown:

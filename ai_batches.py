@@ -165,7 +165,7 @@ DUPLICATE = "duplicate"
 _CUSTOM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 _BUDGET_MESSAGE = ("AI is paused — this account has reached its {over}. "
-                   "Contact will@cavnar.ai if this looks wrong.")    # create_with_retry's own words
+                   "Contact support@cavnar.ai if this looks wrong.")    # create_with_retry's own words
 
 
 class BatchItemFailed(RuntimeError):

@@ -14737,7 +14737,7 @@ def owner_pos_binding_refusal(provider: str, values, restaurant_id, db_path: str
         return None
     what = _POS_LABELS.get(provider, "POS store")
     return (f"That {what} is already connected to another Cavnar AI account, and one store can feed only "
-            f"one restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
+            f"one restaurant. If it's yours, email support@cavnar.ai and we'll move it.")
 
 
 def location_group_conflict(group_name: str, owner_email: str, exclude_id=None,

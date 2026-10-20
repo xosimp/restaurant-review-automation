@@ -68,7 +68,7 @@ def test_registration_is_refused_by_default(monkeypatch):
         "restaurant_name": "Free Rider", "email": "free@rider.test",
         "username": "freerider", "password": "hunter2hunter2"})
     assert r.status_code == 403
-    assert "will@cavnar.ai" in r.get_json()["error"]
+    assert "sales@cavnar.ai" in r.get_json()["error"]   # sales@, 10/20/26
 
 
 def test_no_account_is_created_when_signup_is_closed(db_path, monkeypatch):

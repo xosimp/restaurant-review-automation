@@ -643,7 +643,7 @@ def send_2fa_test(current_user):
     if not dest:
         if method == "sms":
             return jsonify(ok=False, error="No phone number found for your login. Add one in Profile & Details, or send by email instead.")
-        return jsonify(ok=False, error="No email address found for your login. Contact will@cavnar.ai to update your account email.")
+        return jsonify(ok=False, error="No email address found for your login. Contact support@cavnar.ai to update your account email.")
     # This login's own setup challenge: it never touches a sign-in someone
     # else has in progress at this restaurant (SEC-20).
     from auth import issue_two_fa_challenge as _itfc_t
@@ -1474,7 +1474,7 @@ def _json_sign_in(user, *, second_factor, via):
     a 2FA the login needs and no remembered device covers."""
     from auth import is_internal_login, login_needs_second_factor, session_cookie_max_age, update_last_login
     if not user or not user.get("is_active"):
-        return jsonify(ok=False, error="That login is turned off. Contact will@cavnar.ai."), 403
+        return jsonify(ok=False, error="That login is turned off. Contact support@cavnar.ai."), 403
     if user.get("must_reset_password"):
         return jsonify(ok=False, error="This account needs a password reset before signing in. "
                                        "Use Forgot password below."), 403
@@ -1787,7 +1787,7 @@ def apple_web_signin():
         conn.close()
     if not row:
         return jsonify(ok=False, error="No Cavnar AI login uses that Apple ID. Sign in with your password, "
-                                       "or email will@cavnar.ai."), 401
+                                       "or email support@cavnar.ai."), 401
     _clear_attempts("apple:" + ip)
     resp = _json_sign_in(get_user_by_id(row["id"]), second_factor=False, via="apple")
     resp.delete_cookie("a_sso_nonce")

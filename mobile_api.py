@@ -184,7 +184,7 @@ def mobile_apple_signin():
         return jsonify(ok=False, error=(
             "Cavnar AI accounts are set up for a restaurant by Will directly — there is no "
             "self-serve signup. If you already have one, sign in with the username and password "
-            "you were given. Otherwise email will@cavnar.ai."
+            "you were given. Otherwise email sales@cavnar.ai."
         )), 401
 
     user = dict(row)
@@ -257,7 +257,7 @@ def mobile_passkey_login_verify():
     # The password path's gates (mobile_login): a turned-off login, and a
     # sign-in reported as "not me" that burned the password until reset.
     if not user or not user.get("is_active"):
-        return jsonify(ok=False, error="That login is turned off. Contact will@cavnar.ai."), 403
+        return jsonify(ok=False, error="That login is turned off. Contact support@cavnar.ai."), 403
     if user.get("must_reset_password"):
         return jsonify(ok=False, error="This account needs a password reset before signing in — use Forgot password.",
                        password_reset_required=True), 403
@@ -8283,7 +8283,7 @@ def mobile_send_2fa_test(current_user):
     if not dest and method == "sms":
         return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
     if not dest:
-        return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
+        return jsonify(ok=False, error="No email address found. Contact support@cavnar.ai to update your account email."), 400
     # This login's own setup challenge, never a sign-in in progress (SEC-20),
     # and one code a minute per login: each press was a paid SMS, and a
     # double-tap replaced the code the owner had already received (DATA-42).
@@ -9560,7 +9560,7 @@ def mobile_instagram_authorize(current_user):
     from meta_api import oauth_dialog_url
     app_id = os.getenv("META_APP_ID", "")
     if not app_id:
-        return jsonify(ok=False, error="Instagram isn't configured on this server yet — contact will@cavnar.ai."), 503
+        return jsonify(ok=False, error="Instagram isn't configured on this server yet — contact support@cavnar.ai."), 503
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
     from meta_api import login_params
     params = urllib.parse.urlencode({

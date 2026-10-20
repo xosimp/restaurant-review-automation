@@ -529,7 +529,7 @@ def verify(property_id=None, site_url=None) -> dict:
 UNCONFIRMED_MESSAGE = ("Cavnar AI can't yet confirm this is your website's — it must match the website on your "
                        "Google listing. We've been told and will confirm it, usually within a day.")
 TAKEN_MESSAGE = ("That {what} is already connected to another Cavnar AI account, and one website can feed only one "
-                 "restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
+                 "restaurant. If it's yours, email support@cavnar.ai and we'll move it.")
 
 
 def _host(url) -> str:

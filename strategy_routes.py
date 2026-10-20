@@ -6272,9 +6272,9 @@ def _pause_scope(rid):
 
 # What the owner is told when a pause is not theirs to lift (#114).
 _LOCK_MESSAGES = {
-    "dispute": "This account is on hold while a payment dispute is open. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
-    "refund": "This account is on hold after a refund. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
-    "admin": "This account was paused by Cavnar AI. Only Cavnar AI can lift it — reply to will@cavnar.ai.",
+    "dispute": "This account is on hold while a payment dispute is open. Only Cavnar AI can lift it — write to billing@cavnar.ai.",
+    "refund": "This account is on hold after a refund. Only Cavnar AI can lift it — write to billing@cavnar.ai.",
+    "admin": "This account was paused by Cavnar AI. Only Cavnar AI can lift it — write to support@cavnar.ai.",
 }
 
 

@@ -487,16 +487,16 @@ def pay_link_route(token, period):
     page = _PAY_PAGE
     rid = read_pay_token(token)
     if not rid or period not in ("monthly", "annual", "card", "invoice"):
-        return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
+        return page % ("That link isn't right", "Reply to your payment email or write to billing@cavnar.ai."), 404
     r = get_restaurant(rid)
     if not r:
-        return page % ("That link isn't right", "Reply to your payment email or write to will@cavnar.ai."), 404
+        return page % ("That link isn't right", "Reply to your payment email or write to billing@cavnar.ai."), 404
     name = _esc_pay(r.name)
     status = (r.billing_status or "").lower()
     if _m.billing_hold(r):
         return page % ("Your account is on hold",
                        f"{name}'s account is paused while a billing question is sorted out. "
-                       "Reply to Will at will@cavnar.ai and he'll help."), 200
+                       "Write to billing@cavnar.ai and we'll help."), 200
     payer = _bj.billed_by(rid)
     if payer and payer != rid:
         p = get_restaurant(payer)
@@ -513,18 +513,18 @@ def pay_link_route(token, period):
             return redirect(url)
         if not r.stripe_customer_id:
             return page % ("No card on file yet",
-                           "There is no payment method to update. Reply to Will at will@cavnar.ai."), 404
-        return page % ("We couldn't open billing", "Try again in a minute, or write to will@cavnar.ai."), 503
+                           "There is no payment method to update. Write to billing@cavnar.ai."), 404
+        return page % ("We couldn't open billing", "Try again in a minute, or write to billing@cavnar.ai."), 503
     if status == "paused":
         return page % ("Paused", f"{name} is paused. Resume any time from Account → Billing in Cavnar AI, "
-                                 "or reply to Will at will@cavnar.ai."), 200
+                                 "or write to billing@cavnar.ai."), 200
     if status in ("active", "internal") or _bj.live_subscription(rid):
         return page % ("You're all set", f"{name} is already paid for. Nothing more to do."), 200
     modules = [k for k in ("reviews", "labor", "inventory", "marketing") if getattr(r, f"module_{k}", 0)]
     url = create_stripe_checkout(max(1, len(modules)), r.owner_email, r.name, period,
                                  restaurant_id=rid, modules=modules)
     if not url:
-        return page % ("We couldn't open checkout", "Try again in a minute, or write to will@cavnar.ai."), 503
+        return page % ("We couldn't open checkout", "Try again in a minute, or write to billing@cavnar.ai."), 503
     return redirect(url)
 
 

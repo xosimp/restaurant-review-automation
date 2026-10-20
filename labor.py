@@ -2445,7 +2445,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     if analysis and analysis.get("is_live") is False:
         return (f"{greeting} There's no shift data on file yet, so there's nothing to analyse. "
                 "Upload your shifts CSV under Account and this will fill in with your own numbers. "
-                "Reply to will@cavnar.ai if you'd like help getting the export out of your POS.")
+                "Reply to support@cavnar.ai if you'd like help getting the export out of your POS.")
 
     # Guard: if no sales data, return a helpful message instead of nonsense
     total_sales = analysis.get("total_sales", 0)
@@ -2453,7 +2453,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     if total_sales == 0:
         return (f"{greeting} Your shift data has been uploaded and analyzed, but no sales figures were found. "
                 "To see your labor cost percentage and get accurate recommendations, please make sure your CSV includes a sales or revenue column. "
-                "Reply to will@cavnar.ai and I can help you format it correctly.")
+                "Write to support@cavnar.ai and we can help you format it correctly.")
     if total_labor == 0:
         return (f"{greeting} No labor cost data was found in your upload. "
                 "Please make sure your CSV includes employee hours and hourly rates so we can calculate your true labor cost percentage.")
@@ -6131,7 +6131,7 @@ def _read_answer(
         from schedule_context import ScheduleGenerationError
         _err = ScheduleGenerationError("Cavnar AI couldn't write this schedule: the AI model declined the request, "
                                        "so nothing was saved. Try again — if it declines a second time, tell "
-                                       "will@cavnar.ai.")
+                                       "support@cavnar.ai.")
         _err.stop_reason, _err.category = "refusal", _category
         raise _err
 

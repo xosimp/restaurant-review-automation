@@ -285,7 +285,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
         <div style="text-align:center;margin:24px 0">
           <span style="font-family:ui-monospace,'SF Mono','Space Mono',Menlo,Consolas,monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#c84b2f;background:#fdf0ef;padding:16px 24px;border-radius:8px;display:inline-block">{code}</span>
         </div>
-        <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, someone may have your password — change it immediately and contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+        <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, someone may have your password — change it immediately and contact <a href="mailto:security@cavnar.ai" style="color:#c84b2f">security@cavnar.ai</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -334,7 +334,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
           <tr><td style="padding:6px 0;color:#7a736a">IP address</td><td style="padding:6px 0"><strong>{esc(ip or 'Unknown')}</strong></td></tr>
         </table>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed.</p>
-        {("<p style=\"margin:16px 0 0\"><a href=\"" + report_url + "\" style=\"display:inline-block;background:#c84b2f;color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px\">This wasn&rsquo;t me</a></p><p style=\"color:#7a736a;font-size:12px;margin:10px 0 0;line-height:1.6\">That link signs out every device, forgets every remembered device, and requires a password reset before anyone can sign in again. It works once, for 7 days.</p>") if report_url else "<p style=\"color:#7a736a;font-size:13px;margin:8px 0 0;line-height:1.6\">If you don&rsquo;t recognize this sign-in, <a href=\"mailto:will@cavnar.ai\" style=\"color:#c84b2f\">contact Will immediately</a> and change your password.</p>"}
+        {("<p style=\"margin:16px 0 0\"><a href=\"" + report_url + "\" style=\"display:inline-block;background:#c84b2f;color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px\">This wasn&rsquo;t me</a></p><p style=\"color:#7a736a;font-size:12px;margin:10px 0 0;line-height:1.6\">That link signs out every device, forgets every remembered device, and requires a password reset before anyone can sign in again. It works once, for 7 days.</p>") if report_url else "<p style=\"color:#7a736a;font-size:13px;margin:8px 0 0;line-height:1.6\">If you don&rsquo;t recognize this sign-in, <a href=\"mailto:security@cavnar.ai\" style=\"color:#c84b2f\">contact us immediately</a> and change your password.</p>"}
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -516,6 +516,12 @@ def esc(value) -> str:
     return _h.escape("" if value is None else str(value), quote=True)
 
 
+_BILLING_EMAIL_TYPES = frozenset({
+    "send_payment_email", "send_dunning_email", "send_card_update_email", "send_payment_receipt_email",
+    "send_pay_reminder_email", "send_payment_failed_client_email",
+})
+
+
 def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
     """Send one email through Resend, with retry on transient failures, and
     record the real outcome in email_log.
@@ -533,6 +539,9 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     payload = dict(payload or {})
     # Replies to product mail reach a person: the sending address is not
     # Will's inbox. A restaurant-branded send sets its own reply_to.
+    if not payload.get("reply_to") and email_type in _BILLING_EMAIL_TYPES:
+        # Payment mail is answered from billing@ (10/20/26), whoever reads it.
+        payload["reply_to"] = config.billing_email()
     if not payload.get("reply_to") and config.will_email() and config.will_email() != _from_email():
         payload["reply_to"] = config.will_email()
     # Lifted out before the payload reaches Resend, which has no such field.
@@ -1445,7 +1454,7 @@ def report_shell(kicker: str, title: str, subtitle: str, sections,
     </div>
   </td></tr>
   <tr><td colspan="2" align="center" style="padding-top:18px">
-    <p style="font-family:{_SANS};font-size:11px;color:{BRAND['muted']};margin:0;text-align:center"><img src="{_SEAL}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Cavnar AI &nbsp;&middot;&nbsp; <a href="mailto:will@cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">will@cavnar.ai</a> &nbsp;&middot;&nbsp; <a href="https://cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">cavnar.ai</a></span></p>
+    <p style="font-family:{_SANS};font-size:11px;color:{BRAND['muted']};margin:0;text-align:center"><img src="{_SEAL}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Cavnar AI &nbsp;&middot;&nbsp; <a href="mailto:support@cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">support@cavnar.ai</a> &nbsp;&middot;&nbsp; <a href="https://cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">cavnar.ai</a></span></p>
   </td></tr>
 </table>
 </td></tr>
@@ -1854,7 +1863,7 @@ def send_password_reset_code_email(to_email: str, code: str, restaurant_id: int 
         <div style="text-align:center;margin:0 0 20px">
           <span style="font-family:ui-monospace,'SF Mono','Space Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:700;letter-spacing:8px;white-space:nowrap;color:#c84b2f;background:#fdf0ef;padding:14px 20px;border-radius:8px;display:inline-block">{code}</span>
         </div>
-        <p style="color:#7a736a;font-size:12px;margin:0;line-height:1.6">If you didn't request this, someone may have your email address on file &mdash; your password won't change unless this code is used. Contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if you're concerned.</p>
+        <p style="color:#7a736a;font-size:12px;margin:0;line-height:1.6">If you didn't request this, someone may have your email address on file &mdash; your password won't change unless this code is used. Contact <a href="mailto:security@cavnar.ai" style="color:#c84b2f">security@cavnar.ai</a> if you're concerned.</p>
     """)
 
 
@@ -2033,7 +2042,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             # follow-up job. Give the client a way to act instead.
             btn_html = ('<p style="font-size:13px;color:#3a3530;margin-top:8px">'
                         'We hit a problem generating your payment link. Reply to this email or write to '
-                        '<a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> '
+                        '<a href="mailto:billing@cavnar.ai" style="color:#c84b2f">billing@cavnar.ai</a> '
                         'and I will send it straight over.</p>')
             try:
                 import ops as _ops
@@ -2086,7 +2095,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
-    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    <a href="mailto:billing@cavnar.ai" style="color:#c84b2f;text-decoration:none">billing@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
     &nbsp;·&nbsp;
@@ -3963,7 +3972,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{("The password for your login <strong>" + esc(login) + "</strong> at <strong>" + esc(restaurant_name) + "</strong>") if login else ("Your password for <strong>" + esc(restaurant_name) + "</strong>")} was changed on {now_str}.</p>
-        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you didn't make this change, someone else may have access to your account — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you didn't make this change, someone else may have access to your account — <a href="mailto:security@cavnar.ai" style="color:#c84b2f">contact us immediately</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -3973,7 +3982,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
         return deliver(email_type="send_password_changed_email", restaurant_id=restaurant_id,
                        payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI password was changed",
-                  "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
+                  "preheader": "If this wasn't you, contact security@cavnar.ai immediately.", "html": _html_document(html)})
     except Exception as e:
         log.warning("send_password_changed_email: request to Resend failed: %s", e)
         return not_sent("build_error", str(e)[:300])
@@ -3998,7 +4007,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">The sign-in email for <strong>{esc(restaurant_name)}</strong> was changed on {now_str}, from this address to <strong>{masked_new}</strong>.</p>
-        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed — this is the last email you'll receive at this address. If you didn't make this change, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>, since someone else may now control sign-in to this account.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed — this is the last email you'll receive at this address. If you didn't make this change, <a href="mailto:security@cavnar.ai" style="color:#c84b2f">contact us immediately</a>, since someone else may now control sign-in to this account.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -4008,7 +4017,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
         return deliver(email_type="send_email_changed_email", restaurant_id=restaurant_id,
                        payload={"from": sender("client"), "to": [to_email],
                   "subject": "Your Cavnar AI sign-in email was changed",
-                  "preheader": "If this wasn't you, contact will@cavnar.ai immediately.", "html": _html_document(html)})
+                  "preheader": "If this wasn't you, contact security@cavnar.ai immediately.", "html": _html_document(html)})
     except Exception as e:
         log.warning("send_email_changed_email: request to Resend failed: %s", e)
         return not_sent("build_error", str(e)[:300])
@@ -4080,7 +4089,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
         <p style="color:#3a3530;font-size:15px;margin:0 0 20px">Your payment of <strong>${amount:.2f}</strong> for <strong>{restaurant_name_h}</strong> didn't go through — your card was declined.</p>
         <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Update payment method &#8594;</a>
-        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Open the Cavnar AI app and go to <strong>Account &rarr; Billing</strong> — the Manage billing button there opens the secure Stripe page where you can update your card. If it isn't resolved in a few days, reach out and I'll sort it out with you — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Open the Cavnar AI app and go to <strong>Account &rarr; Billing</strong> — the Manage billing button there opens the secure Stripe page where you can update your card. If it isn't resolved in a few days, reach out and I'll sort it out with you — <a href="mailto:billing@cavnar.ai" style="color:#c84b2f">billing@cavnar.ai</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>

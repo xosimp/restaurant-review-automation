@@ -1027,7 +1027,7 @@ def guest_mail_paused(restaurant_id, db_path: str = DB_PATH):
         pass
     return (f"Guest email is paused for now: {why} in the last {PAUSE_WINDOW_DAYS} days, which puts every "
             "restaurant's mail at risk of the spam folder. Clean the list (remove addresses that didn't opt in) "
-            "and it resumes on its own as the week clears; will@cavnar.ai can help.")
+            "and it resumes on its own as the week clears; support@cavnar.ai can help.")
 
 
 def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_PATH) -> dict:

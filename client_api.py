@@ -7044,7 +7044,7 @@ def _do_upload_data(restaurant_id, data_type, f, current_user, source="upload", 
         return jsonify(ok=False, error=(
             f"That file has {len(rows):,} rows — this import handles up to "
             f"{MAX_CSV_ROWS:,} at a time. Split it by date range and upload "
-            f"the parts, or send it to will@cavnar.ai and we'll load it for you."
+            f"the parts, or send it to support@cavnar.ai and we'll load it for you."
         )), 413
 
     # Validate required columns exist

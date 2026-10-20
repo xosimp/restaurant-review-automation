@@ -301,7 +301,7 @@ def _js_str(value):
 
 
 PAGE_TAKEN = ("That Facebook Page or Instagram account is already connected to another Cavnar AI account, and "
-              "one can post for only one restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
+              "one can post for only one restaurant. If it's yours, email support@cavnar.ai and we'll move it.")
 
 
 def page_conflict(rid, page) -> bool:

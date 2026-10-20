@@ -745,7 +745,7 @@ def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
     sends from the plain number rather than borrowing the alert campaign.
     A send that fails (or a number that has STOPped) falls back to email in
     auth.deliver_two_fa_code."""
-    return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact will@cavnar.ai.",
+    return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact security@cavnar.ai.",
                     use_case="otp")
 
 
