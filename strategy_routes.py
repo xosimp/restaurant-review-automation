@@ -3550,18 +3550,25 @@ def _do_schedule_violations(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can check a schedule.")
     import schedule_rules as _sr
-    from schedule_engine import quality_inputs_from_db
+    from schedule_engine import studio_prepared
     b = _body()
     rows = _rows_from_body(b)
     if not rows:
         return {"ok": False, "error": "rows required"}, 400
-    inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
+    # The Studio's kept inputs for this week (schedule_engine.studio_prepared,
+    # keyed on the inputs version, built once at a time): every check after
+    # an edit rebuilt them from the database — the forecast, the baseline,
+    # the requirement model, the roster — 5 s on average, 41 s at worst, on
+    # a web request thread (scale audit 10/19/26 A5-F5 / A6 FE-11). The
+    # roster is on the kept Constraints already.
+    try:
+        hid_key = int(b.get("history_id")) if b.get("history_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        hid_key = None
+    inputs = studio_prepared(_rid(u), rows, history_id=hid_key)["inputs"]
     c = inputs.get("constraints")
     if c is None:
         return {"ok": True, "violations": [], "review": _sr.summarize([])}, 200
-    if inputs.get("roster"):
-        c.active = {n.lower() for n in inputs["roster"]}
-        c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
@@ -7367,7 +7374,6 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
     try:
         from schedule_publish import publish_review
         from models import get_conn as _gc
-        import people
         conn = _gc()
         try:
             row = conn.execute("SELECT id, published_at, superseded_by FROM schedule_history "
@@ -7381,13 +7387,10 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
         # warning or quality note the owner has not read (re-audit 10/8/26).
         if review is None:
             review = publish_review(rid, row["id"], unattended=True) or {}
-        if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
-            return False
-        import schedule_shifts as _ss_ot
-        from labor import employees_in_rows as _eir_ot
-        reach = people.reach_summary(people.reach(rid, _eir_ot(_ss_ot.rows_of(row["id"], "working",
-                                                                             restaurant_id=rid))))
-        return int(reach.get("total") or 0) > 0
+        # The one rule, shared with the Send's own check under its claim
+        # (schedule_publish.one_tap_ok — scale audit 10/19/26 A5-F14).
+        import schedule_publish as _sp_ot
+        return _sp_ot.one_tap_ok(rid, row["id"], review)
     except Exception as e:
         import ops
         ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={rid} schedule_id={schedule_id}")

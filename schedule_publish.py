@@ -1039,21 +1039,28 @@ def enqueue(conn, restaurant_id, history_id, week_start, batch, items, requested
     queued = []
     waiting = conn.execute("SELECT id, employee_name FROM schedule_notices WHERE restaurant_id=? AND week_start=? "
                            "AND status IN ('pending', 'failed')", (restaurant_id, week_start)).fetchall()
+    by_fold = {}
+    for w in waiting:
+        by_fold.setdefault(_fold(w["employee_name"]), []).append(w["id"])
+    # One statement each for the cancels and the inserts (scale audit
+    # 10/19/26 A5-F14): a statement per person — on Postgres a savepoint
+    # each — inside the stamp's write held the one writer for a whole staff.
+    cancel, rows = [], []
     for name, kind in items:
         name = " ".join(str(name or "").split())
         if not name:
             continue
-        k = _fold(name)
-        for w in waiting:
-            if _fold(w["employee_name"]) == k:
-                conn.execute("UPDATE schedule_notices SET status='cancelled', next_attempt_at=NULL WHERE id=? "
-                             "AND status IN ('pending', 'failed')", (w["id"],))
+        cancel += by_fold.get(_fold(name), [])
         pid = (person_ids or {}).get(name)
-        conn.execute("INSERT OR IGNORE INTO schedule_notices (restaurant_id, history_id, week_start, batch, "
-                     "employee_name, person_id, kind, requested_by) VALUES (?,?,?,?,?,?,?,?)",
-                     (restaurant_id, history_id, week_start, batch, name, int(pid) if pid else None, kind,
-                      (requested_by or "")[:120] or None))
+        rows.append((restaurant_id, history_id, week_start, batch, name, int(pid) if pid else None, kind,
+                     (requested_by or "")[:120] or None))
         queued.append((name, kind))
+    if cancel:
+        conn.executemany("UPDATE schedule_notices SET status='cancelled', next_attempt_at=NULL WHERE id=? "
+                         "AND status IN ('pending', 'failed')", [(i,) for i in sorted(set(cancel))])
+    if rows:
+        conn.executemany("INSERT OR IGNORE INTO schedule_notices (restaurant_id, history_id, week_start, batch, "
+                         "employee_name, person_id, kind, requested_by) VALUES (?,?,?,?,?,?,?,?)", rows)
     return queued
 
 
@@ -1075,7 +1082,6 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
     due set once it is decided, so the next pass starts with what this one
     did not reach. Returns {"sent", "unreachable", "failed": [items],
     "pending": [names still to go], "attempted", "hit_bound"}."""
-    import people as _people
     started = _time.monotonic()
     out = {"sent": [], "unreachable": [], "failed": [], "pending": [], "attempted": 0, "hit_bound": False}
     filters, fargs = [], []
@@ -1109,46 +1115,33 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
             conn.close()
         if not rows:
             break
-        for n in rows:
+        # Claimed NOTICE_CLAIM_CHUNK at a time in one write (scale audit
+        # 10/19/26 A5-F14): a claim and a finish per person was ~2 write
+        # transactions a notice, ~150 for one 60-person Send, each taking the
+        # one writer. A chunk the bound cut short hands back what it did not
+        # reach (_unclaim), so the next pass takes it at once.
+        rows = list(rows)
+        for start in range(0, len(rows), NOTICE_CLAIM_CHUNK):
             if _time.monotonic() - started > budget_seconds or (limit is not None and out["attempted"] >= limit):
                 out["hit_bound"] = True
                 break
-            last_id = n["id"]
-            now = _dt.utcnow()
-            conn = get_conn(db_path)
-            try:
-                got = conn.execute(
-                    f"UPDATE schedule_notices SET status='sending', claimed_at=?, attempts=attempts+1 "
-                    f"WHERE id=? AND {_due_sql('schedule_notices')}",
-                    (_utc(now), n["id"], _utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES)))).rowcount
-                conn.commit()
-            finally:
-                conn.close()
-            if not got:
-                continue
-            out["attempted"] += 1
-            key = (n["restaurant_id"], n["history_id"])
-            if key not in ctx:
-                ctx[key] = _notice_context(n["restaurant_id"], n["history_id"], db_path)
-            c = ctx[key]
-            if c is None:
-                _finish_notice(n["id"], "cancelled", error="the week is gone or was never sent", db_path=db_path)
-                continue
-            if n["employee_name"] not in c["reach"]:
-                try:
-                    c["reach"].update(_people.reach(n["restaurant_id"], [n["employee_name"]], purpose="schedule"))
-                except Exception as e:
-                    _ops.capture(e, job="schedule_publish_reach", context=f"restaurant_id={n['restaurant_id']}")
-                    c["reach"][n["employee_name"]] = {"push_user_id": None, "sms": None, "email": None}
-            try:
-                status, item = _deliver_one(n["restaurant_id"], c["restaurant"], n["history_id"], c["rows"],
-                                            n["employee_name"], c["reach"].get(n["employee_name"]), c["week_label"],
-                                            kind=n["kind"], base_url=base_url, notice_id=n["id"], db_path=db_path)
-            except Exception as e:
-                _ops.capture(e, job="schedule_notice", context=f"restaurant_id={n['restaurant_id']} notice={n['id']}")
-                status, item = "failed", {"employee_name": n["employee_name"], "error": str(e)[:200]}
-            _finish_notice(n["id"], status, item=item, attempts=int(n["attempts"] or 0) + 1, db_path=db_path)
-            out[status].append(item)
+            chunk = rows[start:start + NOTICE_CLAIM_CHUNK]
+            if limit is not None:
+                chunk = chunk[:max(0, limit - out["attempted"])]
+            last_id = chunk[-1]["id"]
+            mine = _claim_notices(chunk, db_path)
+            for pos, n in enumerate(chunk):
+                if n["id"] not in mine:
+                    continue
+                if _time.monotonic() - started > budget_seconds:
+                    out["hit_bound"] = True
+                    _unclaim([m for m in chunk[pos:] if m["id"] in mine], mine, db_path)
+                    break
+                _deliver_claimed(n, ctx, out, base_url, db_path)
+            if out["hit_bound"]:
+                break
+        if out["hit_bound"]:
+            break
     # What this pass did not reach, of the same filter.
     conn = get_conn(db_path)
     try:
@@ -1159,6 +1152,118 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
     finally:
         conn.close()
     return out
+
+
+# Notices claimed together in one write (deliver_notices).
+NOTICE_CLAIM_CHUNK = 10
+# A Send's notices the inline window did not reach go out from a bulk
+# job_queue row, this long a run, queued again while some remain (scale
+# audit 10/19/26 A5-F14): the minute duty's 20 s a minute alone left a
+# morning of auto-publishes hours behind. The duty still sweeps retries.
+NOTICE_QUEUE_SECONDS = 120.0
+NOTICE_QUEUE_MAX_ROUNDS = 30
+
+
+def deliver_inline(restaurant_id, batch) -> dict:
+    """A Send's own delivery: INLINE_SECONDS on the request, and what that
+    did not reach handed to the queue (queue_delivery)."""
+    got = deliver_notices(restaurant_id=restaurant_id, batch=batch, budget_seconds=INLINE_SECONDS)
+    if got.get("pending"):
+        queue_delivery(restaurant_id, batch)
+    return got
+
+
+def queue_delivery(restaurant_id, batch, round_=0):
+    """One bulk `schedule_notices` job_queue row delivering the rest of
+    `batch`, keyed so a round is queued once. Never raises: the minute duty
+    delivers it all the same."""
+    try:
+        import job_queue
+        job_queue.enqueue("schedule_notices", {"restaurant_id": restaurant_id, "batch": batch, "round": int(round_)},
+                          restaurant_id=restaurant_id, priority_class="bulk",
+                          idempotency_key=f"schedule_notices:{batch}:{int(round_)}")
+    except Exception as e:
+        _ops.capture(e, job="schedule_notices", context=f"restaurant_id={restaurant_id} batch={batch} queue")
+
+
+def run_queued_notices(job):
+    """job_queue's handler for `schedule_notices`: deliver the batch for up
+    to NOTICE_QUEUE_SECONDS; queued again while notices remain (at most
+    NOTICE_QUEUE_MAX_ROUNDS rounds — the duty takes the rest)."""
+    p = job.payload
+    got = deliver_notices(restaurant_id=p.get("restaurant_id"), batch=p.get("batch"),
+                          budget_seconds=NOTICE_QUEUE_SECONDS)
+    if got.get("hit_bound") and got.get("pending") and int(p.get("round") or 0) < NOTICE_QUEUE_MAX_ROUNDS:
+        queue_delivery(p.get("restaurant_id"), p.get("batch"), int(p.get("round") or 0) + 1)
+    return {"attempted": got["attempted"], "sent": len(got["sent"]), "failed": len(got["failed"]),
+            "pending": len(got["pending"])}
+
+
+def _claim_notices(chunk, db_path=None) -> dict:
+    """Claim the due notices of `chunk` in one write: {id: claim token} of
+    the ones this pass took (each claim's token is its own, so two
+    deliverers in the same second never read each other's)."""
+    now = _dt.utcnow()
+    token = f"{_utc(now)}.{_uuid.uuid4().hex[:8]}"
+    ids = [int(n["id"]) for n in chunk]
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    conn = get_conn(db_path)
+    try:
+        conn.execute(f"UPDATE schedule_notices SET status='sending', claimed_at=?, attempts=attempts+1 "
+                     f"WHERE id IN ({marks}) AND {_due_sql('schedule_notices')}",
+                     [token] + ids + [_utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES))])
+        got = conn.execute(f"SELECT id FROM schedule_notices WHERE id IN ({marks}) AND status='sending' "
+                           "AND claimed_at=?", ids + [token]).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+    return {int(r["id"]): token for r in got}
+
+
+def _unclaim(rows, mine, db_path=None) -> None:
+    """Hand claimed notices this pass did not reach back as they were."""
+    if not rows:
+        return
+    conn = get_conn(db_path)
+    try:
+        conn.executemany("UPDATE schedule_notices SET status=?, claimed_at=NULL, attempts=attempts-1 "
+                         "WHERE id=? AND status='sending' AND claimed_at=?",
+                         [("failed" if n["status"] == "failed" else "pending", int(n["id"]), mine[int(n["id"])])
+                          for n in rows])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _deliver_claimed(n, ctx, out, base_url, db_path=None) -> None:
+    """Tell one claimed notice's person, from the week's published copy,
+    and keep what happened (deliver_notices)."""
+    import people as _people
+    out["attempted"] += 1
+    key = (n["restaurant_id"], n["history_id"])
+    if key not in ctx:
+        ctx[key] = _notice_context(n["restaurant_id"], n["history_id"], db_path)
+    c = ctx[key]
+    if c is None:
+        _finish_notice(n["id"], "cancelled", error="the week is gone or was never sent", db_path=db_path)
+        return
+    if n["employee_name"] not in c["reach"]:
+        try:
+            c["reach"].update(_people.reach(n["restaurant_id"], [n["employee_name"]], purpose="schedule"))
+        except Exception as e:
+            _ops.capture(e, job="schedule_publish_reach", context=f"restaurant_id={n['restaurant_id']}")
+            c["reach"][n["employee_name"]] = {"push_user_id": None, "sms": None, "email": None}
+    try:
+        status, item = _deliver_one(n["restaurant_id"], c["restaurant"], n["history_id"], c["rows"],
+                                    n["employee_name"], c["reach"].get(n["employee_name"]), c["week_label"],
+                                    kind=n["kind"], base_url=base_url, notice_id=n["id"], db_path=db_path)
+    except Exception as e:
+        _ops.capture(e, job="schedule_notice", context=f"restaurant_id={n['restaurant_id']} notice={n['id']}")
+        status, item = "failed", {"employee_name": n["employee_name"], "error": str(e)[:200]}
+    _finish_notice(n["id"], status, item=item, attempts=int(n["attempts"] or 0) + 1, db_path=db_path)
+    out[status].append(item)
 
 
 def _notice_context(restaurant_id, history_id, db_path=None):
@@ -1680,14 +1785,55 @@ def _delivered_payload(rid, schedule_id, got) -> dict:
             "delivery": notice_status(rid, schedule_id)}
 
 
-def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, version=None, override_reasons=None):
+def one_tap_ok(restaurant_id, schedule_id, review) -> bool:
+    """Whether a drafted week may go out from one tap, judged on `review`
+    (a publish_review of it — attended or not: its `held_unattended` are
+    what an unattended run adds): nothing the gate would ask about, no soft
+    flag or note unread, and somebody it reaches. The rule
+    strategy_routes.draft_one_tap_safe and the Send both apply. Never
+    raises (False)."""
+    try:
+        review = review or {}
+        if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
+            return False
+        import people
+        import schedule_shifts as _ss_ot
+        from labor import employees_in_rows as _eir_ot
+        reach = people.reach_summary(people.reach(restaurant_id, _eir_ot(_ss_ot.rows_of(
+            int(schedule_id), "working", restaurant_id=restaurant_id))))
+        return int(reach.get("total") or 0) > 0
+    except Exception as e:
+        _ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={restaurant_id} schedule_id={schedule_id}")
+        return False
+
+
+def one_tap_held(review) -> list:
+    """What holds a one-tap Send, as the owner reads it."""
+    review = review or {}
+    out = [b.get("text") for b in review.get("blockers") or [] if isinstance(b, dict)]
+    out += [s for s in review.get("soft") or [] if isinstance(s, str)]
+    out += [h.get("text") for h in review.get("held_unattended") or [] if isinstance(h, dict)]
+    out += [n.get("text") for n in review.get("notes") or [] if isinstance(n, dict)]
+    return [t for t in dict.fromkeys(out) if t]
+
+
+def one_tap_refusal(review, schedule_id) -> dict:
+    """The answer to a one-tap Send the gate holds: the week opens to read."""
+    return {"ok": False, "one_tap_refused": True, "schedule_id": schedule_id, "held": one_tap_held(review),
+            "error": "This week has something to read before it goes to staff — open it to review and send."}
+
+
+def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, version=None, override_reasons=None,
+            one_tap=False):
     """Send a week to staff for the first time — the route, the mobile twin,
     the delayed run and auto-publish. Returns (payload, http_status).
     `actor` is the user dict acting, or delayed.AUTOMATION_ACTOR; `version`
     the version of the rows the sender reviewed (a Send of rows somebody
     changed since is refused with their changes). `override_reasons` ({key:
     reason}) are kept with the keys the send went out past
-    (schedule_overrides).
+    (schedule_overrides). `one_tap` — a Send nobody read a sheet for: it
+    acknowledges nothing and goes only when one_tap_ok passes on the gate
+    run under the claim (else one_tap_refusal, 409).
 
     A schedule with blockers (publish_blockers) is refused with
     needs_ack=True until the caller says acknowledge — a human reading the
@@ -1730,24 +1876,13 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
         if stale:
             return stale, 409
 
-    # `acknowledge` is True (a person read the list just now) or the list
-    # of blocker keys a person acknowledged when they queued it (a delayed
-    # publish): a blocker that appeared since is not covered (NS5 H3).
-    unattended = acknowledge is False and bool(actor.get("role") == "automation")
-    gate_sig = _sv._rows_sig(row["schedule_csv"])
-    review = publish_review(rid, schedule_id, unattended=unattended)
-    blockers = [b["text"] for b in review["blockers"]]
-    _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
-    if unacked:
-        # Each blocker with its key, so the client acknowledges exactly the
-        # list it showed.
-        return _needs_ack(review, unacked, schedule_id)
-
     # What staff read in the push, the text and the email subject: M/D/YY,
     # never the ISO the row stores.
     week_label = _mdy_range(row["week_start"], row["week_end"] or row["week_start"])
 
-    # Claim the week before anything is written. Nothing stopped a second
+    # Claim the week before anything is written — and before the gate (scale
+    # audit 10/19/26 A5-F14): two managers pressing Send both paid the 10-40 s
+    # gate before one of them lost the claim. Nothing stopped a second
     # publish (a double tap, a second device, the 11am auto-publish after a
     # 10am manual one) from emailing every member of staff again.
     if not _claim(rid, schedule_id, "publish"):
@@ -1768,6 +1903,32 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
                     "schedule_id": schedule_id, "error": _sv.replaced_error(state)}, 409
         return {"ok": False, "in_progress": True, "schedule_id": schedule_id,
                 "error": "This week is being sent to staff right now."}, 409
+
+    # `acknowledge` is True (a person read the list just now) or the list
+    # of blocker keys a person acknowledged when they queued it (a delayed
+    # publish): a blocker that appeared since is not covered (NS5 H3). The
+    # gate runs once, under the claim; a refusal lets the claim go.
+    unattended = acknowledge is False and bool(actor.get("role") == "automation")
+    try:
+        gate_sig = _sv._rows_sig(row["schedule_csv"])
+        review = publish_review(rid, schedule_id, unattended=unattended)
+        if one_tap and not one_tap_ok(rid, schedule_id, review):
+            # A one-tap Send nobody read a sheet for goes only when the
+            # unattended gate passes (re-audit 10/8/26 #1) — checked here,
+            # on the same run of the gate the Send uses (A5-F14: it was run
+            # once for the verdict and again for the Send).
+            _release(rid, schedule_id)
+            return one_tap_refusal(review, schedule_id), 409
+        blockers = [b["text"] for b in review["blockers"]]
+        _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
+    except BaseException:
+        _release(rid, schedule_id)
+        raise
+    if unacked:
+        _release(rid, schedule_id)
+        # Each blocker with its key, so the client acknowledges exactly the
+        # list it showed.
+        return _needs_ack(review, unacked, schedule_id)
 
     actor_name = _actor_name(actor)
     authority = _sv.authority_of(actor)
@@ -1813,7 +1974,7 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     import schedule_rows as _srows
     _after_publish(rid, schedule_id, dict(row, schedule_csv=_srows.to_csv(stamped["rows"])), actor, actor_name,
                    authority)
-    got = deliver_notices(restaurant_id=rid, batch=stamped["batch"], budget_seconds=INLINE_SECONDS)
+    got = deliver_inline(rid, stamped["batch"])
     note = None
     if not got["sent"] and not got["pending"]:
         if got["failed"]:
@@ -1877,15 +2038,22 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
         stale = stale_payload(rid, row["id"], version)
         if stale:
             return stale, 409
-    gate_sig = _sv._rows_sig(row["schedule_csv"])
-    review = publish_review(rid, row["id"])
-    _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
-    if unacked:
-        return _needs_ack(review, unacked, row["id"])
-    # One sender at a time: a double tap must not tell the same people twice.
+    # One sender at a time: a double tap must not tell the same people twice
+    # — claimed before the gate, so the second press never pays for it
+    # (scale audit 10/19/26 A5-F14).
     if not _claim(rid, row["id"], "changes"):
         return {"ok": False, "in_progress": True, "schedule_id": row["id"],
                 "error": "This week is being sent to staff right now."}, 409
+    try:
+        gate_sig = _sv._rows_sig(row["schedule_csv"])
+        review = publish_review(rid, row["id"])
+        _acked, unacked = _ack_gate(review, acknowledge, override_reasons, actor=actor)
+    except BaseException:
+        _release(rid, row["id"])
+        raise
+    if unacked:
+        _release(rid, row["id"])
+        return _needs_ack(review, unacked, row["id"])
     who = _actor_name(actor)
     # What staff had before this send — the published copy — for the
     # predictability-pay record; covers and swaps since are in it.
@@ -1919,7 +2087,7 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
         _release(rid, row["id"])
     _after_send(rid, row["id"], stamped["version"], review, _acked, override_reasons, actor, _sv.authority_of(actor))
     _record_pay(rid, row["id"], stamped["rows"], who, before_rows=_told_before, version=stamped["version"])
-    got = deliver_notices(restaurant_id=rid, batch=stamped["batch"], budget_seconds=INLINE_SECONDS)
+    got = deliver_inline(rid, stamped["batch"])
     log_account_event(rid, "schedule_changes_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
                              f"{len(got['sent'])} of {len(stamped['queued'])} told"
@@ -2110,7 +2278,7 @@ def send_live_change(restaurant_id, schedule_id, shift_ids, actor=None, version=
             _ops.capture(e, job="schedule_overrides", context=f"restaurant_id={rid} live change")
     _after_send(rid, row["id"], version_now, {"blockers": []}, [], None, actor, _sv.authority_of(actor))
     _record_pay(rid, row["id"], target, who, before_rows=old_live, version=version_now)
-    got = deliver_notices(restaurant_id=rid, batch=batch, budget_seconds=INLINE_SECONDS)
+    got = deliver_inline(rid, batch)
     log_account_event(rid, "schedule_live_change_sent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])} ({why}): "
                              f"{len(got['sent'])} of {len(queued)} told")
@@ -2182,7 +2350,7 @@ def resend(restaurant_id, schedule_id, actor=None, scope="missing"):
         raise
     finally:
         conn.close()
-    got = deliver_notices(restaurant_id=rid, batch=batch, budget_seconds=INLINE_SECONDS)
+    got = deliver_inline(rid, batch)
     log_account_event(rid, "schedule_resent", actor,
                       detail=f"week of {_mdy_range(row['week_start'], row['week_start'])}: "
                              f"{'everyone' if scope == 'all' else 'the people who had not got it'} — "

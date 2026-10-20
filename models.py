@@ -482,8 +482,9 @@ class Restaurant:
     auto_draft_weekday: int              = 3
     # 1 once the draft day is somebody's choice (any write of
     # auto_draft_weekday, update_restaurant stamps it); 0 is "not chosen",
-    # and the effective day is then spread across Monday-Thursday by
-    # restaurant (models.auto_draft_weekday — AI cost audit 10/7/26 #5).
+    # and the effective day is then spread across Monday-Saturday by
+    # restaurant (models.auto_draft_weekday — AI cost audit 10/7/26 #5;
+    # Monday-Thursday until scale audit 10/19/26 A5-F4).
     auto_draft_weekday_chosen: int       = 0
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
@@ -5080,6 +5081,9 @@ def init_db(db_path: str = DB_PATH):
     # And every restaurant made before the spread keeps the day it had
     # (re-audit 10/7/26 #6), once — after the first, which already ran.
     keep_preexisting_draft_days(db_path=db_path)
+    # And every restaurant on the four-day spread keeps its day when the
+    # spread widens to six (scale audit 10/19/26 A5-F4), once — after both.
+    keep_four_day_spread_days(db_path=db_path)
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
@@ -8915,6 +8919,20 @@ _INPUT_STAMPS = (
     ("demand_signals", "COUNT(*), MAX(id)"),
     ("labor_daily_history", "COUNT(*), MAX(saved_at)"),
 )
+# restaurants columns schedule_inputs_version leaves out: written by
+# background work or a session (sync stamps, tokens, caches of other
+# modules, read marks), never read by a schedule's inputs. The weather's own
+# forecast (weather_cache_json, weather_hourly_json) stays in: a draft's
+# demand reads it.
+_INPUTS_VOLATILE = frozenset({
+    "last_fetched_at", "weather_cached_at", "geocode_failed_at", "aivis_city_json", "inventory_updated_at",
+    "competitor_updated_at", "competitor_intel", "ig_token", "ig_token_expires", "fb_token_expires", "fb_page_token",
+    "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
+    "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
+    "clover_api_token", "clover_last_synced", "rpower_token", "rpower_last_synced", "rpower_verified_at",
+    "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
+    "gbp_review_count", "gbp_rating_updated_at", "optin_invites_ack_at", "demo_cleared_at",
+})
 
 
 def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
@@ -8932,7 +8950,16 @@ def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        h.update(repr(tuple(row) if row else ()).encode())
+        # Every column but the ones background work writes that no schedule
+        # input reads (_INPUTS_VOLATILE — scale audit 10/19/26 A5-F5): a
+        # review fetch's last_fetched_at, a POS sync's *_last_synced, a
+        # weather refresh's stamp emptied every Studio's kept inputs and the
+        # pre-publish cache all day.
+        if row is not None:
+            items = sorted((k, row[k]) for k in row.keys() if k not in _INPUTS_VOLATILE)
+            h.update(repr(items).encode())
+        else:
+            h.update(b"()")
         try:
             cd = conn.execute("SELECT updated_at, shifts_source, COALESCE(LENGTH(shifts_csv), 0), "
                               "COALESCE(LENGTH(shifts_csv_z), 0), shifts_stale FROM client_data "
@@ -12311,7 +12338,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           job_id: str = None, in_transaction=None) -> int:
+                           job_id: str = None, in_transaction=None, week_copy: tuple = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -12350,6 +12377,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     BUGSLIFE-26) — and the job is marked as having saved (async_jobs.
     saved_ref, its first draft's id) in the same commit, so a later Stop
     knows a draft was saved (ops.stop_async_job, ARCH-2).
+    `week_copy` = (history_id or None, schedule_csv) is the week's working
+    copy a whole-week generation started from (None: no check): when the
+    working copy is another row, or its text moved, since — a manager's
+    Studio save while it ran — nothing is written and DraftChanged is
+    raised (scale audit 10/19/26 A5-F16; it was superseded unconditionally).
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -12392,6 +12424,12 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                 prior_text = now["schedule_csv"] or ""
             elif week_start:
                 cur_copy = week_draft(conn, restaurant_id, week_start)
+                if week_copy is not None:
+                    now_copy = ((int(cur_copy["id"]), cur_copy["schedule_csv"] or "") if cur_copy is not None
+                                else (None, ""))
+                    if now_copy != (week_copy[0], week_copy[1] or ""):
+                        raise DraftChanged(now_copy[0] or week_copy[0] or 0,
+                                           now_copy[1] if cur_copy is not None else None)
                 if cur_copy is not None:
                     prior_text = cur_copy["schedule_csv"] or ""
                 else:
@@ -13813,6 +13851,54 @@ def keep_preexisting_draft_days(db_path=None) -> int:
             pass
         # Retried on the next boot: the marker is written only with the rows.
         print(f"auto-draft day keep migration failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+AUTO_DRAFT_DAY_SPREAD6_MIGRATION = "auto_draft_weekday_spread6_v1"
+
+
+def keep_four_day_spread_days(db_path=None) -> int:
+    """Once (data_migrations): every restaurant whose draft day nobody chose
+    when the spread widened from Monday-Thursday to Monday-Saturday (scale
+    audit 10/19/26 A5-F4) keeps the day it read — the four-day spread's day,
+    moved off its week's eve as effective_auto_draft_weekday moves it —
+    stored and marked chosen, as keep_preexisting_draft_days did for the
+    restaurants made before the spread. The wider spread is for restaurants
+    made after. Returns rows marked."""
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?",
+                        (AUTO_DRAFT_DAY_SPREAD6_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        rows = conn.execute("SELECT id, week_start_day FROM restaurants "
+                            "WHERE COALESCE(auto_draft_weekday_chosen, 0)=0").fetchall()
+        updates = []
+        for r in rows:
+            try:
+                wsd = int(r["week_start_day"] or 0)
+            except (TypeError, ValueError):
+                wsd = 0
+            day = effective_auto_draft_weekday(r["id"], None, 0, week_start_day=wsd,
+                                               spread=AUTO_DRAFT_SPREAD_WEEKDAYS_V1)
+            updates.append((day, r["id"]))
+        if updates:
+            conn.executemany("UPDATE restaurants SET auto_draft_weekday=?, auto_draft_weekday_chosen=1 "
+                             "WHERE id=? AND COALESCE(auto_draft_weekday_chosen, 0)=0", updates)
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (AUTO_DRAFT_DAY_SPREAD6_MIGRATION,
+                      f"{len(updates)} restaurants keep the Monday-Thursday spread's draft day"))
+        conn.commit()
+        return len(updates)
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"auto-draft six-day spread migration failed (will retry at next boot): {e}")
         return 0
     finally:
         conn.close()
@@ -16816,13 +16902,17 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 AUTO_DRAFT_WEEKDAY_DEFAULT = 3      # Thursday: a restaurant with no id, and the column's own default
 AUTO_DRAFT_WEEKDAYS = (0, 1, 2, 3, 4, 5)
-# Where nobody chose the day, it is spread across Monday-Thursday by
-# restaurant id (AI cost audit 10/7/26 #5). Every restaurant drafted on
-# Thursday: with two generation slots (schedule_engine.SCHEDULE_GEN_WORKERS)
-# and 15-40 minutes a draft, 100 Thursday drafts take 12-33 hours and spill
-# past the Friday auto-publish. Deterministic, so a restaurant's day never
-# moves between ticks; Friday and Saturday stay owner choices only.
-AUTO_DRAFT_SPREAD_WEEKDAYS = (0, 1, 2, 3)
+# Where nobody chose the day, it is spread across every draft day, Monday to
+# Saturday, by restaurant id (AI cost audit 10/7/26 #5; scale audit 10/19/26
+# A5-F4 widened it from Monday-Thursday). Every restaurant drafted on
+# Thursday: with two generation slots and 15-40 minutes a draft, 100
+# Thursday drafts took 12-33 hours and spilled past the Friday auto-publish;
+# on four days a fleet of thousands still queued past the drafts' deadline.
+# Deterministic, so a restaurant's day never moves between ticks. Every
+# restaurant that read the four-day spread before keeps the day it had
+# (keep_four_day_spread_days, once).
+AUTO_DRAFT_SPREAD_WEEKDAYS = (0, 1, 2, 3, 4, 5)
+AUTO_DRAFT_SPREAD_WEEKDAYS_V1 = (0, 1, 2, 3)
 AUTO_ORDER_WEEKDAY_DEFAULT = 0      # Monday
 AUTO_ORDER_WEEKDAYS = (0, 1, 2, 3, 4, 5, 6)
 
@@ -16835,14 +16925,16 @@ def _weekday_of(restaurant, attr, default, allowed) -> int:
     return v if v in allowed else default
 
 
-def default_auto_draft_weekday(restaurant_id) -> int:
+def default_auto_draft_weekday(restaurant_id, spread=None) -> int:
     """The draft day of a restaurant whose day nobody chose: Monday to
-    Thursday by its id (AUTO_DRAFT_SPREAD_WEEKDAYS), Thursday without one."""
+    Saturday by its id (AUTO_DRAFT_SPREAD_WEEKDAYS, or `spread`), Thursday
+    without one."""
+    spread = tuple(spread or AUTO_DRAFT_SPREAD_WEEKDAYS)
     try:
         rid = int(restaurant_id)
     except (TypeError, ValueError):
         return AUTO_DRAFT_WEEKDAY_DEFAULT
-    return AUTO_DRAFT_SPREAD_WEEKDAYS[rid % len(AUTO_DRAFT_SPREAD_WEEKDAYS)]
+    return spread[rid % len(spread)]
 
 
 def auto_draft_days(week_start_day=0) -> tuple:
@@ -16856,13 +16948,13 @@ def auto_draft_days(week_start_day=0) -> tuple:
     return tuple(d for d in range(7) if d != eve)
 
 
-def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0) -> int:
+def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0, spread=None) -> int:
     """The day the draft is made, from the row's own columns: the stored
     day when somebody chose it (and it is a draft day for this restaurant's
-    week, auto_draft_days), else the spread default — moved a day earlier
-    when it would fall on the eve of the week. One rule for the Restaurant
-    object (auto_draft_weekday) and a reader of the raw columns
-    (reservation_feeds)."""
+    week, auto_draft_days), else the spread default (`spread`, else
+    AUTO_DRAFT_SPREAD_WEEKDAYS) — moved a day earlier when it would fall on
+    the eve of the week. One rule for the Restaurant object
+    (auto_draft_weekday) and a reader of the raw columns (reservation_feeds)."""
     allowed = auto_draft_days(week_start_day)
     if chosen:
         try:
@@ -16871,7 +16963,7 @@ def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0
             v = None
         if v in allowed:
             return v
-    d = default_auto_draft_weekday(restaurant_id)
+    d = default_auto_draft_weekday(restaurant_id, spread=spread)
     return d if d in allowed else (d - 1) % 7
 
 

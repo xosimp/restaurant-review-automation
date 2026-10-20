@@ -12549,11 +12549,10 @@ def _publish_schedule_request(current_user):
             # a changes send from one tap.
             return jsonify(ok=True, already_published=True, schedule_id=row["id"], sent=[], unreachable=[],
                            failed=[], error=None), 200
-        import strategy_routes as _sr_1t
-        if not _sr_1t.draft_one_tap_safe(rid, row["id"], can_publish=True):
-            return jsonify(ok=False, one_tap_refused=True, schedule_id=row["id"],
-                           error="This week has something to read before it goes to staff — open it to "
-                                 "review and send."), 409
+        # The unattended verdict is judged on the one run of the gate the
+        # Send makes (schedule_publish.one_tap_ok — below, or under the
+        # publish's claim): it ran here once for the verdict and again for
+        # the Send (scale audit 10/19/26 A5-F14).
     if resend and row["published_at"] and not one_tap:
         out, status = _schedule_publish.resend(rid, row["id"], current_user, scope=resend)
         return jsonify(**out), status
@@ -12578,6 +12577,8 @@ def _publish_schedule_request(current_user):
         # imports): this path ran client_api's bound copy while every other
         # Send ran schedule_publish's.
         review = _schedule_publish.publish_review(rid, row["id"])
+        if one_tap and not _schedule_publish.one_tap_ok(rid, row["id"], review):
+            return jsonify(**_schedule_publish.one_tap_refusal(review, row["id"])), 409
         acked, unacked = _schedule_publish._ack_gate(review, acknowledge, reasons, actor=current_user)
         if unacked:
             out, status = _schedule_publish._needs_ack(review, unacked, row["id"])
@@ -12625,7 +12626,8 @@ def _publish_schedule_request(current_user):
                                             **({"version": version} if version is not None else {}))
     else:
         out, status = _publish_schedule(rid, schedule_id, current_user, acknowledge=acknowledge, **_why,
-                                        **({"version": version} if version is not None else {}))
+                                        **({"version": version} if version is not None else {}),
+                                        **({"one_tap": True} if one_tap else {}))
     return jsonify(**out), status
 
 

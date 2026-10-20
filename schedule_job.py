@@ -201,6 +201,9 @@ class GenerationRun:
         self.history_id = None
         self.payload = None
         self.week_dates = []
+        # (week_start, (history_id, csv)): the working copy a whole week
+        # started from, the only one its save may supersede (A5-F16).
+        self.week_copy = None
 
 
 class _CodeRedoDeclined(Exception):
@@ -411,9 +414,59 @@ def _code_redo_refusal(why: str, dates) -> str:
             "as they stand. Check who is off or unavailable, then try again. Nothing was saved.")
 
 
+# A whole week saved only over the working copy it started from (scale audit
+# 10/19/26 A5-F16): a manager's Studio save while it ran used to be
+# superseded unconditionally. A week drafted in code runs again over the
+# week as it now stands (the manager's edited rows are locked, so they are
+# kept) at most WEEK_RERUNS_MAX times; a week from the model is not paid for
+# twice — nothing is saved and the edits stand.
+WEEK_RERUNS_MAX = 2
+WEEK_EDITED_MESSAGE = ("The week was changed and saved while Cavnar AI drafted it, so nothing was replaced — "
+                       "your changes are kept. Generate again once the edits are done.")
+
+
+def _week_copy(req: Request):
+    """(week_start, (history_id or None, schedule_csv)) — the week's working
+    copy as it stands now, or None when the week cannot be told."""
+    if not req.week_start:
+        return None
+    try:
+        import models
+        ws = se.generation_request(req.restaurant_id, week_start=req.week_start)["week_start"]
+        conn = models.get_conn()
+        try:
+            row = models.week_draft(conn, req.restaurant_id, ws)
+        finally:
+            conn.close()
+        return ws, ((int(row["id"]), row["schedule_csv"] or "") if row is not None else (None, ""))
+    except Exception as e:
+        se._soft_fail("the week's working copy", e, req.restaurant_id)
+        return None
+
+
 def _week(job: GenerationRun) -> Candidate:
     """A whole week: one pass, then the quality gate's passes held in memory,
-    then the one save of the winner."""
+    then the one save of the winner — over the working copy the job started
+    from (A5-F16): changed meanwhile, a code draft runs again over it, a
+    model draft saves nothing."""
+    from models import DraftChanged as _DraftChanged
+    reruns = 0
+    while True:
+        job.week_copy = _week_copy(job.req)
+        winner = _week_pass(job)
+        try:
+            _commit(job, winner)
+            return winner
+        except _DraftChanged as moved:
+            if reruns >= WEEK_RERUNS_MAX or not se.code_drafted(winner.result):
+                raise se.ScheduleGenerationError(WEEK_EDITED_MESSAGE)
+            _degraded("the week was edited while it was drafted — drafting again over it", moved)
+            reruns += 1
+            job.passes = []
+
+
+def _week_pass(job: GenerationRun) -> Candidate:
+    """The week's first pass and the quality gate's, nothing saved."""
     req = job.req
     started = _started_week(req)
     if started is None:
@@ -437,7 +490,6 @@ def _week(job: GenerationRun) -> Candidate:
             se._ops.capture(_gx, job="schedule_quality_gate", context=f"restaurant_id={req.restaurant_id}")
             first.payload["gate"] = _gate_not_run("error")
             winner = first
-    _commit(job, winner)
     return winner
 
 
@@ -2341,6 +2393,11 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
     # goes back to _owner_redo. The gate's passes were never saved, so
     # the week is one ordinary save.
     base = spec.base if (spec.redo and spec.base is not None and spec.base.history_id) else None
+    # A whole week supersedes only the working copy it started from (A5-F16):
+    # a manager's save meanwhile is a DraftChanged back to _week.
+    week_copy = None
+    if base is None and not req.redo and job.week_copy and _wd and job.week_copy[0] == _wd[0]:
+        week_copy = job.week_copy[1]
     history_id = se._save_durably(
         req.job_id, clock, rid, _wd[0] if _wd else None, _wd[-1] if _wd else None,
         round(winner.hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
@@ -2364,6 +2421,7 @@ def _commit(job: GenerationRun, winner: Candidate) -> int:
                    "requirements_by_date": se._json_safe(result.get("requirements_by_date") or {})},
         stage_seconds=timer.as_dict(),
         base=(int(base.history_id), base.csv) if base is not None else None,
+        week_copy=week_copy,
         in_transaction=_with_the_week,
     )
     if not history_id:

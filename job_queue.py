@@ -133,6 +133,12 @@ KINDS = {
     # fire_silent; scale audit 10/19/26 FE-12): one try, it carries nothing
     # the app's next refresh won't.
     "silent_push": ("bulk", "bulk", 1),
+    # A Send's schedule notices its inline window did not reach (scale
+    # audit 10/19/26 A5-F14; schedule_publish.queue_delivery).
+    "schedule_notices": ("bulk", "bulk", 2),
+    # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
+    # scheduler.run_auto_publish_schedules fans out).
+    "auto_publish": ("bulk", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -146,6 +152,8 @@ HANDLERS = {
     "schedule_ablation": "schedule_job:run_queued_ablation",
     "bar_price_push": "bar_signals:run_queued_price_push",
     "silent_push": "push:run_queued_silent",
+    "schedule_notices": "schedule_publish:run_queued_notices",
+    "auto_publish": "scheduler:run_queued_auto_publish",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -209,19 +217,129 @@ def group_concurrency(grp) -> int:
     throttled code-only generations that stream nothing (scale audit
     10/19/26 A5-F8)."""
     if grp == "generation":
-        import schedule_engine
-        # Sized to the cores by default (blind re-audit 10/11/26 SCALE-16):
-        # each generation's solves run SCHEDULE_CPSAT_WORKERS threads, and
-        # more of them at once than the cores can carry end on the wall
-        # clock instead of their work budget. An explicit
+        # Sized to the container by default (blind re-audit 10/11/26
+        # SCALE-16; scale audit 10/19/26 A5-F2/F7): its cores over each
+        # solve's threads — more solves at once than the cores carry end on
+        # the wall clock instead of their work budget (A5-F6) — and its
+        # memory over what one generation takes. It was also held to a fixed
+        # 2 (SCHEDULE_GEN_WORKERS), so a bigger container's cores sat idle;
+        # SCHEDULE_GEN_WORKERS is now only an operator's ceiling. An explicit
         # QUEUE_GENERATION_CONCURRENCY is the operator's and is kept.
-        return _int_env("QUEUE_GENERATION_CONCURRENCY",
-                        min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
+        n = _int_env("QUEUE_GENERATION_CONCURRENCY", default_generation_slots())
+        _log_capacity_once(n)
+        return n
     if grp == "pos_io":
         # Network-bound rows: their slots are not cores. RPOWER's own budget
         # is its per-token bucket (rpower), not this count.
         return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
+
+
+# What one generation holds at its peak on top of the container's baseline
+# (scale audit 10/19/26 A5-F7, MEASURED-LOCAL): the parent's growth plus its
+# CP-SAT solve process — about 1.0-1.4 GB at 60-250 people.
+GEN_SLOT_MB = float(os.getenv("SCHEDULE_GEN_SLOT_MB", "") or 1400)
+# What the container holds before any generation runs: the web process and
+# the queue worker's own baseline.
+GEN_MEMORY_RESERVE_MB = float(os.getenv("SCHEDULE_GEN_MEMORY_RESERVE_MB", "") or 1536)
+
+
+def default_generation_slots() -> int:
+    """The generation group's CPU slots when the operator set none: the
+    cores' slots (cpu_generation_slots), held to what the memory carries
+    (memory_generation_slots, when the container has a limit) and to
+    SCHEDULE_GEN_WORKERS when one is set. At least one."""
+    n = cpu_generation_slots()
+    mem = memory_generation_slots()
+    if mem:
+        n = min(n, mem)
+    try:
+        import schedule_engine
+        ceiling = int(schedule_engine.SCHEDULE_GEN_WORKERS or 0)
+    except Exception:
+        ceiling = 0
+    if ceiling > 0:
+        n = min(n, ceiling)
+    return max(1, int(n))
+
+
+def memory_limit_mb():
+    """The container's memory limit in MB — cgroup v2 memory.max, else v1
+    memory.limit_in_bytes — or None when it has none (or it cannot be
+    read): the host's memory is not the container's."""
+    raw = None
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as f:
+                raw = f.read().strip()
+            break
+        except Exception:
+            continue
+    if not raw or raw == "max":
+        return None
+    try:
+        mb = float(raw) / 1048576.0
+    except ValueError:
+        return None
+    # cgroup v1 writes a page-rounded 2^63 for "no limit".
+    if mb <= 0 or mb >= float(1 << 40):
+        return None
+    return mb
+
+
+def memory_generation_slots():
+    """Generations the container's memory carries at once: its limit less
+    GEN_MEMORY_RESERVE_MB, over GEN_SLOT_MB a generation; at least one.
+    None without a limit."""
+    lim = memory_limit_mb()
+    if lim is None:
+        return None
+    return max(1, int((lim - GEN_MEMORY_RESERVE_MB) // max(1.0, GEN_SLOT_MB)))
+
+
+def _solve_threads() -> int:
+    try:
+        import schedule_cpsat
+        return max(1, int(schedule_cpsat.WORKERS))
+    except Exception:
+        return 4
+
+
+def generation_capacity() -> dict:
+    """What the generation group is sized from, for the platform check and
+    the boot line: {cores, memory_mb, cpu_slots, memory_slots, slots,
+    solve_threads, oversubscribed} — oversubscribed when the slots' solver
+    threads outnumber the cores (solves then end on the wall clock, not
+    their work budget: A5-F6)."""
+    per = _solve_threads()
+    cores = cpu_cores()
+    slots = group_concurrency("generation")
+    mem = memory_limit_mb()
+    return {"cores": cores, "memory_mb": int(mem) if mem else None, "cpu_slots": cpu_generation_slots(),
+            "memory_slots": memory_generation_slots(), "slots": slots, "solve_threads": per,
+            "oversubscribed": slots * per > cores}
+
+
+_CAPACITY_LOGGED = []
+
+
+def _log_capacity_once(slots) -> None:
+    """The generation slots this process sized to, said once per process —
+    a warning when their solver threads outnumber the cores (an operator's
+    QUEUE_GENERATION_CONCURRENCY past them: A5-F6)."""
+    if _CAPACITY_LOGGED:
+        return
+    _CAPACITY_LOGGED.append(slots)
+    try:
+        per, cores, mem = _solve_threads(), cpu_cores(), memory_limit_mb()
+        line = (f"generation slots {slots}: {cores} cores / {per} solver threads, memory "
+                f"{int(mem) if mem else 'unlimited'} MB / {int(GEN_SLOT_MB)} MB a generation")
+        if slots * per > cores:
+            log.warning(line + " — more solver threads than cores: solves will end on the wall clock")
+        else:
+            log.info(line)
+    except Exception:
+        pass
 
 
 def cpu_cores() -> int:
@@ -306,12 +424,23 @@ def reservations(grp) -> dict:
     owners' presses always (a press never waits behind drafts), and one for
     the auto-draft while drafts are waiting (a draft always progresses).
     QUEUE_INTERACTIVE_RESERVED / QUEUE_SCHEDULED_RESERVED; each at most the
-    slots less one, so with one slot there is no reservation, only order."""
+    slots less one, so with one slot there is no reservation, only order.
+    The drafts' slot is held against presses only while it leaves them
+    PRESS_MIN_SLOTS, or a draft is within SCHEDULED_URGENT_SECONDS of its
+    deadline (_admits — scale audit 10/19/26 A5-F4)."""
     slots = group_concurrency(grp)
     if grp != "generation" or slots <= 1:
         return {}
     return {"interactive": min(_int_env0("QUEUE_INTERACTIVE_RESERVED", 1), slots - 1),
             "scheduled": min(_int_env0("QUEUE_SCHEDULED_RESERVED", 1), slots - 1)}
+
+
+# Presses keep at least this many CPU slots while drafts wait (scale audit
+# 10/19/26 A5-F4): with two slots the drafts' reservation left an owners'
+# burst one slot all morning. Below it the drafts' slot is held only for a
+# draft about to expire.
+PRESS_MIN_SLOTS = 2
+SCHEDULED_URGENT_SECONDS = int(os.getenv("QUEUE_SCHEDULED_URGENT_SECONDS", "3600"))
 
 
 def mode() -> str:
@@ -524,11 +653,14 @@ def _tenant_key(restaurant_id, conn):
 
 
 def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempotency_key=None, external_id=None,
-            not_before=None, deadline=None, max_attempts=None, wake=True, db_path=None):
+            not_before=None, deadline=None, max_attempts=None, wake=True, db_path=None, requeue_states=()):
     """(row id, created): one unit of work as a row. With `idempotency_key`
     a second enqueue of the same work returns the first row (created False)
-    whatever its state. `not_before` / `deadline` are time.time() values; a
-    row still queued past its deadline expires (EXPIRE_HOOKS) instead of
+    whatever its state — unless that state is one of `requeue_states` (an
+    `expired` auto-draft, which ran nothing: scale audit 10/19/26 A5-F12),
+    when the old row keeps its record under a retired key and the work is
+    queued again. `not_before` / `deadline` are time.time() values; a row
+    still queued past its deadline expires (EXPIRE_HOOKS) instead of
     running late. Wakes this process's consumers (kick) unless `wake` is
     False."""
     grp, klass, attempts = KINDS.get(kind, ("bulk", "bulk", 2))
@@ -540,8 +672,12 @@ def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempot
         # keys), never with claims or other kinds (SCALE-12).
         db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         if idempotency_key:
-            row = conn.execute("SELECT id FROM jobs WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
-            if row:
+            row = conn.execute("SELECT id, state FROM jobs WHERE idempotency_key=?",
+                               (str(idempotency_key),)).fetchone()
+            if row and row["state"] in (requeue_states or ()):
+                conn.execute("UPDATE jobs SET idempotency_key=? WHERE id=?",
+                             (f"{idempotency_key}~{row['state']}:{int(row['id'])}", int(row["id"])))
+            elif row:
                 conn.rollback()
                 return int(row["id"]), False
         cur = conn.execute(
@@ -795,20 +931,37 @@ def _has_work(conn, grp, klass, now) -> bool:
                         "LIMIT 1", (grp, klass, now)).fetchone() is not None
 
 
+def _has_urgent_draft(conn, grp, now) -> bool:
+    """A scheduled row waiting that expires within SCHEDULED_URGENT_SECONDS."""
+    return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class='scheduled' AND state='queued' "
+                        "AND +not_before<=? AND deadline IS NOT NULL AND deadline<=? LIMIT 1",
+                        (grp, now, now + SCHEDULED_URGENT_SECONDS)).fetchone() is not None
+
+
 def _admits(conn, grp, klass, total, held, now) -> bool:
     """Whether a row of `klass` may start in `grp` now: the group's rows in
     flight under max_running, and its CPU slots — less what another class
     keeps for itself (reservations: owners' presses always, the auto-draft
-    while drafts wait) — not all held (SCALE-28)."""
+    while drafts wait) — not all held (SCALE-28). The drafts' slot is kept
+    from a press only while presses still have PRESS_MIN_SLOTS, or when a
+    draft is about to expire (scale audit 10/19/26 A5-F4: on two slots it
+    halved an owners' burst all morning)."""
     if total >= max_running(grp):
         return False
+    slots = group_concurrency(grp)
     kept = 0
     for other, n in reservations(grp).items():
         if other == klass or n <= 0:
             continue
-        if other == "interactive" or _has_work(conn, grp, other, now):
+        if other == "interactive":
+            holds = True
+        elif other == "scheduled" and slots - n < PRESS_MIN_SLOTS:
+            holds = _has_urgent_draft(conn, grp, now)
+        else:
+            holds = _has_work(conn, grp, other, now)
+        if holds:
             kept += max(0, n - held.get(other, 0))
-    return sum(held.values()) + kept < group_concurrency(grp)
+    return sum(held.values()) + kept < slots
 
 
 def _maybe_claimable(conn, groups, now) -> bool:

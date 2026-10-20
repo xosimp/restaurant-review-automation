@@ -294,6 +294,7 @@ def test_the_local_scorer_counts_the_rows_it_reads():
 def test_generation_slots_are_the_cores_over_each_solves_threads(monkeypatch):
     monkeypatch.delenv("QUEUE_GENERATION_CONCURRENCY", raising=False)
     monkeypatch.setattr(job_queue, "_gateway_streams", lambda: None)
+    monkeypatch.setattr(job_queue, "memory_limit_mb", lambda: None)
     monkeypatch.setattr(cps, "WORKERS", 4)
     monkeypatch.setattr(job_queue, "cpu_cores", lambda: 8)
     monkeypatch.setattr(se, "SCHEDULE_GEN_WORKERS", 4)

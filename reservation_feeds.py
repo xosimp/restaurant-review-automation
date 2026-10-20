@@ -200,7 +200,7 @@ def run_reservation_sync(db_path=None, weekday=None) -> dict:
     whose provider is not live yet is skipped, one that fails is failed."""
     # The effective draft day, by the one rule (models.
     # effective_auto_draft_weekday): a day nobody chose is spread across
-    # Monday-Thursday by restaurant (AI cost audit 10/7/26 #5), so the raw
+    # Monday-Saturday by restaurant (AI cost audit 10/7/26 #5, A5-F4), so the raw
     # column's Thursday is not the draft day.
     from models import effective_auto_draft_weekday
     db_path = _path(db_path)

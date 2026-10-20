@@ -773,8 +773,7 @@ def test_the_generate_route_queues_on_the_pool_and_starts_no_thread_of_its_own(d
     # concurrency (a row waiting on the model holds no slot — SCALE-1),
     # sized to the cores by default (SCALE-16).
     assert job_queue._pools["generation"]._max_workers == job_queue.max_running("generation")
-    assert job_queue.group_concurrency("generation") == min(se.SCHEDULE_GEN_WORKERS,
-                                                            job_queue.cpu_generation_slots())
+    assert job_queue.group_concurrency("generation") == job_queue.default_generation_slots()
     assert job_queue.row_for(body["job_id"])["kind"] == "schedule_generate"
     assert "threading.Thread(" not in inspect.getsource(mobile_api.mobile_generate_schedule)
 
@@ -840,8 +839,7 @@ def test_the_auto_draft_takes_its_slot_behind_presses():
     # The auto-draft's slot is its scheduled-class queue row, behind presses
     # (blind re-audit 10/11/26 ARCH-10); the CPU slots are unchanged.
     assert job_queue.KINDS["auto_draft"][:2] == ("generation", "scheduled")
-    assert job_queue.group_concurrency("generation") == min(se.SCHEDULE_GEN_WORKERS,
-                                                            job_queue.cpu_generation_slots())
+    assert job_queue.group_concurrency("generation") == job_queue.default_generation_slots()
 
 
 def test_the_auto_draft_joins_an_owners_running_generation_instead_of_starting_a_second(db, monkeypatch):
