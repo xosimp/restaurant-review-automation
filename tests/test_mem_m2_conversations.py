@@ -90,7 +90,10 @@ def test_turns_that_scroll_out_are_summarised_validated_and_replayed_first(monke
     # Per turn, so after the cached snapshot and uncached (AI cost audit
     # 10/7/26 #30: it was the first block after the static rules, which put
     # a per-turn text in front of the snapshot's cache breakpoint).
-    assert "Restaurant:" in blocks[1]["text"] and "cache_control" in blocks[1]
+    # The snapshot carries its breakpoint only where a read of it is likely
+    # since the scale audit (10/19/26 A4-08) - a cold one-round turn sends it
+    # unmarked; its place, ahead of the per-turn block, is what holds.
+    assert "Restaurant:" in blocks[1]["text"]
     chat = [b for b in blocks if "Option 2: move a server" in b["text"]]
     assert len(chat) == 1 and blocks.index(chat[0]) > 1 and "cache_control" not in chat[0]
     assert "Restaurant:" not in chat[0]["text"]

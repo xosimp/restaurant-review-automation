@@ -156,7 +156,9 @@ def test_a_permanent_twilio_rejection_is_not_retried(twilio, monkeypatch):
     """A 400 (bad number, opted-out recipient) will fail the same way every
     time. The retry the fix adds must stay off for it."""
     calls = _sequence(monkeypatch, "requests.post", [_Resp(400, text="invalid 'To' number")])
-    assert notify.send_sms("+1555", "hello") is False
+    # A dialable US number: since the scale fix round (10/19/26 SEC-05) a
+    # number outside SMS_COUNTRY_CODES is refused before any request is made.
+    assert notify.send_sms("6305550199", "hello") is False
     assert len(calls) == 1
 
 

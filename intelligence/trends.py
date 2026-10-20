@@ -217,16 +217,16 @@ def persist(cohorts: dict = None, members: dict = None, db_path=DB_PATH, today: 
     written = 0
     conn = get_conn(db_path)
     try:
-        for cohort, metrics in series.items():
-            for metric, s in metrics.items():
-                for p in s["points"]:
-                    if p["week"] >= this_week:
-                        continue
-                    cur = conn.execute(
-                        "INSERT INTO intel_cohort_series (cohort, metric, week, n, p50, n_joined, n_left) "
-                        "VALUES (?,?,?,?,?,?,?) ON CONFLICT(cohort, metric, week) DO NOTHING",
-                        (cohort, metric, p["week"], p["n"], p["p50"], s["n_joined"], s["n_left"]))
-                    written += cur.rowcount or 0
+        # One executemany (scale audit 10/19/26 DB-05): every cohort's
+        # metrics' weeks were a savepoint each on Postgres.
+        want = [(cohort, metric, p["week"], p["n"], p["p50"], s["n_joined"], s["n_left"])
+                for cohort, metrics in series.items() for metric, s in metrics.items()
+                for p in s["points"] if p["week"] < this_week]
+        if want:
+            cur = conn.executemany(
+                "INSERT INTO intel_cohort_series (cohort, metric, week, n, p50, n_joined, n_left) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT(cohort, metric, week) DO NOTHING", want)
+            written += max(0, cur.rowcount or 0)
         conn.commit()
     finally:
         conn.close()

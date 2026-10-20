@@ -101,6 +101,12 @@ def get_conn(db_path=None):
 # ── configuration ───────────────────────────────────────────────────────────
 
 CLASSES = ("interactive", "scheduled", "bulk")
+# The consumer groups, each with its own slots: "generation" (schedule
+# generations, CPU), "bulk" (the learners and other CPU work), "pos_io"
+# (network-bound POS reads — scale audit 10/19/26 INF-6: the nightly archive
+# rows held one of bulk's two CPU slots while they waited on RPOWER, so the
+# learners queued behind them).
+GROUPS = ("generation", "bulk", "pos_io")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -112,7 +118,12 @@ KINDS = {
     "email_intake": ("bulk", "bulk", 4),
     # The nightly POS archive, one row per restaurant (strategy_jobs.
     # run_pos_archive; bar audit 10/14/26 R2).
-    "pos_archive": ("bulk", "bulk", 2),
+    "pos_archive": ("pos_io", "bulk", 2),
+    # A store just connected: its history archived newest-first, then its
+    # first sync — off the request thread, at most the pos_io group's
+    # concurrency of stores at once (strategy_jobs.run_queued_pos_onboard;
+    # scale audit 10/19/26 ONB-6 / ONB-4).
+    "pos_onboard": ("pos_io", "bulk", 2),
     # The owner's notes and staff notes read into typed rules when they are
     # SAVED, one batched call (owner_rules.queue_read — blind re-audit
     # 10/11/26 AI-22): never in a generation's critical path.
@@ -123,6 +134,16 @@ KINDS = {
     # The Monday bar price push, one row per restaurant due at its own hour
     # (bar_signals.run_price_push; FC/Bar audit 10/16/26 SCALE-07).
     "bar_price_push": ("bulk", "bulk", 2),
+    # A widget-refresh wake sent at its restaurant's own offset (push.
+    # fire_silent; scale audit 10/19/26 FE-12): one try, it carries nothing
+    # the app's next refresh won't.
+    "silent_push": ("bulk", "bulk", 1),
+    # A Send's schedule notices its inline window did not reach (scale
+    # audit 10/19/26 A5-F14; schedule_publish.queue_delivery).
+    "schedule_notices": ("bulk", "bulk", 2),
+    # One restaurant's auto-publish check (scale audit 10/19/26 A5-F14;
+    # scheduler.run_auto_publish_schedules fans out).
+    "auto_publish": ("bulk", "bulk", 2),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -132,9 +153,13 @@ HANDLERS = {
     "learner": "strategy_jobs:run_queued_learner",
     "email_intake": "email_intake:run_queued",
     "pos_archive": "strategy_jobs:run_queued_pos_archive",
+    "pos_onboard": "strategy_jobs:run_queued_pos_onboard",
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
     "bar_price_push": "bar_signals:run_queued_price_push",
+    "silent_push": "push:run_queued_silent",
+    "schedule_notices": "schedule_publish:run_queued_notices",
+    "auto_publish": "scheduler:run_queued_auto_publish",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
@@ -192,23 +217,135 @@ def group_concurrency(grp) -> int:
     process (a count of claimed rows, never a per-process pool) — its CPU
     slots. A row waiting on a model answer gives its slot back while it
     waits (model_wait — blind re-audit 10/11/26 SCALE-1) and counts only
-    against max_running. The generation group is also held to what the
-    organisation's token budget can carry (model_gateway.
-    max_concurrent_generations — no cap when the budget is not configured)."""
+    against max_running. The organisation's token budget caps the rows
+    STREAMING a model answer (model_gateway.max_concurrent_generations,
+    held in model_gateway.admit), never these CPU slots: folded in here it
+    throttled code-only generations that stream nothing (scale audit
+    10/19/26 A5-F8)."""
     if grp == "generation":
-        import schedule_engine
-        # Sized to the cores by default (blind re-audit 10/11/26 SCALE-16):
-        # each generation's solves run SCHEDULE_CPSAT_WORKERS threads, and
-        # more of them at once than the cores can carry end on the wall
-        # clock instead of their work budget. An explicit
+        # Sized to the container by default (blind re-audit 10/11/26
+        # SCALE-16; scale audit 10/19/26 A5-F2/F7): its cores over each
+        # solve's threads — more solves at once than the cores carry end on
+        # the wall clock instead of their work budget (A5-F6) — and its
+        # memory over what one generation takes. It was also held to a fixed
+        # 2 (SCHEDULE_GEN_WORKERS), so a bigger container's cores sat idle;
+        # SCHEDULE_GEN_WORKERS is now only an operator's ceiling. An explicit
         # QUEUE_GENERATION_CONCURRENCY is the operator's and is kept.
-        n = _int_env("QUEUE_GENERATION_CONCURRENCY",
-                     min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
-        cap = _gateway_streams()
-        if cap:
-            n = max(1, min(n, int(cap)))
+        n = _int_env("QUEUE_GENERATION_CONCURRENCY", default_generation_slots())
+        _log_capacity_once(n)
         return n
+    if grp == "pos_io":
+        # Network-bound rows: their slots are not cores. RPOWER's own budget
+        # is its per-token bucket (rpower), not this count.
+        return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
+
+
+# What one generation holds at its peak on top of the container's baseline
+# (scale audit 10/19/26 A5-F7, MEASURED-LOCAL): the parent's growth plus its
+# CP-SAT solve process — about 1.0-1.4 GB at 60-250 people.
+GEN_SLOT_MB = float(os.getenv("SCHEDULE_GEN_SLOT_MB", "") or 1400)
+# What the container holds before any generation runs: the web process and
+# the queue worker's own baseline.
+GEN_MEMORY_RESERVE_MB = float(os.getenv("SCHEDULE_GEN_MEMORY_RESERVE_MB", "") or 1536)
+
+
+def default_generation_slots() -> int:
+    """The generation group's CPU slots when the operator set none: the
+    cores' slots (cpu_generation_slots), held to what the memory carries
+    (memory_generation_slots, when the container has a limit) and to
+    SCHEDULE_GEN_WORKERS when one is set. At least one."""
+    n = cpu_generation_slots()
+    mem = memory_generation_slots()
+    if mem:
+        n = min(n, mem)
+    try:
+        import schedule_engine
+        ceiling = int(schedule_engine.SCHEDULE_GEN_WORKERS or 0)
+    except Exception:
+        ceiling = 0
+    if ceiling > 0:
+        n = min(n, ceiling)
+    return max(1, int(n))
+
+
+def memory_limit_mb():
+    """The container's memory limit in MB — cgroup v2 memory.max, else v1
+    memory.limit_in_bytes — or None when it has none (or it cannot be
+    read): the host's memory is not the container's."""
+    raw = None
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as f:
+                raw = f.read().strip()
+            break
+        except Exception:
+            continue
+    if not raw or raw == "max":
+        return None
+    try:
+        mb = float(raw) / 1048576.0
+    except ValueError:
+        return None
+    # cgroup v1 writes a page-rounded 2^63 for "no limit".
+    if mb <= 0 or mb >= float(1 << 40):
+        return None
+    return mb
+
+
+def memory_generation_slots():
+    """Generations the container's memory carries at once: its limit less
+    GEN_MEMORY_RESERVE_MB, over GEN_SLOT_MB a generation; at least one.
+    None without a limit."""
+    lim = memory_limit_mb()
+    if lim is None:
+        return None
+    return max(1, int((lim - GEN_MEMORY_RESERVE_MB) // max(1.0, GEN_SLOT_MB)))
+
+
+def _solve_threads() -> int:
+    try:
+        import schedule_cpsat
+        return max(1, int(schedule_cpsat.WORKERS))
+    except Exception:
+        return 4
+
+
+def generation_capacity() -> dict:
+    """What the generation group is sized from, for the platform check and
+    the boot line: {cores, memory_mb, cpu_slots, memory_slots, slots,
+    solve_threads, oversubscribed} — oversubscribed when the slots' solver
+    threads outnumber the cores (solves then end on the wall clock, not
+    their work budget: A5-F6)."""
+    per = _solve_threads()
+    cores = cpu_cores()
+    slots = group_concurrency("generation")
+    mem = memory_limit_mb()
+    return {"cores": cores, "memory_mb": int(mem) if mem else None, "cpu_slots": cpu_generation_slots(),
+            "memory_slots": memory_generation_slots(), "slots": slots, "solve_threads": per,
+            "oversubscribed": slots * per > cores}
+
+
+_CAPACITY_LOGGED = []
+
+
+def _log_capacity_once(slots) -> None:
+    """The generation slots this process sized to, said once per process —
+    a warning when their solver threads outnumber the cores (an operator's
+    QUEUE_GENERATION_CONCURRENCY past them: A5-F6)."""
+    if _CAPACITY_LOGGED:
+        return
+    _CAPACITY_LOGGED.append(slots)
+    try:
+        per, cores, mem = _solve_threads(), cpu_cores(), memory_limit_mb()
+        line = (f"generation slots {slots}: {cores} cores / {per} solver threads, memory "
+                f"{int(mem) if mem else 'unlimited'} MB / {int(GEN_SLOT_MB)} MB a generation")
+        if slots * per > cores:
+            log.warning(line + " — more solver threads than cores: solves will end on the wall clock")
+        else:
+            log.info(line)
+    except Exception:
+        pass
 
 
 def cpu_cores() -> int:
@@ -259,6 +396,19 @@ def _gateway_streams():
         return None
 
 
+def rows_in_phase(grp, phase, exclude_id=None, db_path=None) -> int:
+    """Rows of `grp` running with a live lease in `phase` ('model': waiting
+    on a model answer) — what model_gateway's stream cap counts (A5-F8)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE grp=? AND state='running' AND lease_until>? "
+                           "AND phase=? AND id<>?", (grp, time.time(), phase,
+                                                     int(exclude_id) if exclude_id is not None else -1)).fetchone()
+        return int(row["n"] or 0)
+    finally:
+        conn.close()
+
+
 def max_running(grp) -> int:
     """How many rows of `grp` may be claimed at once across every process,
     code work and model waits together (SCALE-1): the CPU slots plus the
@@ -280,12 +430,23 @@ def reservations(grp) -> dict:
     owners' presses always (a press never waits behind drafts), and one for
     the auto-draft while drafts are waiting (a draft always progresses).
     QUEUE_INTERACTIVE_RESERVED / QUEUE_SCHEDULED_RESERVED; each at most the
-    slots less one, so with one slot there is no reservation, only order."""
+    slots less one, so with one slot there is no reservation, only order.
+    The drafts' slot is held against presses only while it leaves them
+    PRESS_MIN_SLOTS, or a draft is within SCHEDULED_URGENT_SECONDS of its
+    deadline (_admits — scale audit 10/19/26 A5-F4)."""
     slots = group_concurrency(grp)
     if grp != "generation" or slots <= 1:
         return {}
     return {"interactive": min(_int_env0("QUEUE_INTERACTIVE_RESERVED", 1), slots - 1),
             "scheduled": min(_int_env0("QUEUE_SCHEDULED_RESERVED", 1), slots - 1)}
+
+
+# Presses keep at least this many CPU slots while drafts wait (scale audit
+# 10/19/26 A5-F4): with two slots the drafts' reservation left an owners'
+# burst one slot all morning. Below it the drafts' slot is held only for a
+# draft about to expire.
+PRESS_MIN_SLOTS = 2
+SCHEDULED_URGENT_SECONDS = int(os.getenv("QUEUE_SCHEDULED_URGENT_SECONDS", "3600"))
 
 
 def mode() -> str:
@@ -498,11 +659,14 @@ def _tenant_key(restaurant_id, conn):
 
 
 def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempotency_key=None, external_id=None,
-            not_before=None, deadline=None, max_attempts=None, wake=True, db_path=None):
+            not_before=None, deadline=None, max_attempts=None, wake=True, db_path=None, requeue_states=()):
     """(row id, created): one unit of work as a row. With `idempotency_key`
     a second enqueue of the same work returns the first row (created False)
-    whatever its state. `not_before` / `deadline` are time.time() values; a
-    row still queued past its deadline expires (EXPIRE_HOOKS) instead of
+    whatever its state — unless that state is one of `requeue_states` (an
+    `expired` auto-draft, which ran nothing: scale audit 10/19/26 A5-F12),
+    when the old row keeps its record under a retired key and the work is
+    queued again. `not_before` / `deadline` are time.time() values; a row
+    still queued past its deadline expires (EXPIRE_HOOKS) instead of
     running late. Wakes this process's consumers (kick) unless `wake` is
     False."""
     grp, klass, attempts = KINDS.get(kind, ("bulk", "bulk", 2))
@@ -514,8 +678,12 @@ def enqueue(kind, payload=None, restaurant_id=None, priority_class=None, idempot
         # keys), never with claims or other kinds (SCALE-12).
         db_dialect.begin_write(conn, "jobs", "enqueue", kind)
         if idempotency_key:
-            row = conn.execute("SELECT id FROM jobs WHERE idempotency_key=?", (str(idempotency_key),)).fetchone()
-            if row:
+            row = conn.execute("SELECT id, state FROM jobs WHERE idempotency_key=?",
+                               (str(idempotency_key),)).fetchone()
+            if row and row["state"] in (requeue_states or ()):
+                conn.execute("UPDATE jobs SET idempotency_key=? WHERE id=?",
+                             (f"{idempotency_key}~{row['state']}:{int(row['id'])}", int(row["id"])))
+            elif row:
                 conn.rollback()
                 return int(row["id"]), False
         cur = conn.execute(
@@ -769,20 +937,37 @@ def _has_work(conn, grp, klass, now) -> bool:
                         "LIMIT 1", (grp, klass, now)).fetchone() is not None
 
 
+def _has_urgent_draft(conn, grp, now) -> bool:
+    """A scheduled row waiting that expires within SCHEDULED_URGENT_SECONDS."""
+    return conn.execute("SELECT 1 FROM jobs WHERE grp=? AND priority_class='scheduled' AND state='queued' "
+                        "AND +not_before<=? AND deadline IS NOT NULL AND deadline<=? LIMIT 1",
+                        (grp, now, now + SCHEDULED_URGENT_SECONDS)).fetchone() is not None
+
+
 def _admits(conn, grp, klass, total, held, now) -> bool:
     """Whether a row of `klass` may start in `grp` now: the group's rows in
     flight under max_running, and its CPU slots — less what another class
     keeps for itself (reservations: owners' presses always, the auto-draft
-    while drafts wait) — not all held (SCALE-28)."""
+    while drafts wait) — not all held (SCALE-28). The drafts' slot is kept
+    from a press only while presses still have PRESS_MIN_SLOTS, or when a
+    draft is about to expire (scale audit 10/19/26 A5-F4: on two slots it
+    halved an owners' burst all morning)."""
     if total >= max_running(grp):
         return False
+    slots = group_concurrency(grp)
     kept = 0
     for other, n in reservations(grp).items():
         if other == klass or n <= 0:
             continue
-        if other == "interactive" or _has_work(conn, grp, other, now):
+        if other == "interactive":
+            holds = True
+        elif other == "scheduled" and slots - n < PRESS_MIN_SLOTS:
+            holds = _has_urgent_draft(conn, grp, now)
+        else:
+            holds = _has_work(conn, grp, other, now)
+        if holds:
             kept += max(0, n - held.get(other, 0))
-    return sum(held.values()) + kept < group_concurrency(grp)
+    return sum(held.values()) + kept < slots
 
 
 def _maybe_claimable(conn, groups, now) -> bool:
@@ -831,7 +1016,7 @@ def _dead_rows(conn, grp, now, expired) -> list:
     return out
 
 
-def claim(worker_id, groups=("generation", "bulk"), db_path=None):
+def claim(worker_id, groups=GROUPS, db_path=None):
     """The next row this consumer may run, claimed (state running, a lease,
     attempts + 1, holding a CPU slot) — or None when nothing is claimable
     within the bounds above. Rows expired unstarted on the way are handed
@@ -989,7 +1174,9 @@ def complete(job_id, worker_id, result=None, db_path=None) -> bool:
 
 def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
     """A try that raised: queued again after RETRY_BACKOFF while tries are
-    left (and `retry`), else failed. Returns the new state."""
+    left (and `retry`), else failed. Returns the new state. An error that
+    carries `retry_after` seconds (a provider's Retry-After, an open
+    breaker — rpower.RPowerTryLater) waits at least that long instead."""
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT attempts, max_attempts FROM jobs WHERE id=?", (int(job_id),)).fetchone()
@@ -998,6 +1185,10 @@ def fail(job_id, worker_id, error, retry=True, db_path=None) -> str:
         again = retry and int(row["attempts"] or 0) < int(row["max_attempts"] or 1)
         if again:
             wait = RETRY_BACKOFF[min(int(row["attempts"] or 1), len(RETRY_BACKOFF)) - 1]
+            try:
+                wait = max(wait, min(float(getattr(error, "retry_after", 0) or 0), 6 * 3600.0))
+            except (TypeError, ValueError):
+                pass
             conn.execute("UPDATE jobs SET state='queued', not_before=?, error=?, lease_owner=NULL, lease_until=NULL, "
                          "phase=NULL WHERE id=? AND lease_owner=?",
                          (time.time() + wait, str(error)[:500], int(job_id), worker_id))
@@ -1392,11 +1583,15 @@ def tick(db_path=None) -> dict:
     rows a drain could not take when they arrived (every slot busy, a
     resumed row whose lease ran out) are started. Standard counts."""
     out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    # The web row is beaten every minute even while the worker consumes
+    # (scale audit 10/19/26 INF-4): it was beaten only here, after this
+    # return, so a day after the boot a worker's heartbeat pruned it and a
+    # recycled queue worker found no web boot to wait for.
+    heartbeat("web", db_path=db_path)
     if not this_process_consumes(db_path):
         out["skipped"] = 1
         return out
-    heartbeat("web", db_path=db_path)
-    for grp in ("generation", "bulk"):
+    for grp in GROUPS:
         if claimable(grp, db_path=db_path):
             out["attempted"] += 1
             if kick(grp, db_path=db_path) is not None:
@@ -1451,8 +1646,8 @@ def rss_mb():
         return None
 
 
-def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=None, max_jobs=None,
-               max_rss_mb=None) -> str:
+def run_worker(groups=GROUPS, stop=None, threads=None, db_path=None, max_jobs=None,
+               max_rss_mb=None, count_groups=None, on_recycle=None) -> str:
     """worker.py's consumer: `threads` per group (max_running by default —
     a row waiting on a model answer keeps its thread, not its CPU slot)
     claiming in a loop, a heartbeat every RENEW_SECONDS, woken by a slot
@@ -1461,14 +1656,30 @@ def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=N
     its resident memory passed `max_rss_mb` (blind re-audit 10/11/26
     SCALE-17/SCALE-18: a 250-person generation left 1.4 GB resident for
     good): it stops claiming, lets its running rows finish, and returns, so
-    worker.py's supervisor starts a fresh process."""
+    worker.py's supervisor starts a fresh process. `count_groups`: only rows
+    of these groups count toward `max_jobs` (worker.py: generations — scale
+    audit 10/19/26 A5-F3); None counts every row. `on_recycle` is called once
+    when the recycle starts (worker.py tells the supervisor, which starts
+    the replacement while this process drains)."""
     stop = stop or threading.Event()
     recycle = threading.Event()
     ran_total = [0]
     count_lock = threading.Lock()
     heartbeat("worker", db_path=db_path)
 
+    def _recycle():
+        with count_lock:
+            if recycle.is_set():
+                return
+            recycle.set()
+        if on_recycle is not None:
+            try:
+                on_recycle()
+            except Exception as e:
+                log.warning("on_recycle failed: %s", e)
+
     def _loop(grp):
+        counts = count_groups is None or grp in count_groups
         while not stop.is_set() and not _draining.is_set() and not recycle.is_set():
             try:
                 ran = drain((grp,), WORKER_ID, max_jobs=1, db_path=db_path)
@@ -1476,12 +1687,13 @@ def run_worker(groups=("generation", "bulk"), stop=None, threads=None, db_path=N
                 log.error("queue consumer %s failed: %s", grp, e)
                 ran = 0
             if ran:
+                due = False
                 with count_lock:
-                    ran_total[0] += ran
-                    if max_jobs and ran_total[0] >= int(max_jobs):
-                        recycle.set()
-                if max_rss_mb and (rss_mb() or 0) > float(max_rss_mb):
-                    recycle.set()
+                    if counts:
+                        ran_total[0] += ran
+                    due = bool(max_jobs and ran_total[0] >= int(max_jobs))
+                if due or (max_rss_mb and (rss_mb() or 0) > float(max_rss_mb)):
+                    _recycle()
             else:
                 _wake.clear()
                 _wake.wait(POLL_SECONDS)
@@ -1553,7 +1765,7 @@ def start_inprocess(db_path=None) -> None:
     register_shutdown()
     heartbeat("web", db_path=db_path)
     if this_process_consumes(db_path):
-        for grp in ("generation", "bulk"):
+        for grp in GROUPS:
             kick(grp, db_path=db_path)
 
 
@@ -1612,6 +1824,35 @@ def stats(window_seconds=3600, db_path=None) -> dict:
         out["expired_by_tenant"] = {r["t"]: int(r["n"]) for r in conn.execute(
             "SELECT tenant_key AS t, COUNT(*) AS n FROM jobs WHERE state='expired' AND finished_at>? "
             "GROUP BY tenant_key ORDER BY COUNT(*) DESC LIMIT 10", (now - window_seconds,)).fetchall()}
+        # Per kind (scale audit 10/19/26 INF-6, INF-7): what is waiting, how
+        # long the oldest row that MAY run has waited (from its not_before —
+        # a row spread to later is not a backlog), and what failed or expired
+        # in the last day. The bulk backlog alert reads the groups' figure.
+        out["kinds"] = {}
+
+        def _kind(kind, grp):
+            return out["kinds"].setdefault(kind, {"grp": grp, "queued": 0, "running": 0,
+                                                  "oldest_ready_seconds": None, "failed_24h": 0, "expired_24h": 0})
+        for r in conn.execute(
+                "SELECT kind, grp, state, COUNT(*) AS n, MIN(CASE WHEN not_before <= ? THEN "
+                "(CASE WHEN not_before > enqueued_at THEN not_before ELSE enqueued_at END) END) AS ready "
+                "FROM jobs WHERE state IN ('queued','running') GROUP BY kind, grp, state", (now,)).fetchall():
+            k = _kind(r["kind"], r["grp"])
+            k[r["state"]] += int(r["n"])
+            if r["state"] == "queued" and r["ready"] is not None:
+                age = round(now - float(r["ready"]), 1)
+                k["oldest_ready_seconds"] = max(k["oldest_ready_seconds"] or 0, age)
+                g = out["groups"].setdefault(r["grp"], {"queued": 0, "running": 0, "oldest_queued_seconds": None})
+                g["oldest_ready_seconds"] = max(g.get("oldest_ready_seconds") or 0, age)
+        for r in conn.execute("SELECT kind, state, COUNT(*) AS n FROM jobs WHERE state IN ('failed','expired') "
+                              "AND finished_at>? GROUP BY kind, state", (now - 86400,)).fetchall():
+            _kind(r["kind"], KINDS.get(r["kind"], ("bulk",))[0])[r["state"] + "_24h"] = int(r["n"])
+        # The queue worker process (INF-4): seconds since it last beat its
+        # heartbeat (None: none on record), and since this web process booted.
+        row = conn.execute("SELECT MAX(heartbeat_at) AS h FROM job_workers WHERE role='worker'").fetchone()
+        out["worker_heartbeat_age_seconds"] = round(now - float(row["h"]), 1) if row and row["h"] else None
+        row = conn.execute("SELECT MAX(started_at) AS s FROM job_workers WHERE role='web'").fetchone()
+        out["web_started_age_seconds"] = round(now - float(row["s"]), 1) if row and row["s"] else None
         return out
     finally:
         conn.close()

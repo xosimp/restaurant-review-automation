@@ -242,11 +242,16 @@ SCHEDULE_JOB_MAX_SECONDS = 40 * 60
 # minutes.
 SCHEDULE_CODE_JOB_SECONDS = int(float(os.getenv("SCHEDULE_CODE_JOB_SECONDS", "") or 10 * 60))
 
-# The generation group's CPU slots: job_queue.group_concurrency's
-# default (QUEUE_GENERATION_CONCURRENCY), a count of claimed rows across
-# every process. A row streaming a model answer holds no slot
-# (job_queue.model_wait).
-SCHEDULE_GEN_WORKERS = max(1, int(os.getenv("SCHEDULE_GEN_WORKERS", "2")))
+# An operator's ceiling on the generation group's CPU slots, when set (0 =
+# none, the default since the scale audit of 10/19/26 A5-F2 — it was a fixed
+# 2 whatever the container). The slots are job_queue.group_concurrency: the
+# container's cores and memory (job_queue.default_generation_slots), or
+# QUEUE_GENERATION_CONCURRENCY — a count of claimed rows across every
+# process. A row streaming a model answer holds no slot (job_queue.model_wait).
+try:
+    SCHEDULE_GEN_WORKERS = max(0, int(os.getenv("SCHEDULE_GEN_WORKERS", "") or 0))
+except ValueError:
+    SCHEDULE_GEN_WORKERS = 0
 
 
 STOPPED_MESSAGE = "Stopped — nothing was saved."
@@ -4299,10 +4304,33 @@ def _run_cap_reached(rows, costs=None, contract=None, heads=0, inflight_usd=0.0,
         return None
     calls = int(n or 0) + int(inflight_calls or 0)
     usd = float(cost or 0) + float(inflight_usd or 0)
-    if calls + 1 > int(caps.calls) or usd + nxt > float(caps.usd):
+    cap_usd = run_cap_usd(caps)
+    if calls + 1 > int(caps.calls) or usd + nxt > cap_usd:
         return {"calls": calls, "usd": round(usd, 4), "next_usd": round(nxt, 4), "cap_calls": int(caps.calls),
-                "cap_usd": float(caps.usd)}
+                "cap_usd": cap_usd}
     return None
+
+
+# The dollars a run may spend while it is still on the T3 (Sonnet) rung
+# (scale audit 10/19/26 A5-F9): a measured T3 week is $0.29-0.41, so its
+# retries and splits stop at this and the code fallback writes the week,
+# instead of running on toward the policy's $6 — which stays the run's cap
+# once the gate escalates it to T4 (Opus, $0.57+ a call). 0: the policy's cap.
+SCHEDULE_T3_RUN_CAP_USD = float(os.getenv("SCHEDULE_T3_RUN_CAP_USD", "1.5") or 0)
+
+
+def run_cap_usd(caps=None) -> float:
+    """The run's dollar cap for the rung it is on now: the policy's, or
+    SCHEDULE_T3_RUN_CAP_USD while the run is on T3 (A5-F9)."""
+    import ai_workflows as _wf
+    caps = caps or _wf.policy(WORKFLOW).caps
+    cap = float(caps.usd)
+    try:
+        if SCHEDULE_T3_RUN_CAP_USD > 0 and getattr(schedule_route(), "tier", None) == "T3":
+            cap = min(cap, SCHEDULE_T3_RUN_CAP_USD)
+    except Exception as e:
+        log.debug("run cap: the route's tier unreadable, the policy's cap stands: %s", e)
+    return cap
 
 
 def _note_capped(capped) -> None:
@@ -4528,7 +4556,7 @@ def parallel_calls() -> int:
 # multiplied with the generations running): at most call_pool_workers() model
 # streams at once in the process, a batch's calls queueing behind another
 # generation's when it is full. Its size: SCHEDULE_CALL_POOL_WORKERS, else
-# the generations a process runs (SCHEDULE_GEN_WORKERS) x a generation's own
+# the generations that may be in flight (job_queue.max_running) x a generation's own
 # parallel calls. Process-local, like the other bounded pools (CLAUDE.md,
 # gunicorn workers): a second worker gets its own. A call never submits to
 # this pool, so it cannot deadlock.
@@ -4551,7 +4579,7 @@ def call_pool_workers() -> int:
         running = _jq_pool.max_running("generation")
     except Exception as _sx:
         _degraded(f"max_running failed — went on without it: {_sx!r}", _sx)
-        running = SCHEDULE_GEN_WORKERS
+        running = SCHEDULE_GEN_WORKERS or 2
     return max(1, running * parallel_calls())
 
 
@@ -7032,14 +7060,23 @@ def _requirement_model(restaurant_id, shifts=None) -> dict:
         _soft_fail("staffing elasticity", _ex, restaurant_id)
     if store is not None:
         store[key] = out
-    if len(_REQUIREMENT_MODEL_CACHE) > 512:
-        _REQUIREMENT_MODEL_CACHE.clear()
-    _REQUIREMENT_MODEL_CACHE[ckey] = (_time_rm.monotonic(), out)
+    # One entry per restaurant (its older stamps go), the least recently
+    # kept out first past REQUIREMENT_MODEL_ENTRIES — it was wiped whole past
+    # 512, which a fleet of ~1,500 Studios crossed every few minutes (scale
+    # audit 10/19/26 A5-F5).
+    with _REQUIREMENT_MODEL_LOCK:
+        for k in [k for k in _REQUIREMENT_MODEL_CACHE if k[:2] == ckey[:2]]:
+            _REQUIREMENT_MODEL_CACHE.pop(k, None)
+        _REQUIREMENT_MODEL_CACHE[ckey] = (_time_rm.monotonic(), out)
+        while len(_REQUIREMENT_MODEL_CACHE) > REQUIREMENT_MODEL_ENTRIES:
+            _REQUIREMENT_MODEL_CACHE.pop(next(iter(_REQUIREMENT_MODEL_CACHE)), None)
     return out
 
 
 REQUIREMENT_MODEL_TTL = 15 * 60
+REQUIREMENT_MODEL_ENTRIES = 2048
 _REQUIREMENT_MODEL_CACHE = {}
+_REQUIREMENT_MODEL_LOCK = threading.Lock()
 
 
 def _merge_date_demand(restaurant_id, dates, signals_by_date: dict, weather=None, closed=()) -> tuple:
@@ -8291,6 +8328,8 @@ _studio_cache = _collections_studio.OrderedDict()
 _studio_live = {}
 _studio_lock = threading.Lock()
 _studio_counts = {"hits": 0, "misses": 0, "evictions": 0}
+# key -> the lock its one build holds (studio_prepared's single flight).
+_studio_building = {}
 
 
 def studio_invalidate(restaurant_id=None) -> None:
@@ -8301,6 +8340,13 @@ def studio_invalidate(restaurant_id=None) -> None:
             for k in [k for k in list(store) if restaurant_id is None
                       or (k[0] if isinstance(k, tuple) else k) == restaurant_id]:
                 store.pop(k, None)
+    if restaurant_id is None:
+        # And the parsed histories the requests share (labor, A5-F5).
+        try:
+            import labor as _labor_inv
+            _labor_inv.shared_history_clear()
+        except Exception as _sx:
+            _degraded(f"shared history not cleared: {_sx!r}", _sx)
 
 
 import types as _types_sz
@@ -8475,7 +8521,34 @@ def studio_prepared(restaurant_id, rows, daily_target_hours=None, history_id=Non
             _studio_cache.move_to_end(key)
             _studio_counts["hits"] += 1
             return hit
-        _studio_counts["misses"] += 1
+        gate = _studio_building.setdefault(key, threading.Lock()) if version is not None else None
+    if gate is None:
+        with _studio_lock:
+            _studio_counts["misses"] += 1
+        return _studio_build(restaurant_id, rows, targets, key, version, now)
+    # One build per week at a time (scale audit 10/19/26 A5-F5): the Summary,
+    # the score and the violations a Studio opens with asked for the same
+    # inputs at once, and each built them — three of the web process's four
+    # threads for seconds. The others wait for it and read it.
+    with gate:
+        with _studio_lock:
+            hit = _studio_cache.get(key)
+            if hit is not None and _time.monotonic() - hit["built"] < STUDIO_CACHE_SECONDS:
+                _studio_cache.move_to_end(key)
+                _studio_counts["hits"] += 1
+                return hit
+            _studio_counts["misses"] += 1
+        try:
+            return _studio_build(restaurant_id, rows, targets, key, version, _time.monotonic())
+        finally:
+            with _studio_lock:
+                if _studio_building.get(key) is gate:
+                    _studio_building.pop(key, None)
+
+
+def _studio_build(restaurant_id, rows, targets, key, version, now) -> dict:
+    """studio_prepared's build of one week's kept inputs, kept under `key`
+    when the inputs version could be read."""
     import models as _m_studio
     # One read of everything the build reads, shared by the inputs and the
     # signals.

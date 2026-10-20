@@ -127,17 +127,50 @@ def _fact(row, source):
             "row_json": _row_json(row)}
 
 
+def _tenant_write(conn, restaurant_id):
+    """The write transaction for one restaurant's shift record (scale audit
+    10/19/26 DB-08): SQLite BEGIN IMMEDIATE as ever; on Postgres this
+    restaurant's own lock under the platform's shared one, so the nightly
+    sweep's syncs of different restaurants no longer queue behind one
+    writer (db_dialect.begin_tenant_write)."""
+    import db_dialect
+    db_dialect.begin_tenant_write(conn, "shift_facts", int(restaurant_id))
+
+
+_FACT_COLS = ("business_date", "person_id", "employee_name", "employee_key", "role", "shift_start", "shift_end",
+              "scheduled_hours", "actual_hours", "pay_rate", "source", "external_id", "row_json")
+
+
+def _fact_value(v):
+    return round(float(v), 6) if isinstance(v, float) else v
+
+
 def _write_facts(conn, restaurant_id, facts, lo, hi):
-    """Replace this restaurant's facts inside [lo, hi] with `facts`."""
-    conn.execute("DELETE FROM shift_facts WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
-                 (restaurant_id, lo, hi))
-    conn.executemany(
-        "INSERT OR REPLACE INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
-        "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [(restaurant_id, f["business_date"], f["person_id"], f["employee_name"], f["employee_key"], f["role"],
-          f["shift_start"], f["shift_end"], f["scheduled_hours"], f["actual_hours"], f["pay_rate"], f["source"],
-          f["external_id"], f.get("row_json")) for f in facts])
+    """Make this restaurant's facts inside [lo, hi] exactly `facts` — by
+    difference (scale audit 10/19/26 DB-09): a row the window no longer has
+    is deleted, a new or changed row written, an unchanged one left alone.
+    The nightly POS sync used to delete and re-insert all ~60 days (~2,400
+    rows) to add a night's ~40, and every unchanged week's `ingested_at`
+    moved with them, so its read was redone every night."""
+    have = {}
+    for r in conn.execute(f"SELECT id, {', '.join(_FACT_COLS)} FROM shift_facts WHERE restaurant_id=? "
+                          "AND business_date BETWEEN ? AND ?", (restaurant_id, lo, hi)).fetchall():
+        have[(r["business_date"], r["employee_key"], r["shift_start"] or "")] = (
+            r["id"], tuple(_fact_value(r[c]) for c in _FACT_COLS))
+    want = {}
+    for f in facts:
+        want[(f["business_date"], f["employee_key"], f["shift_start"] or "")] = tuple(
+            _fact_value(f.get(c)) for c in _FACT_COLS)
+    gone = [have[k][0] for k in have if k not in want]
+    if gone:
+        conn.executemany("DELETE FROM shift_facts WHERE id=? AND restaurant_id=?",
+                         [(i, restaurant_id) for i in gone])
+    write = [vals for k, vals in want.items() if k not in have or have[k][1] != vals]
+    if write:
+        conn.executemany(
+            "INSERT OR REPLACE INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, "
+            "role, shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [(restaurant_id, *vals) for vals in write])
 
 
 def ingest(restaurant_id, rows, source, db_path=None) -> dict:
@@ -218,7 +251,7 @@ def ingest(restaurant_id, rows, source, db_path=None) -> dict:
         facts = [f for f in (_fact(r, src) for r in new_rows) if f]
         conn = get_conn(db_path)
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            _tenant_write(conn, restaurant_id)
             _write_facts(conn, restaurant_id, facts, dates[0], dates[-1])
             conn.commit()
         except Exception:
@@ -302,7 +335,7 @@ def _ingest_facts(restaurant_id, new_rows, dates, src, who, db_path):
         facts = [f for f in (_fact(r, src) for r in new_rows) if f]
         conn = get_conn(db_path)
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            _tenant_write(conn, restaurant_id)
             _write_facts(conn, restaurant_id, facts, dates[0], dates[-1])
             _respell_facts(conn, restaurant_id, new_rows, dates[0], dates[-1])
             cur = conn.execute("UPDATE client_data SET shifts_stale=1, shifts_source=?, updated_at=datetime('now') "
@@ -394,7 +427,7 @@ def adopt(restaurant_id, rows_=None, source="upload", db_path=None) -> dict:
             if f:
                 f["person_id"] = f["person_id"] or pid_of.get(f["employee_key"])
                 facts.append(f)
-        conn.execute("BEGIN IMMEDIATE")
+        _tenant_write(conn, restaurant_id)
         conn.executemany(
             "INSERT INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
             "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
@@ -498,6 +531,24 @@ def history_rows(restaurant_id, since=None, until=None, db_path=None) -> list:
     return out
 
 
+def latest_date(restaurant_id, until=None, db_path=None):
+    """The newest business_date on file (no later than `until`), or None —
+    one indexed read, so a reader of the current window reads the window
+    (labor's current-window analysis; scale audit 10/19/26 FE-03 / DB-12)
+    instead of every shift ever recorded."""
+    sql = "SELECT MAX(business_date) AS d FROM shift_facts WHERE restaurant_id=?"
+    args = [restaurant_id]
+    if until:
+        sql += " AND business_date <= ?"
+        args.append(str(until)[:10])
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(sql, args).fetchone()
+    finally:
+        conn.close()
+    return (str(row["d"])[:10] if row and row["d"] else None)
+
+
 def export_csv(restaurant_id, db_path=None) -> str:
     """The whole history as the stored file (date, day, employee, role, …),
     built from shift_facts on demand — what models.get_client_data hands a
@@ -553,7 +604,7 @@ def rewrite_window_from_csv(restaurant_id, csv_text, lo, hi, source="upload", db
             f["person_id"] = pid_of.get(staff_settings.name_key(f["employee_name"]))
             facts.append(f)
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        _tenant_write(conn, restaurant_id)
         _write_facts(conn, restaurant_id, facts, lo, hi)
         conn.commit()
     except Exception:
@@ -644,7 +695,7 @@ def backfill_from_csv(db_path=None, max_seconds=15.0) -> int:
                     f["person_id"] = pid_of.get(staff_settings.name_key(f["employee_name"]))
                     facts.append(f)
             if facts:
-                conn.execute("BEGIN IMMEDIATE")
+                _tenant_write(conn, rid)
                 lo = min(f["business_date"] for f in facts)
                 hi = max(f["business_date"] for f in facts)
                 _write_facts(conn, rid, facts, lo, hi)

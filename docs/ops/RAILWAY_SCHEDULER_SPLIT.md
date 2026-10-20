@@ -98,6 +98,23 @@ keeper, then the loop (`scheduler._run_scheduler_thread`, through
 `hosted_dashboard._restart_scheduler_loop`) — so a restarted loop keeps
 renewing its lease instead of looking abandoned after 4 minutes.
 
+## Option: `SCHEDULER_PROCESS=1` (one variable, the start command unchanged)
+
+Since the scale audit (10/19/26 INF-13) gunicorn's master can run the
+scheduler as its own process in the web container, the way it already runs
+the queue worker: set **`SCHEDULER_PROCESS=1`** on the service and redeploy.
+`gunicorn.conf.py` then supervises `worker.py --scheduler` (restarted with a
+growing pause whenever it exits, SIGTERM'd with the queue worker at a
+deploy), and `RUN_SCHEDULER_IN_WEB` defaults to 0 so the web process starts
+no scheduler thread — the loop, its lanes and pools leave the web process's
+GIL and its four request threads. `worker.py --scheduler` never runs
+`init_db`: like the queue worker it waits for a web boot since the container
+started (the schema is migrated), then runs the lease keeper and the loop.
+Off by default; measure first (request p95 during the long jobs — scale
+audit A1 §5 #7). **Rollback:** unset `SCHEDULER_PROCESS` and redeploy (an
+explicit `RUN_SCHEDULER_IN_WEB` still wins either way; the lease lets only
+one loop work).
+
 ## Option: a second process in the SAME service
 
 This does work, because both processes run in one container and see the one
@@ -177,14 +194,18 @@ table (`job_queue.py`), not threads. Who runs them:
   inline in the scheduler thread, are gone.
 
 Slots: a generation row holds one of the group's CPU slots
-(`QUEUE_GENERATION_CONCURRENCY`, default `SCHEDULE_GEN_WORKERS` = 2) only
-while it does code work; while it waits on a model answer it gives the slot
+(`QUEUE_GENERATION_CONCURRENCY`; by default the container's cores over
+`SCHEDULE_CPSAT_WORKERS`, held to its memory at ~1.4 GB a generation —
+`job_queue.default_generation_slots`, scale audit 10/19/26 A5-F2/F7; it was
+a fixed 2) only while it does code work; while it waits on a model answer it gives the slot
 back (`job_queue.model_wait`, entered by `ai_utils.create_with_retry` around
 every attempt) and counts only against `QUEUE_GENERATION_MAX_RUNNING`
 (default 3 x the slots; under `GATEWAY_ORG_OTPM`, never more streams than
 the budget carries). One slot is kept for owners' presses and one for the
 auto-draft while drafts wait (`QUEUE_INTERACTIVE_RESERVED`,
-`QUEUE_SCHEDULED_RESERVED`). A row back from the model waits ('await') ahead
+`QUEUE_SCHEDULED_RESERVED`) — the drafts' slot only while presses keep two,
+or for a draft within an hour of its deadline (scale audit 10/19/26 A5-F4). A
+row back from the model waits ('await') ahead
 of any new claim.
 
 On a deploy's SIGTERM the process hands its running rows back to the queue

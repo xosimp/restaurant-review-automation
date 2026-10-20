@@ -90,6 +90,9 @@ def test_a_deadline_stops_retries_it_cannot_finish(monkeypatch):
     calls = []
     monkeypatch.setattr(ai_utils, "_is_retryable", lambda e: True)
     monkeypatch.setattr(ai_utils.time, "sleep", lambda s: None)
+    # Full jitter since the scale audit (10/19/26 A4-02): the wait is drawn up
+    # to the 1.5 s step - pinned to it, so it is known not to fit in 1 s.
+    monkeypatch.setattr(ai_utils.random, "uniform", lambda a, b: b)
 
     def create(**kw):
         calls.append(1)

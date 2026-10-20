@@ -30,8 +30,8 @@ SEP = " › "
 CSV_HEAD = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 
 
-@pytest.fixture
-def db(db_path, monkeypatch):
+@pytest.fixture(params=["lines", "rollup"])
+def db(db_path, monkeypatch, request):
     real, default = models.get_conn, models.DB_PATH
 
     def redirected(path=None, *a, **k):
@@ -39,7 +39,36 @@ def db(db_path, monkeypatch):
     for mod in (models, auth, client_api, mobile_api):
         monkeypatch.setattr(mod, "get_conn", redirected)
     monkeypatch.setattr(models, "DB_PATH", db_path)
+    if request.param == "rollup":
+        # Every test again with the window read from pos_item_daily (scale audit 10/19/26 DB-11): each
+        # archived day is rolled from its lines as archive_day does, just before the walk reads it — the
+        # two paths must give the same answer.
+        import pos_archive
+        real_rolled = pos_archive.rolled_window
+
+        def rolled(conn, restaurant_id, start, end):
+            c = real(db_path)
+            try:
+                for rid_, prov, iso in [tuple(r) for r in c.execute(
+                        "SELECT restaurant_id, provider, business_date FROM pos_archive_days WHERE restaurant_id=? "
+                        "AND business_date>=? AND business_date<=?", (int(restaurant_id), start, end)).fetchall()]:
+                    pos_archive._roll_day(c, rid_, prov, iso)
+                c.commit()
+            finally:
+                c.close()
+            assert real_rolled(conn, restaurant_id, start, end) or not _has_days(db_path, restaurant_id, start, end)
+            return real_rolled(conn, restaurant_id, start, end)
+        monkeypatch.setattr(pos_archive, "rolled_window", rolled)
     return db_path
+
+
+def _has_days(db, rid, start, end):
+    c = sqlite3.connect(db)
+    try:
+        return c.execute("SELECT COUNT(*) FROM pos_archive_days WHERE restaurant_id=? AND business_date>=? "
+                         "AND business_date<=?", (int(rid), start, end)).fetchone()[0] > 0
+    finally:
+        c.close()
 
 
 def _rid(db, **kw):

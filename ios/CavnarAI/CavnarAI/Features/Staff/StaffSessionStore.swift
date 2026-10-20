@@ -583,14 +583,22 @@ final class StaffSessionStore {
     /// review requires. The server refuses the send without it; the
     /// unchecked-by-default box on StaffSignupView is what makes this call
     /// honest rather than a formality.
-    func startSignup(phone: String, optin: Bool) async throws -> StaffSignupStartResponse {
+    /// `joinCode`: the restaurant the text is counted against — its own
+    /// hourly share of verification texts (scale audit 10/19/26, SEC-04).
+    func startSignup(phone: String, optin: Bool, joinCode: String? = nil) async throws -> StaffSignupStartResponse {
         try await client.sendUnauthenticated("/staff/api/signup/start", method: .post,
-                                             body: StaffSignupStartBody(phone: phone, optin: optin))
+                                             body: StaffSignupStartBody(phone: phone, optin: optin,
+                                                                        joinCode: joinCode))
     }
 
     private struct StaffSignupStartBody: Encodable {
         let phone: String
         let optin: Bool
+        let joinCode: String?
+        enum CodingKeys: String, CodingKey {
+            case phone, optin
+            case joinCode = "join_code"
+        }
     }
 
     func verifySignupCode(phone: String, code: String) async throws -> Bool {

@@ -126,6 +126,8 @@ def _webhook_seen(provider, ok, event=None, error=None):
     function's own, so the second ledger never pages twice."""
     try:
         import models as _m_seen
+        if not ok and _m_seen._refused_flood(provider + ":seen"):
+            return       # a bad-signature flood writes nothing more (SEC-08)
         _m_seen.record_inbound_webhook(provider, bool(ok), event_type=(event or "").split(" ")[0] or None,
                                        reason=None if ok else error, db_path=_m_seen.DB_PATH)
     except Exception as e:

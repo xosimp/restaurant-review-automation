@@ -1,3 +1,4 @@
+import logging
 import os
 import math
 import sqlite3
@@ -481,8 +482,9 @@ class Restaurant:
     auto_draft_weekday: int              = 3
     # 1 once the draft day is somebody's choice (any write of
     # auto_draft_weekday, update_restaurant stamps it); 0 is "not chosen",
-    # and the effective day is then spread across Monday-Thursday by
-    # restaurant (models.auto_draft_weekday — AI cost audit 10/7/26 #5).
+    # and the effective day is then spread across Monday-Saturday by
+    # restaurant (models.auto_draft_weekday — AI cost audit 10/7/26 #5;
+    # Monday-Thursday until scale audit 10/19/26 A5-F4).
     auto_draft_weekday_chosen: int       = 0
     external_scheduling_tool: Optional[str] = None   # "Fourth", "7shifts" — a scheduler they already pay for
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
@@ -1831,6 +1833,17 @@ def ensure_columns(db_path: str = DB_PATH):
         # Which archive layout stored the day (pos_archive.ARCHIVE_VERSION): a
         # day stored before a table joined the archive is stored again.
         ("pos_archive_days", "version", "INTEGER NOT NULL DEFAULT 1"),
+        # Scale audit 10/19/26 (A3-06 / A3-08 / A3-11): when the day's punches
+        # were last read from the POS (the archive, or the nightly labor
+        # read's refresh) — a day read once it had settled is labor's source;
+        # the last change read shared by every process (its time, the moment
+        # it looked from, the dates it found); restated days a failed night
+        # still owes, so the change cursor advances anyway.
+        ("pos_archive_days", "punches_read_at", "TEXT"),
+        ("pos_archive_state", "change_read_at", "TEXT"),
+        ("pos_archive_state", "change_read_since", "TEXT"),
+        ("pos_archive_state", "change_read_dates", "TEXT"),
+        ("pos_archive_state", "restate_pending", "TEXT"),
         # The raw fields every POS read derives from (archive layout 3,
         # 9/29/26): with them a closed day is read from the archive by the
         # very code that reads RPOWER, instead of being downloaded again by
@@ -1871,6 +1884,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_archive_days", "links_ok", "INTEGER"),
         ("pos_archive_days", "recon_gap", "REAL"),
         ("pos_archive_days", "unknown_sales", "REAL"),
+        # The rollup version the day's pos_item_daily rows were written at
+        # (scale audit 10/19/26 DB-11 / DB-02): NULL = not rolled; a reader
+        # takes the rollup only for a window whose every day is at
+        # pos_archive.ITEM_ROLLUP_VERSION.
+        ("pos_archive_days", "item_rollup", "INTEGER"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -3310,6 +3328,22 @@ def init_db(db_path: str = DB_PATH):
             summary_json    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_history_restaurant ON schedule_history(restaurant_id, id)",
+        # A restaurant's week and its newest draft (scale audit 10/19/26
+        # DB-17): activity.build, Ask, DNA and the morning brief read by
+        # week_start / generated_at and scanned the restaurant's whole
+        # history. The fleet's recent drafts (DB-16, A5-F11: the experiment
+        # power check runs on every generation; the admin sweeps) read by
+        # generated_at across tenants.
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_week ON schedule_history(restaurant_id, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_generated ON schedule_history(restaurant_id, generated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_fleet_gen ON schedule_history(generated_at, restaurant_id)",
+        # A chain's locations (models.get_location_group, DB-13): by
+        # organization, or by the admin's group name and owner.
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_org ON restaurants(organization_id)",
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_group ON restaurants(location_group, owner_email)",
+        # The activity sweeps by kind over a window (DB-16:
+        # scheduler's tab-view sweep, the admin's adoption reads).
+        "CREATE INDEX IF NOT EXISTS idx_activity_log_type_created ON activity_log(event_type, created_at)",
         # Second table with the same lazy-init history as schedule_history
         # above: it was only ever created by init_staff_availability(), so a
         # fresh database didn't have it until something happened to call
@@ -4348,6 +4382,46 @@ def init_db(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, provider, punch_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_day ON pos_punches(restaurant_id, business_date)",
+        # The line archive by item and day (scale audit 10/19/26 DB-11,
+        # DB-02): the Bar's bought-vs-sold walk and the recipes' sold-by-name
+        # read moved a store's whole window of lines into Python on every
+        # request (73k rows for 8 weeks at EJ's). One row per day, provider,
+        # item, name, filing and the few per-line facts those readers need —
+        # the effective kind and quantity a modifier takes from its line,
+        # the "double" multiplier, a bucket ticket, a pure modifier, a zero
+        # quantity, an alternate-unit count — with the sums. Written by
+        # pos_archive.archive_day in the same transaction as the lines; the
+        # nightly prune's rollup (pos_archive.roll_item_days) fills older
+        # days first. It outlives the lines (its own window), so the line
+        # detail can be kept shorter later.
+        """CREATE TABLE IF NOT EXISTS pos_item_daily (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            provider        TEXT NOT NULL,
+            business_date   TEXT NOT NULL,
+            item_id         TEXT NOT NULL DEFAULT '',
+            item_name       TEXT NOT NULL DEFAULT '',
+            kind            TEXT NOT NULL,
+            kind_eff        TEXT NOT NULL,
+            department      TEXT NOT NULL DEFAULT '',
+            sales_category  TEXT NOT NULL DEFAULT '',
+            category_id     TEXT NOT NULL DEFAULT '',
+            is_mod          INTEGER NOT NULL DEFAULT 0,
+            mult            REAL NOT NULL DEFAULT 1,
+            pure_mod        INTEGER NOT NULL DEFAULT 0,
+            in_bucket       INTEGER NOT NULL DEFAULT 0,
+            qty_zero        INTEGER NOT NULL DEFAULT 0,
+            has_aqu         INTEGER NOT NULL DEFAULT 0,
+            lines           INTEGER NOT NULL DEFAULT 0,
+            units           REAL NOT NULL DEFAULT 0,
+            qty_eff         REAL NOT NULL DEFAULT 0,
+            sales           REAL NOT NULL DEFAULT 0,
+            aqu             REAL NOT NULL DEFAULT 0,
+            cost_pos        REAL NOT NULL DEFAULT 0,
+            cost_lines      INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (restaurant_id, provider, business_date, item_id, item_name, kind, kind_eff, department,
+                         sales_category, category_id, is_mod, mult, pure_mod, in_bucket, qty_zero, has_aqu)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_day ON pos_item_daily(restaurant_id, business_date)",
         # One row per archived day: what was stored, the newest POS write it
         # held, and how often the POS restated it after it was archived.
         """CREATE TABLE IF NOT EXISTS pos_archive_days (
@@ -4402,6 +4476,7 @@ def init_db(db_path: str = DB_PATH):
         "CREATE INDEX IF NOT EXISTS idx_pos_lines_bdate ON pos_ticket_lines(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_bdate ON pos_punches(business_date)",
         "CREATE INDEX IF NOT EXISTS idx_pos_archive_days_bdate ON pos_archive_days(business_date)",
+        "CREATE INDEX IF NOT EXISTS idx_pos_item_daily_bdate ON pos_item_daily(business_date)",
         # The POS's own menu prices, one row per item and price level, as of
         # the last nightly read (pos_archive.sync_prices, High ROI #7): the
         # baseline a change is found against. Replaced in place; no growth.
@@ -4792,6 +4867,15 @@ def init_db(db_path: str = DB_PATH):
     init_bar_mapping(db_path)
     from rpower import init_rate_limit
     init_rate_limit(db_path)
+    # The POS traffic controls (pos_io, scale audit 10/19/26 A3): the
+    # request ledger, the provider breakers, the catalogs per group and the
+    # live snapshot every intraday reader shares.
+    from pos_io import init_pos_io
+    init_pos_io(db_path)
+    # Shared token buckets (rate_bucket, scale audit 10/19/26 SEC-03): the
+    # fleet's and each restaurant's guest-text pace.
+    from rate_bucket import init_rate_buckets
+    init_rate_buckets(db_path)
     # The model gateway's minute windows, per-restaurant AI ceilings and the
     # shared provider breakers (model_gateway — SCALE-32, SCALE-24).
     from model_gateway import init_model_gateway
@@ -4800,6 +4884,10 @@ def init_db(db_path: str = DB_PATH):
     # index (blob_store — RM-14).
     from pg_shadow import init_pg_shadow
     init_pg_shadow(db_path)
+    # Home's slow blocks kept as per-restaurant read models (home_snapshots,
+    # scale audit 10/19/26 FE-01).
+    from home_snapshots import init_home_snapshots
+    init_home_snapshots(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).
@@ -4885,6 +4973,10 @@ def init_db(db_path: str = DB_PATH):
     # The website's daily analytics and top searches (web_analytics, 10/2/26).
     from web_analytics import init_web_analytics
     init_web_analytics(db_path)
+    # One GA4 property / Search Console site per restaurant, proved before
+    # it is read (external_bindings, scale audit 10/19/26 SEC-01).
+    from external_bindings import init_external_bindings
+    init_external_bindings(db_path)
     # One stored AI read per restaurant and data fingerprint, shared by web
     # and iOS (insight_store), and the reprice decisions record
     # (menu_intelligence) — audit #22 / #26 / #41.
@@ -4935,6 +5027,10 @@ def init_db(db_path: str = DB_PATH):
     # admin_issue_resolutions.occurrence_at — at boot, never on a read.
     import admin_ops as _admin_ops
     _admin_ops.init_admin_ops(db_path)
+    # Onboarding at scale (scale audit 10/19/26, onboarding.py): backfill
+    # slots, setup confirmations, bulk provisioning batches, partners.
+    import onboarding as _onboarding
+    _onboarding.init_onboarding(db_path)
 
 
     # The AI-operations tables (trace, quality events, health events, the
@@ -5015,6 +5111,9 @@ def init_db(db_path: str = DB_PATH):
     # And every restaurant made before the spread keeps the day it had
     # (re-audit 10/7/26 #6), once — after the first, which already ran.
     keep_preexisting_draft_days(db_path=db_path)
+    # And every restaurant on the four-day spread keeps its day when the
+    # spread widens to six (scale audit 10/19/26 A5-F4), once — after both.
+    keep_four_day_spread_days(db_path=db_path)
     # Labor period history as payroll weeks, the legacy rolling windows
     # marked unread (memory audit 9/29/26, labor_periods) — after
     # ensure_columns() has added labor_history.kind, and after the seed's
@@ -5023,6 +5122,22 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # The two boot backfills below find their rows through partial indexes
+    # (scale audit 10/19/26 DB-16): each read the whole schedule_history —
+    # every week's CSV — on every boot, inside the healthcheck window, for
+    # rows that are almost always none.
+    try:
+        _ix = get_conn(db_path)
+        try:
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_hours ON schedule_history(id) "
+                        "WHERE hours_hourly IS NULL")
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_published ON schedule_history(id) "
+                        "WHERE published_at IS NOT NULL AND published_csv IS NULL")
+            _ix.commit()
+        finally:
+            _ix.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning("schedule history: backfill indexes skipped: %s", e)
     # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
     # after the column list above has added hours_hourly / hours_salaried.
     try:
@@ -8834,6 +8949,20 @@ _INPUT_STAMPS = (
     ("demand_signals", "COUNT(*), MAX(id)"),
     ("labor_daily_history", "COUNT(*), MAX(saved_at)"),
 )
+# restaurants columns schedule_inputs_version leaves out: written by
+# background work or a session (sync stamps, tokens, caches of other
+# modules, read marks), never read by a schedule's inputs. The weather's own
+# forecast (weather_cache_json, weather_hourly_json) stays in: a draft's
+# demand reads it.
+_INPUTS_VOLATILE = frozenset({
+    "last_fetched_at", "weather_cached_at", "geocode_failed_at", "aivis_city_json", "inventory_updated_at",
+    "competitor_updated_at", "competitor_intel", "ig_token", "ig_token_expires", "fb_token_expires", "fb_page_token",
+    "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
+    "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
+    "clover_api_token", "clover_last_synced", "rpower_token", "rpower_last_synced", "rpower_verified_at",
+    "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
+    "gbp_review_count", "gbp_rating_updated_at", "optin_invites_ack_at", "demo_cleared_at",
+})
 
 
 def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
@@ -8851,7 +8980,16 @@ def schedule_inputs_version(restaurant_id: int, db_path: str = DB_PATH) -> str:
     conn = get_conn(db_path)
     try:
         row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
-        h.update(repr(tuple(row) if row else ()).encode())
+        # Every column but the ones background work writes that no schedule
+        # input reads (_INPUTS_VOLATILE — scale audit 10/19/26 A5-F5): a
+        # review fetch's last_fetched_at, a POS sync's *_last_synced, a
+        # weather refresh's stamp emptied every Studio's kept inputs and the
+        # pre-publish cache all day.
+        if row is not None:
+            items = sorted((k, row[k]) for k in row.keys() if k not in _INPUTS_VOLATILE)
+            h.update(repr(items).encode())
+        else:
+            h.update(b"()")
         try:
             cd = conn.execute("SELECT updated_at, shifts_source, COALESCE(LENGTH(shifts_csv), 0), "
                               "COALESCE(LENGTH(shifts_csv_z), 0), shifts_stale FROM client_data "
@@ -12230,7 +12368,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                            hours_hourly: float = None, hours_salaried: float = None,
                            review: dict = None, generation_seconds: float = None, weather=None,
                            economics: dict = None, stage_seconds: dict = None, base: tuple = None,
-                           job_id: str = None, in_transaction=None) -> int:
+                           job_id: str = None, in_transaction=None, week_copy: tuple = None) -> int:
     """Persists every generated schedule permanently, independent of
     whatever the mobile app's own client-side caching does — a durable
     record on the Account tab's Schedule History screen that survives
@@ -12269,6 +12407,11 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     BUGSLIFE-26) — and the job is marked as having saved (async_jobs.
     saved_ref, its first draft's id) in the same commit, so a later Stop
     knows a draft was saved (ops.stop_async_job, ARCH-2).
+    `week_copy` = (history_id or None, schedule_csv) is the week's working
+    copy a whole-week generation started from (None: no check): when the
+    working copy is another row, or its text moved, since — a manager's
+    Studio save while it ran — nothing is written and DraftChanged is
+    raised (scale audit 10/19/26 A5-F16; it was superseded unconditionally).
     """
     import json as _json_sh
     import schedule_rows as _srows
@@ -12311,6 +12454,12 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
                 prior_text = now["schedule_csv"] or ""
             elif week_start:
                 cur_copy = week_draft(conn, restaurant_id, week_start)
+                if week_copy is not None:
+                    now_copy = ((int(cur_copy["id"]), cur_copy["schedule_csv"] or "") if cur_copy is not None
+                                else (None, ""))
+                    if now_copy != (week_copy[0], week_copy[1] or ""):
+                        raise DraftChanged(now_copy[0] or week_copy[0] or 0,
+                                           now_copy[1] if cur_copy is not None else None)
                 if cur_copy is not None:
                     prior_text = cur_copy["schedule_csv"] or ""
                 else:
@@ -13005,10 +13154,10 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         rates_key = labor_rates_key(restaurant_id, db_path=db_path)
     except Exception:
         rates_key = None
-    conn = get_conn(db_path)
     prov = provenance or {}
     win = prov.get("window") or None
     ct = prov.get("complete_through")
+    rows = []
     for date_str, day_data in by_day.items():
         in_win = bool(prov) and bool(win) and win[0] <= date_str <= win[1]
         p_src = prov.get("source") if in_win else None
@@ -13034,7 +13183,13 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
             dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except Exception:
             dow = None
-        conn.execute("""
+        rows.append((restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
+                     p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
+    # One executemany, not an execute a day (scale audit 10/19/26 DB-05): on
+    # Postgres every execute inside a transaction is its own savepoint, and a
+    # whole history (up to 1,095 days) overflowed the subtransaction cache.
+    conn = get_conn(db_path)
+    conn.executemany("""
             INSERT INTO labor_daily_history
                 (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours,
                  source, provider, synced_at, final, basis)
@@ -13060,8 +13215,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
                     ELSE NULL END,
                 total_hours=excluded.total_hours,
                 saved_at=datetime('now')
-        """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours,
-              p_src, p_prov, p_at, p_final, rates_key, rates_key, p_src, rates_key, rates_key))
+        """, rows)
     conn.commit()
     conn.close()
 
@@ -13727,6 +13881,55 @@ def keep_preexisting_draft_days(db_path=None) -> int:
             pass
         # Retried on the next boot: the marker is written only with the rows.
         print(f"auto-draft day keep migration failed (will retry at next boot): {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+AUTO_DRAFT_DAY_SPREAD6_MIGRATION = "auto_draft_weekday_spread6_v1"
+
+
+def keep_four_day_spread_days(db_path=None) -> int:
+    """Once (data_migrations): every restaurant whose draft day nobody chose
+    when the spread widened from Monday-Thursday to Monday-Saturday (scale
+    audit 10/19/26 A5-F4) keeps the day it read — the four-day spread's day,
+    moved off its week's eve as effective_auto_draft_weekday moves it —
+    stored and marked chosen, as keep_preexisting_draft_days did for the
+    restaurants made before the spread. The wider spread is for restaurants
+    made after. Returns rows marked."""
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?",
+                        (AUTO_DRAFT_DAY_SPREAD6_MIGRATION,)).fetchone():
+            conn.rollback()
+            return 0
+        rows = conn.execute("SELECT id, week_start_day FROM restaurants "
+                            "WHERE COALESCE(auto_draft_weekday_chosen, 0)=0").fetchall()
+        updates = []
+        for r in rows:
+            try:
+                wsd = int(r["week_start_day"] or 0)
+            except (TypeError, ValueError):
+                wsd = 0
+            day = effective_auto_draft_weekday(r["id"], None, 0, week_start_day=wsd,
+                                               spread=AUTO_DRAFT_SPREAD_WEEKDAYS_V1)
+            updates.append((day, r["id"]))
+        if updates:
+            conn.executemany("UPDATE restaurants SET auto_draft_weekday=?, auto_draft_weekday_chosen=1 "
+                             "WHERE id=? AND COALESCE(auto_draft_weekday_chosen, 0)=0", updates)
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)",
+                     (AUTO_DRAFT_DAY_SPREAD6_MIGRATION,
+                      f"{len(updates)} restaurants keep the Monday-Thursday spread's draft day"))
+        conn.commit()
+        return len(updates)
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        import logging
+        logging.getLogger(__name__).warning("auto-draft six-day spread migration failed (will retry at next boot): %s", e)
         return 0
     finally:
         conn.close()
@@ -14409,7 +14612,11 @@ def pos_binding_conflict(provider: str, values, exclude_id=None, db_path: str = 
     vals = [str(v or "").strip().lower() for v in values]
     if len(vals) != len(cols) or not vals[-1]:
         return None
-    where = " AND ".join(f"LOWER(TRIM(COALESCE({c},'')))=?" for c in cols)
+    # CAST to text: rpower_cg is an INTEGER column, and on Postgres
+    # COALESCE(bigint, '') refuses the '' (invalid input syntax for bigint) —
+    # every RPOWER bind and bulk provisioning row raised there after the
+    # 10/19/26 cutover (found by F8's Postgres run, scale fix round).
+    where = " AND ".join(f"LOWER(TRIM(COALESCE(CAST({c} AS TEXT),'')))=?" for c in cols)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(f"SELECT id, name FROM restaurants WHERE {where} AND COALESCE(is_demo,0)=0",
@@ -15747,6 +15954,9 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
 # those are admin telemetry, not "what changed on my account".
 ACCOUNT_EVENT_TYPES = (
     # Security events the owner should see without asking (security audit).
+    # Cavnar AI's own staff opening and closing the dashboard (view-as) —
+    # access transparency (scale audit 10/19/26, SEC-12).
+    "support_access_opened", "support_access_closed",
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
@@ -15789,6 +15999,8 @@ ACCOUNT_EVENT_TYPES = (
 )
 
 ACCOUNT_EVENT_LABELS = {
+    "support_access_opened": "Cavnar AI support opened your dashboard",
+    "support_access_closed": "Cavnar AI support closed your dashboard",
     "login": "Signed in",
     "password_changed": "Password changed",
     "email_changed": "Email address changed",
@@ -16730,13 +16942,17 @@ def auto_approve_trust(restaurant_id: int, db_path: str = DB_PATH, days: int = 3
 WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 AUTO_DRAFT_WEEKDAY_DEFAULT = 3      # Thursday: a restaurant with no id, and the column's own default
 AUTO_DRAFT_WEEKDAYS = (0, 1, 2, 3, 4, 5)
-# Where nobody chose the day, it is spread across Monday-Thursday by
-# restaurant id (AI cost audit 10/7/26 #5). Every restaurant drafted on
-# Thursday: with two generation slots (schedule_engine.SCHEDULE_GEN_WORKERS)
-# and 15-40 minutes a draft, 100 Thursday drafts take 12-33 hours and spill
-# past the Friday auto-publish. Deterministic, so a restaurant's day never
-# moves between ticks; Friday and Saturday stay owner choices only.
-AUTO_DRAFT_SPREAD_WEEKDAYS = (0, 1, 2, 3)
+# Where nobody chose the day, it is spread across every draft day, Monday to
+# Saturday, by restaurant id (AI cost audit 10/7/26 #5; scale audit 10/19/26
+# A5-F4 widened it from Monday-Thursday). Every restaurant drafted on
+# Thursday: with two generation slots and 15-40 minutes a draft, 100
+# Thursday drafts took 12-33 hours and spilled past the Friday auto-publish;
+# on four days a fleet of thousands still queued past the drafts' deadline.
+# Deterministic, so a restaurant's day never moves between ticks. Every
+# restaurant that read the four-day spread before keeps the day it had
+# (keep_four_day_spread_days, once).
+AUTO_DRAFT_SPREAD_WEEKDAYS = (0, 1, 2, 3, 4, 5)
+AUTO_DRAFT_SPREAD_WEEKDAYS_V1 = (0, 1, 2, 3)
 AUTO_ORDER_WEEKDAY_DEFAULT = 0      # Monday
 AUTO_ORDER_WEEKDAYS = (0, 1, 2, 3, 4, 5, 6)
 
@@ -16749,14 +16965,16 @@ def _weekday_of(restaurant, attr, default, allowed) -> int:
     return v if v in allowed else default
 
 
-def default_auto_draft_weekday(restaurant_id) -> int:
+def default_auto_draft_weekday(restaurant_id, spread=None) -> int:
     """The draft day of a restaurant whose day nobody chose: Monday to
-    Thursday by its id (AUTO_DRAFT_SPREAD_WEEKDAYS), Thursday without one."""
+    Saturday by its id (AUTO_DRAFT_SPREAD_WEEKDAYS, or `spread`), Thursday
+    without one."""
+    spread = tuple(spread or AUTO_DRAFT_SPREAD_WEEKDAYS)
     try:
         rid = int(restaurant_id)
     except (TypeError, ValueError):
         return AUTO_DRAFT_WEEKDAY_DEFAULT
-    return AUTO_DRAFT_SPREAD_WEEKDAYS[rid % len(AUTO_DRAFT_SPREAD_WEEKDAYS)]
+    return spread[rid % len(spread)]
 
 
 def auto_draft_days(week_start_day=0) -> tuple:
@@ -16770,13 +16988,13 @@ def auto_draft_days(week_start_day=0) -> tuple:
     return tuple(d for d in range(7) if d != eve)
 
 
-def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0) -> int:
+def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0, spread=None) -> int:
     """The day the draft is made, from the row's own columns: the stored
     day when somebody chose it (and it is a draft day for this restaurant's
-    week, auto_draft_days), else the spread default — moved a day earlier
-    when it would fall on the eve of the week. One rule for the Restaurant
-    object (auto_draft_weekday) and a reader of the raw columns
-    (reservation_feeds)."""
+    week, auto_draft_days), else the spread default (`spread`, else
+    AUTO_DRAFT_SPREAD_WEEKDAYS) — moved a day earlier when it would fall on
+    the eve of the week. One rule for the Restaurant object
+    (auto_draft_weekday) and a reader of the raw columns (reservation_feeds)."""
     allowed = auto_draft_days(week_start_day)
     if chosen:
         try:
@@ -16785,7 +17003,7 @@ def effective_auto_draft_weekday(restaurant_id, stored, chosen, week_start_day=0
             v = None
         if v in allowed:
             return v
-    d = default_auto_draft_weekday(restaurant_id)
+    d = default_auto_draft_weekday(restaurant_id, spread=spread)
     return d if d in allowed else (d - 1) % 7
 
 
@@ -18135,6 +18353,23 @@ def email_delivery_stats(days: int = 7, restaurant_id: int = None, db_path: str 
 INBOUND_WEBHOOK_CAPTURE_MINUTES = 60
 
 
+REFUSED_WEBHOOK_WRITES_PER_MINUTE = 30
+
+
+def _refused_flood(provider) -> bool:
+    """A bad-signature flood from one address writes no more ledger rows
+    past REFUSED_WEBHOOK_WRITES_PER_MINUTE a minute (scale audit 10/19/26,
+    SEC-08) — the requests are still refused; the count already says the
+    secret is failing."""
+    try:
+        from flask import request, has_request_context
+        ip = request.remote_addr if has_request_context() else None
+    except Exception:
+        ip = None
+    import request_limits
+    return request_limits.memory_limited(f"whref:{provider}:{ip or '-'}", REFUSED_WEBHOOK_WRITES_PER_MINUTE, 60)
+
+
 def record_inbound_webhook(provider: str, verified: bool, event_type: str = None, reason: str = None,
                            db_path: str = DB_PATH) -> bool:
     """One inbound webhook request from `provider` ('resend', 'twilio',
@@ -18146,6 +18381,8 @@ def record_inbound_webhook(provider: str, verified: bool, event_type: str = None
     provider, so a rotated secret pages once, not on every retry. Never
     raises: a ledger hiccup must not change the webhook's answer."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    if not verified and _refused_flood(provider):
+        return False
     now = _dt.now(_tz.utc)
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
     try:

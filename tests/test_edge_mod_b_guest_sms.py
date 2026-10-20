@@ -223,9 +223,16 @@ def test_a_seven_digit_number_is_refused(db_path, web):
     assert _optin(web, guest_links.sign_join(rid), "555-0123").status_code == 400
 
 
-def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, web, texts):
-    """A6 SMS #17 — 44 20 7946 0958 is a London number."""
+def test_an_international_number_without_a_plus_keeps_its_country_code(db_path, web, texts, monkeypatch):
+    """A6 SMS #17 — 44 20 7946 0958 is a London number. The join form texts
+    only SMS_COUNTRY_CODES (default North America, scale audit 10/19/26
+    SEC-05), so it is refused by default and kept as +44 once the UK is on
+    the list."""
     rid = _rid(db_path)
+    monkeypatch.delenv("SMS_COUNTRY_CODES", raising=False)
+    assert _optin(web, guest_links.sign_join(rid), "44 20 7946 0958").status_code == 400
+    assert gm.get_guest_contacts(rid, db_path=db_path) == []
+    monkeypatch.setenv("SMS_COUNTRY_CODES", "1,44")
     assert _optin(web, guest_links.sign_join(rid), "44 20 7946 0958").status_code == 200
     assert [c["phone"] for c in gm.get_guest_contacts(rid, db_path=db_path)] == ["+442079460958"]
 

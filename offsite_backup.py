@@ -33,6 +33,14 @@ Two things here:
    neither scrubbed nor kept on purpose, and at runtime an unclassified one
    is scrubbed anyway. What a run actually took out is what the backup
    email says (describe_scrub).
+
+   Since 10/19/26 (scale audit OPS-1) what a restore NEEDS — the client
+   credentials, the link-signing secrets, webhook secrets, the Stripe
+   customer id, the live invoice intake address — is SEALED rather than
+   scrubbed: it leaves only as ciphertext under CREDENTIAL_KEY (a second
+   escrowed key), inside the BACKUP_ENCRYPTION_KEY file, and unseal() opens
+   it on restore. Live access (sessions, devices, 2FA, reset tokens) is
+   still scrubbed. See SEAL_COLUMNS.
 """
 import datetime as _dt
 import hashlib
@@ -475,7 +483,6 @@ SCRUB_TABLES = {
     "live_activity_tokens": "APNs Live Activity push tokens (parity audit #61)",
     "login_reports": "one-time 'this wasn't me' links that revoke sessions",
     "staff_portal_tokens": "bearer links into each restaurant's staff portal",
-    "app_secrets": "this install's own link-signing secrets",
     "view_as_sessions": "admin view-as sessions",
     "user_backup_codes": "each login's own 2FA recovery codes (hashed) — the admin's included (fix round A)",
     "user_totp": "each internal login's authenticator-app secret (encrypted under CREDENTIAL_KEY) — a live "
@@ -489,22 +496,177 @@ SCRUB_TABLES = {
 SCRUB_COLUMNS = {
     ("users", "reset_token"), ("users", "reset_token_expires"), ("users", "recovery_email_code"),
     ("restaurants", "temp_password"), ("restaurants", "two_fa_device_token"),
-    ("restaurants", "gmb_access_token"), ("restaurants", "gmb_refresh_token"),
-    ("restaurants", "ig_token"), ("restaurants", "fb_page_token"),
-    ("restaurants", "toast_client_secret"), ("restaurants", "toast_access_token"),
-    ("restaurants", "square_access_token"), ("restaurants", "clover_api_token"),
-    ("restaurants", "rpower_token"), ("restaurants", "reservation_api_key"),
-    ("restaurants", "backoffice_api_key"), ("restaurants", "stripe_customer_id"),
-    ("webhooks", "secret"),
     # The share link itself, encrypted under CREDENTIAL_KEY so the admin can
-    # copy it again (fix round B2): a working public link once decrypted.
+    # copy it again (fix round B2): a working public link once decrypted, and
+    # nothing a restore needs (a new share is one click).
     ("sales_audit_shares", "token_enc"),
-    # An intake address is a write capability: whoever has it can mail files
-    # into a restaurant's invoices (bar fix round 10/15/26, R24). A restore
-    # from an off-site copy issues new addresses (the admin's Invoice intake
-    # card, Rotate). The ledger's copy of it goes too.
-    ("email_intake_routes", "address"), ("email_intake", "address"),
+    # The intake ledger's copy of the address a message came to: a record,
+    # not the route (the live route is sealed below, so a restore keeps
+    # receiving invoices); it goes, as before.
+    ("email_intake", "address"),
 }
+
+# ── sealed, not scrubbed (scale audit 10/19/26 OPS-1) ───────────────────────
+#
+# Scrubbing every credential made the off-site copy a restore that severed
+# every integration: on losing the volume, every RPOWER token re-requested
+# and pasted by hand, every Google connection redone by its owner, every pay
+# link and printed QR code dead. At 1,500 stores that is weeks of RTO. These
+# leave the server only as Fernet ciphertext under CREDENTIAL_KEY — a second
+# key, escrowed beside BACKUP_ENCRYPTION_KEY and never stored with the copy —
+# inside a file that is itself encrypted under BACKUP_ENCRYPTION_KEY, so a
+# reader of an off-site copy needs both keys. Without a working
+# CREDENTIAL_KEY at backup time they are scrubbed exactly as before (fail
+# safe). Live access stays scrubbed: sessions, devices, 2FA codes and
+# secrets, reset tokens (SCRUB_TABLES, SCRUB_COLUMNS).
+#
+# credentials.FIELDS on restaurants: already CREDENTIAL_KEY ciphertext at
+# rest (credentials.PREFIX). Kept as they are; a plaintext one (written
+# before the key existed) is encrypted in the copy the same way, so the
+# restored app reads it through get_restaurant like any other.
+#
+# The columns and tables below are plaintext on the server (read by value:
+# an HMAC key, a webhook signing secret, an inbound address looked up by
+# value). In the copy each value becomes SEAL_PREFIX + ciphertext, and
+# unseal() turns it back on restore (db_restore on the RESTORE_FROM file,
+# and once at boot for a database copied in another way). A value that
+# cannot be unsealed (a lost key) is blanked — the old scrubbed state.
+SEAL_PREFIX = "sealed:v1:"
+SEAL_COLUMNS = {
+    ("restaurants", "stripe_customer_id"): "the Stripe customer id: a restore keeps billing linked",
+    ("webhooks", "secret"): "each customer webhook's signing secret: owners need not re-save their webhook",
+    # An intake address is a write capability (whoever has it can mail
+    # files into a restaurant's invoices, bar fix round 10/15/26 R24): it
+    # leaves only sealed, and a restore keeps the address Fintech already has.
+    ("email_intake_routes", "address"): "the live invoice intake address: vendors keep sending to it",
+}
+# Whole tables whose every value column is sealed.
+SEAL_TABLES = {
+    "app_secrets": ("value", "this install's own link-signing secrets: pay links, table-tent QR codes, issue "
+                             "and unsubscribe links keep verifying after a restore"),
+}
+
+
+def _seal_fernet():
+    """The CREDENTIAL_KEY Fernet, or None when there is no working key."""
+    import credentials
+    try:
+        return credentials._fernet() if credentials.key_state() == "ok" else None
+    except Exception:
+        return None
+
+
+def seal_plan(conn):
+    """[(table, column, mode)] this database would carry sealed: mode
+    "credential" for credentials.FIELDS (left as at-rest ciphertext) and
+    "sealed" for SEAL_COLUMNS / SEAL_TABLES. Only columns that exist."""
+    import credentials
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    out = []
+    if "restaurants" in tables:
+        have = {r[1] for r in conn.execute('PRAGMA table_info("restaurants")')}
+        out += [("restaurants", f, "credential") for f in credentials.FIELDS if f in have]
+    for (t, c) in sorted(SEAL_COLUMNS):
+        if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            out.append((t, c, "sealed"))
+    for t, (c, _why) in sorted(SEAL_TABLES.items()):
+        if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            out.append((t, c, "sealed"))
+    return out
+
+
+def _seal(conn, plan, fernet):
+    """Seal plan's columns in a COPY. Returns ["table.column", ...] kept
+    sealed. A value that is already ciphertext of the right kind is left."""
+    import credentials
+    done = []
+    for t, c, mode in plan:
+        prefix = credentials.PREFIX if mode == "credential" else SEAL_PREFIX
+        rows = conn.execute(f'SELECT "{c}" FROM "{t}" WHERE "{c}" IS NOT NULL AND "{c}" != \'\' '
+                            f'AND substr("{c}", 1, {len(prefix)}) != ?', (prefix,)).fetchall()
+        for (value,) in rows:
+            if not isinstance(value, str):
+                value_s = str(value)
+            else:
+                value_s = value
+            token = prefix + fernet.encrypt(value_s.encode("utf-8")).decode("ascii")
+            conn.execute(f'UPDATE "{t}" SET "{c}"=? WHERE "{c}"=?', (token, value))
+        done.append(f"{t}.{c}")
+    return done
+
+
+def unseal(conn) -> dict:
+    """Turn every SEAL_PREFIX value back into its plaintext — on a database
+    restored from an off-site copy. Idempotent and cheap where nothing is
+    sealed (one indexed-or-small read per sealed column). Works on SQLite
+    and Postgres (models.get_conn) alike. A value the key cannot open is
+    blanked (NULL, or '' for a NOT NULL column) — the scrubbed state the copy
+    would have had without sealing — and counted as failed. The caller
+    commits. Returns {unsealed, failed, columns}."""
+    out = {"unsealed": 0, "failed": 0, "columns": []}
+    fernet = _seal_fernet()
+    targets = [(t, c) for (t, c) in SEAL_COLUMNS] + [(t, c) for t, (c, _w) in SEAL_TABLES.items()]
+    for t, c in sorted(targets):
+        info = list(conn.execute(f'PRAGMA table_info("{t}")'))
+        if c not in {r[1] for r in info}:
+            continue
+        notnull = any(r[1] == c and r[3] for r in info)
+        rows = conn.execute(f'SELECT "{c}" FROM "{t}" WHERE substr("{c}", 1, {len(SEAL_PREFIX)}) = ?',
+                            (SEAL_PREFIX,)).fetchall()
+        if not rows:
+            continue
+        out["columns"].append(f"{t}.{c}")
+        for row in rows:
+            sealed = row[0]
+            plain = None
+            if fernet is not None:
+                try:
+                    plain = fernet.decrypt(sealed[len(SEAL_PREFIX):].encode("ascii")).decode("utf-8")
+                except Exception:
+                    plain = None
+            if plain is None:
+                out["failed"] += 1
+                if t in SEAL_TABLES:
+                    conn.execute(f'DELETE FROM "{t}" WHERE "{c}"=?', (sealed,))
+                else:
+                    conn.execute(f'UPDATE "{t}" SET "{c}"=? WHERE "{c}"=?', ("" if notnull else None, sealed))
+                continue
+            conn.execute(f'UPDATE "{t}" SET "{c}"=? WHERE "{c}"=?', (plain, sealed))
+            out["unsealed"] += 1
+    if out["failed"]:
+        log.error("unseal: %d sealed value(s) could not be opened with CREDENTIAL_KEY and were blanked "
+                  "(the off-site copy's scrubbed state): %s", out["failed"], out["columns"])
+    return out
+
+
+def unseal_file(path) -> dict:
+    """unseal() over a SQLite file (a decrypted off-site copy, or the
+    RESTORE_FROM file before it is swapped in)."""
+    import sqlite3
+    conn = sqlite3.connect(path)
+    try:
+        out = unseal(conn)
+        conn.commit()
+        return out
+    finally:
+        conn.close()
+
+
+def sealed_count(path) -> int:
+    """How many SEAL_PREFIX values a SQLite file still holds (the drill)."""
+    import sqlite3
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        n = 0
+        targets = [(t, c) for (t, c) in SEAL_COLUMNS] + [(t, c) for t, (c, _w) in SEAL_TABLES.items()]
+        for t, c in targets:
+            if c not in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+                continue
+            n += conn.execute(f'SELECT COUNT(*) FROM "{t}" WHERE substr("{c}", 1, {len(SEAL_PREFIX)}) = ?',
+                              (SEAL_PREFIX,)).fetchone()[0]
+        return n
+    finally:
+        conn.close()
 
 # Rows whose words never leave the server (memory re-audit 9/29/26,
 # FORGET-1): {table: (which rows, "module:CONSTANT" naming the columns)}.
@@ -607,9 +769,10 @@ def credential_columns(conn):
     return out
 
 
-def scrub_plan(conn):
+def scrub_plan(conn, sealed=()):
     """(tables to empty, [(table, column)] to null, unclassified) for this
-    database.
+    database. `sealed` are (table, column) pairs this run carries sealed
+    instead (seal_plan, OPS-1): never nulled, never unclassified.
 
     The columns are built from the platform's one credential registry,
     credentials.credential_columns(conn) (credentials.FIELDS plus every
@@ -628,16 +791,19 @@ def scrub_plan(conn):
         if t not in have:
             have[t] = {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')} if t in tables else set()
         return have[t]
-    wipe = sorted(t for t in SCRUB_TABLES if t in tables)
-    named = set(SCRUB_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    sealed = set(sealed)
+    sealed_tables = {t for t in SEAL_TABLES if (t, SEAL_TABLES[t][0]) in sealed}
+    # A sealable table this run cannot seal (no key) is emptied, as before.
+    wipe = sorted(t for t in set(SCRUB_TABLES) | (set(SEAL_TABLES) - sealed_tables) if t in tables)
+    named = set(SCRUB_COLUMNS) | set(SEAL_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
     registry = set(credentials.credential_columns(conn))
     unclassified = []
     for t, c in sorted(set(credential_columns(conn)) | registry):
-        if t in SCRUB_TABLES or (t, c) in named or (t, c) in KEEP_COLUMNS:
+        if t in SCRUB_TABLES or t in SEAL_TABLES or (t, c) in named or (t, c) in KEEP_COLUMNS:
             continue
         unclassified.append((t, c))
-    null = sorted((t, c) for t, c in (named | registry | set(unclassified)) - set(KEEP_COLUMNS)
-                  if t not in SCRUB_TABLES and c in _cols(t))
+    null = sorted((t, c) for t, c in (named | registry | set(unclassified)) - set(KEEP_COLUMNS) - sealed
+                  if t not in SCRUB_TABLES and t not in SEAL_TABLES and c in _cols(t))
     return wipe, null, unclassified
 
 
@@ -648,7 +814,13 @@ def redact(path):
     import sqlite3
     conn = sqlite3.connect(path)
     try:
-        wipe, null, unclassified = scrub_plan(conn)
+        # Sealed first (OPS-1): with a working CREDENTIAL_KEY the credentials
+        # and link secrets a restore needs leave as ciphertext under it;
+        # without one they are scrubbed below exactly as before.
+        fernet = _seal_fernet()
+        plan = seal_plan(conn) if fernet is not None else []
+        sealed = _seal(conn, plan, fernet) if plan else []
+        wipe, null, unclassified = scrub_plan(conn, sealed={(t, c) for t, c, _m in plan})
         if unclassified:
             log.error(f"off-site backup scrubbed unclassified credential-looking columns: {unclassified}")
         for t in wipe:
@@ -664,7 +836,7 @@ def redact(path):
         conn.commit()
         conn.execute("VACUUM")
         return {"tables": wipe, "columns": [f"{t}.{c}" for t, c in null], "unclassified": unclassified,
-                "rows": rows}
+                "rows": rows, "sealed": sealed}
     finally:
         conn.close()
 
@@ -682,6 +854,7 @@ def describe_scrub(scrubbed) -> dict:
         "blanked": sorted(scrubbed.get("columns") or []),
         "precaution": sorted(f"{t}.{c}" for t, c in (scrubbed.get("unclassified") or [])),
         "removed_rows": sorted(scrubbed.get("rows") or []),
+        "sealed": sorted(scrubbed.get("sealed") or []),
         "kept": "password hashes, hashed link tokens, public link ids guests and staff already hold, and "
                 "model token counts (offsite_backup.KEEP_COLUMNS)",
     }

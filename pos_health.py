@@ -168,3 +168,70 @@ def pos_sync_state(r, now=None) -> dict:
         print(f"[pos_health] unreadable: {e}")
         out["state"] = "unknown"
     return out
+
+
+# ── the fleet's POS, as one reading (scale audit 10/19/26 OPS-6) ────────────
+#
+# A provider outage, or a token RPOWER revoked for every store, used to be one
+# "RPOWER POS needs attention" console row per store and no page. The fleet
+# reading names the share of connected stores failing per provider; past
+# FLEET_OUTAGE_SHARE (and at least FLEET_OUTAGE_MIN_STORES stores, so one
+# store's own trouble stays that store's issue) it is one outage: one
+# platform issue in the console (admin_ops) and one page
+# (ops.check_platform_sla).
+import os as _os
+
+FLEET_OUTAGE_SHARE = float(_os.getenv("POS_FLEET_OUTAGE_SHARE", "0.05"))
+FLEET_OUTAGE_MIN_STORES = int(_os.getenv("POS_FLEET_OUTAGE_MIN_STORES", "2"))
+
+
+def _fleet(rows):
+    """{provider: {connected, failing: [row], share, outage}} from (provider,
+    failing, row) triples."""
+    out = {}
+    for prov, failing, row in rows:
+        f = out.setdefault(prov, {"connected": 0, "failing": [], "share": 0.0, "outage": False})
+        f["connected"] += 1
+        if failing:
+            f["failing"].append(row)
+    for f in out.values():
+        n = len(f["failing"])
+        f["share"] = round(n / float(f["connected"]), 3) if f["connected"] else 0.0
+        f["outage"] = n >= FLEET_OUTAGE_MIN_STORES and f["share"] > FLEET_OUTAGE_SHARE
+    return out
+
+
+def fleet_from_records(recs) -> dict:
+    """The fleet reading from the admin console's records (customer
+    locations that are not ended or paused): a store failing is one whose
+    POS integration row reads `error`."""
+    rows = []
+    for rec in recs or []:
+        if rec.get("segment") != "customer" or (rec.get("billing") or {}).get("status") in (
+                "churned", "canceled", "cancelled", "paused"):
+            continue
+        for i in rec.get("integrations") or []:
+            if i.get("key") in PROVIDER_NAMES and i.get("configured"):
+                rows.append((i["key"], i.get("state") == "error", {"id": rec.get("id"), "name": rec.get("name")}))
+    return _fleet(rows)
+
+
+def fleet_state(restaurants=None, now=None) -> dict:
+    """The fleet reading from the restaurants table (every live, non-demo
+    restaurant's primary POS through pos_sync_state). Never raises."""
+    try:
+        if restaurants is None:
+            from models import get_all_restaurants, in_service
+            restaurants = [r for r in get_all_restaurants() if in_service(r)]
+        rows = []
+        for r in restaurants:
+            if int(_get(r, "is_demo") or 0):
+                continue
+            st = pos_sync_state(r, now=now)
+            if st.get("connected"):
+                rows.append((st["provider"], st["state"] == "error",
+                             {"id": _get(r, "id"), "name": _get(r, "name")}))
+        return _fleet(rows)
+    except Exception as e:
+        print(f"[pos_health] fleet unreadable: {e}")
+        return {}

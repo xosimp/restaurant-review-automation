@@ -46,8 +46,11 @@ def rid(db_path, monkeypatch):
             monkeypatch.setattr(mod, "get_conn", conn)
     monkeypatch.setattr(models, "get_conn", conn)
     monkeypatch.setattr(models, "DB_PATH", db_path)
-    return create_restaurant(Restaurant(name="EJ Co", owner_email="e@x.test", module_marketing=1,
-                                        timezone="America/Chicago"), db_path=db_path)
+    # menu_url is admin-set: the website the analytics must belong to (SEC-01).
+    rid = create_restaurant(Restaurant(name="EJ Co", owner_email="e@x.test", module_marketing=1,
+                                       timezone="America/Chicago"), db_path=db_path)
+    models.update_restaurant(rid, {"menu_url": "https://www.ejs.com/menu"})
+    return rid
 
 
 class Resp:
@@ -59,7 +62,7 @@ class Resp:
         return self._b
 
 
-def _fake_google(monkeypatch, days, ga_status=200, gsc_status=200, calls=None):
+def _fake_google(monkeypatch, days, ga_status=200, gsc_status=200, calls=None, stream_uri="https://ejs.com"):
     """GA4 and Search Console answering for `days` (list of date)."""
     import requests
 
@@ -99,6 +102,15 @@ def _fake_google(monkeypatch, days, ga_status=200, gsc_status=200, calls=None):
                                        for d in days]})
         raise AssertionError(url)
     monkeypatch.setattr(requests, "post", post)
+
+    def get(url, headers=None, timeout=None):
+        assert timeout, "every outbound call names a timeout"
+        if calls is not None:
+            calls.append((url, None))
+        if "analyticsadmin" in url and "/dataStreams" in url:
+            return Resp(200, {"dataStreams": [{"webStreamData": {"defaultUri": stream_uri}}]})
+        raise AssertionError(url)
+    monkeypatch.setattr(requests, "get", get)
 
 
 # ── inputs ──────────────────────────────────────────────────────────────────
@@ -328,3 +340,105 @@ def test_the_daily_job_is_registered_and_wired():
     src = inspect.getsource(scheduler.scheduler_loop)
     assert '_ops.run_in_lane("intel", "web_analytics", run_daily_web_analytics)' in src
     assert "resumable_sweep(_WEB_ANALYTICS_CURSOR_KEY" in inspect.getsource(scheduler.run_daily_web_analytics)
+
+
+# ── whose property it is (scale audit 10/19/26, SEC-01) ─────────────────────
+
+def _other(db_path, menu=None, demo=0):
+    rid = create_restaurant(Restaurant(name="Rival", owner_email="r@x.test", module_marketing=1,
+                                       timezone="America/Chicago"), db_path=db_path)
+    models.update_restaurant(rid, {"menu_url": menu, "is_demo": demo})
+    return rid
+
+
+def test_a_website_belongs_to_the_listing_never_to_what_the_owner_typed():
+    assert wa.host_matches("ejs.com", {"ejs.com"}) and wa.host_matches("ejs.com", {"order.ejs.com"})
+    assert not wa.host_matches("wixsite.com", set()) and not wa.host_matches("com", {"ejs.com"})
+    assert not wa.host_matches("b.wixsite.com", {"a.wixsite.com"})
+    assert not wa.host_matches("order.ejs.com", {"ejs.com"}), "a subdomain is not proved by the parent"
+    import external_bindings as eb
+    assert eb.normalize("gsc", "https://www.EJS.com/") == eb.normalize("gsc", "sc-domain:ejs.com") == "ejs.com"
+    assert eb.normalize("ga4", "properties/412345678") == "412345678"
+
+
+def test_a_competitors_site_is_never_read_and_a_verified_one_is_refused(rid, db_path, sa, monkeypatch):
+    """Owner A types B's public domain: the shared service account can read
+    it (B granted it), but nothing is read for A, and once B verified it A's
+    save is refused without naming B."""
+    import client_api
+    import external_bindings as eb
+    monkeypatch.setattr(client_api, "log_account_event", lambda *a, **k: None)
+    started = []
+    monkeypatch.setattr(client_api, "_start_web_analytics_sync", lambda r: started.append(r) or True)
+    calls = []
+    end = wa._today(models.get_restaurant(rid)) - timedelta(days=1)
+    _fake_google(monkeypatch, [end], calls=calls, stream_uri="https://ejs.com")
+    attacker = _other(db_path, menu="https://rival.com/menu")
+    app = Flask(__name__)
+    a_owner = {"restaurant_id": attacker, "role": "owner", "id": 9}
+    with app.test_request_context("/x", method="POST", json={"gsc_site_url": "sc-domain:ejs.com",
+                                                            "ga4_property_id": "412345678"}):
+        out, code = client_api._do_web_analytics_set(a_owner)
+    assert code == 200 and out["checks"]["gsc"]["code"] == "unconfirmed" and out["checks"]["ga4"]["code"] == "unconfirmed"
+    assert not out["syncing"] and started == []
+    assert eb.binding("gsc", attacker)["status"] == "pending"
+    calls.clear()
+    res = wa.sync(attacker)
+    assert res["gsc"]["code"] == "unconfirmed" and res["ga4"]["code"] == "unconfirmed"
+    assert not [u for u, _j in calls if "searchAnalytics" in u or "analyticsdata" in u], "nothing of B's is read"
+    # The real owner connects: proved by its own website, and a pending
+    # squatter never blocks it.
+    owner = {"restaurant_id": rid, "role": "owner", "id": 1}
+    with app.test_request_context("/x", method="POST", json={"gsc_site_url": "https://www.ejs.com/",
+                                                            "ga4_property_id": "412345678"}):
+        out, code = client_api._do_web_analytics_set(owner)
+    assert code == 200 and out["checks"]["gsc"]["ok"] and out["checks"]["ga4"]["ok"] and started == [rid]
+    assert eb.binding("gsc", rid)["verified_how"] == "website_match"
+    assert eb.binding("ga4", rid)["verified_how"] == "stream_match"
+    # Now the attacker's save is refused, and B is never named.
+    with app.test_request_context("/x", method="POST", json={"gsc_site_url": "ejs.com"}):
+        out, code = client_api._do_web_analytics_set(a_owner)
+    assert code == 409 and out["code"] == "taken" and "EJ Co" not in out["error"]
+    assert not wa.ensure_ownership(models.get_restaurant(attacker), "gsc", "sc-domain:ejs.com"), \
+        "an admin approval cannot hand it over either"
+    assert eb.approve("gsc", "ejs.com", attacker) == "conflict"
+    # B disconnects: the site is free again.
+    with app.test_request_context("/x", method="POST"):
+        assert client_api._do_web_analytics_disconnect(owner)[1] == 200
+    assert eb.binding("gsc", rid) is None and not eb.conflict("gsc", "ejs.com", attacker)
+
+
+def test_a_pending_binding_is_read_once_an_admin_approves_it(rid, db_path, sa, monkeypatch):
+    import external_bindings as eb
+    models.update_restaurant(rid, {"menu_url": None, "gsc_site_url": "sc-domain:ejs.com"})
+    end = wa._today(models.get_restaurant(rid)) - timedelta(days=1)
+    _fake_google(monkeypatch, [end])
+    assert wa.sync(rid)["gsc"]["code"] == "unconfirmed"
+    assert [p["restaurant_id"] for p in eb.pending()] == [rid]
+    assert eb.approve("gsc", "sc-domain:ejs.com", rid) == "verified"
+    assert wa.sync(rid)["gsc"]["ok"] and eb.pending() == []
+
+
+def test_bindings_in_place_before_the_fix_keep_reading(rid, db_path, sa, monkeypatch):
+    """Grandfathering: Simple EJ's connected before 10/19/26 and keeps its
+    read with no website on file; recorded once, duplicates named."""
+    import external_bindings as eb
+    models.update_restaurant(rid, {"menu_url": None, "ga4_property_id": "412345678",
+                                   "gsc_site_url": "sc-domain:ejs.com"})
+    twin = _other(db_path)
+    models.update_restaurant(twin, {"ga4_property_id": "412345678"})
+    demo = _other(db_path, demo=1)
+    models.update_restaurant(demo, {"ga4_property_id": "999999999"})
+    conn = models.get_conn(db_path)
+    conn.execute("DELETE FROM data_migrations WHERE name=?", (eb.GRANDFATHER_MIGRATION,))
+    conn.commit()
+    conn.close()
+    assert eb.grandfather(db_path) == 3 and eb.grandfather(db_path) == 0
+    conn = models.get_conn(db_path)
+    detail = conn.execute("SELECT detail FROM data_migrations WHERE name=?", (eb.GRANDFATHER_MIGRATION,)).fetchone()[0]
+    conn.close()
+    assert "duplicates to resolve: ga4:412345678" in detail
+    assert eb.binding("ga4", rid)["verified_how"] == "grandfathered" and eb.binding("ga4", demo) is None
+    end = wa._today(models.get_restaurant(rid)) - timedelta(days=1)
+    _fake_google(monkeypatch, [end])
+    assert wa.sync(rid)["ok"] and wa.sync(demo).get("ga4", {}).get("code") != "unconfirmed"

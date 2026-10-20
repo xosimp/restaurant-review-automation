@@ -231,6 +231,13 @@ def create_client(current_user):
                                      and _flag("module_reviews", 1)) else 0,
         })
 
+        # The new store's setup checklist (scale audit 10/19/26 ONB-12):
+        # the confirmations a person makes once, on its onboarding tracker.
+        try:
+            import onboarding as _onb_cc
+            _onb_cc.start_setup(rid)
+        except Exception as _onb_e:
+            _ops.capture(_onb_e, job="create_client_setup_checklist", context=f"restaurant_id={rid}")
         module_names = []
         if _flag("module_reviews"): module_names.append("Review Intelligence")
         if _flag("module_labor"):   module_names.append("Labor Optimizer")
@@ -2641,6 +2648,9 @@ def view_as_client(restaurant_id, current_user):
                 "that has the owner's login, or add one first."), 404
     if request.method != "POST":
         return _view_as_confirm_page(restaurant_id)
+    reason = view_as_reason(request.form.get("reason"))
+    if not reason:
+        return _view_as_confirm_page(restaurant_id, error=VIEW_AS_REASON_MESSAGE), 400
     from auth import create_view_as_session, VIEW_AS_HOURS, current_session_token, sql_utc
     from datetime import datetime as _dt_va, timedelta as _td_va, timezone as _tz_va
     read_only = not current_user.get("is_admin")
@@ -2652,10 +2662,12 @@ def view_as_client(restaurant_id, current_user):
     _audit_admin_action(current_user, "view_as_started", restaurant_id=restaurant_id,
                         target=f"user:{user_id}",
                         after={"target_user_id": user_id, "read_only": read_only, "hours": VIEW_AS_HOURS,
-                               "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS))},
+                               "ends_at": sql_utc(_dt_va.now(_tz_va.utc) + _td_va(hours=VIEW_AS_HOURS)),
+                               "reason": reason},
                         summary=(f"{current_user.get('username')} opened a "
                                  f"{'read-only ' if read_only else ''}view-as session "
-                                 f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h)"))
+                                 f"(signed in as login #{user_id}, {VIEW_AS_HOURS}h): {reason}"[:300]))
+    tell_tenant_support_access(restaurant_id, "opened", current_user, reason, read_only=read_only)
     resp = make_response(redirect("/"))
     # The cookie ends when the session does: VIEW_AS_HOURS, absolute.
     resp.set_cookie("session_token", token, max_age=VIEW_AS_HOURS * 3600,
@@ -2670,12 +2682,36 @@ def view_as_client(restaurant_id, current_user):
     return resp
 
 
+VIEW_AS_REASON_MESSAGE = "Say why you're opening their dashboard (a ticket, their request, a fix) — they see it."
+
+
+def view_as_reason(raw):
+    """The reason a view-as is opened, or '' when it is missing or too
+    short to mean anything (scale audit 10/19/26, SEC-12)."""
+    text = " ".join(str(raw or "").split())[:200]
+    return text if len(text) >= 8 else ""
+
+
+def tell_tenant_support_access(restaurant_id, what, admin, reason=None, read_only=False):
+    """The restaurant's own Account → Security → Activity says Cavnar AI
+    staff opened (or closed) its dashboard, who and why — access
+    transparency the operator's trail alone never gave the tenant
+    (SEC-12). Never raises."""
+    try:
+        from models import log_account_event as _lae
+        name = (admin or {}).get("username") or (admin or {}).get("acting_admin") or "Cavnar AI support"
+        detail = (f"{name}" + (" (read-only)" if read_only else "") + (f": {reason}" if reason else ""))[:240]
+        _lae(restaurant_id, f"support_access_{what}", {"username": name}, detail=detail)
+    except Exception as e:
+        _ops.capture(e, job="support_access_notice", context=f"restaurant_id={restaurant_id}")
+
+
 # The admin's own session token while a view-as is open, readable only by
 # /admin/stop-viewing (path-scoped, HttpOnly, SameSite=Strict).
 _VIEW_AS_RETURN_COOKIE = "cavnar_admin_return"
 
 
-def _view_as_confirm_page(restaurant_id):
+def _view_as_confirm_page(restaurant_id, error=None):
     """The GET half of view-as: a button that POSTs, carrying the csrf_js
     double-submit token (minted here when this browser has none yet —
     ensure_csrf_cookie leaves a response that already sets one alone)."""
@@ -2694,7 +2730,11 @@ def _view_as_confirm_page(restaurant_id):
         f"you make is recorded under your name.</p>"
         f"<form method='post' action='/admin/view-as/{int(restaurant_id)}'>"
         f"<input type='hidden' name='csrf_token' value='{_esc_va(csrf_tok)}'>"
-        f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
+        f"<p><label for='va-reason'>Why? They see this in their account activity.</label><br>"
+        f"<input id='va-reason' name='reason' required minlength='8' maxlength='200' "
+        f"style='width:100%;max-width:420px' placeholder='Ticket, their request, the fix you are checking'></p>"
+        + (f"<p style='color:var(--bad)'>{_esc_va(error)}</p>" if error else "")
+        + f"<button type='submit' class='cbtn cbtn-primary'>Open their dashboard</button></form>"
         f"<p style='margin-top:16px'><a href='/admin'>Back to the admin console</a></p>")
     resp = make_response(body)
     if not request.cookies.get(CSRF_COOKIE):
@@ -2747,6 +2787,8 @@ def stop_viewing():
                         after={"view_as": False},
                         summary=f"{viewing.get('acting_admin') or 'an admin'} stopped viewing as "
                                 f"{viewing.get('username')}")
+    tell_tenant_support_access(viewing.get("restaurant_id"), "closed",
+                               {"username": viewing.get("acting_admin") or "Cavnar AI support"})
     own = request.cookies.get(_VIEW_AS_RETURN_COOKIE, "")
     back = get_session_user(own) if own else None
     from auth import is_internal_login as _iil_sv, session_cookie_max_age as _scma_sv
@@ -3867,6 +3909,46 @@ def admin_set_brand(restaurant_id, current_user):
 def admin_api_overview(current_user):
     import admin_ops
     return jsonify(**admin_ops.overview())
+
+
+@admin_bp.route("/admin/api/external-bindings")
+@admin_required
+def admin_api_external_bindings(current_user):
+    """GA4 properties / Search Console sites waiting for ownership proof
+    (external_bindings, scale audit 10/19/26 SEC-01): pasted by an owner,
+    readable or not, never read until proved or approved here."""
+    import external_bindings as _eb
+    return jsonify(ok=True, pending=_eb.pending())
+
+
+@admin_bp.route("/admin/api/external-bindings/approve", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_external_bindings_approve(current_user):
+    """Approve one pending binding after checking by hand that the property
+    is the restaurant's. Refused when another restaurant holds it verified."""
+    import admin_events
+    import external_bindings as _eb
+    if not current_user.get("is_admin"):
+        return jsonify(ok=False, error="Admins only."), 403
+    data = request.get_json(silent=True) or {}
+    provider = str(data.get("provider") or "")
+    try:
+        rid = int(data.get("restaurant_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="restaurant_id is required."), 400
+    if provider not in _eb.PROVIDER_COLUMNS:
+        return jsonify(ok=False, error="Unknown provider."), 400
+    before = _eb.binding(provider, rid)
+    result = _eb.approve(provider, data.get("external_id"), rid)
+    admin_events.record_admin_action(current_user, "external_binding.approved", restaurant_id=rid,
+                                     target=f"{provider}:{_eb.normalize(provider, data.get('external_id'))}",
+                                     before=before, after=_eb.binding(provider, rid),
+                                     result="ok" if result == "verified" else "refused")
+    if result != "verified":
+        return jsonify(ok=False, result=result,
+                       error="Another restaurant holds it." if result == "conflict" else "No such pending binding."), 409
+    return jsonify(ok=True, result=result)
 
 
 @admin_bp.route("/admin/api/intelligence")
@@ -6432,6 +6514,17 @@ def admin_api_queues(current_user):
     return jsonify(**_admin_ops_c.queues())
 
 
+@admin_bp.route("/admin/api/pos-traffic")
+@admin_required
+def admin_api_pos_traffic(current_user):
+    """RPOWER requests over the last ?hours= (24): by endpoint, by store and
+    by hour, from the request ledger, with the breaker's state (scale audit
+    10/19/26 A3-19). Read-only."""
+    import pos_io
+    hours = request.args.get("hours", 24, type=int)
+    return jsonify(ok=True, **pos_io.summary(hours=hours if hours in (1, 6, 24, 72, 168) else 24))
+
+
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):
@@ -6516,6 +6609,42 @@ def admin_api_ai_health(current_user):
     credential failure, the global and Places budgets, recent events."""
     import ai_utils
     return jsonify(ok=True, **ai_utils.ai_health())
+
+
+@admin_bp.route("/admin/api/ai/capacity")
+@admin_required
+def admin_api_ai_capacity(current_user):
+    """The AI capacity view (scale audit 10/19/26 A4-01/02/07), read on
+    demand: this minute's gateway tokens by model family and class, the
+    interactive lane and the interactive slots (who holds them), and the
+    Message Batches share and billed-and-discarded items over `days`
+    (default 7, at most 30)."""
+    import ai_utils
+    import ai_lane
+    import ai_batches
+    import model_gateway
+    try:
+        days = max(1, min(30, int(request.args.get("days") or 7)))
+    except ValueError:
+        days = 7
+    slots = ai_utils._INTERACTIVE_SLOTS
+    # Calls refused by a provider's rate limit, per vendor (A4-02 / A4-15:
+    # the Perplexity account's limit is unknown — this is how it shows).
+    from models import get_conn as _gc_cap
+    conn = _gc_cap()
+    try:
+        limited = {r["vendor"]: int(r["n"] or 0) for r in conn.execute(
+            "SELECT COALESCE(vendor,'anthropic') AS vendor, COUNT(*) AS n FROM ai_usage WHERE reason='rate_limit' "
+            "AND created_at >= datetime('now', ?) GROUP BY COALESCE(vendor,'anthropic')",
+            (f"-{days} days",)).fetchall()}
+    finally:
+        conn.close()
+    return jsonify(ok=True, gateway=model_gateway.usage_now(), lane=ai_lane.stats(), rate_limited=limited,
+                   interactive_slots={"total": ai_utils.INTERACTIVE_AI_SLOTS,
+                                      "free": ai_utils.interactive_slots_free(),
+                                      "held_by": {str(k): v for k, v in (slots.held_by() if hasattr(
+                                          slots, "held_by") else {}).items()}},
+                   batches=ai_batches.usage_report(days))
 
 
 @admin_bp.route("/admin/api/ai/reset-breaker", methods=["POST"])

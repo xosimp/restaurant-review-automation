@@ -513,7 +513,7 @@ def test_the_new_read_routes_answer_for_an_admin(db_path, monkeypatch):
     _as_admin(monkeypatch)
     client = _app().test_client()
     for path in ("/admin/api/badges", "/admin/api/issues/list?per_page=5", "/admin/api/clients/list",
-                 "/admin/api/onboarding", "/admin/api/adoption", "/admin/api/queues", "/admin/api/data-sources",
+                 "/admin/api/onboarding", "/admin/api/adoption", "/admin/api/queues", "/admin/api/data-sources", "/admin/api/pos-traffic",
                  f"/admin/api/client/{rid}/timeline", f"/admin/api/client/{rid}/billing/live",
                  "/admin/api/vendor-costs", "/admin/api/business-metrics", "/admin/api/issues/resolutions"):
         r = client.get(path)

@@ -612,9 +612,11 @@ def estimate_restaurant(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         conn.execute("DELETE FROM staffing_elasticity WHERE restaurant_id=?", (restaurant_id,))
-        for (fam, part), e in out.items():
-            conn.execute("INSERT INTO staffing_elasticity (restaurant_id, family, daypart, move, estimate_json) "
-                         "VALUES (?,?,?,?,?)", (restaurant_id, fam, part, int(e["move"]), json.dumps(e)))
+        # One executemany (scale audit 10/19/26 DB-05).
+        if out:
+            conn.executemany("INSERT INTO staffing_elasticity (restaurant_id, family, daypart, move, estimate_json) "
+                             "VALUES (?,?,?,?,?)",
+                             [(restaurant_id, fam, part, int(e["move"]), json.dumps(e)) for (fam, part), e in out.items()])
         conn.commit()
     finally:
         conn.close()

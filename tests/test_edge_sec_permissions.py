@@ -325,7 +325,7 @@ def _support_via_view_as(db_path):
     c = _app().test_client()
     c.set_cookie("session_token", create_session(sup, db_path=db_path))
     c.set_cookie("csrf_js", CSRF["X-CSRF"])
-    r = c.post(f"/admin/view-as/{rid}", headers=CSRF)      # a POST since SEC-34
+    r = c.post(f"/admin/view-as/{rid}", headers=CSRF, data={"reason": "checking a ticket for them"})      # a POST since SEC-34
     assert r.status_code == 302
     viewing = get_session_user(c.get_cookie("session_token").value, db_path=db_path)
     assert viewing["id"] == owner and viewing["device_type"] == "admin-view-as"

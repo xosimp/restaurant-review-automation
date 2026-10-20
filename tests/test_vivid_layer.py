@@ -103,4 +103,4 @@ def test_no_ruler_and_no_glow_filter_on_figures():
     css = _vivid()
     assert "vx-ruler" not in DASH
     assert "drop-shadow" not in css
-    assert "t += Math.min(ts - last, 120);" in DASH
+    assert "t += Math.min(d, Math.max(34, avg * 1.5));" in DASH

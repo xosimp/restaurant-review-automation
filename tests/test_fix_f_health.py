@@ -355,4 +355,9 @@ def test_the_web_boot_runs_the_guards_before_it_builds_anything():
     admin_seed = src.index("# ── Admin account seed")
     assert guard < emptied < first_init < admin_seed
     assert src.index("_logging_setup.configure()") < src.index("app = Flask(__name__)")
-    assert "release=(os.getenv(\"RAILWAY_GIT_COMMIT_SHA\")" in src
+    # Sentry's init lives in sentry_setup since the scale audit (10/19/26
+    # OPS-5), shared with the queue worker and the scheduler process.
+    assert '_sentry_setup.init("web"' in src
+    shared = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "sentry_setup.py"), encoding="utf-8").read()
+    assert "release=(os.getenv(\"RAILWAY_GIT_COMMIT_SHA\")" in shared

@@ -59,6 +59,7 @@ Schedule re-audit 10/11/26 (workstream T) — additive to the one payload:
 """
 import json
 import logging
+import os
 import threading
 import time as _time
 from datetime import date, datetime, timedelta
@@ -93,8 +94,13 @@ RAN_OT_OVER_HOURS = 2.0
 SURE_MIN_WEEKS = 2
 SURE_WEEKS = 12
 # A review of the same rows, rules and day is served from here (TRUST-26).
-CACHE_SECONDS = 30
-CACHE_MAX = 64
+# The key holds everything a review reads (_cache_key: the rows or the
+# stored version, the week's state, schedule_inputs_version, the dismissals
+# and overrides, the reader, the day), so the time is only a backstop: 30 s
+# had a Studio session rebuild a 10-40 s review between the Summary, the
+# Publish step and the phone (scale audit 10/19/26 A5-F5 / A6 FE-11).
+CACHE_SECONDS = float(os.getenv("PREPUBLISH_CACHE_SECONDS", "300"))
+CACHE_MAX = 256
 # Rule kinds counted per person-week, not per shift (TRUST-11): a weekly
 # ceiling, a minimum, days in a row.
 PERSON_WEEK_KINDS = ("over_hours_ceiling", "under_min_hours", "over_max_hours", "long_run", "minor_week_hours",
@@ -198,12 +204,12 @@ def review(restaurant_id, schedule_id, rows=None, user=None, today=None, can_pub
     section that could not be worked out is empty."""
     sections = sections if sections in SECTIONS else "all"
     # The saved week's review is cached (the Summary, the Publish step and
-    # the phone ask for it in turn); the rows on screen change with every
-    # edit and are computed each time — "core" first (TRUST-26).
-    ck = None
-    if rows is None:
-        ck = _safe(lambda: _cache_key(restaurant_id, schedule_id, rows, user, today, can_publish, sections), None,
-                   "cache key", restaurant_id)
+    # the phone ask for it in turn) — and the rows on screen too, by their
+    # own text (scale audit 10/19/26 A5-F5: the same unsaved rows checked by
+    # the Summary and again by the Publish step paid twice); an edit is new
+    # rows, so it is computed — "core" first (TRUST-26).
+    ck = _safe(lambda: _cache_key(restaurant_id, schedule_id, rows, user, today, can_publish, sections), None,
+               "cache key", restaurant_id)
     hit = _cache_get(ck)
     if hit is not None:
         return hit

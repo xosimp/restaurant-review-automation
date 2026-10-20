@@ -186,6 +186,7 @@ def derive_nights(restaurant_id, dates, db_path=None, provider=None) -> dict:
     conn = get_conn(db_path)
     try:
         filed = _filer(conn, rid)
+        want = []
         for iso in dates:
             q = ("SELECT line_id, ticket_id, item_id, item_name, kind, sales, loss_amount, department, "
                  "sales_category, category_id, discounted, parent_line_id FROM pos_ticket_lines "
@@ -195,19 +196,24 @@ def derive_nights(restaurant_id, dates, db_path=None, provider=None) -> dict:
                 q += " AND provider=?"
                 args.append(provider)
             rows = conn.execute(q, args).fetchall()
-            conn.execute("DELETE FROM bar_sales_nights WHERE restaurant_id=? AND business_date=?", (rid, iso))
             if not rows:
                 continue
             cells, basis = _allocate(rows, filed)
+            want.extend((rid, iso, dep, sub, round(c["sales"], 2), round(c["discounts"], 2), round(c["comps100"], 2),
+                         round(c["comp_lines"], 2), round(c["discount_lines"], 2), basis)
+                        for (dep, sub), c in cells.items())
+            out["nights"] += 1
+            out["cells"] += len(cells)
+        # Every night's cells replaced in two statements (scale audit
+        # 10/19/26 DB-05): a repair's nights were two savepoints each on
+        # Postgres, in one transaction.
+        conn.executemany("DELETE FROM bar_sales_nights WHERE restaurant_id=? AND business_date=?",
+                         [(rid, iso) for iso in dates])
+        if want:
             conn.executemany(
                 "INSERT INTO bar_sales_nights (restaurant_id, business_date, department, sales_category, sales, "
                 "discounts, comps100, comp_lines, discount_lines, basis, computed_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-                [(rid, iso, dep, sub, round(c["sales"], 2), round(c["discounts"], 2), round(c["comps100"], 2),
-                  round(c["comp_lines"], 2), round(c["discount_lines"], 2), basis)
-                 for (dep, sub), c in cells.items()])
-            out["nights"] += 1
-            out["cells"] += len(cells)
+                "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))", want)
         conn.commit()
     except Exception:
         conn.rollback()

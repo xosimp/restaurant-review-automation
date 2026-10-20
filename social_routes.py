@@ -46,8 +46,14 @@ def instagram_connect(current_user):
     # Signed, like the iOS flow: a bare restaurant id let anyone finish the
     # public dialog with their own Meta account and bind their page to any
     # restaurant (MOD-MKT-5). "web~" tells the callback to answer the popup.
-    from gmb import sign_mobile_state
-    state        = "web~" + sign_mobile_state(current_user["restaurant_id"])
+    # Bound to THIS browser (scale audit 10/19/26, SEC-09): the state carries
+    # the hash of a nonce set here as a cookie, and the callback binds only
+    # when the browser finishing the dialog presents it — Meta's URL handed
+    # to another restaurant's owner connects nothing.
+    import secrets as _secrets
+    from gmb import sign_bound_state
+    nonce = _secrets.token_urlsafe(24)
+    state        = "web~" + sign_bound_state(current_user["restaurant_id"], nonce_bind(nonce))
     params = urllib.parse.urlencode({
         "client_id":     app_id,
         "redirect_uri":  redirect_uri,
@@ -56,7 +62,27 @@ def instagram_connect(current_user):
         "response_type": "code",
         "state":         state,
     })
-    return flask_redirect(oauth_dialog_url(params))
+    resp = flask_redirect(oauth_dialog_url(params))
+    from auth import cookies_require_secure
+    resp.set_cookie(IG_NONCE_COOKIE, nonce, max_age=600, httponly=True, secure=cookies_require_secure(),
+                    samesite="Lax", path="/instagram")
+    return resp
+
+
+IG_NONCE_COOKIE = "ig_oauth_nonce"
+
+
+def nonce_bind(nonce) -> str:
+    """The state's form of the browser nonce: "n" + its hash, never the
+    nonce itself (the state passes through Meta and its logs)."""
+    import hashlib
+    return "n" + hashlib.sha256(str(nonce or "").encode()).hexdigest()[:32]
+
+
+def _browser_holds(bind) -> bool:
+    import hmac
+    nonce = request.cookies.get(IG_NONCE_COOKIE) or ""
+    return bool(nonce) and str(bind or "").startswith("n") and hmac.compare_digest(nonce_bind(nonce), str(bind))
 
 def _ig_popup_error(code, sentence):
     """The web popup's failure: tell the opener (its `msg` code is what the
@@ -90,15 +116,18 @@ def instagram_callback():
     # prefixes it with "web~" and is answered with postMessage; the iOS app
     # finishes on a deep link. An unsigned, bare-numeric, tampered or
     # expired state binds nothing — it used to be trusted as the restaurant id.
-    from gmb import verify_mobile_state
+    # Bound to the login that started it (SEC-09): the web popup's state to
+    # this browser's nonce cookie; the app's to its login, which confirms
+    # the Page with a bearer call before anything is saved.
+    from gmb import verify_bound_state
     web_signed = bool(state and state.startswith("web~"))
     mobile = bool(state and ":" in state and not web_signed)
-    if web_signed:
-        rid = verify_mobile_state(state[len("web~"):])
-    elif mobile:
-        rid = verify_mobile_state(state)
-    else:
-        rid = None
+    parsed = verify_bound_state(state[len("web~"):] if web_signed else state) if (web_signed or mobile) else None
+    rid = bind = None
+    if parsed:
+        rid, bind = parsed
+        if (web_signed and not _browser_holds(bind)) or (mobile and not bind.startswith("u")):
+            rid = None
 
     def _fail(code_, sentence):
         if mobile:
@@ -147,10 +176,42 @@ def instagram_callback():
         return _fail("no_pages", "Facebook didn't share any Page. Sign in with a Facebook account that's an admin "
                                  "of the restaurant's Page, and tick that Page when Facebook asks.")
     if len(pages) == 1:
-        return _connect_page(rid, pages[0], mobile)
+        return _finish(rid, bind, pages[0], mobile)
     # More than one Page (someone who runs several restaurants' Pages, 10/2/26):
     # never guess. The first Page with Instagram used to be bound, whoever's it was.
-    return _page_picker(pages, _seal_pick(rid, mobile, long_token))
+    return _page_picker(pages, _seal_pick(rid, mobile, long_token, bind))
+
+
+def _finish(rid, bind, page, mobile):
+    """The web popup binds now (its browser proved it started the flow);
+    the app is handed a sealed ticket its own login must confirm
+    (/mobile/api/connections/instagram/confirm) before anything is saved."""
+    if not mobile:
+        return _connect_page(rid, page, False)
+    import urllib.parse
+    ticket = _pick_fernet().encrypt(__import__("json").dumps(
+        {"kind": "confirm", "rid": int(rid), "u": str(bind)[1:], "page": page}).encode()).decode()
+    return redirect("cavnarai://ig-callback?status=confirm&ticket=" + urllib.parse.quote(ticket, safe=""))
+
+
+def confirm_mobile_connection(current_user, ticket):
+    """The app's confirmation of a Page its login chose (SEC-09): the sealed
+    ticket from _finish must name this login and this restaurant and be
+    younger than PICK_TTL_SECONDS. ({ok}, status)."""
+    import json as _json
+    try:
+        data = _json.loads(_pick_fernet().decrypt(str(ticket or "").encode(), ttl=PICK_TTL_SECONDS))
+    except Exception:
+        data = None
+    if not data or data.get("kind") != "confirm":
+        return {"ok": False, "error": "This connection expired. Start again from Account → Connections."}, 400
+    if str(data.get("u")) != str(current_user.get("id")) or int(data.get("rid") or 0) != int(current_user["restaurant_id"]):
+        return {"ok": False, "error": "This connection was started by another login. Nothing was connected."}, 403
+    err = _save_page(int(data["rid"]), data.get("page") or {})
+    if err:
+        return {"ok": False, "code": err[0], "error": err[1]}, 409 if err[0] == "page_taken" else 500
+    return {"ok": True, "page": (data.get("page") or {}).get("name"),
+            "instagram": bool((data.get("page") or {}).get("ig_id"))}, 200
 
 
 # ── Which Page, and its Instagram (10/2/26) ─────────────────────────────────
@@ -176,9 +237,10 @@ def _pick_fernet():
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(("meta-page-pick:" + secret).encode()).digest()))
 
 
-def _seal_pick(rid, mobile, user_token):
+def _seal_pick(rid, mobile, user_token, bind=None):
     import json as _json
-    return _pick_fernet().encrypt(_json.dumps({"rid": int(rid), "m": bool(mobile), "t": user_token}).encode()).decode()
+    return _pick_fernet().encrypt(_json.dumps({"kind": "pick", "rid": int(rid), "m": bool(mobile), "t": user_token,
+                                               "b": bind}).encode()).decode()
 
 
 def _open_pick(blob):
@@ -186,9 +248,10 @@ def _open_pick(blob):
     tampered or older than PICK_TTL_SECONDS."""
     import json as _json
     try:
-        return _json.loads(_pick_fernet().decrypt((blob or "").encode(), ttl=PICK_TTL_SECONDS))
+        data = _json.loads(_pick_fernet().decrypt((blob or "").encode(), ttl=PICK_TTL_SECONDS))
     except Exception:
         return None
+    return data if data.get("kind", "pick") == "pick" and "t" in data else None
 
 
 def _read_pages(user_token):
@@ -237,10 +300,43 @@ def _js_str(value):
     return _json.dumps(value or "").replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def _connect_page(rid, page, mobile):
-    """Bind one Page (and its Instagram, when linked) to the restaurant and
-    answer the popup or the phone. A Page without Instagram clears any old
-    Instagram binding, so the two never point at different businesses."""
+PAGE_TAKEN = ("That Facebook Page or Instagram account is already connected to another Cavnar AI account, and "
+              "one can post for only one restaurant. If it's yours, email will@cavnar.ai and we'll move it.")
+
+
+def page_conflict(rid, page) -> bool:
+    """The Page (or its Instagram) is bound to another live, non-demo
+    restaurant (SEC-09; models.pos_binding_conflict's rule for POS stores).
+    Never names it."""
+    from models import get_conn as _gc
+    conn = _gc()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM restaurants WHERE id<>? AND COALESCE(is_demo,0)=0 AND "
+            "((fb_page_id IS NOT NULL AND fb_page_id<>'' AND fb_page_id=?) OR "
+            " (ig_user_id IS NOT NULL AND ig_user_id<>'' AND ig_user_id=?))",
+            (int(rid), str(page.get("id") or "-"), str(page.get("ig_id") or "-"))).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return False
+    try:
+        from models import get_restaurant as _gr
+        me = _gr(int(rid))
+        if me is not None and int(getattr(me, "is_demo", 0) or 0):
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _save_page(rid, page):
+    """Save one Page (and its Instagram) on the restaurant: None, or
+    (code, sentence) when it was not saved."""
+    if not page or not page.get("id") or not page.get("token"):
+        return ("save_failed", "The connection couldn't be saved. Try connecting again.")
+    if page_conflict(rid, page):
+        return ("page_taken", PAGE_TAKEN)
     expires = _token_expiry(page["token"])
     update = {"fb_page_token": page["token"], "fb_page_id": page["id"], "fb_page_name": page["name"],
               "fb_token_expires": expires}
@@ -253,16 +349,31 @@ def _connect_page(rid, page, mobile):
         from models import update_restaurant as _update_r
         _update_r(rid, update)
     except Exception as e:
-        # Nothing saved is never "connected" (MB-21).
         print(f"[social] Meta connection save failed for restaurant {rid}: {_safe_err(e)}")
-        if mobile:
-            return redirect("cavnarai://ig-callback?status=error")
-        return _ig_popup_error("save_failed", "The connection couldn't be saved. Try connecting again.")
+        return ("save_failed", "The connection couldn't be saved. Try connecting again.")
     has_ig = bool(page.get("ig_id"))
     print(f"[social] Meta connected for restaurant {rid}: Page {page['id']}"
           + (f" + Instagram {page['ig_id']}" if has_ig else " (no Instagram linked)"))
+    return None
+
+
+def _connect_page(rid, page, mobile):
+    """Bind one Page (and its Instagram, when linked) to the restaurant and
+    answer the popup or the phone. A Page without Instagram clears any old
+    Instagram binding, so the two never point at different businesses."""
+    err = _save_page(rid, page)
+    if err:
+        # Nothing saved is never "connected" (MB-21).
+        if mobile:
+            return redirect("cavnarai://ig-callback?status=error")
+        return _ig_popup_error(err[0], err[1])
+    has_ig = bool(page.get("ig_id"))
     if mobile:
         return redirect("cavnarai://ig-callback?status=connected" + ("" if has_ig else "&instagram=none"))
+    return _connected_popup(page, has_ig)
+
+
+def _connected_popup(page, has_ig):
     import html as _h
     words = (f"Facebook: {_h.escape(page['name'])}" + (f" · Instagram: @{_h.escape(page['ig_username'] or '')}"
              if has_ig else " · Instagram isn't linked to this Page"))
@@ -315,6 +426,13 @@ def instagram_choose():
         return _ig_popup_error("state_invalid", "This choice expired. Nothing was connected — start again from "
                                                 "Account → Connections.")
     mobile = bool(data.get("m"))
+    bind = data.get("b") or ""
+    # The same binding as the callback (SEC-09): the web picker is answered
+    # only in the browser that started the flow; the app's choice still
+    # waits for its login's confirmation.
+    if (not mobile and not _browser_holds(bind)) or (mobile and not str(bind).startswith("u")):
+        return _ig_popup_error("state_invalid", "This choice didn't start in this browser. Nothing was connected "
+                                                "— start again from Account → Connections.")
     pages, answer = _read_pages(data.get("t"))
     chosen = next((p for p in (pages or []) if p["id"] == str(request.form.get("page") or "")), None)
     if not chosen:
@@ -322,7 +440,7 @@ def instagram_choose():
             return redirect("cavnarai://ig-callback?status=error")
         return _ig_popup_error("page_gone", "That Page isn't shared with Cavnar AI any more. Nothing was connected "
                                             "— start again.")
-    return _connect_page(int(data["rid"]), chosen, mobile)
+    return _finish(int(data["rid"]), bind, chosen, mobile)
 
 
 @social_bp.route("/api/post-to-instagram", methods=["POST"])

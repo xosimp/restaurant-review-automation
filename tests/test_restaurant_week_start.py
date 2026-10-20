@@ -52,11 +52,12 @@ def test_a_generate_press_and_its_checks_read_the_restaurants_week(monkeypatch):
 def test_the_auto_draft_never_falls_on_the_eve_of_the_week():
     assert models.auto_draft_days(0) == (0, 1, 2, 3, 4, 5)                     # Monday week: Monday-Saturday
     assert 1 not in models.auto_draft_days(2) and 6 in models.auto_draft_days(2)  # Wednesday week: not Tuesday
-    # Restaurant 5 spreads to Tuesday by id: on a Wednesday week it drafts Monday.
-    assert models.default_auto_draft_weekday(5) == 1
-    assert models.effective_auto_draft_weekday(5, None, 0, week_start_day=2) == 0
-    assert models.effective_auto_draft_weekday(5, 1, 1, week_start_day=2) == 0  # a stored Tuesday is moved too
-    assert models.effective_auto_draft_weekday(5, 6, 1, week_start_day=2) == 6  # Sunday is a draft day here
+    # Restaurant 7 spreads to Tuesday by id (Monday-Saturday, 7 % 6): on a
+    # Wednesday week it drafts Monday.
+    assert models.default_auto_draft_weekday(7) == 1
+    assert models.effective_auto_draft_weekday(7, None, 0, week_start_day=2) == 0
+    assert models.effective_auto_draft_weekday(7, 1, 1, week_start_day=2) == 0  # a stored Tuesday is moved too
+    assert models.effective_auto_draft_weekday(7, 6, 1, week_start_day=2) == 6  # Sunday is a draft day here
     r = Restaurant(name="x", owner_email="x@x.test", week_start_day=2)
     r.id, r.auto_draft_weekday, r.auto_draft_weekday_chosen = 9, 6, 1
     assert models.auto_publish_weekday(r) == 0                                   # Sunday's draft goes Monday

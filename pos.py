@@ -150,7 +150,19 @@ def connected_provider(restaurant_id):
     else (None, None). With credentials for more than one (a migration), the
     ONE primary provider pos_health.primary_provider names — the same one
     every freshness reading reads — so the nightly sync, the DSR, depletion
-    and the freshness line never read different providers (DH2-13)."""
+    and the freshness line never read different providers (DH2-13).
+
+    One read of the restaurant row for the whole answer (scale audit
+    10/19/26 DB-13): each provider's is_connected read it again — four full
+    281-column reads a restaurant, for every restaurant the 10-minute DSR
+    sweep and the nightly sync ask about. The check is one unit of work, so
+    it reads inside a read_scope (a request already memoises)."""
+    import models as _m
+    with _m.read_scope():
+        return _connected_provider(restaurant_id)
+
+
+def _connected_provider(restaurant_id):
     connected = []
     for name, mod in get_providers().items():
         try:
@@ -353,7 +365,34 @@ def _reopen_moved_nights(restaurant_id, mismatches):
     pipeline._spawn(go)
 
 
-POS_SYNC_MAX_SECONDS = 45 * 60
+# ── "Sync now": one path, one cooldown (scale audit 10/19/26 A3-09) ─────────
+#
+# The account card's RPOWER button (rpower_routes.do_sync, 10 minutes, key
+# rpower_sync_now:<rid>) and Data Health's Sync now (client_api, 5 minutes,
+# key sync_now:<rid>:pos — and a bare thread per tap with no request context)
+# could run two full pulls of one store at once. Both now take this one
+# cooldown and run on the bounded admin pool (scheduler.start_manual_pos_sync,
+# which joins a sync already running for the restaurant).
+SYNC_NOW_COOLDOWN_MINUTES = 10
+
+
+def sync_now_key(restaurant_id):
+    return f"pos_sync_now:{restaurant_id}"
+
+
+def sync_now(restaurant_id, actor="owner"):
+    """(started, job_id): start the restaurant's POS sync off the request
+    thread, unless any Sync now started one in the last
+    SYNC_NOW_COOLDOWN_MINUTES (then (False, None))."""
+    import ops
+    import scheduler
+    if not ops.claim_cooldown(sync_now_key(restaurant_id), SYNC_NOW_COOLDOWN_MINUTES):
+        return False, None
+    job_id, _joined = scheduler.start_manual_pos_sync(restaurant_id, actor)
+    return True, job_id
+
+
+POS_SYNC_MAX_SECONDS = int(__import__("os").getenv("POS_SYNC_MAX_SECONDS", str(45 * 60)))
 # The fetch is network-bound (a 60-day pull per restaurant); the SQLite write
 # section (save_synced_shifts) holds _WRITE_LOCK, so four fetches overlap and
 # one restaurant at a time writes (DH5-7).
@@ -466,15 +505,34 @@ def note_sync_failure(restaurant_id, now=None):
     return True
 
 
+_TENANT_LOCKS = {}
+_TENANT_LOCKS_GUARD = threading.Lock()
+
+
+def _write_lock_for(restaurant_id):
+    """The lock a sync's write section holds: on SQLite _WRITE_LOCK, one for
+    the process (one writer — four fetches waiting on its busy_timeout
+    instead would only contend); on Postgres the restaurant's own (scale
+    audit 10/19/26 DB-08): its writes are tenant transactions there
+    (shift_facts / people begin_tenant_write), so two restaurants' syncs
+    write side by side and one restaurant's two never overlap."""
+    import db_dialect
+    if db_dialect.backend() != "postgres":
+        return _WRITE_LOCK
+    with _TENANT_LOCKS_GUARD:
+        return _TENANT_LOCKS.setdefault(int(restaurant_id), threading.RLock())
+
+
 def _serialized_write(fn):
-    """Hold _WRITE_LOCK for the whole call: the nightly sweep fetches four
-    restaurants at once, and this is the section that writes SQLite."""
+    """Hold the write lock (_write_lock_for) for the whole call: the nightly
+    sweep fetches four restaurants at once, and this is the section that
+    writes."""
     import functools
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        with _WRITE_LOCK:
-            return fn(*args, **kwargs)
+    def wrapper(restaurant_id, *args, **kwargs):
+        with _write_lock_for(restaurant_id):
+            return fn(restaurant_id, *args, **kwargs)
     return wrapper
 
 
@@ -490,7 +548,7 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     - Only Toast archived labor_daily_history (what YoY and trends read), so
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
-    by _WRITE_LOCK (the sweep's fetches run four at a time)."""
+    by _write_lock_for (the sweep's fetches run four at a time)."""
     from datetime import datetime, timezone
     from labor import load_shifts
     import shift_facts
@@ -527,7 +585,8 @@ def save_synced_shifts(restaurant_id, csv_str, source):
                 "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                 "window": (dates[0], dates[-1]) if dates else None,
                 "complete_through": ct.isoformat() if ct else None}
-        save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id), provenance=prov)
+        save_labor_daily_history(restaurant_id, _history_to_save(restaurant_id, full_history_by_day(restaurant_id),
+                                                                 dates), provenance=prov)
         refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
@@ -540,6 +599,38 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     except Exception as e:
         log.warning(f"[{source} sync] insight cache not cleared: {e}")
     return int(got.get("rows") or 0)
+
+
+def _history_to_save(restaurant_id, by_day, window_dates):
+    """The days of a re-analysed history a POS pull must write (scale audit
+    10/19/26 DB-09): the pulled window, any day with no stored row, and any
+    day whose stored figure was costed on other rates (its `basis` is not
+    this restaurant's current rates key) — not the whole history every
+    night. Outside the window nothing the pull read changed a day; a rate
+    change still re-costs every day, as before. Never raises: on a failed
+    read it returns every day."""
+    if not window_dates:
+        return by_day
+    try:
+        from models import get_conn, labor_rates_key
+        key = labor_rates_key(restaurant_id)
+        lo, hi = min(window_dates), max(window_dates)
+        conn = get_conn()
+        try:
+            stored = {r[0]: r[1] for r in conn.execute(
+                "SELECT date, basis FROM labor_daily_history WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"labor history: saving every day for {restaurant_id} ({e})")
+        return by_day
+    keep = {}
+    for day, data in by_day.items():
+        basis = stored.get(day)
+        if (lo <= day <= hi or day not in stored or key is None or not basis
+                or not str(basis).startswith(f"{key}:")):
+            keep[day] = data
+    return keep
 
 
 def connection_status(restaurant_id):
@@ -645,6 +736,118 @@ def fetch_loss_lines(restaurant_id, start_date, end_date):
     return fn(restaurant_id, start_date, end_date), name
 
 
+# ── the live snapshot: one read during service, shared (scale audit 10/19/26
+# A3-02 / A3-03 / A3-09) ─────────────────────────────────────────────────────
+#
+# Live labor (every 15 minutes), the coverage check (every 20), the hourly
+# capture, the closing summary and the /labor/live page each read the whole
+# day's sales and punches from the POS on their own: ~320 requests a store a
+# day at RPOWER, ~30x the rows. Now the first of them in LIVE_SNAPSHOT_SECONDS
+# reads, the read is kept (pos_io.pos_live_snapshot, shared by every process),
+# and the rest use it; one read per store and kind at a time in this process.
+# A web request never reads the POS: it gets the kept read while it is
+# younger than REQUEST_SNAPSHOT_MAX_SECONDS, else "not read lately"
+# (POSCapabilityError), and the page states its last reading instead.
+# `with pos.fresh_live_reads():` reads afresh whatever is kept (the coverage
+# check before it tells a manager someone has not clocked in).
+REQUEST_SNAPSHOT_MAX_SECONDS = 1800
+_live_ctx = threading.local()
+
+# Reads made for an owner's question rather than by a job — Ask, an AI
+# answer on the owner pool, a page's background refresh (scale audit
+# 10/19/26 A3-20) — read the archive and the kept lists only, as a page
+# load does: a thread with no request context used to get a job's
+# semantics (on-demand archiving, 60-second budget waits, three tries, live
+# multi-day reads). A ContextVar, so work copied to a pool keeps it.
+import contextvars as _cv
+_ARCHIVE_ONLY = _cv.ContextVar("pos_archive_only", default=False)
+
+
+class archive_only:
+    """`with pos.archive_only():` — POS reads inside are archive-and-kept-
+    lists only; a day the archive lacks is unknown (POSCapabilityError from
+    the pos.fetch_* front doors), never read live."""
+
+    def __enter__(self):
+        self.token = _ARCHIVE_ONLY.set(True)
+        return self
+
+    def __exit__(self, *exc):
+        _ARCHIVE_ONLY.reset(self.token)
+        return False
+
+
+def archive_only_active() -> bool:
+    return bool(_ARCHIVE_ONLY.get())
+
+
+class POSNoSalesYet(Exception):
+    """The POS answered, with nothing posted yet for the day (a kept
+    answer): `not_yet`, as the provider's own exception says."""
+    not_yet = True
+
+    def __init__(self, message, provider=None):
+        super().__init__(message)
+        self.provider = provider
+
+
+class fresh_live_reads:
+    """Inside: every live read goes to the POS, past the kept snapshot."""
+
+    def __enter__(self):
+        self.prev = getattr(_live_ctx, "fresh", False)
+        _live_ctx.fresh = True
+        return self
+
+    def __exit__(self, *exc):
+        _live_ctx.fresh = self.prev
+        return False
+
+
+def _on_request_thread():
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
+
+
+def _from_snapshot(snap, kind):
+    if snap["state"] == "not_yet":
+        raise POSNoSalesYet(f"no sales posted yet (as of {int(snap['age'] // 60)} minutes ago)", snap["provider"])
+    value = snap["value"]
+    return (float(value) if kind == "sales" else list(value or [])), snap["provider"]
+
+
+def _live_read(kind, restaurant_id, business_date, read):
+    """(value, provider) of `read()` — the POS read — through the shared
+    snapshot (see the note above)."""
+    import pos_io
+    day = business_date.isoformat() if hasattr(business_date, "isoformat") else str(business_date)[:10]
+    fresh = getattr(_live_ctx, "fresh", False)
+    snap = None if fresh else pos_io.snapshot_get(restaurant_id, kind, day)
+    if snap and snap["age"] < pos_io.LIVE_SNAPSHOT_SECONDS:
+        return _from_snapshot(snap, kind)
+    if _on_request_thread():
+        if snap and snap["age"] < REQUEST_SNAPSHOT_MAX_SECONDS:
+            return _from_snapshot(snap, kind)
+        raise POSCapabilityError("the POS has not been read during service lately; a page load never reads it")
+    with pos_io.snapshot_lock(restaurant_id, kind):
+        if not fresh:
+            snap = pos_io.snapshot_get(restaurant_id, kind, day)
+            if snap and snap["age"] < pos_io.LIVE_SNAPSHOT_SECONDS:
+                return _from_snapshot(snap, kind)       # another thread read it while this one waited
+        try:
+            value, provider = read()
+        except Exception as e:
+            if getattr(e, "not_yet", False) and kind == "sales":
+                pos_io.snapshot_put(restaurant_id, kind, day, None, provider=getattr(e, "provider", None),
+                                    state="not_yet")
+            raise
+        pos_io.snapshot_put(restaurant_id, kind, day, value, provider=provider)
+        return value, provider
+
+
 def fetch_sales_today(restaurant_id, business_date):
     """Net sales SO FAR today, from a POS that can be asked during service.
 
@@ -663,7 +866,7 @@ def fetch_sales_today(restaurant_id, business_date):
     fn = getattr(mod, "fetch_sales_today", None)
     if fn is None:
         raise POSCapabilityError(f"{name} cannot be read during service")
-    return fn(restaurant_id, business_date), name
+    return _live_read("sales", restaurant_id, business_date, lambda: (fn(restaurant_id, business_date), name))
 
 
 def department_sold_categories(restaurant_id, days=90):
@@ -687,7 +890,8 @@ def fetch_clock_ins_today(restaurant_id, business_date):
     fn = getattr(mod, "fetch_clock_ins_today", None)
     if fn is None:
         raise POSCapabilityError(f"{name} has no live clock-in feed")
-    return fn(restaurant_id, business_date), name
+    return _live_read("clock_ins", restaurant_id, business_date,
+                      lambda: (fn(restaurant_id, business_date), name))
 
 
 # ── the nightly DSR's reads (dsr/) ──────────────────────────────────────────

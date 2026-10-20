@@ -587,10 +587,14 @@ def test_a_big_send_returns_within_its_window_and_the_outbox_finishes_it(db, mai
     _contacts(db, rid, "Ana", "Bob")
     hid = _save(db, rid, _csv())
     monkeypatch.setattr(schedule_publish, "INLINE_SECONDS", 0.0)
+    # What the window left is handed to a queue row (scale audit 10/19/26
+    # A5-F14); held here so the duty's own run is what finishes it.
+    queued = []
+    monkeypatch.setattr(schedule_publish, "queue_delivery", lambda r, b, round_=0: queued.append(r))
     out, status = _publish(rid, hid)
     assert status == 200 and out["ok"] and out["sent"] == [] and sorted(out["sending"]) == ["Ana", "Bob"]
     assert _one(db, "SELECT published_at FROM schedule_history WHERE id=?", hid)["published_at"]
-    assert mail["sent"] == []
+    assert mail["sent"] == [] and queued == [rid]
     got = schedule_publish.run_schedule_notices(max_seconds=30)
     assert got["ok"] == 2 and got["failed"] == 0 and sorted(mail["sent"]) == ["Ana", "Bob"]
     st = schedule_publish.notice_status(rid, hid)

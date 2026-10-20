@@ -553,6 +553,17 @@ def health_snapshot(db_path=None):
             return {"status": "error", "error": "schema_mismatch", "missing_count": len(missing)}, 500
         journal = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "").lower()
         emptied = platform_emptied(conn, path)
+        pg_mb = None
+        if getattr(conn, "in_transaction", False):
+            # On Postgres the reads above opened a transaction (SQLite's
+            # SELECTs do not), and the probe refuses to run inside one: it
+            # read "unknown" on every poll after the 10/19/26 cutover, so
+            # /health could no longer see a database that takes no writes.
+            # Only reads happened here — ending it loses nothing.
+            import db_dialect
+            if db_dialect.is_postgres(conn):
+                pg_mb = conn.execute_native("SELECT pg_database_size(current_database())").fetchone()[0] / 1048576
+            conn.rollback()
         write = db_write_probe(conn=conn)
     except Exception:
         log.exception("health: database check failed")
@@ -614,7 +625,9 @@ def health_snapshot(db_path=None):
     payload = {"status": "degraded" if problems else "ok", "problems": problems,
                "db": "ok",
                "database": {"write": write["state"], "write_ms": write["ms"], "journal": journal,
-                            "size_mb": disk.get("db_mb"), "wal_mb": disk.get("wal_mb")},
+                            "size_mb": round(pg_mb, 1) if pg_mb is not None else disk.get("db_mb"),
+                            "wal_mb": disk.get("wal_mb"),
+                            **({"backend": "postgres"} if pg_mb is not None else {})},
                "scheduler": sched["state"], "disk": disk,
                "backup": {**{k: backup[k] for k in ("state", "age_hours", "offsite", "offsite_age_hours")},
                           # ops.backup_status's own verdict on the newest run:

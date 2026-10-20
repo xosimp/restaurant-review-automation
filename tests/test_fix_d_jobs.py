@@ -74,8 +74,13 @@ def _x(db_path, sql, args=()):
 # ── the registry and the loop (#31, #40) ────────────────────────────────────
 
 def _loop_job_names():
-    names = set(re.findall(r'run_job\("([a-z_]+)"', _LOOP_SRC))
-    names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', _LOOP_SRC))
+    src = _LOOP_SRC
+    # The DSR sweep is submitted to its lane through one helper the loop and
+    # the pulse both call (scale audit 10/19/26 INF-1).
+    if "_submit_dsr_sweep(_ops, now)" in src:
+        src += inspect.getsource(scheduler._submit_dsr_sweep)
+    names = set(re.findall(r'run_job\("([a-z_]+)"', src))
+    names |= set(re.findall(r'run_in_lane\("[a-z]+", "([a-z_]+)"', src))
     return names
 
 
@@ -100,8 +105,9 @@ def test_every_job_the_loop_runs_has_an_sla_unless_it_is_quarterly():
     no_sla = {n for n, s in jobs_registry.JOBS.items() if not s.get("sla_minutes")}
     # pg_shadow and blob_offload run only while their switch is on
     # (PG_SHADOW_WRITE, BLOB_STORE — scheduler audit 10/10/26 RM-13/14): an
-    # SLA would page about a job that is off on purpose.
-    assert no_sla == {"restore_drill", "quarterly_summaries", "pg_shadow", "blob_offload"}
+    # SLA would page about a job that is off on purpose. pg_partitions runs
+    # only on Postgres (scale audit 10/19/26 DB-04).
+    assert no_sla == {"restore_drill", "quarterly_summaries", "pg_shadow", "blob_offload", "pg_partitions"}
     assert set(ops.EXPECTED_JOBS) == set(jobs_registry.JOBS) - no_sla
     assert ops.EXPECTED_JOBS["pos_sync"] == 26 and ops.EXPECTED_JOBS["review_fetch"] == 16
 

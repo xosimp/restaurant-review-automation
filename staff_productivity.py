@@ -238,10 +238,13 @@ def estimate_restaurant(restaurant_id, today=None, db_path=DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         conn.execute("DELETE FROM staff_productivity WHERE restaurant_id=?", (restaurant_id,))
-        for k, e in got.items():
-            conn.execute("INSERT INTO staff_productivity (restaurant_id, person_key, name, estimate_json) "
-                         "VALUES (?,?,?,?)", (restaurant_id, k, e["name"],
-                                              json.dumps(dict(e, window=[start.isoformat(), end.isoformat()]))))
+        # One executemany (scale audit 10/19/26 DB-05): a savepoint a person
+        # on Postgres otherwise.
+        if got:
+            conn.executemany("INSERT INTO staff_productivity (restaurant_id, person_key, name, estimate_json) "
+                             "VALUES (?,?,?,?)",
+                             [(restaurant_id, k, e["name"], json.dumps(dict(e, window=[start.isoformat(), end.isoformat()])))
+                              for k, e in got.items()])
         conn.commit()
     finally:
         conn.close()

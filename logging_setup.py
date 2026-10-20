@@ -183,6 +183,61 @@ def _thread_excepthook(args):
         exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
 
 
+# A printed line that reads like trouble is logged as a warning, not info.
+_PRINT_WARN_WORDS = ("error", "failed", "failure", "exception", "traceback", "could not", "refused")
+
+
+class PrintToLog:
+    """sys.stdout on Railway (scale audit 10/19/26 OPS-13): each printed line
+    becomes a log record of the "print" logger — JSON, with a level and the
+    request, restaurant or job bound to the thread — instead of a bare line
+    Railway reads as info with no context. About a thousand print() calls
+    across the modules; the ratchet in tests/test_scale_fix_f3.py stops new
+    ones. A write from inside the log handler (or anything else re-entering)
+    goes straight to the real stream, so this can never loop."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self._buf = threading.local()
+        self._busy = threading.local()
+
+    def write(self, text):
+        if getattr(self._busy, "on", False):
+            return self._raw.write(text)
+        pending = getattr(self._buf, "text", "") + str(text)
+        lines = pending.split("\n")
+        self._buf.text = lines.pop()
+        for line in lines:
+            self._emit(line)
+        return len(text)
+
+    def _emit(self, line):
+        if not line.strip():
+            return
+        self._busy.on = True
+        try:
+            low = line.lower()
+            lvl = logging.WARNING if any(w in low for w in _PRINT_WARN_WORDS) else logging.INFO
+            logging.getLogger("print").log(lvl, line)
+        except Exception:
+            self._raw.write(line + "\n")
+        finally:
+            self._busy.on = False
+
+    def flush(self):
+        rest = getattr(self._buf, "text", "")
+        if rest:
+            self._buf.text = ""
+            self._emit(rest)
+        try:
+            self._raw.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
 def configure(level=None, fmt=None, stream=None, force=False):
     """Install the process's log handler on the root logger. Idempotent:
     a second call does nothing unless force=True. Handlers someone else
@@ -193,7 +248,8 @@ def configure(level=None, fmt=None, stream=None, force=False):
     if _configured and not force:
         return next((h for h in root.handlers if getattr(h, "_cavnar_handler", False)), None)
     json_lines = use_json() if fmt is None else (fmt == "json")
-    handler = logging.StreamHandler(stream or sys.stdout)
+    raw_out = sys.stdout._raw if isinstance(sys.stdout, PrintToLog) else sys.stdout
+    handler = logging.StreamHandler(stream or raw_out)
     handler._cavnar_handler = True
     handler.addFilter(ContextFilter())
     handler.setFormatter(JsonFormatter() if json_lines else TextFormatter())
@@ -208,5 +264,17 @@ def configure(level=None, fmt=None, stream=None, force=False):
         sys.stdout.reconfigure(line_buffering=True)
     except (AttributeError, ValueError, OSError):
         pass
+    # On Railway (JSON chosen by the environment, onto the real stdout),
+    # print() becomes a log record too (OPS-13). The handler above already
+    # holds the real stream, so its own lines never come back through here.
+    if fmt is None and stream is None and json_lines and not isinstance(sys.stdout, PrintToLog):
+        sys.stdout = PrintToLog(sys.stdout)
     _configured = True
+    # The same lines to an outside log service when LOG_DRAIN_URL is set
+    # (log_drain, scale audit 10/19/26 OPS-8); off, nothing changes.
+    try:
+        import log_drain
+        log_drain.install()
+    except Exception as e:
+        sys.stderr.write(f"log drain not installed: {e}\n")
     return handler

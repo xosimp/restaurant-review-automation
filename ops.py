@@ -191,7 +191,11 @@ _RESULT_KEYS = ("attempted", "ok", "failed", "skipped", "hit_bound", "held", "re
 # Counters that are not a success when a job reports no `attempted` of its
 # own: everything else it counts ({sent: 99}, {diagnosed: 3}) is.
 _NOT_SUCCESS = frozenset(("attempted", "failed", "skipped", "held", "retried", "hit_bound", "closed", "not_yet",
-                          "not_supported", "empty", "expired", "unsupported", "missed"))
+                          "not_supported", "empty", "expired", "unsupported", "missed", "eligible"))
+# Kept beside the counts when a job reports it (scale audit 10/19/26 INF-7):
+# how many restaurants the pass was FOR, so a run its bound cut short says
+# how far it got (jobs_bound_capped).
+_COVERAGE_KEYS = ("eligible",)
 
 # How often a running job proves it is alive (job_runs.pulse_at), and how
 # long a silent run may go before it is taken to be dead — its process gone.
@@ -259,7 +263,7 @@ def run_outcome(result):
         state = RUN_FAILED
     elif failed or counts["hit_bound"]:
         state = RUN_PARTIAL
-    blob_counts = {k: result.get(k) for k in _RESULT_KEYS if k in result}
+    blob_counts = {k: result.get(k) for k in _RESULT_KEYS + _COVERAGE_KEYS if k in result}
     for k, v in counts.items():
         blob_counts.setdefault(k, v)
     try:
@@ -458,6 +462,7 @@ _MARKERS_SQL = """CREATE TABLE IF NOT EXISTS ops_markers (
 # loop's own daily "quality_calibration:<date>" claim is not one.
 _MARKER_PATTERNS = ("rating_unreadable:*", "competitor_move_told:*", "data_source_seen:*",
                     "quality_calibration:[0-9]*:*")
+_MARKERS_CARRIED = "boot:claims_markers_carried_157"
 
 # A claim whose run started and never finished is taken to be dead after
 # this long, and the period may be claimed again (DATA-20). A run still
@@ -572,6 +577,10 @@ def init_ops(db_path=None):
             conn.execute(sql)
         conn.executemany("INSERT OR IGNORE INTO job_expected_since (job) VALUES (?)",
                          [(job,) for job in EXPECTED_JOBS])
+        # The lease's one row, here at boot: acquire_scheduler_lease ran this
+        # and the CREATE TABLE on every tick, pulse and lane renew (scale
+        # audit 10/19/26 INF-18 — no DDL on a per-call path).
+        conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
         for table, columns in (("job_runs", _RUNS_COLUMNS), ("job_failures", _FAILURE_COLUMNS),
                                ("scheduler_lease", _LEASE_COLUMNS), ("async_jobs", _ASYNC_JOB_COLUMNS)):
             have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -603,10 +612,14 @@ def init_ops(db_path=None):
             conn.execute(sql)
         conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")
         # The permanent markers that lived in the pruned claims table (#157),
-        # carried over once with the time each was first claimed.
-        for pattern in _MARKER_PATTERNS:
-            conn.execute("INSERT OR IGNORE INTO ops_markers (key, created_at) "
-                         "SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB ?", (pattern,))
+        # carried over once with the time each was first claimed — once:
+        # every boot scanned the whole claims table four times (scale audit
+        # 10/19/26 DB-14), for rows nothing has written there since.
+        if not conn.execute("SELECT 1 FROM ops_markers WHERE key=?", (_MARKERS_CARRIED,)).fetchone():
+            for pattern in _MARKER_PATTERNS:
+                conn.execute("INSERT OR IGNORE INTO ops_markers (key, created_at) "
+                             "SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB ?", (pattern,))
+            conn.execute("INSERT OR IGNORE INTO ops_markers (key) VALUES (?)", (_MARKERS_CARRIED,))
         _ensure_retention_indexes(conn)
         conn.commit()
     finally:
@@ -1012,6 +1025,19 @@ RESUME_DEADLINE_SECONDS = 20 * 60
 # An owner's generation waiting past this to start (the queue's interactive
 # p95 over the last hour) warns the operator (check_platform_sla).
 QUEUE_WAIT_ALERT_SECONDS = int(os.getenv("QUEUE_WAIT_ALERT_SECONDS", "120"))
+# The queue worker process silent this long while it is meant to run
+# (gunicorn.conf.py starts it) warns the operator (scale audit 10/19/26
+# INF-4): the web process then consumes the whole queue itself, and nothing
+# said so.
+QUEUE_WORKER_ALERT_SECONDS = int(os.getenv("QUEUE_WORKER_ALERT_SECONDS", "300"))
+# A row that may run (past its not_before) still queued this long in a
+# non-generation group warns (INF-6): the bulk or POS rows are not draining
+# before the morning that reads them.
+QUEUE_BACKLOG_ALERT_SECONDS = int(float(os.getenv("QUEUE_BACKLOG_ALERT_HOURS", "6")) * 3600)
+# A job whose last this-many runs ALL hit their time bound warns (INF-7): it
+# is no longer reaching every restaurant each period, and a bounded run was
+# counted a success (job_runs.ok 2), so no SLA saw it.
+BOUND_ALERT_RUNS = max(2, int(os.getenv("BOUND_ALERT_RUNS", "3")))
 
 # How long past its own deadline (set_async_job_deadline) a job may still be
 # writing its result before a poll calls it dead.
@@ -1463,8 +1489,10 @@ def read_async_job(job_id, restaurant_id=None):
             return None
         # Scoped where the caller is authenticated: a job belongs to the
         # restaurant that started it, whatever the id in the URL.
-        if restaurant_id is not None and row["restaurant_id"] is not None \
-                and int(row["restaurant_id"]) != int(restaurant_id):
+        # A row with no restaurant is nobody's to read through a scoped
+        # call (scale audit 10/19/26, SEC-18: it failed open).
+        if restaurant_id is not None and (row["restaurant_id"] is None
+                                          or int(row["restaurant_id"]) != int(restaurant_id)):
             conn.close()
             return None
         status = row["status"]
@@ -1960,6 +1988,91 @@ def jobs_overdue(now=None, db_path=None) -> list:
     return out
 
 
+_bound_cache = {}
+_BOUND_TTL_SECONDS = 600
+
+
+def jobs_bound_capped(db_path=None, runs=None, use_cache=True) -> list:
+    """[{job, runs, eligible, attempted}] for every registered job whose last
+    `runs` (BOUND_ALERT_RUNS) finished runs ALL hit their time bound (scale
+    audit 10/19/26 INF-7): a resumable sweep that is cut short every pass
+    rotates through the fleet instead of covering it — pos_sync reaching
+    each store every second night at 1,500 — while every one of those runs
+    counts as a success and no SLA fires. One indexed read per job (the
+    jobs_overdue pattern), kept ten minutes. Never raises: [] unreadable."""
+    import json as _json
+    n = int(runs or BOUND_ALERT_RUNS)
+    key = (db_path or "", n)
+    hit = _bound_cache.get(key)
+    if use_cache and hit and time.monotonic() - hit[0] < _BOUND_TTL_SECONDS:
+        return list(hit[1])
+    try:
+        from models import get_conn
+        conn = get_conn(db_path) if db_path else get_conn()
+    except Exception:
+        return []
+    out = []
+    try:
+        for job in jobs_registry.JOBS:
+            rows = conn.execute("SELECT result_json FROM job_runs WHERE job=? AND finished_at IS NOT NULL "
+                                "ORDER BY started_at DESC LIMIT ?", (job, n)).fetchall()
+            if len(rows) < n:
+                continue
+            blobs = []
+            for r in rows:
+                try:
+                    blobs.append(_json.loads(r[0]) if r[0] else {})
+                except (TypeError, ValueError):
+                    blobs.append({})
+            if all(isinstance(b, dict) and b.get("hit_bound") for b in blobs):
+                last = blobs[0]
+                out.append({"job": job, "runs": n, "eligible": last.get("eligible"),
+                            "attempted": last.get("attempted")})
+    except Exception as e:
+        log.warning(f"jobs_bound_capped unreadable: {e}")
+        return []
+    finally:
+        conn.close()
+    _bound_cache[key] = (time.monotonic(), list(out))
+    return out
+
+
+def queue_problems(q, worker_expected=None) -> list:
+    """[(warn kind, sentence)] about the job queue from job_queue.stats():
+      * the queue worker process silent past QUEUE_WORKER_ALERT_SECONDS while
+        it is meant to run (INF-4) — the web process has the queue;
+      * a non-generation group's oldest runnable row waiting past
+        QUEUE_BACKLOG_ALERT_SECONDS (INF-6).
+    `worker_expected`: whether gunicorn's master supervises a queue worker
+    here (QUEUE_WORKER_SUPERVISED, which it sets before the web worker
+    forks); None reads it."""
+    out = []
+    q = q or {}
+    if worker_expected is None:
+        worker_expected = (os.getenv("QUEUE_WORKER_SUPERVISED") or "").strip() == "1"
+    if worker_expected:
+        age = q.get("worker_heartbeat_age_seconds")
+        booted = q.get("web_started_age_seconds")
+        silent = (age is None and booted is not None and booted > QUEUE_WORKER_ALERT_SECONDS) or \
+            (age is not None and age > QUEUE_WORKER_ALERT_SECONDS
+             and (booted is None or booted > QUEUE_WORKER_ALERT_SECONDS))
+        if silent:
+            when = "since this process booted" if age is None else f"for {int(age // 60)} minutes"
+            out.append(("queue_worker", f"The queue worker process has not beaten its heartbeat {when} — the web "
+                        "process is running every generation, learner and archive row itself. Check the logs "
+                        "for 'queue worker exited' or 'no web process booted' (worker.py --queue)."))
+    for grp, g in sorted((q.get("groups") or {}).items()):
+        if grp == "generation":
+            continue
+        age = (g or {}).get("oldest_ready_seconds")
+        if age is not None and age > QUEUE_BACKLOG_ALERT_SECONDS:
+            out.append(("queue_backlog", f"The {grp} queue is behind: its oldest runnable row has waited "
+                        f"{age / 3600:.1f} hours (alert past {QUEUE_BACKLOG_ALERT_SECONDS // 3600}) with "
+                        f"{int(g.get('queued') or 0)} queued — raise QUEUE_{grp.upper()}_CONCURRENCY or see "
+                        "docs/plans/POSTGRES_AND_WORKERS_PLAN.md."))
+    return out
+
+
 def write_probe(db_path=None, timeout=2.0):
     """(ok, error): can the database take a write right now? BEGIN
     IMMEDIATE takes the write lock without writing anything, then ROLLBACK.
@@ -2118,6 +2231,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or state.get("wedged") or state.get("loop_stalled")
                 or out.get("jobs_overdue")
                 or disk.get("state") == "critical"
+                or (out.get("requests") or {}).get("error_rate_over")
                 or not write_ok)
 
 
@@ -2150,7 +2264,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     out = {"heartbeat_minutes": None, "loop_minutes": None, "running_job": None, "jobs_overdue": [],
            "disk": None, "write_ok": None, "backup": None, "dsr_missing": [], "messaging": [], "problems": [],
            "schedule_generation": None, "schedule_inputs": None, "schedule_capped": None, "queue": None,
-           "alerted": False}
+           "bound_capped": [], "requests": None, "alerted": False}
     try:
         import status_manager
         state = status_manager.scheduler_state(db_path)
@@ -2250,11 +2364,21 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     gcap = out.get("schedule_capped") or {}
     if gcap.get("over"):
         warn_kinds.add("schedule_capped")
+        # What the slots are sized from (scale audit 10/19/26 A5-F6): solver
+        # threads past the cores is the usual cause of a wall-clock cut.
+        sizing = ""
+        try:
+            import job_queue as _jq_cap
+            cap = _jq_cap.generation_capacity()
+            sizing = (f" Sizing: {cap['slots']} generation slots x {cap['solve_threads']} solver threads on "
+                      f"{cap['cores']} cores" + (" — more threads than cores." if cap["oversubscribed"] else "."))
+        except Exception as e:
+            log.warning(f"generation capacity unavailable to the platform check: {e}")
         problems.append(f"Schedule solves are being cut short: {gcap['capped']} of the last {gcap['n']} generations "
                         f"({int(round(gcap['rate'] * 100))}%) had a solve ended by the wall clock or the memory "
                         "bound instead of its work budget ("
                         + ", ".join(f"{k} {v}" for k, v in list(gcap["kinds"].items())[:4])
-                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB.")
+                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB." + sizing)
     # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
     # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
     # (p95 over the last hour) is the trigger to move the queue to its own
@@ -2271,6 +2395,60 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
                         f"(p95, last hour; alert past {QUEUE_WAIT_ALERT_SECONDS // 60}) — check the queue worker "
                         "process is running (QUEUE_WORKER=1, the default) or raise QUEUE_GENERATION_CONCURRENCY "
                         "(docs/plans/POSTGRES_AND_WORKERS_PLAN.md, When).")
+    # The queue worker alive and the bulk / POS backlog (scale audit 10/19/26
+    # INF-4, INF-6).
+    for kind, sentence in queue_problems(q):
+        warn_kinds.add(kind)
+        problems.append(sentence)
+    # Sweeps their bound cuts short every pass (INF-7): coverage, not
+    # success. Read where the supervisor pages (send) — kept ten minutes.
+    if send:
+        out["bound_capped"] = jobs_bound_capped(db_path=db_path)
+    for b in out["bound_capped"]:
+        warn_kinds.add("bound_capped")
+        reach = (f" (the last reached {b['attempted']} of {b['eligible']})"
+                 if b.get("eligible") and b.get("attempted") is not None else "")
+        problems.append(f"{b['job']} hit its time bound on each of its last {b['runs']} runs{reach} — it no "
+                        "longer covers every restaurant each period.")
+    # Customer requests failing or slow (scale audit 10/19/26 OPS-7), from the
+    # persisted per-minute rollups: a 5xx rate over the last minutes, and a
+    # p95 over the SLO held for a quarter of an hour.
+    try:
+        import platform_monitor as _pm_sla
+        out["requests"] = _pm_sla.request_slo(db_path=db_path)
+    except Exception as e:
+        log.warning(f"request rollups unavailable to the platform check: {e}")
+    rq = out["requests"] or {}
+    if rq.get("error_rate_over"):
+        problems.append(f"{rq['errors_5xx']} of {rq['requests']} customer requests failed with a 5xx in the last "
+                        f"{rq['error_minutes']} minutes ({rq['error_rate'] * 100:.1f}%, alert past "
+                        f"{rq['error_rate_alert'] * 100:g}%) — the routes are in the console's 5xx samples.")
+    if rq.get("latency_over"):
+        warn_kinds.add("latency")
+        problems.append(f"Customer requests are slow: p95 within {rq['p95_le_ms']} ms over the last "
+                        f"{rq['latency_minutes']} minutes (SLO {rq['p95_slo_ms']} ms, {rq['latency_requests']} "
+                        "requests) — the slow routes are in the console's request rollups.")
+    # The fleet's POS (scale audit 10/19/26 OPS-6): a provider failing for
+    # more than pos_health.FLEET_OUTAGE_SHARE of the connected stores is one
+    # outage and one page (a warning: once a day for the set), never one
+    # console issue per store; a breaker held open past its page threshold
+    # pages once per opening (pos_io.page_if_long_open).
+    try:
+        import pos_health as _ph_sla
+        # Read only when paging: /health's read-only call stays lean.
+        fleet = _ph_sla.fleet_state() if send else {}
+        out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
+                            for p, f in fleet.items()}
+        for prov, f in fleet.items():
+            if f["outage"]:
+                warn_kinds.add(f"pos_fleet_{prov}")
+                problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
+                                f"stores ({int(round(f['share'] * 100))}%) — one outage, not a store's own problem.")
+        if send:
+            import pos_io as _pio_sla
+            _pio_sla.page_if_long_open("rpower")
+    except Exception as e:
+        log.warning(f"the fleet POS reading unavailable to the platform check: {e}")
     out["problems"] = problems
     if not problems or not send:
         return out
@@ -2309,11 +2487,82 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
 # the cooldown lives here instead — one page per key per cooldown per process.
 _page_memory = {}
 _page_lock = threading.Lock()
+_page_local = threading.local()
 
 
 def will_phone():
     """The operator's mobile for platform pages (WILL_PHONE), or ""."""
     return (os.getenv("WILL_PHONE") or "").strip()
+
+
+def _env_list(name):
+    return [x.strip() for x in (os.getenv(name) or "").split(",") if x.strip()]
+
+
+def oncall_phones():
+    """Every phone a platform page is texted to: WILL_PHONE, then each of
+    OPS_ONCALL_PHONES (comma-separated) — a second responder (scale audit
+    10/19/26 OPS-4: one person was the whole on-call). Deduplicated, in
+    order."""
+    out = []
+    for p in [will_phone()] + _env_list("OPS_ONCALL_PHONES"):
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def oncall_emails():
+    """Every address a platform page is emailed to: config.will_email(),
+    then each of OPS_ONCALL_EMAILS."""
+    out = []
+    for e in [config.will_email()] + _env_list("OPS_ONCALL_EMAILS"):
+        e = (e or "").strip()
+        if e and e.lower() not in [x.lower() for x in out]:
+            out.append(e)
+    return out
+
+
+# A paging service (OPS-4): phone escalation, acknowledgement and a second
+# on-call belong to a service built for them, not to a text that nobody
+# acknowledges. Off until configured. OPS_PAGER_KIND=pagerduty sends a
+# PagerDuty Events v2 trigger (OPS_PAGER_ROUTING_KEY, deduplicated on the
+# page's key); OPS_PAGER_KIND=webhook (or just OPS_PAGER_WEBHOOK_URL) POSTs
+# {key, subject, lines, source} to any service's incoming webhook (Better
+# Stack, Opsgenie, ...).
+PAGER_TIMEOUT = (5, 10)
+PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
+
+
+def pager_configured():
+    kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
+    if kind == "pagerduty":
+        return bool((os.getenv("OPS_PAGER_ROUTING_KEY") or "").strip())
+    return bool((os.getenv("OPS_PAGER_WEBHOOK_URL") or "").strip())
+
+
+def send_to_pager(key, subject, lines) -> bool:
+    """One event to the configured paging service. True when it took it;
+    never raises."""
+    if not pager_configured():
+        return False
+    import requests
+    kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
+    try:
+        if kind == "pagerduty":
+            r = requests.post(PAGERDUTY_EVENTS_URL, json={
+                "routing_key": os.getenv("OPS_PAGER_ROUTING_KEY").strip(), "event_action": "trigger",
+                "dedup_key": f"cavnar:{key}",
+                "payload": {"summary": str(subject)[:1000], "source": "cavnar-ai", "severity": "critical",
+                            "custom_details": {"lines": [str(x)[:300] for x in (lines or [])[:12]]}}},
+                timeout=PAGER_TIMEOUT)
+        else:
+            r = requests.post(os.getenv("OPS_PAGER_WEBHOOK_URL").strip(), json={
+                "key": str(key), "subject": str(subject), "lines": [str(x) for x in (lines or [])[:12]],
+                "source": "cavnar-ai"}, timeout=PAGER_TIMEOUT)
+        return 200 <= r.status_code < 300
+    except Exception as e:
+        log.error(f"pager send failed: {e}")
+        return False
 
 
 def _cooldown_active(key, minutes):
@@ -2376,7 +2625,14 @@ def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_
     with _page_lock:
         if _cooldown_active(key, cooldown_minutes):
             return {"sent": False, "reason": "cooldown", "channels": {}}
-        got = alert_will(subject, lines)
+        # The page's key reaches the pager's dedup through a thread-local, so
+        # alert_will's (subject, lines) signature — which tests and callers
+        # stand in for — is unchanged.
+        _page_local.key = key
+        try:
+            got = alert_will(subject, lines)
+        finally:
+            _page_local.key = None
         res = {"sent": bool(got), "channels": dict(getattr(got, "channels", None) or {}),
                "error": getattr(got, "error", None)}
         if res["sent"]:
@@ -2401,45 +2657,60 @@ class AlertResult:
         return f"<AlertResult sent={self.sent} channels={self.channels} err={self.error!r}>"
 
 
-def alert_will(subject, lines):
-    """Tell Will now, outside the scheduler: a text to WILL_PHONE, an email
-    to config.will_email() and a push to the admin logins' phones. Never an
-    owner.
+def alert_will(subject, lines, key=None):
+    """Tell the on-call now, outside the scheduler: a text to every
+    oncall_phones() number (WILL_PHONE first), an email to every
+    oncall_emails() address, an event to the paging service when one is
+    configured (send_to_pager, keyed on `key`), and a push to the admin
+    logins' phones. Never an owner.
 
     The text is the independent channel (decision 8): the email rides the
     product's own Resend account and the push its own APNs, so an outage of
     either used to take the page down with it. A push is only queued here —
     it proves nothing — so only the text and the email count as delivered.
 
-    Returns an AlertResult: truthy when a text or the email went out, with
-    each channel's outcome in .channels."""
+    Returns an AlertResult: truthy when a text, the email or the pager
+    went out, with each channel's outcome in .channels."""
     import html as _html
     channels, errors = {}, []
     lines = [str(x) for x in (lines or [])]
-    phone = will_phone()
-    if phone:
-        try:
-            import notify as _notify
-            body = (subject + ": " + " ".join(lines[:3]))[:320]
-            channels["sms"] = bool(_notify.send_sms(phone, body, use_case="alert"))
-            if not channels["sms"]:
-                errors.append("sms not accepted")
-        except Exception as e:
-            channels["sms"] = False
-            errors.append(f"sms: {e}")
-            log.error(f"alert_will sms failed: {e}")
+    phones = oncall_phones()
+    if phones:
+        import notify as _notify
+        body = (subject + ": " + " ".join(lines[:3]))[:320]
+        texted = 0
+        for phone in phones:
+            try:
+                if _notify.send_sms(phone, body, use_case="alert"):
+                    texted += 1
+                else:
+                    errors.append("sms not accepted")
+            except Exception as e:
+                errors.append(f"sms: {e}")
+                log.error(f"alert_will sms failed: {e}")
+        channels["sms"] = texted > 0
+        if len(phones) > 1:
+            channels["sms_reached"] = texted
+    if pager_configured():
+        channels["pager"] = send_to_pager(key or getattr(_page_local, "key", None) or subject, subject, lines)
+        if not channels["pager"]:
+            errors.append("pager not accepted")
     try:
         import emails as _emails
         b = _emails.BRAND
         body = "".join(f'<li style="margin:0 0 6px">{_html.escape(x)}</li>' for x in lines[:12])
-        res = _emails._send_branded(
-            config.will_email(), subject, from_label="Cavnar AI Ops", email_type="ops_platform_alert",
-            inner_html=(f'<p style="color:{b["strong"]};font-size:16px;font-weight:700;margin:0 0 12px">'
-                        f'{_html.escape(subject)}</p><ul style="color:{b["body"]};font-size:14px;'
-                        f'line-height:1.5;margin:0 0 0 18px">{body}</ul>'))
-        channels["email"] = bool(getattr(res, "ok", False))
-        if not channels["email"]:
-            errors.append(f"email: {getattr(res, 'error', None) or 'not accepted'}")
+        inner = (f'<p style="color:{b["strong"]};font-size:16px;font-weight:700;margin:0 0 12px">'
+                 f'{_html.escape(subject)}</p><ul style="color:{b["body"]};font-size:14px;'
+                 f'line-height:1.5;margin:0 0 0 18px">{body}</ul>')
+        mailed = 0
+        for addr in oncall_emails():
+            res = _emails._send_branded(addr, subject, from_label="Cavnar AI Ops", email_type="ops_platform_alert",
+                                        inner_html=inner)
+            if getattr(res, "ok", False):
+                mailed += 1
+            else:
+                errors.append(f"email: {getattr(res, 'error', None) or 'not accepted'}")
+        channels["email"] = mailed > 0
     except Exception as e:
         channels["email"] = False
         errors.append(f"email: {e}")
@@ -2468,7 +2739,7 @@ def alert_will(subject, lines):
     except Exception as e:
         channels["push"] = False
         log.error(f"alert_will push failed: {e}")
-    return AlertResult(bool(channels.get("sms") or channels.get("email")), channels,
+    return AlertResult(bool(channels.get("sms") or channels.get("email") or channels.get("pager")), channels,
                        "; ".join(errors)[:300] or None)
 
 
@@ -2624,9 +2895,8 @@ def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> boo
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute(_LEASE_SQL)
-        conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
-        conn.commit()
+        # The table and its one row are made at boot (init_ops — INF-18);
+        # one UPDATE here.
         try:
             cur = conn.execute(
                 "UPDATE scheduler_lease SET owner=?, heartbeat_at=datetime('now'), kept=? "
@@ -2646,6 +2916,11 @@ def acquire_scheduler_lease(owner: str = None, stale_seconds: int = None) -> boo
             )
         conn.commit()
         held = cur.rowcount == 1
+        if not held and conn.execute("SELECT 1 FROM scheduler_lease WHERE id=1").fetchone() is None:
+            # The row went missing (a hand-edited or restored database):
+            # made once, then taken by the next call.
+            conn.execute("INSERT OR IGNORE INTO scheduler_lease (id, owner, heartbeat_at) VALUES (1, NULL, NULL)")
+            conn.commit()
         conn.close()
         return held
     except Exception as e:
@@ -2718,8 +2993,6 @@ def scheduler_lease_holder():
     try:
         from models import get_conn
         conn = get_conn()
-        conn.execute(_LEASE_SQL)
-        conn.commit()
         row = conn.execute("SELECT * FROM scheduler_lease WHERE id=1").fetchone()
         conn.close()
         if not row:
@@ -2880,7 +3153,11 @@ _RETENTION_DAYS = {
     # The ticket-level POS archive (pos_archive, 9/29/26): three years, the
     # history every people, table and price learner reads.
     "pos_tickets":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
-    "pos_ticket_lines":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # The line detail may be kept shorter than the rest of the archive
+    # (scale audit 10/19/26 DB-02: ~0.2 GB a store-year of the ~0.3):
+    # RETAIN_POS_LINES_DAYS, the archive's window unless set. Its rollup
+    # (pos_item_daily, below) rolls every day before a line of it goes.
+    "pos_ticket_lines":   int(os.getenv("RETAIN_POS_LINES_DAYS", os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095"))),
     "pos_punches":        int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_archive_days":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
     "pos_payments":       int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
@@ -2889,6 +3166,14 @@ _RETENTION_DAYS = {
     # discounts (bar.sales.derive_nights, 10/15/26): kept as long as the
     # archive it is derived from.
     "bar_sales_nights":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # The lines by item and day (pos_archive.roll_item_days, DB-11 / DB-02):
+    # about a tenth of the lines' rows, kept at least as long as the archive
+    # so it outlives a shortened line window.
+    "pos_item_daily":     int(os.getenv("RETAIN_POS_ITEM_DAILY_DAYS", os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095"))),
+    # The POS request ledger (pos_io, scale audit 10/19/26 A3-19): hourly
+    # counts per endpoint and store; the console reads a day, a quarter
+    # keeps the trend RPOWER's limits will be argued from.
+    "pos_request_ledger": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3078,8 +3363,9 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
+    "pos_request_ledger": "hour",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
-    "bar_sales_nights": "business_date",
+    "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
     "task_proof_media": "created_at",
     "ai_reads": "created_at", "ai_claims": "created_at",
@@ -3208,8 +3494,10 @@ _RETENTION_FLOOR_DAYS = {
     "shift_facts": 400, "attendance_events": 400, "person_signals": 400,
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     "pos_payments": 400, "pos_payouts": 400,
+    # The console reads a day of the request ledger (pos_io.summary).
+    "pos_request_ledger": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
-    "bar_sales_nights": 400,
+    "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
     "task_assignments": 90, "task_line_completions": 90, "task_signoffs": 90, "task_proof_media": 30,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
@@ -3287,6 +3575,10 @@ _RETENTION_ROLLUP = {
     # (ai_read_summaries, kept forever) before any raw read or claim goes.
     "ai_reads": "ai_reads:rollup_quarters",
     "ai_claims": "ai_reads:rollup_quarters",
+    # Each archived day's lines by item (pos_item_daily) before any line of
+    # the day goes (scale audit 10/19/26 DB-02); raises while a day past the
+    # line window is not rolled yet.
+    "pos_ticket_lines": "pos_archive:roll_item_days",
 }
 # (reader, window, what a lifetime reader reads instead). A window is days,
 # or "module.CONSTANT" (the reader's own constant, read by the test), or
@@ -3417,8 +3709,12 @@ _RETENTION_KNOWN_GAPS = {
     ("login_history", "admin_ops._load_with"): "team last-seen reads the staff sign-ins kept 90 days (the owners' "
                                                "last console sign-in falls back to engagement_monthly's months)",
 }
-# Past this many rows in one table in one pass, the rest waits a night.
+# Past this many rows in one table in one pass, the rest waits a night —
+# or past RETENTION_INFLOW_FACTOR times the rows that aged out in the last
+# day, when that is more (_inflow_cap, scale audit 10/19/26 DB-03: a fixed
+# cap under a table's daily inflow meant the table only ever grew).
 RETENTION_PASS_MAX_ROWS = int(os.getenv("RETENTION_PASS_MAX_ROWS", "200000"))
+RETENTION_INFLOW_FACTOR = int(os.getenv("RETENTION_INFLOW_FACTOR", "2"))
 
 # Deleted in chunks of this many rows, one commit each, and the whole pass
 # stops taking on tables after RETENTION_MAX_SECONDS (#72, #81): one DELETE
@@ -3450,6 +3746,19 @@ REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 # and a received invoice file's kept text (fintech_files.content, and its
 # object-store copy): the invoice lines hold the history, so past a year the
 # file is only its row (bar fix round 10/15/26, R5, R24).
+# Claims of a period shorter than a day (scale audit 10/19/26 DB-14 /
+# INF-16): live labor every quarter hour and the intraday capture every hour,
+# per open restaurant, plus the loop's own 5-20 minute ticks — ~60 of a
+# restaurant's ~70-150 claims a day, each asked about only inside its own
+# period, kept 45 days with the daily ones. They go after
+# RETAIN_SUBDAILY_CLAIMS_DAYS (floor 1: a period is asked about within it).
+SUBDAILY_CLAIM_JOBS = ("live_labor", "intraday", "ai_batch_collect", "dsr_sweep", "pg_shadow", "dsr_delivery",
+                       "staff_reminders", "pos_schedule_push", "pos_retry", "ai_fleet_runaway")
+SUBDAILY_CLAIMS_KEEP_DAYS = int(os.getenv("RETAIN_SUBDAILY_CLAIMS_DAYS", "2"))
+# The band each night's pass reads (claimed_at, indexed): the days just past
+# the window, so a missed night or two is still caught; anything older goes
+# at the table's own 45 days.
+SUBDAILY_CLAIMS_BAND_DAYS = 7
 EMAIL_INTAKE_UNROUTED_DAYS = int(os.getenv("RETAIN_EMAIL_INTAKE_UNROUTED_DAYS", "30"))
 FINTECH_FILE_CONTENT_DAYS = int(os.getenv("RETAIN_FINTECH_FILE_CONTENT_DAYS", "365"))
 
@@ -3477,6 +3786,8 @@ def _special_retention():
         # (floor 90: a re-read of a file is asked for within weeks).
         "email_intake_unrouted": (EMAIL_INTAKE_UNROUTED_DAYS, 7),
         "fintech_file_content": (FINTECH_FILE_CONTENT_DAYS, 90),
+        # The sub-daily claims (DB-14, above), floor 1 day.
+        "subdaily_claims": (SUBDAILY_CLAIMS_KEEP_DAYS, 1),
     }
 
 
@@ -3665,6 +3976,68 @@ def _chunked_delete(conn, table, where, args, deadline, max_rows=None):
         total += n
         if n < chunk or time.monotonic() > deadline:
             return total
+
+
+def _inflow_cap(conn, table, col, days, only=None) -> int:
+    """This pass's row cap for `table` (scale audit 10/19/26 DB-03): the
+    fixed RETENTION_PASS_MAX_ROWS, or RETENTION_INFLOW_FACTOR times the rows
+    that aged out in the last day (stamped in the one day just past the
+    window) when that is more. A table whose daily inflow outgrew the fixed
+    cap only ever grew; this keeps up with it — and catches up a backlog —
+    while a wrong clock or a mis-stamped column still cannot empty a table
+    in one night: the band is one day of rows, so the cap stays a couple of
+    days of them (none at all when the clock has jumped past the data)."""
+    base = int(RETENTION_PASS_MAX_ROWS)
+    try:
+        where = f"{col} >= datetime('now', ?) AND {col} < datetime('now', ?)" + (f" AND {only}" if only else "")
+        n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}",
+                         (f"-{int(days) + 1} days", f"-{int(days)} days")).fetchone()[0]
+    except Exception as e:
+        log.warning(f"retention inflow of {table} unreadable: {e}")
+        return base
+    return max(base, int(RETENTION_INFLOW_FACTOR) * int(n or 0))
+
+
+def _drop_expired_months(conn, table, days, held=None) -> list:
+    """On Postgres, the month partitions of `table` wholly past its window,
+    dropped (pg_partitions.drop_expired, at most PARTITION_DROPS_PER_PASS a
+    night) before the chunked delete takes what is left — the partial month
+    and the DEFAULT partition. A restaurant under a records hold keeps the
+    table RECORDS_HOLD_DAYS, so with one held a month goes only past that.
+    [] on SQLite, for an unpartitioned table, or one whose retention keeps
+    some rows whatever their age (_RETENTION_ONLY)."""
+    import db_dialect
+    if table not in db_dialect.PARTITIONED or table in _RETENTION_ONLY or not db_dialect.is_postgres(conn):
+        return []
+    keep = int(days)
+    if table in _RETENTION_HOLD_TABLES and held and keep < RECORDS_HOLD_DAYS:
+        keep = RECORDS_HOLD_DAYS
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    cutoff = (_dt.now(_tz.utc) - _td(days=keep)).strftime("%Y-%m-%d %H:%M:%S")
+    import pg_partitions
+    conn.commit()                    # the drop runs in a transaction of its own
+    return pg_partitions.drop_expired(conn, table, cutoff)
+
+
+def _prune_subdaily_claims(conn, deadline, refused=None) -> int:
+    """The claims of a period shorter than a day, after
+    SUBDAILY_CLAIMS_KEEP_DAYS (DB-14 / INF-16), under the floor rule — from
+    the band of SUBDAILY_CLAIMS_BAND_DAYS just past it, so the night's read
+    is a few days of claims, never the table's whole 45. Returns rows."""
+    st = retention_state("subdaily_claims")
+    if st["state"] == "disabled":
+        return 0
+    if st["state"] == "below_floor":
+        if refused is not None:
+            refused.append(st)
+        return 0
+    days = int(st["days"])
+    # The job names are this module's own constants, never input.
+    keys = "(" + " OR ".join(f"job_key LIKE '{j}:%'" for j in SUBDAILY_CLAIM_JOBS) + ")"
+    where = f"claimed_at >= datetime('now', ?) AND claimed_at < datetime('now', ?) AND {keys}"
+    args = (f"-{days + SUBDAILY_CLAIMS_BAND_DAYS} days", f"-{days} days")
+    cap = _inflow_cap(conn, "job_period_claims", "claimed_at", days, only=keys)
+    return _chunked_delete(conn, "job_period_claims", where, args, deadline, max_rows=cap)
 
 
 # What thinned detail keeps of a Shift Quality evaluation: the headline the
@@ -4118,7 +4491,7 @@ def prune_ledgers(db_path=None):
     from models import get_conn, DB_PATH
     deleted = {}
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
-    refused, capped = [], []
+    refused, capped, dropped_parts = [], [], []
     try:
         conn = get_conn(db_path or DB_PATH)
     except Exception as e:
@@ -4167,10 +4540,26 @@ def prune_ledgers(db_path=None):
                     where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
                               f"AND {col} >= datetime('now', ?))")
                     args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
-                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
+                # Postgres: whole months past the window are dropped first
+                # (DB-03); a failed drop leaves them to the delete below.
+                try:
+                    gone = _drop_expired_months(conn, table, days, held)
+                    if gone:
+                        dropped_parts.extend(gone)
+                except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    log.warning(f"prune_ledgers could not drop {table}'s old months: {e}")
+                    capture(e, job="prune_ledgers", context=f"partition drop {table}", db_path=db_path)
+                # The cap follows the table's inflow (DB-03): read before
+                # the delete, which may take the newest aged rows first.
+                cap = _inflow_cap(conn, table, col, days, only)
+                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=cap)
                 if n:
                     deleted[table] = n
-                if n >= RETENTION_PASS_MAX_ROWS:
+                if n >= cap:
                     capped.append(table)
                     counts["hit_bound"] = True
                 counts["ok"] += 1
@@ -4222,6 +4611,16 @@ def prune_ledgers(db_path=None):
                 log.error(f"prune_ledgers could not erase removed reviews: {e}")
                 capture(e, job="prune_ledgers", context="reviews_erase", db_path=db_path)
         try:
+            n = _prune_subdaily_claims(conn, deadline, refused=refused)
+            if n:
+                deleted["subdaily_claims"] = n
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            log.warning(f"prune_ledgers skipped the sub-daily claims: {e}")
+        try:
             deleted.update(_prune_intake(conn, deadline, refused=refused))
         except Exception as e:
             try:
@@ -4253,6 +4652,8 @@ def prune_ledgers(db_path=None):
     deleted.update(counts)
     deleted["refused"] = [{"table": r["table"], "days": r["days"], "floor": r["floor"]} for r in refused]
     deleted["capped"] = capped
+    if dropped_parts:
+        deleted["partitions_dropped"] = dropped_parts
     return deleted
 
 

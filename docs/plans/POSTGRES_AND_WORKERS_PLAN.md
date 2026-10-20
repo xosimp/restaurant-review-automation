@@ -94,7 +94,7 @@ Process-local state a second worker would duplicate (the inventory:
 | AI breakers | `ai_utils._breakers` | **moved 10/10/26**: each process keeps its own counts, but every opening, closing and reset is the `ai_breakers` row, read back by every process within `AI_BREAKER_SYNC_SECONDS` | done |
 | AI budget cache, blocked-call merge | `ai_utils._budget_cache`, `_blocked_memo` | stale spend per worker; blocked rows merged per worker, not per minute | read-through with a generation stamp; merge on an `INSERT … ON CONFLICT` key |
 | The admin fleet memo | `admin_ops._fleet_state` | a write on one worker drops only its own memo: the other serves reads up to 45 s stale | **moved 10/11/26**: a generation counter in the database the memo checks (`job_cursors['admin_fleet_gen']`, moved by every admin write) |
-| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (**moved 10/10/26**: a generation is a `job_queue` row and its slot a count of claimed rows — `QUEUE_GENERATION_CONCURRENCY` across every process; since 10/11/26 the only path — `_GEN_SLOTS` and `JOB_QUEUE=0` are gone — and consumed by the queue worker process beside gunicorn, which recycles itself; a row waiting on the model holds no CPU slot), (`ASK_MAX_CONCURRENT` and `INTERACTIVE_AI_SLOTS` guard each process's own request threads: right per worker by design) the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts) | every bound becomes N × its value | the job queue below (a global bound is a count of claimed rows) |
+| Bounded pools | `ASK_MAX_CONCURRENT` (`client_api._ASK_SLOTS`), Ask's read pool (`ask_cavnar.ASK_READ_WORKERS`, 10/7/26), `ops.run_admin_task`, `admin_routes._submit_admin_job` (the one admin job pool; `_AdminJobs` was folded into it), the webhook and push delivery pools, `admin_ops.heavy_slot`, the schedule generation pool and its slots (**moved 10/10/26**: a generation is a `job_queue` row and its slot a count of claimed rows — `QUEUE_GENERATION_CONCURRENCY` across every process; since 10/11/26 the only path — `_GEN_SLOTS` and `JOB_QUEUE=0` are gone — and consumed by the queue worker process beside gunicorn, which recycles itself; a row waiting on the model holds no CPU slot), (`ASK_MAX_CONCURRENT` and `INTERACTIVE_AI_SLOTS` guard each process's own request threads: right per worker by design) the owner AI job pool (`ai_async`, `OWNER_AI_JOB_WORKERS`; AI cost audit 10/7/26 #57 — invoice and recipe-card reads, the Campaign Studio's drafts), Home's snapshot rebuild pool (`home_snapshots`, `HOME_SNAPSHOT_WORKERS`; scale audit 10/19/26 FE-01), the interactive lane (`ai_lane`, `AI_LANE_WORKERS`; scale audit 10/19/26 A4-01 — polled Ask turns; its turns' events are in the process's memory, so a second worker also needs the poll pinned to its process or the events in the database) | every bound becomes N × its value | the job queue below (a global bound is a count of claimed rows) |
 | The in-memory telemetry | `http_layer` (`_samples`, `_inflight`, `_rollups`, `_sentry_last`) | each worker reports only its own "now"; persisted rollups add up correctly | nothing — label the live panels per worker |
 | Claim fallback and page memory | `ops._claim_fallback`, `ops._page_memory`, `ops._running_jobs` | fallbacks for a database that cannot be written; `is_running` sees one process (`running_elsewhere` reads the database) | acceptable as fallbacks; keep |
 | Refused-audit window | `admin_events._refused_window` | N × 20 rows per IP per 10 minutes | the table's own cap already bounds it |
@@ -105,7 +105,8 @@ Process-local state a second worker would duplicate (the inventory:
 | The route-override cache (10/7/26) | `ai_orchestrator._OVERRIDES` (`OVERRIDE_CACHE_SECONDS`, 60) | an override applied or reverted in the console reaches the other workers up to 60 s later — the same window one worker already has | keep, or a generation stamp in `ai_route_overrides` the cache checks |
 | The generation watchers (iOS parity round 10/7/26) | was `schedule_engine._GEN_WATCHERS` (`watch_generation` / `take_generation_watchers`) — who pressed Generate for each running job, pushed `schedule_drafted` when it lands | **moved 10/10/26**: the `generation_watchers` table keyed on the async job id, taken (read and deleted in one transaction) when the job finishes, wherever it ran — a restart no longer forgets who was waiting | done |
 | The Studio's kept inputs (10/2/26; reviewed 10/10/26, SCALE-24: its key is `models.schedule_inputs_version`, read from the database, so a second worker can never serve a stale week — only re-sweep once) | `schedule_engine._studio_cache`, `_studio_live` (keyed on `models.schedule_inputs_version`; an LRU sized in bytes since 10/14/26 — `STUDIO_CACHE_BUDGET_MB` 512, each week measured as kept and its scorer as it fills, `studio_cache_stats()` its fill, hits, misses and evictions (blind re-audit 10/11/26 SCALE-22) — `STUDIO_CACHE_PER_RESTAURANT` 3, `STUDIO_CACHE_SECONDS` 900 as a backstop, one `_studio_lock` — scheduler audit 10/10/26 SCALE-8, BUGSLIFE-23), and each prepared week's last served answers for the re-score's deltas (`quality_payload`, SCALE-29) | each worker re-sweeps on its own first drag; the key moves the moment the inputs do, so nothing is stored stale; a delta's base another worker served is answered whole | keep (a cache) |
-| The pre-publish review's kept answers (schedule re-audit 10/11/26 TRUST-26) | `prepublish._CACHE` (`CACHE_SECONDS` 30, `CACHE_MAX` 64; the SAVED week's review only — keyed on the week's version and state, `models.schedule_inputs_version`, the dismissals and overrides recorded, the reader and the day; `prepublish.invalidate` on an answer) | each worker computes the review once on its own; nothing stale past the key | keep (a cache) |
+| The pre-publish review's kept answers (schedule re-audit 10/11/26 TRUST-26) | `prepublish._CACHE` (`CACHE_SECONDS` `PREPUBLISH_CACHE_SECONDS` 300 — was 30 —, `CACHE_MAX` 256; the saved week's review and, since the scale audit of 10/19/26 A5-F5, the rows on screen by their own text — keyed on the week's version and state, `models.schedule_inputs_version`, the dismissals and overrides recorded, the reader and the day; `prepublish.invalidate` on an answer) | each worker computes the review once on its own; nothing stale past the key | keep (a cache) |
+| The parsed shift history the web requests share (scale audit 10/19/26 A5-F5 / A6 FE-11) | `labor._shared_history` (keyed on the database, the restaurant and client_data's history stamp — updated_at, sizes, stale mark, store; `SHIFT_HISTORY_CACHE_ROWS` 300,000 rows, least recently used out, `SHIFT_HISTORY_CACHE_SECONDS` 900 a backstop; inside a Flask request only) | each worker parses a restaurant's history once on its own; the stamp moves with an upload or a POS sync in every worker | keep (a cache) |
 | The Crew stage's kept matrix (10/10/26) | `crew_matrix._matrix_cache` (`MATRIX_CACHE_SECONDS` 600, `MATRIX_CACHE_SIZE` 512; keyed on `models.schedule_inputs_version`, the week's draft and the newest POS day — scheduler audit SCALE-27) | each worker builds it on its own first view; the key moves when anything it reads does | keep (a cache) |
 | Push provider alarms and the delivery ceiling | `push._provider_alarms` (one capture per APNs failure reason an hour), `push._queued` / the overflow queue (`_MAX_PUSH_QUEUED`) — the alerts, and since 10/7/26 the silent widget pushes and Live Activity updates too (`push._submit_native`) | N × one capture an hour per reason; N × the queue ceiling | the push outbox already holds every alert (`push_outbox`); the ceiling becomes a count of claimed rows with the job queue |
 
@@ -217,10 +218,65 @@ which was 30-50x too late:
 | Step | Before | Why | Trigger to watch |
 |---|---|---|---|
 | Queue consumed by `worker.py` (`QUEUE_WORKER=1`) | **~150 restaurants** | owner presses queue past the 15-minute client wait at ~150-300 (2 slots, 5-30 minutes a week); the generation CPU holds the web process's GIL | `job_queue.stats()` `wait_p95_seconds` for the interactive class over 120 s (the target: p95 under two minutes to start) |
-| Postgres shadow on, then the cutover | **~300 restaurants** | the 5 GB volume and the backup's 2-3x free space hold tens to ~100 restaurant-years of schedules; the Studio cache, the AI caps and press latency all fail by ~300 | the volume over 60% (`/health` disk, Railway's volume metric); a backup whose off-site copy took parts (multipart) means the snapshot passed 512 MiB |
+| Postgres shadow on, then the cutover | **before the RPOWER rollout (~15-25 POS stores; scale audit 10/19/26 DB-01 — the ~300 below predates the ticket archive)** | the 5 GB volume and the backup's 2-3x free space hold tens to ~100 restaurant-years of schedules; the Studio cache, the AI caps and press latency all fail by ~300 | the volume over 60% (`/health` disk, Railway's volume metric); a backup whose off-site copy took parts (multipart) means the snapshot passed 512 MiB |
 | Services + autoscaled workers | ~1,000-2,500 | the GIL-bound CPU (~262 CPU-hours a week at 9,000), auto-draft throughput (~900-1,200 opted in) | generation queue depth at the auto-draft's deadline; saturated minutes on `/admin` → Engineering |
 | Warehouse + change data capture (Stage 4) | a few thousand | learners scanning the fleet nightly | learner rows still queued at 8am |
 
 The latency triggers (`request_rollups` p95 by class, the write probe's
 wait) still apply, but they do not see queue wait — that is the new trigger
 above.
+
+## Backups at scale (scale audit 10/19/26 OPS-11 — design; status below)
+
+**Today (built):** on Postgres the nightly `backup_db` exports the whole
+database into a SQLite file on the app volume (`pg_copy.export_to_sqlite`),
+gzips it (the local copy), makes a full-size scrubbed / sealed work copy,
+encrypts it and uploads it to R2. Since 10/19/26 Railway Pro's scheduled
+volume backups on the Postgres service (daily kept 6 days, weekly kept a
+month — snapshots, not point-in-time) are the first restore path and this
+export the second, independent one (RECOVERY.md → *Database recovery*).
+
+**Why it stops fitting:** measured ~78 s/GB (30 s for 384 MB), so the
+60-minute job bound is reached near **46 GB** — about 200 store-years of the
+POS archive — and the work needs ~2.5x the database free on the app volume
+at its peak (the export, its gzip, the scrub copy, the encrypted copy). The
+nightly `backup_runs.detail_json` now carries `stage_seconds` (snapshot,
+gzip, scrub, encrypt, upload) and `total_seconds`, and a run past half its
+bound is captured and paged (`backup_slow`, `scheduler.BACKUP_SLOW_SHARE`) —
+the measured curve, before the night it no longer fits. The backup's
+free-space gate reads the live Postgres size since 10/19/26 (it read the
+SQLite file left by the cutover).
+
+**The design for past tens of GB, in order:**
+
+1. **Stream, never stage.** Replace export → gzip → scrub copy → encrypt with
+   one streaming pass per table: read a table from Postgres with `COPY ... TO
+   STDOUT` (or a server-side cursor), apply the scrub / seal registry to each
+   row in flight (`offsite_backup` already names every column; the seal is
+   per value), and write gzip → Fernet-chunk → R2 multipart parts as it goes.
+   Disk needed: one part buffer (256 MiB), not 2.5x the database. Restore is
+   the same stream in reverse into an empty Postgres (`scripts/run_pg_copy.py`
+   grows a `--from-offsite` source). The format is versioned beside the old
+   one; the drill restores both until the old one ages out (35 days).
+2. **Off the web process.** The stream runs as a `job_queue` row in the queue
+   worker (bulk class, its own bound), not on the scheduler thread in the web
+   process; the scheduler only enqueues it at 2am.
+3. **The local copy goes away on Postgres.** Railway's volume backups are the
+   fast restore; the app-volume export exists only because SQLite needed it.
+   Once (1) ships, `BACKUP_RETAIN_COUNT` local exports drop to zero on
+   Postgres and the app volume holds no database copy at all.
+4. **Point-in-time recovery** (the RPO, OPS-2): Railway Pro's volume
+   snapshots are daily. Continuous WAL archiving to R2 (`archive_command` /
+   `wal-g` / `pgBackRest`) needs control of the Postgres server's config,
+   which Railway's managed template does not give; a self-run Postgres image
+   on Railway with `wal-g` pushing to the existing R2 bucket would, at the
+   cost of running Postgres ourselves. Decision for Will (report F8). A
+   logical replica is the other path and needs a second service (out of
+   scope this round).
+5. **Partitioned facts age out of the backup.** The month-partitioned POS
+   archive tables (`pg_partitions`) older than a quarter change only on a
+   restatement; a monthly full copy of closed partitions plus a nightly copy
+   of the open ones cuts the nightly stream to the hot set.
+
+Nothing above (1-5) is built yet except the measurements and the gate.
+

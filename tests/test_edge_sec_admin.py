@@ -140,7 +140,7 @@ def test_view_as_acts_as_the_owner_when_the_owner_is_the_only_login(app, db_path
     rid = _restaurant(db_path)
     owner = _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
-    r = _post(c, "/admin/view-as/%d" % rid)
+    r = _post(c, "/admin/view-as/%d" % rid, data={"reason": "checking a ticket for them"})
     assert r.status_code == 302
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
@@ -158,7 +158,7 @@ def test_view_as_lasts_its_absolute_window_and_the_cookie_ends_with_it(app, db_p
     rid = _restaurant(db_path)
     _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
-    r = _post(c, "/admin/view-as/%d" % rid)
+    r = _post(c, "/admin/view-as/%d" % rid, data={"reason": "checking a ticket for them"})
     cookie = next(h for h in r.headers.getlist("Set-Cookie") if h.startswith("session_token="))
     assert "Max-Age=%d" % (auth.VIEW_AS_HOURS * 3600) in cookie
     row = _row(db_path, "SELECT expires_at FROM sessions WHERE device_type='admin-view-as'")
@@ -173,7 +173,7 @@ def test_view_as_targets_the_owner_even_when_a_staff_identity_was_created_first(
     owner = _owner(db_path, rid)
     assert staff < owner
     c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
-    _post(c, "/admin/view-as/%d" % rid)
+    _post(c, "/admin/view-as/%d" % rid, data={"reason": "checking a ticket for them"})
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
 
@@ -188,7 +188,7 @@ def test_view_as_targets_the_owner_even_when_a_manager_login_was_created_first(a
     upsert_membership(mgr, rid, "manager", db_path=db_path)
     owner = _owner(db_path, rid)
     c = _client(app, create_session(admin_uid, password_verified_at=True, db_path=db_path))
-    _post(c, "/admin/view-as/%d" % rid)
+    _post(c, "/admin/view-as/%d" % rid, data={"reason": "checking a ticket for them"})
     row = _row(db_path, "SELECT user_id FROM sessions WHERE device_type='admin-view-as'")
     assert row is not None and row["user_id"] == owner
 

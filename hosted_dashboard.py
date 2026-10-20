@@ -40,21 +40,11 @@ from models import get_conn, get_restaurant, get_review_stats, get_reviews_data,
 from auth import get_session_user, create_user
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
-import sentry_sdk
+# One initialisation for every process (sentry_setup — the queue worker and
+# worker.py call it too, scale audit 10/19/26 OPS-5); none without SENTRY_DSN.
+import sentry_setup as _sentry_setup
 from sentry_sdk.integrations.flask import FlaskIntegration
-_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
-if _SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=_SENTRY_DSN,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.1,   # 10% of requests for performance tracing
-        profiles_sample_rate=0.0, # off — not needed yet
-        environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
-        # The deployed commit, so an error is tied to the build that raised
-        # it and a regression shows as new in a release (#38, #77).
-        release=(os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT") or None),
-        send_default_pii=False,   # never send PII to Sentry
-    )
+_sentry_setup.init("web", integrations=[FlaskIntegration()])
 
 app = Flask(__name__)
 
@@ -274,6 +264,14 @@ if not getattr(audit_bp, "_csrf_wired", False):
     csrf_protect(audit_bp)
     audit_bp._csrf_wired = True
 app.register_blueprint(audit_bp)
+# Onboarding at scale (scale audit 10/19/26): bulk provisioning, backfill
+# pacing, setup confirmations, checklists, the DSR calendar, partners —
+# admin-console writes, CSRF-protected like admin_bp.
+from onboarding_routes import onboarding_bp
+if not getattr(onboarding_bp, "_csrf_wired", False):
+    csrf_protect(onboarding_bp)
+    onboarding_bp._csrf_wired = True
+app.register_blueprint(onboarding_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(auth_bp)
@@ -1170,6 +1168,23 @@ try:
     # whose marker says it held client restaurants must still hold them.
     _sm_boot.assert_platform_not_emptied()
     _init_db()
+    # A database loaded from an off-site copy some other way than
+    # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
+    # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
+    # OPS-1): opened here, once; a few empty reads on every other boot.
+    try:
+        import offsite_backup as _ob_boot
+        from models import get_conn as _gc_boot
+        _c_boot = _gc_boot()
+        try:
+            _un = _ob_boot.unseal(_c_boot)
+            _c_boot.commit()
+        finally:
+            _c_boot.close()
+        if _un.get("unsealed") or _un.get("failed"):
+            _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
+    except Exception as _e_boot:
+        _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
     # This boot, in boot_events (#76): the row before it says whether the
     # last process ended cleanly. After init_db, never before it: creating
     # the file first would stop adopt_legacy_db from ever running.
@@ -1267,7 +1282,12 @@ except Exception as _reset_e:
 # scheduler_lease() elects exactly one runner across processes, so the loser
 # idles and takes over only if the holder stops heartbeating. Unsetting the
 # variable is therefore also the rollback.
-_RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", "1").strip().lower() not in ("0", "false", "no")
+# SCHEDULER_PROCESS=1 (scale audit 10/19/26 INF-13): gunicorn's master runs
+# the scheduler as its own process (gunicorn.conf.py, `worker.py
+# --scheduler`), so the default here turns to 0. An explicit
+# RUN_SCHEDULER_IN_WEB still wins.
+_SCHED_DEFAULT = "0" if (os.getenv("SCHEDULER_PROCESS") or "").strip().lower() in ("1", "true", "yes", "on") else "1"
+_RUN_SCHEDULER_IN_WEB = os.getenv("RUN_SCHEDULER_IN_WEB", _SCHED_DEFAULT).strip().lower() not in ("0", "false", "no")
 import threading as _sched_threading
 _SCHED_THREAD = None
 _SCHED_START_FAILED = False
@@ -1383,6 +1403,14 @@ def _post_boot():
         res = _cred_boot.encrypt_existing()
         if res.get("encrypted") or res.get("failed"):
             _boot_log.info("credentials encrypted at boot: %s", res)
+        # Webhook signing secrets sealed too, and a key rotation finished
+        # (CREDENTIAL_KEY_PREVIOUS) — scale audit 10/19/26, SEC-14.
+        sealed_hooks = _cred_boot.encrypt_webhook_secrets()
+        if sealed_hooks:
+            _boot_log.info("webhook secrets encrypted at boot: %s", sealed_hooks)
+        rot = _cred_boot.rotate_existing()
+        if rot.get("rotated") or rot.get("unreadable"):
+            _boot_log.warning("credential key rotation at boot: %s", rot)
     except Exception as e:
         _boot_log.exception("credential encryption pass failed: %s", e)
     # Now that this database is known good, say on the volume that it holds

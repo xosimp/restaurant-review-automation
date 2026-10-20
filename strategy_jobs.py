@@ -217,6 +217,7 @@ class _BoundedWalk:
 
 # The walks above, bounded (#84). Each is per-restaurant model or POS work.
 LOSS_SYNC_MAX_SECONDS = 30 * 60
+LOSS_SYNC_WORKERS = max(1, int(os.getenv("LOSS_SYNC_WORKERS", "4")))
 WEEKLY_PLAN_MAX_SECONDS = 45 * 60
 RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
 ISSUE_SCAN_MAX_SECONDS = 15 * 60
@@ -373,27 +374,59 @@ def run_loss_sync(db_path=DB_PATH):
     """Nightly: comps, voids and refunds from POSes that report them.
     Bounded and resumable (_BoundedWalk, #84)."""
     import loss_detection, ops
-    synced = unsupported = failed = 0
-    walk = _BoundedWalk("loss_sync", _restaurants(db_path), db_path, LOSS_SYNC_MAX_SECONDS)
-    for r in walk:
+    import scheduler as _sched
+    c = {"synced": 0, "unsupported": 0, "failed": 0}
+    lock = threading.Lock()
+    by_id = {r.id: r for r in _restaurants(db_path)}
+
+    def _one(rid):
+        r = by_id[rid]
         try:
             out = loss_detection.sync(r.id, db_path=db_path)
         except Exception as e:
             ops.capture(e, job="loss_sync", context=f"restaurant_id={r.id}")
-            failed += 1
+            with lock:
+                c["failed"] += 1
             _record_loss(r.id, False, str(e), None, db_path)
-            continue
+            return
         if out.get("ok"):
-            synced += 1
+            with lock:
+                c["synced"] += 1
             _record_loss(r.id, True, None, out.get("provider"), db_path)
             _loss_flags_to_issues(r, db_path)
         else:
             # A POS that cannot report comps and voids is a normal state,
             # not a failed sync: nothing is recorded for it.
-            unsupported += 1
+            with lock:
+                c["unsupported"] += 1
+
+    # A pool and the same cursor, not a serial walk (scale audit 10/19/26
+    # INF-5 / A3-04): serially it covered ~780 stores a night; its reads are
+    # the archive's now, so the bound is mostly database time.
+    _done, hit_bound = _sched.resumable_sweep("loss_sync_cursor", sorted(by_id), _one, LOSS_SYNC_MAX_SECONDS,
+                                              workers=LOSS_SYNC_WORKERS, job="loss_sync")
+    if hit_bound:
+        ops.capture(RuntimeError(f"loss_sync stopped at its {LOSS_SYNC_MAX_SECONDS}s bound; the rest lead the "
+                                 "next pass"), job="loss_sync", context="time_bound")
+    synced, failed, unsupported = c["synced"], c["failed"], c["unsupported"]
     # The counts job_runs judges a partial or failed night by (DH2-1, #39).
-    return _counts(synced + failed, synced, failed, unsupported, walk.hit_bound,
+    return _counts(synced + failed, synced, failed, unsupported, bool(hit_bound),
                    synced=synced, not_supported=unsupported)
+
+
+# A nightly row (archive, learner, diagnosis) still queued this long after it
+# became runnable expires instead of running (scale audit 10/19/26 INF-6):
+# the rows had no deadline, so a backlog never drained and the next night's
+# rows stacked behind it. Just under a day, so it goes before the next
+# fan-out queues its successor — the next night's archive re-reads restated
+# days and backfills a week; a learner's next pass covers the same ground.
+BULK_ROW_DEADLINE_HOURS = float(os.getenv("QUEUE_BULK_DEADLINE_HOURS", "22") or 22)
+
+
+def _bulk_deadline(not_before=None):
+    import time as _t
+    start = max(_t.time(), float(not_before or 0))
+    return start + BULK_ROW_DEADLINE_HOURS * 3600
 
 
 def run_pos_archive(db_path=DB_PATH, today=None):
@@ -426,7 +459,8 @@ def run_pos_archive(db_path=DB_PATH, today=None):
             continue
         night, not_before = _archive_night(r, today)
         items.append({"payload": {"restaurant_id": r.id, "day": night}, "restaurant_id": r.id,
-                      "not_before": not_before, "idempotency_key": f"pos_archive:{r.id}:{night}"})
+                      "not_before": not_before, "deadline": _bulk_deadline(not_before),
+                      "idempotency_key": f"pos_archive:{r.id}:{night}"})
     created = job_queue.enqueue_many("pos_archive", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
     return _counts(created, created, 0, unsupported + (len(items) - created), False, queued=created)
@@ -463,9 +497,52 @@ def run_queued_pos_archive(job):
         return {"skipped": "no POS that can archive"}
     out = pos_archive.run_for(rid)
     if not out.get("ok"):
-        raise RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        err = RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        # The POS asked us to wait (an open breaker, a long Retry-After):
+        # the row is tried again then, not on the fixed backoff (A3-10).
+        if out.get("retry_after"):
+            err.retry_after = float(out["retry_after"])
+        raise err
     return {"archived": len(out.get("archived") or []), "restated": out.get("restated") or 0,
             "backfill_left": out.get("backfill_left")}
+
+
+def run_queued_pos_onboard(job):
+    """job_queue's handler for `pos_onboard` (scale audit 10/19/26 ONB-6 /
+    ONB-4): a store just connected. Its history is archived first, newest
+    night first (pos_archive.onboard, bounded), then its first sync runs —
+    which then reads the archive, not 60 days live — so the owner sees data
+    within minutes of the connect, not at 3am, and no night is read twice.
+    A provider that asks us to wait reschedules the row."""
+    import pos
+    import pos_archive
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None or pos_archive.provider_for(rid)[1] is None:
+        return {"skipped": "no POS that can archive"}
+    arch = pos_archive.onboard(rid)
+    if arch.get("retry_after"):
+        err = RuntimeError(f"pos_onboard: the POS asked us to wait ({len(arch.get('archived') or [])} nights in)")
+        err.retry_after = float(arch["retry_after"])
+        raise err
+    sync = pos.sync_restaurant(rid, trigger="connect")
+    return {"archived": len(arch.get("archived") or []), "failed": len(arch.get("failed") or []),
+            "left": arch.get("left"), "sync_ok": bool(sync.get("ok")), "sync_error": sync.get("error")}
+
+
+def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
+    """Queue a just-connected store's onboarding (once a day per store
+    binding). Never raises: the nightly jobs onboard it anyway."""
+    try:
+        import job_queue
+        from datetime import date as _date
+        _qid, created = job_queue.enqueue(
+            "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
+            priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
+        return bool(created)
+    except Exception as e:
+        log.warning("pos_onboard not queued for %s: %s", restaurant_id, e)
+        return False
 
 
 # The DSR backfill's pass (bar audit 10/14/26 RPW-13 / R11): bounded and
@@ -473,21 +550,11 @@ def run_queued_pos_archive(job):
 DSR_BACKFILL_MAX_SECONDS = 30 * 60
 
 
-def run_dsr_backfill(db_path=DB_PATH):
-    """Nightly, after the POS sync: the Daily Sales Report's figures for the
-    nights before its report started, from the POS (dsr.backfill.backfill:
-    figures only, no report, email or model) — its own job, where it used to
-    run inside rpower.sync_to_db with every failure swallowed into a log
-    line, so a broken backfill (and the Bar history it feeds) had no
-    job_runs row and no alert. Every restaurant with the report on and a
-    connected POS; a restaurant whose read failed counts as failed, its
-    error captured. Bounded and resumable (_BoundedWalk)."""
-    import ops
+def _dsr_backfill_due(db_path=DB_PATH):
+    """(restaurants with the report on and a connected POS, skipped count)."""
     import pos
-    from dsr import backfill as _dsr_backfill
-    ok = failed = skipped = filled = 0
-    walk = _BoundedWalk("dsr_backfill", _restaurants(db_path), db_path, DSR_BACKFILL_MAX_SECONDS)
-    for r in walk:
+    due, skipped = [], 0
+    for r in _restaurants(db_path):
         if not getattr(r, "dsr_enabled", 0):
             skipped += 1
             continue
@@ -498,6 +565,56 @@ def run_dsr_backfill(db_path=DB_PATH):
         if not provider:
             skipped += 1
             continue
+        due.append(r)
+    return due, skipped
+
+
+def run_dsr_backfill(db_path=DB_PATH, today=None):
+    """Nightly, after the POS sync: the Daily Sales Report's figures for the
+    nights before its report started, from the POS (dsr.backfill.backfill:
+    figures only, no report, email or model) — its own job, where it used to
+    run inside rpower.sync_to_db with every failure swallowed.
+
+    Fanned out (scale audit 10/19/26 ONB-5): one `learner` queue row (bulk
+    class) per restaurant with the report on and a connected POS
+    (`dsr_backfill_one`), run by the queue worker in parallel and fairly
+    across tenants. The serial 30-minute walk reached ~15 new stores a
+    night, so 100 stores joining took a week to fill. A row whose read
+    fails raises, and the queue records it and tries once more. Standard
+    counts over the rows queued (the work's own results are the rows').
+    `run_dsr_backfill_sweep` is the bounded inline body a script runs."""
+    from datetime import date as _date
+    due, skipped = _dsr_backfill_due(db_path)
+    out = fan_out("dsr_backfill", [r.id for r in due], str(today or _date.today())[:10], db_path=db_path)
+    out["skipped"] = int(out.get("skipped") or 0) + skipped
+    return out
+
+
+def dsr_backfill_one(restaurant_id):
+    """One restaurant's DSR backfill (the `dsr_backfill` learner row).
+    Raises when the POS could not be read for some nights."""
+    import models as _models_db
+    r = _models_db.get_restaurant(restaurant_id)
+    if r is None or not getattr(r, "dsr_enabled", 0):
+        return {"skipped": "report off"}
+    from dsr import backfill as _dsr_backfill
+    out = _dsr_backfill.backfill(r, days=60)
+    if out.get("failed"):
+        raise RuntimeError(f"dsr_backfill: {out['failed']} nights could not be read from the POS")
+    return {"filled": out.get("filled") or 0}
+
+
+def run_dsr_backfill_sweep(db_path=DB_PATH):
+    """The DSR backfill inline, bounded and resumable (_BoundedWalk) — for a
+    script or a test; the scheduler fans it out (run_dsr_backfill). Every
+    restaurant with the report on and a connected POS; a restaurant whose
+    read failed counts as failed, its error captured."""
+    import ops
+    from dsr import backfill as _dsr_backfill
+    ok = failed = filled = 0
+    due, skipped = _dsr_backfill_due(db_path)
+    walk = _BoundedWalk("dsr_backfill", due, db_path, DSR_BACKFILL_MAX_SECONDS)
+    for r in walk:
         try:
             out = _dsr_backfill.backfill(r, days=60, db_path=None if db_path == DB_PATH else db_path)
         except Exception as e:
@@ -1443,8 +1560,9 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     # most once a day (claimed before the paid generation).
     #
     # Each restaurant on ITS day (auto_draft_weekday: the owner's pick, else
-    # Monday-Thursday spread by restaurant — AI cost audit 10/7/26 #5, a
-    # Thursday for everyone queued every draft on two generation slots)
+    # Monday-Saturday spread by restaurant — AI cost audit 10/7/26 #5, a
+    # Thursday for everyone queued every draft on two generation slots;
+    # Monday-Thursday until the scale audit of 10/19/26, A5-F4)
     # from AUTO_DRAFT_HOUR in its own zone; the loop used to gate every
     # restaurant on Chicago's Thursday 6am.
     from models import auto_draft_weekday
@@ -1452,9 +1570,22 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     from zoneinfo import ZoneInfo
     at = None if now is None else (now if now.tzinfo else now.replace(tzinfo=ZoneInfo(OPERATOR_TZ)))
     local = {}
+    held_for_setup = 0
     for r in _restaurants(db_path):
         if not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
             continue
+        # A store still being set up is not drafted for (scale audit 10/19/26
+        # ONB-12): a schedule from unconfirmed rates, a payroll week read off
+        # RPOWER's unconfirmed ot_dow, and no floors or availability is a
+        # paid draft the owner throws away. Stores set up by hand before the
+        # setup checklist existed have none open and are never held.
+        try:
+            import onboarding as _onb_ad
+            if _onb_ad.labor_setup_pending(r, db_path=None if db_path == DB_PATH else db_path):
+                held_for_setup += 1
+                continue
+        except Exception as e:
+            log.warning("auto_draft: setup check failed for %s (%s); not held", r.id, e)
         now_l = (restaurant_now(r, naive=True) if at is None
                  else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
         # The draft day, and the day after it as the fallback (scheduler
@@ -1469,6 +1600,9 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
             local[r.id] = (r, now_l.date().isoformat())
     by_id = {v[0].id: v[0] for v in local.values()}
     counts["failed"] = 0
+    # Today's drafts start spread over the time the slots take to clear
+    # them, at least AUTO_DRAFT_SPREAD_MINUTES (scale audit 10/19/26 A5-F4).
+    spread = auto_draft_spread_seconds(len(local)) if enqueue else None
 
     def _bump(key):
         with lock:
@@ -1518,8 +1652,11 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
             _bump("skipped")
             return
         if enqueue:
-            enqueue_auto_draft(r, period=local[r.id][1], target=target, attempt=attempt)
-            _bump("queued")
+            _qid, created = _enqueue_auto_draft(r, period=local[r.id][1], target=target, attempt=attempt,
+                                                spread_seconds=spread)
+            # A row already queued or running for this try is not a new one
+            # (A5-F12: a dead row's id came back and was counted "queued").
+            _bump("queued" if created else "skipped")
             return
         try:
             _draft_one(r, db_path, _se, _bump, period=local[r.id][1], target=target, attempt=attempt)
@@ -1537,7 +1674,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     attempted = counts["drafted"] + counts["failed"] + counts["batched"] + counts["queued"]
     return _counts(attempted, counts["drafted"] + counts["batched"] + counts["queued"], counts["failed"],
                    counts["skipped"], ran_out, drafted=counts["drafted"], batched=counts["batched"],
-                   queued=counts["queued"], complete=not ran_out)
+                   queued=counts["queued"], complete=not ran_out, held_for_setup=held_for_setup)
 
 
 def auto_draft_target(r, period) -> str:
@@ -1615,6 +1752,13 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     # under a notice rule, its auto-publish the next day — MARKET-1), else
     # the same default with that lag.
     _request = generation_request(r.id, today=_today, week_start=target, publish_lag_days=1)
+    if batch and _drafted_in_code(r.id, _request.get("week_start")):
+        # A week drafted in code (the solver — the default — or carry-forward)
+        # makes no drafting call to batch: planning it built and SOLVED the
+        # whole week only to find nothing to send, then the run below built
+        # and solved it again (scale audit 10/19/26 A5-F13 — twice the CPU of
+        # every auto-draft). It runs now.
+        batch = False
     if batch:
         # The same week the synchronous run would write; the try it spends
         # is this one (the answer runs this again with the same target and
@@ -1736,11 +1880,25 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
         _watch.notify_generation_watchers(job_id, r.id, exclude=told)
 
 
-def _tell_auto_draft_gave_up(r, db_path, target):
-    """Every paid try at the week's draft ended without one: the owner is
-    told, once, to generate it — never left to find no draft on the day the
-    week was due (SCALE-3). The drafted notice's channel and audience (the
-    logins that can publish). Never raises."""
+def _drafted_in_code(restaurant_id, week_start) -> bool:
+    """Whether the week's draft source in force is a code source
+    (schedule_engine.draft_source_for: SCHEDULE_DRAFT_SOURCE, else the
+    draft_v1 arm, else the solver). False when it cannot be read — the
+    batch plan then decides, as before."""
+    try:
+        import schedule_engine as _se_src
+        import schedule_fallback as _sfb_src
+        return _se_src.draft_source_for(restaurant_id, week_start) in _sfb_src.CODE_SOURCES
+    except Exception:
+        return False
+
+
+def _tell_auto_draft_gave_up(r, db_path, target, why="tries"):
+    """Every paid try at the week's draft ended without one — or (`why`
+    "busy") its turn never came before the draft days ran out (A5-F12): the
+    owner is told, once, to generate it — never left to find no draft on the
+    day the week was due (SCALE-3). The drafted notice's channel and
+    audience (the logins that can publish). Never raises."""
     try:
         import notify, push, morning_brief
         from permissions import has_permission, SCHEDULE_PUBLISH
@@ -1755,9 +1913,11 @@ def _tell_auto_draft_gave_up(r, db_path, target):
             return
         from time_utils import mdy
         notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
-        push.fire_push(r.id, "schedule_drafted", "Next week's schedule couldn't be drafted",
-                       f"The automatic draft for the week of {mdy(target)} didn't finish after "
-                       f"{AUTO_DRAFT_ATTEMPTS} tries. Generate it from the Labor tab.",
+        body = (f"The automatic draft for the week of {mdy(target)} didn't get its turn — Cavnar AI was too "
+                "busy. Generate it from the Labor tab." if why == "busy" else
+                f"The automatic draft for the week of {mdy(target)} didn't finish after "
+                f"{AUTO_DRAFT_ATTEMPTS} tries. Generate it from the Labor tab.")
+        push.fire_push(r.id, "schedule_drafted", "Next week's schedule couldn't be drafted", body,
                        data={}, db_path=db_path, user_ids=audience)
     except Exception as e:
         import ops
@@ -1772,17 +1932,93 @@ def _tell_auto_draft_gave_up(r, db_path, target):
 # enqueues it again. Its deadline also orders the scheduled class (earliest
 # first).
 AUTO_DRAFT_QUEUE_HOURS = 6
+# The longest a draft's deadline stretches when the queue ahead of it is
+# longer than AUTO_DRAFT_QUEUE_HOURS of work (auto_draft_deadline_seconds —
+# scale audit 10/19/26 A5-F4): still inside the draft day and its fallback.
+AUTO_DRAFT_QUEUE_MAX_HOURS = 18
 # A timezone's drafts start spread over this many minutes from the pass that
 # queued them (blind re-audit 10/11/26 SCALE-28): every restaurant of a zone
-# used to become claimable at one instant at 6am local.
+# used to become claimable at one instant at 6am local. The least spread:
+# a day with more drafts than the slots clear in it spreads wider, up to
+# AUTO_DRAFT_SPREAD_MAX_MINUTES (auto_draft_spread_seconds, A5-F4).
 AUTO_DRAFT_SPREAD_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MINUTES", "120"))
+AUTO_DRAFT_SPREAD_MAX_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MAX_MINUTES", "360"))
+# One generation's slot time when none has been measured yet (seconds).
+GENERATION_SECONDS_ASSUMED = 30.0
+_GEN_SECONDS_MEMO = {}
 
 
-def auto_draft_offset_seconds(restaurant_id) -> int:
-    """The restaurant's fixed place in its zone's draft spread: the same
-    every week (a stable hash of its id), so an owner sees the draft land at
-    the same time of the morning."""
-    span = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+def generation_seconds_estimate() -> float:
+    """What one generation holds a CPU slot for, measured: the mean of the
+    newest finished generation rows (claimed to finished), between 5 s and
+    10 minutes; GENERATION_SECONDS_ASSUMED with none on file. Read at most
+    once a minute per process."""
+    import time as _t
+    hit = _GEN_SECONDS_MEMO.get("v")
+    if hit and _t.monotonic() - hit[0] < 60:
+        return hit[1]
+    est = GENERATION_SECONDS_ASSUMED
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            rows = conn.execute("SELECT finished_at - started_at AS s FROM jobs WHERE grp='generation' "
+                                "AND state='done' AND started_at IS NOT NULL AND finished_at IS NOT NULL "
+                                "ORDER BY id DESC LIMIT 50").fetchall()
+        finally:
+            conn.close()
+        got = [float(r["s"]) for r in rows if r["s"] is not None and float(r["s"]) > 0]
+        if got:
+            est = min(600.0, max(5.0, sum(got) / len(got)))
+    except Exception:
+        est = GENERATION_SECONDS_ASSUMED
+    _GEN_SECONDS_MEMO["v"] = (_t.monotonic(), est)
+    return est
+
+
+def _generation_slots() -> int:
+    try:
+        import job_queue
+        return max(1, int(job_queue.group_concurrency("generation")))
+    except Exception:
+        return 1
+
+
+def auto_draft_spread_seconds(n_due=None) -> int:
+    """How widely the day's drafts start spread: AUTO_DRAFT_SPREAD_MINUTES,
+    or — when `n_due` drafts take the generation slots longer than that —
+    the time they take, up to AUTO_DRAFT_SPREAD_MAX_MINUTES (A5-F4)."""
+    base = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+    if not n_due or base <= 0:
+        return base
+    need = int(n_due * generation_seconds_estimate() / _generation_slots())
+    return int(min(max(base, need), max(base, AUTO_DRAFT_SPREAD_MAX_MINUTES * 60)))
+
+
+def auto_draft_deadline_seconds() -> int:
+    """How long a draft may wait for a slot: AUTO_DRAFT_QUEUE_HOURS, or one
+    and a half times the generation work already queued ahead of it (rows
+    x measured seconds / slots) when that is longer, at most
+    AUTO_DRAFT_QUEUE_MAX_HOURS (scale audit 10/19/26 A5-F4: a fixed 6 hours
+    expired the tail of a big zone's morning every week)."""
+    base = AUTO_DRAFT_QUEUE_HOURS * 3600
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            n = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE grp='generation' AND state='queued'").fetchone()["n"]
+        finally:
+            conn.close()
+    except Exception:
+        return base
+    backlog = float(n or 0) * generation_seconds_estimate() / _generation_slots()
+    return int(min(max(base, 1.5 * backlog), AUTO_DRAFT_QUEUE_MAX_HOURS * 3600))
+
+
+def auto_draft_offset_seconds(restaurant_id, span=None) -> int:
+    """The restaurant's fixed place in its zone's draft spread (`span`
+    seconds, else AUTO_DRAFT_SPREAD_MINUTES): the same every week (a stable
+    hash of its id), so an owner sees the draft land at the same time of the
+    morning."""
+    span = int(span) if span is not None else max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
     if span <= 0 or restaurant_id is None:
         return 0
     import hashlib
@@ -1790,14 +2026,26 @@ def auto_draft_offset_seconds(restaurant_id) -> int:
     return h % span
 
 
-def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None):
+def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None,
+                       spread_seconds=None):
     """One restaurant's auto-draft as a `scheduled` job_queue row: the same
     try (_claim_auto_draft_attempt) the pass claimed, keyed so the same try
-    is never queued twice. `answers_job` is the Message Batches group whose
-    answers are stored by call key (schedule_batch — blind re-audit 10/11/26
-    ARCH-15): the draft runs under schedule_resume.resuming(it). `answer` is
-    the one answer an item submitted before ARCH-15 carries ({key, text,
-    stop_reason, usage, call_id}). Returns the row id."""
+    is never queued twice — unless its row EXPIRED unstarted, which ran and
+    paid for nothing: then it is queued again (scale audit 10/19/26 A5-F12;
+    the dead row used to come back, so the pass counted a draft that never
+    ran). `answers_job` is the Message Batches group whose answers are
+    stored by call key (schedule_batch — blind re-audit 10/11/26 ARCH-15):
+    the draft runs under schedule_resume.resuming(it). `answer` is the one
+    answer an item submitted before ARCH-15 carries ({key, text,
+    stop_reason, usage, call_id}). `spread_seconds` — the day's spread
+    (auto_draft_spread_seconds). Returns the row id."""
+    return _enqueue_auto_draft(r, period=period, target=target, attempt=attempt, batch=batch, answer=answer,
+                               answers_job=answers_job, spread_seconds=spread_seconds)[0]
+
+
+def _enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None,
+                        spread_seconds=None):
+    """enqueue_auto_draft's (row id, created)."""
     import job_queue
     import time as _t
     payload = {"restaurant_id": r.id, "period": period, "target": target, "attempt": attempt,
@@ -1810,11 +2058,10 @@ def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, an
     # the spread; a batched answer, already paid for, or a synchronous run
     # after a batch fell through, is drafted as soon as a slot allows.
     first_half = batch and answer is None and not answers_job
-    start = _t.time() + (auto_draft_offset_seconds(r.id) if first_half else 0)
-    qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
-                                      idempotency_key=key, not_before=start,
-                                      deadline=start + AUTO_DRAFT_QUEUE_HOURS * 3600)
-    return qid
+    start = _t.time() + (auto_draft_offset_seconds(r.id, span=spread_seconds) if first_half else 0)
+    return job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
+                             idempotency_key=key, not_before=start, deadline=start + auto_draft_deadline_seconds(),
+                             requeue_states=("expired",))
 
 
 def run_queued_auto_draft(job):
@@ -1879,6 +2126,40 @@ def on_auto_draft_expired(job):
     if period:
         ops.release_period(f"auto_draft:{rid}", period)
     _release_auto_draft_attempt(rid, p.get("target"), p.get("attempt"))
+    # No pass left to queue it again — the draft day and its fallback day are
+    # over (or in their last hour): the owner is told to generate the week,
+    # never left to find nothing on the day it was due (scale audit 10/19/26
+    # A5-F12: an expiry was silent, and the dead row's key stopped every
+    # later pass from queuing it).
+    try:
+        _tell_if_no_pass_left(rid, p.get("target"))
+    except Exception as e:
+        ops.capture(e, job="auto_draft_schedule_expired", context=f"restaurant_id={rid}")
+
+
+def _tell_if_no_pass_left(rid, target, now=None):
+    """After an expiry: tell the owner when no hourly pass can queue this
+    week's draft again (the restaurant's own clock is past its draft day and
+    fallback day, or in the fallback day's last hour) and the week still has
+    nothing. Returns whether they were told."""
+    from models import get_restaurant, auto_draft_weekday
+    from time_utils import restaurant_now
+    r = get_restaurant(rid)
+    if r is None or not target or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
+        return False
+    local = now if now is not None else restaurant_now(r, naive=True)
+    day = auto_draft_weekday(r)
+    fallback = (day + 1) % 7
+    if local.weekday() == day or (local.weekday() == fallback and local.hour < 23):
+        return False                    # a later pass today or tomorrow queues it again
+    conn = get_conn(DB_PATH)
+    try:
+        if _week_has_schedule(conn, r.id, target):
+            return False
+    finally:
+        conn.close()
+    _tell_auto_draft_gave_up(r, DB_PATH, target, why="busy")
+    return True
 
 
 # The learners a `learner` queue row runs, by name ("module:function"; each
@@ -1899,6 +2180,9 @@ LEARNERS = {
     # reached ~1,000 restaurants a pass. One row per restaurant now, run by
     # the queue worker (fan_out below).
     "food_cost_diagnosis": "scheduler:food_cost_diagnosis_one",
+    # The DSR's nights before it started, one row per restaurant (scale audit
+    # 10/19/26 ONB-5): the serial walk filled ~15 new stores a night.
+    "dsr_backfill": "strategy_jobs:dsr_backfill_one",
 }
 # Learners whose body takes the row's `today` (the restaurant's own date the
 # fan-out chose), as people_nightly does.
@@ -1921,13 +2205,15 @@ def fan_out_learner(name, db_path=DB_PATH, today=None):
     items = []
     if name == "people_nightly":
         items.append({"payload": {"learner": "people_backfill", "restaurant_id": None, "day": day},
-                      "restaurant_id": None, "idempotency_key": f"learner:people_backfill:{day}"})
+                      "restaurant_id": None, "deadline": _bulk_deadline(),
+                      "idempotency_key": f"learner:people_backfill:{day}"})
     for r in _restaurants(db_path):
         if not getattr(r, "module_labor", 0):
             continue
         items.append({"payload": {"learner": name, "restaurant_id": r.id, "day": day,
                                   **({"today": str(today)[:10]} if today else {})},
-                      "restaurant_id": r.id, "idempotency_key": f"learner:{name}:{r.id}:{day}"})
+                      "restaurant_id": r.id, "deadline": _bulk_deadline(),
+                      "idempotency_key": f"learner:{name}:{r.id}:{day}"})
     created = job_queue.enqueue_many("learner", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path)
     return _counts(created, created, 0, len(items) - created, False, queued=created)
@@ -1951,6 +2237,7 @@ def fan_out(name, ids, day, db_path=DB_PATH, today_by_id=None, not_before=None):
         if today_by_id and rid in today_by_id:
             payload["today"] = str(today_by_id[rid])[:10]
         items.append({"payload": payload, "restaurant_id": int(rid), "not_before": not_before,
+                      "deadline": _bulk_deadline(not_before),
                       "idempotency_key": f"learner:{name}:{int(rid)}:{day}"})
     created = job_queue.enqueue_many("learner", items, priority_class="bulk",
                                      db_path=None if db_path == DB_PATH else db_path) if items else 0
@@ -2421,6 +2708,10 @@ def _open_now(r, local):
 INTRADAY_WORKERS = 4
 INTRADAY_CAPTURE_MAX_SECONDS = 10 * 60
 SLOT_JOB_MAX_SECONDS = 4 * 60
+# The POS-reading slot jobs (live labor, the coverage check) walk their
+# restaurants on this many workers, as the capture does (scale audit
+# 10/19/26 INF-14 / A3-03): serially they reached ~96 and ~185 stores a run.
+SLOT_WORKERS = max(1, int(os.getenv("SLOT_JOB_WORKERS", "4")))
 
 
 def slot_restaurants(db_path=DB_PATH) -> list:
@@ -2921,12 +3212,14 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
     every gap, and someone already on whose shift ends as the gap begins
     (the lunch server who could stay) is suggested before anyone off."""
     import intraday, issues, ops
+    import pos as _pos_live
     from time_utils import restaurant_now, business_date
-    opened = 0
-    st = {"attempted": 0, "failed": 0}
-    for r in _slot_iter("coverage_check", restaurants, db_path, state=st):
+    st = {"attempted": 0, "failed": 0, "opened": 0}
+    lock = threading.Lock()
+
+    def _one(r):
         if not getattr(r, "module_labor", 0):
-            continue
+            return
         local = restaurant_now(r, naive=True)
         # Every pass, open or not: a gap whose shift has ended stops asking
         # for a cover, and an earlier day's issue closes as a miss (it stayed
@@ -2936,12 +3229,24 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
         except Exception as ce:
             ops.capture(ce, job="coverage_check", context=f"restaurant_id={r.id} ended shifts")
         if not _open_now(r, local):
-            continue
+            return
         if "manager" not in issues.get_routing(r.id, db_path):
-            continue
-        st["attempted"] += 1
+            return
+        with lock:
+            st["attempted"] += 1
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
+            if gaps.get("missing"):
+                # The clock-ins came from the shared live read (up to
+                # pos_io.LIVE_SNAPSHOT_SECONDS old, scale audit A3-02):
+                # before anyone is told a person has not clocked in, read
+                # them afresh — they may have punched in since — unless the
+                # read was made this minute.
+                import pos_io as _pio_cov
+                snap = _pio_cov.snapshot_get(r.id, "clock_ins", str(gaps.get("business_date") or "")[:10])
+                if not snap or snap["age"] > 60:
+                    with _pos_live.fresh_live_reads():
+                        gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
             # The service the clock is in — the date coverage_gaps read the
             # published week and the clock-ins for (E-4).
             bday = str(gaps.get("business_date") or business_date(r, local).isoformat())[:10]
@@ -2977,11 +3282,17 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     continue
                 due.append(dict(m, hold=staff_comms.hold_sentence(hold)))
             if due:
-                opened += _raise_coverage(r, bday, due, gaps, local, db_path)
+                n = _raise_coverage(r, bday, due, gaps, local, db_path)
+                with lock:
+                    st["opened"] += n
         except Exception as e:
-            st["failed"] += 1
+            with lock:
+                st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
-    return _slot_counts(st, opened=opened)
+
+    # On SLOT_WORKERS, not a serial walk (INF-14 / A3-03).
+    st["hit_bound"] = _slot_sweep("coverage_check", restaurants, _one, db_path, workers=SLOT_WORKERS)
+    return _slot_counts(st, opened=st["opened"])
 
 
 # Covers suggested for each gap on a coverage issue (the issue page offers

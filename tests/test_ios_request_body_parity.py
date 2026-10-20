@@ -1826,6 +1826,12 @@ _WEB_ONLY = "a web-only control (no iOS screen edits it) — a capability gap, n
 _THROTTLE = "the login throttle's remembered-device token, read on every auth route; the phone sends it on /login"
 
 NOT_SENT_BY_IOS = {
+    # Scale fix round 10/19/26: optional, and today's builds work without
+    # them. A view-as reason (SEC-12) falls back to "opened from the app (no
+    # reason given)"; `poll` (A4-01) asks for the polled Ask turn - without it
+    # the phone streams exactly as before. The iOS side is a follow-up build.
+    ("/mobile/api/admin/view-as/<int:restaurant_id>", "reason"): "optional (SEC-12): the app's fallback reason is recorded",
+    ("/mobile/api/ask-cavnar/stream", "poll"): "optional (A4-01): without it the turn streams as before",
     # The Bench's standby policy (J3, MARKET-26): the phone sets the hours of
     # pay; a flat sum and a note are set where the web sets them too, which is
     # nowhere yet (both read as optional by standby_insurance.set_policy).

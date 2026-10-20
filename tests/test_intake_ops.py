@@ -491,10 +491,16 @@ def test_intake_address_scrubbed_offsite(db, tmp_path):
     finally:
         src.close()
         dst.close()
-    assert ("email_intake_routes", "address") in offsite_backup.SCRUB_COLUMNS
+    # The live route's address is SEALED off-site since the scale fix round
+    # (10/19/26 OPS-1: a restore keeps the vendors' invoices arriving) -
+    # ciphertext under CREDENTIAL_KEY, or blanked when no key can seal it;
+    # the intake ledger's copy is still scrubbed. Either way the plain
+    # address never leaves the volume.
+    assert ("email_intake_routes", "address") in offsite_backup.SEAL_COLUMNS
     assert ("email_intake", "address") in offsite_backup.SCRUB_COLUMNS
     did = offsite_backup.redact(copy)
-    assert "email_intake_routes.address" in did["columns"] and "email_intake.address" in did["columns"]
+    assert "email_intake.address" in did["columns"]
+    assert "email_intake_routes.address" in did["columns"] or "email_intake_routes.address" in str(did["sealed"])
     conn = sqlite3.connect(copy)
     try:
         text = "\n".join(str(r) for r in conn.execute("SELECT * FROM email_intake_routes").fetchall())

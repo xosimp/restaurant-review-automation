@@ -382,6 +382,90 @@ def _pos_lines(conn, restaurant_id, start, end) -> list:
     return [dict(zip(names, r)) for r in rows]
 
 
+# ── the lines by item and day (pos_item_daily, scale audit 10/19/26 DB-11) ──
+#
+# The bought-vs-sold walk below read every sale, comp and void line of its
+# window into Python on each request. What it needs of a line is its item,
+# name and filing, and a few facts that take the line's neighbours to know:
+# the kind and quantity a modifier takes from the line it modifies, the
+# "double" multiplier a modifier puts on its line, whether its ticket rings a
+# bucket's beers on their own lines, whether it is a pure modifier, a zero
+# quantity, an alternate-unit count. resolve_lines works those out once per
+# day — pos_archive.archive_day stores the groups as pos_item_daily — and the
+# walk reads the sums. A window not wholly rolled is resolved here from its
+# lines, the same function, so the two paths agree by construction.
+ROLLUP_KEY = ("business_date", "provider", "item_id", "item_name", "kind", "kind_eff", "department",
+              "sales_category", "category_id", "is_mod", "mult", "pure_mod", "in_bucket", "qty_zero", "has_aqu")
+ROLLUP_SUMS = ("lines", "units", "qty_eff", "sales", "aqu", "cost_pos", "cost_lines")
+_BAR_KINDS = ("sale", "comp", "void")
+
+
+def resolve_lines(rows) -> list:
+    """`rows` (archived lines: line_id, ticket_id, business_date, provider,
+    item_id, item_name, kind, qty, sales, cost, aqu_count, department,
+    sales_category, category_id, parent_line_id) as pos_item_daily groups
+    (ROLLUP_KEY + ROLLUP_SUMS dicts). A modifier resolves against the sale,
+    comp and void lines among `rows` only, as the walk always did."""
+    rows = [dict(r) for r in rows]
+    bar_rows = [r for r in rows if r.get("kind") in _BAR_KINDS]
+    by_id = {r["line_id"]: r for r in bar_rows}
+    mult = defaultdict(lambda: 1.0)
+    for r in bar_rows:
+        par = r.get("parent_line_id")
+        if par and par in by_id and DOUBLE_RE.search(str(r.get("item_name") or "")):
+            mult[par] = 2.0
+    buckets = _bucket_tickets(bar_rows)
+    groups = {}
+    for r in rows:
+        bar = r.get("kind") in _BAR_KINDS
+        par = by_id.get(r.get("parent_line_id")) if bar and r.get("parent_line_id") else None
+        kind_eff = par["kind"] if par is not None else r["kind"]
+        m = (mult[par["line_id"]] if par is not None else mult[r["line_id"]]) if bar else 1.0
+        raw_qty = _f(r.get("qty"))
+        qty = raw_qty
+        if par is not None and qty == 0:
+            qty = _f(par["qty"])
+        if kind_eff in ("comp", "void"):
+            qty = abs(qty)
+        sales = _f(r.get("sales"))
+        pure = 1 if par is not None and (DOUBLE_RE.search(str(r.get("item_name") or "")) or sales == 0) else 0
+        aqu = _f(r.get("aqu_count"))
+        cost = _f(r.get("cost"))
+        key = (str(r.get("business_date") or "")[:10], str(r.get("provider") or ""), str(r.get("item_id") or ""),
+               str(r.get("item_name") or ""), r["kind"], kind_eff, str(r.get("department") or ""),
+               str(r.get("sales_category") or ""), str(r.get("category_id") or ""), 1 if par is not None else 0,
+               float(m), pure, 1 if bar and r.get("ticket_id") in buckets else 0, 1 if qty == 0 else 0,
+               1 if aqu > 0 else 0)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = dict(zip(ROLLUP_KEY, key), **{s: 0 for s in ROLLUP_SUMS})
+        g["lines"] += 1
+        g["units"] += raw_qty
+        g["qty_eff"] += qty
+        g["sales"] += sales
+        if aqu > 0:
+            g["aqu"] += aqu
+        if cost > 0:
+            g["cost_pos"] += cost
+            g["cost_lines"] += 1
+    return list(groups.values())
+
+
+def _pos_groups(conn, restaurant_id, start, end) -> list:
+    """The window's sale, comp and void lines as resolve_lines groups: from
+    pos_item_daily when every archived day of the window is rolled at the
+    current version (pos_archive.rolled_window), else from the lines."""
+    import pos_archive
+    if pos_archive.rolled_window(conn, restaurant_id, start, end):
+        rows = conn.execute(
+            f"SELECT {', '.join(ROLLUP_KEY + ROLLUP_SUMS)} FROM pos_item_daily WHERE restaurant_id=? "
+            "AND business_date>=? AND business_date<=? AND kind IN ('sale','comp','void') ORDER BY business_date",
+            (int(restaurant_id), start, end)).fetchall()
+        names = ROLLUP_KEY + ROLLUP_SUMS
+        return [dict(zip(names, r)) for r in rows]
+    return resolve_lines(_pos_lines(conn, restaurant_id, start, end))
+
+
 def _alt_units(conn, restaurant_id) -> dict:
     try:
         rows = conn.execute("SELECT category_id, alt_qty_unit FROM pos_sales_categories WHERE restaurant_id=? "
@@ -853,11 +937,17 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     conn = get_conn(db_path)
     try:
         item_names = {}
-        for r in conn.execute("SELECT provider, item_id, MAX(item_name) FROM pos_ticket_lines WHERE restaurant_id=? "
-                              "AND business_date>=? AND business_date<=? AND item_id IS NOT NULL "
-                              "GROUP BY provider, item_id", (int(restaurant_id), start, end)).fetchall():
+        import pos_archive
+        if pos_archive.rolled_window(conn, restaurant_id, start, end):
+            # The rollup keeps no NULL item: '' is "no item" there.
+            q = ("SELECT provider, item_id, MAX(item_name) FROM pos_item_daily WHERE restaurant_id=? "
+                 "AND business_date>=? AND business_date<=? AND item_id <> '' GROUP BY provider, item_id")
+        else:
+            q = ("SELECT provider, item_id, MAX(item_name) FROM pos_ticket_lines WHERE restaurant_id=? "
+                 "AND business_date>=? AND business_date<=? AND item_id IS NOT NULL GROUP BY provider, item_id")
+        for r in conn.execute(q, (int(restaurant_id), start, end)).fetchall():
             item_names[(r[0], str(r[1]))] = r[2]
-        pos_rows = _pos_lines(conn, restaurant_id, start, end)
+        pos_rows = _pos_groups(conn, restaurant_id, start, end)
         alt = _alt_units(conn, restaurant_id)
         from bar.sales import _filer
         filed = _filer(conn, int(restaurant_id))
@@ -901,14 +991,8 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         if ck not in prods or prods[ck].pack is None:
             continue
         targets[(s["provider"], str(s["item_id"]))].append((ck, "oz", float(s["oz"]), "recipe_card", None))
-    # Walk the POS lines: modifiers follow their parent.
-    by_id = {r["line_id"]: r for r in pos_rows}
-    mult = defaultdict(lambda: 1.0)
-    for r in pos_rows:
-        par = r.get("parent_line_id")
-        if par and par in by_id and DOUBLE_RE.search(str(r.get("item_name") or "")):
-            mult[par] = 2.0
-    bucket_tickets = _bucket_tickets(pos_rows)
+    # Walk the POS lines by item and day (resolve_lines: modifiers already
+    # follow their parent, a "double" already multiplies it).
     linked_nights = sum(1 for d in have if nights.get(d, 1) >= 4)
     if mapping is None:
         from bar.mapping import Mapping
@@ -924,14 +1008,9 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
     unsized = set()
     spec_pending = {(s["provider"], s["item_name"].lower()) for s in suggested}
     for r in pos_rows:
-        par = by_id.get(r.get("parent_line_id")) if r.get("parent_line_id") else None
-        kind = par["kind"] if par is not None else r["kind"]
-        m = mult[par["line_id"]] if par is not None else mult[r["line_id"]]
-        qty = _f(r["qty"])
-        if par is not None and qty == 0:
-            qty = _f(par["qty"])
-        if kind in ("comp", "void"):
-            qty = abs(qty)
+        kind = r["kind_eff"]
+        m = float(r["mult"])
+        qty = _f(r["qty_eff"])
         dep, sub = filed(r)
         bar_kind = mapping.resolve(*key_for(dep, sub))["kind"]
         is_drink = bar_kind in POUR_CATEGORIES
@@ -944,11 +1023,12 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         k = (r["provider"], str(r["item_id"] or ""))
         tg = targets.get(k)
         if not tg:
-            pure_mod = par is not None and (DOUBLE_RE.search(str(r.get("item_name") or "")) or _f(r["sales"]) == 0)
+            pure_mod = bool(r["pure_mod"])
+            rung = not r["qty_zero"]
             why = owner_aside.get(k) or set_aside_reason(r["item_name"])
-            if why == "bucket" and r.get("ticket_id") not in bucket_tickets:
+            if why == "bucket" and not r["in_bucket"]:
                 why = None          # a bucket rung as one item: its beers are in it, ask about it
-            if is_drink and kind == "sale" and r["item_id"] and not pure_mod and qty and why:
+            if is_drink and kind == "sale" and r["item_id"] and not pure_mod and rung and why:
                 # Set aside, and still in the matched share's base: its sales
                 # carry no theoretical (BAR-CALC-05).
                 a = aside.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"], "category": bar_kind,
@@ -958,7 +1038,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                 a["sales_usd"] += _f(r["sales"])
                 aside_sales[bar_kind] += _f(r["sales"])
                 continue
-            if is_drink and kind == "sale" and r["item_id"] and not pure_mod and qty:
+            if is_drink and kind == "sale" and r["item_id"] and not pure_mod and rung:
                 u = unmapped.setdefault(k, {"provider": k[0], "item_id": k[1], "item": r["item_name"],
                                             "category": bar_kind, "rung_units": 0.0, "sales_usd": 0.0,
                                             "spec_suggested": (k[0], str(r["item_name"] or "").lower()) in spec_pending})
@@ -969,7 +1049,7 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
         if kind == "sale" and is_drink:
             matched_lines.append((bar_kind, day, _f(r["sales"]), tuple(t[0] for t in tg), known))
         unit_alt = alt.get(str(r.get("category_id") or ""))
-        aqu = _f(r.get("aqu_count"))
+        aqu = _f(r["aqu"]) if r["has_aqu"] else 0.0
         for ck, mode, oz, basis, assume in tg:
             p = prods[ck]
             p.drinks.add(r["item_name"] or k[1])
@@ -997,10 +1077,10 @@ def compute(restaurant_id, today=None, db_path=None, lines=None, counted=None, c
                 p.rung_oz[kind] += line_oz
                 p.rung_oz_day[kind][day] += line_oz
             if kind == "sale":
-                p.rung_lines += 1
-                if len(tg) == 1 and _f(r.get("cost")) > 0:
-                    p.rpower_cost += _f(r["cost"])
-                    p.rpower_cost_lines += 1
+                p.rung_lines += int(r["lines"])
+                if len(tg) == 1 and int(r["cost_lines"]) > 0:
+                    p.rpower_cost += _f(r["cost_pos"])
+                    p.rpower_cost_lines += int(r["cost_lines"])
     # Distributor gaps inside the span mark their products incomplete.
     gapped = set()
     try:

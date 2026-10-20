@@ -33,3 +33,4 @@ ios/CavnarAI/.dev-url
 # Ember Core render scratch (brand/ember-core/README.txt)
 brand/ember-core/render/frames/
 brand/ember-core/render/ember-core.js
+scripts/loadtest/users.csv

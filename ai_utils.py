@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import sqlite3
 import sys
@@ -88,7 +89,8 @@ AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", "150"))
 # two clients; the per-client allowance means the ceiling grows with the
 # business instead of throttling it.
 #
-# $30 a paying client (AI cost audit 10/7/26 #23; it was $200). A full-tier
+# (History: $30 a paying client from the AI cost audit, 10/7/26 #23 — since
+# SCALE-11 below it is each client's own monthly ceiling, $150.) A full-tier
 # restaurant runs well under a dollar a day — $15-25 a month with a weekly
 # Opus schedule — so $200 each let the pool climb to ~8x real use before it
 # noticed anything: at 50 clients a runaway could spend $10,000 a month with
@@ -169,7 +171,7 @@ def invalidate_budget_memo(restaurant_id=None):
             _budget_memo.clear()
             return
         for key in list(_budget_memo):
-            if key[0] == "paying" or (key[0] == "tier" and key[2] == restaurant_id):
+            if key[0] in ("paying", "trials") or (key[0] == "tier" and key[2] == restaurant_id):
                 _budget_memo.pop(key, None)
 
 
@@ -199,6 +201,30 @@ def _paying_client_count(db_path=None):
         n = int(n or 0)
     except Exception:
         # Not memoised: a failed read must not pin the pool to its floor.
+        return 0
+    _memo_put(key, n)
+    return n
+
+
+def _trial_client_count(db_path=None):
+    """Trial restaurants that are not demos — what the trial pool (A4-05)
+    and the Places pool (A4-04) grow by. Memoised like the paying count."""
+    key = ("trials", _memo_db(db_path))
+    hit, value = _memo_get(key)
+    if hit:
+        return value
+    try:
+        from models import get_conn, DB_PATH
+        conn = get_conn(db_path or DB_PATH)
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) c FROM restaurants "
+                f"WHERE LOWER(TRIM(COALESCE(billing_status,''))) IN {_TRIAL_STATES_SQL} "
+                "AND COALESCE(is_demo, 0) = 0").fetchone()["c"]
+        finally:
+            conn.close()
+        n = int(n or 0)
+    except Exception:
         return 0
     _memo_put(key, n)
     return n
@@ -285,6 +311,42 @@ _BUDGET_ACTION = contextvars.ContextVar("cavnar_ai_budget_action", default=None)
 # normal use never meets it; 80% pages Will. 0 disables it.
 AI_TRIAL_POOL_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_DAILY_USD", "50"))
 AI_TRIAL_POOL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MONTHLY_USD", "500"))
+# ...which are FLOORS since the scale audit of 10/19/26 (A4-05). One fixed
+# $500 a month for every trial together met normal use (~$15 a restaurant a
+# month) at ~33 trials — and Simple EJ's itself is a trial: an RPOWER
+# rollout provisioned as trials would have stopped every trial's Ask, DSR,
+# drafts and diagnoses mid-month. The pool now grows by
+# AI_TRIAL_POOL_PER_TRIAL_DAILY_USD / _MONTHLY_USD a non-demo trial (half a
+# trial's own ceiling: a fleet of trials ALL at their own ceiling still
+# meets it, a fleet in normal use never does), up to the absolute
+# AI_TRIAL_POOL_MAX_DAILY_USD / _MONTHLY_USD — the runaway backstop for a
+# provisioning bug or a scripted signup (0 = none). At ~$15 a trial a month
+# the default maximum binds near 330 trials: raise it, or provision a
+# rollout as paying (`active`), before then. 80% of either still pages.
+AI_TRIAL_POOL_PER_TRIAL_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_PER_TRIAL_DAILY_USD", "2.5"))
+AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD", "25"))
+AI_TRIAL_POOL_MAX_DAILY_USD = float(os.getenv("AI_TRIAL_POOL_MAX_DAILY_USD", "500"))
+AI_TRIAL_POOL_MAX_MONTHLY_USD = float(os.getenv("AI_TRIAL_POOL_MAX_MONTHLY_USD", "5000"))
+
+
+def trial_pool_budgets(db_path=None):
+    """(daily, monthly) ceilings of every trial's spend together: the floor,
+    or the per-trial allowance times the non-demo trials, at most the
+    absolute maximum when one is set (A4-05). A floor of 0 disables that
+    window, as before."""
+    trials = _trial_client_count(db_path)
+    out = []
+    for floor, per, cap in ((AI_TRIAL_POOL_DAILY_USD, AI_TRIAL_POOL_PER_TRIAL_DAILY_USD, AI_TRIAL_POOL_MAX_DAILY_USD),
+                            (AI_TRIAL_POOL_MONTHLY_USD, AI_TRIAL_POOL_PER_TRIAL_MONTHLY_USD,
+                             AI_TRIAL_POOL_MAX_MONTHLY_USD)):
+        if not floor:
+            out.append(0.0)
+            continue
+        v = max(floor, trials * max(0.0, per))
+        if cap and cap > 0:
+            v = min(v, max(cap, floor))
+        out.append(float(v))
+    return out[0], out[1]
 
 # Google Places is a data API, not AI, and has its own per-restaurant ceiling
 # (owner decision 2). Its spend used to draw down the AI ceiling — a geocode
@@ -314,8 +376,19 @@ AI_PLACES_GLOBAL_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MONTHLY_USD", "
 # times a restaurant's few dollars a month), never past
 # AI_PLACES_GLOBAL_MAX_MONTHLY_USD — a deliberate Railway variable, not a
 # side effect of signing clients (places_global_monthly_budget).
+#
+# Scale audit 10/19/26 (A4-04): the $3,000 absolute maximum was the SCALE-11
+# flaw the AI pool had removed — at ~300-860 restaurants (measured $3.5 a
+# restaurant a month, ~$10 with a full daily competitor set) normal use met
+# it and competitor intel, the own rating, onboarding's first look and the
+# weather geocode were refused for every client until the 1st. There is no
+# absolute maximum by default now (0 = none, as AI_GLOBAL_MAX_MONTHLY_BUDGET_
+# USD); the pool grows with every client restaurant — paying, and trials
+# that are not demos, whose Places spend it counts too — and each one's own
+# $3 day / $30 month plus the 80% page are the runaway bounds. A maximum
+# set on purpose still binds.
 AI_PLACES_GLOBAL_PER_CLIENT_USD = float(os.getenv("AI_PLACES_GLOBAL_PER_CLIENT_USD", "15"))
-AI_PLACES_GLOBAL_MAX_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MAX_MONTHLY_USD", "3000"))
+AI_PLACES_GLOBAL_MAX_MONTHLY_USD = float(os.getenv("AI_PLACES_GLOBAL_MAX_MONTHLY_USD", "0"))
 
 # Spend past this share of a ceiling is a warning: an issue on the console
 # and, for the global pool, a page — before the ceiling stops anything.
@@ -440,7 +513,7 @@ _AI_ROW_SQL = "(COALESCE(vendor,'') <> 'google_places' AND COALESCE(model,'') NO
 
 
 def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, scope="ai", trials_only=False,
-                 actions=None):
+                 actions=None, _rollup=True):
     """Spend since `sql_window` for one budget scope.
 
     scope "ai" — Claude and Perplexity. A restaurant's own figure leaves out
@@ -449,9 +522,25 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, 
     global pool counts them, so they are never unbounded.
     scope "places" — Google Places only.
     trials_only — every trial account's own spend together (not a demo's,
-    not an admin's run): the trial pool."""
+    not an admin's run): the trial pool.
+
+    A FLEET month (no restaurant: the paying pool, the trial pool, the
+    Places pool) is read from the nightly daily rollup for the month's
+    complete days plus the raw rows after them (scale audit 10/19/26 A4-12:
+    a SUM over a month of every restaurant's ledger rows ran on the call
+    path once a minute per process — ~1.5M rows a month at 1,500
+    restaurants). _spend_from_rollup; anything it cannot read falls back to
+    the raw SUM, as before."""
     from models import get_conn, DB_PATH
     path = db_path or DB_PATH
+    if _rollup and restaurant_id is None and str(sql_window).endswith("-01 00:00:00"):
+        try:
+            got = _spend_from_rollup(sql_window, path, paid_only=paid_only, scope=scope, trials_only=trials_only,
+                                     actions=actions)
+            if got is not None:
+                return got
+        except Exception as e:
+            log.warning("month spend from the rollup failed, summing the ledger: %s", e)
     conn = get_conn(path)
     try:
         _ensure_usage_schema(conn, path)
@@ -490,6 +579,73 @@ def _spend_since(sql_window, restaurant_id=None, db_path=None, paid_only=False, 
         return float(row["spend"] or 0.0)
     finally:
         conn.close()
+
+
+_ROLLUP_PLACES_SQL = "(vendor='google_places' OR model LIKE 'google-places%')"
+_ROLLUP_AI_SQL = "(vendor <> 'google_places' AND model NOT LIKE 'google-places%')"
+
+
+def _rollup_complete_through(conn, first_day, today):
+    """The last day D (first_day <= D < today) such that every day from
+    first_day through D is in ai_usage_daily and was rolled after it ended —
+    so its figures are final — or None. A day with no rollup row ends the
+    run: no usage and "not rolled yet" look the same, and the raw rows are
+    the safe answer for both."""
+    from datetime import date, timedelta
+    rows = conn.execute("SELECT day, MAX(updated_at) AS u FROM ai_usage_daily WHERE day >= ? AND day < ? "
+                        "GROUP BY day", (first_day, today)).fetchall()
+    rolled = {str(r["day"])[:10]: str(r["u"] or "") for r in rows}
+    d, last = date.fromisoformat(first_day), None
+    end = date.fromisoformat(today)
+    while d < end:
+        nxt = (d + timedelta(days=1)).isoformat()
+        stamp = rolled.get(d.isoformat())
+        if stamp is None or stamp.replace("T", " ")[:10] < nxt:
+            break
+        last = d.isoformat()
+        d += timedelta(days=1)
+    return last
+
+
+def _spend_from_rollup(sql_window, path, paid_only=False, scope="ai", trials_only=False, actions=None):
+    """A fleet month's spend (_spend_since with no restaurant) as the daily
+    rollup's complete days plus the raw rows since (A4-12), or None when no
+    day of the month is complete in the rollup yet. The same rows count as
+    the raw SUM: `admin_cost_usd` is what an admin ran, so a client pool
+    leaves it out and the paying pool counts it for every restaurant."""
+    from datetime import date, timedelta
+    from models import get_conn
+    first = str(sql_window)[:10]
+    conn = get_conn(path)
+    try:
+        today = conn.execute("SELECT date('now') AS d").fetchone()["d"]
+        through = _rollup_complete_through(conn, first, str(today)[:10])
+        if through is None:
+            return None
+        where = "WHERE day >= ? AND day <= ? AND " + (_ROLLUP_PLACES_SQL if scope == "places" else _ROLLUP_AI_SQL)
+        params = [first, through]
+        if actions:
+            where += " AND action IN (" + ",".join("?" for _a in actions) + ")"
+            params += list(actions)
+        if paid_only:
+            expr = ("CASE WHEN restaurant_id IS NULL OR restaurant_id IN (SELECT id FROM restaurants WHERE "
+                    "LOWER(TRIM(COALESCE(billing_status,''))) IN " + _PAID_STATES_SQL + ") "
+                    "THEN cost_usd ELSE admin_cost_usd END")
+        elif trials_only:
+            expr = "cost_usd - admin_cost_usd"
+            where += (" AND restaurant_id IN (SELECT id FROM restaurants WHERE "
+                      "LOWER(TRIM(COALESCE(billing_status,''))) IN " + _TRIAL_STATES_SQL
+                      + " AND COALESCE(is_demo, 0) = 0)")
+        else:
+            expr = "cost_usd"
+        row = conn.execute(f"SELECT COALESCE(SUM({expr}), 0) AS spend FROM ai_usage_daily {where}",
+                           params).fetchone()
+        rolled = float(row["spend"] or 0.0)
+    finally:
+        conn.close()
+    after = (date.fromisoformat(through) + timedelta(days=1)).isoformat() + " 00:00:00"
+    return rolled + _spend_since(after, None, path, paid_only=paid_only, scope=scope, trials_only=trials_only,
+                                 actions=actions, _rollup=False)
 
 
 def _current_windows():
@@ -582,12 +738,13 @@ def _finish_status(out):
 
 def _trial_pool_status(day, month, db_path):
     """Every trial's spend together against the trial pool (trial_pool_day /
-    trial_pool_month)."""
+    trial_pool_month), each ceiling scaled by the trials (A4-05)."""
+    daily, monthly = trial_pool_budgets(db_path)
     return {"trial_pool_day": {"spend": _cached_spend(("trial_pool", day), day, None, db_path, trials_only=True),
-                               "budget": AI_TRIAL_POOL_DAILY_USD, "resets_at": _resets_at("day")},
+                               "budget": daily, "resets_at": _resets_at("day")},
             "trial_pool_month": {"spend": _cached_spend(("trial_pool", month), month, None, db_path,
                                                         trials_only=True),
-                                 "budget": AI_TRIAL_POOL_MONTHLY_USD, "resets_at": _resets_at("month")}}
+                                 "budget": monthly, "resets_at": _resets_at("month")}}
 
 
 def ai_budget_status(restaurant_id=None, db_path=None):
@@ -653,14 +810,17 @@ PLACES_GLOBAL_LABEL = "monthly Google Places budget across all clients"
 
 
 def places_global_monthly_budget(db_path=None):
-    """The platform's Google Places ceiling for this many paying clients
+    """The platform's Google Places ceiling for this many client restaurants
     (#9): never below AI_PLACES_GLOBAL_MONTHLY_USD, otherwise
-    AI_PLACES_GLOBAL_PER_CLIENT_USD a paying client, at most
-    AI_PLACES_GLOBAL_MAX_MONTHLY_USD. 0 still disables it."""
+    AI_PLACES_GLOBAL_PER_CLIENT_USD a paying or (non-demo) trial
+    restaurant; AI_PLACES_GLOBAL_MAX_MONTHLY_USD only when set (A4-04: no
+    absolute maximum by default). 0 still disables it."""
     if not AI_PLACES_GLOBAL_MONTHLY_USD:
         return 0.0
-    scaled = max(AI_PLACES_GLOBAL_MONTHLY_USD, _paying_client_count(db_path) * AI_PLACES_GLOBAL_PER_CLIENT_USD)
-    if AI_PLACES_GLOBAL_MAX_MONTHLY_USD:
+    clients = _paying_client_count(db_path) + _trial_client_count(db_path)
+    scaled = max(AI_PLACES_GLOBAL_MONTHLY_USD, clients * AI_PLACES_GLOBAL_PER_CLIENT_USD)
+    # An absolute ceiling binds only when one was set on purpose (A4-04).
+    if AI_PLACES_GLOBAL_MAX_MONTHLY_USD and AI_PLACES_GLOBAL_MAX_MONTHLY_USD > 0:
         scaled = min(scaled, max(AI_PLACES_GLOBAL_MAX_MONTHLY_USD, AI_PLACES_GLOBAL_MONTHLY_USD))
     return scaled
 
@@ -778,7 +938,8 @@ def _record_budget_stop(scope, restaurant_id, vendor="anthropic"):
     if scope in _TRIAL_POOL_SCOPES.values():
         _page(f"budget_stop:trial_pool:{vendor}", "Cavnar AI: AI is paused for every trial account (budget)",
               [f"The {scope} was reached — every trial's AI calls are refused until it resets or the "
-               f"ceiling is raised (AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD).",
+               f"ceiling is raised (AI_TRIAL_POOL_MAX_DAILY_USD / AI_TRIAL_POOL_MAX_MONTHLY_USD, or the "
+               f"per-trial allowance AI_TRIAL_POOL_PER_TRIAL_*).",
                "Paying clients are not affected. If these are real trials, raise the ceiling; if not, "
                "look at who created them. Open the admin console → Operations → AI to see what spent it."])
     if scope == PLACES_GLOBAL_LABEL:
@@ -833,7 +994,8 @@ def _note_budget_warnings(status, restaurant_id, vendor="anthropic"):
                                                      f"{int(AI_BUDGET_WARN_PCT)}%",
                   [f"All trial accounts together: {detail}.",
                    "At 100% every trial's AI calls are refused until it resets; paying clients are not "
-                   "affected. Raise AI_TRIAL_POOL_DAILY_USD / AI_TRIAL_POOL_MONTHLY_USD if the trials are real."])
+                   "affected. Raise AI_TRIAL_POOL_MAX_DAILY_USD / AI_TRIAL_POOL_MAX_MONTHLY_USD if the trials "
+                   "are real."])
         if scope == "global_month" and vendor == "google_places":
             _page("budget_warn:google_places", "Cavnar AI: the platform Google Places budget is past "
                                               f"{int(AI_BUDGET_WARN_PCT)}%",
@@ -1412,6 +1574,11 @@ def user_facing_error(exc, fallback="Couldn't get an answer right now — try ag
                 "try again in a moment."), 503
     if isinstance(exc, AIProviderDown):
         return str(exc), 503
+    # The provider's rate limit after the retries (A4-02): a moment's wait
+    # clears it, like "busy" — never "something went wrong".
+    if isinstance(exc, anthropic.RateLimitError) or getattr(exc, "status_code", None) == 429:
+        return ("Cavnar AI is busy with other requests right now — nothing is lost, "
+                "try again in a moment."), 503
     if isinstance(exc, AIRefused):
         return ("Cavnar AI can't answer that one as asked. Try rephrasing it, "
                 "or ask about a specific part of the business."), 422
@@ -1492,7 +1659,14 @@ MODELS = {
     "marketing_insight":   ("CLAUDE_MODEL",           HAIKU_55),
     "guest_marketing":     ("GUEST_MARKETING_MODEL",  SONNET_55),
     "recipes":             ("RECIPE_MODEL",           SONNET_55),
-    "invoices":            ("INVOICE_MODEL",          OPUS),
+    # Claude Opus 5.5 since the scale audit of 10/19/26 (A4-11): the same
+    # capability tier as Opus 5 at a fifth less ($4/$20 v $5/$25), its
+    # thinking at the low effort a call naming none gets. No stored-invoice
+    # eval has been run (scripts/invoice_model_eval.py), so not a cheaper
+    # tier: the arithmetic gate (extraction_verdict) still checks every read
+    # and the owner still confirms every line. INVOICE_MODEL=claude-opus-5
+    # rolls back.
+    "invoices":            ("INVOICE_MODEL",          OPUS_55),
     "reporter":            ("CLAUDE_REPORTER_MODEL",  SONNET_55),
     "email_personalise":   ("CLAUDE_MODEL",           HAIKU_55),
     "sales_audit_notes":   ("SALES_AUDIT_NOTES_MODEL", SONNET_55),
@@ -1713,7 +1887,104 @@ INTERACTIVE_AI_WAIT_SECONDS = float(os.getenv("INTERACTIVE_AI_WAIT_SECONDS", "3"
 INTERACTIVE_AI_TIMEOUT = float(os.getenv("INTERACTIVE_AI_TIMEOUT", "40"))
 INTERACTIVE_AI_RETRIES = 1
 DEFAULT_AI_RETRIES = 2
-_INTERACTIVE_SLOTS = threading.BoundedSemaphore(INTERACTIVE_AI_SLOTS)
+# A hard ceiling on the slots one restaurant may hold at once (0: none — a
+# lone restaurant may use every slot while nobody else waits).
+INTERACTIVE_AI_PER_TENANT_MAX = max(0, int(os.getenv("INTERACTIVE_AI_PER_TENANT_MAX", "0") or 0))
+
+
+class FairSlots:
+    """The interactive slots, shared fairly between restaurants (scale audit
+    10/19/26 SEC-06: a BoundedSemaphore let one restaurant's two open Ask
+    tabs hold both slots while every other owner's reply draft and insight
+    waited 3 s and was told "busy"). Work-conserving: a free slot is taken
+    at once when nobody waits, so a lone restaurant is served exactly as
+    before. Under contention a freed slot is handed to the WAITING
+    restaurant holding the fewest slots, then the one served longest ago,
+    then the first to ask — so no restaurant holds more than its share
+    while another waits. INTERACTIVE_AI_PER_TENANT_MAX (when > 0) is a hard
+    ceiling per restaurant on top. Duck-types BoundedSemaphore's acquire /
+    release / _value, so the guard's callers (and a test's plain semaphore)
+    work either way."""
+
+    def __init__(self, n, per_tenant_max=0):
+        self._n = max(1, int(n))
+        self._free = self._n
+        self._per = max(0, int(per_tenant_max or 0))
+        self._held = {}
+        self._served = {}
+        self._waiters = []          # [tenant, event, seq, granted]
+        self._seq = 0
+        self._lock = threading.Lock()
+
+    @property
+    def _value(self):
+        return self._free
+
+    def _may(self, tenant):
+        return not self._per or self._held.get(tenant, 0) < self._per
+
+    def _grant(self, tenant):
+        self._free -= 1
+        self._held[tenant] = self._held.get(tenant, 0) + 1
+        self._served[tenant] = time.monotonic()
+        if len(self._served) > 5000:
+            self._served.clear()
+
+    def _dispatch(self):
+        while self._free > 0:
+            cands = [w for w in self._waiters if not w[3] and self._may(w[0])]
+            if not cands:
+                return
+            w = min(cands, key=lambda c: (self._held.get(c[0], 0), self._served.get(c[0], 0.0), c[2]))
+            w[3] = True
+            self._waiters.remove(w)
+            self._grant(w[0])
+            w[1].set()
+
+    def acquire(self, blocking=True, timeout=None, tenant=None):
+        with self._lock:
+            # Free and nobody waiting who could take it (a waiter held back
+            # by its own per-restaurant ceiling does not block another).
+            if self._free > 0 and self._may(tenant) and \
+                    not any(not w[3] and self._may(w[0]) for w in self._waiters):
+                self._grant(tenant)
+                return True
+            if not blocking or (timeout is not None and timeout <= 0):
+                return False
+            self._seq += 1
+            w = [tenant, threading.Event(), self._seq, False]
+            self._waiters.append(w)
+            self._dispatch()
+        w[1].wait(timeout)
+        with self._lock:
+            if w[3]:
+                return True
+            if w in self._waiters:
+                self._waiters.remove(w)
+            return False
+
+    def release(self, tenant=None):
+        with self._lock:
+            if self._free >= self._n:
+                raise ValueError("FairSlots released too many times")
+            if self._held.get(tenant, 0) <= 0:
+                # Released under another name than it was taken (a caller
+                # that could not say whose it was): give back some holder's.
+                tenant = next((t for t, n in self._held.items() if n > 0), tenant)
+            n = self._held.get(tenant, 0) - 1
+            if n > 0:
+                self._held[tenant] = n
+            else:
+                self._held.pop(tenant, None)
+            self._free += 1
+            self._dispatch()
+
+    def held_by(self):
+        with self._lock:
+            return dict(self._held)
+
+
+_INTERACTIVE_SLOTS = FairSlots(INTERACTIVE_AI_SLOTS, INTERACTIVE_AI_PER_TENANT_MAX)
 # True while this context holds a slot (a turn, or the call itself), so a
 # nested call — or a pool thread run in a copy of this context — takes none.
 _INTERACTIVE_HELD = contextvars.ContextVar("cavnar_ai_interactive_held", default=False)
@@ -1787,19 +2058,40 @@ def on_request_thread() -> bool:
         return False
 
 
-def acquire_interactive_slot(wait=None) -> bool:
-    """Take one interactive slot, waiting at most `wait` seconds
-    (INTERACTIVE_AI_WAIT_SECONDS by default). False when none came free.
-    The caller releases it with release_interactive_slot() — from whichever
+def _slot_tenant(tenant=None):
+    """Whose slot this is: the restaurant named, else the one the context
+    or the request's session names (None for a call for no one)."""
+    if tenant is not None:
+        return tenant
+    try:
+        return _context_restaurant()
+    except Exception:
+        return None
+
+
+def acquire_interactive_slot(wait=None, tenant=None) -> bool:
+    """Take one interactive slot for `tenant` (a restaurant id; the
+    context's when omitted), waiting at most `wait` seconds
+    (INTERACTIVE_AI_WAIT_SECONDS by default) — in the fair order of
+    FairSlots while others wait. False when none came free. The caller
+    releases it with release_interactive_slot(tenant) — from whichever
     thread finishes the work."""
     if wait is None:
         wait = _SLOT_WAIT.get()
-    return _INTERACTIVE_SLOTS.acquire(timeout=INTERACTIVE_AI_WAIT_SECONDS if wait is None else max(0.0, wait))
+    timeout = INTERACTIVE_AI_WAIT_SECONDS if wait is None else max(0.0, wait)
+    slots = _INTERACTIVE_SLOTS
+    if isinstance(slots, FairSlots):
+        return slots.acquire(timeout=timeout, tenant=_slot_tenant(tenant))
+    return slots.acquire(timeout=timeout)
 
 
-def release_interactive_slot():
+def release_interactive_slot(tenant=None):
     try:
-        _INTERACTIVE_SLOTS.release()
+        slots = _INTERACTIVE_SLOTS
+        if isinstance(slots, FairSlots):
+            slots.release(tenant=_slot_tenant(tenant))
+        else:
+            slots.release()
     except ValueError:
         log.error("interactive AI slot released more often than it was taken")
 
@@ -2189,6 +2481,63 @@ def _is_retryable(exc):
     return type(exc).__name__ in ("OverloadedError", "ServiceUnavailableError", "DeadlineExceededError")
 
 
+# The longest retry-after a background call waits out before its retry, and
+# the longest an owner's call (a request thread) does — past it the call is
+# not retried at all (scale audit 10/19/26 A4-02).
+AI_RETRY_AFTER_MAX_SECONDS = float(os.getenv("AI_RETRY_AFTER_MAX_SECONDS", "30"))
+AI_RETRY_AFTER_INTERACTIVE_MAX_SECONDS = float(os.getenv("AI_RETRY_AFTER_INTERACTIVE_MAX_SECONDS", "5"))
+
+
+def _retry_after_seconds(exc):
+    """The provider's `retry-after` (seconds) on a failed call, or None."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("retry-after")
+    except Exception:
+        return None
+    try:
+        return max(0.0, float(raw)) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_delay(exc, attempt, backoff, interactive=False):
+    """Seconds before retry `attempt`, or None when it should not be retried.
+    With a retry-after: that, plus up to a quarter of it (at least half a
+    second) of jitter — None when it is past what this caller may wait. Else
+    full jitter over the exponential step (backoff ** attempt)."""
+    ra = _retry_after_seconds(exc)
+    if ra is not None:
+        cap = AI_RETRY_AFTER_INTERACTIVE_MAX_SECONDS if interactive else AI_RETRY_AFTER_MAX_SECONDS
+        if ra > cap:
+            return None
+        return ra + random.uniform(0.0, max(0.5, ra * 0.25))
+    step = float(backoff) ** attempt
+    return random.uniform(min(0.1, step), step)
+
+
+_RATE_LIMIT_NOTED = {"minute": None}
+
+
+def _note_rate_limited(exc):
+    """One health event a minute per process for calls refused by the
+    provider's rate limit after their retries — the console's signal that
+    the gateway's GATEWAY_ORG_* allocation is missing or set too high."""
+    minute = int(time.time() // 60)
+    if _RATE_LIMIT_NOTED["minute"] == minute:
+        return
+    _RATE_LIMIT_NOTED["minute"] = minute
+    try:
+        record_health_event("anthropic", "rate_limited", scope="rate_limit",
+                            detail=f"a call was refused by the provider's rate limit after its retries "
+                                   f"(retry-after {_retry_after_seconds(exc)})")
+    except Exception as e:
+        log.warning("rate-limit event not recorded: %s", e)
+
+
 def classify_error(exc):
     """A short machine reason for a failed provider call: timeout, connection,
     rate_limit, overloaded, server, auth, permission, credit, not_found,
@@ -2569,8 +2918,15 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                 # re-plans it smaller (the schedule splits it; P-22).
                 if _is_retryable(e) and not (deadline is not None and reason == "timeout"):
                     attempt += 1
-                    if attempt <= retries and (deadline is None or time.time() + backoff ** attempt < float(deadline)):
-                        time.sleep(backoff ** attempt)
+                    # The provider's retry-after when it gave one, else the
+                    # exponential step — either with jitter, so a burst of
+                    # callers refused together does not come back together
+                    # (scale audit 10/19/26 A4-02). An owner's call never
+                    # waits out a long retry-after on its request thread.
+                    delay = _retry_delay(e, attempt, backoff, interactive=on_request)
+                    if delay is not None and attempt <= retries and \
+                            (deadline is None or time.time() + delay < float(deadline)):
+                        time.sleep(delay)
                         continue
                     # Retry budget exhausted — this is the "AI is down" signal the
                     # operator digest exists for, so record it before re-raising.
@@ -2586,8 +2942,18 @@ def create_with_retry(client, retries=None, backoff=1.5, restaurant_id=None, act
                         pass
                     if reason == "overloaded":
                         _note_provider_error("anthropic", reason, e)
+                    if reason == "rate_limit":
+                        # OUR rate limit, not the provider failing (scale
+                        # audit 10/19/26 A4-02): never a breaker failure — five
+                        # of them in a burst used to stop every AI feature for
+                        # every restaurant for a minute. The call is refused;
+                        # the gateway's allocation (GATEWAY_ORG_*) is the
+                        # throttle, and the event is recorded once a minute.
+                        _breaker_release_probe("anthropic")
+                        _note_rate_limited(e)
+                        raise
                     # Only an EXHAUSTED retry budget counts toward the breaker:
-                    # one transient 429 that the retry absorbed is the system
+                    # one transient 5xx that the retry absorbed is the system
                     # working, not a provider that is down.
                     _breaker_record("anthropic", False, reason=reason)
                     raise
@@ -3968,6 +4334,13 @@ def init_ai_ops(db_path=None):
                 if "duplicate column" not in str(e).lower():    # another process added it first
                     raise
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_action ON ai_usage(action, model)")
+        # The boot's backfills below find their rows through these (scale
+        # audit 10/19/26 DB-16): each was a scan of the whole ledger on every
+        # boot, for rows that are almost always none. A partial index holds
+        # only the rows still to do, so it stays empty.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_vendor ON ai_usage(id) WHERE vendor IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_outcome ON ai_usage(id) WHERE outcome IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_no_price ON ai_usage(id) WHERE price_version IS NULL")
         # The re-check dedupe's probe (W4): one text's checks on a surface.
         if cols:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_validation_log_hash ON ai_validation_log(text_hash, surface)")
@@ -4861,9 +5234,58 @@ def prune_ai_ops(db_path=None):
             except sqlite3.Error as e:
                 log.debug("prune_ai_ops skipped %s: %s", name, e)
         conn.commit()
+        try:
+            n = _trim_trace_text(conn)
+            if n:
+                out["ai_calls_text_budget"] = n
+            conn.commit()
+        except sqlite3.Error as e:
+            log.debug("prune_ai_ops skipped the trace text budget: %s", e)
     finally:
         conn.close()
     return out
+
+
+# The most the kept trace text (ai_calls.prompt_z / output_z, compressed)
+# may take on the volume, in MB (scale audit 10/19/26 A4-14: ~1.4 MB a
+# restaurant at the newest AI_TRACE_KEEP_PER_ACTION per action — ~2 GB at
+# 1,500 restaurants on a 5 GB volume). Past it the nightly prune drops the
+# OLDEST text first (the row, its hashes and usage stay). Far above today's
+# few MB, so nothing changes until the fleet grows. 0 = no budget.
+AI_TRACE_TEXT_MAX_MB = float(os.getenv("AI_TRACE_TEXT_MAX_MB", "512") or 0)
+_TRACE_TRIM_BATCH = 500
+_TRACE_TRIM_MAX_BATCHES = 200
+
+
+def _trim_trace_text(conn) -> int:
+    """Drop the oldest kept trace text until it fits AI_TRACE_TEXT_MAX_MB;
+    returns the rows trimmed. Bounded: at most _TRACE_TRIM_MAX_BATCHES
+    batches a night (the next night goes on)."""
+    if AI_TRACE_TEXT_MAX_MB <= 0:
+        return 0
+    budget = AI_TRACE_TEXT_MAX_MB * 1024 * 1024
+    total = float(conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(LENGTH(prompt_z), 0) + COALESCE(LENGTH(output_z), 0)), 0) AS b "
+        "FROM ai_calls WHERE prompt_z IS NOT NULL OR output_z IS NOT NULL").fetchone()["b"] or 0)
+    trimmed = 0
+    for _batch in range(_TRACE_TRIM_MAX_BATCHES):
+        if total <= budget:
+            break
+        rows = conn.execute(
+            "SELECT call_id, COALESCE(LENGTH(prompt_z), 0) + COALESCE(LENGTH(output_z), 0) AS b FROM ai_calls "
+            "WHERE prompt_z IS NOT NULL OR output_z IS NOT NULL ORDER BY created_at, call_id LIMIT ?",
+            (_TRACE_TRIM_BATCH,)).fetchall()
+        if not rows:
+            break
+        ids = []
+        for r in rows:
+            ids.append((r["call_id"],))
+            total -= float(r["b"] or 0)
+            if total <= budget:
+                break
+        conn.executemany("UPDATE ai_calls SET prompt_z=NULL, output_z=NULL WHERE call_id=?", ids)
+        trimmed += len(ids)
+    return trimmed
 
 
 # ── Google Places: one metered, budget-checked request path (#123) ───────────

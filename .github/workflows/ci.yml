@@ -91,7 +91,7 @@ jobs:
           pytest -n 3 --dist loadfile -q -p no:warnings
           tests/test_q2_postgres.py tests/test_sf10_h2_postgres.py
           tests/test_models.py tests/test_auth.py tests/test_auth_hardening.py tests/test_auth_routes.py
-          tests/test_ops.py tests/test_retention.py tests/test_scheduler_lease.py tests/test_edge_data_claims_and_lease.py
+          tests/test_ops.py tests/test_retention.py tests/test_scheduler_lease.py tests/test_edge_data_claims_and_lease.py tests/test_scale_fix_f4.py
           tests/test_sf10_h2_queue.py tests/test_sf11_q1_queue.py tests/test_sf10_h2_gateway.py tests/test_sf10_h2_versions.py
           tests/test_publish_claim.py tests/test_staff_schedule_publish.py tests/test_schedule_publish_gate.py
           tests/test_sf10_i1_prepublish.py tests/test_refix_r6_people.py tests/test_schedule_people_identity.py

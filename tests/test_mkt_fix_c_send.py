@@ -379,6 +379,9 @@ def test_submissions_are_paced_when_they_reach_a_carrier(db_path, clock, texts, 
         now[0] += s
 
     monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    # The restaurant's shared bucket (rate_bucket, SEC-03) keeps wall time;
+    # it reads the same fake clock, so the drain's own interval is what waits.
+    monkeypatch.setattr(time, "time", lambda: now[0])
     monkeypatch.setattr(time, "sleep", _sleep)
     rid = _rid(db_path)
     _guests(db_path, rid, 4)

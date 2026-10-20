@@ -1476,6 +1476,12 @@ DEPLETION_CATCHUP_MAX_DAYS = 14
 LABOR_PREWARM_LOOKBACK_DAYS = 7
 LABOR_PREWARM_MAX_SECONDS = int(os.getenv("LABOR_PREWARM_MAX_SECONDS", str(20 * 60)))
 LABOR_PREWARM_CURSOR_KEY = "labor_prewarm_cursor"
+# Restaurants pre-warmed at once (scale audit 10/19/26 A4-09: two workers x
+# 20 minutes at ~5 s a read covered ~480 restaurants a night, and past that
+# the cursor rotated and the Labor read was paid on page open). Four by
+# default — each read is a model wait, bounded by the gateway's tokens a
+# minute and each restaurant's budgets, not by these threads.
+LABOR_PREWARM_WORKERS = max(1, int(os.getenv("LABOR_PREWARM_WORKERS", "4")))
 
 
 def labor_prewarm_restaurants(db_path=None) -> list:
@@ -1547,7 +1553,7 @@ def run_labor_prewarm(now=None):
             _ops.capture(e, job="labor_prewarm", context=f"restaurant_id={rid}")
 
     _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(), _one,
-                                     LABOR_PREWARM_MAX_SECONDS, workers=2, job="labor_prewarm")
+                                     LABOR_PREWARM_MAX_SECONDS, workers=LABOR_PREWARM_WORKERS, job="labor_prewarm")
     c["hit_bound"] = bool(ran_out)
     return c
 
@@ -2240,6 +2246,52 @@ def _remove_quietly(path):
         pass
 
 
+# A backup past this share of its job bound (jobs_registry backup_db
+# max_minutes) is said out loud, before the night it no longer fits (scale
+# audit 10/19/26 OPS-11: ~78 s/GB measured, so the 60-minute bound is
+# reached near 46 GB; the stage seconds in backup_runs.detail_json are the
+# measured curve).
+BACKUP_SLOW_SHARE = 0.5
+
+
+def _backup_lap(run, stage):
+    """Seconds per backup stage into the run's detail (OPS-11). The first
+    call for 'snapshot' starts the clock."""
+    now = time.monotonic()
+    d = run.setdefault("_detail", {})
+    last = d.pop("_lap_at", None)
+    if last is not None:
+        stages = d.setdefault("stage_seconds", {})
+        stages[stage] = round(stages.get(stage, 0) + (now - last), 1)
+    d["_lap_at"] = now
+
+
+def _backup_too_slow(run):
+    d = run.get("_detail") or {}
+    d.pop("_lap_at", None)
+    total = round(sum((d.get("stage_seconds") or {}).values()), 1)
+    d["total_seconds"] = total
+    try:
+        import jobs_registry
+        bound = 60 * float(jobs_registry.JOBS["backup_db"].get("max_minutes") or 60)
+    except Exception:
+        bound = 3600.0
+    if total <= BACKUP_SLOW_SHARE * bound:
+        return
+    d["slow"] = True
+    _ops.capture(RuntimeError(f"backup_db took {total}s, over {int(BACKUP_SLOW_SHARE * 100)}% of its "
+                              f"{int(bound)}s bound: {d.get('stage_seconds')}"), job="backup_db", context="slow")
+    try:
+        if scheduling_allowed():
+            _ops.page_operator("backup_slow", "Cavnar AI: the nightly backup is nearing its time bound",
+                               [f"{total}s of a {int(bound)}s bound — stages {d.get('stage_seconds')}",
+                                "Move the copy off the app volume before it stops fitting (RECOVERY.md -> The backup; "
+                                "docs/plans/POSTGRES_AND_WORKERS_PLAN.md -> Backups at scale)."],
+                               cooldown_minutes=24 * 60)
+    except Exception as e:
+        log.warning(f"backup_db: slow-backup page failed: {e}")
+
+
 def _redact_snapshot(path):
     """Strip credentials from a COPY of a snapshot before it leaves the
     server (offsite_backup.redact, the one scrub registry)."""
@@ -2283,6 +2335,7 @@ def _backup_failed(run, message, page=True):
     run.setdefault("local_ok", 0)
     run.setdefault("offsite_ok", 0)
     detail = dict(run.pop("_detail", {}) or {})
+    detail.pop("_lap_at", None)
     detail["error"] = str(message)[:300]
     run["detail_json"] = _json.dumps(detail, default=str)[:2000]
     _ops.record_backup_run(run)
@@ -2315,6 +2368,9 @@ def _scrub_lines_html(scrubbed):
                      "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
     if d.get("removed_rows"):
         lines.append(f"<b>Guest text of removed rows</b>: {esc(d['removed_rows'])}.")
+    if d.get("sealed"):
+        lines.append(f"<b>Sealed under CREDENTIAL_KEY</b> (kept for a restore, ciphertext only): "
+                     f"{esc(d['sealed'])}.")
     lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
     return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
 
@@ -2451,6 +2507,17 @@ def backup_db():
         run["wal_bytes"] = os.path.getsize(DB_PATH + "-wal")
     except OSError:
         run["wal_bytes"] = 0
+    import models as _m_size
+    if _m_size._db_backend() == "postgres":
+        # On Postgres DB_PATH is the SQLite file left by the cutover, which
+        # never grows: the free-space gate (and the storage trend) measured
+        # the wrong database. The export this run writes is the live one's
+        # size (scale fix 10/19/26, ONB-1).
+        try:
+            import onboarding as _onb_size
+            run["db_bytes"], run["wal_bytes"] = _onb_size.live_database_bytes(), 0
+        except Exception as e:
+            log.warning(f"backup_db: Postgres size unavailable: {e}")
 
     try:
         os.makedirs(backup_dir, exist_ok=True)
@@ -2476,8 +2543,11 @@ def backup_db():
 
     try:
         local_path = os.path.join(backup_dir, filename + ".gz")
+        _backup_lap(run, "snapshot")
         _write_consistent_snapshot(work_path)
+        _backup_lap(run, "snapshot")
         _gzip_snapshot(work_path, local_path)
+        _backup_lap(run, "gzip")
         run["_detail"]["snapshot_bytes"] = os.path.getsize(work_path)
         # The LOCAL snapshot is NOT redacted, deliberately.
         #
@@ -2544,10 +2614,13 @@ def backup_db():
             raise RuntimeError(f"not enough free space for the encrypted copy: {_free // (1024 * 1024)} MB free, "
                                f"{_need // (1024 * 1024)} MB needed")
         scrubbed = _redact_snapshot(redacted_path) or {}
+        _backup_lap(run, "scrub")
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
         run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
         run["_detail"]["scrubbed_columns"] = len(scrubbed.get("columns") or [])
+        run["_detail"]["sealed_columns"] = scrubbed.get("sealed") or []
         _encrypt_file_chunked(redacted_path, enc_path, key)
+        _backup_lap(run, "encrypt")
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
         digest = offsite_backup.sha256_file(enc_path)
@@ -2557,6 +2630,7 @@ def backup_db():
         if cfg.get("s3"):
             try:
                 up = offsite_backup.upload_file(enc_path, enc_name, sha256_hex=digest)
+                _backup_lap(run, "upload")
                 targets.append(up["target"])
                 log.info(f"backup_db: uploaded {up['target']} ({size_kb} KB, sha256 {digest[:12]}…)")
             except Exception as e:
@@ -2597,6 +2671,7 @@ def backup_db():
     if not targets:
         _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
     run["finished_at"] = _now_utc_stamp()
+    _backup_too_slow(run)
     run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
     _ops.record_backup_run(run)
     _ops.ping_healthcheck()
@@ -3352,6 +3427,10 @@ def _competitor_batch_open(restaurant_id) -> bool:
 
 _COMPETITOR_DAILY_CURSOR_KEY = "competitor_daily_cursor"
 COMPETITOR_DAILY_MAX_SECONDS = 20 * 60
+# Restaurants checked at once (A4-09: one worker covered ~460 a day). Each
+# is Places Details only, on the shared per-day details cache; a restaurant
+# is one worker's, so its own Places ceiling is never raced.
+COMPETITOR_DAILY_WORKERS = max(1, int(os.getenv("COMPETITOR_DAILY_WORKERS", "3")))
 
 
 def run_daily_competitor_ratings():
@@ -3382,18 +3461,29 @@ def run_daily_competitor_ratings():
             continue
         eligible.append(r.id)
 
+    import threading as _thr_cd
+    _lock = _thr_cd.Lock()
+
+    def _count(key, n=1):
+        with _lock:
+            counts[key] += n
+
     def _one(rid):
-        counts["attempted"] += 1
         res = competitor.check_ratings(rid)
         if not res.get("ok"):
             if res.get("reason") == "no competitor read to refresh yet":
-                counts["skipped"] += 1
-                counts["attempted"] -= 1
+                _count("skipped")
                 return
-            counts["failed"] += 1
+            _count("attempted")
+            _count("failed")
             _record(rid, "competitor", False, error=res.get("reason") or "ratings check failed", provider="places")
             return
-        counts["ok"] += 1
+        if res.get("not_due"):
+            # Checked within COMPETITOR_CHECK_EVERY_DAYS (A4-13).
+            _count("skipped")
+            return
+        _count("attempted")
+        _count("ok")
         if res.get("reanalyse"):
             full = competitor.run_competitor_analysis(rid) or {}
             if full.get("batched"):
@@ -3401,9 +3491,9 @@ def run_daily_competitor_ratings():
                 # batch) records the outcome when it lands — as the weekly
                 # pass treats it. Recording success here counted a read that
                 # had not happened, and one that later failed (re-audit P3).
-                counts["batched"] += 1
+                _count("batched")
             elif full.get("ok") is not False:
-                counts["reanalysed"] += 1
+                _count("reanalysed")
                 _record(rid, "competitor", True, provider="places")
             else:
                 _record(rid, "competitor", False, error=full.get("error") or "competitor analysis failed",
@@ -3411,7 +3501,8 @@ def run_daily_competitor_ratings():
 
     if eligible:
         _done, hit = resumable_sweep(_COMPETITOR_DAILY_CURSOR_KEY, sorted(eligible), _one,
-                                     COMPETITOR_DAILY_MAX_SECONDS, workers=1, job="competitor_daily")
+                                     COMPETITOR_DAILY_MAX_SECONDS, workers=COMPETITOR_DAILY_WORKERS,
+                                     job="competitor_daily")
         counts["hit_bound"] = bool(hit)
     return counts
 
@@ -3447,6 +3538,24 @@ def run_daily_web_analytics():
                                      workers=1, job="web_analytics")
         counts["hit_bound"] = bool(hit)
     return counts
+
+
+# The weekly visibility checks spread over this many days from Monday by
+# restaurant id (scale audit 10/19/26 A4-15): one Perplexity rate limit and
+# one worker meet ~1,350 restaurants a pass. 1 (the default): every
+# restaurant from Monday, as before. The daily retry pass reaches each
+# restaurant's own day; a missed day is caught up on the next.
+AI_VISIBILITY_SPREAD_DAYS = max(1, min(7, int(os.getenv("AI_VISIBILITY_SPREAD_DAYS", "1") or 1)))
+
+
+def _visibility_due_today(restaurant_id, now=None) -> bool:
+    if AI_VISIBILITY_SPREAD_DAYS <= 1:
+        return True
+    try:
+        day = (now or _chi_now()).weekday()
+        return int(restaurant_id) % AI_VISIBILITY_SPREAD_DAYS <= day
+    except Exception:
+        return True
 
 
 def run_weekly_ai_visibility(retry_only=False):
@@ -3498,7 +3607,8 @@ def run_weekly_ai_visibility(retry_only=False):
     eligible = [r for r in get_all_restaurants() if r.id and is_full_tier(r) and in_service(r)]
     # Every pass skips a restaurant already checked this week (#137).
     before = len(eligible)
-    eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)]
+    eligible = [r for r in eligible if not _ok_this_week(r.id, "visibility", week_start)
+                and _visibility_due_today(r.id)]
     _n, hit_bound = _weekly_sweep("ai_visibility", _VISIBILITY_CURSOR_KEY, eligible, _check)
     counts.update(attempted=counts["checked"] + counts["failed"] + counts.get("partial", 0), ok=counts["checked"],
                   skipped=before - len(eligible), hit_bound=bool(hit_bound))
@@ -4326,7 +4436,7 @@ def _drafted_today(generated_at, local_day, r) -> bool:
         return False
 
 
-def run_auto_publish_schedules():
+def run_auto_publish_schedules(enqueue=False, only=None):
     """9am local the day after the restaurant's draft day (Friday for the
     default Thursday draft; models.auto_publish_weekday): queue the draft to go to staff
     AUTO_PUBLISH_UNDO_MINUTES later, with those two hours as the undo window — for owners who turned it on AND
@@ -4335,7 +4445,14 @@ def run_auto_publish_schedules():
     shared, and made before today (a draft the auto-draft's fallback day
     made this morning waits for its owner). Nothing is sent here;
     delayed.run_due sends it, and the owner is told now so "undo" is a real
-    choice. Bounded and resumable (resumable_sweep, AUTO_PUBLISH_*)."""
+    choice. Bounded and resumable (resumable_sweep, AUTO_PUBLISH_*).
+
+    `enqueue` (the scheduler passes True — scale audit 10/19/26 A5-F14):
+    each restaurant due is one bulk `auto_publish` job_queue row (keyed on
+    it and its local day, its deadline the window's close) run by the queue
+    worker (run_queued_auto_publish → `only`), never a sweep of publish
+    gates on two threads of the web process. `only` — one restaurant's
+    check, as the row runs it."""
     import delayed
     from models import (get_all_restaurants, get_conn, schedule_publish_trust, SCHEDULE_PUBLISH_TRUST_MIN, DB_PATH,
                         auto_publish_weekday)
@@ -4348,7 +4465,13 @@ def run_auto_publish_schedules():
             counts[key] += 1
 
     due = {}
-    for r in get_all_restaurants():
+    if only is not None:
+        from models import get_restaurant as _gr_ap
+        _one_r = _gr_ap(int(only))
+        candidates = [_one_r] if _one_r is not None else []
+    else:
+        candidates = get_all_restaurants()
+    for r in candidates:
         if not getattr(r, "auto_publish_schedule", 0) or not getattr(r, "module_labor", 0):
             continue
         if not _served_client(r):
@@ -4506,11 +4629,65 @@ def run_auto_publish_schedules():
             _ops.capture(e, job="auto_publish_schedule_notice", context=f"restaurant_id={r.id}")
         return True
 
+    if only is not None:
+        for rid in sorted(due):
+            _one(rid)
+        return {"queued": counts["queued"], "skipped": counts["skipped"], "failed": counts["failed"],
+                "attempted": counts["queued"] + counts["failed"], "ok": counts["queued"], "hit_bound": False}
+    if enqueue:
+        # One bulk row per restaurant due, run by the queue worker: each check
+        # is a publish gate (10-40 s), and a morning of thousands held two
+        # threads of the web process for the job's 15 minutes (A5-F14).
+        import job_queue
+        import time as _t_ap
+        items = []
+        for rid in sorted(due):
+            r = due[rid]
+            local = restaurant_now(r, naive=True)
+            left = (local.replace(hour=AUTO_PUBLISH_UNTIL, minute=0, second=0, microsecond=0) - local).total_seconds()
+            items.append({"payload": {"restaurant_id": rid}, "restaurant_id": rid,
+                          "idempotency_key": f"auto_publish:{rid}:{local.date().isoformat()}",
+                          "deadline": _t_ap.time() + max(60.0, left)})
+        queued = job_queue.enqueue_many("auto_publish", items, priority_class="bulk") if items else 0
+        return {"queued": queued, "skipped": counts["skipped"] + len(items) - queued, "attempted": queued,
+                "ok": queued, "failed": 0, "hit_bound": False, "due": len(due)}
     _done, ran_out = resumable_sweep(AUTO_PUBLISH_CURSOR_KEY, sorted(due), _one, AUTO_PUBLISH_MAX_SECONDS,
                                      workers=AUTO_PUBLISH_WORKERS, job="auto_publish_schedule")
     return {"queued": counts["queued"], "skipped": counts["skipped"],
             "attempted": counts["queued"] + counts["failed"], "ok": counts["queued"], "failed": counts["failed"],
             "hit_bound": bool(ran_out), "due": len(due), "reached": int(_done)}
+
+
+def run_queued_auto_publish(job):
+    """job_queue's handler for `auto_publish`: one restaurant's auto-publish
+    check, claimed for its local day when it runs (local_due) — a row that
+    runs after the window closed does nothing (scale audit 10/19/26
+    A5-F14)."""
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    return run_auto_publish_schedules(only=rid)
+
+
+# Railway's healthcheck window (railway.json healthcheckTimeout): a
+# RESTORE_FROM boot does its decompress, checks and migration before
+# gunicorn binds, so it must finish well inside this (OPS-3/OPS-10).
+RESTORE_HEALTHCHECK_SECONDS = 120
+
+
+def _live_count(sql):
+    """One COUNT against the live database, on either backend (the drill's
+    DB_PATH read the SQLite file left behind by the Postgres cutover)."""
+    from models import get_conn
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(sql).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
 
 
 def run_restore_drill():
@@ -4522,7 +4699,8 @@ def run_restore_drill():
     thing the unredacted snapshot exists for — that OAuth tokens survive —
     because a local database holds none. This runs where the snapshot is.
 
-    Quarterly, and from /admin → Jobs. Read-only against production: the
+    Monthly (OPS-10; it was quarterly), and from /admin → Jobs, with the
+    seconds of each restore stage. Read-only against production: the
     snapshot is copied to a scratch path beside it, checked, migrated the
     way a real restore is (init_db), and deleted. Emails Will the result
     either way; a failure also lands in ops like any job.
@@ -4552,6 +4730,17 @@ def run_restore_drill():
         finally:
             conn.close()
 
+    # Seconds per stage (OPS-10): what a RESTORE_FROM boot spends before it
+    # can bind, measured on the real snapshot every month, against the
+    # 120-second healthcheck (RECOVERY.md -> Drill).
+    stages = {}
+    _t0 = [time.monotonic()]
+
+    def _lap(name):
+        now_m = time.monotonic()
+        stages[name] = round(now_m - _t0[0], 1)
+        _t0[0] = now_m
+
     _clean()
     if newest.endswith(".gz"):
         # Decompressed into the scratch file — the step a real restore
@@ -4561,6 +4750,7 @@ def run_restore_drill():
         import models as _models_ck
         _models_ck.checkpoint(newest)       # pooled connections: the file alone holds every commit
         shutil.copyfile(newest, scratch)
+    _lap("decompress")
     # Fresh (#2): the drill picked the newest snapshot with no age check, so
     # a backup that had silently stopped weeks ago still "passed".
     age_hours = round((time.time() - os.path.getmtime(newest)) / 3600.0, 1)
@@ -4569,15 +4759,24 @@ def run_restore_drill():
               "age_hours": age_hours, "fresh": age_hours <= _ops.BACKUP_STALE_HOURS}
     try:
         report["integrity"] = _q(scratch, "PRAGMA integrity_check")
+        _lap("integrity")
         report["restaurants"] = _q(scratch, "SELECT COUNT(*) FROM restaurants")
         report["latest_review"] = _q(scratch, "SELECT MAX(review_date) FROM reviews")
         report["latest_alert"] = _q(scratch, "SELECT MAX(fired_at) FROM alert_log")
         tok = "SELECT COUNT(*) FROM restaurants WHERE gmb_refresh_token IS NOT NULL AND gmb_refresh_token != ''"
         report["google_tokens_in_snapshot"] = _q(scratch, tok)
-        report["google_tokens_live"] = _q(DB_PATH, tok)
+        report["google_tokens_live"] = _live_count(tok)
+        _lap("checks")
         # The migration path a real restore takes: init_db over an older file.
         init_db(scratch)
+        _lap("migrate")
         report["integrity_after_migrate"] = _q(scratch, "PRAGMA integrity_check")
+        _lap("integrity_after_migrate")
+        report["stages"] = stages
+        report["restore_seconds"] = round(sum(stages.values()), 1)
+        # Over the healthcheck, a RESTORE_FROM boot of this snapshot would
+        # fail its deploy: say so (RECOVERY.md -> Restore, OPS-3).
+        report["fits_healthcheck"] = report["restore_seconds"] < RESTORE_HEALTHCHECK_SECONDS
         report["ok"] = (report["integrity"] == "ok" and report["integrity_after_migrate"] == "ok"
                         and (report["restaurants"] or 0) > 0)
         # Tokens: the snapshot is up to a day old, so equality is not
@@ -4604,11 +4803,16 @@ def run_restore_drill():
                  f"Restaurants: {report.get('restaurants')}",
                  f"Newest review: {report.get('latest_review')} · newest alert: {report.get('latest_alert')}",
                  f"Google tokens: {report.get('google_tokens_in_snapshot')} in the snapshot, "
-                 f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}"]
+                 f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}",
+                 f"Restore seconds (local snapshot): {report.get('restore_seconds')} — "
+                 + ", ".join(f"{k} {v}" for k, v in (report.get("stages") or {}).items())
+                 + ("" if report.get("fits_healthcheck", True) else
+                    f" — OVER the {RESTORE_HEALTHCHECK_SECONDS}s healthcheck: a RESTORE_FROM boot of this "
+                    "snapshot would fail its deploy; prepare the restore out of band (RECOVERY.md)")]
         _emails.deliver(email_type="restore_drill", restaurant_id=None, payload={
             "from": _emails.sender("ops"), "to": [config.will_email()],
             "subject": f"Restore drill {'passed' if report['ok'] else 'FAILED'} — {report['snapshot']}",
-            "preheader": "The quarterly proof that the backup restores.",
+            "preheader": "The monthly proof that the backup restores, and how long it takes.",
             "html": _emails._branded_email("".join(f"<p>{_h.escape(x)}</p>" for x in lines)
                                            + "<p>Record the date in docs/ops/RECOVERY.md.</p>")})
     except Exception as e:
@@ -4629,6 +4833,17 @@ def _decrypt_file_chunked(src_path, dest_path, key):
             line = line.strip()
             if line:
                 dst.write(fernet.decrypt(line))
+
+
+def _drill_count(path, sql):
+    import sqlite3
+    c = sqlite3.connect(path)
+    try:
+        return c.execute(sql).fetchone()[0]
+    except sqlite3.Error:
+        return None
+    finally:
+        c.close()
 
 
 def _drill_offsite(backup_dir):
@@ -4658,22 +4873,48 @@ def _drill_offsite(backup_dir):
     object_key = target.split("/", 3)[3] if target.count("/") >= 3 else ""
     enc = os.path.join(backup_dir, "restore_drill_offsite.enc")
     plain = os.path.join(backup_dir, "restore_drill_offsite.db")
+    # Seconds per stage of the restore a lost volume would need (OPS-10):
+    # the drill's own measure of the off-site leg of the RTO.
+    stages = {}
+    _t = [time.monotonic()]
+
+    def _lap(name):
+        now_m = time.monotonic()
+        stages[name] = round(now_m - _t[0], 1)
+        _t[0] = now_m
     try:
         got = offsite_backup.download_file(object_key, enc, cfg=cfg, full_key=True)
+        _lap("download")
         if row["sha256"] and got["sha256"] != row["sha256"]:
-            return {"checked": True, "ok": False,
+            return {"checked": True, "ok": False, "stages": stages,
                     "summary": f"{target}: checksum mismatch ({got['sha256'][:12]}… vs {row['sha256'][:12]}…)"}
         _decrypt_file_chunked(enc, plain, key)
+        _lap("decrypt")
         c = sqlite3.connect(plain)
         try:
             integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
             restaurants = c.execute("SELECT COUNT(*) FROM restaurants").fetchone()[0]
         finally:
             c.close()
-        ok = integrity == "ok" and restaurants > 0
-        return {"checked": True, "ok": ok,
+        _lap("integrity")
+        # The sealed credentials and link secrets open with this server's
+        # CREDENTIAL_KEY (OPS-1): a copy whose seals do not open is a
+        # restore that severs every integration, so the drill fails on it.
+        sealed = offsite_backup.sealed_count(plain)
+        opened = offsite_backup.unseal_file(plain)
+        _lap("unseal")
+        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE rpower_token IS NOT NULL "
+                                          "AND rpower_token != ''")
+        seals_ok = not opened.get("failed")
+        ok = integrity == "ok" and restaurants > 0 and seals_ok
+        return {"checked": True, "ok": ok, "stages": stages, "sealed": sealed,
+                "unsealed": opened.get("unsealed"), "unseal_failed": opened.get("failed"),
+                "rpower_tokens_kept": rpower_kept,
                 "summary": f"{target} ({round(got['bytes'] / 1e6, 1)} MB, uploaded {row['finished_at']} UTC): "
-                           f"checksum ok, decrypts, integrity {integrity}, {restaurants} restaurants"}
+                           f"checksum ok, decrypts, integrity {integrity}, {restaurants} restaurants, "
+                           f"{rpower_kept} RPOWER tokens kept, {opened.get('unsealed')} sealed values opened"
+                           + ("" if seals_ok else f", {opened.get('failed')} did NOT open with CREDENTIAL_KEY")
+                           + " · seconds " + ", ".join(f"{k} {v}" for k, v in stages.items())}
     except Exception as e:
         return {"checked": True, "ok": False, "summary": f"{target}: {e}"}
     finally:
@@ -4952,6 +5193,7 @@ class _PulsedOps:
     def _pulse(self, name, started, stop):
         started.wait()
         begun = time.monotonic()
+        pulse_lanes = name != "dsr_sweep"
         bound = jobs_registry.max_minutes(name) * 60.0
         overrun_told = False
         while not stop.is_set():
@@ -4971,6 +5213,14 @@ class _PulsedOps:
                 self.run_duties(renew_lease=True, vouch=within)
             except Exception as e:
                 log.error(f"Scheduler pulse failed: {e}")
+            # The DSR sweep owes its nights minutes: while this job holds the
+            # loop, its 10-minute slots are still submitted to the DSR lane
+            # (scale audit 10/19/26 INF-1, INF-2).
+            if pulse_lanes:
+                try:
+                    _submit_dsr_sweep(self, _chi_now())
+                except Exception as e:
+                    log.error(f"DSR sweep not submitted from the pulse: {e}")
             # Outside the duties' lock: a slow monitor never holds them up.
             if within and self._keeping_up():
                 _ops.ping_healthcheck()
@@ -5139,7 +5389,9 @@ class _Lane:
         finally:
             if on_done is not None:
                 on_done()
-            if self.name == "sweep":
+            if self.name in ("sweep", "pos"):
+                # A chained lane's next link starts SWEEP_FOLLOW_SECONDS
+                # after this one ends, not at the next tick.
                 _SWEEP_DONE.set()
 
     def _run_job(self, job_name, fn, args, kwargs):
@@ -5188,7 +5440,39 @@ class _Lane:
 # (_PulsedOps.settled), not by its place in the loop. Its own lane: a
 # Monday Intel sweep or an hour-long schedule draft must not hold the
 # chain the briefs read.
-_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep")}
+#
+# "dsr" (scale audit 10/19/26 INF-1, INF-2, A4-06): the DSR sweep, every ten
+# minutes, with its own workers inside (dsr.pipeline.SWEEP_WORKERS). It ran
+# on the loop thread, so the 3am POS block (pos_sync, loss_sync, the DSR
+# backfill — up to two hours at scale) and an 8pm review fetch froze it
+# across the East and Central deadlines. Submitted by the tick and by the
+# pulse of whatever inline job holds the loop (_submit_dsr_sweep).
+#
+# "pos" (INF-2): the 3am POS chain — pos_sync, then loss_sync and the DSR
+# backfill once it has settled — one at a time, as the loop ran them, so
+# RPOWER sees the same traffic; beside the loop instead of on it.
+#
+# "fetch" (INF-9): the review fetch, four times a day, up to its three-hour
+# bound; its 8pm slot overlapped the East Coast closes and held live labor
+# and the staff reminders.
+_LANES = {"intel": _Lane("intel"), "ai": _Lane("ai"), "sweep": _Lane("sweep"), "dsr": _Lane("dsr"),
+          "pos": _Lane("pos"), "fetch": _Lane("fetch")}
+
+
+def _submit_dsr_sweep(ops_, now):
+    """Claim this 10-minute slot of the DSR sweep and start it on the "dsr"
+    lane; a lane still running the last slot's pass gives the claim back,
+    so the next tick or pulse starts it. Called by the loop's tick and by
+    the pulse of an inline job (_PulsedOps._pulse). Returns whether a pass
+    was started."""
+    slot = f"{now.date()}-{now.hour}-{now.minute // 10}"
+    if not ops_.claim_period("dsr_sweep", slot):
+        return False
+    from dsr.pipeline import run_sweep
+    if ops_.run_in_lane("dsr", "dsr_sweep", run_sweep):
+        return True
+    ops_.release_period("dsr_sweep", slot)
+    return False
 
 
 # What the morning briefs read that the 5-6am chain writes (#54): the food
@@ -5465,10 +5749,12 @@ def scheduler_loop():
             # (dsr.pipeline.run_sweep): each restaurant past its OWN close,
             # the POS close-day poll, block retries, the provisional
             # deadline and late-data versions. Bounded and resumable inside;
-            # each night claims (restaurant, business date, version).
-            if _ops.claim_period("dsr_sweep", f"{today}-{now.hour}-{now.minute // 10}"):
-                from dsr.pipeline import run_sweep
-                _ops.run_job("dsr_sweep", run_sweep)
+            # each night claims (restaurant, business date, version). On its
+            # own lane, submitted here AND by the pulse while an inline job
+            # holds the loop (_submit_dsr_sweep — scale audit 10/19/26 INF-1,
+            # INF-2): the 3am POS block and an 8pm review fetch froze it
+            # across the ET and CT deadlines.
+            _submit_dsr_sweep(_ops, now)
 
             # Every 10 minutes while the Postgres shadow is on (PG_SHADOW_WRITE,
             # scheduler audit 10/10/26 RM-13): the schedule revisions noted in
@@ -5479,6 +5765,13 @@ def scheduler_loop():
             import blob_store as _bstore
             if _bstore.active() != "db" and _due(now, 2) and _ops.claim_period("blob_offload", str(today)):
                 _ops.run_job("blob_offload", _bstore.offload)
+
+            # Daily at 2am on Postgres (scale audit 10/19/26 DB-04): the next
+            # months' partitions exist before their rows arrive.
+            import db_dialect as _dbd
+            if _dbd.backend() == "postgres" and _due(now, 2) and _ops.claim_period("pg_partitions", str(today)):
+                import pg_partitions as _pgp
+                _ops.run_job("pg_partitions", _pgp.run)
 
             import pg_shadow as _pgs
             if _pgs.enabled() and _ops.claim_period("pg_shadow", f"{today}-{now.hour}-{now.minute // 10}"):
@@ -5565,9 +5858,10 @@ def scheduler_loop():
             if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
-                # The day after a backup, once a quarter: prove the newest snapshot
-                # restores. See run_restore_drill.
-                if today.day == 2 and today.month in (1, 4, 7, 10) and \
+                # The 2nd of every month, after the backup: prove the newest
+                # snapshot and the off-site copy restore, and time it (OPS-10;
+                # it was quarterly). See run_restore_drill.
+                if today.day == 2 and \
                         _ops.claim_period("restore_drill", f"{today}"):
                     _ops.run_job("restore_drill", run_restore_drill)
                 # Straight after the backup, so the pruned rows are in it:
@@ -5622,9 +5916,16 @@ def scheduler_loop():
                                         retry_only=True, claim="ai_visibility_retry"):
                     _ops.release_period("ai_visibility_retry", str(today))
 
+            # 3am — the POS chain on the "pos" lane (scale audit 10/19/26
+            # INF-2): pos_sync, then loss_sync and the DSR backfill once it
+            # has settled, one at a time as before, but beside the loop: run
+            # inline they held it (and the DSR sweep, live labor, the staff
+            # reminders) for up to two hours at scale. A busy lane gives the
+            # claim back, so a later tick starts it.
             if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
-                _ops.run_job("pos_sync", run_toast_sync)
+                if not _ops.run_in_lane("pos", "pos_sync", run_toast_sync):
+                    _ops.release_period("pos_sync", str(today))
 
             # After the POS sync, on the AI lane — the Labor read written
             # ahead of the morning open for owners who open it (#100).
@@ -5640,9 +5941,11 @@ def scheduler_loop():
 
             # 3am+ — comps/voids/refunds from POSes that report them. After
             # pos_sync so the same night's data is settled first.
-            if _due(now, 3) and _ops.claim_period("loss_sync", str(today)):
+            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+                    _ops.claim_period("loss_sync", str(today)):
                 from strategy_jobs import run_loss_sync
-                _ops.run_job("loss_sync", run_loss_sync)
+                if not _ops.run_in_lane("pos", "loss_sync", run_loss_sync):
+                    _ops.release_period("loss_sync", str(today))
 
             # 3am+, once the POS sync has settled — the Daily Sales Report's
             # figures for the nights before it started (dsr.backfill), its
@@ -5650,7 +5953,8 @@ def scheduler_loop():
             if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
                     _ops.claim_period("dsr_backfill", str(today)):
                 from strategy_jobs import run_dsr_backfill
-                _ops.run_job("dsr_backfill", run_dsr_backfill)
+                if not _ops.run_in_lane("pos", "dsr_backfill", run_dsr_backfill):
+                    _ops.release_period("dsr_backfill", str(today))
 
             # 4am daily — the ticket-level POS archive (pos_archive): yesterday,
             # restated days, a week of backfill.
@@ -5998,9 +6302,11 @@ def scheduler_loop():
 
             # Hourly: 9am local the day after each restaurant's draft day
             # (Friday for a Thursday draft) — queue the unedited draft to
-            # publish at 11am with an undo window (run_auto_publish_schedules).
+            # publish at 11am with an undo window (run_auto_publish_schedules) —
+            # one queue row per restaurant due, run by the queue worker
+            # (scale audit 10/19/26 A5-F14).
             if _ops.claim_period("auto_publish_schedule", f"{today}-{now.hour}"):
-                _ops.run_job("auto_publish_schedule", run_auto_publish_schedules)
+                _ops.run_job("auto_publish_schedule", run_auto_publish_schedules, enqueue=True)
 
             if _due(now, 4) and _ops.claim_period("marketing_metrics_sync", str(today)):
                 log.info("Running marketing metrics sync...")
@@ -6015,11 +6321,15 @@ def scheduler_loop():
             # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time (a quiet
             # Places-only restaurant at 8am and 4pm only — run_daily_fetch,
             # AI cost audit 10/7/26 #45).
+            # On the "fetch" lane (scale audit 10/19/26 INF-9): up to its
+            # three-hour bound inline, the 8pm slot held live labor and the
+            # staff reminders through the East Coast closes.
             _fetch_slot = _latest_slot(now, (8, 12, 16, 20))
             if _fetch_slot is not None and _ops.claim_period("review_fetch", f"{today}-{_fetch_slot}"):
                 log.info(f"Running review fetch for the {_fetch_slot}:00 CT slot "
                          f"(now {now.hour}:{now.minute:02d})...")
-                _ops.run_job("review_fetch", run_daily_fetch)
+                if not _ops.run_in_lane("fetch", "review_fetch", run_daily_fetch):
+                    _ops.release_period("review_fetch", f"{today}-{_fetch_slot}")
 
             # Hourly — one authenticated, non-sending call per provider; a
             # provider that starts failing pages Will once (provider_health,

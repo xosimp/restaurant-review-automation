@@ -175,12 +175,15 @@ class _StopLoop(Exception):
 
 
 def _one_tick(monkeypatch, fetch):
-    """Drive exactly one real scheduler_loop tick in which only the review
-    fetch is due; `fetch` stands in for run_daily_fetch."""
+    """Drive exactly one real scheduler_loop tick in which only a long INLINE
+    job is due; `fetch` stands in for it. It was the review fetch, which has
+    run on its own lane since the scale audit (10/19/26 INF-9); the nightly
+    backup still runs on the loop thread, so it stands in now."""
     import scheduler, marketing_publish, notify, issues, morning_brief, delayed
-    monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 22, 9, 0))   # a Tuesday
-    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "review_fetch")
-    monkeypatch.setattr(scheduler, "run_daily_fetch", fetch)
+    monkeypatch.setattr(scheduler, "_chi_now", lambda: datetime(2026, 9, 22, 2, 0))   # a Tuesday
+    monkeypatch.setattr(scheduler._ops, "claim_period", lambda job, period: job == "backup_db")
+    monkeypatch.setattr(scheduler, "backup_db", fetch)
+    monkeypatch.setattr(scheduler, "run_nightly_retention", lambda *a, **k: {"attempted": 0})
     monkeypatch.setattr(notify, "release_due_alerts", lambda *a, **k: {})
     monkeypatch.setattr(issues, "tick", lambda *a, **k: None)
     monkeypatch.setattr(morning_brief, "run_due", lambda *a, **k: None)

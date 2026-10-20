@@ -24,8 +24,10 @@ Cavnar, all types") — "restaurants like yours" only for a like-for-like
 group of this restaurant's own type — and the Response Validation Layer's
 B1 and P2 rules hold every answer to that.
 """
+import hashlib
 import json
 import re
+import threading
 from ai_utils import AIRefused, create_with_retry, extract_text, get_client, is_refusal, model_for
 
 
@@ -1457,7 +1459,42 @@ def _system_blocks(restaurant_name, context, depth, turn=None):
     return blocks
 
 
-def _cached_messages(messages, turn_start, enabled=True):
+# Restaurants whose snapshot block was last sent with its cache breakpoint:
+# rid -> (sha of the snapshot, when). Within the provider's five-minute cache
+# the same snapshot is likely still cached, so marking it is a READ (A4-08).
+_SNAPSHOT_MARKED = {}
+_SNAPSHOT_MARKED_LOCK = threading.Lock()
+SNAPSHOT_CACHE_SECONDS = 290
+
+
+def _snapshot_sha(snapshot) -> str:
+    return hashlib.sha256(str(snapshot or "").encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _snapshot_recently_cached(restaurant_id, snapshot) -> bool:
+    with _SNAPSHOT_MARKED_LOCK:
+        hit = _SNAPSHOT_MARKED.get(restaurant_id)
+    return bool(hit and hit[0] == _snapshot_sha(snapshot) and _time_now() - hit[1] < SNAPSHOT_CACHE_SECONDS)
+
+
+def _note_snapshot_cached(restaurant_id, snapshot):
+    with _SNAPSHOT_MARKED_LOCK:
+        if len(_SNAPSHOT_MARKED) > 5000:
+            _SNAPSHOT_MARKED.clear()
+        _SNAPSHOT_MARKED[restaurant_id] = (_snapshot_sha(snapshot), _time_now())
+
+
+def _cold_snapshot(system_blocks):
+    """The system blocks with the snapshot's breakpoint taken off (the
+    shared static block keeps its own): sent where no read of the
+    snapshot is likely (A4-08)."""
+    out = list(system_blocks)
+    if len(out) > 1 and isinstance(out[1], dict) and out[1].get("cache_control"):
+        out[1] = {k: v for k, v in out[1].items() if k != "cache_control"}
+    return out
+
+
+def _cached_messages(messages, turn_start, enabled=True, last=False):
     """The `messages` one call sends, with its message-level cache
     breakpoints (#16): on the last block of the newest two user messages of
     THIS turn (the question in round one; then the newest tool results and
@@ -1472,11 +1509,16 @@ def _cached_messages(messages, turn_start, enabled=True):
     a tool_choice change misses the message cache anyway and a write there
     would never be read — sends the turn as it is. History before the turn
     never carries one: the per-turn system blocks in front of it differ
-    every turn, so its prefix could never be read again."""
+    every turn, so its prefix could never be read again.
+
+    `last` (the loop's last round, scale audit 10/19/26 A4-08): only the
+    breakpoint this call READS is kept — the newest, a write no later
+    round would read, is not marked."""
     out = list(messages)
     if not enabled:
         return out
     marked = 0
+    skip = 1 if last else 0
     for idx in range(len(out) - 1, turn_start - 1, -1):
         m = out[idx]
         if marked >= 2:
@@ -1489,6 +1531,10 @@ def _cached_messages(messages, turn_start, enabled=True):
         elif isinstance(content, list) and content and isinstance(content[-1], dict):
             blocks = [dict(b) if isinstance(b, dict) else b for b in content]
         else:
+            continue
+        if skip:
+            skip -= 1
+            marked += 1
             continue
         blocks[-1] = dict(blocks[-1], cache_control={"type": "ephemeral"})
         out[idx] = dict(m, content=blocks)
@@ -3509,14 +3555,28 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None, brief=F
     _progress("Thinking", "solving")
     import time as _time
     _loop_started = _time.time()
+    # The restaurant's snapshot block is cached only where a read is likely
+    # (scale audit 10/19/26 A4-08): a later round of this turn, a turn
+    # likely to run one, or this snapshot written for this restaurant within
+    # the cache's five minutes. A one-round answer to a cold snapshot paid
+    # the write premium (1.25x) on ~16k tokens nothing read again.
+    _warm_snapshot = _snapshot_recently_cached(restaurant.id, snapshot)
     for _round in range(_MAX_TOOL_ROUNDS):
         if _round and _time.time() - _loop_started > ASK_LOOP_MAX_SECONDS:
             break
+        _mark_snap = bool(_round) or _mark_round_one or _warm_snapshot
+        if _mark_snap:
+            _note_snapshot_cached(restaurant.id, snapshot)
+        # The last round the loop allows writes no message prefix: nothing
+        # reads it after (A4-08) — it still reads the one before.
+        _last_round = (_round == _MAX_TOOL_ROUNDS - 1
+                       or _time.time() - _loop_started > ASK_LOOP_MAX_SECONDS * 0.75)
         message = create_with_retry(
             get_client(),
             **_on_route({"model": model, "max_tokens": max_tokens}),
-            system=system_blocks,
-            messages=_cached_messages(messages, turn_start, enabled=bool(_round) or _mark_round_one),
+            system=system_blocks if _mark_snap else _cold_snapshot(system_blocks),
+            messages=_cached_messages(messages, turn_start, enabled=bool(_round) or _mark_round_one,
+                                      last=_last_round),
             tools=tool_specs,
             restaurant_id=restaurant.id,
             action=action,

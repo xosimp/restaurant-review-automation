@@ -503,8 +503,11 @@ def test_static_assets_are_not_given_a_far_future_expiry():
     """They are referenced by bare path with no hash or version query, so a
     long max-age would strand a JavaScript fix in browser caches."""
     import inspect, http_layer
-    src = inspect.getsource(http_layer.add_cache_headers)
-    code = "\n".join(line.split("#")[0] for line in src.splitlines())
+    import ast
+    fn = ast.parse(inspect.getsource(http_layer.add_cache_headers)).body[0]
+    if fn.body and isinstance(fn.body[0], ast.Expr) and isinstance(getattr(fn.body[0], "value", None), ast.Constant):
+        fn.body = fn.body[1:]              # the docstring explains the hashed exception (FE-04), it sets nothing
+    code = ast.unparse(fn)
     assert "max-age=86400" not in code
     assert "immutable" not in code
 

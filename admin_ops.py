@@ -1004,6 +1004,13 @@ def _load_with(conn):
         suppressed[(row["email"] or "").strip().lower()] = row
     risk_state = per_rid("SELECT restaurant_id, level, since, updated_at FROM account_risk_state",
                          label="account_risk_state", optional=True)
+    # The onboarding tracker's POS, history and setup facts (ONB-9), grouped.
+    try:
+        import onboarding as _onb_facts
+        onboarding_facts = _onb_facts.fleet_facts(conn, rests)
+    except Exception as e:
+        log.warning("onboarding facts unavailable: %s", e)
+        onboarding_facts = {}
     sms_cost = per_rid("SELECT restaurant_id, ROUND(SUM(COALESCE(cost_usd,0)),4) AS cost, COUNT(*) AS n "
                        "FROM sms_log WHERE created_at >= ? GROUP BY restaurant_id", (w["month"],),
                        label="sms_log", optional=True)
@@ -1056,6 +1063,7 @@ def _load_with(conn):
              sessions=sessions, guests=guests, job_failures=job_failures,
              job_failures_has_kind="kind" in jf_cols, job_failures_has_rid="restaurant_id" in jf_cols,
              resolved=resolved, data_health_daily=data_health_daily, source_health=source_health,
+             onboarding_facts=onboarding_facts,
              mirror=mirror, mirror_available=bool(mirror_cols), mirror_cols=mirror_cols,
              status_changes=status_changes, events=events, suppressed=suppressed, risk_state=risk_state,
              sms_cost=sms_cost, storm_caps=storm_caps, budget_watch=budget_rows, ai_anomalies=anomaly_rows,
@@ -1621,8 +1629,11 @@ def _onboarding_for(r, d, owner):
     rid = r["id"]
     rv = d["reviews"].get(rid, {})
     mods = {m["key"]: m for m in _modules_for(r, d)}
+    import onboarding as _onb
+    facts = (d.get("onboarding_facts") or {}).get(rid) or {}
     steps = [
-        {"key": "contract", "label": "Contract signed", "done": (r.get("contract_status") or "pending") == "signed"},
+        {"key": "contract", "label": "Contract signed", "done": (r.get("contract_status") or "pending") == "signed"
+         or _onb.partner_covers(facts, "contract")},
         {"key": "login", "label": "First sign-in", "done": bool(owner and owner.get("last_login"))},
         {"key": "reviews", "label": "Google reviews connected", "done": bool(r.get("gmb_refresh_token") or r.get("reviews_live"))},
         {"key": "voice", "label": "Brand voice set", "done": bool(r.get("voice_notes"))},
@@ -1635,7 +1646,14 @@ def _onboarding_for(r, d, owner):
     if r.get("module_marketing"):
         steps.append({"key": "marketing", "label": "First post generated", "done": mods["marketing"]["receiving"]})
     if r.get("billing_status") not in ("internal",):
-        steps.append({"key": "billing", "label": "Billing active", "done": r.get("billing_status") == "active"})
+        steps.append({"key": "billing", "label": "Billing active", "done": r.get("billing_status") == "active"
+                      or _onb.partner_covers(facts, "billing")})
+    # The POS, history, checklist and setup-confirmation steps (scale audit
+    # 10/19/26 ONB-9/11/12, onboarding.extra_steps).
+    try:
+        steps += _onb.extra_steps(r, facts)
+    except Exception as e:
+        log.warning("onboarding steps for %s not built: %s", rid, e)
     done = sum(1 for s in steps if s["done"])
     # `dismissed` is the OWNER hiding their setup card; it no longer mutes
     # the operator's "Onboarding stuck" issue (#152).
@@ -2729,6 +2747,32 @@ def _platform_issues(recs, d):
                     "Fetches run at 8am, noon, 4pm and 8pm Central."),
             action="Open jobs", action_kind="link", action_href="#operations/jobs")
     facts["fetch_behind"] = len(stale_fetch)
+    # FLEET POS (scale audit 10/19/26 OPS-6): a provider failing for many
+    # stores at once is ONE outage — one platform issue naming the share,
+    # and _all_issues folds those stores' own "RPOWER POS needs attention"
+    # rows into it (an outage at 1,500 stores was 1,500 console rows). The
+    # breaker (pos_io) open is the same outage seen from the requests.
+    facts["pos_fleet"] = {}
+    try:
+        import pos_health as _ph_fleet
+        import pos_io as _pio_fleet
+        fleet = _ph_fleet.fleet_from_records(recs)
+        for prov, f in fleet.items():
+            br = _pio_fleet.breaker_state(prov) if prov == "rpower" else {"state": "closed"}
+            if not (f["outage"] or br["state"] != "closed"):
+                continue
+            facts["pos_fleet"][prov] = f
+            label = _POS_LABELS.get(prov, prov.title())
+            names = ", ".join(r["name"] for r in f["failing"][:4])
+            add(f"fleet:pos:{prov}", (f"{label} failing for {len(f['failing'])} of {f['connected']} stores"
+                                      if f["failing"] else f"{label} requests are paused by the breaker"),
+                "critical", zone="UTC",
+                detail=(f"{names}{'…' if len(f['failing']) > 4 else ''}. " if names else "")
+                + (f"Breaker {br['state'].replace('_', '-')}: {br.get('reason') or ''}. " if br["state"] != "closed" else "")
+                + "One outage, not one problem per store — the stores' own rows are folded into this one.",
+                action="Open integrations", action_kind="link", action_href="#operations/integrations")
+    except Exception as e:
+        _note_failure("pos_fleet", e)
     # Expected jobs past their SLA (ops.EXPECTED_JOBS, DH2-2).
     overdue_ok = True
     try:
@@ -2892,7 +2936,10 @@ def _issue_counts(issues):
 def _all_issues(recs, d):
     """(every open issue sorted, platform facts)."""
     platform, facts = _platform_issues(recs, d)
-    return _sort_issues([i for r in recs for i in r["issues"]] + platform), facts
+    # A POS outage across the fleet is one platform issue (OPS-6): the
+    # stores' own rows for that provider are folded into it, not listed N times.
+    folded = {f"int:{p}" for p in (facts.get("pos_fleet") or {})}
+    return _sort_issues([i for r in recs for i in r["issues"] if i.get("key") not in folded] + platform), facts
 
 
 ISSUES_IN_OVERVIEW = 60
@@ -6476,7 +6523,15 @@ def onboarding_list():
                      "contract_status": r["billing"].get("contract_status"),
                      "signed_at": r["billing"].get("signed_at")})
     rows.sort(key=lambda x: (x["done"] / max(1, x["total"]), -x["days_since_signup"]))
-    return {"ok": True, "rows": rows, **_payload_meta(meta, bucket)}
+    # The fleet board (ONB-9): stores per stage, the stuck ones, the backfill
+    # slots and the room left for history.
+    import onboarding as _onb_board
+    board = _onb_board.board(rows)
+    try:
+        board["backfill"] = _onb_board.backfill_state()
+    except Exception as e:
+        board["backfill"] = {"error": str(e)[:160]}
+    return {"ok": True, "rows": rows, "board": board, **_payload_meta(meta, bucket)}
 
 
 # Module adoption (#71): owner USE of a module in the last 28 days — a

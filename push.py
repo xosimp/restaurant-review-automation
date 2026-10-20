@@ -1883,6 +1883,31 @@ LIVE_ACTIVITY_ATTRIBUTES = {
 }
 SILENT_REASONS = ("dsr", "waiting")
 SILENT_MIN_MINUTES = 15
+# The "dsr" wake is the fleet-wide one: held reports are released together
+# when quiet hours end, and every owner phone woke at once to make ~5 reads
+# (scale audit 10/19/26 FE-12). Each restaurant's is sent at its own fixed
+# offset inside this window, through the job queue (kind silent_push).
+# "waiting" is an owner's own action's echo and goes at once. 0 sends both
+# at once.
+SILENT_JITTERED = ("dsr",)
+
+
+def silent_jitter_seconds() -> int:
+    try:
+        return max(0, int(os.getenv("SILENT_PUSH_JITTER_SECONDS", "600")))
+    except ValueError:
+        return 600
+
+
+def silent_offset(restaurant_id, reason) -> int:
+    """Seconds this restaurant's `reason` wake waits: a fixed spread of the
+    restaurant id over the window (the same restaurant always lands at the
+    same offset, so its phones stay in step with each other)."""
+    window = silent_jitter_seconds()
+    if reason not in SILENT_JITTERED or window <= 0:
+        return 0
+    import zlib
+    return zlib.crc32(f"{int(restaurant_id)}:{reason}".encode()) % window
 # Seconds from the Unix epoch to 2001-01-01: ActivityKit decodes a Date in
 # content-state with JSONDecoder's default strategy, which counts from 2001.
 _APPLE_EPOCH = 978307200
@@ -2017,27 +2042,35 @@ def silent_payload(restaurant_id, reason) -> dict:
             "cavnar": {"silent": reason, "restaurant_id": int(restaurant_id)}}
 
 
+def _silent_tokens(restaurant_id, user_ids, db_path=DB_PATH) -> list:
+    tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
+    if user_ids is not None:
+        allowed = {int(u) for u in user_ids}
+        tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
+    return [t for t in tokens if t.get("tier") != TIER_STAFF]
+
+
 def fire_silent(restaurant_id, reason, user_ids=None, db_path=DB_PATH) -> int:
     """Wake the owner app on this restaurant's phones to refresh its widgets
     (#31): `reason` "dsr" (last night's report was delivered) or "waiting"
     (the waiting count changed). Console (owner-tier) devices only — a staff
     phone has no owner widget — narrowed to `user_ids` when given. At most
-    one per restaurant, reason and audience per SILENT_MIN_MINUTES. Returns
-    how many devices it was queued for."""
+    one per restaurant, reason and audience per SILENT_MIN_MINUTES. A "dsr"
+    wake waits its restaurant's silent_offset in the job queue (FE-12).
+    Returns how many devices it was queued for."""
     if reason not in SILENT_REASONS or not native_push_allowed():
         return 0
     try:
-        tokens = get_device_tokens(restaurant_id, db_path, for_delivery=True)
-        if user_ids is not None:
-            allowed = {int(u) for u in user_ids}
-            tokens = [t for t in tokens if int(t.get("user_id") or 0) in allowed]
-        tokens = [t for t in tokens if t.get("tier") != TIER_STAFF]
+        tokens = _silent_tokens(restaurant_id, user_ids, db_path)
         if not tokens:
             return 0
         import ops
         who = ",".join(str(u) for u in sorted({int(u) for u in user_ids})) if user_ids is not None else "all"
         if not ops.claim_cooldown(f"silent:{int(restaurant_id)}:{reason}:{who}"[:180], SILENT_MIN_MINUTES):
             return 0
+        delay = silent_offset(restaurant_id, reason)
+        if delay and _queue_silent(restaurant_id, reason, user_ids, delay, db_path):
+            return len(tokens)
         n = 0
         for t in tokens:
             if _submit_native(_deliver_silent, t, int(restaurant_id), reason, db_path):
@@ -2046,6 +2079,43 @@ def fire_silent(restaurant_id, reason, user_ids=None, db_path=DB_PATH) -> int:
     except Exception as e:
         print(f"[push] fire_silent failed (rid={restaurant_id}, {reason}): {e}")
         return 0
+
+
+def _queue_silent(restaurant_id, reason, user_ids, delay, db_path=DB_PATH) -> bool:
+    """One job_queue row (kind silent_push) due in `delay` seconds; False
+    when it could not be queued (the caller then sends at once)."""
+    try:
+        import job_queue
+        now = time.time()
+        job_queue.enqueue("silent_push",
+                          {"restaurant_id": int(restaurant_id), "reason": reason,
+                           "user_ids": sorted(int(u) for u in user_ids) if user_ids is not None else None},
+                          restaurant_id=int(restaurant_id), not_before=now + delay,
+                          # Past the APNs expiry the refresh is one the app has done on its own.
+                          deadline=now + delay + 3000,
+                          db_path=None if db_path == DB_PATH else db_path)
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("silent push not queued (rid=%s, %s): %s", restaurant_id, reason, e)
+        return False
+
+
+def run_queued_silent(job) -> dict:
+    """job_queue's handler for `silent_push`: the wake fire_silent deferred
+    to its restaurant's offset — the devices read again now (a token removed
+    meanwhile is not woken), delivered on this consumer's thread."""
+    p = (job.get("payload") if hasattr(job, "get") else getattr(job, "payload", None)) or {}
+    rid, reason = p.get("restaurant_id"), p.get("reason")
+    if rid is None or reason not in SILENT_REASONS:
+        return {"skipped": "bad payload"}
+    if not native_push_allowed():
+        return {"skipped": "native push not allowed here"}
+    sent = 0
+    for t in _silent_tokens(int(rid), p.get("user_ids")):
+        if _deliver_silent(t, int(rid), reason):
+            sent += 1
+    return {"sent": sent}
 
 
 def _deliver_silent(token_row, restaurant_id, reason, db_path=DB_PATH):

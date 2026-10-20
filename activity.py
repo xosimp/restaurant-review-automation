@@ -21,16 +21,19 @@ Three parts:
   memory   — what the AI is still holding: trackers in flight, follow-ups
              it was told to remember, issues it is chasing.
 
-Cached per restaurant for ACTIVITY_TTL seconds: the feed is polled by
-every open dashboard, and the answer does not change faster than the jobs
-that write it.
+Cached per restaurant for ACTIVITY_TTL seconds (5 minutes; the web polls
+every 2): the feed is polled by every open dashboard, and the answer does
+not change faster than the jobs that write it.
 """
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
 from models import get_conn, DB_PATH
 
-ACTIVITY_TTL = 45
+# Longer than the web's two-minute poll (scale audit 10/19/26 FE-05): at 45
+# seconds against a 60-second poll a single viewer missed on every tick.
+ACTIVITY_TTL = int(os.getenv("ACTIVITY_TTL_SECONDS", "300"))
 _CACHE = {}
 # A ceiling on live entries: nothing ever removed an expired one, so the dict
 # held one feed per (restaurant, viewer denial set) that had ever loaded it

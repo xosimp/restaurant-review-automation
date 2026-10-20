@@ -229,7 +229,11 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Do not raise gunicorn `--workers` past 1** until the bounded pools
   that still multiply with workers are sized for it: the two admin pools —
   `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
-  and push delivery pools, the owner AI job pool `ai_async`, the AI
+  and push delivery pools, the owner AI job pool `ai_async`, Home's
+  snapshot rebuild pool (`home_snapshots`, `HOME_SNAPSHOT_WORKERS`), the
+  interactive AI lane (`ai_lane`, `AI_LANE_WORKERS` — its polled Ask turns'
+  events live in process memory, so a second worker also needs the poll
+  pinned to its process), the AI
   background pools (Ask's read and summary pools, the shadow-review and
   scoring pools) and the schedule model-call pool — one per process,
   `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
@@ -243,8 +247,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   inputs (`_studio_cache`, on `models.schedule_inputs_version`), its live
   check (`_studio_live`) and the requirement model cache
   (`_REQUIREMENT_MODEL_CACHE`) on `schedule_engine.shifts_stamp`, and the
-  pre-publish review cache (`prepublish._CACHE`, 30 s, keyed on the week's
-  version, `schedule_inputs_version` and the dismissal/override stamps). (Moved
+  pre-publish review cache (`prepublish._CACHE`, `PREPUBLISH_CACHE_SECONDS`
+  300, keyed on the week's version, `schedule_inputs_version`, the rows on
+  screen and the dismissal/override stamps), and the parsed shift history
+  web requests share (`labor._shared_history`, on the history's stamp). (Moved
   into the database 10/11/26, blind re-audit ARCH-26/SCALE-23: the admin
   request ceiling — `admin_request_hits`, `security._admin_hits` only its
   fallback; the console's fleet memo — dropped in every worker through the
@@ -292,10 +298,13 @@ A deletion is only "verified" when the trace is written down alongside it.
   change a control and its sentence together.
 - **Static assets:** the dashboard's script and style blocks are served as
   content-hashed, immutable bundles (`/b/<hash>`, `static_bundles`), so they
-  may be cached forever. Everything else under `/static/` (e.g.
-  `/static/cavnar-orb.js`) has no cache-busting: do not add a far-future
-  `max-age` to those until they are hashed too, or a fix will be stranded in
-  browser caches.
+  may be cached forever. Since 10/19/26 (FE-04) every literal `/static/<file>`
+  in a template, and every `url()` in a `/static` stylesheet, is served as
+  `/static/<file>?v=<content hash>` (`static_bundles.version_refs`), and only
+  a request carrying the file's CURRENT hash is answered immutable. A bare
+  `/static/` URL (one built at run time, an email's absolute link, a
+  reference in a `/static` script) still has no cache-busting: never give
+  those a far-future `max-age`, or a fix will be stranded in browser caches.
 - **SQL must stay translatable to Postgres.** `models.get_conn` returns a
   Postgres connection when `DATABASE_URL` names one (`db_dialect`); run
   `scripts/pg_sql_audit.py` after adding SQL — it must report
@@ -303,9 +312,14 @@ A deletion is only "verified" when the trace is written down alongside it.
   statements that failed on a real server (10/11/26 SCALE-10): CI's
   `postgres` job PREPAREs every statement (`pg_sql_audit.py --database-url`,
   `prepare_failed: 0`) and runs the DB-heavy tests on Postgres; run it locally
-  against a throwaway cluster when a change is SQL-heavy. Never set
-  `DATABASE_URL` for the app outside the cutover runbook
-  (`docs/ops/POSTGRES_CUTOVER.md`).
+  against a throwaway cluster when a change is SQL-heavy. **Production runs on
+  Postgres since 10/19/26** (Railway service `Postgres`, Pro plan,
+  point-in-time recovery on; `DATABASE_URL=${{Postgres.DATABASE_URL}}` on
+  `web`): every SQL change must work on both backends, and a `railway ssh`
+  one-off reaches the live data through `models.get_conn` — the volume's
+  `reviews.db` is the frozen pre-switch copy. Never set `DATABASE_URL` for a
+  LOCAL app (production's database) — tests use `CAVNAR_TEST_PG_URL` on a
+  scratch server (`docs/ops/POSTGRES_CUTOVER.md`).
 - **Every Anthropic call passes the model gateway** (`model_gateway`, inside
   `ai_utils.create_with_retry`): call classes, per-tenant budgets and the
   organisation's tokens a minute. The fleet AI ceiling is per paying

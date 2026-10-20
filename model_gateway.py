@@ -31,6 +31,26 @@ gates and the send:
   GatewayBusy — its queue row is tried again later (job_queue.fail).
   Unset (the default) the allocator is off: nothing waits.
 
+  PER MODEL FAMILY (scale audit 10/19/26 A4-02). The provider meters its
+  limits per model (Sonnet 5.5, Opus 5.5, Haiku 5.5 each have their own
+  bucket; the Opus 4.x line shares one), so the minute is kept per (family,
+  class): a burst of Opus schedule streams never eats the Sonnet minute Ask
+  runs on. Each family gets GATEWAY_ORG_OTPM / GATEWAY_ORG_ITPM unless
+  GATEWAY_FAMILY_LIMITS (JSON: {"claude-sonnet-5-5": {"itpm": .., "otpm":
+  ..}}) names its own. The lane is stored in the `klass` column as
+  "<family>|<class>" (model_family, _lane) — rows live two hours, so no
+  migration. The input reserved is the prompt AFTER its last cache
+  breakpoint, tools included (estimate): a cache read does not count toward
+  the provider's input limit; a cache write does and settles in with the
+  real usage.
+
+  STREAMS AT ONCE (scale audit 10/19/26 A5-F8). The generation group's cap
+  from the output budget (max_concurrent_generations) holds the rows that
+  are STREAMING a model answer — a generation call waits for one of those
+  places in admit (_stream_slot_wait) — never the CPU slots a code-only
+  generation needs (it used to be folded into job_queue.group_concurrency,
+  throttling solver weeks that stream nothing).
+
   A TENANT'S TOKENS A MINUTE. GATEWAY_TENANT_OTPM caps one restaurant's
   output tokens a minute (`model_tenant_windows`), so one restaurant's loop
   cannot take the organisation's minute. Off by default.
@@ -62,7 +82,9 @@ the cost ledger (`ai_usage`) to a warehouse — Stage 4, change data capture.
 """
 import contextlib
 import contextvars
+import json
 import os
+import re
 import threading
 import time
 
@@ -83,10 +105,58 @@ def _f(name, default):
         return float(default)
 
 
-def org_limits() -> dict:
+def model_family(model) -> str:
+    """The provider's rate-limit bucket a model draws on (A4-02): the model
+    id without a date suffix; every Opus 4.x shares one."""
+    m = re.sub(r"-\d{8}$", "", str(model or "").strip().lower())
+    if m.startswith("claude-opus-4"):
+        return "claude-opus-4"
+    return m or "unknown"
+
+
+def _family_limits() -> dict:
+    raw = os.getenv("GATEWAY_FAMILY_LIMITS", "") or ""
+    if not raw.strip():
+        return {}
+    try:
+        val = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(val, dict):
+        return {}
+    return {model_family(k): v for k, v in val.items() if isinstance(v, dict)}
+
+
+def org_limits(family=None) -> dict:
     """{"otpm", "itpm"}: the organisation's output / input tokens a minute
-    the gateway allocates (0: not allocated)."""
-    return {"otpm": _f("GATEWAY_ORG_OTPM", 0), "itpm": _f("GATEWAY_ORG_ITPM", 0)}
+    the gateway allocates for one model family (0: not allocated) —
+    GATEWAY_FAMILY_LIMITS' entry for it, else GATEWAY_ORG_OTPM / ITPM."""
+    out = {"otpm": _f("GATEWAY_ORG_OTPM", 0), "itpm": _f("GATEWAY_ORG_ITPM", 0)}
+    if family is None:
+        return out
+    own = _family_limits().get(model_family(family)) or {}
+    for k in ("otpm", "itpm"):
+        try:
+            if own.get(k) is not None:
+                out[k] = max(0.0, float(own[k]))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def _lane(family, klass) -> str:
+    """The `klass` column's value for one (family, class) window."""
+    return f"{model_family(family)}|{klass}"
+
+
+def _split_lane(value):
+    """(family, class) of a stored lane; a row written before families
+    (a bare class) is (None, class)."""
+    v = str(value or "")
+    if "|" in v:
+        fam, _sep, k = v.rpartition("|")
+        return fam, k
+    return None, v
 
 
 def shares() -> dict:
@@ -201,27 +271,68 @@ def call_class() -> str:
 # ── the allocator ───────────────────────────────────────────────────────────
 
 class Ticket:
-    __slots__ = ("klass", "minute", "est_in", "est_out", "restaurant_id", "settled", "waited")
+    __slots__ = ("klass", "minute", "est_in", "est_out", "restaurant_id", "settled", "waited", "family")
 
-    def __init__(self, klass, minute, est_in, est_out, restaurant_id, waited=0.0):
+    def __init__(self, klass, minute, est_in, est_out, restaurant_id, waited=0.0, family="unknown"):
         self.klass, self.minute, self.est_in, self.est_out = klass, minute, est_in, est_out
         self.restaurant_id, self.settled, self.waited = restaurant_id, False, waited
+        self.family = family
+
+
+# An image or a PDF page in a prompt, in characters (~1,600 tokens).
+_MEDIA_BLOCK_CHARS = 6400
+
+
+def _block_chars(b) -> int:
+    if isinstance(b, str):
+        return len(b)
+    if not isinstance(b, dict):
+        return len(str(b or ""))
+    kind = b.get("type")
+    if kind in ("image", "document"):
+        return _MEDIA_BLOCK_CHARS
+    if kind == "tool_use":
+        return len(json.dumps(b.get("input") or {}, default=str)) + len(str(b.get("name") or ""))
+    if kind == "tool_result":
+        c = b.get("content")
+        if isinstance(c, list):
+            return sum(_block_chars(x) for x in c)
+        return len(str(c or ""))
+    return len(str(b.get("text") or ""))
+
+
+def _marked(b) -> bool:
+    return isinstance(b, dict) and bool(b.get("cache_control"))
 
 
 def estimate(kwargs) -> tuple:
-    """(input, output) tokens a call is reserved before it says: its prompt's
-    characters / 4, and its max_tokens capped at OUTPUT_RESERVE_CAP."""
-    chars = 0
-    for m in (kwargs or {}).get("messages") or []:
+    """(input, output) tokens a call is reserved before it says: its
+    prompt's characters / 4 — tools, system and messages in the order the
+    provider reads them, counted from after the LAST cache breakpoint (a
+    cache read does not count toward the provider's input limit; a write
+    settles in with the real usage — scale audit 10/19/26 A4-02; the tools
+    were not counted at all before) — and its max_tokens capped at
+    OUTPUT_RESERVE_CAP."""
+    kw = kwargs or {}
+    seq = []
+    for t in kw.get("tools") or []:
+        seq.append((len(json.dumps(t, default=str)) if isinstance(t, dict) else len(str(t)), _marked(t)))
+    sys_ = kw.get("system")
+    if isinstance(sys_, str):
+        seq.append((len(sys_), False))
+    else:
+        for b in sys_ or []:
+            seq.append((_block_chars(b), _marked(b)))
+    for m in kw.get("messages") or []:
         c = m.get("content") if isinstance(m, dict) else None
         if isinstance(c, str):
-            chars += len(c)
+            seq.append((len(c), False))
         elif isinstance(c, list):
-            chars += sum(len(str(b.get("text") or "")) for b in c if isinstance(b, dict))
-    sys_ = (kwargs or {}).get("system")
-    chars += len(sys_) if isinstance(sys_, str) else sum(len(str(b.get("text") or "")) for b in (sys_ or [])
-                                                         if isinstance(b, dict))
-    out = min(int((kwargs or {}).get("max_tokens") or 1024), OUTPUT_RESERVE_CAP)
+            for b in c:
+                seq.append((_block_chars(b), _marked(b)))
+    last = max((i for i, (_n, mk) in enumerate(seq) if mk), default=-1)
+    chars = sum(n for i, (n, _mk) in enumerate(seq) if i > last)
+    out = min(int(kw.get("max_tokens") or 1024), OUTPUT_RESERVE_CAP)
     return int(chars / 4) + 1, out
 
 
@@ -244,13 +355,14 @@ def _allowance(klass, usage, limit, share):
     return max(own_left, min(free_total, max(0.0, free_total - reserve_left)))
 
 
-def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, force=False):
+def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, force=False, family="unknown"):
     """Reserve in this minute's windows when the class (and the tenant) has
-    room; returns the minute reserved in, or None. `force` reserves whatever
-    the room: a call that waited out its allowance and goes anyway still
-    counts its estimate, so the calls after it see the minute as it is
-    (re-audit 10/11/26 SCALE-25)."""
-    lim = org_limits()
+    room in the model family's minute; returns the minute reserved in, or
+    None. `force` reserves whatever the room: a call that waited out its
+    allowance and goes anyway still counts its estimate, so the calls after
+    it see the minute as it is (re-audit 10/11/26 SCALE-25)."""
+    fam = model_family(family)
+    lim = org_limits(fam)
     tenant_cap = _f("GATEWAY_TENANT_OTPM", 0)
     minute = _minute(now)
     conn = get_conn(db_path)
@@ -261,8 +373,14 @@ def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, 
         db_dialect.begin_write(conn, "model_gateway", minute)
         rows = conn.execute("SELECT klass, input_tokens, output_tokens FROM model_token_windows WHERE minute=?",
                             (minute,)).fetchall()
-        out_use = {r["klass"]: int(r["output_tokens"]) for r in rows}
-        in_use = {r["klass"]: int(r["input_tokens"]) for r in rows}
+        # This family's minute only: the provider meters each model apart.
+        out_use, in_use = {}, {}
+        for r in rows:
+            r_fam, r_k = _split_lane(r["klass"])
+            if r_fam != fam:
+                continue
+            out_use[r_k] = out_use.get(r_k, 0) + int(r["output_tokens"])
+            in_use[r_k] = in_use.get(r_k, 0) + int(r["input_tokens"])
         sh = shares()
         if not force and (est_out > _allowance(klass, out_use, lim["otpm"], sh) or
                           est_in > _allowance(klass, in_use, lim["itpm"], sh)):
@@ -277,7 +395,7 @@ def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, 
         conn.execute("INSERT INTO model_token_windows (minute, klass, input_tokens, output_tokens, calls) "
                      "VALUES (?,?,?,?,1) ON CONFLICT(minute, klass) DO UPDATE SET input_tokens=input_tokens+"
                      "excluded.input_tokens, output_tokens=output_tokens+excluded.output_tokens, calls=calls+1",
-                     (minute, klass, est_in, est_out))
+                     (minute, _lane(fam, klass), est_in, est_out))
         if tenant_cap > 0 and restaurant_id is not None:
             conn.execute("INSERT INTO model_tenant_windows (minute, restaurant_id, output_tokens) VALUES (?,?,?) "
                          "ON CONFLICT(minute, restaurant_id) DO UPDATE SET output_tokens=output_tokens+"
@@ -295,7 +413,15 @@ def _try_reserve(klass, est_in, est_out, restaurant_id, now=None, db_path=None, 
 
 def enabled() -> bool:
     lim = org_limits()
-    return lim["otpm"] > 0 or lim["itpm"] > 0 or _f("GATEWAY_TENANT_OTPM", 0) > 0
+    if lim["otpm"] > 0 or lim["itpm"] > 0 or _f("GATEWAY_TENANT_OTPM", 0) > 0:
+        return True
+    for v in _family_limits().values():
+        try:
+            if float(v.get("otpm") or 0) > 0 or float(v.get("itpm") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def admit(restaurant_id, kwargs, klass=None, sleep=time.sleep, db_path=None):
@@ -306,15 +432,17 @@ def admit(restaurant_id, kwargs, klass=None, sleep=time.sleep, db_path=None):
     if not enabled():
         return None
     klass = klass or call_class()
+    family = model_family((kwargs or {}).get("model"))
     est_in, est_out = estimate(kwargs)
     waited, give_up = 0.0, WAIT_SECONDS.get(klass, 60)
+    waited += _stream_slot_wait(give_up, sleep)
     while True:
         try:
-            minute = _try_reserve(klass, est_in, est_out, restaurant_id, db_path=db_path)
+            minute = _try_reserve(klass, est_in, est_out, restaurant_id, db_path=db_path, family=family)
         except Exception:
             return None                      # bookkeeping never stops a call
         if minute is not None:
-            return Ticket(klass, minute, est_in, est_out, restaurant_id, waited)
+            return Ticket(klass, minute, est_in, est_out, restaurant_id, waited, family=family)
         if waited >= give_up:
             if klass == "bulk":
                 raise GatewayBusy(klass, retry_after=60 - (time.time() % 60))
@@ -324,12 +452,13 @@ def admit(restaurant_id, kwargs, klass=None, sleep=time.sleep, db_path=None):
             # minute look emptier than it was exactly at saturation, so more
             # calls went out and the provider's 429s followed.
             try:
-                minute = _try_reserve(klass, est_in, est_out, restaurant_id, db_path=db_path, force=True)
+                minute = _try_reserve(klass, est_in, est_out, restaurant_id, db_path=db_path, force=True,
+                                      family=family)
             except Exception:
                 minute = None
             if minute is None:
-                return Ticket(klass, _minute(), 0, 0, restaurant_id, waited)
-            return Ticket(klass, minute, est_in, est_out, restaurant_id, waited)
+                return Ticket(klass, _minute(), 0, 0, restaurant_id, waited, family=family)
+            return Ticket(klass, minute, est_in, est_out, restaurant_id, waited, family=family)
         step = min(give_up - waited, max(0.5, 60 - (time.time() % 60)))
         # Waiting holds no generation slot (SCALE-25): the queue job is
         # parked for the wait, so another restaurant's generation can do its
@@ -337,6 +466,35 @@ def admit(restaurant_id, kwargs, klass=None, sleep=time.sleep, db_path=None):
         with _parked(step):
             sleep(step)
         waited += step
+
+
+def _stream_slot_wait(give_up, sleep=time.sleep) -> float:
+    """Inside a generation queue job, with an output budget set: wait (at
+    most `give_up` seconds, parked) while max_concurrent_generations rows
+    of the group are already streaming a model answer — the cap on streams
+    (scale audit 10/19/26 A5-F8), which used to hold the CPU slots of
+    code-only generations instead. Then the call goes anyway, as an owner's
+    or a running generation's always has. Returns the seconds waited;
+    anywhere else, 0 at once."""
+    cap = max_concurrent_generations()
+    if not cap:
+        return 0.0
+    try:
+        import job_queue
+        job = job_queue.current()
+        if job is None or job.get("grp") != "generation":
+            return 0.0
+        waited = 0.0
+        while job_queue.rows_in_phase("generation", "model", exclude_id=job.get("id")) >= cap:
+            if waited >= give_up:
+                break
+            step = min(max(0.0, give_up - waited), 2.0) or 0.5
+            with _parked(step):
+                sleep(step)
+            waited += step
+        return waited
+    except Exception:
+        return 0.0                           # bookkeeping never stops a call
 
 
 def _parked(seconds):
@@ -370,7 +528,8 @@ def settle(ticket, message=None, db_path=None) -> None:
                          "VALUES (?,?,?,?,1) ON CONFLICT(minute, klass) DO UPDATE SET "
                          "input_tokens=MAX(0, model_token_windows.input_tokens+?), "
                          "output_tokens=MAX(0, model_token_windows.output_tokens+?)",
-                         (ticket.minute, ticket.klass, max(0, d_in), max(0, d_out), d_in, d_out))
+                         (ticket.minute, _lane(ticket.family, ticket.klass), max(0, d_in), max(0, d_out), d_in,
+                          d_out))
             if ticket.restaurant_id is not None:
                 conn.execute("INSERT INTO model_tenant_windows (minute, restaurant_id, output_tokens) VALUES (?,?,?) "
                              "ON CONFLICT(minute, restaurant_id) DO UPDATE SET "
@@ -392,7 +551,8 @@ def settle(ticket, message=None, db_path=None) -> None:
 def max_concurrent_generations():
     """How many generations may stream at once within the organisation's
     output budget for the interactive and scheduled classes, or None when
-    no budget is set (job_queue.group_concurrency then uses its own)."""
+    no budget is set. Held in admit (_stream_slot_wait) against the rows
+    streaming, never against the generation group's CPU slots (A5-F8)."""
     otpm = org_limits()["otpm"]
     if otpm <= 0 or GENERATION_STREAM_OTPM <= 0:
         return None
@@ -421,9 +581,17 @@ def usage_now(db_path=None) -> dict:
                             "WHERE minute=?", (_minute(),)).fetchall()
     finally:
         conn.close()
-    return {"limits": org_limits(), "shares": shares(),
-            "classes": {r["klass"]: {"input": r["input_tokens"], "output": r["output_tokens"], "calls": r["calls"]}
-                        for r in rows}}
+    classes, families = {}, {}
+    for r in rows:
+        fam, k = _split_lane(r["klass"])
+        for bucket in (classes.setdefault(k, {"input": 0, "output": 0, "calls": 0}),
+                       families.setdefault(fam or "unknown", {}).setdefault(k, {"input": 0, "output": 0,
+                                                                                 "calls": 0})):
+            bucket["input"] += int(r["input_tokens"] or 0)
+            bucket["output"] += int(r["output_tokens"] or 0)
+            bucket["calls"] += int(r["calls"] or 0)
+    return {"limits": org_limits(), "family_limits": _family_limits(), "shares": shares(),
+            "classes": classes, "families": families}
 
 
 # ── per-tenant dollar budgets ───────────────────────────────────────────────

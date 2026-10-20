@@ -3550,18 +3550,25 @@ def _do_schedule_violations(u):
     if not _sees_labor(u):
         return _forbidden("Only someone who can see labor can check a schedule.")
     import schedule_rules as _sr
-    from schedule_engine import quality_inputs_from_db
+    from schedule_engine import studio_prepared
     b = _body()
     rows = _rows_from_body(b)
     if not rows:
         return {"ok": False, "error": "rows required"}, 400
-    inputs = quality_inputs_from_db(_rid(u), week_rows=rows)
+    # The Studio's kept inputs for this week (schedule_engine.studio_prepared,
+    # keyed on the inputs version, built once at a time): every check after
+    # an edit rebuilt them from the database — the forecast, the baseline,
+    # the requirement model, the roster — 5 s on average, 41 s at worst, on
+    # a web request thread (scale audit 10/19/26 A5-F5 / A6 FE-11). The
+    # roster is on the kept Constraints already.
+    try:
+        hid_key = int(b.get("history_id")) if b.get("history_id") not in (None, "") else None
+    except (TypeError, ValueError):
+        hid_key = None
+    inputs = studio_prepared(_rid(u), rows, history_id=hid_key)["inputs"]
     c = inputs.get("constraints")
     if c is None:
         return {"ok": True, "violations": [], "review": _sr.summarize([])}, 200
-    if inputs.get("roster"):
-        c.active = {n.lower() for n in inputs["roster"]}
-        c.roster_names = list(inputs["roster"])
     viols = _sr.violations(rows, c)
     out = {"ok": True, "violations": viols, "review": _sr.summarize(viols),
            "pending_time_off": inputs.get("pending_time_off") or {}}
@@ -5959,7 +5966,14 @@ def _do_cross_module(u):
     except Exception:
         _log_rank = False
     # The login's own answers leave its links too (CROSSMODULE-2).
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
+    # Kept per login for the business day (home_snapshots, scale audit
+    # 10/19/26 FE-01): a 3 s build on every Home open. Links answered since
+    # the build are left out below by their presentation.
+    import home_snapshots
+    brief = home_snapshots.serve(
+        "cross_module", _rid(u), home_snapshots.viewer_scope(u), _local_today(u),
+        lambda: bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank),
+        restaurant=r)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
@@ -6109,8 +6123,14 @@ def _do_good_news(u):
     # and it fails closed: a role lookup that errors hides everything.
     view = viewer_restaurant(get_restaurant(_rid(u)), u)
     denied = set(getattr(view, "_ask_denied", frozenset()))
-    items = good_news.all_good_news(_rid(u), today=_local_today(u),
-                                    restaurant=view, denied_modules=denied)
+    # Kept per denied-module set for the business day (home_snapshots,
+    # FE-01): an 11 s build on every Home open.
+    import home_snapshots
+    today = _local_today(u)
+    items = home_snapshots.serve(
+        "good_news", _rid(u), home_snapshots.denied_scope(denied), today,
+        lambda: good_news.all_good_news(_rid(u), today=today, restaurant=view, denied_modules=denied),
+        restaurant=view)
     items = [dict(i, ask=f"What's behind this: {i.get('headline', '')}") for i in items]
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
@@ -6356,7 +6376,12 @@ def _do_monthly_review(u):
     import monthly_review
     from models import get_restaurant
     rid = _rid(u)
-    review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
+    # The build is the same for every login (the filters below are per
+    # login), kept for the business day (home_snapshots, FE-01).
+    import home_snapshots
+    r, today = get_restaurant(rid), _local_today(u)
+    review = home_snapshots.serve("monthly_review", rid, home_snapshots.shared_scope(), today,
+                                  lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r)
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
     review["goals"] = [g for g in (review.get("goals") or []) if _metric_visible(u, g.get("metric"))]
@@ -6419,7 +6444,15 @@ def _do_morning_brief(u):
     import morning_brief
     from models import get_restaurant
     r = get_restaurant(_rid(u))
-    brief = morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u)
+    # Kept per login for the business day (home_snapshots, FE-01): a 13 s
+    # build on every Home open. A line an answer has silenced since the
+    # build is dropped at serve time, as the build itself drops them.
+    import home_snapshots
+    today = _local_today(u)
+    brief = home_snapshots.serve(
+        "morning_brief", _rid(u), home_snapshots.viewer_scope(u), today,
+        lambda: morning_brief.build(_rid(u), restaurant=r, today=today, viewer=u), restaurant=r)
+    brief["lines"] = morning_brief._drop_answered(_rid(u), brief.get("lines") or [], viewer=u)
     # K6: Home's "Before service" card renders these lines, so a load that
     # names itself a Home view (?view=home, web and iOS Home) records them on
     # "home" — once a day per key. Every other reader (the settings screens)
@@ -7114,114 +7147,19 @@ def _do_dsr_settings_set(u):
     the POS's own meal periods). Every column is in update_restaurant's
     whitelist. A value of the wrong type is a 400 with the reason, never a
     500."""
-    import json
-    from dsr import fiscal
     from models import get_restaurant, update_restaurant
-    from time_utils import mdy
     refused = _dsr_owner_only(u)
     if refused:
         return refused
     body = _body()
     if not isinstance(body, dict):
         return {"ok": False, "error": "Send the settings as a JSON object."}, 400
-    fields = {}
-    if "fiscal_week_start_dow" in body:
-        v = body.get("fiscal_week_start_dow")
-        if v is None or v == "":
-            fields["fiscal_week_start_dow"] = None
-        else:
-            try:
-                v = int(v)
-            except (TypeError, ValueError):
-                v = -1
-            if isinstance(body.get("fiscal_week_start_dow"), bool) or not 0 <= v <= 6:
-                return {"ok": False, "error": "Pick a day for your week to start."}, 400
-            fields["fiscal_week_start_dow"] = v
-    if "fiscal_year_start" in body:
-        raw = body.get("fiscal_year_start")
-        if raw in (None, ""):
-            fields["fiscal_year_start"] = None
-        else:
-            d = _dsr_day(raw)
-            if d is None:
-                return {"ok": False, "error": "The year start must be a date."}, 400
-            fields["fiscal_year_start"] = d.isoformat()
-    if "fiscal_period_scheme" in body:
-        raw = body.get("fiscal_period_scheme")
-        if isinstance(raw, list) and all(isinstance(n, int) and not isinstance(n, bool) for n in raw):
-            raw = ",".join(str(n) for n in raw)
-        scheme = raw.replace(" ", "") if isinstance(raw, str) else ""
-        if not fiscal.valid_scheme(scheme):
-            return {"ok": False, "error": "Pick 13 four-week periods, 4-4-5, 4-5-4 or 5-4-4, or list your "
-                                          "periods' lengths in weeks (12 or 13 of 4 or 5, totalling 52 or 53)."}, 400
-        fields["fiscal_period_scheme"] = scheme
-    if "fiscal_years" in body:
-        raw = body.get("fiscal_years")
-        if raw is not None and not isinstance(raw, list):
-            return {"ok": False, "error": "List each year as a start date and its period lengths."}, 400
-        rows, err = fiscal.parse_years(raw)
-        if err:
-            return {"ok": False, "error": err}, 400
-        fields["fiscal_years_json"] = (json.dumps([{"start": s.isoformat(), "lengths": n} for s, n in rows])
-                                       if rows else None)
-    if "dsr_enabled" in body:
-        fields["dsr_enabled"] = 1 if body.get("dsr_enabled") else 0
-    if "dsr_notify" in body:
-        fields["dsr_notify"] = 1 if body.get("dsr_notify") else 0
-    if "dsr_gross_basis" in body:
-        from dsr.block_sales import GROSS_BASES
-        # A list or an object is unhashable: `in GROSS_BASES` raised and the
-        # route answered 500 (re-audit D16). Only a known string is a basis.
-        basis = body.get("dsr_gross_basis")
-        if not isinstance(basis, str) or basis not in GROSS_BASES:
-            return {"ok": False, "error": "Gross is either items only or everything rung (items, tax and voids)."}, 400
-        fields["dsr_gross_basis"] = basis
-    if "dsr_deadline_hour" in body:
-        raw = body.get("dsr_deadline_hour")
-        try:
-            h = -1 if isinstance(raw, bool) else int(raw)
-        except (TypeError, ValueError):
-            h = -1
-        if not 0 <= h <= 11:
-            return {"ok": False, "error": "Pick an hour between midnight and 11am."}, 400
-        fields["dsr_deadline_hour"] = h
-    if "dsr_late_night_hour" in body:
-        # Checks opened from this hour on are "Late night" (dsr.block_service);
-        # null keeps the POS's own Lunch/Dinner tags.
-        raw = body.get("dsr_late_night_hour")
-        if raw is None or raw == "":
-            fields["dsr_late_night_hour"] = None
-        else:
-            try:
-                h = -1 if isinstance(raw, bool) else int(raw)
-            except (TypeError, ValueError):
-                h = -1
-            if not 18 <= h <= 23:
-                return {"ok": False, "error": "Late night starts between 6pm and 11pm."}, 400
-            fields["dsr_late_night_hour"] = h
-    if "dsr_budget_mode" in body:
-        # How the owner budgets (10/9/26): a figure per night, or one for
-        # the week split by the restaurant's own weekday mix.
-        if body.get("dsr_budget_mode") not in ("day", "week"):
-            return {"ok": False, "error": "Budget by day or by week."}, 400
-        fields["dsr_budget_mode"] = body["dsr_budget_mode"]
-    if not fields:
-        return {"ok": False, "error": "Nothing to change."}, 400
-    # Periods are whole weeks: a year start that isn't the week's first day
-    # would split a week across two periods.
-    r = get_restaurant(_rid(u))
-    dow = fields["fiscal_week_start_dow"] if "fiscal_week_start_dow" in fields else getattr(r, "fiscal_week_start_dow", None)
-    ys = fields["fiscal_year_start"] if "fiscal_year_start" in fields else getattr(r, "fiscal_year_start", None)
-    want = 0 if dow is None else int(dow)
-    if ys:
-        if date.fromisoformat(str(ys)[:10]).weekday() != want:
-            return {"ok": False, "error": f"Period 1 has to start on a {_WEEKDAYS[want]}, the first day of your week."}, 400
-    listed = (fiscal.parse_years(fields["fiscal_years_json"])[0] if "fiscal_years_json" in fields
-              else fiscal.listed_years(r))
-    for start, _lengths in listed:
-        if start.weekday() != want:
-            return {"ok": False, "error": f"The year starting {mdy(start)} has to start on a "
-                                          f"{_WEEKDAYS[want]}, the first day of your week."}, 400
+    # One validation for the owner's settings and the admin console's DSR
+    # calendar action (scale audit 10/19/26 ONB-7): dsr.settings.validate.
+    from dsr import settings as _dsr_settings
+    fields, error = _dsr_settings.validate(body, get_restaurant(_rid(u)))
+    if error:
+        return {"ok": False, "error": error}, 400
     update_restaurant(_rid(u), fields)
     return {"ok": True, "settings": _dsr_settings_payload(get_restaurant(_rid(u)))}, 200
 
@@ -7341,7 +7279,6 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
     try:
         from schedule_publish import publish_review
         from models import get_conn as _gc
-        import people
         conn = _gc()
         try:
             row = conn.execute("SELECT id, published_at, superseded_by FROM schedule_history "
@@ -7355,13 +7292,10 @@ def draft_one_tap_safe(rid, schedule_id, can_publish=True, review=None) -> bool:
         # warning or quality note the owner has not read (re-audit 10/8/26).
         if review is None:
             review = publish_review(rid, row["id"], unattended=True) or {}
-        if review.get("blockers") or review.get("soft") or review.get("notes") or review.get("held_unattended"):
-            return False
-        import schedule_shifts as _ss_ot
-        from labor import employees_in_rows as _eir_ot
-        reach = people.reach_summary(people.reach(rid, _eir_ot(_ss_ot.rows_of(row["id"], "working",
-                                                                             restaurant_id=rid))))
-        return int(reach.get("total") or 0) > 0
+        # The one rule, shared with the Send's own check under its claim
+        # (schedule_publish.one_tap_ok — scale audit 10/19/26 A5-F14).
+        import schedule_publish as _sp_ot
+        return _sp_ot.one_tap_ok(rid, row["id"], review)
     except Exception as e:
         import ops
         ops.capture(e, job="draft_one_tap_safe", context=f"restaurant_id={rid} schedule_id={schedule_id}")
@@ -7966,6 +7900,80 @@ def _do_policy_notice_dismiss(u):
     return {"ok": True, "dismissed": bool(ok)}, 200
 
 
+# ── Home's follow-through, one read (scale audit 10/19/26 FE-01) ─────────────
+# The web Home fired these fifteen reads at once after /api/home/brief —
+# fifteen requests, each through the auth stack, together holding all four
+# request threads. GET /api/home/follow answers them in one: each block is
+# its route's own body, under the gates its own path has (the module a plan
+# lacks, the module a role may not read), with the query its own request
+# sent. A block is null wherever its own read would not have answered 200,
+# exactly as the client treated a failed read. The four kept blocks
+# (home_snapshots) are served only from what is kept for today: one not yet
+# built is named in `missing` and the client reads it on its own, in
+# parallel, so the first open of a day is no slower than before.
+# (key, path the client used, its query, body)
+_HOME_FOLLOW = (
+    ("brief", "/api/morning-brief", {"view": "home"}, "_do_morning_brief"),
+    ("issues", "/api/issues", {"status": "unresolved"}, "_do_issues_list"),
+    ("goals", "/api/goals", {}, "_do_goals_list"),
+    ("outcomes", "/api/outcomes", {}, "_do_outcomes_list"),
+    ("actions", "/api/actions", {}, "_do_actions"),
+    ("closeout", "/api/closeout", {}, "_do_closeout_get"),
+    ("value", "/api/value", {}, "_do_value"),
+    ("cross", "/api/cross-module", {}, "_do_cross_module"),
+    ("news", "/api/good-news", {}, "_do_good_news"),
+    ("miles", "/api/milestones", {}, "_do_milestones"),
+    ("loss", "/api/loss-signals", {}, "_do_loss_signals"),
+    ("month", "/api/monthly-review", {}, "_do_monthly_review"),
+    ("timeline", "/api/recs/timeline", {"limit": "40"}, "_do_recs_timeline"),
+    ("worked", "/api/recs/what-worked", {"days": "180"}, "_do_recs_what_worked"),
+)
+
+
+class _QueryAs:
+    """The request's query string as one block's own read sent it (bodies
+    read request.args); the real one is put back after."""
+
+    def __init__(self, args):
+        from werkzeug.datastructures import ImmutableMultiDict
+        self.args = ImmutableMultiDict(args)
+
+    def __enter__(self):
+        self.req = request._get_current_object()
+        self.had = "args" in self.req.__dict__
+        self.was = self.req.__dict__.get("args")
+        self.req.__dict__["args"] = self.args
+        return self
+
+    def __exit__(self, *exc):
+        if self.had:
+            self.req.__dict__["args"] = self.was
+        else:
+            self.req.__dict__.pop("args", None)
+        return False
+
+
+def _do_home_follow(u):
+    import auth
+    import home_snapshots
+    blocks, missing = {}, []
+    for key, path, args, body_name in _HOME_FOLLOW:
+        if auth._module_blocked(u, path=path) or auth._module_permission_denied(u, path=path):
+            blocks[key] = None
+            continue
+        try:
+            with _QueryAs(args), home_snapshots.kept_only():
+                payload, status = globals()[body_name](u)
+            blocks[key] = payload if status == 200 and isinstance(payload, dict) and payload.get("ok") else None
+        except home_snapshots.SnapshotMiss:
+            missing.append(key)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("home-follow %s failed rid=%s: %s", key, _rid(u), e)
+            blocks[key] = None
+    return {"ok": True, "blocks": blocks, "missing": missing}, 200
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
     ("/account/policy-notice/dismiss", ["POST"], _do_policy_notice_dismiss, "policy_notice_dismiss"),
@@ -8013,6 +8021,7 @@ _ROUTES = [
     ("/labor/auto-draft", ["POST"], _do_auto_draft_set, "auto_draft_set"),
     ("/loss-signals", ["GET"], _do_loss_signals, "loss_signals"),
     ("/cross-module", ["GET"], _do_cross_module, "cross_module"),
+    ("/home/follow", ["GET"], _do_home_follow, "home_follow"),
     ("/good-news", ["GET"], _do_good_news, "good_news"),
     ("/milestones", ["GET"], _do_milestones, "milestones_list"),
     ("/monthly-review", ["GET"], _do_monthly_review, "monthly_review"),

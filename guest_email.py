@@ -735,6 +735,9 @@ def send_newsletter(restaurant_id, body, subject=None, db_path: str = DB_PATH,
         return {"ok": False, "error": NEEDS_ADDRESS, "needs_mailing_address": True}
     if not _sending_configured():
         return {"ok": False, "error": NOT_CONFIGURED, "not_configured": True}
+    paused = guest_mail_paused(restaurant_id, db_path=db_path)
+    if paused:
+        return {"ok": False, "error": paused, "paused": True}
     # The Haiku gate on the final email, every field a guest reads, unless
     # this exact text already passed it (a gated draft left as it was, a
     # resend) — wherever its words came from (re-audit 10/7/26 #8).
@@ -927,7 +930,9 @@ def _render(restaurant, person, subject, paragraphs, base, design=None, image_ur
     payload = {
         # display_from: a comma or quote in the name split this header into
         # two mailboxes (MOD-EML-2).
-        "from": _emails.display_from(restaurant.name),
+        # GUEST_FROM_EMAIL when set: guest mail on its own domain, apart
+        # from owners' security mail (SEC-02).
+        "from": _emails.display_from(restaurant.name, config.guest_from_email() or None),
         "to": [person["email"]],
         "subject": subject,
         "html": html,
@@ -960,6 +965,71 @@ def _failure(result):
     return "failed", err, 0
 
 
+# ── Per-tenant reputation breaker (scale audit 10/19/26, SEC-02) ───────────
+# Every restaurant's guest mail leaves from Cavnar AI's sending domain, so one
+# tenant mailing a stale or imported list lowers the reputation of every
+# tenant's newsletter (Google's bulk-sender line is 0.3% spam). Complaints
+# used to be statistics only. A restaurant whose guest mail drew more than
+# GUEST_EMAIL_COMPLAINT_PAUSE_PCT complaints or GUEST_EMAIL_BOUNCE_PAUSE_PCT
+# bounces over the last 7 days (at least PAUSE_MIN_ACCEPTED accepted) has its
+# guest mail paused until the window clears: a new newsletter is refused with
+# the reason, a running one holds its pending recipients, a review-request
+# email is not sent.
+GUEST_EMAIL_TYPES = ("guest_newsletter", "guest_review_request")
+PAUSE_WINDOW_DAYS = 7
+PAUSE_MIN_ACCEPTED = 50
+PAUSE_COMPLAINT_PCT_DEFAULT = 0.1
+PAUSE_BOUNCE_PCT_DEFAULT = 5.0
+
+
+def _pct_env(name, default) -> float:
+    import os
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def guest_mail_paused(restaurant_id, db_path: str = DB_PATH):
+    """The sentence saying why this restaurant's guest mail is paused, or
+    None. Never raises (a ledger hiccup must not stop mail on its own)."""
+    from models import DELIVERY_STATUS_RANK
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT COALESCE(status,'sent') AS status, COUNT(*) AS n FROM email_log WHERE restaurant_id=? "
+                "AND email_type IN (?, ?) AND sent_at >= datetime('now', ?) GROUP BY 1",
+                (int(restaurant_id), *GUEST_EMAIL_TYPES, f"-{PAUSE_WINDOW_DAYS} days")).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("guest mail breaker unread for %s: %s", restaurant_id, e)
+        return None
+    counts = {r["status"]: r["n"] for r in rows}
+    accepted = sum(n for s, n in counts.items() if s in DELIVERY_STATUS_RANK)
+    if accepted < PAUSE_MIN_ACCEPTED:
+        return None
+    complaint = 100.0 * counts.get("complained", 0) / accepted
+    bounce = 100.0 * counts.get("bounced", 0) / accepted
+    if complaint > _pct_env("GUEST_EMAIL_COMPLAINT_PAUSE_PCT", PAUSE_COMPLAINT_PCT_DEFAULT):
+        why = f"{counts.get('complained', 0)} of the last {accepted} guest emails were marked as spam"
+    elif bounce > _pct_env("GUEST_EMAIL_BOUNCE_PAUSE_PCT", PAUSE_BOUNCE_PCT_DEFAULT):
+        why = f"{counts.get('bounced', 0)} of the last {accepted} guest emails bounced"
+    else:
+        return None
+    try:
+        import ops
+        if ops.claim_cooldown(f"guest_mail_paused:{int(restaurant_id)}", 24 * 60):
+            ops.capture(RuntimeError(f"guest mail paused: {why}"), job="guest_mail_breaker",
+                        context=f"restaurant_id={restaurant_id}")
+    except Exception:
+        pass
+    return (f"Guest email is paused for now: {why} in the last {PAUSE_WINDOW_DAYS} days, which puts every "
+            "restaurant's mail at risk of the spam folder. Clean the list (remove addresses that didn't opt in) "
+            "and it resumes on its own as the week clears; will@cavnar.ai can help.")
+
+
 def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_PATH) -> dict:
     """Send pending recipients of one newsletter, each claimed first. A send
     that raises (the process going away) gives its claim back.
@@ -986,6 +1056,10 @@ def _send_batch(newsletter_id, limit=None, max_seconds=None, db_path: str = DB_P
     restaurant = get_restaurant(nl["restaurant_id"])
     if not restaurant:
         return {"sent": 0, "failed": 0}
+    if guest_mail_paused(nl["restaurant_id"], db_path=db_path):
+        # Recipients stay pending: the newsletter resumes when the window
+        # clears (SEC-02).
+        return {"sent": 0, "failed": 0, "held": True, "paused": True}
     base = config.base_url().rstrip("/")
     paragraphs = _paragraphs(nl["body"])
     try:

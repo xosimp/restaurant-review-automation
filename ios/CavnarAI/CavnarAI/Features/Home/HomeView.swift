@@ -523,7 +523,8 @@ struct HomeView: View {
             .sheet(item: $evidenceLink, onDismiss: { Task { await followThrough.load() } }) { link in
                 HomeLinkEvidenceSheet(link: link)
             }
-            .task { await viewModel.load() }
+            // An appear reads again only when the last read is stale (FE-07).
+            .task { await viewModel.loadIfStale() }
             .onChange(of: viewModel.lastLoadedAt, initial: true) { _, _ in noteQuietWindow() }
             // A tapped push about another location switched to it
             // (DeepLinkRouter), or the switcher did — Home shows that

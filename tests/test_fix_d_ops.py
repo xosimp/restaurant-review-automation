@@ -243,12 +243,18 @@ def test_existing_marker_claims_are_carried_over_at_boot(db_path):
                 "('rating_unreadable:4:7/1/26', '2026-07-02 10:00:00')")
     _x(db_path, "INSERT INTO job_period_claims (job_key) VALUES ('quality_calibration:5:2026-09-21')")
     _x(db_path, "INSERT INTO job_period_claims (job_key) VALUES ('quality_calibration:2026-09-27')")
+    # A database from before the carry: the fixture's boot already made it (and marked it done).
+    _x(db_path, f"DELETE FROM ops_markers WHERE key='{ops._MARKERS_CARRIED}'")
     ops.init_ops(db_path)
     keys = {r["key"]: r["created_at"] for r in _q(db_path, "SELECT key, created_at FROM ops_markers")}
     assert keys.get("rating_unreadable:4:7/1/26") == "2026-07-02 10:00:00"
     assert "quality_calibration:5:2026-09-21" in keys
     assert "quality_calibration:2026-09-27" not in keys, "the loop's daily claim is not a marker"
     assert ops.claim_marker("rating_unreadable:4", "7/1/26") is False
+    # Once (scale audit 10/19/26 DB-14): a later boot no longer scans the claims table for them.
+    _x(db_path, "INSERT INTO job_period_claims (job_key) VALUES ('rating_unreadable:9:8/1/26')")
+    ops.init_ops(db_path)
+    assert not _q(db_path, "SELECT 1 FROM ops_markers WHERE key='rating_unreadable:9:8/1/26'")
 
 
 def test_the_marker_call_sites_use_ops_markers():

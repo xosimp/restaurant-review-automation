@@ -1147,7 +1147,16 @@ final class AccountViewModel {
                 connectInstagramError = response.error ?? "Couldn't start Instagram connect."
                 return
             }
-            try await GMBConnectCoordinator().connect(authorizeURL: url)
+            // The callback saves nothing for the app: this login confirms
+            // the Page it chose (scale audit 10/19/26, SEC-09).
+            if let ticket = try await GMBConnectCoordinator().connect(authorizeURL: url) {
+                let confirmed: APIClient.OKResponse = try await client.send(
+                    "/mobile/api/connections/instagram/confirm", method: .post, body: ["ticket": ticket])
+                guard confirmed.ok else {
+                    connectInstagramError = confirmed.error ?? "Couldn't connect Instagram & Facebook."
+                    return
+                }
+            }
             await load()
         } catch let error as GMBConnectError {
             switch error {

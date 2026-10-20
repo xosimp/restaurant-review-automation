@@ -81,7 +81,8 @@ class TranslationError(ValueError):
 # Month-partitioned fact tables on Postgres (scale.md data model): table ->
 # (partition column, extra key columns an upsert's conflict target gains).
 # scripts/run_pg_copy.py creates them PARTITION BY RANGE on that column, one
-# partition a month; retention drops whole partitions (pg_partitions).
+# partition a month; pg_partitions keeps the next months made, and the
+# nightly prune drops the months wholly past a table's window (DB-03).
 PARTITIONED = {
     "shift_facts": "business_date",
     "attendance_events": "business_date",
@@ -1191,6 +1192,14 @@ class Translator:
             mode = "DECLARED"
         part = PARTITIONED.get(table or "")
         if part:
+            # Only a table the copy partitioned carries the column in its
+            # key (pg_copy.table_ddl): one a boot made itself — a fresh
+            # Postgres, CI's — keeps SQLite's key, and an arbiter naming the
+            # column matches no constraint there.
+            pk = [c.lower() for c in (self.pk_lookup(table) or [])]
+            if pk and part not in pk:
+                part = None
+        if part:
             toks = _add_conflict_column(toks, part)
         if mode is None:
             return toks
@@ -1580,6 +1589,39 @@ def run_atomic_many(raw, sql, rows, in_tx_hint=False):
     return cur
 
 
+# Writes past this many in one transaction overflow Postgres's per-backend
+# subtransaction cache (PGPROC_MAX_CACHED_SUBXIDS): each is a savepoint that
+# took an XID, and from then on every other session's snapshot reads
+# pg_subtrans. The loops found by the 10/19/26 sweep are one executemany
+# now (DB-05); a loop still left is said once per call site in the log, so
+# production names the rest.
+SUBXACT_WARN = 64
+_WRITE_STMT = re.compile(r"^\s*(INSERT|UPDATE|DELETE|WITH\b.*\b(INSERT|UPDATE|DELETE))\b", re.I | re.S)
+_subxact_sites = set()
+
+
+def _note_subxact(conn):
+    n = getattr(conn, "_tx_writes", 0) + 1
+    conn._tx_writes = n
+    if n != SUBXACT_WARN + 1:
+        return
+    try:
+        import traceback
+        here = os.path.abspath(__file__)
+        site = next((f"{os.path.basename(f.filename)}:{f.lineno} {f.name}"
+                     for f in reversed(traceback.extract_stack()[:-2])
+                     if os.path.abspath(f.filename) != here and not f.filename.endswith("models.py")), "?")
+    except Exception:
+        site = "?"
+    if site in _subxact_sites:
+        return
+    _subxact_sites.add(site)
+    import logging
+    logging.getLogger("db_dialect").warning(
+        f"subtransactions: more than {SUBXACT_WARN} write statements in one transaction at {site} — "
+        "one savepoint each on Postgres; make it one executemany (scale audit 10/19/26 DB-05)")
+
+
 def _undo_statement(raw):
     """Back to the statement's savepoint (the transaction before it)."""
     try:
@@ -1690,6 +1732,10 @@ class PgConnection:
     def _run(self, sql, params, cur):
         # Always a tuple: every literal % was doubled, so the query is
         # always read for placeholders (never sent with params=None).
+        if not self._in_tx:
+            self._tx_writes = 0
+        elif _WRITE_STMT.match(sql):
+            _note_subxact(self)
         try:
             raw = run_atomic(self._raw, sql, tuple(params or ()), self._in_tx)
         except Exception as e:
@@ -1996,6 +2042,25 @@ def begin_write(conn, *resource, lock_now=True):
         lock(conn, *resource)
 
 
+def begin_tenant_write(conn, *resource):
+    """A write transaction for one tenant's `resource` (scale audit 10/19/26
+    DB-08) that still keeps the one-writer rule for everything else. SQLite:
+    BEGIN IMMEDIATE. Postgres: the platform's write lock (WRITE_LOCK_KEY)
+    SHARED, then `resource`'s own lock. Two tenants' syncs (or two
+    resources of one) run side by side; every BEGIN IMMEDIATE site, which
+    takes WRITE_LOCK_KEY exclusively, still waits for them and they for it —
+    so a site moved here is serialised against every site not yet moved
+    exactly as before, and against its own resource of its own tenant."""
+    if not is_postgres(conn):
+        conn.execute("BEGIN IMMEDIATE")
+        return
+    if not resource:
+        raise ValueError("begin_tenant_write needs the resource it serialises")
+    conn.execute("BEGIN")
+    conn.execute_native("SELECT pg_advisory_xact_lock_shared(%s)", (WRITE_LOCK_KEY,))
+    lock(conn, *resource)
+
+
 def lock(conn, *resource) -> None:
     """Inside an open write transaction: on Postgres, wait for and hold the
     advisory lock of `resource` until the transaction ends; on SQLite a
@@ -2186,7 +2251,24 @@ def _driver_connect(url):
     import psycopg
     # UTC, as SQLite's datetime('now') is: a stamp with no offset is read
     # as UTC (cavnar_ts), and now() / CURRENT_DATE agree with the app.
-    raw = psycopg.connect(url, autocommit=False, connect_timeout=10, options="-c timezone=UTC")
+    # Timeouts (scale audit 10/19/26 DB-06): SQLite gave up on a lock after
+    # its 30 s busy_timeout; Postgres would wait forever, and one stuck
+    # transaction holding WRITE_LOCK_KEY stopped every BEGIN IMMEDIATE in
+    # every process. 0 turns one off.
+    opts = ["-c timezone=UTC",
+            f"-c lock_timeout={_env_int(os.getenv('PG_LOCK_TIMEOUT_MS'), 30000)}",
+            f"-c statement_timeout={_env_int(os.getenv('PG_STATEMENT_TIMEOUT_MS'), 300000)}",
+            f"-c idle_in_transaction_session_timeout={_env_int(os.getenv('PG_IDLE_TX_TIMEOUT_MS'), 300000)}"]
+    # PG_CONNECT_TIMEOUT_S (5): a server that does not answer a connect is
+    # given up on this soon (it was 10 s, and every request thread waited
+    # it out in turn while the database restarted - DB-22).
+    raw = psycopg.connect(url, autocommit=False, connect_timeout=max(2, _env_int(os.getenv("PG_CONNECT_TIMEOUT_S"), 5)),
+                          options=" ".join(opts))
+    # Behind PgBouncer in transaction mode (before 1.21) a server-side
+    # prepared statement may not exist on the next backend (DB-07):
+    # PG_PREPARE_THRESHOLD=off never prepares.
+    if (os.getenv("PG_PREPARE_THRESHOLD") or "").strip().lower() in ("off", "none", "0"):
+        raw.prepare_threshold = None
     raw.adapters.register_loader("numeric", _numeric_loader())
     return raw
 
@@ -2196,6 +2278,35 @@ def _env_int(value, default):
         return max(0, int(value or default))
     except ValueError:
         return default
+
+
+def _env_float(value, default):
+    try:
+        return max(0.0, float(value if value not in (None, "") else default))
+    except ValueError:
+        return default
+
+
+def _alive(raw, ping=False) -> bool:
+    """Whether an idle connection can be handed out: open, not broken, its
+    socket's status OK — and, with `ping`, answering a round trip (DB-22)."""
+    try:
+        if getattr(raw, "closed", False) or getattr(raw, "broken", False):
+            return False
+        pgconn = getattr(raw, "pgconn", None)
+        if pgconn is not None:
+            from psycopg import pq
+            if pgconn.status != pq.ConnStatus.OK:
+                return False
+        if ping:
+            try:
+                raw.execute("SELECT 1", prepare=False)
+            except TypeError:               # a DB-API driver without `prepare`
+                raw.cursor().execute("SELECT 1")
+            raw.rollback()
+        return True
+    except Exception:
+        return False
 
 
 class _Pool:
@@ -2231,6 +2342,8 @@ class _Pool:
         self.base = 0                     # checked out by a thread holding none
         self.overflow = 0                 # checked out by a thread already holding one
         self.opened = 0                   # live raw connections (out + idle)
+        self.down_until = 0.0             # the connect breaker (DB-22): monotonic
+        self.down_error = ""
 
     def limits(self):
         # Read each checkout (cheap), so a changed limit needs no restart.
@@ -2259,20 +2372,11 @@ class _Pool:
                         f"database connection pool exhausted ({self.base} + {self.overflow} in use; "
                         f"PG_POOL_MAX={cap_base}, PG_POOL_OVERFLOW={cap_over})")
                 self.cond.wait(left)
-            raw = None
-            now = time.monotonic()
-            while self.idle:
-                r, born, since = self.idle.pop()
-                if now - born > life or now - since > idle_s:
-                    self.opened -= 1
-                    _close_raw(r)
-                    continue
-                raw = (r, born)
-                break
         held[self.url] = held.get(self.url, 0) + 1
         try:
+            raw = self._reuse(life, idle_s)
             if raw is None:
-                raw = (_driver_connect(self.url), time.monotonic())
+                raw = (self._connect(), time.monotonic())
                 with self.cond:
                     self.opened += 1
             c = PgConnection(raw[0])
@@ -2282,6 +2386,49 @@ class _Pool:
             raise
         c._url, c._born, c._slot = self.url, raw[1], kind
         return c
+
+    # ── a database that restarts (DB-22, 10/19/26) ──────────────────────────
+    #
+    # Enabling point-in-time recovery redeployed production's Postgres: for
+    # ~3 minutes every checkout opened a new connection and waited the whole
+    # connect timeout (10 s) before failing, and the four request threads
+    # queued behind those waits. Now a failed connect opens a short breaker
+    # (PG_CONNECT_BACKOFF_S, 3 s): until it closes, a checkout that needs a
+    # new connection fails at once, with the sqlite3.OperationalError every
+    # caller already handles. And an idle connection is checked before it is
+    # handed out — its own state always, a round trip when it has sat idle
+    # past PG_POOL_PING_AFTER_S (30 s) — so a restart's dead connections are
+    # dropped, never given to a request.
+
+    def _reuse(self, life, idle_s):
+        """A live idle connection as (raw, born), or None."""
+        ping_after = _env_int(os.getenv("PG_POOL_PING_AFTER_S"), 30)
+        while True:
+            with self.cond:
+                if not self.idle:
+                    return None
+                r, born, since = self.idle.pop()
+            now = time.monotonic()
+            if now - born <= life and now - since <= idle_s and _alive(r, ping=now - since > ping_after):
+                return (r, born)
+            with self.cond:
+                self.opened -= 1
+            _close_raw(r)
+
+    def _connect(self):
+        now = time.monotonic()
+        if now < self.down_until:
+            raise sqlite3.OperationalError(
+                f"database unreachable (a connect failed {self.down_error}; retrying within "
+                f"{max(0.0, self.down_until - now):.1f} s)")
+        try:
+            raw = _driver_connect(self.url)
+        except Exception as e:
+            self.down_until = time.monotonic() + _env_float(os.getenv("PG_CONNECT_BACKOFF_S"), 3.0)
+            self.down_error = f"{type(e).__name__}: {str(e)[:200]}"
+            raise sqlite3.OperationalError(f"database unreachable: {self.down_error}") from e
+        self.down_until = 0.0
+        return raw
 
     def checkin(self, conn):
         held = _held()

@@ -144,6 +144,32 @@ _REACTION_RE = re.compile(
 _PHONE_EXTENSION = re.compile(r"\s*(?:x|ext\.?|extension|#)\s*\d+\s*$", re.IGNORECASE)
 
 
+# The countries any non-OTP text may go to (scale audit 10/19/26, SEC-05):
+# alerts, staff and guest texts alike. Every Cavnar AI restaurant is in North
+# America and every A2P 10DLC campaign is US-registered; a public join form
+# that texted any "+<digits>" was the shape of SMS pumping (toll fraud) on the
+# one shared guest sender. SMS_COUNTRY_CODES (default "1": US and Canada,
+# exactly ten digits after it). Verification codes keep their own list
+# (auth.otp_country_allowed, STAFF_OTP_COUNTRY_CODES).
+SMS_COUNTRY_ERROR_CODE = "country_not_allowed"
+
+
+def sms_country_codes() -> tuple:
+    raw = os.environ.get("SMS_COUNTRY_CODES", "") or "1"
+    codes = tuple(c.strip().lstrip("+") for c in raw.split(",") if c.strip().lstrip("+").isdigit())
+    return codes or ("1",)
+
+
+def sms_country_allowed(phone: str) -> bool:
+    """A number (any form) in a country Cavnar AI texts. +1 needs exactly
+    ten digits after it."""
+    p = _normalize_phone(phone)
+    for cc in sms_country_codes():
+        if p.startswith("+" + cc):
+            return len(p) == 12 if cc == "1" else len(p) >= 8
+    return False
+
+
 def _normalize_phone(phone: str) -> str:
     # A text cannot reach an extension, and its digits appended to the number
     # made "(630) 555-0123 x45" into +630555012345, someone else's number
@@ -459,6 +485,11 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # The showcase demo (Halsted & Rye) never texts anyone.
             return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
                                    permanent=True))
+    if use_case != "otp" and not sms_country_allowed(phone):
+        log_id = _log_sms(rid, use_case, phone, "blocked", SMS_COUNTRY_ERROR_CODE,
+                          "a country Cavnar AI does not text", db_path=db_path)
+        return _done(SmsResult(False, status="blocked", error_code=SMS_COUNTRY_ERROR_CODE,
+                               error="a country Cavnar AI does not text", permanent=True, log_id=log_id))
     if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
                           "the number replied STOP", db_path=db_path)

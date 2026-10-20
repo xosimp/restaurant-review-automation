@@ -197,6 +197,9 @@ def test_a_quick_callback_finishes_inside_the_pass(db_path, batches):
 
 def test_a_cutoff_fallback_runs_on_the_pool_too(db_path, batches, monkeypatch):
     monkeypatch.setattr(ai_batches, "CALLBACK_INLINE_WAIT_SECONDS", 0.2)
+    # The cut-off path itself: a one-item batch would now be cancelled first
+    # (scale audit 10/19/26 A4-07), so that path is switched off here.
+    monkeypatch.setattr(ai_batches, "CANCEL_GRACE_SECONDS", 0)
     rid = _rid(db_path)
     ai_batches.submit(WF, [_item("c1", rid, cutoff_at=datetime.utcnow() - timedelta(minutes=1))])
     GATE["event"] = threading.Event()
@@ -215,6 +218,9 @@ def test_a_cutoff_fallback_runs_on_the_pool_too(db_path, batches, monkeypatch):
 
 def test_an_answer_landing_while_its_cutoff_fallback_runs_is_ledgered_and_dropped(db_path, batches, monkeypatch):
     monkeypatch.setattr(ai_batches, "CALLBACK_INLINE_WAIT_SECONDS", 0.1)
+    # The cut-off path itself: a one-item batch would now be cancelled first
+    # (scale audit 10/19/26 A4-07), so that path is switched off here.
+    monkeypatch.setattr(ai_batches, "CANCEL_GRACE_SECONDS", 0)
     rid = _rid(db_path)
     ai_batches.submit(WF, [_item("l1", rid, cutoff_at=datetime.utcnow() - timedelta(minutes=1))])
     GATE["event"] = threading.Event()
@@ -588,9 +594,12 @@ def test_the_places_ceiling_counts_real_paying_restaurants(db_path):
     ai_utils.invalidate_budget_memo()
     n = ai_utils._paying_client_count()
     assert n >= 25
-    assert ai_utils.places_global_monthly_budget() == min(max(ai_utils.AI_PLACES_GLOBAL_MONTHLY_USD,
-                                                              n * ai_utils.AI_PLACES_GLOBAL_PER_CLIENT_USD),
-                                                          ai_utils.AI_PLACES_GLOBAL_MAX_MONTHLY_USD)
+    # Every client restaurant, paying or trial, and no absolute maximum by
+    # default (scale audit 10/19/26 A4-04).
+    clients = n + ai_utils._trial_client_count()
+    assert ai_utils.AI_PLACES_GLOBAL_MAX_MONTHLY_USD == 0
+    assert ai_utils.places_global_monthly_budget() == max(ai_utils.AI_PLACES_GLOBAL_MONTHLY_USD,
+                                                          clients * ai_utils.AI_PLACES_GLOBAL_PER_CLIENT_USD)
 
 
 # ── #10: a cut stream's output is estimated ─────────────────────────────────

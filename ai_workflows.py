@@ -87,14 +87,38 @@ def _previous_tier_models():
     return {"T1": os.getenv("AI_TIER_T1_PREVIOUS_MODEL", _ai.HAIKU)}
 
 
+def canary_percent() -> float:
+    """AI_CANARY_PERCENT (scale audit 10/19/26 A4-10): the share of ALL
+    restaurants, by a stable hash of the id, in the canary beside the ids
+    AI_CANARY_RESTAURANTS names — a real cohort the learner can judge the
+    cheap rung on, instead of one demo store. 0 (the default) adds none."""
+    try:
+        return max(0.0, min(100.0, float(os.getenv("AI_CANARY_PERCENT", "0") or 0)))
+    except ValueError:
+        return 0.0
+
+
+def _canary_bucket(restaurant_id) -> float:
+    """A restaurant's stable place in [0, 100) for the percent cohort."""
+    import hashlib
+    h = hashlib.sha256(f"ai-canary:{int(restaurant_id)}".encode()).hexdigest()
+    return (int(h[:8], 16) % 10000) / 100.0
+
+
 def _in_canary(restaurant_id) -> bool:
     names = canary_restaurants()
     if CANARY_ALL in names:
         return True
     try:
-        return restaurant_id is not None and int(restaurant_id) in names
+        if restaurant_id is None:
+            return False
+        rid = int(restaurant_id)
     except (TypeError, ValueError):
         return False
+    if rid in names:
+        return True
+    pct = canary_percent()
+    return bool(pct) and _canary_bucket(rid) < pct
 
 
 def _tier_table(restaurant_id=None):
@@ -550,12 +574,9 @@ def canary_start(pol: Policy, restaurant_id, start: str | None = None):
     ladder = list(pol.ladder)
     if not pol.canary or len(ladder) < 2 or DEFAULT in ladder or pinned_model(pol):
         return start, None
-    try:
-        rid = int(restaurant_id) if restaurant_id is not None else None
-    except (TypeError, ValueError):
-        rid = None
-    names = canary_restaurants()
-    if CANARY_ALL in names or (rid is not None and rid in names):
+    # The ids AI_CANARY_RESTAURANTS names, "*", or the AI_CANARY_PERCENT
+    # cohort (A4-10) — one membership rule with the tiers' (_in_canary).
+    if _in_canary(restaurant_id):
         return start, True
     if not start or start not in ladder or start == ladder[0]:
         start = ladder[1]

@@ -97,7 +97,8 @@ def test_every_attempt_is_logged_with_its_outcome(db_path, twilio):
     with notify.sms_context(rid):
         assert notify.send_sms("6305550100", "hi") is True
     twilio["answers"].append((400, {"code": 21211, "message": "Invalid 'To' Phone Number"}))
-    res = notify.send_sms_result("+1555", "hi", restaurant_id=rid)
+    # Well-formed for the local country check (SEC-05), refused by Twilio.
+    res = notify.send_sms_result("+15550000000", "hi", restaurant_id=rid)
     assert not res.ok and res.permanent and res.error_code == "21211"
     rows = _rows(db_path, "SELECT restaurant_id, status, error_code, provider_sid, to_last4, to_hash FROM sms_log ORDER BY id")
     assert rows[0]["status"] == "queued" and rows[0]["provider_sid"] == "SM1" and rows[0]["restaurant_id"] == rid

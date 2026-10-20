@@ -214,6 +214,21 @@ def _reset_ai_rate_limiter():
 
 
 @pytest.fixture(autouse=True)
+def _reset_request_limits(monkeypatch):
+    """request_limits keeps its windows and buckets in memory, keyed by IP,
+    login and restaurant id — which every test reuses (scale fix 10/19/26,
+    SEC-07/08). Cleared per test; the per-login request share is off unless
+    a test turns it on (REQUEST_LIMITS=1), so a test that makes a hundred
+    calls as one login is not throttled by the one before it."""
+    import request_limits
+    request_limits.reset()
+    if "REQUEST_LIMITS" not in os.environ:
+        monkeypatch.setenv("REQUEST_LIMITS", "0")
+    yield
+    request_limits.reset()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rpower_caches():
     """rpower caches its lists (sales types, menu, void reasons, people,
     tables and rooms, the closed-day answer) per restaurant id for minutes;

@@ -123,10 +123,25 @@ def test_bootstrap_binds_a_single_store_and_adopts_its_settings(db_path, monkeyp
     assert r.rpower_store_name == "Simple EJ's"
     assert r.rpower_verified_at
     assert r.timezone == "America/Chicago"
-    # RPOWER's ot_dow is 1-based from Monday; Cavnar's week_start_day is
-    # Python's weekday(), 0-based from Monday. Off by one, and silently off
-    # by one is a payroll week starting on the wrong day.
-    assert r.week_start_day == 0, "RPOWER ot_dow 1 (Monday) is Cavnar week_start_day 0"
+    # RPOWER's ot_dow read as 1-based from Monday against Cavnar's
+    # week_start_day (Python's weekday(), 0-based from Monday) is an
+    # UNCONFIRMED reading: since 10/19/26 (scale audit ONB-11) it is the setup
+    # step's suggestion, confirmed by a person, never applied silently.
+    assert r.week_start_day == 0
+    assert out["suggested_week_start_day"] == 0
+
+
+def test_bootstraps_payroll_week_is_a_suggestion_confirmed_in_setup(db_path, monkeypatch):
+    import onboarding
+    rid = _restaurant(db_path, rpower_token="tok")
+    _stub_api(monkeypatch, {"store/get": [dict(_STORE, ot_dow=3)]})
+    assert rpower.bootstrap(rid)["ok"] is True
+    assert models.get_restaurant(rid).week_start_day == 0, "never applied without a person's yes"
+    pending = onboarding.confirmations(rid)["week_start"]
+    assert pending["status"] == "pending" and pending["suggested"]["week_start_day"] == 2
+    assert onboarding.confirm(rid, "week_start", who="will")["ok"]
+    assert models.get_restaurant(rid).week_start_day == 2
+    assert onboarding.confirmations(rid)["week_start"]["status"] == "confirmed"
 
 
 def test_bootstrap_refuses_to_guess_between_several_stores(db_path, monkeypatch):
