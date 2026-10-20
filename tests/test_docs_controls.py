@@ -447,7 +447,7 @@ def test_the_scrub_empties_the_tables_the_doc_names():
     import offsite_backup
     assert set(offsite_backup.SCRUB_TABLES) == {"sessions", "two_fa_backup_codes", "trusted_devices",
                                                 "device_tokens", "login_reports", "staff_portal_tokens",
-                                                "app_secrets", "view_as_sessions", "user_backup_codes",
+                                                "view_as_sessions", "user_backup_codes",
                                                 "async_jobs",
                                                 # R10 (9/29/26): an internal login's authenticator-app
                                                 # secret — a live second factor.
@@ -487,6 +487,23 @@ def test_the_documented_retention_table_is_the_registry():
     for t, (days, col) in seen.items():
         assert ops._RETENTION_DAYS[t] == days, t
         assert ops._RETENTION_COLUMN.get(t, "created_at") == col, t
+
+
+def test_the_offsite_copy_seals_what_a_restore_needs_and_the_docs_say_so():
+    """OPS-1 (scale audit 10/19/26): credentials, link-signing secrets,
+    webhook secrets, the Stripe customer id and the live intake address
+    leave only sealed under CREDENTIAL_KEY; the restore opens them."""
+    import offsite_backup
+    import db_restore
+    assert set(offsite_backup.SEAL_TABLES) == {"app_secrets"}
+    assert set(offsite_backup.SEAL_COLUMNS) == {("restaurants", "stripe_customer_id"), ("webhooks", "secret"),
+                                                ("email_intake_routes", "address")}
+    assert "_unseal(tmp)" in inspect.getsource(db_restore.restore_if_requested)
+    assert "unseal_file(plain)" in inspect.getsource(__import__("scheduler")._drill_offsite)
+    schema = _read("DATABASE_SCHEMA.md")
+    assert "`SEAL_COLUMNS`" in schema and "`SEAL_TABLES`" in schema
+    _says(SECURITY, "sealed under `credential_key`")
+    _says(RECOVERY, "sealed under `credential_key`", "a reader of an off-site copy needs both keys")
 
 
 def test_an_unclassified_credential_column_is_scrubbed_anyway():

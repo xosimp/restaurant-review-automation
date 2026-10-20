@@ -119,6 +119,11 @@ def restore_if_requested(db_path=None) -> dict:
             os.replace(db_path + suffix, f"{db_path}{suffix}.broken-{stamp}")
     if not gz:
         shutil.copyfile(snapshot, tmp)
+    # A decrypted off-site copy carries its credentials and link secrets
+    # SEALED under CREDENTIAL_KEY (offsite_backup, scale audit OPS-1): opened
+    # here, in the file, before anything serves from it. A local snapshot
+    # holds none, so this is a few empty reads.
+    unsealed = _unseal(tmp)
     os.replace(tmp, db_path)
 
     got = _count_restaurants(db_path)
@@ -127,4 +132,19 @@ def restore_if_requested(db_path=None) -> dict:
     open(marker, "w").close()
     log.warning("Restored %s over %s (%d restaurants). Remove RESTORE_FROM once confirmed.",
                 snapshot, db_path, got)
-    return {"restored": True, "snapshot": snapshot, "restaurants": got}
+    return {"restored": True, "snapshot": snapshot, "restaurants": got, "unsealed": unsealed}
+
+
+def _unseal(path) -> dict:
+    """offsite_backup.unseal_file, logged; never fails the restore (a value
+    it cannot open is blanked — the scrubbed state, re-entered by hand)."""
+    try:
+        import offsite_backup
+        out = offsite_backup.unseal_file(path)
+    except Exception as e:
+        log.error("restore: unsealing the off-site copy's credentials failed: %s", e)
+        return {"unsealed": 0, "failed": None, "error": str(e)[:200]}
+    if out.get("unsealed") or out.get("failed"):
+        log.warning("restore: unsealed %d value(s) from an off-site copy (%d could not be opened): %s",
+                    out["unsealed"], out["failed"], out["columns"])
+    return out

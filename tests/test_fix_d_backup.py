@@ -166,8 +166,12 @@ def test_every_credential_looking_column_is_scrubbed_or_kept_on_purpose(tmp_path
                  ("restaurants", "rpower_token"), ("restaurants", "reservation_api_key"),
                  ("webhooks", "secret")):
         assert must in null, must
-    for t in ("staff_portal_tokens", "app_secrets", "sessions", "login_reports", "user_backup_codes"):
+    for t in ("staff_portal_tokens", "sessions", "login_reports", "user_backup_codes"):
         assert t in offsite_backup.SCRUB_TABLES
+    # Link-signing secrets are sealed under CREDENTIAL_KEY, or emptied
+    # without a key (OPS-1) — never carried in clear.
+    assert "app_secrets" in offsite_backup.SEAL_TABLES
+    assert "app_secrets" in _wipe
     # The encrypted share link goes; its hash and four-character hint stay.
     assert ("sales_audit_shares", "token_enc") in null
     assert ("sales_audit_shares", "token_hint") not in null and ("sales_audit_shares", "token") not in null
@@ -426,3 +430,97 @@ def test_the_drill_proves_the_object_storage_copy(live, monkeypatch):
         200, body=stored["body"] + b"tampered\n"))
     with pytest.raises(RuntimeError):
         scheduler.run_restore_drill()
+
+
+# ── sealed, not scrubbed (scale audit 10/19/26 OPS-1) ───────────────────────
+
+def test_a_restore_from_the_offsite_copy_keeps_every_credential_sealed_under_the_credential_key(tmp_path,
+                                                                                               monkeypatch):
+    """Volume loss used to mean every RPOWER token pasted again by hand, every
+    Google connection redone, every pay link and QR code dead. With a working
+    CREDENTIAL_KEY the copy carries them — but only as ciphertext under that
+    key — and unseal() opens them on restore. Live access stays scrubbed."""
+    from cryptography.fernet import Fernet
+    import credentials
+    import db_restore
+    monkeypatch.setenv("CREDENTIAL_KEY", Fernet.generate_key().decode())
+    path = str(tmp_path / "live.db")
+    _full_schema(path)
+    rid = create_restaurant(Restaurant(name="Seal Co", owner_email="s@x.test"), db_path=path)
+    models.update_restaurant(rid, {"rpower_token": "RP-SECRET-3", "gmb_refresh_token": "G-SECRET-1"}, db_path=path)
+    conn = sqlite3.connect(path)
+    # A plaintext credential written before the key existed, and the
+    # plaintext-on-the-server columns the seal covers.
+    conn.execute("UPDATE restaurants SET square_access_token='SQ-PLAIN-2', stripe_customer_id='cus_SEAL9' "
+                 "WHERE id=?", (rid,))
+    conn.execute("INSERT INTO webhooks (restaurant_id, url, secret) VALUES (?, 'https://h.example', 'WH-SECRET-7')",
+                 (rid,))
+    conn.execute("INSERT INTO app_secrets (name, value) VALUES ('pay_links:v1', 'APP-SECRET-9')")
+    conn.execute("INSERT INTO staff_portal_tokens (restaurant_id, token) VALUES (?, 'STAFF-SECRET-8')", (rid,))
+    conn.commit()
+    assert conn.execute("SELECT rpower_token FROM restaurants WHERE id=?", (rid,)).fetchone()[0].startswith(
+        credentials.PREFIX)
+    conn.close()
+    copy = str(tmp_path / "copy.db")
+    src, dst = sqlite3.connect(path), sqlite3.connect(copy)
+    src.backup(dst)
+    src.close()
+    dst.close()
+    scrubbed = scheduler._redact_snapshot(copy)
+    assert "restaurants.rpower_token" in scrubbed["sealed"] and "app_secrets.value" in scrubbed["sealed"]
+    assert "app_secrets" not in scrubbed["tables"] and "staff_portal_tokens" in scrubbed["tables"]
+    blob = open(copy, "rb").read()
+    for val in ("RP-SECRET-3", "G-SECRET-1", "SQ-PLAIN-2", "cus_SEAL9", "WH-SECRET-7", "APP-SECRET-9",
+                "STAFF-SECRET-8"):
+        assert val.encode() not in blob, f"{val} left the server in clear"
+    assert offsite_backup.sealed_count(copy) == 3     # stripe id, webhook secret, app secret
+    # Restore: RESTORE_FROM unseals the file before it is swapped in.
+    target = str(tmp_path / "restored.db")
+    sqlite3.connect(target).close()
+    monkeypatch.setenv("RESTORE_FROM", copy)
+    out = db_restore.restore_if_requested(db_path=target)
+    assert out["restored"] and out["unsealed"]["unsealed"] == 3 and out["unsealed"]["failed"] == 0
+    r = models.get_restaurant(rid, db_path=target)
+    assert r.rpower_token == "RP-SECRET-3" and r.gmb_refresh_token == "G-SECRET-1"
+    assert r.square_access_token == "SQ-PLAIN-2"
+    c = sqlite3.connect(target)
+    try:
+        assert c.execute("SELECT stripe_customer_id FROM restaurants WHERE id=?", (rid,)).fetchone()[0] == "cus_SEAL9"
+        assert c.execute("SELECT secret FROM webhooks").fetchone()[0] == "WH-SECRET-7"
+        assert c.execute("SELECT value FROM app_secrets WHERE name='pay_links:v1'").fetchone()[0] == "APP-SECRET-9"
+        assert c.execute("SELECT COUNT(*) FROM staff_portal_tokens").fetchone()[0] == 0
+    finally:
+        c.close()
+
+
+def test_without_a_credential_key_the_copy_is_scrubbed_as_before(tmp_path, monkeypatch):
+    monkeypatch.delenv("CREDENTIAL_KEY", raising=False)
+    path = str(tmp_path / "live.db")
+    _full_schema(path)
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO app_secrets (name, value) VALUES ('email_links', 'APP-SECRET-9')")
+    conn.commit()
+    conn.close()
+    scrubbed = offsite_backup.redact(path)
+    assert scrubbed["sealed"] == [] and "app_secrets" in scrubbed["tables"]
+    assert ("restaurants.rpower_token" in scrubbed["columns"]) and ("webhooks.secret" in scrubbed["columns"])
+
+
+def test_a_seal_the_restoring_key_cannot_open_is_blanked_not_served(tmp_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("CREDENTIAL_KEY", Fernet.generate_key().decode())
+    path = str(tmp_path / "live.db")
+    _full_schema(path)
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO app_secrets (name, value) VALUES ('email_links', 'APP-SECRET-9')")
+    conn.commit()
+    conn.close()
+    offsite_backup.redact(path)
+    monkeypatch.setenv("CREDENTIAL_KEY", Fernet.generate_key().decode())   # a different key
+    out = offsite_backup.unseal_file(path)
+    assert out["failed"] == 1 and out["unsealed"] == 0
+    c = sqlite3.connect(path)
+    try:
+        assert c.execute("SELECT COUNT(*) FROM app_secrets").fetchone()[0] == 0
+    finally:
+        c.close()

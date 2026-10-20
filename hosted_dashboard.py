@@ -1170,6 +1170,23 @@ try:
     # whose marker says it held client restaurants must still hold them.
     _sm_boot.assert_platform_not_emptied()
     _init_db()
+    # A database loaded from an off-site copy some other way than
+    # RESTORE_FROM (scripts/run_pg_copy.py into Postgres) still carries its
+    # credentials and link secrets sealed under CREDENTIAL_KEY (scale audit
+    # OPS-1): opened here, once; a few empty reads on every other boot.
+    try:
+        import offsite_backup as _ob_boot
+        from models import get_conn as _gc_boot
+        _c_boot = _gc_boot()
+        try:
+            _un = _ob_boot.unseal(_c_boot)
+            _c_boot.commit()
+        finally:
+            _c_boot.close()
+        if _un.get("unsealed") or _un.get("failed"):
+            _boot_log.warning("unsealed an off-site copy's values at boot: %s", _un)
+    except Exception as _e_boot:
+        _boot_log.exception("unseal pass at boot failed: %s", _e_boot)
     # This boot, in boot_events (#76): the row before it says whether the
     # last process ended cleanly. After init_db, never before it: creating
     # the file first would stop adopt_legacy_db from ever running.
