@@ -458,6 +458,7 @@ _MARKERS_SQL = """CREATE TABLE IF NOT EXISTS ops_markers (
 # loop's own daily "quality_calibration:<date>" claim is not one.
 _MARKER_PATTERNS = ("rating_unreadable:*", "competitor_move_told:*", "data_source_seen:*",
                     "quality_calibration:[0-9]*:*")
+_MARKERS_CARRIED = "boot:claims_markers_carried_157"
 
 # A claim whose run started and never finished is taken to be dead after
 # this long, and the period may be claimed again (DATA-20). A run still
@@ -603,10 +604,14 @@ def init_ops(db_path=None):
             conn.execute(sql)
         conn.execute("INSERT OR IGNORE INTO scheduler_heartbeat (id) VALUES (1)")
         # The permanent markers that lived in the pruned claims table (#157),
-        # carried over once with the time each was first claimed.
-        for pattern in _MARKER_PATTERNS:
-            conn.execute("INSERT OR IGNORE INTO ops_markers (key, created_at) "
-                         "SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB ?", (pattern,))
+        # carried over once with the time each was first claimed — once:
+        # every boot scanned the whole claims table four times (scale audit
+        # 10/19/26 DB-14), for rows nothing has written there since.
+        if not conn.execute("SELECT 1 FROM ops_markers WHERE key=?", (_MARKERS_CARRIED,)).fetchone():
+            for pattern in _MARKER_PATTERNS:
+                conn.execute("INSERT OR IGNORE INTO ops_markers (key, created_at) "
+                             "SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB ?", (pattern,))
+            conn.execute("INSERT OR IGNORE INTO ops_markers (key) VALUES (?)", (_MARKERS_CARRIED,))
         _ensure_retention_indexes(conn)
         conn.commit()
     finally:
@@ -3412,8 +3417,12 @@ _RETENTION_KNOWN_GAPS = {
     ("login_history", "admin_ops._load_with"): "team last-seen reads the staff sign-ins kept 90 days (the owners' "
                                                "last console sign-in falls back to engagement_monthly's months)",
 }
-# Past this many rows in one table in one pass, the rest waits a night.
+# Past this many rows in one table in one pass, the rest waits a night —
+# or past RETENTION_INFLOW_FACTOR times the rows that aged out in the last
+# day, when that is more (_inflow_cap, scale audit 10/19/26 DB-03: a fixed
+# cap under a table's daily inflow meant the table only ever grew).
 RETENTION_PASS_MAX_ROWS = int(os.getenv("RETENTION_PASS_MAX_ROWS", "200000"))
+RETENTION_INFLOW_FACTOR = int(os.getenv("RETENTION_INFLOW_FACTOR", "2"))
 
 # Deleted in chunks of this many rows, one commit each, and the whole pass
 # stops taking on tables after RETENTION_MAX_SECONDS (#72, #81): one DELETE
@@ -3445,6 +3454,19 @@ REVIEW_ERASE_DAYS = int(os.getenv("RETAIN_REVIEW_ERASE_DAYS", "30"))
 # and a received invoice file's kept text (fintech_files.content, and its
 # object-store copy): the invoice lines hold the history, so past a year the
 # file is only its row (bar fix round 10/15/26, R5, R24).
+# Claims of a period shorter than a day (scale audit 10/19/26 DB-14 /
+# INF-16): live labor every quarter hour and the intraday capture every hour,
+# per open restaurant, plus the loop's own 5-20 minute ticks — ~60 of a
+# restaurant's ~70-150 claims a day, each asked about only inside its own
+# period, kept 45 days with the daily ones. They go after
+# RETAIN_SUBDAILY_CLAIMS_DAYS (floor 1: a period is asked about within it).
+SUBDAILY_CLAIM_JOBS = ("live_labor", "intraday", "ai_batch_collect", "dsr_sweep", "pg_shadow", "dsr_delivery",
+                       "staff_reminders", "pos_schedule_push", "pos_retry", "ai_fleet_runaway")
+SUBDAILY_CLAIMS_KEEP_DAYS = int(os.getenv("RETAIN_SUBDAILY_CLAIMS_DAYS", "2"))
+# The band each night's pass reads (claimed_at, indexed): the days just past
+# the window, so a missed night or two is still caught; anything older goes
+# at the table's own 45 days.
+SUBDAILY_CLAIMS_BAND_DAYS = 7
 EMAIL_INTAKE_UNROUTED_DAYS = int(os.getenv("RETAIN_EMAIL_INTAKE_UNROUTED_DAYS", "30"))
 FINTECH_FILE_CONTENT_DAYS = int(os.getenv("RETAIN_FINTECH_FILE_CONTENT_DAYS", "365"))
 
@@ -3472,6 +3494,8 @@ def _special_retention():
         # (floor 90: a re-read of a file is asked for within weeks).
         "email_intake_unrouted": (EMAIL_INTAKE_UNROUTED_DAYS, 7),
         "fintech_file_content": (FINTECH_FILE_CONTENT_DAYS, 90),
+        # The sub-daily claims (DB-14, above), floor 1 day.
+        "subdaily_claims": (SUBDAILY_CLAIMS_KEEP_DAYS, 1),
     }
 
 
@@ -3660,6 +3684,68 @@ def _chunked_delete(conn, table, where, args, deadline, max_rows=None):
         total += n
         if n < chunk or time.monotonic() > deadline:
             return total
+
+
+def _inflow_cap(conn, table, col, days, only=None) -> int:
+    """This pass's row cap for `table` (scale audit 10/19/26 DB-03): the
+    fixed RETENTION_PASS_MAX_ROWS, or RETENTION_INFLOW_FACTOR times the rows
+    that aged out in the last day (stamped in the one day just past the
+    window) when that is more. A table whose daily inflow outgrew the fixed
+    cap only ever grew; this keeps up with it — and catches up a backlog —
+    while a wrong clock or a mis-stamped column still cannot empty a table
+    in one night: the band is one day of rows, so the cap stays a couple of
+    days of them (none at all when the clock has jumped past the data)."""
+    base = int(RETENTION_PASS_MAX_ROWS)
+    try:
+        where = f"{col} >= datetime('now', ?) AND {col} < datetime('now', ?)" + (f" AND {only}" if only else "")
+        n = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}",
+                         (f"-{int(days) + 1} days", f"-{int(days)} days")).fetchone()[0]
+    except Exception as e:
+        log.warning(f"retention inflow of {table} unreadable: {e}")
+        return base
+    return max(base, int(RETENTION_INFLOW_FACTOR) * int(n or 0))
+
+
+def _drop_expired_months(conn, table, days, held=None) -> list:
+    """On Postgres, the month partitions of `table` wholly past its window,
+    dropped (pg_partitions.drop_expired, at most PARTITION_DROPS_PER_PASS a
+    night) before the chunked delete takes what is left — the partial month
+    and the DEFAULT partition. A restaurant under a records hold keeps the
+    table RECORDS_HOLD_DAYS, so with one held a month goes only past that.
+    [] on SQLite, for an unpartitioned table, or one whose retention keeps
+    some rows whatever their age (_RETENTION_ONLY)."""
+    import db_dialect
+    if table not in db_dialect.PARTITIONED or table in _RETENTION_ONLY or not db_dialect.is_postgres(conn):
+        return []
+    keep = int(days)
+    if table in _RETENTION_HOLD_TABLES and held and keep < RECORDS_HOLD_DAYS:
+        keep = RECORDS_HOLD_DAYS
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    cutoff = (_dt.now(_tz.utc) - _td(days=keep)).strftime("%Y-%m-%d %H:%M:%S")
+    import pg_partitions
+    conn.commit()                    # the drop runs in a transaction of its own
+    return pg_partitions.drop_expired(conn, table, cutoff)
+
+
+def _prune_subdaily_claims(conn, deadline, refused=None) -> int:
+    """The claims of a period shorter than a day, after
+    SUBDAILY_CLAIMS_KEEP_DAYS (DB-14 / INF-16), under the floor rule — from
+    the band of SUBDAILY_CLAIMS_BAND_DAYS just past it, so the night's read
+    is a few days of claims, never the table's whole 45. Returns rows."""
+    st = retention_state("subdaily_claims")
+    if st["state"] == "disabled":
+        return 0
+    if st["state"] == "below_floor":
+        if refused is not None:
+            refused.append(st)
+        return 0
+    days = int(st["days"])
+    # The job names are this module's own constants, never input.
+    keys = "(" + " OR ".join(f"job_key LIKE '{j}:%'" for j in SUBDAILY_CLAIM_JOBS) + ")"
+    where = f"claimed_at >= datetime('now', ?) AND claimed_at < datetime('now', ?) AND {keys}"
+    args = (f"-{days + SUBDAILY_CLAIMS_BAND_DAYS} days", f"-{days} days")
+    cap = _inflow_cap(conn, "job_period_claims", "claimed_at", days, only=keys)
+    return _chunked_delete(conn, "job_period_claims", where, args, deadline, max_rows=cap)
 
 
 # What thinned detail keeps of a Shift Quality evaluation: the headline the
@@ -4113,7 +4199,7 @@ def prune_ledgers(db_path=None):
     from models import get_conn, DB_PATH
     deleted = {}
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
-    refused, capped = [], []
+    refused, capped, dropped_parts = [], [], []
     try:
         conn = get_conn(db_path or DB_PATH)
     except Exception as e:
@@ -4162,10 +4248,26 @@ def prune_ledgers(db_path=None):
                     where += (f" AND NOT (restaurant_id IN ({','.join('?' * len(held))}) "
                               f"AND {col} >= datetime('now', ?))")
                     args += list(held) + [f"-{RECORDS_HOLD_DAYS} days"]
-                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=RETENTION_PASS_MAX_ROWS)
+                # Postgres: whole months past the window are dropped first
+                # (DB-03); a failed drop leaves them to the delete below.
+                try:
+                    gone = _drop_expired_months(conn, table, days, held)
+                    if gone:
+                        dropped_parts.extend(gone)
+                except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    log.warning(f"prune_ledgers could not drop {table}'s old months: {e}")
+                    capture(e, job="prune_ledgers", context=f"partition drop {table}", db_path=db_path)
+                # The cap follows the table's inflow (DB-03): read before
+                # the delete, which may take the newest aged rows first.
+                cap = _inflow_cap(conn, table, col, days, only)
+                n = _chunked_delete(conn, table, where, tuple(args), deadline, max_rows=cap)
                 if n:
                     deleted[table] = n
-                if n >= RETENTION_PASS_MAX_ROWS:
+                if n >= cap:
                     capped.append(table)
                     counts["hit_bound"] = True
                 counts["ok"] += 1
@@ -4217,6 +4319,16 @@ def prune_ledgers(db_path=None):
                 log.error(f"prune_ledgers could not erase removed reviews: {e}")
                 capture(e, job="prune_ledgers", context="reviews_erase", db_path=db_path)
         try:
+            n = _prune_subdaily_claims(conn, deadline, refused=refused)
+            if n:
+                deleted["subdaily_claims"] = n
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            log.warning(f"prune_ledgers skipped the sub-daily claims: {e}")
+        try:
             deleted.update(_prune_intake(conn, deadline, refused=refused))
         except Exception as e:
             try:
@@ -4248,6 +4360,8 @@ def prune_ledgers(db_path=None):
     deleted.update(counts)
     deleted["refused"] = [{"table": r["table"], "days": r["days"], "floor": r["floor"]} for r in refused]
     deleted["capped"] = capped
+    if dropped_parts:
+        deleted["partitions_dropped"] = dropped_parts
     return deleted
 
 

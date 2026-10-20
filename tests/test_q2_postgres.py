@@ -860,6 +860,48 @@ def test_the_partition_job_keeps_months_ahead_and_reports_rows_in_default(scratc
         c.close()
 
 
+@live
+def test_retention_drops_whole_months_past_the_window(scratch_db, tmp_path, monkeypatch):
+    # Scale audit 10/19/26 DB-03: a month wholly past the window is one DROP, not a month of deletes.
+    import contextlib
+    import io
+    import ops
+    import pg_copy
+    import pg_partitions
+    import psycopg
+    db_path = str(tmp_path / "source.db")
+    with contextlib.redirect_stdout(io.StringIO()):
+        models.init_db(db_path)
+        models.ensure_columns(db_path)
+    rid = models.create_restaurant(models.Restaurant(name="Drops", owner_email="dd@x.com"), db_path=db_path)
+    models.checkpoint(db_path)
+    dst = psycopg.connect(scratch_db, autocommit=False)
+    try:
+        assert pg_copy.copy_database(db_path, dst, today=date(2026, 10, 14))["verify"]["ok"]
+    finally:
+        dst.close()
+    c = db_dialect.connect(scratch_db)
+    try:
+        for day in ("2026-10-05", "2026-11-20", "2026-12-03"):
+            c.execute("INSERT INTO shift_facts (restaurant_id, business_date, employee_name, employee_key, source) "
+                      "VALUES (?, ?, 'Ana', 'ana', 'pos')", (rid, day))
+        c.commit()
+        parts = [n for n, _u in pg_partitions.month_partitions(c, "shift_facts")]
+        assert parts[:3] == ["shift_facts_p202610", "shift_facts_p202611", "shift_facts_p202612"]
+        # One month a pass by default, however far the cutoff reaches.
+        assert pg_partitions.drop_expired(c, "shift_facts", "2026-12-15 00:00:00") == ["shift_facts_p202610"]
+        assert pg_partitions.drop_expired(c, "shift_facts", "2026-12-15 00:00:00", max_drops=5) == \
+            ["shift_facts_p202611"]                                    # December is not wholly past
+        days = [r[0] for r in c.execute("SELECT business_date FROM shift_facts ORDER BY business_date").fetchall()]
+        assert days == ["2026-12-03"]
+        # The prune's own call: on Postgres it drops; a table that keeps some rows forever never does.
+        monkeypatch.setattr(pg_partitions, "PARTITION_DROPS_PER_PASS", 1)
+        assert ops._drop_expired_months(c, "shift_facts", 100000) == []          # nothing that old
+        assert ops._drop_expired_months(c, "rec_events", 1) == []                # not partitioned
+    finally:
+        c.close()
+
+
 def test_the_partition_job_is_a_no_op_on_sqlite(monkeypatch):
     import pg_partitions
     monkeypatch.delenv("DATABASE_URL", raising=False)

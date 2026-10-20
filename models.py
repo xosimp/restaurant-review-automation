@@ -3308,6 +3308,22 @@ def init_db(db_path: str = DB_PATH):
             summary_json    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_history_restaurant ON schedule_history(restaurant_id, id)",
+        # A restaurant's week and its newest draft (scale audit 10/19/26
+        # DB-17): activity.build, Ask, DNA and the morning brief read by
+        # week_start / generated_at and scanned the restaurant's whole
+        # history. The fleet's recent drafts (DB-16, A5-F11: the experiment
+        # power check runs on every generation; the admin sweeps) read by
+        # generated_at across tenants.
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_week ON schedule_history(restaurant_id, week_start)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_generated ON schedule_history(restaurant_id, generated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_fleet_gen ON schedule_history(generated_at, restaurant_id)",
+        # A chain's locations (models.get_location_group, DB-13): by
+        # organization, or by the admin's group name and owner.
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_org ON restaurants(organization_id)",
+        "CREATE INDEX IF NOT EXISTS idx_restaurants_group ON restaurants(location_group, owner_email)",
+        # The activity sweeps by kind over a window (DB-16:
+        # scheduler's tab-view sweep, the admin's adoption reads).
+        "CREATE INDEX IF NOT EXISTS idx_activity_log_type_created ON activity_log(event_type, created_at)",
         # Second table with the same lazy-init history as schedule_history
         # above: it was only ever created by init_staff_availability(), so a
         # fresh database didn't have it until something happened to call
@@ -5021,6 +5037,22 @@ def init_db(db_path: str = DB_PATH):
         backfill_labor_periods(db_path=db_path)
     except Exception as e:
         print(f"[labor periods] boot backfill skipped: {e}")
+    # The two boot backfills below find their rows through partial indexes
+    # (scale audit 10/19/26 DB-16): each read the whole schedule_history —
+    # every week's CSV — on every boot, inside the healthcheck window, for
+    # rows that are almost always none.
+    try:
+        _ix = get_conn(db_path)
+        try:
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_hours ON schedule_history(id) "
+                        "WHERE hours_hourly IS NULL")
+            _ix.execute("CREATE INDEX IF NOT EXISTS idx_schedule_history_no_published ON schedule_history(id) "
+                        "WHERE published_at IS NOT NULL AND published_csv IS NULL")
+            _ix.commit()
+        finally:
+            _ix.close()
+    except Exception as e:
+        print(f"[schedule history] backfill indexes skipped: {e}")
     # Each stored week's hours split by pay (schedule audit 10/3/26 E-7):
     # after the column list above has added hours_hourly / hours_salaried.
     try:

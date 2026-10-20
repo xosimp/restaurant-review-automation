@@ -91,7 +91,8 @@ What the dialect layer keeps of SQLite's behaviour (db_dialect.py):
   stopped every process.
 - **Partitions:** the copy makes them to 3 months ahead; the daily
   `pg_partitions` job keeps them 3 months ahead and fails when a dated row
-  sits in a DEFAULT partition (DB-04).
+  sits in a DEFAULT partition (DB-04); the nightly prune drops a month wholly
+  past its table's window (DB-03).
 - **Savepoints:** every statement inside a transaction is its own savepoint;
   a write loop of more than 64 `execute()` calls in one transaction
   overflows Postgres's subtransaction cache — write loops use `executemany`
@@ -231,6 +232,9 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
 - The scheduler and the queue workers can become their own Railway services
   (POSTGRES_AND_WORKERS_PLAN.md step 4) — the lease, the queue and the
   heartbeats live in the networked database now. Not before.
-- Retention on the partitioned fact tables can drop whole month partitions
-  instead of chunked deletes (`DROP TABLE <table>_p<YYYYMM>`), once a month,
-  for months wholly past the table's window.
+- Retention on the partitioned fact tables drops whole month partitions
+  (built 10/19/26, DB-03): the nightly `prune_ledgers` detaches and drops a
+  month once it is wholly past the table's window (`pg_partitions.drop_expired`,
+  at most `PARTITION_DROPS_PER_PASS` = 1 a table a night, after the table's
+  rollup and with a records hold respected), then deletes in chunks what is
+  left (the partial month, the DEFAULT partition). Nothing to do here.

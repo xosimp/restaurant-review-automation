@@ -81,8 +81,8 @@ class TranslationError(ValueError):
 # Month-partitioned fact tables on Postgres (scale.md data model): table ->
 # (partition column, extra key columns an upsert's conflict target gains).
 # scripts/run_pg_copy.py creates them PARTITION BY RANGE on that column, one
-# partition a month; pg_partitions keeps the next months made (retention
-# still deletes in chunks: dropping whole partitions is not built).
+# partition a month; pg_partitions keeps the next months made, and the
+# nightly prune drops the months wholly past a table's window (DB-03).
 PARTITIONED = {
     "shift_facts": "business_date",
     "attendance_events": "business_date",
