@@ -59,6 +59,10 @@ _EWMA_WEIGHT = 0.3
 ROW_DEADLINE_SECONDS = 120
 # How long a client keeps polling before it says so.
 WAIT_SECONDS = 150
+# A finished row (its answer is a whole review, tens of KB) is kept this long
+# for its polls, then pruned by the next submit — never the jobs table's 14
+# days: at 1,500 restaurants that was gigabytes a week.
+RESULT_KEEP_SECONDS = 600
 
 _COST = {}
 _COST_LOCK = threading.Lock()
@@ -146,10 +150,30 @@ def submit(endpoint, user, restaurant_id, path_args=None, req=None):
                                       idempotency_key=f"{KIND}:{sig}",
                                       requeue_states=("done", "failed", "expired", "cancelled"),
                                       deadline=time.time() + ROW_DEADLINE_SECONDS)
+    _prune()
     resp = jsonify(**pending_answer(qid, req.path))
     resp.headers[TICKET_HEADER] = str(qid)
     resp.headers["Cache-Control"] = "no-store"
     return resp, 202
+
+
+def _prune(limit=200) -> int:
+    """Finished studio rows past RESULT_KEEP_SECONDS, a bounded chunk. Never
+    raises."""
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            n = conn.execute("DELETE FROM jobs WHERE id IN (SELECT id FROM jobs WHERE grp='studio' "
+                             "AND state IN ('done', 'failed', 'expired', 'cancelled') AND finished_at < ? LIMIT ?)",
+                             (time.time() - RESULT_KEEP_SECONDS, int(limit))).rowcount
+            conn.commit()
+            return int(n or 0)
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("studio rows not pruned: %s", e)
+        return 0
 
 
 def _poll_path(path, ticket) -> str:

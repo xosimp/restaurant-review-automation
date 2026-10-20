@@ -173,3 +173,18 @@ def test_the_clients_poll_the_ticket_and_the_servers_wait():
     vm = open(os.path.join(root, "ios", "CavnarAI", "CavnarAI", "Features", "Labor", "LaborViewModel.swift"),
               encoding="utf-8").read()
     assert "result.retryAfterMs" in vm
+
+
+def test_finished_studio_rows_are_pruned_after_their_polls(db, monkeypatch, worker):
+    import time
+    rid = _rid(db)
+    qid, _c = job_queue.enqueue(studio_offload.KIND, {"endpoint": "publish_check"}, restaurant_id=rid, wake=False)
+    other, _c = job_queue.enqueue("learner", {}, restaurant_id=rid, wake=False)
+    conn = models.get_conn()
+    conn.execute("UPDATE jobs SET state='done', finished_at=? WHERE id IN (?, ?)",
+                 (time.time() - studio_offload.RESULT_KEEP_SECONDS - 5, qid, other))
+    conn.commit()
+    conn.close()
+    assert studio_offload._prune() == 1
+    left = {r[0] for r in models.get_conn().execute("SELECT id FROM jobs").fetchall()}
+    assert qid not in left and other in left
