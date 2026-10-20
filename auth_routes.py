@@ -785,54 +785,99 @@ def change_password(current_user):
 @csrf_required
 @login_required
 def update_email_route(current_user):
-    data = request.get_json()
+    """The web's email change — one body with the app's (_do_update_email).
+    Refusals answer 200 {ok: false} as this route always has."""
+    payload, status = _do_update_email(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), (200 if status == 400 else status)
+
+
+def _do_update_email(current_user, data):
+    """A login's email change, web and app (re-audit 10/20/26 R7-17): the
+    current password, then a 6-digit code sent to the NEW address
+    (auth.start_email_change); the change is made only when that code comes
+    back with the same address (`code`, auth.finish_email_change). The
+    first call answers {ok: false, verify_required: true, sent_to} — false so
+    an app build from before this round shows the sentence instead of
+    "updated". Moves restaurants.owner_email only for the account holder
+    whose address it is (SEC-13); the OLD address is told once it is done.
+    Returns (payload, status)."""
+    import re as _re_email
+    from auth import start_email_change, finish_email_change, _mask_email
     new_email = (data.get("new_email") or "").strip().lower()
     current_pw = data.get("current_password", "")
+    code = str(data.get("code") or "").strip()
     if not new_email:
-        return jsonify(ok=False, error="Email address is required")
-    import re as _re_email
+        return {"ok": False, "error": "Email address is required"}, 400
     if not _re_email.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", new_email):
-        return jsonify(ok=False, error="Enter a valid email address")
-    # Verify current password
+        return {"ok": False, "error": "Enter a valid email address"}, 400
+    if current_user.get("acting_admin") or current_user.get("acting_admin_id"):
+        return {"ok": False, "error": "The sign-in email is the account holder's to change, not in view-as."}, 403
     user = verify_password(current_user["username"], current_pw)
     if not user:
-        return jsonify(ok=False, error="Current password is incorrect")
-    # Check email not already taken by another user
+        return {"ok": False, "error": "Current password is incorrect"}, 400
     conn = get_conn()
-    existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (new_email, current_user["id"])).fetchone()
-    if existing:
+    try:
+        existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?",
+                                (new_email, current_user["id"])).fetchone()
+    finally:
         conn.close()
-        return jsonify(ok=False, error="That email is already in use")
-    old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
-    old_email = old_email_row["email"] if old_email_row else None
-    # Update users.email
-    conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
-    # The restaurant's contact address (2FA codes, alerts, the owner
-    # match that keeps a location in its group) moves only when the account
-    # holder whose address it is changes theirs. Any login's change used to
-    # rewrite it (SEC-13).
-    from permissions import is_principal as _is_principal_em
-    _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (current_user["restaurant_id"],)).fetchone()
-    _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
-                      and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
-    # Update restaurant.owner_email so notifications/digest still work
-    if _moves_contact:
-        # Bumps row_version like update_restaurant does (DATA-28).
-        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
-                     (new_email, current_user["restaurant_id"]))
-    conn.commit()
-    conn.close()
+    if existing:
+        return {"ok": False, "error": "That email is already in use"}, 400
+    if not code:
+        sent = None
+        try:
+            from emails import send_email_change_code
+            sent = send_email_change_code(new_email, start_email_change(current_user["id"], new_email),
+                                          restaurant_id=current_user.get("restaurant_id"))
+        except Exception:
+            sent = None
+        if not getattr(sent, "ok", False):
+            return {"ok": False, "error": "We couldn't email a code to that address. Check it and try again."}, 502
+        return {"ok": False, "verify_required": True, "sent_to": _mask_email(new_email),
+                "error": f"We emailed a 6-digit code to {_mask_email(new_email)}. Enter it to finish."}, 200
+    verdict = finish_email_change(current_user["id"], new_email, code)
+    if verdict != "ok":
+        return {"ok": False, "verify_required": verdict == "wrong",
+                "error": ("That code isn't right." if verdict == "wrong"
+                          else "That code expired. Ask for a new one.")}, 400
+    conn = get_conn()
+    try:
+        old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
+        old_email = old_email_row["email"] if old_email_row else None
+        conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
+        # The restaurant's contact address (2FA codes, alerts, the owner
+        # match that keeps a location in its group) moves only when the
+        # account holder whose address it is changes theirs (SEC-13).
+        from permissions import is_principal as _is_principal_em
+        _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?",
+                                (current_user["restaurant_id"],)).fetchone()
+        _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
+                          and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
+        if _moves_contact:
+            # Bumps row_version like update_restaurant does (DATA-28).
+            conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
+                         (new_email, current_user["restaurant_id"]))
+        conn.commit()
+    finally:
+        conn.close()
     import models as _models_inv
     _models_inv._invalidate_request_cache(current_user["restaurant_id"])
+    try:
+        from client_api import log_account_event
+        log_account_event(current_user["restaurant_id"], "email_changed", current_user, new_email)
+    except Exception:
+        pass
     if old_email and old_email != new_email:
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
             from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email,
+                                     restaurant.owner_name if restaurant else None,
+                                     tz=restaurant.timezone if restaurant else None,
                                      restaurant_id=restaurant.id if restaurant else None)
         except Exception:
             pass  # the email change itself already succeeded
-    return jsonify(ok=True)
+    return {"ok": True}, 200
 
 @auth_bp.route("/api/sessions", methods=["GET"])
 @login_required

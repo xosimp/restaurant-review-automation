@@ -721,6 +721,32 @@ def test_the_schedule_poller_never_returns_another_kind_of_job(db_path, client, 
     assert r.status_code == 404
 
 
+# ── R7-17: an email change is confirmed at the new address ────────────────
+
+def test_an_email_change_waits_on_a_code_sent_to_the_new_address(db_path, client, monkeypatch):
+    import emails
+    codes = []
+    monkeypatch.setattr(emails, "send_email_change_code",
+                        lambda to, code, restaurant_id=None: codes.append((to, code)) or emails.SendResult(True))
+    monkeypatch.setattr(emails, "send_email_changed_email", lambda *a, **k: None)
+    rid, owner = _setup(db_path, two_fa=False)
+    tok = _phone_login(client)["token"]
+    body = {"new_email": "thief@evil.test", "current_password": "ownerpass1"}
+    r = client.post("/mobile/api/account/update-email", headers=_bearer(tok), json=body).get_json()
+    assert r["verify_required"] is True and codes[-1][0] == "thief@evil.test"
+    assert models.get_restaurant(rid, db_path=db_path).owner_email == "owner@x.test"     # nothing moved yet
+    for _ in range(auth.EMAIL_CHANGE_MAX_TRIES):
+        bad = client.post("/mobile/api/account/update-email", headers=_bearer(tok), json=dict(body, code="000000"))
+        assert bad.get_json()["ok"] is False
+    # Five wrong codes end the request: even the right one no longer works.
+    r = client.post("/mobile/api/account/update-email", headers=_bearer(tok), json=dict(body, code=codes[-1][1]))
+    assert r.get_json()["ok"] is False
+    r = client.post("/mobile/api/account/update-email", headers=_bearer(tok), json=body).get_json()
+    r = client.post("/mobile/api/account/update-email", headers=_bearer(tok), json=dict(body, code=codes[-1][1]))
+    assert r.get_json()["ok"] is True
+    assert models.get_restaurant(rid, db_path=db_path).owner_email == "thief@evil.test"
+
+
 # ── R7-22: per-location comparison only inside a real group ──────────────
 
 def test_ungrouped_restaurants_sharing_an_email_are_not_siblings(db_path):

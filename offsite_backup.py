@@ -495,6 +495,7 @@ SCRUB_TABLES = {
 # column (read at call time, so a field added there is scrubbed here).
 SCRUB_COLUMNS = {
     ("users", "reset_token"), ("users", "reset_token_expires"), ("users", "recovery_email_code"),
+    ("users", "email_change_code"),
     ("restaurants", "temp_password"), ("restaurants", "two_fa_device_token"),
     # The share link itself, encrypted under CREDENTIAL_KEY so the admin can
     # copy it again (fix round B2): a working public link once decrypted, and

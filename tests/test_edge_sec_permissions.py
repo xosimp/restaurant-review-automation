@@ -190,31 +190,54 @@ def test_a_manager_cannot_become_the_owner_with_a_self_minted_backup_code(db_pat
 
 # ── a login's own email is not the restaurant's owner_email ─────────────────
 
-def test_the_owners_own_email_change_moves_the_restaurant_contact(db_path):
+@pytest.fixture
+def change_codes(monkeypatch):
+    """The code an email change sends to the new address (re-audit 10/20/26
+    R7-17), captured: the change is made only with it."""
+    import emails
+    from emails import SendResult
+    box = []
+    monkeypatch.setattr(emails, "send_email_change_code",
+                        lambda to, code, restaurant_id=None: box.append(code) or SendResult(True))
+    monkeypatch.setattr(emails, "send_email_changed_email", lambda *a, **k: None)
+    return box
+
+
+def _change_email(post, body, codes, **kw):
+    first = post(json=body, **kw).get_json()
+    assert first["ok"] is False and first["verify_required"] is True
+    return post(json=dict(body, code=codes[-1]), **kw)
+
+
+def test_the_owners_own_email_change_moves_the_restaurant_contact(db_path, change_codes):
     rid, owner, mgr = _setup(db_path)
-    r = _web(db_path, owner).post("/api/update-email", json={"new_email": "owner-new@x.test", "current_password": "ownerpass1"},
-                                  headers=CSRF)
+    c = _web(db_path, owner)
+    r = _change_email(lambda **k: c.post("/api/update-email", **k),
+                      {"new_email": "owner-new@x.test", "current_password": "ownerpass1"}, change_codes, headers=CSRF)
     assert r.get_json()["ok"] is True
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner-new@x.test"
 
 
-def test_a_managers_web_email_change_leaves_the_owner_email_alone(db_path):
+def test_a_managers_web_email_change_leaves_the_owner_email_alone(db_path, change_codes):
     rid, owner, mgr = _setup(db_path)
-    r = _web(db_path, mgr).post("/api/update-email", json={"new_email": "mgr-new@x.test", "current_password": "mgrpass12"},
-                                headers=CSRF)
+    c = _web(db_path, mgr)
+    r = _change_email(lambda **k: c.post("/api/update-email", **k),
+                      {"new_email": "mgr-new@x.test", "current_password": "mgrpass12"}, change_codes, headers=CSRF)
     assert r.get_json()["ok"] is True
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner@x.test"
 
 
-def test_a_managers_mobile_email_change_leaves_the_owner_email_alone(db_path):
+def test_a_managers_mobile_email_change_leaves_the_owner_email_alone(db_path, change_codes):
     rid, owner, mgr = _setup(db_path)
-    r = _app().test_client().post("/mobile/api/account/update-email", headers=_bearer(db_path, mgr),
-                                  json={"new_email": "mgr-new@x.test", "current_password": "mgrpass12"})
+    c = _app().test_client()
+    h = _bearer(db_path, mgr)
+    r = _change_email(lambda **k: c.post("/mobile/api/account/update-email", headers=h, **k),
+                      {"new_email": "mgr-new@x.test", "current_password": "mgrpass12"}, change_codes)
     assert r.get_json()["ok"] is True
     assert get_restaurant(rid, db_path=db_path).owner_email == "owner@x.test"
 
 
-def test_a_managers_email_change_leaves_the_location_in_the_owners_group(db_path):
+def test_a_managers_email_change_leaves_the_location_in_the_owners_group(db_path, change_codes):
     l1 = create_restaurant(Restaurant(name="L1", owner_email="boss@x.test", location_group="G"), db_path=db_path)
     l2 = create_restaurant(Restaurant(name="L2", owner_email="boss@x.test", location_group="G"), db_path=db_path)
     boss = create_user(l1, "boss", "boss@x.test", "bosspass1", db_path=db_path)
@@ -223,8 +246,10 @@ def test_a_managers_email_change_leaves_the_location_in_the_owners_group(db_path
     mgr2 = create_user(l2, "mgr2", "mgr2@x.test", "mgrpass12", db_path=db_path)
     auth.set_user_role(mgr2, "manager", db_path=db_path)
     upsert_membership(mgr2, l2, "manager", db_path=db_path)
-    _web(db_path, mgr2).post("/api/update-email", json={"new_email": "mgr2-new@x.test", "current_password": "mgrpass12"},
-                             headers=CSRF)
+    c2 = _web(db_path, mgr2)
+    assert _change_email(lambda **k: c2.post("/api/update-email", **k),
+                         {"new_email": "mgr2-new@x.test", "current_password": "mgrpass12"}, change_codes,
+                         headers=CSRF).get_json()["ok"] is True
     r = _web(db_path, boss).post("/api/switch-location", json={"restaurant_id": l2}, headers=CSRF)
     assert r.status_code == 200 and r.get_json()["ok"] is True
 

@@ -596,6 +596,12 @@ def init_auth(db_path: str = DB_PATH):
         # switch never reactivates a row carrying either stamp.
         "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
+        # Re-audit 10/20/26 R7-17: an email change waits on a code sent to the
+        # NEW address (start_email_change / finish_email_change).
+        "ALTER TABLE users ADD COLUMN email_change_pending TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_code TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_expires TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_attempts INTEGER NOT NULL DEFAULT 0",
         # Re-audit 10/20/26 R7-01: wrong codes typed against one challenge.
         # It dies at TWO_FA_CHALLENGE_MAX_WRONG; a resend keeps the count.
         "ALTER TABLE two_fa_challenges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
@@ -4793,7 +4799,8 @@ def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -
         # Columns added by migrations, each cleared only where it exists.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         for col in ("phone", "recovery_email", "recovery_email_pending", "recovery_email_code",
-                    "recovery_email_expires", "google_id", "apple_user_id", "two_fa_method"):
+                    "recovery_email_expires", "google_id", "apple_user_id", "two_fa_method",
+                    "email_change_pending", "email_change_code", "email_change_expires"):
             if col in cols:
                 conn.execute(f"UPDATE users SET {col}=NULL WHERE id=?", (user_id,))
         conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
@@ -7093,6 +7100,73 @@ def clear_must_reset_password(user_id: int, db_path: str = DB_PATH):
     conn.execute("UPDATE users SET must_reset_password=0 WHERE id=?", (user_id,))
     conn.commit()
     conn.close()
+
+
+# ── an email change, confirmed at the new address (R7-17) ────────────────────
+#
+# Blind re-audit 10/20/26 R7-17: the current password alone moved a login's
+# email — and an account holder's restaurants.owner_email, its 2FA email —
+# so a password holder could redirect resets and sign-in codes to an address
+# of their own. The change now waits on a 6-digit code sent to the new
+# address (15 minutes, 5 tries, stored hashed); the old address is still told
+# once it is done.
+EMAIL_CHANGE_MINUTES = 15
+EMAIL_CHANGE_MAX_TRIES = 5
+
+
+def _email_change_hash(user_id, email, code) -> str:
+    import hmac as _h, hashlib as _hl
+    return _h.new(_pending_key(), f"email-change:{int(user_id)}:{email}:{code}".encode(), _hl.sha256).hexdigest()
+
+
+def start_email_change(user_id: int, new_email: str, db_path: str = DB_PATH) -> str:
+    """Record `new_email` as this login's pending address and return the
+    code to send THERE. A new request replaces an older one."""
+    code = f"{secrets.randbelow(1000000):06d}"
+    email = (new_email or "").strip().lower()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE users SET email_change_pending=?, email_change_code=?, email_change_attempts=0, "
+                     "email_change_expires=datetime('now', ?) WHERE id=?",
+                     (email, _email_change_hash(user_id, email, code), f"+{EMAIL_CHANGE_MINUTES} minutes",
+                      user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return code
+
+
+def finish_email_change(user_id: int, new_email: str, code: str, db_path: str = DB_PATH) -> str:
+    """'ok' | 'wrong' | 'expired' | 'missing' for the code typed for the
+    pending change to `new_email`. 'ok' clears the pending change (the caller
+    then makes it); the EMAIL_CHANGE_MAX_TRIES-th wrong code ends it."""
+    import hmac as _h
+    email = (new_email or "").strip().lower()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT email_change_pending, email_change_code, email_change_attempts, "
+                           "(email_change_expires < datetime('now')) AS stale FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+        if not row or not row["email_change_pending"] or row["email_change_pending"] != email:
+            return "missing"
+        if row["stale"]:
+            return "expired"
+        if not _h.compare_digest(row["email_change_code"] or "",
+                                 _email_change_hash(user_id, email, (code or "").strip())):
+            tries = int(row["email_change_attempts"] or 0) + 1
+            if tries >= EMAIL_CHANGE_MAX_TRIES:
+                conn.execute("UPDATE users SET email_change_pending=NULL, email_change_code=NULL, "
+                             "email_change_expires=NULL, email_change_attempts=0 WHERE id=?", (user_id,))
+            else:
+                conn.execute("UPDATE users SET email_change_attempts=? WHERE id=?", (tries, user_id))
+            conn.commit()
+            return "wrong"
+        conn.execute("UPDATE users SET email_change_pending=NULL, email_change_code=NULL, "
+                     "email_change_expires=NULL, email_change_attempts=0 WHERE id=?", (user_id,))
+        conn.commit()
+        return "ok"
+    finally:
+        conn.close()
 
 
 def start_recovery_email(user_id: int, email: str, db_path: str = DB_PATH) -> str:

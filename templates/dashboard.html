@@ -34600,6 +34600,10 @@ function closeEmailModal(){
   document.getElementById('email-modal').style.display='none';
   document.getElementById('email-new').value='';
   document.getElementById('email-pw').value='';
+  var codeEl=document.getElementById('email-code');
+  if(codeEl){codeEl.value='';codeEl.style.display='none';}
+  var goEl=document.getElementById('email-go');
+  if(goEl)goEl.textContent='Update email';
   var st=document.getElementById('email-status');
   st.style.display='none';st.textContent='';
 }
@@ -34610,8 +34614,21 @@ function updateEmail(){
   if(!newEmail){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a new email address';return;}
   if(newEmail.indexOf('@')<1||newEmail.indexOf('.')<0){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a valid email address';return;}
   if(!pw){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter your current password';return;}
+  // The change is confirmed with a code sent to the NEW address (re-audit
+  // 10/20/26 R7-17): the first answer asks for it, the second carries it.
+  var codeEl=document.getElementById('email-code');
+  var code=(codeEl&&codeEl.style.display!=='none')?codeEl.value.trim():'';
   st.style.display='block';st.style.color='var(--ink3)';st.textContent='Updating...';
-  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(apiJson).then(function(d){
+  var payload={new_email:newEmail,current_password:pw};
+  if(code)payload.code=code;
+  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(apiJson).then(function(d){
+    if(d.verify_required){
+      if(codeEl){codeEl.style.display='block';codeEl.value='';codeEl.focus();}
+      var goEl=document.getElementById('email-go');
+      if(goEl)goEl.textContent='Confirm new email';
+      st.style.display='block';st.style.color='var(--ink3)';st.textContent=d.error||'Enter the code we emailed to the new address.';
+      return;
+    }
     if(d.ok){
       closeEmailModal();
       var disp=document.getElementById('acct-email-display');
@@ -37722,7 +37739,8 @@ document.addEventListener('click', function(e) {
     <div style="display:flex;flex-direction:column;gap:10px">
       <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:16px">
       <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:16px">
-      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="updateEmail()">Update email</button>
+      <input class="form-input" type="text" id="email-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code from the new address" style="font-size:16px;display:none">
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" id="email-go" onclick="updateEmail()">Update email</button>
       <div id="email-status" style="font-size:15px;text-align:center;display:none"></div>
     </div>
   </div>

@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum UpdateEmailField: Hashable, CaseIterable {
-    case email, password
+    case email, password, code
 }
 
 struct UpdateEmailSheet: View {
@@ -9,11 +9,13 @@ struct UpdateEmailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newEmail = ""
     @State private var currentPassword = ""
+    @State private var code = ""
     @State private var postedLabel: String?
     @FocusState private var focusedField: UpdateEmailField?
 
     private var canSubmit: Bool {
         !viewModel.isUpdatingEmail && newEmail.contains("@") && !currentPassword.isEmpty
+            && (!viewModel.updateEmailNeedsCode || code.count >= 6)
     }
 
     var body: some View {
@@ -31,6 +33,18 @@ struct UpdateEmailSheet: View {
                         focus: $focusedField, field: .password
                     )
 
+                    // A code sent to the NEW address confirms the change
+                    // (re-audit 10/20/26 R7-17).
+                    if viewModel.updateEmailNeedsCode {
+                        CavnarFloatingField(
+                            icon: "number", placeholder: "6-digit code", text: $code,
+                            keyboardType: .numberPad, textContentType: .oneTimeCode, autocapitalization: .never,
+                            focus: $focusedField, field: .code
+                        )
+                    }
+                    if let notice = viewModel.updateEmailNotice {
+                        Text(notice).font(.cavnar(.body)).foregroundStyle(Color.cavnarInk)
+                    }
                     if let error = viewModel.updateEmailError {
                         Text(error).font(.cavnar(.body)).foregroundStyle(Color.cavnarRedText)
                     }
@@ -44,7 +58,8 @@ struct UpdateEmailSheet: View {
                     VStack(spacing: 10) {
                         Button {
                             Task {
-                                await viewModel.updateEmail(newEmail: newEmail, currentPassword: currentPassword)
+                                await viewModel.updateEmail(newEmail: newEmail, currentPassword: currentPassword,
+                                                            code: viewModel.updateEmailNeedsCode ? code : nil)
                                 if viewModel.updateEmailSucceeded {
                                     Haptic.success()
                                     postedLabel = "Email updated"
@@ -55,7 +70,7 @@ struct UpdateEmailSheet: View {
                                 if viewModel.isUpdatingEmail {
                                     CavnarShimmerText(text: "Updating…", color: Color.cavnarInk)
                                 } else {
-                                    Text("Update email")
+                                    Text(viewModel.updateEmailNeedsCode ? "Confirm new email" : "Update email")
                                 }
                             }
                             .frame(maxWidth: .infinity)

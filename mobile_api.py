@@ -7855,58 +7855,12 @@ def mobile_change_password(current_user):
 @mobile_bp.route("/account/update-email", methods=["POST"])
 @mobile_login_required
 def mobile_update_email(current_user):
-    """Mirrors auth_routes.py's own /api/update-email exactly (verify
-    current password, validate format, check uniqueness, dual-update
-    users.email + restaurants.owner_email so notifications/digest keep
-    working) — that route is @login_required (web session cookie), which
-    the app has no way to authenticate as, so this is the same logic under
-    mobile_login_required (bearer token) instead."""
-    data = request.get_json() or {}
-    new_email = (data.get("new_email") or "").strip().lower()
-    current_pw = data.get("current_password", "")
-    if not new_email:
-        return jsonify(ok=False, error="Email address is required"), 400
-    import re as _re_email
-    if not _re_email.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", new_email):
-        return jsonify(ok=False, error="Enter a valid email address"), 400
-    user = verify_password(current_user["username"], current_pw)
-    if not user:
-        return jsonify(ok=False, error="Current password is incorrect"), 400
-    conn = get_conn()
-    existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (new_email, current_user["id"])).fetchone()
-    if existing:
-        conn.close()
-        return jsonify(ok=False, error="That email is already in use"), 400
-    old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
-    old_email = old_email_row["email"] if old_email_row else None
-    conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
-    # The restaurant's contact address (2FA codes, alerts, the owner
-    # match that keeps a location in its group) moves only when the account
-    # holder whose address it is changes theirs. Any login's change used to
-    # rewrite it (SEC-13).
-    from permissions import is_principal as _is_principal_em
-    _rest_em = conn.execute("SELECT owner_email FROM restaurants WHERE id=?", (current_user["restaurant_id"],)).fetchone()
-    _moves_contact = (_is_principal_em(current_user) and _rest_em is not None and old_email
-                      and (_rest_em["owner_email"] or "").strip().lower() == (old_email or "").strip().lower())
-    if _moves_contact:
-        # Bumps row_version like update_restaurant does, or a form loaded
-        # before this change would still look current (DATA-28).
-        conn.execute("UPDATE restaurants SET owner_email=?, row_version=COALESCE(row_version,0)+1 WHERE id=?",
-                     (new_email, current_user["restaurant_id"]))
-    conn.commit()
-    conn.close()
-    import models as _models_inv
-    _models_inv._invalidate_request_cache(current_user["restaurant_id"])
-    _log_account_event(current_user["restaurant_id"], "email_changed", current_user, detail=new_email)
-    if old_email and old_email != new_email:
-        try:
-            restaurant = get_restaurant(current_user["restaurant_id"])
-            from emails import send_email_changed_email
-            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None, tz=restaurant.timezone if restaurant else None,
-                                     restaurant_id=restaurant.id if restaurant else None)
-        except Exception:
-            pass  # the email change itself already succeeded
-    return jsonify(ok=True)
+    """The app's email change — auth_routes._do_update_email, the web's
+    body (re-audit 10/20/26 R7-17: confirmed by a code sent to the new
+    address)."""
+    from auth_routes import _do_update_email
+    payload, status = _do_update_email(current_user, request.get_json(silent=True) or {})
+    return jsonify(**payload), status
 
 
 # Profile fields only an account holder may change (PROMPTS-9). The owner's

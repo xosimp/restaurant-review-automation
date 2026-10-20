@@ -445,6 +445,7 @@ _SUPPRESSION_EXEMPT = {
     "send_email_changed_email",
     "send_passkey_added_email",
     "send_security_notice_email",
+    "send_email_change_code",
     "send_recovery_email_code",
     "send_login_notification",
 }
@@ -821,6 +822,7 @@ FLOOD_LIMITS = {
     "send_password_changed_email": (6, 3600),
     "send_passkey_added_email": (6, 3600),
     "send_security_notice_email": (8, 3600),
+    "send_email_change_code": (6, 3600),
     "send_team_invite_email": (10, 3600),
     "digest_preview": (6, 3600),
 }
@@ -4165,6 +4167,21 @@ def send_recovery_email_code(to_email: str, code: str, restaurant_id: int = None
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">Enter this code in the app to finish adding this address as your recovery email. It expires in 15 minutes.</p>
       <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#c84b2f;margin:0 0 20px">{code}</p>
       <p style="font-size:12px;color:#7a736a;line-height:1.6">If you didn't request this, you can ignore it.</p>
+    """)
+
+
+def send_email_change_code(to_email: str, code: str, restaurant_id: int = None) -> "SendResult":
+    """The code that confirms a login's NEW sign-in email (re-audit 10/20/26
+    R7-17) — sent to the new address, so a password alone can no longer move
+    a login's email (and an account holder's 2FA email) somewhere else."""
+    return _send_branded(to_email, "Confirm your new Cavnar AI sign-in email",
+                         email_type="send_email_change_code", restaurant_id=restaurant_id,
+                         preheader="Expires in 15 minutes.",
+                         inner_html=f"""
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:{BRAND["strong"]}">Confirm your new sign-in email</h2>
+      <p style="font-size:14px;color:{BRAND["body"]};line-height:1.6;margin-bottom:20px">Enter this code where you asked to change your email. It expires in 15 minutes. Your sign-in email changes only once it is entered.</p>
+      <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:{BRAND["ember"]};margin:0 0 20px">{code}</p>
+      <p style="font-size:12px;color:{BRAND["muted"]};line-height:1.6">If you didn't ask for this, ignore it — nothing changes.</p>
     """)
 
 
