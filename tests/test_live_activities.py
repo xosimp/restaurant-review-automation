@@ -55,6 +55,9 @@ def apns(monkeypatch):
     monkeypatch.setattr(push, "_provider_jwt", lambda: "jwt")
     monkeypatch.setattr(push, "native_push_allowed", lambda: True)
     monkeypatch.setattr(push, "_submit_native", lambda fn, *args: (fn(*args), True)[1])
+    # At once: the "dsr" wake's spread over the fleet (FE-12) has its own
+    # tests (test_fe12_silent_push_spread.py).
+    monkeypatch.setenv("SILENT_PUSH_JITTER_SECONDS", "0")
     return posts
 
 

@@ -123,6 +123,10 @@ KINDS = {
     # The Monday bar price push, one row per restaurant due at its own hour
     # (bar_signals.run_price_push; FC/Bar audit 10/16/26 SCALE-07).
     "bar_price_push": ("bulk", "bulk", 2),
+    # A widget-refresh wake sent at its restaurant's own offset (push.
+    # fire_silent; scale audit 10/19/26 FE-12): one try, it carries nothing
+    # the app's next refresh won't.
+    "silent_push": ("bulk", "bulk", 1),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -135,6 +139,7 @@ HANDLERS = {
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
     "bar_price_push": "bar_signals:run_queued_price_push",
+    "silent_push": "push:run_queued_silent",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.
