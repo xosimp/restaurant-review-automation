@@ -253,6 +253,11 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
     gap, unknown = _reconcile(restaurant_id, iso, rows.get("checks"))
     conn = get_conn(db_path)
     try:
+        # On Postgres the nightly roll (roll_item_days) of this restaurant's
+        # days waits for this day's store, and this for it (SQLite: no-op —
+        # the database has one writer).
+        import db_dialect
+        db_dialect.lock(conn, "pos_archive", restaurant_id)
         prev = conn.execute("SELECT max_stamp, restated FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
                             "AND business_date=?", (restaurant_id, name, iso)).fetchone()
         for table, cols, key in _TABLES:
@@ -385,7 +390,11 @@ def roll_item_days(db_path=None, max_seconds=None) -> dict:
         conn = get_conn(db_path)
         try:
             db_dialect.begin_write(conn, "pos_archive", rid)
-            _roll_day(conn, rid, prov, iso)
+            still = conn.execute("SELECT 1 FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
+                                 "AND business_date=? AND COALESCE(item_rollup, 0) <> ?",
+                                 (rid, prov, iso, ITEM_ROLLUP_VERSION)).fetchone()
+            if still:               # archive_day may have stored and rolled it since the list was read
+                _roll_day(conn, rid, prov, iso)
             conn.commit()
             rolled += 1
         except Exception as e:
