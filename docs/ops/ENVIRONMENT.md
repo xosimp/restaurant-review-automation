@@ -433,6 +433,9 @@ Changed or added by the AI cost audit (10/7/26):
 | `METRICS_SYNC_SECONDS` | `"1800"` | scheduler.py |
 | `OPTIN_INVITE_SECONDS` | `"240"` | guest_marketing.py |
 | `POS_RETRY_MAX_SECONDS` | `str(15 * 60` | scheduler.py |
+| `POS_SYNC_MAX_SECONDS` | `2700` | pos.py — the nightly POS sync's wall-clock bound (resumable; scale audit INF-5) |
+| `POS_SYNC_WORKERS` | `"4"` | pos.py — the nightly POS sync's workers |
+| `LOSS_SYNC_WORKERS` | `"4"` | strategy_jobs.py — the nightly comps/voids sync's workers (it walked serially; INF-5) |
 | `PPLX_BACKOFF_BASE` | `"2"` | client_api.py — first step of a 429's exponential backoff (with jitter) when no Retry-After came |
 | `PPLX_MIN_REQUEST_INTERVAL` | `"1.3"` | client_api.py |
 | `PPLX_RETRY_AFTER_MAX` | `"8"` | client_api.py — the longest Retry-After a 429 is waited out; a longer one gives the question up |

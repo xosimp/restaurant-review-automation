@@ -217,6 +217,7 @@ class _BoundedWalk:
 
 # The walks above, bounded (#84). Each is per-restaurant model or POS work.
 LOSS_SYNC_MAX_SECONDS = 30 * 60
+LOSS_SYNC_WORKERS = max(1, int(os.getenv("LOSS_SYNC_WORKERS", "4")))
 WEEKLY_PLAN_MAX_SECONDS = 45 * 60
 RECIPE_DRAFTS_MAX_SECONDS = 30 * 60
 ISSUE_SCAN_MAX_SECONDS = 15 * 60
@@ -373,26 +374,43 @@ def run_loss_sync(db_path=DB_PATH):
     """Nightly: comps, voids and refunds from POSes that report them.
     Bounded and resumable (_BoundedWalk, #84)."""
     import loss_detection, ops
-    synced = unsupported = failed = 0
-    walk = _BoundedWalk("loss_sync", _restaurants(db_path), db_path, LOSS_SYNC_MAX_SECONDS)
-    for r in walk:
+    import scheduler as _sched
+    c = {"synced": 0, "unsupported": 0, "failed": 0}
+    lock = threading.Lock()
+    by_id = {r.id: r for r in _restaurants(db_path)}
+
+    def _one(rid):
+        r = by_id[rid]
         try:
             out = loss_detection.sync(r.id, db_path=db_path)
         except Exception as e:
             ops.capture(e, job="loss_sync", context=f"restaurant_id={r.id}")
-            failed += 1
+            with lock:
+                c["failed"] += 1
             _record_loss(r.id, False, str(e), None, db_path)
-            continue
+            return
         if out.get("ok"):
-            synced += 1
+            with lock:
+                c["synced"] += 1
             _record_loss(r.id, True, None, out.get("provider"), db_path)
             _loss_flags_to_issues(r, db_path)
         else:
             # A POS that cannot report comps and voids is a normal state,
             # not a failed sync: nothing is recorded for it.
-            unsupported += 1
+            with lock:
+                c["unsupported"] += 1
+
+    # A pool and the same cursor, not a serial walk (scale audit 10/19/26
+    # INF-5 / A3-04): serially it covered ~780 stores a night; its reads are
+    # the archive's now, so the bound is mostly database time.
+    _done, hit_bound = _sched.resumable_sweep("loss_sync_cursor", sorted(by_id), _one, LOSS_SYNC_MAX_SECONDS,
+                                              workers=LOSS_SYNC_WORKERS, job="loss_sync")
+    if hit_bound:
+        ops.capture(RuntimeError(f"loss_sync stopped at its {LOSS_SYNC_MAX_SECONDS}s bound; the rest lead the "
+                                 "next pass"), job="loss_sync", context="time_bound")
+    synced, failed, unsupported = c["synced"], c["failed"], c["unsupported"]
     # The counts job_runs judges a partial or failed night by (DH2-1, #39).
-    return _counts(synced + failed, synced, failed, unsupported, walk.hit_bound,
+    return _counts(synced + failed, synced, failed, unsupported, bool(hit_bound),
                    synced=synced, not_supported=unsupported)
 
 

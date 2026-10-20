@@ -380,7 +380,7 @@ def sync_now(restaurant_id, actor="owner"):
     return True, job_id
 
 
-POS_SYNC_MAX_SECONDS = 45 * 60
+POS_SYNC_MAX_SECONDS = int(__import__("os").getenv("POS_SYNC_MAX_SECONDS", str(45 * 60)))
 # The fetch is network-bound (a 60-day pull per restaurant); the SQLite write
 # section (save_synced_shifts) holds _WRITE_LOCK, so four fetches overlap and
 # one restaurant at a time writes (DH5-7).
