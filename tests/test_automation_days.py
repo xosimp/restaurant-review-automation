@@ -37,7 +37,7 @@ def test_the_days_default_and_save(db):
     r = models.get_restaurant(rid)
     assert (r.auto_draft_weekday, r.auto_draft_weekday_chosen, r.auto_order_weekday) == (3, 0, 0)
     spread = models.default_auto_draft_weekday(rid)
-    assert spread in (0, 1, 2, 3)
+    assert spread in (0, 1, 2, 3, 4, 5)
     assert (models.auto_draft_weekday(r), models.auto_publish_weekday(r)) == (spread, spread + 1)
     models.update_restaurant(rid, {"auto_draft_weekday": 1, "auto_order_weekday": 6})
     r = models.get_restaurant(rid)
@@ -57,18 +57,20 @@ def test_a_day_out_of_range_reads_as_the_default():
 
 # ── AI cost audit 10/7/26 #5: an unchosen draft day is spread ──────────────
 
-def test_an_unchosen_draft_day_is_spread_monday_to_thursday_by_restaurant(db):
-    rids = [_rid(db, name=f"Spread {i}") for i in range(8)]
+def test_an_unchosen_draft_day_is_spread_monday_to_saturday_by_restaurant(db):
+    rids = [_rid(db, name=f"Spread {i}") for i in range(12)]
     days = [models.auto_draft_weekday(models.get_restaurant(rid)) for rid in rids]
-    assert days == [rid % 4 for rid in rids]                          # deterministic, Monday-Thursday
-    assert set(days) == {0, 1, 2, 3}
+    # Deterministic, Monday-Saturday (scale audit 10/19/26 A5-F4: it was
+    # Monday-Thursday, and a fleet's drafts queued past their deadline).
+    assert days == [rid % 6 for rid in rids]
+    assert set(days) == {0, 1, 2, 3, 4, 5}
     for rid, d in zip(rids, days):
         assert models.auto_publish_weekday(models.get_restaurant(rid)) == d + 1
     # A chosen day is kept, Thursday included — never replaced by the spread.
     models.update_restaurant(rids[0], {"auto_draft_weekday": 3})
     assert models.auto_draft_weekday(models.get_restaurant(rids[0])) == 3
-    # Friday and Saturday stay owner choices.
-    assert 4 not in models.AUTO_DRAFT_SPREAD_WEEKDAYS and 5 not in models.AUTO_DRAFT_SPREAD_WEEKDAYS
+    # Every draft day is in the spread; Sunday (the Monday week's eve) never.
+    assert models.AUTO_DRAFT_SPREAD_WEEKDAYS == (0, 1, 2, 3, 4, 5)
     # One rule for the object and the raw columns.
     for rid in rids[1:]:
         r = models.get_restaurant(rid)

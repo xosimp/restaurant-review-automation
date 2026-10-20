@@ -1443,8 +1443,9 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     # most once a day (claimed before the paid generation).
     #
     # Each restaurant on ITS day (auto_draft_weekday: the owner's pick, else
-    # Monday-Thursday spread by restaurant — AI cost audit 10/7/26 #5, a
-    # Thursday for everyone queued every draft on two generation slots)
+    # Monday-Saturday spread by restaurant — AI cost audit 10/7/26 #5, a
+    # Thursday for everyone queued every draft on two generation slots;
+    # Monday-Thursday until the scale audit of 10/19/26, A5-F4)
     # from AUTO_DRAFT_HOUR in its own zone; the loop used to gate every
     # restaurant on Chicago's Thursday 6am.
     from models import auto_draft_weekday
@@ -1469,6 +1470,9 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
             local[r.id] = (r, now_l.date().isoformat())
     by_id = {v[0].id: v[0] for v in local.values()}
     counts["failed"] = 0
+    # Today's drafts start spread over the time the slots take to clear
+    # them, at least AUTO_DRAFT_SPREAD_MINUTES (scale audit 10/19/26 A5-F4).
+    spread = auto_draft_spread_seconds(len(local)) if enqueue else None
 
     def _bump(key):
         with lock:
@@ -1518,8 +1522,11 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
             _bump("skipped")
             return
         if enqueue:
-            enqueue_auto_draft(r, period=local[r.id][1], target=target, attempt=attempt)
-            _bump("queued")
+            _qid, created = _enqueue_auto_draft(r, period=local[r.id][1], target=target, attempt=attempt,
+                                                spread_seconds=spread)
+            # A row already queued or running for this try is not a new one
+            # (A5-F12: a dead row's id came back and was counted "queued").
+            _bump("queued" if created else "skipped")
             return
         try:
             _draft_one(r, db_path, _se, _bump, period=local[r.id][1], target=target, attempt=attempt)
@@ -1615,6 +1622,13 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
     # under a notice rule, its auto-publish the next day — MARKET-1), else
     # the same default with that lag.
     _request = generation_request(r.id, today=_today, week_start=target, publish_lag_days=1)
+    if batch and _drafted_in_code(r.id, _request.get("week_start")):
+        # A week drafted in code (the solver — the default — or carry-forward)
+        # makes no drafting call to batch: planning it built and SOLVED the
+        # whole week only to find nothing to send, then the run below built
+        # and solved it again (scale audit 10/19/26 A5-F13 — twice the CPU of
+        # every auto-draft). It runs now.
+        batch = False
     if batch:
         # The same week the synchronous run would write; the try it spends
         # is this one (the answer runs this again with the same target and
@@ -1736,11 +1750,25 @@ def _draft_one(r, db_path, _se, _bump, period=None, target=None, attempt=None, b
         _watch.notify_generation_watchers(job_id, r.id, exclude=told)
 
 
-def _tell_auto_draft_gave_up(r, db_path, target):
-    """Every paid try at the week's draft ended without one: the owner is
-    told, once, to generate it — never left to find no draft on the day the
-    week was due (SCALE-3). The drafted notice's channel and audience (the
-    logins that can publish). Never raises."""
+def _drafted_in_code(restaurant_id, week_start) -> bool:
+    """Whether the week's draft source in force is a code source
+    (schedule_engine.draft_source_for: SCHEDULE_DRAFT_SOURCE, else the
+    draft_v1 arm, else the solver). False when it cannot be read — the
+    batch plan then decides, as before."""
+    try:
+        import schedule_engine as _se_src
+        import schedule_fallback as _sfb_src
+        return _se_src.draft_source_for(restaurant_id, week_start) in _sfb_src.CODE_SOURCES
+    except Exception:
+        return False
+
+
+def _tell_auto_draft_gave_up(r, db_path, target, why="tries"):
+    """Every paid try at the week's draft ended without one — or (`why`
+    "busy") its turn never came before the draft days ran out (A5-F12): the
+    owner is told, once, to generate it — never left to find no draft on the
+    day the week was due (SCALE-3). The drafted notice's channel and
+    audience (the logins that can publish). Never raises."""
     try:
         import notify, push, morning_brief
         from permissions import has_permission, SCHEDULE_PUBLISH
@@ -1755,9 +1783,11 @@ def _tell_auto_draft_gave_up(r, db_path, target):
             return
         from time_utils import mdy
         notify.record_notification(r.id, "schedule_drafted", db_path=db_path)
-        push.fire_push(r.id, "schedule_drafted", "Next week's schedule couldn't be drafted",
-                       f"The automatic draft for the week of {mdy(target)} didn't finish after "
-                       f"{AUTO_DRAFT_ATTEMPTS} tries. Generate it from the Labor tab.",
+        body = (f"The automatic draft for the week of {mdy(target)} didn't get its turn — Cavnar AI was too "
+                "busy. Generate it from the Labor tab." if why == "busy" else
+                f"The automatic draft for the week of {mdy(target)} didn't finish after "
+                f"{AUTO_DRAFT_ATTEMPTS} tries. Generate it from the Labor tab.")
+        push.fire_push(r.id, "schedule_drafted", "Next week's schedule couldn't be drafted", body,
                        data={}, db_path=db_path, user_ids=audience)
     except Exception as e:
         import ops
@@ -1772,17 +1802,93 @@ def _tell_auto_draft_gave_up(r, db_path, target):
 # enqueues it again. Its deadline also orders the scheduled class (earliest
 # first).
 AUTO_DRAFT_QUEUE_HOURS = 6
+# The longest a draft's deadline stretches when the queue ahead of it is
+# longer than AUTO_DRAFT_QUEUE_HOURS of work (auto_draft_deadline_seconds —
+# scale audit 10/19/26 A5-F4): still inside the draft day and its fallback.
+AUTO_DRAFT_QUEUE_MAX_HOURS = 18
 # A timezone's drafts start spread over this many minutes from the pass that
 # queued them (blind re-audit 10/11/26 SCALE-28): every restaurant of a zone
-# used to become claimable at one instant at 6am local.
+# used to become claimable at one instant at 6am local. The least spread:
+# a day with more drafts than the slots clear in it spreads wider, up to
+# AUTO_DRAFT_SPREAD_MAX_MINUTES (auto_draft_spread_seconds, A5-F4).
 AUTO_DRAFT_SPREAD_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MINUTES", "120"))
+AUTO_DRAFT_SPREAD_MAX_MINUTES = int(os.getenv("AUTO_DRAFT_SPREAD_MAX_MINUTES", "360"))
+# One generation's slot time when none has been measured yet (seconds).
+GENERATION_SECONDS_ASSUMED = 30.0
+_GEN_SECONDS_MEMO = {}
 
 
-def auto_draft_offset_seconds(restaurant_id) -> int:
-    """The restaurant's fixed place in its zone's draft spread: the same
-    every week (a stable hash of its id), so an owner sees the draft land at
-    the same time of the morning."""
-    span = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+def generation_seconds_estimate() -> float:
+    """What one generation holds a CPU slot for, measured: the mean of the
+    newest finished generation rows (claimed to finished), between 5 s and
+    10 minutes; GENERATION_SECONDS_ASSUMED with none on file. Read at most
+    once a minute per process."""
+    import time as _t
+    hit = _GEN_SECONDS_MEMO.get("v")
+    if hit and _t.monotonic() - hit[0] < 60:
+        return hit[1]
+    est = GENERATION_SECONDS_ASSUMED
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            rows = conn.execute("SELECT finished_at - started_at AS s FROM jobs WHERE grp='generation' "
+                                "AND state='done' AND started_at IS NOT NULL AND finished_at IS NOT NULL "
+                                "ORDER BY id DESC LIMIT 50").fetchall()
+        finally:
+            conn.close()
+        got = [float(r["s"]) for r in rows if r["s"] is not None and float(r["s"]) > 0]
+        if got:
+            est = min(600.0, max(5.0, sum(got) / len(got)))
+    except Exception:
+        est = GENERATION_SECONDS_ASSUMED
+    _GEN_SECONDS_MEMO["v"] = (_t.monotonic(), est)
+    return est
+
+
+def _generation_slots() -> int:
+    try:
+        import job_queue
+        return max(1, int(job_queue.group_concurrency("generation")))
+    except Exception:
+        return 1
+
+
+def auto_draft_spread_seconds(n_due=None) -> int:
+    """How widely the day's drafts start spread: AUTO_DRAFT_SPREAD_MINUTES,
+    or — when `n_due` drafts take the generation slots longer than that —
+    the time they take, up to AUTO_DRAFT_SPREAD_MAX_MINUTES (A5-F4)."""
+    base = max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
+    if not n_due or base <= 0:
+        return base
+    need = int(n_due * generation_seconds_estimate() / _generation_slots())
+    return int(min(max(base, need), max(base, AUTO_DRAFT_SPREAD_MAX_MINUTES * 60)))
+
+
+def auto_draft_deadline_seconds() -> int:
+    """How long a draft may wait for a slot: AUTO_DRAFT_QUEUE_HOURS, or one
+    and a half times the generation work already queued ahead of it (rows
+    x measured seconds / slots) when that is longer, at most
+    AUTO_DRAFT_QUEUE_MAX_HOURS (scale audit 10/19/26 A5-F4: a fixed 6 hours
+    expired the tail of a big zone's morning every week)."""
+    base = AUTO_DRAFT_QUEUE_HOURS * 3600
+    try:
+        conn = get_conn(DB_PATH)
+        try:
+            n = conn.execute("SELECT COUNT(*) AS n FROM jobs WHERE grp='generation' AND state='queued'").fetchone()["n"]
+        finally:
+            conn.close()
+    except Exception:
+        return base
+    backlog = float(n or 0) * generation_seconds_estimate() / _generation_slots()
+    return int(min(max(base, 1.5 * backlog), AUTO_DRAFT_QUEUE_MAX_HOURS * 3600))
+
+
+def auto_draft_offset_seconds(restaurant_id, span=None) -> int:
+    """The restaurant's fixed place in its zone's draft spread (`span`
+    seconds, else AUTO_DRAFT_SPREAD_MINUTES): the same every week (a stable
+    hash of its id), so an owner sees the draft land at the same time of the
+    morning."""
+    span = int(span) if span is not None else max(0, AUTO_DRAFT_SPREAD_MINUTES) * 60
     if span <= 0 or restaurant_id is None:
         return 0
     import hashlib
@@ -1790,14 +1896,26 @@ def auto_draft_offset_seconds(restaurant_id) -> int:
     return h % span
 
 
-def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None):
+def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None,
+                       spread_seconds=None):
     """One restaurant's auto-draft as a `scheduled` job_queue row: the same
     try (_claim_auto_draft_attempt) the pass claimed, keyed so the same try
-    is never queued twice. `answers_job` is the Message Batches group whose
-    answers are stored by call key (schedule_batch — blind re-audit 10/11/26
-    ARCH-15): the draft runs under schedule_resume.resuming(it). `answer` is
-    the one answer an item submitted before ARCH-15 carries ({key, text,
-    stop_reason, usage, call_id}). Returns the row id."""
+    is never queued twice — unless its row EXPIRED unstarted, which ran and
+    paid for nothing: then it is queued again (scale audit 10/19/26 A5-F12;
+    the dead row used to come back, so the pass counted a draft that never
+    ran). `answers_job` is the Message Batches group whose answers are
+    stored by call key (schedule_batch — blind re-audit 10/11/26 ARCH-15):
+    the draft runs under schedule_resume.resuming(it). `answer` is the one
+    answer an item submitted before ARCH-15 carries ({key, text,
+    stop_reason, usage, call_id}). `spread_seconds` — the day's spread
+    (auto_draft_spread_seconds). Returns the row id."""
+    return _enqueue_auto_draft(r, period=period, target=target, attempt=attempt, batch=batch, answer=answer,
+                               answers_job=answers_job, spread_seconds=spread_seconds)[0]
+
+
+def _enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, answer=None, answers_job=None,
+                        spread_seconds=None):
+    """enqueue_auto_draft's (row id, created)."""
     import job_queue
     import time as _t
     payload = {"restaurant_id": r.id, "period": period, "target": target, "attempt": attempt,
@@ -1810,11 +1928,10 @@ def enqueue_auto_draft(r, period=None, target=None, attempt=None, batch=True, an
     # the spread; a batched answer, already paid for, or a synchronous run
     # after a batch fell through, is drafted as soon as a slot allows.
     first_half = batch and answer is None and not answers_job
-    start = _t.time() + (auto_draft_offset_seconds(r.id) if first_half else 0)
-    qid, _created = job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
-                                      idempotency_key=key, not_before=start,
-                                      deadline=start + AUTO_DRAFT_QUEUE_HOURS * 3600)
-    return qid
+    start = _t.time() + (auto_draft_offset_seconds(r.id, span=spread_seconds) if first_half else 0)
+    return job_queue.enqueue("auto_draft", payload, restaurant_id=r.id, priority_class="scheduled",
+                             idempotency_key=key, not_before=start, deadline=start + auto_draft_deadline_seconds(),
+                             requeue_states=("expired",))
 
 
 def run_queued_auto_draft(job):
@@ -1879,6 +1996,40 @@ def on_auto_draft_expired(job):
     if period:
         ops.release_period(f"auto_draft:{rid}", period)
     _release_auto_draft_attempt(rid, p.get("target"), p.get("attempt"))
+    # No pass left to queue it again — the draft day and its fallback day are
+    # over (or in their last hour): the owner is told to generate the week,
+    # never left to find nothing on the day it was due (scale audit 10/19/26
+    # A5-F12: an expiry was silent, and the dead row's key stopped every
+    # later pass from queuing it).
+    try:
+        _tell_if_no_pass_left(rid, p.get("target"))
+    except Exception as e:
+        ops.capture(e, job="auto_draft_schedule_expired", context=f"restaurant_id={rid}")
+
+
+def _tell_if_no_pass_left(rid, target, now=None):
+    """After an expiry: tell the owner when no hourly pass can queue this
+    week's draft again (the restaurant's own clock is past its draft day and
+    fallback day, or in the fallback day's last hour) and the week still has
+    nothing. Returns whether they were told."""
+    from models import get_restaurant, auto_draft_weekday
+    from time_utils import restaurant_now
+    r = get_restaurant(rid)
+    if r is None or not target or not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
+        return False
+    local = now if now is not None else restaurant_now(r, naive=True)
+    day = auto_draft_weekday(r)
+    fallback = (day + 1) % 7
+    if local.weekday() == day or (local.weekday() == fallback and local.hour < 23):
+        return False                    # a later pass today or tomorrow queues it again
+    conn = get_conn(DB_PATH)
+    try:
+        if _week_has_schedule(conn, r.id, target):
+            return False
+    finally:
+        conn.close()
+    _tell_auto_draft_gave_up(r, DB_PATH, target, why="busy")
+    return True
 
 
 # The learners a `learner` queue row runs, by name ("module:function"; each

@@ -322,16 +322,23 @@ def test_a_press_keeps_a_slot_and_a_waiting_draft_keeps_one(db, monkeypatch):
     rids = _restaurants(None, 6)
     now = time.time()
     for i, r in enumerate(rids[:3]):
-        jq.enqueue("auto_draft", {}, restaurant_id=r, deadline=now + 3600 + i, wake=False)
+        jq.enqueue("auto_draft", {}, restaurant_id=r, deadline=now + 6 * 3600 + i, wake=False)
     d1 = jq.claim("w", groups=("generation",))
     assert d1["priority_class"] == "scheduled"
     # Drafts alone never take the slot kept for presses.
     assert jq.claim("w", groups=("generation",)) is None
     p1, _ = jq.enqueue("schedule_generate", {}, restaurant_id=rids[3], wake=False)
-    jq.enqueue("schedule_generate", {}, restaurant_id=rids[4], wake=False)
+    p2, _ = jq.enqueue("schedule_generate", {}, restaurant_id=rids[4], wake=False)
     assert jq.claim("w", groups=("generation",)).id == p1
     _done(d1)
-    # A draft is waiting: the second press does not take the draft's slot.
+    # Drafts are waiting, hours from their deadline: on two slots the
+    # presses keep both (scale audit 10/19/26 A5-F4 — the drafts' slot
+    # halved an owners' burst all morning).
+    assert jq.claim("w", groups=("generation",)).id == p2
+    _done({"id": p1})
+    # A draft about to expire keeps its slot from the next press.
+    _sql("UPDATE jobs SET deadline=? WHERE kind='auto_draft' AND state='queued'", (time.time() + 600,))
+    jq.enqueue("schedule_generate", {}, restaurant_id=rids[5], wake=False)
     nxt = jq.claim("w", groups=("generation",))
     assert nxt["priority_class"] == "scheduled"
     assert jq.reservations("generation") == {"interactive": 1, "scheduled": 1}

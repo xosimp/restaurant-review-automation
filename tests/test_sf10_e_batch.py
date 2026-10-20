@@ -218,6 +218,9 @@ def test_the_auto_draft_submits_first_and_holds_no_job_or_slot(monkeypatch):
     import ops
     import schedule_engine
     monkeypatch.setattr(schedule_engine, "generation_request", lambda rid, **k: {"week_start": WEEK[0]})
+    # A week on the model source (a code source never batches: scale audit
+    # 10/19/26 A5-F13, tests/test_scale_f6_scheduler.py).
+    monkeypatch.setattr(sj, "_drafted_in_code", lambda *a: False)
     got = {}
     monkeypatch.setattr(sb, "submit_auto_draft", lambda r, **k: got.update(k) or "submitted")
     monkeypatch.setattr(ops, "claim_async_job", lambda *a, **k: (_ for _ in ()).throw(AssertionError("claimed")))

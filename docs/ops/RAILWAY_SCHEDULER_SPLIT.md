@@ -186,7 +186,9 @@ every attempt) and counts only against `QUEUE_GENERATION_MAX_RUNNING`
 (default 3 x the slots; under `GATEWAY_ORG_OTPM`, never more streams than
 the budget carries). One slot is kept for owners' presses and one for the
 auto-draft while drafts wait (`QUEUE_INTERACTIVE_RESERVED`,
-`QUEUE_SCHEDULED_RESERVED`). A row back from the model waits ('await') ahead
+`QUEUE_SCHEDULED_RESERVED`) — the drafts' slot only while presses keep two,
+or for a draft within an hour of its deadline (scale audit 10/19/26 A5-F4). A
+row back from the model waits ('await') ahead
 of any new claim.
 
 On a deploy's SIGTERM the process hands its running rows back to the queue
