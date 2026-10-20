@@ -109,6 +109,12 @@ def test_the_card_link_opens_a_fresh_portal_session(db_path, pay, monkeypatch):
     fake = _stripe()
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fixture")
     monkeypatch.setattr(config, "stripe_api", lambda key=None: fake)
+    # The Billing Portal opens only for the account holder signed in (blind
+    # re-audit 10/20/26 R7-08): signed out, the link asks them to sign in.
+    r = pay(rid, "card")
+    assert r.status_code == 302 and r.headers["Location"].startswith("/login?next=")
+    import webhook_routes
+    monkeypatch.setattr(webhook_routes, "_pay_signin_redirect", lambda *a, **k: None)   # signed in as the owner
     r = pay(rid, "card")
     assert r.status_code == 302 and r.headers["Location"] == "https://billing.stripe.com/p/session_1"
     assert ("Portal", "cus_1") in fake.calls

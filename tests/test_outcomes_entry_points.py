@@ -255,7 +255,7 @@ def test_39_a_dsr_kind_with_no_honest_metric_measures_nothing(db_path):
 def test_39_reduce_waste_is_measured_on_waste_and_credited_to_food_cost(db_path, monkeypatch):
     rid = _rid(db_path)
     real = metrics.measure
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None:
+    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None, **_kw:
                         (120.0, "stub") if key == "weekly_waste" else real(r, key, s, e, db_path))
     rec_ledger.present(rid, "dsr_action:reduce_waste:food/fish-tacos", "food", "dsr", title="Portion the fish")
     out = _rec_event(rid, {"key": "dsr_action:reduce_waste:food/fish-tacos", "event": "completed",

@@ -12,6 +12,15 @@ from auth import create_user, init_auth
 from models import Restaurant, create_restaurant, get_conn
 
 
+@pytest.fixture(autouse=True)
+def _not_the_demo_store(monkeypatch):
+    """push asks demo_store.is_simulated(restaurant_id), which reads the
+    DEFAULT database: in a parallel run another test's demo store can hold
+    the same id there. These tests' restaurants are never the demo."""
+    import demo_store
+    monkeypatch.setattr(demo_store, "is_simulated", lambda r: False)
+
+
 @pytest.fixture
 def rid(db_path):
     init_auth(db_path=db_path)

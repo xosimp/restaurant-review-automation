@@ -504,6 +504,11 @@ def test_a_store_still_trading_at_3am_chicago_is_synced_at_its_own_hour(monkeypa
     pos.sync_all()
     assert synced == [1] and pos.deferred_syncs() == [2]
     hour[2] = 3                                               # 3am in Los Angeles
+    # The retry pass reads each store's own clock: pinned to 3:30am, or the
+    # test passed only when run at night (R3-12).
+    import time_utils
+    from datetime import datetime as _dt
+    monkeypatch.setattr(time_utils, "restaurant_now", lambda r, naive=True: _dt(2026, 10, 20, 3, 30))
     monkeypatch.setattr(scheduler.data_health if hasattr(scheduler, "data_health") else __import__("data_health"),
                         "due_retries", lambda kind: [])
     scheduler.run_pos_retry()

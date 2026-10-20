@@ -173,7 +173,7 @@ def test_labor_and_rating_forecasts_score_against_their_closed_week(db_path, mon
     forecast_log.record(rid, "labor_week", 30.0, period_of=date(2026, 8, 5), db_path=db_path)
     forecast_log.record(rid, "review_rating_week", 4.5, period_of=date(2026, 8, 5), db_path=db_path)
     seen = []
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db: (seen.append((key, s, e)) or
+    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db, **_kw: (seen.append((key, s, e)) or
                                                                        ({"labor_pct": 25.0}.get(key), "")))
     out = forecast_log.score_due(rid, today=date(2026, 8, 20), db_path=db_path)
     assert out == {"scored": 1, "unmeasurable": 1, "gave_up": 0}
@@ -453,7 +453,7 @@ def test_the_monthly_review_prime_cost_is_last_months_measurement(db_path, monke
     windows = {("2026-08-01", "2026-08-31"): {"food_cost_pct": 30.0, "labor_pct": 28.0},
                ("2026-07-01", "2026-07-31"): {"food_cost_pct": 31.0, "labor_pct": 29.0}}
     monkeypatch.setattr(metrics, "measure",
-                        lambda r, key, s, e, db: ((windows.get((s, e)) or {}).get(key), "test"))
+                        lambda r, key, s, e, db, **_kw: ((windows.get((s, e)) or {}).get(key), "test"))
     r = monthly_review.build(rid, today=date(2026, 9, 16), db_path=db_path)
     assert r["prime_cost"]["pct"] == 58.0 and r["prime_cost"]["delta"] == -2.0
     assert r["prime_cost"]["claim_kind"] == "measured" and r["prime_cost"]["window"] == ["2026-08-01", "2026-08-31"]

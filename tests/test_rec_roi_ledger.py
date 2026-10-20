@@ -248,7 +248,7 @@ def test_track_links_its_tracker_at_once(db, monkeypatch):
     from flask import Flask
     rid = _rid(db)
     rl.present(rid, "insight_review:abcdef1234", "reviews", "reviews", title="Answer 3-star reviews", db_path=db)
-    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None: (4.3, "30 reviews"))
+    monkeypatch.setattr(metrics, "measure", lambda r, key, s, e, db_path=None, **_kw: (4.3, "30 reviews"))
     with Flask(__name__).test_request_context(json={"key": "insight_review:abcdef1234", "event": "accepted",
                                                     "surface": "reviews", "module": "reviews"}):
         out, st = strategy_routes._do_rec_event({"id": 1, "restaurant_id": rid, "role": "client"})

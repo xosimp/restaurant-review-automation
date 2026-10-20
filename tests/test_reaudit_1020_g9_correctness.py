@@ -201,7 +201,7 @@ def test_r9_12_a_kill_mid_flush_never_resends_who_was_already_delivered(db_path,
         for rid in (r1, r2, r3):
             assert notify._gated_out(rid, 10, "g9_check") is False
         for rid in (r1, r2):
-            notify._batch[rid] = [notify._Pending("labor_over", "t", "s", [], None, recs=[{}])]
+            notify._open_batch()[rid] = [notify._Pending("labor_over", "t", "s", [], None, recs=[{}])]
         sent = []
 
         def deliver(rid, item, db):
@@ -212,7 +212,7 @@ def test_r9_12_a_kill_mid_flush_never_resends_who_was_already_delivered(db_path,
         with pytest.raises(KeyboardInterrupt):
             notify.flush_daily_batch(db_path)
     finally:
-        notify._batch, notify._batch_claims = None, []
+        notify.discard_daily_batch()
     day = "2026-09-21"
     # Delivered, in flight and checked-with-nothing are all claimed: the next
     # hourly pass sends none of them again (it re-sent r1 before).

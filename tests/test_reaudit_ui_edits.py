@@ -529,7 +529,7 @@ def test_ios_rows_are_reflagged_from_the_rule_check():
     assert "v.isHard && v.dayLevel != true" in flag and "out[i].needsReview = false" in flag
     assert 'case dayLevel = "day_level"' in vm
     assert "applyFlags(checked: rows, violations: r.violations, review: r.review, replace: true)" in \
-        _swift_fn(vm, "refreshEditCost")
+        _swift_fn(vm, "refreshEditCostOnce")      # coalesced since 10/20/26 R6-F7
     assert "refreshOvertimeMoves(reflag: true)" in _swift_fn(vm, "adoptWeek")
     assert vm.count("Self.flaggedRows(") >= 2                       # the save and apply-fixes answers
 

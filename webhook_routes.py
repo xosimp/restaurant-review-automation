@@ -499,6 +499,23 @@ def _pay_signin_redirect(rid, token, period):
     return redirect("/login?next=" + quote(f"/pay/{token}/{period}", safe=""))
 
 
+def _open_invoice_page(restaurant, period):
+    """The open invoice's hosted page when the link is a pay link (not
+    `card`) and one is open: Stripe's page only takes a payment for that
+    invoice - no card on file, no cancel - so it opens from the emailed
+    link without signing in. A payment email the owner forwards to their
+    bookkeeper still works; the Billing Portal (change the card, cancel,
+    read every invoice) still needs the account holder (R7-08)."""
+    if restaurant is None or period == "card":
+        return None
+    try:
+        import billing_jobs as _bj_inv
+        inv = _bj_inv.latest_open_invoice(restaurant.id)
+        return (inv or {}).get("hosted_invoice_url") or None
+    except Exception:
+        return None
+
+
 @webhook_bp.route("/pay/<token>/<period>")
 def pay_link_route(token, period):
     """Where every billing email's buttons go. The signed token names one
@@ -536,6 +553,9 @@ def pay_link_route(token, period):
     if payer and payer != rid:
         p = get_restaurant(payer)
         if status == "past_due" or (p and (p.billing_status or "").lower() == "past_due"):
+            pay_only = _open_invoice_page(p, period)
+            if pay_only:
+                return redirect(pay_only)
             signin = _pay_signin_redirect(rid, token, period)
             if signin is not None:
                 return signin
@@ -546,6 +566,9 @@ def pay_link_route(token, period):
                        f"{name} is billed together with {_esc_pay(p.name if p else 'your group')} — "
                        "one subscription covers the group, so there is nothing to pay here."), 200
     if status == "past_due" or period in ("card", "invoice"):
+        pay_only = _open_invoice_page(r, period)
+        if pay_only:
+            return redirect(pay_only)
         signin = _pay_signin_redirect(rid, token, period)
         if signin is not None:
             return signin

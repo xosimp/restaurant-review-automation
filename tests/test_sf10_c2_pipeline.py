@@ -187,6 +187,9 @@ def test_each_stage_boundary_is_a_queue_checkpoint_and_the_save_is_the_last(db, 
     _finished(monkeypatch)
     se._run_schedule_job("c2-cp", rid)
     named = [s for s in seen if s in BOUNDARIES or s == "saved"]
+    # "saved" is written AT the commit and again with the timings (blind
+    # re-audit 10/20/26 R5-11): one boundary, written twice.
+    named = [s for i, s in enumerate(named) if not (s == "saved" and i and named[i - 1] == "saved")]
     assert named == list(BOUNDARIES) + ["saved"]
     # the timed stages are boundaries too (_StageClock)
     assert seen.index("inputs_and_model") < seen.index("parsed") < seen.index("rules") < seen.index("repair")
