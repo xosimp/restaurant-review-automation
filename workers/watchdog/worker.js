@@ -6,7 +6,17 @@
 // 2. Uptime: every 5 minutes the cron fetches /health and expects 200 with
 //    "db":"ok". Two failing checks in a row page Will (a deploy's restart is
 //    shorter than that); a recovery sends one "back up" email.
-// Alerts go by Resend from the app's own sender. State lives in KV.
+// Alerts go by Resend from the app's own sender to every ALERT_TO address
+// (comma-separated), and — so a Resend outage cannot silence the one
+// monitor outside Railway (scale audit 10/19/26 OPS-4) — to every channel
+// below that is configured, each off until its secrets are set:
+//   PAGERDUTY_ROUTING_KEY      a PagerDuty Events v2 trigger, resolved on recovery
+//                              (phone escalation and a second on-call live there)
+//   PAGER_WEBHOOK_URL          any paging service's incoming webhook (Better Stack,
+//                              Opsgenie, ...): POST {event, subject, text, source}
+//   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM, ALERT_SMS_TO (comma-separated)
+//                              a text to each on-call phone
+// An alert counts as delivered when any channel took it. State lives in KV.
 const HEALTH_URL = "https://dashboard.cavnar.ai/health";
 const STALE_MINUTES = 20;
 const FAILS_BEFORE_ALERT = 2;
@@ -57,10 +67,10 @@ async function check(env) {
   const streak = problems.length ? (prev.streak || 0) + 1 : 0;
   let alerted = Boolean(prev.alerted);
   if (problems.length && streak >= FAILS_BEFORE_ALERT && !alerted) {
-    alerted = await email(env, "Cavnar AI is down", problems.join("\n") +
-      "\n\nChecked from outside Railway by the cavnar-watchdog Worker. You'll get one more email when it recovers.");
+    alerted = await notify(env, "trigger", "Cavnar AI is down", problems.join("\n") +
+      "\n\nChecked from outside Railway by the cavnar-watchdog Worker. You'll get one more message when it recovers.");
   } else if (!problems.length && alerted) {
-    if (await email(env, "Cavnar AI is back up", "The heartbeat and /health are both answering again.")) alerted = false;
+    if (await notify(env, "resolve", "Cavnar AI is back up", "The heartbeat and /health are both answering again.")) alerted = false;
   }
   // Written only when it changed: a healthy hour is no writes at all.
   if (streak !== (prev.streak || 0) || alerted !== Boolean(prev.alerted) ||
@@ -69,11 +79,61 @@ async function check(env) {
   }
 }
 
+function list(value) {
+  return String(value || "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+// Every configured channel, each on its own: one failing never stops the
+// others. True when any of them accepted the alert.
+async function notify(env, event, subject, text) {
+  const sends = [email(env, subject, text)];
+  if (env.PAGERDUTY_ROUTING_KEY) sends.push(pagerduty(env, event, subject));
+  if (env.PAGER_WEBHOOK_URL) sends.push(webhook(env, event, subject, text));
+  if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM) {
+    for (const to of list(env.ALERT_SMS_TO)) sends.push(sms(env, to, `${subject}: ${text}`.slice(0, 320)));
+  }
+  const results = await Promise.all(sends.map((p) => p.catch(() => false)));
+  return results.some(Boolean);
+}
+
 async function email(env, subject, text) {
+  const to = list(env.ALERT_TO);
+  if (!env.RESEND_API_KEY || !to.length) return false;
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: `Cavnar AI Watchdog <${env.ALERT_FROM}>`, to: [env.ALERT_TO], subject, text }),
+    body: JSON.stringify({ from: `Cavnar AI Watchdog <${env.ALERT_FROM}>`, to, subject, text }),
+  });
+  return r.ok;
+}
+
+async function pagerduty(env, event, subject) {
+  const r = await fetch("https://events.pagerduty.com/v2/enqueue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      routing_key: env.PAGERDUTY_ROUTING_KEY, event_action: event, dedup_key: "cavnar-watchdog-down",
+      payload: { summary: subject, source: "cavnar-watchdog", severity: "critical" },
+    }),
+  });
+  return r.ok;
+}
+
+async function webhook(env, event, subject, text) {
+  const r = await fetch(env.PAGER_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event, subject, text, source: "cavnar-watchdog" }),
+  });
+  return r.ok;
+}
+
+async function sms(env, to, body) {
+  const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
+  const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+    method: "POST",
+    headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ To: to, From: env.TWILIO_FROM, Body: body }).toString(),
   });
   return r.ok;
 }

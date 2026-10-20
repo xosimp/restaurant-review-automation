@@ -2464,11 +2464,82 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
 # the cooldown lives here instead — one page per key per cooldown per process.
 _page_memory = {}
 _page_lock = threading.Lock()
+_page_local = threading.local()
 
 
 def will_phone():
     """The operator's mobile for platform pages (WILL_PHONE), or ""."""
     return (os.getenv("WILL_PHONE") or "").strip()
+
+
+def _env_list(name):
+    return [x.strip() for x in (os.getenv(name) or "").split(",") if x.strip()]
+
+
+def oncall_phones():
+    """Every phone a platform page is texted to: WILL_PHONE, then each of
+    OPS_ONCALL_PHONES (comma-separated) — a second responder (scale audit
+    10/19/26 OPS-4: one person was the whole on-call). Deduplicated, in
+    order."""
+    out = []
+    for p in [will_phone()] + _env_list("OPS_ONCALL_PHONES"):
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def oncall_emails():
+    """Every address a platform page is emailed to: config.will_email(),
+    then each of OPS_ONCALL_EMAILS."""
+    out = []
+    for e in [config.will_email()] + _env_list("OPS_ONCALL_EMAILS"):
+        e = (e or "").strip()
+        if e and e.lower() not in [x.lower() for x in out]:
+            out.append(e)
+    return out
+
+
+# A paging service (OPS-4): phone escalation, acknowledgement and a second
+# on-call belong to a service built for them, not to a text that nobody
+# acknowledges. Off until configured. OPS_PAGER_KIND=pagerduty sends a
+# PagerDuty Events v2 trigger (OPS_PAGER_ROUTING_KEY, deduplicated on the
+# page's key); OPS_PAGER_KIND=webhook (or just OPS_PAGER_WEBHOOK_URL) POSTs
+# {key, subject, lines, source} to any service's incoming webhook (Better
+# Stack, Opsgenie, ...).
+PAGER_TIMEOUT = (5, 10)
+PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
+
+
+def pager_configured():
+    kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
+    if kind == "pagerduty":
+        return bool((os.getenv("OPS_PAGER_ROUTING_KEY") or "").strip())
+    return bool((os.getenv("OPS_PAGER_WEBHOOK_URL") or "").strip())
+
+
+def send_to_pager(key, subject, lines) -> bool:
+    """One event to the configured paging service. True when it took it;
+    never raises."""
+    if not pager_configured():
+        return False
+    import requests
+    kind = (os.getenv("OPS_PAGER_KIND") or "").strip().lower()
+    try:
+        if kind == "pagerduty":
+            r = requests.post(PAGERDUTY_EVENTS_URL, json={
+                "routing_key": os.getenv("OPS_PAGER_ROUTING_KEY").strip(), "event_action": "trigger",
+                "dedup_key": f"cavnar:{key}",
+                "payload": {"summary": str(subject)[:1000], "source": "cavnar-ai", "severity": "critical",
+                            "custom_details": {"lines": [str(x)[:300] for x in (lines or [])[:12]]}}},
+                timeout=PAGER_TIMEOUT)
+        else:
+            r = requests.post(os.getenv("OPS_PAGER_WEBHOOK_URL").strip(), json={
+                "key": str(key), "subject": str(subject), "lines": [str(x) for x in (lines or [])[:12]],
+                "source": "cavnar-ai"}, timeout=PAGER_TIMEOUT)
+        return 200 <= r.status_code < 300
+    except Exception as e:
+        log.error(f"pager send failed: {e}")
+        return False
 
 
 def _cooldown_active(key, minutes):
@@ -2531,7 +2602,14 @@ def page_operator(key, subject, lines, cooldown_minutes=PLATFORM_ALERT_COOLDOWN_
     with _page_lock:
         if _cooldown_active(key, cooldown_minutes):
             return {"sent": False, "reason": "cooldown", "channels": {}}
-        got = alert_will(subject, lines)
+        # The page's key reaches the pager's dedup through a thread-local, so
+        # alert_will's (subject, lines) signature — which tests and callers
+        # stand in for — is unchanged.
+        _page_local.key = key
+        try:
+            got = alert_will(subject, lines)
+        finally:
+            _page_local.key = None
         res = {"sent": bool(got), "channels": dict(getattr(got, "channels", None) or {}),
                "error": getattr(got, "error", None)}
         if res["sent"]:
@@ -2556,45 +2634,60 @@ class AlertResult:
         return f"<AlertResult sent={self.sent} channels={self.channels} err={self.error!r}>"
 
 
-def alert_will(subject, lines):
-    """Tell Will now, outside the scheduler: a text to WILL_PHONE, an email
-    to config.will_email() and a push to the admin logins' phones. Never an
-    owner.
+def alert_will(subject, lines, key=None):
+    """Tell the on-call now, outside the scheduler: a text to every
+    oncall_phones() number (WILL_PHONE first), an email to every
+    oncall_emails() address, an event to the paging service when one is
+    configured (send_to_pager, keyed on `key`), and a push to the admin
+    logins' phones. Never an owner.
 
     The text is the independent channel (decision 8): the email rides the
     product's own Resend account and the push its own APNs, so an outage of
     either used to take the page down with it. A push is only queued here —
     it proves nothing — so only the text and the email count as delivered.
 
-    Returns an AlertResult: truthy when a text or the email went out, with
-    each channel's outcome in .channels."""
+    Returns an AlertResult: truthy when a text, the email or the pager
+    went out, with each channel's outcome in .channels."""
     import html as _html
     channels, errors = {}, []
     lines = [str(x) for x in (lines or [])]
-    phone = will_phone()
-    if phone:
-        try:
-            import notify as _notify
-            body = (subject + ": " + " ".join(lines[:3]))[:320]
-            channels["sms"] = bool(_notify.send_sms(phone, body, use_case="alert"))
-            if not channels["sms"]:
-                errors.append("sms not accepted")
-        except Exception as e:
-            channels["sms"] = False
-            errors.append(f"sms: {e}")
-            log.error(f"alert_will sms failed: {e}")
+    phones = oncall_phones()
+    if phones:
+        import notify as _notify
+        body = (subject + ": " + " ".join(lines[:3]))[:320]
+        texted = 0
+        for phone in phones:
+            try:
+                if _notify.send_sms(phone, body, use_case="alert"):
+                    texted += 1
+                else:
+                    errors.append("sms not accepted")
+            except Exception as e:
+                errors.append(f"sms: {e}")
+                log.error(f"alert_will sms failed: {e}")
+        channels["sms"] = texted > 0
+        if len(phones) > 1:
+            channels["sms_reached"] = texted
+    if pager_configured():
+        channels["pager"] = send_to_pager(key or getattr(_page_local, "key", None) or subject, subject, lines)
+        if not channels["pager"]:
+            errors.append("pager not accepted")
     try:
         import emails as _emails
         b = _emails.BRAND
         body = "".join(f'<li style="margin:0 0 6px">{_html.escape(x)}</li>' for x in lines[:12])
-        res = _emails._send_branded(
-            config.will_email(), subject, from_label="Cavnar AI Ops", email_type="ops_platform_alert",
-            inner_html=(f'<p style="color:{b["strong"]};font-size:16px;font-weight:700;margin:0 0 12px">'
-                        f'{_html.escape(subject)}</p><ul style="color:{b["body"]};font-size:14px;'
-                        f'line-height:1.5;margin:0 0 0 18px">{body}</ul>'))
-        channels["email"] = bool(getattr(res, "ok", False))
-        if not channels["email"]:
-            errors.append(f"email: {getattr(res, 'error', None) or 'not accepted'}")
+        inner = (f'<p style="color:{b["strong"]};font-size:16px;font-weight:700;margin:0 0 12px">'
+                 f'{_html.escape(subject)}</p><ul style="color:{b["body"]};font-size:14px;'
+                 f'line-height:1.5;margin:0 0 0 18px">{body}</ul>')
+        mailed = 0
+        for addr in oncall_emails():
+            res = _emails._send_branded(addr, subject, from_label="Cavnar AI Ops", email_type="ops_platform_alert",
+                                        inner_html=inner)
+            if getattr(res, "ok", False):
+                mailed += 1
+            else:
+                errors.append(f"email: {getattr(res, 'error', None) or 'not accepted'}")
+        channels["email"] = mailed > 0
     except Exception as e:
         channels["email"] = False
         errors.append(f"email: {e}")
@@ -2623,7 +2716,7 @@ def alert_will(subject, lines):
     except Exception as e:
         channels["push"] = False
         log.error(f"alert_will push failed: {e}")
-    return AlertResult(bool(channels.get("sms") or channels.get("email")), channels,
+    return AlertResult(bool(channels.get("sms") or channels.get("email") or channels.get("pager")), channels,
                        "; ".join(errors)[:300] or None)
 
 

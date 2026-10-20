@@ -450,3 +450,48 @@ def test_a_missing_dsr_night_pages(db_path, monkeypatch):
     monkeypatch.setattr(ops, "alert_will", lambda subject, lines: sent.append(lines) or True)
     assert ops.check_platform_sla()["alerted"]
     assert any("Daily Sales Report missing" in x and "Simple EJ's" in x for x in sent[0])
+
+
+# ── OPS-4 (scale audit 10/19/26): more than one on-call, a paging service ──
+
+def test_a_page_reaches_every_oncall_phone_and_address(db_path, monkeypatch):
+    import notify
+    import emails
+    monkeypatch.setenv("WILL_PHONE", "+15555550100")
+    monkeypatch.setenv("OPS_ONCALL_PHONES", "+15555550101, +15555550100")
+    monkeypatch.setenv("OPS_ONCALL_EMAILS", "second@cavnar.test")
+    texts, mails = [], []
+    monkeypatch.setattr(notify, "send_sms", lambda to, body, use_case="alert", **k: texts.append(to) or True)
+    monkeypatch.setattr(emails, "_send_branded",
+                        lambda to, *a, **k: mails.append(to) or emails.SendResult(ok=True))
+    res = ops.alert_will("Cavnar AI: test", ["the scheduler stopped"])
+    assert bool(res) and texts == ["+15555550100", "+15555550101"]
+    assert "second@cavnar.test" in mails and len(mails) == 2
+
+
+def test_a_configured_pager_gets_the_page_keyed_for_dedup_and_counts_as_delivered(db_path, monkeypatch):
+    import requests
+    import notify
+    import emails
+    monkeypatch.delenv("WILL_PHONE", raising=False)
+    monkeypatch.delenv("OPS_ONCALL_PHONES", raising=False)
+    monkeypatch.setenv("OPS_PAGER_KIND", "pagerduty")
+    monkeypatch.setenv("OPS_PAGER_ROUTING_KEY", "rk-test")
+    monkeypatch.setattr(emails, "_send_branded", lambda *a, **k: emails.SendResult(ok=False, error="resend down"))
+    monkeypatch.setattr(notify, "send_sms", lambda *a, **k: pytest.fail("no phone is configured"))
+    posted = []
+
+    class _R:
+        status_code = 202
+    monkeypatch.setattr(requests, "post", lambda url, json=None, timeout=None: posted.append((url, json, timeout))
+                        or _R())
+    res = ops.page_operator("backup_failed", "Cavnar AI: backup failed", ["no off-site copy"])
+    assert res["sent"] is True and res["channels"]["pager"] is True, "the pager alone is a delivery"
+    url, body, timeout = posted[0]
+    assert url == ops.PAGERDUTY_EVENTS_URL and body["dedup_key"] == "cavnar:backup_failed" and timeout
+
+
+def test_no_pager_is_called_until_one_is_configured(db_path, monkeypatch):
+    for v in ("OPS_PAGER_KIND", "OPS_PAGER_ROUTING_KEY", "OPS_PAGER_WEBHOOK_URL"):
+        monkeypatch.delenv(v, raising=False)
+    assert ops.pager_configured() is False and ops.send_to_pager("k", "s", []) is False

@@ -5001,6 +5001,10 @@ def init_db(db_path: str = DB_PATH):
     # admin_issue_resolutions.occurrence_at — at boot, never on a read.
     import admin_ops as _admin_ops
     _admin_ops.init_admin_ops(db_path)
+    # Onboarding at scale (scale audit 10/19/26, onboarding.py): backfill
+    # slots, setup confirmations, bulk provisioning batches, partners.
+    import onboarding as _onboarding
+    _onboarding.init_onboarding(db_path)
 
 
     # The AI-operations tables (trace, quality events, health events, the
@@ -14582,7 +14586,11 @@ def pos_binding_conflict(provider: str, values, exclude_id=None, db_path: str = 
     vals = [str(v or "").strip().lower() for v in values]
     if len(vals) != len(cols) or not vals[-1]:
         return None
-    where = " AND ".join(f"LOWER(TRIM(COALESCE({c},'')))=?" for c in cols)
+    # CAST to text: rpower_cg is an INTEGER column, and on Postgres
+    # COALESCE(bigint, '') refuses the '' (invalid input syntax for bigint) —
+    # every RPOWER bind and bulk provisioning row raised there after the
+    # 10/19/26 cutover (found by F8's Postgres run, scale fix round).
+    where = " AND ".join(f"LOWER(TRIM(COALESCE(CAST({c} AS TEXT),'')))=?" for c in cols)
     conn = get_conn(db_path)
     try:
         rows = conn.execute(f"SELECT id, name FROM restaurants WHERE {where} AND COALESCE(is_demo,0)=0",

@@ -2246,6 +2246,52 @@ def _remove_quietly(path):
         pass
 
 
+# A backup past this share of its job bound (jobs_registry backup_db
+# max_minutes) is said out loud, before the night it no longer fits (scale
+# audit 10/19/26 OPS-11: ~78 s/GB measured, so the 60-minute bound is
+# reached near 46 GB; the stage seconds in backup_runs.detail_json are the
+# measured curve).
+BACKUP_SLOW_SHARE = 0.5
+
+
+def _backup_lap(run, stage):
+    """Seconds per backup stage into the run's detail (OPS-11). The first
+    call for 'snapshot' starts the clock."""
+    now = time.monotonic()
+    d = run.setdefault("_detail", {})
+    last = d.pop("_lap_at", None)
+    if last is not None:
+        stages = d.setdefault("stage_seconds", {})
+        stages[stage] = round(stages.get(stage, 0) + (now - last), 1)
+    d["_lap_at"] = now
+
+
+def _backup_too_slow(run):
+    d = run.get("_detail") or {}
+    d.pop("_lap_at", None)
+    total = round(sum((d.get("stage_seconds") or {}).values()), 1)
+    d["total_seconds"] = total
+    try:
+        import jobs_registry
+        bound = 60 * float(jobs_registry.JOBS["backup_db"].get("max_minutes") or 60)
+    except Exception:
+        bound = 3600.0
+    if total <= BACKUP_SLOW_SHARE * bound:
+        return
+    d["slow"] = True
+    _ops.capture(RuntimeError(f"backup_db took {total}s, over {int(BACKUP_SLOW_SHARE * 100)}% of its "
+                              f"{int(bound)}s bound: {d.get('stage_seconds')}"), job="backup_db", context="slow")
+    try:
+        if scheduling_allowed():
+            _ops.page_operator("backup_slow", "Cavnar AI: the nightly backup is nearing its time bound",
+                               [f"{total}s of a {int(bound)}s bound — stages {d.get('stage_seconds')}",
+                                "Move the copy off the app volume before it stops fitting (RECOVERY.md -> The backup; "
+                                "docs/plans/POSTGRES_AND_WORKERS_PLAN.md -> Backups at scale)."],
+                               cooldown_minutes=24 * 60)
+    except Exception as e:
+        log.warning(f"backup_db: slow-backup page failed: {e}")
+
+
 def _redact_snapshot(path):
     """Strip credentials from a COPY of a snapshot before it leaves the
     server (offsite_backup.redact, the one scrub registry)."""
@@ -2289,6 +2335,7 @@ def _backup_failed(run, message, page=True):
     run.setdefault("local_ok", 0)
     run.setdefault("offsite_ok", 0)
     detail = dict(run.pop("_detail", {}) or {})
+    detail.pop("_lap_at", None)
     detail["error"] = str(message)[:300]
     run["detail_json"] = _json.dumps(detail, default=str)[:2000]
     _ops.record_backup_run(run)
@@ -2321,6 +2368,9 @@ def _scrub_lines_html(scrubbed):
                      "offsite_backup.SCRUB_COLUMNS or KEEP_COLUMNS.")
     if d.get("removed_rows"):
         lines.append(f"<b>Guest text of removed rows</b>: {esc(d['removed_rows'])}.")
+    if d.get("sealed"):
+        lines.append(f"<b>Sealed under CREDENTIAL_KEY</b> (kept for a restore, ciphertext only): "
+                     f"{esc(d['sealed'])}.")
     lines.append(f"<b>Kept on purpose</b>: {_html.escape(d['kept'])}.")
     return "".join(f'<p style="font-size:12px;color:{b["muted"]};margin:0 0 6px">{l}</p>' for l in lines)
 
@@ -2457,6 +2507,17 @@ def backup_db():
         run["wal_bytes"] = os.path.getsize(DB_PATH + "-wal")
     except OSError:
         run["wal_bytes"] = 0
+    import models as _m_size
+    if _m_size._db_backend() == "postgres":
+        # On Postgres DB_PATH is the SQLite file left by the cutover, which
+        # never grows: the free-space gate (and the storage trend) measured
+        # the wrong database. The export this run writes is the live one's
+        # size (scale fix 10/19/26, ONB-1).
+        try:
+            import onboarding as _onb_size
+            run["db_bytes"], run["wal_bytes"] = _onb_size.live_database_bytes(), 0
+        except Exception as e:
+            log.warning(f"backup_db: Postgres size unavailable: {e}")
 
     try:
         os.makedirs(backup_dir, exist_ok=True)
@@ -2482,8 +2543,11 @@ def backup_db():
 
     try:
         local_path = os.path.join(backup_dir, filename + ".gz")
+        _backup_lap(run, "snapshot")
         _write_consistent_snapshot(work_path)
+        _backup_lap(run, "snapshot")
         _gzip_snapshot(work_path, local_path)
+        _backup_lap(run, "gzip")
         run["_detail"]["snapshot_bytes"] = os.path.getsize(work_path)
         # The LOCAL snapshot is NOT redacted, deliberately.
         #
@@ -2550,10 +2614,13 @@ def backup_db():
             raise RuntimeError(f"not enough free space for the encrypted copy: {_free // (1024 * 1024)} MB free, "
                                f"{_need // (1024 * 1024)} MB needed")
         scrubbed = _redact_snapshot(redacted_path) or {}
+        _backup_lap(run, "scrub")
         run["_detail"]["scrubbed_unclassified"] = scrubbed.get("unclassified") or []
         run["_detail"]["scrubbed_tables"] = scrubbed.get("tables") or []
         run["_detail"]["scrubbed_columns"] = len(scrubbed.get("columns") or [])
+        run["_detail"]["sealed_columns"] = scrubbed.get("sealed") or []
         _encrypt_file_chunked(redacted_path, enc_path, key)
+        _backup_lap(run, "encrypt")
         enc_bytes = os.path.getsize(enc_path)
         size_kb = round(enc_bytes / 1024, 1)
         digest = offsite_backup.sha256_file(enc_path)
@@ -2563,6 +2630,7 @@ def backup_db():
         if cfg.get("s3"):
             try:
                 up = offsite_backup.upload_file(enc_path, enc_name, sha256_hex=digest)
+                _backup_lap(run, "upload")
                 targets.append(up["target"])
                 log.info(f"backup_db: uploaded {up['target']} ({size_kb} KB, sha256 {digest[:12]}…)")
             except Exception as e:
@@ -2603,6 +2671,7 @@ def backup_db():
     if not targets:
         _backup_failed(run, "no off-site copy was made tonight — " + ("; ".join(errors) or "unknown"))
     run["finished_at"] = _now_utc_stamp()
+    _backup_too_slow(run)
     run["detail_json"] = _json.dumps(run.pop("_detail", {}), default=str)[:2000]
     _ops.record_backup_run(run)
     _ops.ping_healthcheck()
@@ -4600,6 +4669,27 @@ def run_queued_auto_publish(job):
     return run_auto_publish_schedules(only=rid)
 
 
+# Railway's healthcheck window (railway.json healthcheckTimeout): a
+# RESTORE_FROM boot does its decompress, checks and migration before
+# gunicorn binds, so it must finish well inside this (OPS-3/OPS-10).
+RESTORE_HEALTHCHECK_SECONDS = 120
+
+
+def _live_count(sql):
+    """One COUNT against the live database, on either backend (the drill's
+    DB_PATH read the SQLite file left behind by the Postgres cutover)."""
+    from models import get_conn
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(sql).fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
 def run_restore_drill():
     """Restore the newest snapshot into a scratch file and prove it.
 
@@ -4609,7 +4699,8 @@ def run_restore_drill():
     thing the unredacted snapshot exists for — that OAuth tokens survive —
     because a local database holds none. This runs where the snapshot is.
 
-    Quarterly, and from /admin → Jobs. Read-only against production: the
+    Monthly (OPS-10; it was quarterly), and from /admin → Jobs, with the
+    seconds of each restore stage. Read-only against production: the
     snapshot is copied to a scratch path beside it, checked, migrated the
     way a real restore is (init_db), and deleted. Emails Will the result
     either way; a failure also lands in ops like any job.
@@ -4639,6 +4730,17 @@ def run_restore_drill():
         finally:
             conn.close()
 
+    # Seconds per stage (OPS-10): what a RESTORE_FROM boot spends before it
+    # can bind, measured on the real snapshot every month, against the
+    # 120-second healthcheck (RECOVERY.md -> Drill).
+    stages = {}
+    _t0 = [time.monotonic()]
+
+    def _lap(name):
+        now_m = time.monotonic()
+        stages[name] = round(now_m - _t0[0], 1)
+        _t0[0] = now_m
+
     _clean()
     if newest.endswith(".gz"):
         # Decompressed into the scratch file — the step a real restore
@@ -4648,6 +4750,7 @@ def run_restore_drill():
         import models as _models_ck
         _models_ck.checkpoint(newest)       # pooled connections: the file alone holds every commit
         shutil.copyfile(newest, scratch)
+    _lap("decompress")
     # Fresh (#2): the drill picked the newest snapshot with no age check, so
     # a backup that had silently stopped weeks ago still "passed".
     age_hours = round((time.time() - os.path.getmtime(newest)) / 3600.0, 1)
@@ -4656,15 +4759,24 @@ def run_restore_drill():
               "age_hours": age_hours, "fresh": age_hours <= _ops.BACKUP_STALE_HOURS}
     try:
         report["integrity"] = _q(scratch, "PRAGMA integrity_check")
+        _lap("integrity")
         report["restaurants"] = _q(scratch, "SELECT COUNT(*) FROM restaurants")
         report["latest_review"] = _q(scratch, "SELECT MAX(review_date) FROM reviews")
         report["latest_alert"] = _q(scratch, "SELECT MAX(fired_at) FROM alert_log")
         tok = "SELECT COUNT(*) FROM restaurants WHERE gmb_refresh_token IS NOT NULL AND gmb_refresh_token != ''"
         report["google_tokens_in_snapshot"] = _q(scratch, tok)
-        report["google_tokens_live"] = _q(DB_PATH, tok)
+        report["google_tokens_live"] = _live_count(tok)
+        _lap("checks")
         # The migration path a real restore takes: init_db over an older file.
         init_db(scratch)
+        _lap("migrate")
         report["integrity_after_migrate"] = _q(scratch, "PRAGMA integrity_check")
+        _lap("integrity_after_migrate")
+        report["stages"] = stages
+        report["restore_seconds"] = round(sum(stages.values()), 1)
+        # Over the healthcheck, a RESTORE_FROM boot of this snapshot would
+        # fail its deploy: say so (RECOVERY.md -> Restore, OPS-3).
+        report["fits_healthcheck"] = report["restore_seconds"] < RESTORE_HEALTHCHECK_SECONDS
         report["ok"] = (report["integrity"] == "ok" and report["integrity_after_migrate"] == "ok"
                         and (report["restaurants"] or 0) > 0)
         # Tokens: the snapshot is up to a day old, so equality is not
@@ -4691,11 +4803,16 @@ def run_restore_drill():
                  f"Restaurants: {report.get('restaurants')}",
                  f"Newest review: {report.get('latest_review')} · newest alert: {report.get('latest_alert')}",
                  f"Google tokens: {report.get('google_tokens_in_snapshot')} in the snapshot, "
-                 f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}"]
+                 f"{report.get('google_tokens_live')} live — {'survive' if report.get('tokens_survive') else 'MISSING'}",
+                 f"Restore seconds (local snapshot): {report.get('restore_seconds')} — "
+                 + ", ".join(f"{k} {v}" for k, v in (report.get("stages") or {}).items())
+                 + ("" if report.get("fits_healthcheck", True) else
+                    f" — OVER the {RESTORE_HEALTHCHECK_SECONDS}s healthcheck: a RESTORE_FROM boot of this "
+                    "snapshot would fail its deploy; prepare the restore out of band (RECOVERY.md)")]
         _emails.deliver(email_type="restore_drill", restaurant_id=None, payload={
             "from": _emails.sender("ops"), "to": [config.will_email()],
             "subject": f"Restore drill {'passed' if report['ok'] else 'FAILED'} — {report['snapshot']}",
-            "preheader": "The quarterly proof that the backup restores.",
+            "preheader": "The monthly proof that the backup restores, and how long it takes.",
             "html": _emails._branded_email("".join(f"<p>{_h.escape(x)}</p>" for x in lines)
                                            + "<p>Record the date in docs/ops/RECOVERY.md.</p>")})
     except Exception as e:
@@ -4716,6 +4833,17 @@ def _decrypt_file_chunked(src_path, dest_path, key):
             line = line.strip()
             if line:
                 dst.write(fernet.decrypt(line))
+
+
+def _drill_count(path, sql):
+    import sqlite3
+    c = sqlite3.connect(path)
+    try:
+        return c.execute(sql).fetchone()[0]
+    except sqlite3.Error:
+        return None
+    finally:
+        c.close()
 
 
 def _drill_offsite(backup_dir):
@@ -4745,22 +4873,48 @@ def _drill_offsite(backup_dir):
     object_key = target.split("/", 3)[3] if target.count("/") >= 3 else ""
     enc = os.path.join(backup_dir, "restore_drill_offsite.enc")
     plain = os.path.join(backup_dir, "restore_drill_offsite.db")
+    # Seconds per stage of the restore a lost volume would need (OPS-10):
+    # the drill's own measure of the off-site leg of the RTO.
+    stages = {}
+    _t = [time.monotonic()]
+
+    def _lap(name):
+        now_m = time.monotonic()
+        stages[name] = round(now_m - _t[0], 1)
+        _t[0] = now_m
     try:
         got = offsite_backup.download_file(object_key, enc, cfg=cfg, full_key=True)
+        _lap("download")
         if row["sha256"] and got["sha256"] != row["sha256"]:
-            return {"checked": True, "ok": False,
+            return {"checked": True, "ok": False, "stages": stages,
                     "summary": f"{target}: checksum mismatch ({got['sha256'][:12]}… vs {row['sha256'][:12]}…)"}
         _decrypt_file_chunked(enc, plain, key)
+        _lap("decrypt")
         c = sqlite3.connect(plain)
         try:
             integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
             restaurants = c.execute("SELECT COUNT(*) FROM restaurants").fetchone()[0]
         finally:
             c.close()
-        ok = integrity == "ok" and restaurants > 0
-        return {"checked": True, "ok": ok,
+        _lap("integrity")
+        # The sealed credentials and link secrets open with this server's
+        # CREDENTIAL_KEY (OPS-1): a copy whose seals do not open is a
+        # restore that severs every integration, so the drill fails on it.
+        sealed = offsite_backup.sealed_count(plain)
+        opened = offsite_backup.unseal_file(plain)
+        _lap("unseal")
+        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE rpower_token IS NOT NULL "
+                                          "AND rpower_token != ''")
+        seals_ok = not opened.get("failed")
+        ok = integrity == "ok" and restaurants > 0 and seals_ok
+        return {"checked": True, "ok": ok, "stages": stages, "sealed": sealed,
+                "unsealed": opened.get("unsealed"), "unseal_failed": opened.get("failed"),
+                "rpower_tokens_kept": rpower_kept,
                 "summary": f"{target} ({round(got['bytes'] / 1e6, 1)} MB, uploaded {row['finished_at']} UTC): "
-                           f"checksum ok, decrypts, integrity {integrity}, {restaurants} restaurants"}
+                           f"checksum ok, decrypts, integrity {integrity}, {restaurants} restaurants, "
+                           f"{rpower_kept} RPOWER tokens kept, {opened.get('unsealed')} sealed values opened"
+                           + ("" if seals_ok else f", {opened.get('failed')} did NOT open with CREDENTIAL_KEY")
+                           + " · seconds " + ", ".join(f"{k} {v}" for k, v in stages.items())}
     except Exception as e:
         return {"checked": True, "ok": False, "summary": f"{target}: {e}"}
     finally:
@@ -5704,9 +5858,10 @@ def scheduler_loop():
             if _due(now, 2) and _ops.claim_period("backup_db", str(today)):
                 log.info("Running daily DB backup...")
                 _ops.run_job("backup_db", backup_db)
-                # The day after a backup, once a quarter: prove the newest snapshot
-                # restores. See run_restore_drill.
-                if today.day == 2 and today.month in (1, 4, 7, 10) and \
+                # The 2nd of every month, after the backup: prove the newest
+                # snapshot and the off-site copy restore, and time it (OPS-10;
+                # it was quarterly). See run_restore_drill.
+                if today.day == 2 and \
                         _ops.claim_period("restore_drill", f"{today}"):
                     _ops.run_job("restore_drill", run_restore_drill)
                 # Straight after the backup, so the pruned rows are in it:

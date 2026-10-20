@@ -489,21 +489,11 @@ def run_queued_pos_archive(job):
 DSR_BACKFILL_MAX_SECONDS = 30 * 60
 
 
-def run_dsr_backfill(db_path=DB_PATH):
-    """Nightly, after the POS sync: the Daily Sales Report's figures for the
-    nights before its report started, from the POS (dsr.backfill.backfill:
-    figures only, no report, email or model) — its own job, where it used to
-    run inside rpower.sync_to_db with every failure swallowed into a log
-    line, so a broken backfill (and the Bar history it feeds) had no
-    job_runs row and no alert. Every restaurant with the report on and a
-    connected POS; a restaurant whose read failed counts as failed, its
-    error captured. Bounded and resumable (_BoundedWalk)."""
-    import ops
+def _dsr_backfill_due(db_path=DB_PATH):
+    """(restaurants with the report on and a connected POS, skipped count)."""
     import pos
-    from dsr import backfill as _dsr_backfill
-    ok = failed = skipped = filled = 0
-    walk = _BoundedWalk("dsr_backfill", _restaurants(db_path), db_path, DSR_BACKFILL_MAX_SECONDS)
-    for r in walk:
+    due, skipped = [], 0
+    for r in _restaurants(db_path):
         if not getattr(r, "dsr_enabled", 0):
             skipped += 1
             continue
@@ -514,6 +504,56 @@ def run_dsr_backfill(db_path=DB_PATH):
         if not provider:
             skipped += 1
             continue
+        due.append(r)
+    return due, skipped
+
+
+def run_dsr_backfill(db_path=DB_PATH, today=None):
+    """Nightly, after the POS sync: the Daily Sales Report's figures for the
+    nights before its report started, from the POS (dsr.backfill.backfill:
+    figures only, no report, email or model) — its own job, where it used to
+    run inside rpower.sync_to_db with every failure swallowed.
+
+    Fanned out (scale audit 10/19/26 ONB-5): one `learner` queue row (bulk
+    class) per restaurant with the report on and a connected POS
+    (`dsr_backfill_one`), run by the queue worker in parallel and fairly
+    across tenants. The serial 30-minute walk reached ~15 new stores a
+    night, so 100 stores joining took a week to fill. A row whose read
+    fails raises, and the queue records it and tries once more. Standard
+    counts over the rows queued (the work's own results are the rows').
+    `run_dsr_backfill_sweep` is the bounded inline body a script runs."""
+    from datetime import date as _date
+    due, skipped = _dsr_backfill_due(db_path)
+    out = fan_out("dsr_backfill", [r.id for r in due], str(today or _date.today())[:10], db_path=db_path)
+    out["skipped"] = int(out.get("skipped") or 0) + skipped
+    return out
+
+
+def dsr_backfill_one(restaurant_id):
+    """One restaurant's DSR backfill (the `dsr_backfill` learner row).
+    Raises when the POS could not be read for some nights."""
+    import models as _models_db
+    r = _models_db.get_restaurant(restaurant_id)
+    if r is None or not getattr(r, "dsr_enabled", 0):
+        return {"skipped": "report off"}
+    from dsr import backfill as _dsr_backfill
+    out = _dsr_backfill.backfill(r, days=60)
+    if out.get("failed"):
+        raise RuntimeError(f"dsr_backfill: {out['failed']} nights could not be read from the POS")
+    return {"filled": out.get("filled") or 0}
+
+
+def run_dsr_backfill_sweep(db_path=DB_PATH):
+    """The DSR backfill inline, bounded and resumable (_BoundedWalk) — for a
+    script or a test; the scheduler fans it out (run_dsr_backfill). Every
+    restaurant with the report on and a connected POS; a restaurant whose
+    read failed counts as failed, its error captured."""
+    import ops
+    from dsr import backfill as _dsr_backfill
+    ok = failed = filled = 0
+    due, skipped = _dsr_backfill_due(db_path)
+    walk = _BoundedWalk("dsr_backfill", due, db_path, DSR_BACKFILL_MAX_SECONDS)
+    for r in walk:
         try:
             out = _dsr_backfill.backfill(r, days=60, db_path=None if db_path == DB_PATH else db_path)
         except Exception as e:
@@ -1469,9 +1509,22 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     from zoneinfo import ZoneInfo
     at = None if now is None else (now if now.tzinfo else now.replace(tzinfo=ZoneInfo(OPERATOR_TZ)))
     local = {}
+    held_for_setup = 0
     for r in _restaurants(db_path):
         if not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
             continue
+        # A store still being set up is not drafted for (scale audit 10/19/26
+        # ONB-12): a schedule from unconfirmed rates, a payroll week read off
+        # RPOWER's unconfirmed ot_dow, and no floors or availability is a
+        # paid draft the owner throws away. Stores set up by hand before the
+        # setup checklist existed have none open and are never held.
+        try:
+            import onboarding as _onb_ad
+            if _onb_ad.labor_setup_pending(r, db_path=None if db_path == DB_PATH else db_path):
+                held_for_setup += 1
+                continue
+        except Exception as e:
+            log.warning("auto_draft: setup check failed for %s (%s); not held", r.id, e)
         now_l = (restaurant_now(r, naive=True) if at is None
                  else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
         # The draft day, and the day after it as the fallback (scheduler
@@ -1560,7 +1613,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     attempted = counts["drafted"] + counts["failed"] + counts["batched"] + counts["queued"]
     return _counts(attempted, counts["drafted"] + counts["batched"] + counts["queued"], counts["failed"],
                    counts["skipped"], ran_out, drafted=counts["drafted"], batched=counts["batched"],
-                   queued=counts["queued"], complete=not ran_out)
+                   queued=counts["queued"], complete=not ran_out, held_for_setup=held_for_setup)
 
 
 def auto_draft_target(r, period) -> str:
@@ -2066,6 +2119,9 @@ LEARNERS = {
     # reached ~1,000 restaurants a pass. One row per restaurant now, run by
     # the queue worker (fan_out below).
     "food_cost_diagnosis": "scheduler:food_cost_diagnosis_one",
+    # The DSR's nights before it started, one row per restaurant (scale audit
+    # 10/19/26 ONB-5): the serial walk filled ~15 new stores a night.
+    "dsr_backfill": "strategy_jobs:dsr_backfill_one",
 }
 # Learners whose body takes the row's `today` (the restaurant's own date the
 # fan-out chose), as people_nightly does.

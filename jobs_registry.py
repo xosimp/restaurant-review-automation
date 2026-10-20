@@ -105,9 +105,10 @@ JOBS = {
                     "BACKUP_OFFSITE_MAX_DAYS",
         target=("scheduler", "run_offsite_lifecycle_check"), max_minutes=5),
     "restore_drill": dict(
-        cadence="2nd of Jan / Apr / Jul / Oct, after the 2am backup", sla_minutes=None, sends=True, runnable=True,
+        cadence="2nd of every month, after the 2am backup", sla_minutes=None, sends=True, runnable=True,
         label="Restore drill",
-        description="Restore the newest snapshot to scratch and prove it is fresh, opens, migrates and kept its tokens",
+        description="Restore the newest snapshot and the newest off-site copy to scratch, prove they are fresh, open, "
+                    "migrate and kept their tokens (the off-site copy's sealed ones open), and time each stage",
         target=("scheduler", "run_restore_drill"), max_minutes=30),
     "pos_sync": dict(
         cadence="3am CT nightly (POS lane)", sla_minutes=_D, sends=False, runnable=True,
@@ -159,8 +160,8 @@ JOBS = {
     "dsr_backfill": dict(
         cadence="3am CT nightly, after the POS sync", sla_minutes=_D, sends=False, runnable=True,
         label="DSR backfill", description="Fill the Daily Sales Report's figures for nights before it started, "
-                                          "from the POS (figures only: no report, email or model; bounded, "
-                                          "resumable)",
+                                          "from the POS (figures only: no report, email or model): one queue "
+                                          "row per restaurant, run by the queue worker (ONB-5)",
         target=("strategy_jobs", "run_dsr_backfill"), max_minutes=40, retry=True, lane="pos"),
     "intelligence_features": dict(
         cadence="3am CT daily", sla_minutes=_D, sends=False, runnable=True,

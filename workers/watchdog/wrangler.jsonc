@@ -1,6 +1,9 @@
 // The outside-Railway monitor (heartbeat + /health). Deploy from this folder:
 //   npx wrangler deploy
 // Secrets (not in git): RESEND_API_KEY, PING_TOKEN — `npx wrangler secret put <NAME>`.
+// Optional, each a second channel beside email (OPS-4): PAGERDUTY_ROUTING_KEY, PAGER_WEBHOOK_URL,
+// TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM + ALERT_SMS_TO (secrets too). ALERT_TO takes a
+// comma-separated list.
 // Railway's HEALTHCHECK_PING_URL = https://cavnar-watchdog.<workers subdomain>/ping/<PING_TOKEN>
 {
   "name": "cavnar-watchdog",

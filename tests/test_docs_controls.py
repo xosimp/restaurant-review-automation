@@ -162,6 +162,11 @@ _STEP_UP_TODAY = {
     # purging a received file.
     "/admin/api/client/<int:restaurant_id>/intake/rotate",
     "/admin/api/client/<int:restaurant_id>/intake/purge",
+    # Onboarding at scale (scale audit 10/19/26, ONB-2 / ONB-10): applying a
+    # provisioning list (it creates logins and keeps a POS credential), and
+    # saving a partner (with PARTNER_BILLING on it takes contracts off stores).
+    "/admin/api/onboarding/provision/apply",
+    "/admin/api/partners",
 }
 
 # Routes that need the step-up for only PART of what they do, through
@@ -447,7 +452,7 @@ def test_the_scrub_empties_the_tables_the_doc_names():
     import offsite_backup
     assert set(offsite_backup.SCRUB_TABLES) == {"sessions", "two_fa_backup_codes", "trusted_devices",
                                                 "device_tokens", "login_reports", "staff_portal_tokens",
-                                                "app_secrets", "view_as_sessions", "user_backup_codes",
+                                                "view_as_sessions", "user_backup_codes",
                                                 "async_jobs",
                                                 # R10 (9/29/26): an internal login's authenticator-app
                                                 # secret — a live second factor.
@@ -487,6 +492,23 @@ def test_the_documented_retention_table_is_the_registry():
     for t, (days, col) in seen.items():
         assert ops._RETENTION_DAYS[t] == days, t
         assert ops._RETENTION_COLUMN.get(t, "created_at") == col, t
+
+
+def test_the_offsite_copy_seals_what_a_restore_needs_and_the_docs_say_so():
+    """OPS-1 (scale audit 10/19/26): credentials, link-signing secrets,
+    webhook secrets, the Stripe customer id and the live intake address
+    leave only sealed under CREDENTIAL_KEY; the restore opens them."""
+    import offsite_backup
+    import db_restore
+    assert set(offsite_backup.SEAL_TABLES) == {"app_secrets"}
+    assert set(offsite_backup.SEAL_COLUMNS) == {("restaurants", "stripe_customer_id"), ("webhooks", "secret"),
+                                                ("email_intake_routes", "address")}
+    assert "_unseal(tmp)" in inspect.getsource(db_restore.restore_if_requested)
+    assert "unseal_file(plain)" in inspect.getsource(__import__("scheduler")._drill_offsite)
+    schema = _read("DATABASE_SCHEMA.md")
+    assert "`SEAL_COLUMNS`" in schema and "`SEAL_TABLES`" in schema
+    _says(SECURITY, "sealed under `credential_key`")
+    _says(RECOVERY, "sealed under `credential_key`", "a reader of an off-site copy needs both keys")
 
 
 def test_an_unclassified_credential_column_is_scrubbed_anyway():
@@ -588,11 +610,15 @@ def test_health_and_the_console_are_never_cached_by_a_browser():
 def test_paging_texts_will_phone_and_emails_at_most_hourly_on_railway():
     import ops
     src = inspect.getsource(ops.alert_will)
-    assert "will_phone()" in src and 'use_case="alert"' in src and "_send_branded" in src
+    assert "oncall_phones()" in src and 'use_case="alert"' in src and "_send_branded" in src
+    # WILL_PHONE first, then the second responders (OPS-4, 10/19/26).
+    assert "will_phone()" in inspect.getsource(ops.oncall_phones)
+    assert "send_to_pager(" in src and "oncall_emails()" in src
     assert ops.PLATFORM_ALERT_COOLDOWN_MINUTES == 60
     sla = inspect.getsource(ops.check_platform_sla)
     assert "scheduling_allowed()" in sla and "page_operator(" in sla
-    _says(RECOVERY, "a text to `will_phone`", "at most once an hour per problem")
+    _says(RECOVERY, "a text to `will_phone`", "at most once an hour per problem", "`ops_oncall_phones`",
+          "`ops_pager_kind`")
 
 
 def test_the_sla_check_runs_on_the_supervisor_every_five_minutes():

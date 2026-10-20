@@ -25,6 +25,10 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
+| `LOG_DRAIN_URL` | `""` (off) | An https endpoint every process (web and queue worker) also ships its JSON log lines to, in batches off the request path (`log_drain`, scale audit 10/19/26 OPS-8): Better Stack, Axiom, Datadog's HTTP intake, anything taking a JSON array POST. Off, nothing changes; plain http is refused. | log_drain.py |
+| `LOG_DRAIN_TOKEN` | `""` | Sent as `Authorization: Bearer` to the drain. A secret. | log_drain.py |
+| `LOG_DRAIN_LEVEL` | `"INFO"` | The lowest level shipped to the drain. | log_drain.py |
+| `LOG_DRAIN_QUEUE_MAX`, `LOG_DRAIN_BATCH`, `LOG_DRAIN_FLUSH_SECONDS` | `5000`, `200`, `2` | The drain's bounded queue (oldest dropped and counted when full), lines per POST, seconds between sends. | log_drain.py |
 | `PORT` | `5000` | The port `hosted_dashboard.py` binds when run directly (default 5000; run locally as `PORT=5050`, which the iOS debug build expects). | hosted_dashboard.py |
 | `RUN_SCHEDULER_IN_WEB` | `"1"` (`"0"` with `SCHEDULER_PROCESS=1`) | 1 (default): the web process runs the scheduler thread. `docs/ops/RAILWAY_SCHEDULER_SPLIT.md`. | hosted_dashboard.py |
 | `SCHEDULER_PROCESS` | unset (off) | `1`: gunicorn's master also starts `worker.py --scheduler` — the scheduler loop as its own process in the web container, off the web process's GIL (scale audit 10/19/26 INF-13) — and the web process starts no scheduler thread. The lease still elects one runner. Rollback: unset it. | gunicorn.conf.py, hosted_dashboard.py |
@@ -74,6 +78,11 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `SUPPORT_EMAIL` | — | The support address in guest marketing messages; falls back to `WILL_EMAIL`. | guest_marketing.py |
 | `CAVNAR_POSTAL_ADDRESS` | `""` | The postal address in marketing email footers (CAN-SPAM). Empty leaves it out. | emails.py |
 | `WILL_PHONE` | — | Operator paging by text (`ops.py`). | ops.py |
+| `OPS_ONCALL_PHONES` | `""` | More phones a platform page is texted to, comma-separated, beside `WILL_PHONE` — a second responder (scale audit 10/19/26 OPS-4; `ops.oncall_phones`). | ops.py |
+| `OPS_ONCALL_EMAILS` | `""` | More addresses a platform page is emailed to, comma-separated, beside `WILL_EMAIL` (`ops.oncall_emails`). | ops.py |
+| `OPS_PAGER_KIND` | `""` | `pagerduty` sends every platform page to PagerDuty Events v2 (needs `OPS_PAGER_ROUTING_KEY`), deduplicated on the page's key; anything else with `OPS_PAGER_WEBHOOK_URL` set POSTs `{key, subject, lines, source}` there. Off until set (OPS-4: acknowledgement, phone escalation and a second on-call belong to a paging service). | ops.py |
+| `OPS_PAGER_ROUTING_KEY` | `""` | The PagerDuty Events v2 integration (routing) key. A secret. | ops.py |
+| `OPS_PAGER_WEBHOOK_URL` | `""` | A paging service's incoming-webhook URL (Better Stack, Opsgenie, ...). A secret. | ops.py |
 | `TWILIO_ACCOUNT_SID` | `""` | Twilio account (SMS). | notify.py, provider_health.py |
 | `TWILIO_AUTH_TOKEN` | `""` | Twilio auth token. | notify.py, provider_health.py |
 | `TWILIO_FROM_NUMBER` | `""` | Fallback sending number for owner texts. | notify.py |
@@ -124,11 +133,17 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TOAST_SCHEDULE_WRITE` | `""` (off) | 1 only once Toast has admitted Cavnar AI to its integration-partner programme and granted the labor write scope: the POS schedule push then writes shifts to Toast (`POST /labor/v1/shifts`). Off, the Toast push refuses and the preview says why (schedule audit 10/10/26 MARKET-7). | toast.py |
 | `BACKOFFICE_API_BASE` | — | Back Office API host, once one exists (`docs/plans/BACK_OFFICE_INTEGRATION.md`). | backoffice.py |
 | `POS_ARCHIVE_READS` | `"1"` | 1 (default): nightly readers read a closed day from the POS ticket archive instead of the POS API. | pos_archive.py |
+| `POS_BACKFILL_MAX_STORES` | `"8"` | How many stores may backfill POS history at once (scale audit 10/19/26 ONB-1, `onboarding.backfill_admission`): a wave of new stores waits for a slot; a waiting store still archives last night. | onboarding.py |
+| `POS_BACKFILL_DAYS_PER_NIGHT` | `"7"` | Days of history a backfilling store archives a night (ONB-5). 7 is 13 nights to 90 days; raise it for a wave once RPOWER agrees the fleet request budget. | pos_archive.py |
+| `POS_BACKFILL_BYTES_PER_STORE_DAY` | `"650000"` | What one archived store-day is reckoned to cost on disk (the audit measured ~613 KB with indexes): the free-space gate's estimate of tonight's backfill. | onboarding.py |
+| `PG_VOLUME_MAX_BYTES` | `"0"` | The Postgres volume's size in bytes, when set (the app cannot see another service's disk): a backfill waits once the database plus tonight's days would pass 80% of it. 0 = only the app volume is checked. | onboarding.py |
+| `ONBOARDING_STUCK_DAYS` | `"14"` | The fleet onboarding board names a store not live this many days after signing up. | onboarding.py |
 
 ## Billing and contracts
 
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
+| `PARTNER_BILLING` | `""` (off) | `1` turns the partner / reseller entity's billing on (scale audit 10/19/26 ONB-10): a store under a partner with `billing_mode` partner and a signed master agreement needs no DocuSign envelope or checkout of its own, and its tracker's contract and billing steps read done. Off, a partner can be recorded and stores attached and nothing about a store's contract or billing changes. A business decision before it is turned on (the report lists it). | onboarding.py |
 | `STRIPE_SECRET_KEY` | `""` | Stripe, for checkout, subscriptions and reconcile. | admin_ops.py, admin_routes.py, billing_jobs.py, client_api.py |
 | `STRIPE_WEBHOOK_SECRET` | `""` | Verifies Stripe webhooks. | admin_routes.py, hosted_dashboard.py, webhook_routes.py |
 | `BILLING_PREVIEW_IDS` | `""` | Restaurant ids that see the billing screen before launch (`client_api.py`). | client_api.py |

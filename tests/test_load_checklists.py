@@ -44,9 +44,13 @@ def test_a_rerun_adds_nothing_and_a_sub_step_names_its_parent():
 def test_sheets_land_as_task_sheets_with_their_sections_and_critical_lines():
     # The loader writes task sheets (10/15/26): it wrote the flat
     # task_templates list, which nobody's checklist has read since 9/30/26.
-    src = open(os.path.join(ROOT, "scripts", "load_checklists.py"), encoding="utf-8").read()
-    main = src[src.index("def main("):]
+    # Since 10/19/26 the writing lives in client_setup (the admin console's
+    # Checklists action and this script share it, scale audit ONB-7).
+    src = open(os.path.join(ROOT, "client_setup.py"), encoding="utf-8").read()
+    main = src[src.index("def apply_checklists("):]
     assert "ts.create_sheet(" in main and "ts.add_line(" in main and "add_task_template" not in main
+    assert "client_setup.apply_checklists(" in open(os.path.join(ROOT, "scripts", "load_checklists.py"),
+                                                    encoding="utf-8").read()
     mgr = next(s for s in DOC["sheets"] if s["job_code"] == "Manager FOH")
     assert mgr["shift_kind"] == "opening" and mgr["requires_signoff"] is True
     rows = lc.sheet_rows(mgr)

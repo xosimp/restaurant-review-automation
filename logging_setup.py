@@ -270,4 +270,11 @@ def configure(level=None, fmt=None, stream=None, force=False):
     if fmt is None and stream is None and json_lines and not isinstance(sys.stdout, PrintToLog):
         sys.stdout = PrintToLog(sys.stdout)
     _configured = True
+    # The same lines to an outside log service when LOG_DRAIN_URL is set
+    # (log_drain, scale audit 10/19/26 OPS-8); off, nothing changes.
+    try:
+        import log_drain
+        log_drain.install()
+    except Exception as e:
+        sys.stderr.write(f"log drain not installed: {e}\n")
     return handler

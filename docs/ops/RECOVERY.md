@@ -68,9 +68,14 @@ and the request id, never the raw path.
 Three things page, and they fail independently:
 
 1. **The operator page** (`ops.page_operator` → `ops.alert_will`): a text to
-   `WILL_PHONE` (the channel that survives a Resend or APNs outage), an
-   email, and a push to the admin logins (a push proves nothing, so it does
-   not count as delivered). Sent by the web process's supervisor thread
+   `WILL_PHONE` and every `OPS_ONCALL_PHONES` number (the channel that
+   survives a Resend or APNs outage), an email to `WILL_EMAIL` and every
+   `OPS_ONCALL_EMAILS` address, an event to the paging service when one is
+   configured (`OPS_PAGER_KIND` / `OPS_PAGER_ROUTING_KEY` /
+   `OPS_PAGER_WEBHOOK_URL` — PagerDuty or any incoming webhook, deduplicated
+   on the page's key; acknowledgement and phone escalation live there,
+   scale audit 10/19/26 OPS-4), and a push to the admin logins (a push
+   proves nothing, so it does not count as delivered). Sent by the web process's supervisor thread
    every five minutes when something needs a person — a stale heartbeat, a
    wedged job or stalled loop, an overdue job, low or critical disk, a
    refused write, a stale / failed / off-site-less backup, a DSR night
@@ -210,9 +215,33 @@ took since) is in the cutover runbook's *Rollback*. The steps below are the
 SQLite ones; on Postgres the nightly snapshot is an export to SQLite
 (`pg_copy.export_to_sqlite`), so a restore is that file through
 `RESTORE_FROM` with `DB_BACKEND=sqlite`, or `scripts/run_pg_copy.py` back
-into an empty Postgres. Point-in-time recovery: Railway's own backups on the
-Postgres service are off unless turned on there (Backups tab); until then
-the nightly export is the only copy (RPO 24 h).
+into an empty Postgres.
+
+**Two independent copies of the Postgres database, in this order** (the
+workspace moved to Railway Pro 10/19/26):
+
+1. **Railway's volume backups on the `Postgres` service** — the first
+   restore path. Scheduled on the service's *Backups* tab: **daily, kept 6
+   days**, and **weekly, kept 1 month**. Restore from that same tab (pick
+   the backup, Restore; Railway stages it and the service redeploys on it).
+   They are **volume snapshots, not point-in-time recovery**: a restore
+   comes back as of the snapshot's time, and everything after it is lost.
+   They live in Railway, so they do not survive losing the Railway project.
+2. **The nightly export + the encrypted off-site copy** (`backup_db`, 2am
+   CT; *The backup* below) — the second, independent copy: a SQLite export
+   on the volume and a sealed, Fernet-encrypted copy in R2 (and by email
+   when it fits), kept 35 days. This is the one that survives losing the
+   Railway project or account. Restore it through `RESTORE_FROM` with
+   `DB_BACKEND=sqlite`, or with `scripts/run_pg_copy.py` into an empty
+   Postgres (the boot then unseals its credentials, below).
+
+**RPO is still up to 24 hours** on either path (the newest daily snapshot or
+the newest nightly export); there is no WAL shipping or point-in-time
+recovery in this round (scale audit 10/19/26 OPS-2). POS data since the
+snapshot re-pulls from RPOWER; owner edits, published schedules, uploaded
+invoices, ratings and DSR closeouts since the snapshot do not come back.
+Pro also lets the volumes grow to 1 TB (self-serve resize) — the first fix
+for a *Volume full* below.
 
 `/health` returns 500 with a database error code, or SQLite reports corruption.
 
@@ -257,20 +286,28 @@ or `/admin` → Engineering → Overview → Backups, `GET /admin/api/backup`):
 - **The emailed copy** (to Will, when it fits in 25 MB) — the same
   encrypted file as an attachment.
 
-Both off-site copies are **scrubbed** (sessions, 2FA backup codes — an
-internal login's own too — trusted devices, device tokens, staff-portal
-links, view-as sessions, admin job results (`async_jobs`), the link-signing
-secrets in `app_secrets`, and every OAuth / POS / reservation / back-office
-credential, webhook secret and Stripe customer id, and every invoice intake
-address — `DATABASE_SCHEMA.md` →
-*What leaves the server in a backup*; the backup email lists what that
-night's scrub did) and **Fernet-encrypted** with
-`BACKUP_ENCRYPTION_KEY`, one token per 3 MB chunk, one per line.
+Both off-site copies are **scrubbed of live access** (sessions, 2FA backup
+codes — an internal login's own too — authenticator secrets, trusted
+devices, device tokens, staff-portal links, view-as sessions, admin job
+results (`async_jobs`), reset tokens) and **keep what a restore needs
+sealed under `CREDENTIAL_KEY`** (scale audit 10/19/26 OPS-1): every OAuth /
+POS / reservation / back-office credential (already that ciphertext at
+rest), the link-signing secrets in `app_secrets`, customer webhook secrets,
+the Stripe customer id and each live invoice intake address —
+`DATABASE_SCHEMA.md` → *What leaves the server in a backup*; the backup email
+lists what that night's scrub emptied, blanked and sealed. The file is then
+**Fernet-encrypted** with `BACKUP_ENCRYPTION_KEY`, one token per 3 MB chunk,
+one per line — so a reader of an off-site copy needs both keys. A night with
+no working `CREDENTIAL_KEY` scrubs the sealed values instead (the old
+behaviour), and a restore from that copy means re-entering them by hand.
 
 **Key escrow.** `BACKUP_ENCRYPTION_KEY` must be kept somewhere other than
 Railway (a password manager): without it no off-site copy can be read, and a
 lost Railway project takes the key with it. Keep `CREDENTIAL_KEY` beside it:
-a restored LOCAL snapshot holds credentials encrypted with it.
+a restored local snapshot holds credentials encrypted with it, and an
+off-site copy's sealed values open only with it. **Without the escrowed
+`CREDENTIAL_KEY` an off-site restore severs every integration** (each sealed
+value is blanked, never served as ciphertext).
 
 #### Restoring from the object-storage copy, step by step
 
@@ -305,11 +342,16 @@ a restored LOCAL snapshot holds credentials encrypted with it.
    chunked format is a single token and decrypts with the same loop.
 5. Verify it (step 3 below) — `integrity_check` first.
 6. Put it on the volume (`/app/data/…`) and restore it with `RESTORE_FROM`
-   (step 4 below). Then work through [After any restore](#after-any-restore):
-   an off-site copy is scrubbed, so expect to redo every integration — and
-   to make each restaurant's invoice intake address again (Customers → the
-   client → Data & integrations → Invoice intake → Make an intake address;
-   the old one is not in the copy) and give it to Fintech and any forward.
+   (step 4 below), with the escrowed `CREDENTIAL_KEY` set on the service.
+   The restore unseals the copy's credentials, link secrets, webhook
+   secrets, Stripe customer ids and intake addresses before the swap
+   (`db_restore` → `offsite_backup.unseal_file`; the deploy log says how
+   many opened and how many could not). Into Postgres instead
+   (`scripts/run_pg_copy.py`): the next boot unseals them in place. Then work
+   through [After any restore](#after-any-restore): sessions and devices are
+   gone (everyone signs in again), integrations are not — unless the log
+   says values could not be opened (a wrong or lost `CREDENTIAL_KEY`), in
+   which case those are blank and are re-entered by hand as before.
 
 The quarterly drill does steps 2–5 automatically where object storage is
 configured, so a failed drill email is the early warning (see [Drill](#drill)).
@@ -362,6 +404,25 @@ The restore is a boot step instead (`db_restore.py`):
 `init_db()` and `ensure_columns()` run right after the swap and additively
 migrate an older snapshot forward — that path is exercised on every deploy.
 
+**A large restore: prepare it out of band first** (scale audit 10/19/26
+OPS-3). The steps above run before gunicorn binds, inside the 120-second
+healthcheck; the monthly drill times them and says when they no longer fit.
+Then, while the old process still serves:
+
+```bash
+railway ssh -- python3 scripts/prepare_restore.py /app/data/backups/cavnar_ai_backup_YYYY-MM-DD.db.gz
+# an off-site copy, downloaded onto the volume (step 2 above):
+railway ssh -- python3 scripts/prepare_restore.py /app/data/restore.enc --encrypted
+```
+
+It decompresses or decrypts, integrity-checks and unseals into
+`/app/data/restore_prepared.db` (room for one more database is needed) and
+writes `restore_prepared.db.prepared.json`; it never touches the live
+database. Set `RESTORE_FROM=/app/data/restore_prepared.db`: the boot checks
+the file's size and mtime against the record and **renames** it into place —
+seconds, whatever the size. A file that changed since it was prepared is
+refused and nothing changes.
+
 Manual fallback, only with the service stopped (scale it to 0 in Railway
 first, so nothing can open the file):
 
@@ -393,12 +454,13 @@ loads.
 
 | Area | State after restore | Action |
 |---|---|---|
-| Owner sessions | Valid (local snapshot) or gone (off-site copy) | If gone, tell clients to sign in again |
+| Owner sessions | Valid (local snapshot, Railway volume backup) or gone (off-site copy) | If gone, tell clients to sign in again |
 | Push device tokens | Same | They re-register on next app launch; `send-test-push` to confirm |
-| Google / Toast / Square / Clover / RPOWER / Instagram / reservations / Back Office | Same (an off-site copy nulls them all) | If nulled, each owner must reconnect in Account → Connections (RPOWER and Back Office are re-entered by Cavnar in the console) |
-| Link-signing secrets (`app_secrets`) | Kept (local) or GONE (off-site copy) | From an off-site copy new kept secrets are minted: pay links, table-tent join QR codes, issue links and unsubscribe links issued before the backup no longer verify — resend pay links and reprint QR codes |
-| Customer webhook secrets | Kept (local) or blanked (off-site copy) | Owners re-save their outbound webhook |
-| Stripe | `stripe_customer_id` nulled in an off-site copy | Re-link it in the console (Customers → the client → Billing → **Attach Stripe customer**, with the `cus_` id from the Stripe dashboard), then run the `stripe_reconcile` job (Operations → Jobs → Run now) so the subscription mirror is refilled |
+| Google / Toast / Square / Clover / RPOWER / Instagram / reservations / Back Office | Kept (local, Railway volume backup); kept sealed in an off-site copy and opened on restore with the escrowed `CREDENTIAL_KEY` (OPS-1) | Only if the restore log says values could not be opened (or the copy predates 10/19/26): each owner reconnects in Account → Connections (RPOWER and Back Office are re-entered by Cavnar in the console) |
+| Link-signing secrets (`app_secrets`) | Kept (local); kept sealed in an off-site copy since 10/19/26 | Only if they could not be opened: new kept secrets are minted, and pay links, table-tent join QR codes, issue links and unsubscribe links issued before the backup no longer verify — resend pay links and reprint QR codes |
+| Customer webhook secrets | Kept (local); kept sealed (off-site) | Only if blanked: owners re-save their outbound webhook |
+| Invoice intake addresses | Kept (local); the live route kept sealed (off-site) | Only if blanked: make a new one (Customers → the client → Data & integrations → Invoice intake) and give it to Fintech and any forward |
+| Stripe | `stripe_customer_id` kept (local) or sealed (off-site) | Only if blanked: re-link it in the console (Customers → the client → Billing → **Attach Stripe customer**, with the `cus_` id from the Stripe dashboard), then run the `stripe_reconcile` job (Operations → Jobs → Run now) so the subscription mirror is refilled |
 | Data since the snapshot | Lost | Reviews re-fetch on the next pass (`UNIQUE(restaurant_id, platform, external_id)` makes that safe). Uploaded CSVs and manual edits do not come back |
 | Job claims | Restored to snapshot state | Jobs already run that day **may run again**. Check `job_period_claims` before a digest hour |
 | Owed billing emails | Restored to snapshot state | Check `owed_sends` for rows the snapshot has as pending that already went (sent after the snapshot) and mark them `cancelled` before you delete `RESTORE_FROM`: the `owed_sends` job drains due rows on every tick once the scheduler is back |
@@ -452,6 +514,16 @@ write — and every save, draft and send fails until space is freed.
    encrypted file); short of it, that copy fails and pages and the local
    snapshot stands. Engineering → Overview → Backups shows growth per day and
    days to full (`ops.storage_trend`, from each night's backup row).
+
+6. New stores' POS history backfill holds itself before it can break the
+   backup (scale audit 10/19/26 ONB-1): a store backfills only while it
+   holds one of `POS_BACKFILL_MAX_STORES` slots AND the volume has room for
+   tonight's days plus `BACKUP_FREE_SPACE_FACTOR` x the database after them
+   (`onboarding.backfill_admission`); short of room it waits (last night
+   still archives), says why on Customers → Onboarding, and pages once in 12
+   hours (`backfill_no_room`). On Postgres the backup's gate reads the live
+   database's size (`pg_database_size`), not the SQLite file left by the
+   cutover. `PG_VOLUME_MAX_BYTES` adds the Postgres volume's own ceiling.
 
 A full volume is the one failure where doing nothing gets worse quietly.
 
@@ -609,7 +681,8 @@ The admin console needs a password, and — once enrolled or with
 ## Drill
 
 The drill is a job: `scheduler.run_restore_drill`, run automatically on
-the 2nd of Jan/Apr/Jul/Oct after the 2am backup, and on demand from
+the 2nd of every month after the 2am backup (quarterly until 10/19/26,
+OPS-10), and on demand from
 `/admin` → Jobs → **restore_drill**. It copies the newest snapshot to a
 scratch file beside it (decompressing a gzipped one — the step
 `RESTORE_FROM` takes too) and FAILS on a snapshot older than 26 hours, then
@@ -619,12 +692,27 @@ un-redaction proof), runs `init_db()` over the copy the way a real restore
 does, and deletes the copy. Where object storage is configured it then
 proves the off-site copy too: downloads the newest one recorded in
 `backup_runs`, checks it against the SHA-256 it was uploaded with, decrypts
-it and runs `integrity_check` and a restaurant count. It emails Will the
-result either way. A failure is a failed job in `/admin` → Jobs like any
+it and runs `integrity_check` and a restaurant count, then opens its sealed
+values with this server's `CREDENTIAL_KEY` — a copy whose seals do not open
+fails the drill, since restoring it would sever every integration — and
+counts the RPOWER tokens it kept. **It times every stage** (local:
+decompress, integrity, checks, migrate; off-site: download, decrypt,
+integrity, unseal) and says when the local restore would not fit inside the
+120-second healthcheck a `RESTORE_FROM` boot runs under
+(`scheduler.RESTORE_HEALTHCHECK_SECONDS`) — the measured RTO, not a guess.
+It emails Will the result either way. A failure is a failed job in `/admin` → Jobs like any
 other. Run it by hand after any change to `backup_db`,
 `_write_consistent_snapshot`, `offsite_backup` or the scrub registry.
 
 Record the date of the last successful drill here:
+
+A yearly game day (an outside step, Will's): a full off-site restore —
+download, decrypt, `RESTORE_FROM` — onto a scratch Railway environment with
+only the escrowed keys, timed end to end, so the keys in the password
+manager are proven to be the right ones. The monthly job proves everything
+but the escrow. Railway's own volume backups are proved the same way: once a
+quarter restore one into a scratch environment from the Backups tab and load
+`/health`.
 
 - **Last drill:** 2026-09-20, **production**, by hand over `railway ssh`
   (the job above did not exist yet). Newest snapshot
@@ -636,7 +724,7 @@ Record the date of the last successful drill here:
   live (no Google connection in production yet, so that column proves
   nothing either way); `init_db()` migrated the copy and integrity was
   `ok` afterwards; scratch file removed. Next: the `restore_drill` job on
-  2027-01-02, automatically. The off-site copy has never been drilled — run
+  the 2nd of the next month, automatically. The off-site copy has never been drilled — run
   the job once object storage is configured.
 - **Earlier:** 2026-09-20, **local** (not production). Newest local
   snapshot `cavnar_ai_backup_2026-09-19.db` (8.3 MB) copied to scratch with
@@ -654,6 +742,11 @@ Record the date of the last successful drill here:
 - **Heartbeat.** `HEALTHCHECK_PING_URL` on Railway is `https://cavnar-watchdog.cavnarai-account.workers.dev/ping/<PING_TOKEN>`;
   the scheduler pings it every tick (`ops.ping_healthcheck`), `/fail` after a failed backup or digest.
 - **Uptime.** A cron every 5 minutes fetches `/health` and expects 200 with `"db":"ok"`.
-- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row emails `will@cavnar.ai` once (Resend,
-  the Worker's own `RESEND_API_KEY` secret), and once more when it recovers. State is in the Worker's KV namespace.
+- Silence past 20 minutes, a `/fail`, or two failing `/health` checks in a row alerts once, and once more when it
+  recovers: an email to every `ALERT_TO` address (comma-separated; Resend, the Worker's own `RESEND_API_KEY` secret),
+  and — so a Resend outage cannot silence the one monitor outside Railway (OPS-4) — each channel whose secrets are set:
+  `PAGERDUTY_ROUTING_KEY` (a PagerDuty trigger, resolved on recovery), `PAGER_WEBHOOK_URL` (any paging service's
+  webhook), and `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM` + `ALERT_SMS_TO` (a text to each on-call
+  phone). The alert counts as sent when any channel took it. State is in the Worker's KV namespace. A change to
+  `worker.js` goes live only with `npx wrangler deploy` from `workers/watchdog/`.
 - To rotate the token: `npx wrangler secret put PING_TOKEN`, then update `HEALTHCHECK_PING_URL` on Railway.

@@ -495,6 +495,10 @@ body.role-support .w{display:none!important}
     <input type="password" id="reauth-pw" autocomplete="current-password" placeholder="Your password" onkeydown="if(event.key==='Enter')reauthSubmit()">
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p" onclick="reauthSubmit()">Confirm</button><button class="btn" onclick="reauthDone(false)">Cancel</button></div></div>
 </div></div>
+<div class="mo" id="m-setup"><div class="mb" style="max-width:720px">
+  <div class="mh"><h2 id="setup-title">Setup</h2><button class="x" onclick="closeModal('m-setup')" aria-label="Close">✕</button></div>
+  <div id="setup-body" class="fl"></div>
+</div></div>
 <div class="toast" id="toast"></div>
 <script>
 // ── plumbing ────────────────────────────────────────────────────────────────
@@ -1407,18 +1411,121 @@ function formAvail(download){
   const url = '/admin/forms/availability.pdf' + (q.length ? '?' + q.join('&') : '');
   if(download) location.href = url; else window.open(url, '_blank', 'noopener');
 }
+// ── Onboarding at scale (scale audit 10/19/26) ─────────────────────────────
+// The fleet board (stores per stage, the stuck ones, the POS history
+// backfill's slots and room), the bulk provisioning list (dry run, then
+// Create — step-up), and one store's Setup: the confirmations a person
+// makes once (payroll week, rates, salaried managers, station logins,
+// floors, availability, the DSR calendar), its checklists and its DSR
+// calendar from a preset — the work that used to run on a production shell.
+function onbBoard(b){
+  if(!b) return '';
+  const st = (b.stages||[]).map(s=>miniStat(esc(s.label), fmtN(s.count), s.key==='live'?'set up':'stores here')).join('');
+  const bf = b.backfill || {}, held = (bf.active||[]).filter(x=>x.held_reason);
+  const stuck = (b.stuck||[]).slice(0,8).map(x=>`<a href="#client/${x.id}">${esc(x.name)}</a> <span class="dim">· ${esc(x.stage)} · day ${x.days}</span>`).join('<br>');
+  return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Fleet onboarding</h2><span class="sub">POS history backfill: <span class="n">${bf.used==null?'—':bf.used}</span> of <span class="n">${bf.cap==null?'—':bf.cap}</span> slots${held.length?` · <span style="color:var(--amber-t)">${held.length} held: ${esc(held[0].held_reason)}</span>`:''}</span></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">${st}</div>
+    ${stuck?`<div class="muted" style="font-size:12.5px"><span class="lbl">Not live after ${b.stuck_after_days} days</span><br>${stuck}</div>`:''}</div>`;
+}
+function bulkCard(){
+  return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap"><h2>Add restaurants from a list</h2><span class="sub">One row per store · dry run first · a store already here is left alone</span></div>
+    <textarea id="bulk-csv" rows="5" placeholder="restaurant_name,owner_email,owner_name,timezone,modules,rpower_cg,rpower_store_mid"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input id="bulk-token" type="password" autocomplete="off" placeholder="RPOWER partner token (optional)" style="min-width:240px">
+      <select id="bulk-partner" aria-label="Partner"><option value="">No partner</option></select>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="bulk-welcome" checked> Send each owner the welcome</label>
+      <button class="btn s w" onclick="bulkDry()">Dry run</button><button class="btn s p w" id="bulk-apply" onclick="bulkApply()" disabled>Create</button></div>
+    <div id="bulk-out"></div></div>`;
+}
+async function bulkPartners(){
+  try{ const d = await api('/admin/api/partners'); const sel = $('bulk-partner'); if(!sel || !d.ok) return;
+    (d.partners||[]).forEach(p=>{ const o = document.createElement('option'); o.value = p.id; o.textContent = p.name + (p.billing_mode==='partner'?' (billed by partner)':''); sel.appendChild(o); }); }catch(e){}
+}
+function bulkRows(rows){
+  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+async function bulkDry(){
+  const d = await post('/admin/api/onboarding/provision/dry-run', {csv: $('bulk-csv').value});
+  if(!d.ok){ $('bulk-out').innerHTML = `<div class="warnline">${esc(d.error||'The list could not be read')}</div>`; $('bulk-apply').disabled = true; return; }
+  const c = d.counts || {};
+  $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix</div>` + bulkRows(d.rows);
+  $('bulk-apply').disabled = !(c.create > 0);
+}
+async function bulkApply(){
+  const n = $('bulk-out').querySelectorAll('tbody tr').length;
+  if(!confirm('Create the new restaurants on this list' + ($('bulk-welcome').checked ? ' and send each new owner the welcome?' : '?'))) return;
+  $('bulk-apply').disabled = true;
+  const d = await post('/admin/api/onboarding/provision/apply', {csv: $('bulk-csv').value, rpower_token: $('bulk-token').value,
+    partner_id: $('bulk-partner').value || null, send_welcome: $('bulk-welcome').checked});
+  if(!d.ok){ toast(d.error || 'The list was not applied', 'bad'); $('bulk-apply').disabled = false; return; }
+  $('bulk-token').value = '';
+  $('bulk-out').innerHTML = `<div class="sub">Creating ${d.rows} row${d.rows===1?'':'s'}…</div>`;
+  for(let i = 0; i < 120; i++){
+    await new Promise(r=>setTimeout(r, 1500));
+    const j = await api('/admin/api/onboarding/provision/' + d.job_id);
+    if(j.status === 'pending') continue;
+    if(j.ok === false && !j.rows){ $('bulk-out').innerHTML = `<div class="warnline">${esc(j.error||'Failed')}</div>`; return; }
+    const c = j.counts || {};
+    $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.created||0}</span> created · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> not created</div>` + bulkRows(j.rows);
+    toast((c.created||0) + ' restaurants created'); return;
+  }
+}
+async function openSetup(rid){
+  const d = await api('/admin/api/onboarding/' + rid + '/setup'); if(!d.ok){ toast(d.error||'Setup couldn\'t be read','bad'); return; }
+  $('setup-title').textContent = 'Setup · ' + d.name;
+  const started = d.started ? '' : '<p class="sub">This restaurant was set up before the setup checklist; nothing here is required of it. A confirmation made here still counts.</p>';
+  const items = started + (d.items||[]).map(s=>{
+    const sug = s.suggested && s.suggested.label ? ` <span class="dim">· suggested: ${esc(s.suggested.label)}</span>` : '';
+    const right = s.done ? `<span class="ok">✓</span> <span class="dim">${esc(s.confirmed_by||'')+' '+fmtD(s.confirmed_at)}</span>`
+      : s.key==='week_start' ? `<select id="ws-day">${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map((w,i)=>`<option value="${i}" ${(s.suggested&&s.suggested.week_start_day===i)?'selected':''}>${w}</option>`).join('')}</select> <button class="btn s w" onclick="confirmStep(${rid},'week_start',+$('ws-day').value)">Confirm</button>`
+      : s.key==='dsr_calendar' ? '<span class="dim">set below</span>' : `<button class="btn s w" onclick="confirmStep(${rid},'${s.key}')">Confirm</button>`;
+    return `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><span>${s.done?'<span class="ok">✓</span>':'<span class="no">○</span>'} ${esc(s.label)}${s.done?'':sug}</span><span>${right}</span></div>`; }).join('');
+  const presets = Object.keys(d.dsr.presets||{}).map(k=>`<option value="${k}" ${d.dsr.scheme===k?'selected':''}>${esc(d.dsr.presets[k])}</option>`).join('');
+  $('setup-body').innerHTML = `${items || '<p class="sub">No confirmations apply to this restaurant.</p>'}
+    <h3 style="margin-top:14px">Checklists</h3><p class="sub"><span class="n">${d.checklists}</span> sheets now. Paste a checklists file (docs/clients/&lt;client&gt;/checklists.json); a line already on a sheet is skipped.</p>
+    <textarea id="setup-checklists" rows="4" placeholder='{"sheets": [...]}'></textarea>
+    <div style="display:flex;gap:8px"><button class="btn s w" onclick="loadChecklists(${rid},false)">Dry run</button><button class="btn s p w" onclick="loadChecklists(${rid},true)">Load</button></div><div id="setup-cl-out" class="sub"></div>
+    ${d.dsr.enabled?`<h3 style="margin-top:14px">DSR fiscal calendar</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="dsr-preset">${presets}</select>
+      <input id="dsr-year" placeholder="Year starts YYYY-MM-DD" value="${esc(d.dsr.year_start||'')}" style="width:190px">
+      <select id="dsr-dow">${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map((w,i)=>`<option value="${i}" ${d.dsr.week_start_dow===i?'selected':''}>Weeks start ${w}</option>`).join('')}</select>
+      <button class="btn s w" onclick="setDsr(${rid},false)">Check</button><button class="btn s p w" onclick="setDsr(${rid},true)">Save</button></div><div id="setup-dsr-out" class="sub"></div>`:''}
+    ${d.partner?`<p class="sub" style="margin-top:12px">Partner: ${esc(d.partner.name)} · ${esc(d.partner.billing_mode)}${d.partner_billing?'':' (partner billing is off)'}</p>`:''}`;
+  openModal('m-setup');
+}
+async function confirmStep(rid, step, value){
+  const d = await post('/admin/api/onboarding/' + rid + '/confirm', {step: step, value: value});
+  if(!d.ok){ toast(d.error||'Not confirmed','bad'); return; }
+  toast('Confirmed'); openSetup(rid);
+}
+async function loadChecklists(rid, apply){
+  const d = await post('/admin/api/onboarding/' + rid + '/checklists', {doc: $('setup-checklists').value, apply: apply});
+  if(!d.ok){ $('setup-cl-out').textContent = d.error || 'Not loaded'; return; }
+  $('setup-cl-out').textContent = apply ? (d.lines_added + ' lines added, ' + d.sheets_created + ' new sheets') : (d.lines + ' lines on ' + (d.sheets||[]).length + ' sheets would be added');
+  if(apply) toast('Checklists loaded');
+}
+async function setDsr(rid, apply){
+  const d = await post('/admin/api/onboarding/' + rid + '/dsr', {preset: $('dsr-preset').value, fiscal_year_start: $('dsr-year').value || null,
+    fiscal_week_start_dow: +$('dsr-dow').value, apply: apply});
+  if(!d.ok){ $('setup-dsr-out').textContent = d.error || 'Not saved'; return; }
+  $('setup-dsr-out').textContent = apply ? 'Saved.' : 'That calendar checks out.';
+  if(apply){ toast('DSR calendar saved'); openSetup(rid); }
+}
 async function onboarding(){
   const d = await api('/admin/api/onboarding'); if(!okRes(d)) throw new Error(errText(d, 'Onboarding couldn\'t be read'));
   const rows = d.rows || [];
   const forms = await clientForms();
-  V().innerHTML = forms + errBanner(d) + (rows.length ? `<div class="grid g3">${rows.map(r=>{ const pct = Math.round(100*(r.done||0)/(r.total||1)), steps = r.steps || [], left = steps.filter(s=>!s.done), done = steps.filter(s=>s.done);
+  V().innerHTML = onbBoard(d.board) + bulkCard() + forms + errBanner(d) + (rows.length ? `<div class="grid g3">${rows.map(r=>{ const pct = Math.round(100*(r.done||0)/(r.total||1)), steps = r.steps || [], left = steps.filter(s=>!s.done), done = steps.filter(s=>s.done);
     return `<div class="card" style="padding:18px;display:flex;flex-direction:column;gap:14px">
       <div style="display:flex;align-items:center;gap:12px">${monoTile(r.name, r.health)}<div style="flex:1;min-width:0;display:flex;flex-direction:column"><a href="#client/${r.id}" style="font-weight:700;font-size:14px;color:var(--ink)">${esc(r.name)}</a><span class="muted" style="font-size:12.5px">${esc(r.owner||r.owner_email||'')} · joined ${fmtD(r.created_at)} · day <span class="n">${r.days_since_signup}</span></span></div><span class="n" style="font-size:18px;font-weight:600">${r.done}<span class="muted" style="font-size:13px">/${r.total}</span></span></div>
       <span class="bar"><i style="width:${pct}%;background:${pct>=75?'var(--green)':pct>=40?'var(--amber)':'var(--ember2)'}"></i></span>
       <div class="steps">${left.slice(0,2).map(s=>`<div><span class="no">○</span><span>${esc(s.label)}</span></div>`).join('')}<div class="muted" style="font-size:12.5px" title="${esc(left.slice(2).map(s=>s.label).join(' · '))}">${left.length>2?'+'+(left.length-2)+' more to go · ':''}<span class="ok">✓</span> ${done.length} done</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${bill(r.status)}${r.owner_hid_card?'<span class="chip" title="The owner hid their setup card; this stays until the steps are done">card hidden by owner</span>':''}${r.deletion_due?'<span class="chip bad">closing</span>':''}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto"><button class="btn s w" onclick="resendWelcome(${r.id},'${jsq(r.name)}','${jsq(r.owner_email||'')}')">Resend welcome</button>${r.status!=='active'&&!r.billed_by?`<button class="btn s w" onclick="resendPayment(${r.id},'${jsq(r.name)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">Payment link</button>`:''}<a class="btn s g" href="#client/${r.id}?tab=billing">Billing</a><a class="btn s g w" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:auto"><button class="btn s w" onclick="resendWelcome(${r.id},'${jsq(r.name)}','${jsq(r.owner_email||'')}')">Resend welcome</button>${r.status!=='active'&&!r.billed_by?`<button class="btn s w" onclick="resendPayment(${r.id},'${jsq(r.name)}','${jsq(r.status||'')}','${jsq(r.owner_email||'')}')">Payment link</button>`:''}<button class="btn s w" onclick="openSetup(${r.id})">Setup</button><a class="btn s g" href="#client/${r.id}?tab=billing">Billing</a><a class="btn s g w" href="/admin/client-settings/${r.id}">Settings</a></div></div>`; }).join('')}</div>`
     : `<div class="card empty">${readFailed(d, ['restaurants']) ? 'Onboarding is unknown — the fleet couldn\'t be read.' : 'Everyone in service is set up.'}</div>`);
+  bulkPartners();
 }
 
 // ── Billing ─────────────────────────────────────────────────────────────────

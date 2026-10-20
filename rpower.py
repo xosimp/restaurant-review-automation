@@ -607,25 +607,38 @@ def bootstrap(restaurant_id: int, store_mid: str = None) -> dict:
     # nothing already — an operator's explicit choice outranks the POS.
     if chosen.get("timezone") and not (r and r.timezone and r.timezone != "America/Chicago"):
         fields["timezone"] = chosen["timezone"]
+    suggested_week_start = None
     if chosen.get("ot_dow") is not None and r is not None and not getattr(r, "week_start_day", 0):
         # Two different conventions for the same fact, so this conversion is
-        # spelled out rather than assumed: RPOWER's ot_dow is 1-based starting
-        # Monday (1=Mon..7=Sun), while Cavnar's week_start_day is Python's
-        # weekday() — 0-based, also starting Monday. Off by one, nothing more,
-        # but silently off by one is a payroll week that starts on the wrong
-        # day and an overtime calculation that splits in the wrong place.
+        # spelled out rather than assumed: RPOWER's ot_dow read as 1-based
+        # starting Monday (1=Mon..7=Sun), against Cavnar's week_start_day,
+        # Python's weekday() — 0-based, also starting Monday.
         # UNCONFIRMED (bar audit 10/14/26 RPW-17 / R26): the collection does
         # not define ot_dow at all, and its own `open_days` sample "NYYYYYN"
         # reads Sunday-first. EJ's came through this path as week_start_day 2
-        # (Wednesday) from ot_dow 3 - to be checked against EJ's known payroll
-        # week and asked of RPOWER before the next store is bootstrapped; an
-        # operator's week_start_day always wins.
+        # (Wednesday) from ot_dow 3. So it is no longer APPLIED (scale audit
+        # 10/19/26 ONB-11): silently off by one is a payroll week that starts
+        # on the wrong day and an overtime split in the wrong place, at every
+        # store bootstrapped after. It is recorded as the setup step's
+        # suggestion and a person confirms the day during setup
+        # (onboarding.confirm 'week_start'); an operator's week_start_day
+        # always wins.
         try:
-            fields["week_start_day"] = (int(chosen["ot_dow"]) - 1) % 7
+            suggested_week_start = (int(chosen["ot_dow"]) - 1) % 7
         except (TypeError, ValueError):
-            pass
+            suggested_week_start = None
     update_restaurant(restaurant_id, fields)
-    return {"ok": True, "store": chosen, "applied": sorted(fields)}
+    if suggested_week_start is not None:
+        try:
+            import onboarding
+            onboarding.suggest(restaurant_id, "week_start",
+                               {"week_start_day": suggested_week_start, "ot_dow": chosen.get("ot_dow"),
+                                "label": onboarding._WEEKDAYS[suggested_week_start]},
+                               source="rpower ot_dow (unconfirmed reading)")
+        except Exception as e:
+            log.warning("rpower bootstrap: week-start suggestion not recorded for %s: %s", restaurant_id, e)
+    return {"ok": True, "store": chosen, "applied": sorted(fields),
+            "suggested_week_start_day": suggested_week_start}
 
 
 def _ctx(restaurant_id: int) -> tuple:
