@@ -463,7 +463,51 @@ def published(cohort: str, metric: str, exclude_value=None, db_path=DB_PATH, tod
     row = _row(cohort, metric, db_path=db_path, today=today, with_vals=True)
     if not row:
         return None
-    return publish_row(row, metric, exclude_org=exclude_org, exclude_value=exclude_value)
+    out = publish_row(row, metric, exclude_org=exclude_org, exclude_value=exclude_value)
+    if out and not out.get("withheld") and _one_owner_moved(row, exclude_org, db_path):
+        return {"withheld": True, "n": out.get("n", 0), "measured": out.get("measured"),
+                "reason": DIFFERENCING_REASON}
+    return out
+
+
+DIFFERENCING_REASON = ("one owner joined or left this group since last week, so this week's band could single "
+                       "them out; it returns when the group changes by more than one owner or settles")
+
+
+def _member_orgs(row, exclude_org):
+    try:
+        members = json.loads(row.get("members_json") or "null")
+    except Exception:
+        members = None
+    if members is None:
+        return None
+    ex = _excluded(exclude_org)
+    return frozenset(o for _v, o in members if o not in ex)
+
+
+def _one_owner_moved(row, exclude_org, db_path) -> bool:
+    """Differencing over time (scale audit 10/19/26, SEC-20): k = 5 does not
+    stop a member reading a band the week before and the week after ONE
+    organisation joined or left — the change is that one organisation's
+    figure. A band whose organisations (the viewer's left out) differ from
+    the previous week's band by exactly one is withheld; identical, or two
+    or more changed, it is shown. Counts only; never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            prev = conn.execute("SELECT members_json FROM intel_benchmarks WHERE cohort=? AND metric=? AND week < ? "
+                                "ORDER BY week DESC LIMIT 1",
+                                (row.get("cohort"), row.get("metric"), row.get("week"))).fetchone()
+        finally:
+            conn.close()
+        if not prev:
+            return False
+        now_orgs, before = _member_orgs(row, exclude_org), _member_orgs(dict(prev), exclude_org)
+        if now_orgs is None or before is None:
+            return False
+        return len(now_orgs ^ before) == 1
+    except Exception:
+        return False
 
 
 def viewer_org(restaurant_id, db_path=DB_PATH) -> frozenset:

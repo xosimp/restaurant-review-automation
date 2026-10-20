@@ -303,6 +303,33 @@ def test_sec13_the_switch_and_its_revalidation_use_one_rule(db_path):
         conn.close()
 
 
+def test_sec20_a_band_one_owner_away_from_last_weeks_is_withheld(db_path):
+    import json
+    import models
+    from intelligence import benchmarks as bm
+    conn = models.get_conn(db_path)
+
+    def put(week, orgs):
+        members = [[0.30 + i / 100.0, o] for i, o in enumerate(orgs)]
+        conn.execute("INSERT INTO intel_benchmarks (cohort, metric, week, n, p25, p50, p75, mean, vals_json, orgs, "
+                     "max_org_share, members_json) VALUES ('c1','labor_pct',?,?,0,0,0,0,'[]',?,0.1,?)",
+                     (week, len(orgs), len(orgs), json.dumps(members)))
+        conn.commit()
+    base = [f"o{i}" for i in range(8)]
+    put("2026-W40", base)
+    put("2026-W41", base + ["new1"])
+    row = {"cohort": "c1", "metric": "labor_pct", "week": "2026-W41",
+           "members_json": json.dumps([[0.3, o] for o in base + ["new1"]])}
+    assert bm._one_owner_moved(row, frozenset({"viewer"}), db_path), "one owner joined: differencing reveals it"
+    put("2026-W42", base + ["new1", "new2", "new3"])
+    row2 = dict(row, week="2026-W42", members_json=json.dumps([[0.3, o] for o in base + ["new1", "new2", "new3"]]))
+    assert not bm._one_owner_moved(row2, frozenset({"viewer"}), db_path), "two changed: shown"
+    row3 = dict(row, week="2026-W41", members_json=json.dumps([[0.3, o] for o in base]))
+    assert not bm._one_owner_moved(row3, frozenset({"viewer"}), db_path), "the same owners: shown"
+    assert not bm._one_owner_moved(row, frozenset({"new1"}), db_path), "the viewer's own joining is not a reveal"
+    conn.close()
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api
