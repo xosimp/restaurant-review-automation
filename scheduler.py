@@ -1413,9 +1413,11 @@ POS_RETRY_MAX_SECONDS = int(os.getenv("POS_RETRY_MAX_SECONDS", str(15 * 60)))
 
 
 def run_pos_retry():
-    """Hourly: retry every POS sync whose retry is due, bounded and
-    resumable, before POS_RETRY_UNTIL_LOCAL_HOUR in the restaurant's own
-    zone. Returns the sweep counts for job_runs, hit_bound included."""
+    """Hourly: retry every POS sync whose retry is due, and run the nightly
+    sync of each store the 3am Chicago pass left for its own local hour
+    (pos.deferred_syncs, R3-12), bounded and resumable, before
+    POS_RETRY_UNTIL_LOCAL_HOUR in the restaurant's own zone. Returns the
+    sweep counts for job_runs, hit_bound included."""
     import data_health
     import pos
     from models import get_restaurant, in_service
@@ -1423,6 +1425,10 @@ def run_pos_retry():
     counts = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0}
     lock = threading.Lock()
     due = data_health.due_retries("pos")
+    # The stores the 3am Chicago pass left for their own hour (blind
+    # re-audit 10/20/26 R3-12: pos.sync_due_locally) — synced here once that
+    # hour comes, once a night.
+    late = [rid for rid in pos.deferred_syncs() if rid not in set(due)]
 
     def _one(rid):
         r = get_restaurant(rid)
@@ -1430,6 +1436,17 @@ def run_pos_retry():
         if r is None or not in_service(r) or local.hour >= POS_RETRY_UNTIL_LOCAL_HOUR:
             with lock:
                 counts["skipped"] += 1
+            return
+        if rid in late_ids:
+            if not pos.sync_due_locally(r, local) or \
+                    not _ops.claim_period(f"pos_sync_late:{rid}", local.date().isoformat()):
+                with lock:
+                    counts["skipped"] += 1
+                return
+            result = pos.sync_restaurant(rid)
+            with lock:
+                counts["attempted"] += 1
+                counts["ok" if result.get("ok") else "failed"] += 1
             return
         attempt = next((n for n in range(1, len(pos.RETRY_DELAYS_HOURS) + 1)
                         if _ops.claim_period(f"pos_retry_attempt:{rid}", f"{local.date().isoformat()}#{n}")), None)
@@ -1442,7 +1459,8 @@ def run_pos_retry():
             counts["attempted"] += 1
             counts["ok" if result.get("ok") else "failed"] += 1
 
-    _done, hit_bound = resumable_sweep("pos_retry_cursor", due, _one, POS_RETRY_MAX_SECONDS,
+    late_ids = set(late)
+    _done, hit_bound = resumable_sweep("pos_retry_cursor", list(due) + late, _one, POS_RETRY_MAX_SECONDS,
                                        workers=SWEEP_WORKERS, job="pos_retry")
     if hit_bound:
         _ops.capture(RuntimeError(f"POS retry pass stopped at its {POS_RETRY_MAX_SECONDS}s bound; "

@@ -125,11 +125,12 @@ def guard(ctx, block_name, part, fn, gaps, default=None):
 #
 # The ticket-level archive (pos_archive) is written by the 4am job, after a
 # night's report has already gone out at the POS close. The blocks that read
-# checks, lines and punches (dsr.block_service) therefore archive the night
-# themselves, once per pass and only once the Sales block shows the POS day
-# is closed: the figures are in the first version the owner reads, not a 4am
-# update. The 4am job archives the same day again; a day is replaced whole,
-# so the two never disagree for long.
+# checks, lines and punches (dsr.block_service) take the night as the Sales
+# block's read stored it, and archive it themselves only when it is not
+# stored (pos_archive.ensure_day) — only once the Sales block shows the POS
+# day is closed: the figures are in the first version the owner reads, not
+# a 4am update. The 4am job reads the night again only when the POS wrote
+# to it after it was stored (pos_archive.run_for, R3-02).
 
 def night_archive(ctx):
     """{"ok", "provider", "reason", "counts"} for tonight's check-level
@@ -151,8 +152,12 @@ def night_archive(ctx):
     else:
         out["provider"] = name
         try:
-            counts = pos_archive.archive_day(ctx.restaurant_id, ctx.business_date,
-                                             db_path=ctx.db_path, provider=(name, mod))
+            # The night as the Sales block's read stored it moments ago — read
+            # from the POS only when the archive does not hold it (blind
+            # re-audit 10/20/26 R3-02: this read the whole night again on
+            # every pass, the third download of one night).
+            counts = pos_archive.ensure_day(ctx.restaurant_id, ctx.business_date,
+                                            db_path=ctx.db_path, provider=(name, mod))
             out.update(ok=True, counts=counts)
         except Exception as e:
             import ops

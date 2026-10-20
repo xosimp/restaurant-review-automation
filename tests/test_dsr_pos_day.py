@@ -33,6 +33,7 @@ def _redirect(db_path, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(pos, "PROVIDERS", None)
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
+    monkeypatch.setattr(rpower, "FLEET_RPS", 0)             # the fleet ceiling stands alone (R3-08)
     yield
 
 

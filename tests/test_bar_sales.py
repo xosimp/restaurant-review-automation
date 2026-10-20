@@ -662,16 +662,36 @@ def test_changed_business_dates_requests_at_most_a_week(db, monkeypatch):
     def req(token, path, params=None):
         if path == "ticketsales/getbytimestamp":     # ticket/getbytimestamp is asked over the same weeks
             asked.append((params["startdate"], params["enddate"]))
-        return [{"date": params["startdate"] + "T00:00:00", "time_stamp": params["startdate"] + "T12:00:00"}]
+        return [{"date": "2026-09-27T00:00:00", "time_stamp": "2026-09-27T12:00:00"}]
     monkeypatch.setattr(rpower, "_request", req)
     since = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
     until = datetime(2026, 10, 10, 3, 0, tzinfo=timezone.utc)
     out = rpower.changed_business_dates(rid, since, until)
-    spans = [(date.fromisoformat(a), date.fromisoformat(b)) for a, b in asked]
-    assert all((b - a).days <= rpower.MAX_RANGE_DAYS for a, b in spans)
-    assert spans[0][0] == date(2026, 9, 20) and spans[-1][1] == date(2026, 10, 11)
-    assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1)), "no day between two requests"
+    # Since 10/20/26 (blind re-audit R3-03) the window carries a time: from
+    # `since` less the overlap and the timezone margin, to `until`.
+    spans = [(datetime.fromisoformat(a), datetime.fromisoformat(b)) for a, b in asked]
+    assert all((b - a) <= timedelta(days=rpower.MAX_RANGE_DAYS) for a, b in spans)
+    naive = since.replace(tzinfo=None) - rpower.CHANGE_OVERLAP - rpower.CHANGE_MARGIN
+    assert spans[0][0] == naive and spans[-1][1] >= until.replace(tzinfo=None)
+    assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1)), "no time between two requests"
     assert "2026-09-27" in out
+
+
+def test_changed_business_dates_falls_back_to_dates_when_rpower_refuses_a_time(db, monkeypatch):
+    rid = _rpower_rid(db)
+    asked = []
+
+    def req(token, path, params=None):
+        if "T" in str(params["startdate"]):
+            raise rpower.RPowerError("HTTP 400 from ticketsales/getbytimestamp: bad date")
+        asked.append(params["startdate"])
+        return []
+    monkeypatch.setattr(rpower, "_request", req)
+    monkeypatch.setitem(rpower._change_datetime_refused, "at", None)
+    rpower.changed_business_dates(rid, datetime(2026, 10, 9, 3, tzinfo=timezone.utc),
+                                  datetime(2026, 10, 10, 3, tzinfo=timezone.utc))
+    assert asked and all(len(a) == 10 for a in asked), "date-only windows after the refusal"
+    assert rpower._change_datetime_refused["at"] is not None
 
 
 # ── V41: the P-Mix's headers name the lines below them ──────────────────────

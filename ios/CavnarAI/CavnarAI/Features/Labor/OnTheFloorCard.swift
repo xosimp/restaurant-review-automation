@@ -384,7 +384,8 @@ final class FloorStore {
                                                   body: PushBody(scheduleId: scheduleId),
                                                   hapticOnError: false, retryTransient: false)
             if r.ok {
-                note = r.status == "unchanged" ? "Already on the POS: nothing changed" : "Sent to the POS"
+                note = r.status == "queued" ? "Sending to the POS now"
+                    : (r.status == "unchanged" ? "Already on the POS: nothing changed" : "Sent to the POS")
                 Haptic.success()
             } else {
                 error = r.error ?? "It didn\u{2019}t all go through: each shift says why."

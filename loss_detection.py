@@ -53,7 +53,11 @@ def sync(restaurant_id, days=14, db_path=DB_PATH):
     cannot report this is a normal state, not an error.
     """
     import pos
-    end = date.today() - timedelta(days=1)
+    # The restaurant's last COMPLETE night, never the server's date (blind
+    # re-audit 10/20/26 R3-09): on a UTC host at 3–4am Chicago, "yesterday"
+    # was a Pacific night still trading — read live, stored partial, and
+    # judged by signals() for a spike or an approver's share.
+    end = pos.local_complete_through(restaurant_id)
     days = max(days, _restatement_days(restaurant_id, end, db_path))
     start = end - timedelta(days=days - 1)
     try:
@@ -145,8 +149,12 @@ def _window(restaurant_id, start, end, db_path):
 
 
 def signals(restaurant_id, today=None, db_path=DB_PATH):
-    """The last 7 days of comps/voids/refunds against their own baseline."""
-    today = today or date.today()
+    """The last 7 days of comps/voids/refunds against their own baseline —
+    the week through the restaurant's last complete night (R3-09: the
+    server's date judged a western night still trading)."""
+    if today is None:
+        import pos
+        today = pos.local_complete_through(restaurant_id) + timedelta(days=1)
     week_end = today - timedelta(days=1)
     week_start = week_end - timedelta(days=6)
     base_end = week_start - timedelta(days=1)

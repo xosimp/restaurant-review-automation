@@ -416,6 +416,7 @@ def sync_all(stats=None):
     # longer holds the whole pass, and the next pass starts where this one
     # stopped.
     live = {r.id: r for r in get_all_restaurants() if in_service(r)}
+    deferred = []
 
     def _one(rid):
         r = live[rid]
@@ -423,6 +424,14 @@ def sync_all(stats=None):
         if not mod:
             with lock:
                 counts["skipped"] += 1
+            return
+        if not sync_due_locally(r):
+            # Its own night is still trading (3am Chicago is 1am in Los
+            # Angeles): synced by the hourly pass at its own local hour
+            # (deferred_syncs; blind re-audit 10/20/26 R3-12).
+            with lock:
+                counts["skipped"] += 1
+                deferred.append(rid)
             return
         result = sync_restaurant(rid)
         with lock:
@@ -450,9 +459,72 @@ def sync_all(stats=None):
                                  f"restaurants before the {POS_SYNC_MAX_SECONDS}s bound; the rest lead the "
                                  "next pass"), job="pos_sync", context="time_bound")
     counts["hit_bound"] = bool(hit_bound)
+    _remember_deferred(deferred)
     if isinstance(stats, dict):
         stats.update(counts)
     return [by_rid[rid] for rid in order if rid in by_rid]
+
+
+# The nightly sync runs at each store's own POS_SYNC_LOCAL_HOUR, not at 3am
+# Chicago for every store (blind re-audit 10/20/26 R3-12): a store west of
+# Chicago was synced while its night still traded, and every job of the 3am
+# chain read that night live. The 3am pass syncs the stores already past
+# their own hour and leaves the rest (job_cursors[DEFERRED_KEY]); the hourly
+# recovery pass (scheduler.run_pos_retry) syncs each of them once its own
+# hour comes, once a night.
+POS_SYNC_LOCAL_HOUR = int(__import__("os").getenv("POS_SYNC_LOCAL_HOUR", "3"))
+DEFERRED_KEY = "pos_sync_deferred"
+
+
+def sync_due_locally(restaurant, now_local=None) -> bool:
+    """Whether the restaurant's own clock has reached POS_SYNC_LOCAL_HOUR
+    (an hour before the business-day boundary counts; a restaurant whose
+    clock cannot be read is due — the sync runs as it always did)."""
+    try:
+        from time_utils import restaurant_now
+        local = now_local or restaurant_now(restaurant, naive=True)
+        return local.hour >= POS_SYNC_LOCAL_HOUR
+    except Exception:
+        return True
+
+
+def _remember_deferred(ids) -> None:
+    import json
+    from datetime import datetime, timezone
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                         (DEFERRED_KEY, json.dumps({"at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                                                    "ids": sorted(int(i) for i in ids)})))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"POS sync: deferred stores not kept: {e}")
+
+
+def deferred_syncs(max_age_hours=20) -> list:
+    """The restaurants the last nightly pass left for their own hour (the
+    pass ran within `max_age_hours`), oldest id first. [] when none."""
+    import json
+    from datetime import datetime, timezone, timedelta
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (DEFERRED_KEY,)).fetchone()
+        finally:
+            conn.close()
+        data = json.loads(row[0]) if row and row[0] else {}
+        at = datetime.fromisoformat(str(data.get("at"))).replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - at > timedelta(hours=max_age_hours):
+            return []
+        return [int(i) for i in data.get("ids") or []]
+    except Exception:
+        return []
 
 
 # A sync failing this long, with no success in between, is the owner's to
@@ -838,7 +910,11 @@ def _live_read(kind, restaurant_id, business_date, read):
             if snap and snap["age"] < pos_io.LIVE_SNAPSHOT_SECONDS:
                 return _from_snapshot(snap, kind)       # another thread read it while this one waited
         try:
-            value, provider = read()
+            # A read during service is the "live" lane of the request budget
+            # (blind re-audit 10/20/26 R3-01): served ahead of the nightly
+            # archive, onboarding and backfill sharing the token.
+            with pos_io.lane("live"):
+                value, provider = read()
         except Exception as e:
             if getattr(e, "not_yet", False) and kind == "sales":
                 pos_io.snapshot_put(restaurant_id, kind, day, None, provider=getattr(e, "provider", None),
