@@ -589,7 +589,7 @@ def mobile_register():
     heads-up email so a signup nobody set up isn't discovered later."""
     if not public_signup_open():
         return jsonify(ok=False,
-                       error="Cavnar AI accounts are set up with you directly. Email will@cavnar.ai to get started."), 403
+                       error=f"Cavnar AI accounts are set up with you directly. Email {__import__('config').sales_email()} to get started."), 403
 
     ip = _get_client_ip()
     if _is_rate_limited(ip):

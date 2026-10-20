@@ -9725,7 +9725,9 @@ def _restaurant_has_marketing_module(restaurant_id):
     r = get_restaurant(restaurant_id)
     return bool(r and r.module_marketing)
 
-_NO_MARKETING_MODULE_ERROR = "Guest text club requires the Marketing module — contact will@cavnar.ai to add it."
+import config as _config_sales
+_NO_MARKETING_MODULE_ERROR = ("Guest text club requires the Marketing module — contact "
+                              f"{_config_sales.sales_email()} to add it.")
 
 @client_bp.route("/api/guest-contacts", methods=["GET"])
 @login_required

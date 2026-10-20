@@ -5750,7 +5750,8 @@ def _module_blocked(user, path=None):
 
 
 def _module_blocked_message(label):
-    return f"{label} isn't part of this plan. Contact will@cavnar.ai to add it."
+    import config
+    return f"{label} isn't part of this plan. Contact {config.sales_email()} to add it."
 
 
 def _module_permission_denied(user, path=None):

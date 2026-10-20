@@ -82,6 +82,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `RESEND_WEBHOOK_SECRET` | `""` | Verifies Resend's delivery/bounce webhooks (`webhook_routes.py`) — what turns "sent" into "delivered". | webhook_routes.py |
 | `INTAKE_EMAIL_DOMAIN` | `""` | The receiving domain a new invoice intake address is made on (the admin's Invoice intake card, `email_intake.default_domain`); unset, the domain of the newest address on file. | email_intake.py |
 | `BUG_REPORT_EMAIL` | `"will@cavnar.ai"` | Where in-app bug reports go (default will@cavnar.ai). | emails.py, models.py |
+| `SALES_EMAIL` | `"sales@cavnar.ai"` | Where sales questions go: "add a module" and "set up an account" messages, the sales audit PDF and its email's reply-to (config.sales_email). Support, billing and security stay will@cavnar.ai. | config.py, auth.py, client_api.py, mobile_api.py, audit_app.py |
 | `SUPPORT_EMAIL` | — | The support address in guest marketing messages; falls back to `WILL_EMAIL`. | guest_marketing.py |
 | `CAVNAR_POSTAL_ADDRESS` | `""` | The postal address in marketing email footers (CAN-SPAM). Empty leaves it out. | emails.py |
 | `WILL_PHONE` | — | Operator paging by text (`ops.py`). | ops.py |

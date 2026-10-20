@@ -19,6 +19,9 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.platypus import Flowable
 import resend
 import pricing as _pricing   # the one price list; the PDF used to hardcode launch prices
+import config as _config
+# The audit is a sales document: replies and questions go to sales@ (owner, 10/20/26).
+_SALES = _config.sales_email()
 
 from dotenv import load_dotenv
 
@@ -164,7 +167,7 @@ def generate_pdf(data):
                   S("lg", fontName="Times-Roman", fontSize=22, textColor=INK, leading=26)),
         Paragraph(
             f"RESTAURANT AI AUDIT SCORECARD<br/>"
-            f"<font color='#7a736a' size='8'>will@cavnar.ai  ·  cavnar.ai  ·  Chicago, IL  ·  "
+            f"<font color='#7a736a' size='8'>{_SALES}  ·  cavnar.ai  ·  Chicago, IL  ·  "
             f"{data.get('date', datetime.now().strftime('%B %d, %Y'))}</font>",
             S("hr", fontName="Helvetica-Bold", fontSize=10, textColor=INK,
               leading=14, alignment=TA_RIGHT))
@@ -355,7 +358,7 @@ def generate_pdf(data):
     # Footer
     story.append(HRFlowable(width="100%", thickness=0.5, color=PAPER3, spaceAfter=8))
     story.append(Paragraph(
-        "Cavnar AI  ·  will@cavnar.ai  ·  cavnar.ai  ·  Chicago, IL  ·  "
+        f"Cavnar AI  ·  {_SALES}  ·  cavnar.ai  ·  Chicago, IL  ·  "
         "This report is confidential and prepared exclusively for the restaurant named above.",
         sFooter))
 
@@ -371,6 +374,7 @@ def send_email(to_email, restaurant, pdf_buf):
     params = {
         "from": __import__("emails").sender("will"),
         "to": [to_email],
+        "reply_to": [_SALES],
         "subject": f"Your AI Audit Report — {restaurant}",
         "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -397,7 +401,7 @@ def send_email(to_email, restaurant, pdf_buf):
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     Will Cavnar · Cavnar AI<br/>
-    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    <a href="mailto:{_SALES}" style="color:#c84b2f;text-decoration:none">{_SALES}</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
   </p>

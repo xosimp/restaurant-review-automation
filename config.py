@@ -24,6 +24,16 @@ def base_url() -> str:
     return (os.getenv("BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
 
 
+DEFAULT_SALES_EMAIL = "sales@cavnar.ai"
+
+
+def sales_email() -> str:
+    """Where every sales question goes — adding a module, a new restaurant,
+    a sales audit (owner, 10/20/26). Support, billing and security keep
+    will@cavnar.ai."""
+    return (os.getenv("SALES_EMAIL") or DEFAULT_SALES_EMAIL).strip()
+
+
 def from_email() -> str:
     """The address transactional mail is sent from (Resend sender)."""
     return os.getenv("FROM_EMAIL", DEFAULT_SENDER)
