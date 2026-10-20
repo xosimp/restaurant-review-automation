@@ -7190,7 +7190,19 @@ svg:hover .hb-xh{opacity:1}
     if(window.history&&window.history.replaceState)window.history.replaceState({},'',window.location.pathname+window.location.hash);
     if(q)setTimeout(function(){hbAsk(q);},400);
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);hbAskFromUrl();});else {hbLoad(false);hbAskFromUrl();}
+  // Home loads when Home is what is on screen (scale audit 10/19/26 FE-02):
+  // every page load used to run its whole fan-out, whichever tab, Studio,
+  // Bar or DNA page it opened on, and every reload of those repeated it.
+  // Checked after the address router has picked the tab; a page that opens
+  // elsewhere loads Home on its first visit (switchTab -> hbRefresh) or when
+  // the full-screen page over it closes (hbEnsure).
+  function hbOnScreen(){
+    var p=document.getElementById('panel-home');
+    return !!(p&&p.classList.contains('active'))&&!window._SS_BOOT&&!window._DNA_BOOT&&!window._BAR_BOOT;
+  }
+  window.hbEnsure=function(){var p=document.getElementById('panel-home');if(p&&p.classList.contains('active')&&!_hbLoadedAt&&!_hbData&&!_hbLoading)hbLoad(false);};
+  function hbBoot(){hbAskFromUrl();setTimeout(function(){if(hbOnScreen())hbLoad(false);},0);}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hbBoot);else hbBoot();
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('panel-home').classList.contains('active'))hbRefresh();});
 })();
 </script>
@@ -27892,6 +27904,8 @@ function studioClose(opts) {
     else { history.replaceState(null, '', '/#labor'); if (window.cavNav) cavNav('labor', {replace: true}); }
   }
   ssLaunchRefresh();
+  // Home under it loads now if the page opened on the Studio (FE-02).
+  setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
 }
 // The Schedule tab: active while the Studio is open; closing it gives the
 // tab bar back to the panel underneath. Any other tab closes the Studio
@@ -46527,6 +46541,8 @@ function sfw2RuleCheck(chk) {
       else history.replaceState(null, '', '/');
     }
     if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+    // Home under it loads now if the page opened on DNA (FE-02).
+    setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
   };
   // Back and Forward cross the DNA page's address (cavRoute asks first).
   window.dnaOnRoute = function () {
@@ -49382,6 +49398,7 @@ function sfw2RuleCheck(chk) {
       else { history.replaceState(null, '', '/#inventory'); if (typeof cavNav === 'function') cavNav('inventory'); }
     }
     if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+    setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
   };
   window.barOnRoute = function () {
     var at = window.location.pathname === '/bar';

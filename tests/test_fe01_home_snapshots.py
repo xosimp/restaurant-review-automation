@@ -277,6 +277,36 @@ def test_home_follow_keeps_a_blocks_own_refusal(client, db_path, monkeypatch):
     assert client.get("/api/home/follow").get_json()["blocks"]["loss"] is None
 
 
+def _dashboard():
+    import os
+    return open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "templates", "dashboard.html"), encoding="utf-8").read()
+
+
+def test_the_web_home_makes_one_follow_read_plus_the_report_row():
+    src = _dashboard()
+    body = src.split("function hbFollow(){", 1)[1].split("\n  }\n", 1)[0]
+    assert "fetch('/api/home/follow'" in body
+    assert "get('dsr','/api/dsr?limit=1')" in body
+    # The fallback reads each block from its own route.
+    assert "each();" in body and "d.missing" in body
+
+
+def test_home_loads_only_when_home_is_on_screen():
+    """FE-02: the page boot no longer runs Home's fan-out whatever tab, or
+    Studio / Bar / DNA page, it opened on."""
+    src = _dashboard()
+    assert "document.addEventListener('DOMContentLoaded',function(){hbLoad(false);" not in src
+    boot = src.split("function hbBoot(){", 1)[1].split("}", 1)[0]
+    assert "hbOnScreen()" in boot
+    on_screen = src.split("function hbOnScreen(){", 1)[1].split("\n  }", 1)[0]
+    for flag in ("_SS_BOOT", "_DNA_BOOT", "_BAR_BOOT", "panel-home"):
+        assert flag in on_screen
+    # The pages over Home load it when they close.
+    for closer in ("window.dnaClose = function", "function studioClose(opts)", "window.barClose = function"):
+        assert "hbEnsure" in src.split(closer, 1)[1].split("\n};", 1)[0].split("\n  };", 1)[0], closer
+
+
 def test_home_follow_restores_the_requests_own_query(client, db_path):
     import strategy_routes
     from flask import request
