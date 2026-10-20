@@ -172,6 +172,67 @@ def test_sec10_the_tenant_name_scan_does_not_grow_with_the_fleet():
     assert per < 0.002, f"{per * 1000:.2f} ms a string with 20,000 names"
 
 
+def test_sec14_a_key_rotation_keeps_every_token(db_path, monkeypatch):
+    """CREDENTIAL_KEY rotated with the old one in CREDENTIAL_KEY_PREVIOUS:
+    everything still reads, the boot pass re-seals it under the new key,
+    and then the old key can go."""
+    from cryptography.fernet import Fernet
+    import credentials
+    import models
+    import webhooks
+    from models import Restaurant, create_restaurant
+    old, new = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    monkeypatch.setenv("CREDENTIAL_KEY", old)
+    monkeypatch.delenv("CREDENTIAL_KEY_PREVIOUS", raising=False)
+    credentials._fernet_cache.clear()
+    rid = create_restaurant(Restaurant(name="Rot Co", owner_email="r@x.test"), db_path=db_path)
+    models.update_restaurant(rid, {"rpower_token": "rp-secret"}, db_path=db_path)
+    webhooks.init_webhooks(db_path)
+    monkeypatch.setattr(webhooks, "_validate_webhook_url", lambda url: None)    # no DNS in a test
+    secret = webhooks.save_webhook(rid, "https://hooks.example.com/x", ["review.new"], db_path=db_path)
+    conn = models.get_conn(db_path)
+    raw_hook = conn.execute("SELECT secret FROM webhooks WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.close()
+    assert raw_hook.startswith(credentials.PREFIX) and secret not in raw_hook, "the signing secret is sealed"
+    # Rotate: new key first, the old one kept for reading.
+    monkeypatch.setenv("CREDENTIAL_KEY", new)
+    monkeypatch.setenv("CREDENTIAL_KEY_PREVIOUS", old)
+    credentials._fernet_cache.clear()
+    assert models.get_restaurant(rid, db_path).rpower_token == "rp-secret"
+    assert webhooks.get_webhook(rid, db_path)["secret"] == secret
+    out = credentials.rotate_existing(db_path)
+    assert out["rotated"] == 2 and out["unreadable"] == 0
+    assert credentials.rotate_existing(db_path)["rotated"] == 0, "idempotent"
+    monkeypatch.delenv("CREDENTIAL_KEY_PREVIOUS")
+    credentials._fernet_cache.clear()
+    assert models.get_restaurant(rid, db_path).rpower_token == "rp-secret", "readable with the new key alone"
+    assert webhooks.get_webhook(rid, db_path)["secret"] == secret
+    credentials._fernet_cache.clear()
+
+
+def test_sec14_plain_webhook_secrets_are_sealed_at_boot(db_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    import credentials
+    import models
+    import webhooks
+    monkeypatch.delenv("CREDENTIAL_KEY", raising=False)
+    credentials._fernet_cache.clear()
+    webhooks.init_webhooks(db_path)
+    monkeypatch.setattr(webhooks, "_validate_webhook_url", lambda url: None)    # no DNS in a test
+    from models import Restaurant, create_restaurant
+    rid = create_restaurant(Restaurant(name="Hook Co", owner_email="h@x.test"), db_path=db_path)
+    secret = webhooks.save_webhook(rid, "https://hooks.example.com/y", ["review.new"], db_path=db_path)
+    monkeypatch.setenv("CREDENTIAL_KEY", Fernet.generate_key().decode())
+    credentials._fernet_cache.clear()
+    assert webhooks.get_webhook(rid, db_path)["secret"] == secret, "a plain row from before still reads"
+    assert credentials.encrypt_webhook_secrets(db_path) == 1
+    conn = models.get_conn(db_path)
+    raw = conn.execute("SELECT secret FROM webhooks WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.close()
+    assert raw.startswith(credentials.PREFIX) and webhooks.get_webhook(rid, db_path)["secret"] == secret
+    credentials._fernet_cache.clear()
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api

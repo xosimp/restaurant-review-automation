@@ -113,6 +113,13 @@ def init_webhooks(db_path=DB_PATH):
     conn.close()
 
 
+def open_secret(value):
+    """A stored signing secret, opened: sealed (enc:v1:) or plain from
+    before 10/19/26. '' when no configured key opens it."""
+    import credentials as _cred
+    return _cred.decrypt(value) or ""
+
+
 def get_webhook(restaurant_id, db_path=DB_PATH):
     conn = get_conn(db_path)
     row = conn.execute(
@@ -120,7 +127,11 @@ def get_webhook(restaurant_id, db_path=DB_PATH):
         (restaurant_id,)
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    out = dict(row)
+    out["secret"] = open_secret(out.get("secret"))
+    return out
 
 
 def save_webhook(restaurant_id, url, events, db_path=DB_PATH):
@@ -138,12 +149,15 @@ def save_webhook(restaurant_id, url, events, db_path=DB_PATH):
             "UPDATE webhooks SET url=?, events=?, is_active=1, consecutive_failures=0, disabled_reason=NULL WHERE id=?",
             (url, json.dumps(events), existing["id"])
         )
-        secret = existing["secret"]
+        secret = open_secret(existing["secret"])
     else:
         secret = "whsec_" + secrets.token_hex(24)
+        # Sealed under CREDENTIAL_KEY like every other credential (scale
+        # audit 10/19/26, SEC-14); plain when no key is set.
+        import credentials as _cred
         conn.execute(
             "INSERT INTO webhooks (restaurant_id, url, secret, events) VALUES (?,?,?,?)",
-            (restaurant_id, url, secret, json.dumps(events))
+            (restaurant_id, url, _cred.encrypt(secret), json.dumps(events))
         )
     conn.commit()
     conn.close()

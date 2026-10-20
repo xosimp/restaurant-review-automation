@@ -230,7 +230,10 @@ night's scrub did) and **Fernet-encrypted** with
 **Key escrow.** `BACKUP_ENCRYPTION_KEY` must be kept somewhere other than
 Railway (a password manager): without it no off-site copy can be read, and a
 lost Railway project takes the key with it. Keep `CREDENTIAL_KEY` beside it:
-a restored LOCAL snapshot holds credentials encrypted with it.
+a restored LOCAL snapshot holds credentials encrypted with it — and after a
+key rotation, the previous key too until the boot log says
+`unreadable: 0` (`CREDENTIAL_KEY_PREVIOUS`, `docs/ops/SECURITY.md` → Data at
+rest): a snapshot taken before the rotation was sealed with the old one.
 
 #### Restoring from the object-storage copy, step by step
 

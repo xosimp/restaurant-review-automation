@@ -9428,6 +9428,13 @@ def _do_ai_visibility_inner(rid, force=False):
     return _payload, 200
 
 
+def _webhooks_open_secret(value):
+    """The signing secret as the owner copies it (sealed since 10/19/26,
+    SEC-14)."""
+    import webhooks as _wh_open
+    return _wh_open.open_secret(value)
+
+
 @client_bp.route("/api/webhook", methods=["GET"])
 @login_required
 def webhook_get(current_user):
@@ -9453,7 +9460,7 @@ def webhook_get(current_user):
     from permissions import is_principal
     return jsonify(ok=True, webhook={
         "url":                  wh["url"],
-        "secret":               wh["secret"] if is_principal(current_user) else None,
+        "secret":               _webhooks_open_secret(wh["secret"]) if is_principal(current_user) else None,
         "events":               json.loads(wh.get("events") or "[]"),
         "last_fired":           wh.get("last_fired_at"),
         "last_status":          wh.get("last_status"),

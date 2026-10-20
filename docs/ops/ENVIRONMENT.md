@@ -11,7 +11,8 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | Variable | Default | What it does | Read in |
 |---|---|---|---|
 | `SECRET_KEY` | `""` | Flask session and token signing (auth, email links, OAuth state, guest links). **Required in production**; without it the app runs on an ephemeral key (`CAVNAR_SECRET_KEY_EPHEMERAL` marks that) and every restart signs everyone out. | auth.py, emails.py, gmb.py, guest_links.py |
-| `CREDENTIAL_KEY` | — | Fernet key for every credential at rest (`credentials.py`: POS tokens, OAuth tokens, TOTP secrets). **Required**; see `SECURITY.md`. | credentials.py, guest_links.py |
+| `CREDENTIAL_KEY` | — | Fernet key for every credential at rest (`credentials.py`: POS tokens, OAuth tokens, TOTP secrets, webhook signing secrets). **Required**; see `SECURITY.md`. | credentials.py, guest_links.py |
+| `CREDENTIAL_KEY_PREVIOUS` | `""` | During a key rotation: the retired key(s), comma-separated, decrypt-only; the boot's `credentials.rotate_existing()` re-seals what they opened. Remove once the boot log says `unreadable: 0` (SEC-14). | credentials.py |
 | `BASE_URL` | — | The dashboard's public origin (`config.base_url`), the root of every emailed/texted/pushed link. Production: `https://dashboard.cavnar.ai`. | config.py |
 | `RAILWAY_VOLUME_MOUNT_PATH` | `"."` | Where the SQLite file and backups live (the Railway volume). Default `.` locally; tests point it at a scratch directory. | models.py, platform_monitor.py, scripts/seed_simple_ejs_reviews.py, status_manager.py |
 | `ANTHROPIC_API_KEY` | `""` | Claude, for every model call (`ai_utils`). Empty forces every AI path onto its offline fallback (tests, CI). | ai_utils.py, competitor.py, emails.py, provider_health.py |
