@@ -3,6 +3,7 @@ import SwiftUI
 enum MarketingSubTab: String, CaseIterable, Identifiable {
     case content = "Content"
     case campaigns = "Campaigns"
+    case guests = "Guests"
     case analytics = "Analytics"
     var id: String { rawValue }
 }
@@ -37,6 +38,7 @@ struct MarketingView: View {
     @State private var compose = MarketingComposeViewModel()
     @State private var opportunities = MarketingOpportunityViewModel()
     @State private var campaigns = CampaignsTabViewModel()
+    @State private var guests = GuestsTabViewModel()
     /// The Campaign Studio, open on one seed.
     @State private var studioSeed: StudioSeed?
     @State private var focusApplied = false
@@ -90,6 +92,8 @@ struct MarketingView: View {
                                             canChangeInvites: sessionStore.currentUser?.isAccountOwnerLogin ?? false,
                                             onOpenStudio: { studioSeed = $0 },
                                             onOpenTextClub: { shelfDestination = .guestTextClub })
+                    } else if subTab == .guests {
+                        GuestsTabSection(viewModel: guests)
                     } else if subTab == .content {
                         if viewModel.stats != nil {
                             CachedDataNotice(text: viewModel.stalenessNotice)
@@ -181,6 +185,8 @@ struct MarketingView: View {
                     _ = await (a, b)
                 case .campaigns:
                     await campaigns.load()
+                case .guests:
+                    await guests.load()
                 case .analytics:
                     await analyticsViewModel.refresh()
                 }
@@ -242,6 +248,7 @@ struct MarketingView: View {
         .task { await opportunities.load() }
         .task(id: subTab) {
             if subTab == .campaigns { await campaigns.load() }
+            if subTab == .guests { await guests.load() }
         }
         .task {
             guard !focusApplied else { return }
@@ -285,6 +292,7 @@ struct MarketingView: View {
             switch subTab {
             case .content: await viewModel.load()
             case .campaigns: await campaigns.load()
+            case .guests: await guests.load()
             case .analytics: await analyticsViewModel.refresh()
             }
         }
@@ -1497,6 +1505,8 @@ struct MarketingFocus: Equatable {
         switch section {
         case "campaigns", "campaign", "guests", "newsletter":
             p.subTab = .campaigns
+        case "guest-list", "host-stand":
+            p.subTab = .guests
         case "analytics":
             p.subTab = .analytics
         case "text-club", "textclub", "guest-text-club", "contacts":
