@@ -231,6 +231,13 @@ def create_client(current_user):
                                      and _flag("module_reviews", 1)) else 0,
         })
 
+        # The new store's setup checklist (scale audit 10/19/26 ONB-12):
+        # the confirmations a person makes once, on its onboarding tracker.
+        try:
+            import onboarding as _onb_cc
+            _onb_cc.start_setup(rid)
+        except Exception as _onb_e:
+            _ops.capture(_onb_e, job="create_client_setup_checklist", context=f"restaurant_id={rid}")
         module_names = []
         if _flag("module_reviews"): module_names.append("Review Intelligence")
         if _flag("module_labor"):   module_names.append("Labor Optimizer")

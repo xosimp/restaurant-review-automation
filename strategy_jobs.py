@@ -1492,9 +1492,22 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     from zoneinfo import ZoneInfo
     at = None if now is None else (now if now.tzinfo else now.replace(tzinfo=ZoneInfo(OPERATOR_TZ)))
     local = {}
+    held_for_setup = 0
     for r in _restaurants(db_path):
         if not (getattr(r, "auto_draft_schedule", 0) and getattr(r, "module_labor", 0)):
             continue
+        # A store still being set up is not drafted for (scale audit 10/19/26
+        # ONB-12): a schedule from unconfirmed rates, a payroll week read off
+        # RPOWER's unconfirmed ot_dow, and no floors or availability is a
+        # paid draft the owner throws away. Stores set up by hand before the
+        # setup checklist existed have none open and are never held.
+        try:
+            import onboarding as _onb_ad
+            if _onb_ad.labor_setup_pending(r, db_path=None if db_path == DB_PATH else db_path):
+                held_for_setup += 1
+                continue
+        except Exception as e:
+            log.warning("auto_draft: setup check failed for %s (%s); not held", r.id, e)
         now_l = (restaurant_now(r, naive=True) if at is None
                  else at.astimezone(restaurant_tz(r)).replace(tzinfo=None))
         # The draft day, and the day after it as the fallback (scheduler
@@ -1577,7 +1590,7 @@ def run_auto_draft_schedules(db_path=DB_PATH, now=None, enqueue=False):
     attempted = counts["drafted"] + counts["failed"] + counts["batched"] + counts["queued"]
     return _counts(attempted, counts["drafted"] + counts["batched"] + counts["queued"], counts["failed"],
                    counts["skipped"], ran_out, drafted=counts["drafted"], batched=counts["batched"],
-                   queued=counts["queued"], complete=not ran_out)
+                   queued=counts["queued"], complete=not ran_out, held_for_setup=held_for_setup)
 
 
 def auto_draft_target(r, period) -> str:

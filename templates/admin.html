@@ -1475,9 +1475,10 @@ async function bulkApply(){
 async function openSetup(rid){
   const d = await api('/admin/api/onboarding/' + rid + '/setup'); if(!d.ok){ toast(d.error||'Setup couldn\'t be read','bad'); return; }
   $('setup-title').textContent = 'Setup · ' + d.name;
-  const items = (d.items||[]).map(s=>{
+  const started = d.started ? '' : '<p class="sub">This restaurant was set up before the setup checklist; nothing here is required of it. A confirmation made here still counts.</p>';
+  const items = started + (d.items||[]).map(s=>{
     const sug = s.suggested && s.suggested.label ? ` <span class="dim">· suggested: ${esc(s.suggested.label)}</span>` : '';
-    const right = s.done ? `<span class="ok">✓</span> <span class="dim">${s.grandfathered ? 'set up before this checklist' : esc(s.confirmed_by||'')+' '+fmtD(s.confirmed_at)}</span>`
+    const right = s.done ? `<span class="ok">✓</span> <span class="dim">${esc(s.confirmed_by||'')+' '+fmtD(s.confirmed_at)}</span>`
       : s.key==='week_start' ? `<select id="ws-day">${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map((w,i)=>`<option value="${i}" ${(s.suggested&&s.suggested.week_start_day===i)?'selected':''}>${w}</option>`).join('')}</select> <button class="btn s w" onclick="confirmStep(${rid},'week_start',+$('ws-day').value)">Confirm</button>`
       : s.key==='dsr_calendar' ? '<span class="dim">set below</span>' : `<button class="btn s w" onclick="confirmStep(${rid},'${s.key}')">Confirm</button>`;
     return `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><span>${s.done?'<span class="ok">✓</span>':'<span class="no">○</span>'} ${esc(s.label)}${s.done?'':sug}</span><span>${right}</span></div>`; }).join('');

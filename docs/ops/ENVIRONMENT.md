@@ -135,7 +135,6 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `POS_BACKFILL_DAYS_PER_NIGHT` | `"7"` | Days of history a backfilling store archives a night (ONB-5). 7 is 13 nights to 90 days; raise it for a wave once RPOWER agrees the fleet request budget. | pos_archive.py |
 | `POS_BACKFILL_BYTES_PER_STORE_DAY` | `"650000"` | What one archived store-day is reckoned to cost on disk (the audit measured ~613 KB with indexes): the free-space gate's estimate of tonight's backfill. | onboarding.py |
 | `PG_VOLUME_MAX_BYTES` | `"0"` | The Postgres volume's size in bytes, when set (the app cannot see another service's disk): a backfill waits once the database plus tonight's days would pass 80% of it. 0 = only the app volume is checked. | onboarding.py |
-| `ONBOARDING_SETUP_SINCE` | `"2026-10-20"` | Restaurants created before this date were set up by hand and are not asked the setup confirmations or checklist step (ONB-9/12). | onboarding.py |
 | `ONBOARDING_STUCK_DAYS` | `"14"` | The fleet onboarding board names a store not live this many days after signing up. | onboarding.py |
 
 ## Billing and contracts

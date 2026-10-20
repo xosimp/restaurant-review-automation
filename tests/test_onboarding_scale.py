@@ -285,15 +285,24 @@ def test_the_dsr_calendar_is_set_by_preset_with_the_owner_routes_rules(app, db_p
 def test_a_new_rpower_store_carries_pos_history_and_setup_steps(db_path):
     r = {"id": 1, "rpower_token": "t", "rpower_store_mid": "m", "rpower_last_synced": "2026-10-20",
          "module_labor": 1, "dsr_enabled": 1, "created_at": "2026-10-21 10:00:00"}
-    steps = {s["key"]: s for s in onboarding.extra_steps(r, {"archive_days": 30, "dsr_nights": 59})}
+    opened = {"confirmations": {"week_start": {"status": "pending", "suggested": {"week_start_day": 2}}}}
+    steps = {s["key"]: s for s in onboarding.extra_steps(r, dict(opened, archive_days=30, dsr_nights=59))}
     assert steps["pos_bound"]["done"] and steps["pos_first_data"]["done"]
     assert not steps["pos_history"]["done"] and steps["pos_history"]["left"] == 59
     assert steps["dsr_history"]["done"]
     assert {"setup:week_start", "setup:dsr_calendar", "checklists"} <= set(steps)
     assert not steps["setup:week_start"]["done"]
-    # A restaurant set up before the checklist existed is not asked again.
-    old = dict(r, created_at="2026-09-01 10:00:00")
-    assert not any(s["key"].startswith("setup:") for s in onboarding.extra_steps(old, {}))
+    # A restaurant set up before the checklist existed (no setup rows) is not
+    # asked again, and its auto-draft is never held.
+    assert not any(s["key"].startswith("setup:") for s in onboarding.extra_steps(r, {"archive_days": 89}))
+    rid = create_restaurant(Restaurant(name="Old Co", owner_email="o@old.test"), db_path=db_path)
+    update_restaurant(rid, {"module_labor": 1}, db_path=db_path)
+    assert onboarding.labor_setup_pending(models.get_restaurant(rid)) == []
+    onboarding.start_setup(rid)
+    assert "week_start" in onboarding.labor_setup_pending(models.get_restaurant(rid))
+    for k in ("week_start", "roles_rates", "salaried", "station_logins", "floors_closers", "availability"):
+        onboarding.confirm(rid, k, value=2 if k == "week_start" else None, who="will")
+    assert onboarding.labor_setup_pending(models.get_restaurant(rid)) == []
 
 
 def test_the_board_counts_stores_per_stage_and_names_the_stuck(db_path):
@@ -319,3 +328,23 @@ def test_a_partner_covers_contract_and_billing_only_when_switched_on(db_path, mo
     assert onboarding.partner_covers(facts, "contract") is False
     monkeypatch.setenv("PARTNER_BILLING", "1")
     assert onboarding.skips_direct_contract(rid) is True and onboarding.partner_covers(facts, "billing") is True
+
+
+def test_the_auto_draft_waits_for_a_new_stores_setup(db_path, monkeypatch):
+    import strategy_jobs
+    rid = create_restaurant(Restaurant(name="Draft Co", owner_email="d@draft.test"), db_path=db_path)
+    update_restaurant(rid, {"module_labor": 1, "auto_draft_schedule": 1}, db_path=db_path)
+    onboarding.start_setup(rid)
+    out = strategy_jobs.run_auto_draft_schedules(db_path=db_path, enqueue=True)
+    assert out["held_for_setup"] == 1
+
+
+def test_a_new_client_and_a_provisioned_store_open_their_setup_checklist(db_path, monkeypatch):
+    import bulk_provisioning as bp
+    monkeypatch.setattr(billing_jobs, "enqueue", lambda *a, **k: (1, True))
+    rows, _ = bp.parse_csv(CSV)
+    out = bp.apply(rows, "will")
+    rid = next(r["restaurant_id"] for r in out["rows"] if r["action"] == "created")
+    assert set(onboarding.confirmations(rid)) == set(onboarding.SETUP_STEP_KEYS)
+    import inspect
+    assert "start_setup(rid)" in inspect.getsource(admin_routes.create_client)

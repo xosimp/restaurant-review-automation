@@ -312,10 +312,28 @@ SETUP_STEPS = (
     ("dsr_calendar", "DSR fiscal calendar confirmed", "dsr"),
 )
 SETUP_STEP_KEYS = tuple(k for k, _l, _s in SETUP_STEPS)
-# Restaurants live before the setup checklist existed were set up by hand
-# with Will; their confirmations count as given (not asked again).
-SETUP_CHECKLIST_SINCE = os.getenv("ONBOARDING_SETUP_SINCE", "2026-10-20")
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def start_setup(restaurant_id, db_path=None) -> None:
+    """Open the setup checklist for a new store: every SETUP_STEPS row
+    pending (the ones that do not apply to it are never shown). A store
+    with no rows was set up by hand before the checklist existed and is not
+    asked (setup_started) — deterministic, never a date. Called by the New
+    client form, bulk provisioning and an RPOWER bind."""
+    conn = get_conn(db_path)
+    try:
+        conn.executemany("INSERT INTO onboarding_confirmations (restaurant_id, step, status) VALUES (?, ?, 'pending') "
+                         "ON CONFLICT(restaurant_id, step) DO NOTHING",
+                         [(int(restaurant_id), k) for k in SETUP_STEP_KEYS])
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def setup_started(facts) -> bool:
+    """Whether this store's setup checklist was opened (start_setup)."""
+    return bool((facts or {}).get("confirmations"))
 
 
 def suggest(restaurant_id, step, suggested, source, db_path=None) -> None:
@@ -393,7 +411,6 @@ def setup_items(r, facts=None) -> list:
     confirmed_at, confirmed_by}] — the steps that apply to it."""
     facts = facts or {}
     conf = facts.get("confirmations") or {}
-    grandfathered = str(r.get("created_at") or "")[:10] < SETUP_CHECKLIST_SINCE if r.get("created_at") else False
     out = []
     for key, label, scope in SETUP_STEPS:
         if scope == "labor" and not r.get("module_labor"):
@@ -401,11 +418,26 @@ def setup_items(r, facts=None) -> list:
         if scope == "dsr" and not r.get("dsr_enabled"):
             continue
         c = conf.get(key) or {}
-        done = c.get("status") == "confirmed" or grandfathered
-        out.append({"key": key, "label": label, "done": bool(done), "suggested": c.get("suggested"),
-                    "confirmed_at": c.get("confirmed_at"), "confirmed_by": c.get("confirmed_by"),
-                    "grandfathered": bool(grandfathered and c.get("status") != "confirmed")})
+        out.append({"key": key, "label": label, "done": c.get("status") == "confirmed",
+                    "suggested": c.get("suggested"), "confirmed_at": c.get("confirmed_at"),
+                    "confirmed_by": c.get("confirmed_by")})
     return out
+
+
+def labor_setup_pending(r, db_path=None) -> list:
+    """The labor setup confirmations still open for a restaurant (an object
+    with the Restaurant fields, or a dict) — [] for one whose setup
+    checklist was never opened (set up by hand before it existed). The
+    auto-draft waits while any is open (ONB-12)."""
+    row = r if isinstance(r, dict) else {"module_labor": getattr(r, "module_labor", 0),
+                                         "id": getattr(r, "id", None)}
+    if not row.get("module_labor") or row.get("id") is None:
+        return []
+    conf = confirmations(row["id"], db_path)
+    if not conf:
+        return []
+    return [k for k, _l, scope in SETUP_STEPS if scope == "labor"
+            and (conf.get(k) or {}).get("status") != "confirmed"]
 
 
 # ── the tracker's steps and the fleet board (ONB-9) ─────────────────────────
@@ -497,22 +529,16 @@ def extra_steps(r, facts=None) -> list:
     """Everything this module adds to admin_ops._onboarding_for's steps."""
     facts = facts or {}
     steps = pos_steps(r, facts)
-    # A restaurant set up by hand before the checklist existed is not asked
-    # again: its checklist and confirmation steps are left off its tracker
-    # (not counted done — its step count is what it was).
-    if grandfathered(r):
+    # A restaurant set up by hand before the checklist existed has no setup
+    # rows and is not asked again: its checklist and confirmation steps are
+    # left off its tracker (not counted done — its step count is what it was).
+    if not setup_started(facts):
         return steps
     if r.get("module_labor"):
         steps.append({"key": "checklists", "label": "Checklists loaded",
                       "done": int(facts.get("checklists") or 0) > 0})
     steps += [{"key": f"setup:{s['key']}", "label": s["label"], "done": s["done"]} for s in setup_items(r, facts)]
     return steps
-
-
-def grandfathered(r) -> bool:
-    """Live before the setup checklist existed (ONBOARDING_SETUP_SINCE)."""
-    created = str(r.get("created_at") or "")[:10]
-    return bool(created) and created < SETUP_CHECKLIST_SINCE
 
 
 def partner_covers(facts, step) -> bool:

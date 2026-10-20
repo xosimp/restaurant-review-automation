@@ -271,6 +271,8 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
                 if store.get("timezone") and not (row.get("timezone") or "").strip():
                     updates["timezone"] = store["timezone"]
         _models_mod.update_restaurant(rid, updates, **dbp)
+        import onboarding
+        onboarding.start_setup(rid, db_path=db_path)
         if partner_id:
             import onboarding
             onboarding.attach_store(partner_id, rid, db_path=db_path)

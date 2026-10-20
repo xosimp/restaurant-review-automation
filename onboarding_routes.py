@@ -163,7 +163,7 @@ def admin_onboarding_setup(restaurant_id, current_user):
         conn.close()
     items = onboarding.setup_items(row, {"confirmations": conf})
     return jsonify(ok=True, restaurant_id=restaurant_id, name=r.name, items=items,
-                   grandfathered=onboarding.grandfathered(row), checklists=int(n_sheets or 0),
+                   started=bool(conf), checklists=int(n_sheets or 0),
                    week_start_day=getattr(r, "week_start_day", 0),
                    dsr={"enabled": bool(getattr(r, "dsr_enabled", 0)),
                         "scheme": getattr(r, "fiscal_period_scheme", None),
