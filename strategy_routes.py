@@ -3591,12 +3591,20 @@ def _do_schedule_violations(u):
         print(f"[schedule] unmet list unavailable: {e!r}")
     # Who the rows on screen push into overtime, with a same-role person who
     # has room and what moving the shift saves — the one-tap move (#27).
+    # Pay is for those who see pay (blind re-audit 10/20/26 R7-24): a login
+    # with the Labor view but not pay (a teammate) sent one 10-hour shift
+    # against an empty baseline and read that person's own rate off the
+    # cost; the moves' dollar figures are priced on role rates. For it the
+    # moves come unpriced and the cost is withheld.
+    sees_pay = _sees_pay(u)
+    if not sees_pay:
+        out["pay_hidden"] = True
     try:
         import schedule_learning as _sl
         from models import get_role_rates as _grr, get_restaurant as _gr
         out["overtime_moves"] = [f for f in _sl.price_overtime_moves(
-            _sl.overtime_forecast(rows, constraints=c), _grr(_rid(u)),
-            getattr(_gr(_rid(u)), "hourly_rate", None) or None) if f.get("candidate")]
+            _sl.overtime_forecast(rows, constraints=c), _grr(_rid(u)) if sees_pay else {},
+            (getattr(_gr(_rid(u)), "hourly_rate", None) or None) if sees_pay else None) if f.get("candidate")]
         import rec_ledger as _rl
         for f in out["overtime_moves"]:
             f["rec_key"] = _rl.rec_key("overtime_move", f"{f['employee']}:{f['candidate'].get('date')}")
@@ -3609,7 +3617,9 @@ def _do_schedule_violations(u):
     # What the edit moves in hours and overtime-priced dollars, when the
     # page sends the rows it started from.
     base = _rows_from_body({"rows": b.get("baseline_rows")}) if isinstance(b.get("baseline_rows"), list) else None
-    if base is not None:
+    if base is not None and not sees_pay:
+        out["cost"] = None
+    elif base is not None:
         try:
             import schedule_economics as _econ
             # Priced exactly as the generation prices the week (schedule
@@ -7254,8 +7264,14 @@ def _do_person_set(u, key):
         return _forbidden("Your login can view the team but not change it.")
     import people
     from client_api import log_account_event
+    body = _body()
+    # One fixed answer for any pay value from a login that does not see pay
+    # (R7-24): the refusal used to say whether the value sent matched the
+    # role's rate — an oracle for the rate it hides.
+    if not _sees_pay(u) and isinstance(body, dict) and body.get("pay_rate") not in (None, "", {}):
+        return {"ok": False, "error": "Pay is set per role in Labor → Targets & rates."}, 400
     try:
-        person, changed = people.update_person(_rid(u), key, _body(), updated_by=_who(u),
+        person, changed = people.update_person(_rid(u), key, body, updated_by=_who(u),
                                                may_manage_logins=_principal(u))
     except people.PersonError as e:
         return {"ok": False, "error": str(e)}, 400

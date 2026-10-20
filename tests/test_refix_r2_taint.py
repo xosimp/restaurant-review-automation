@@ -121,9 +121,17 @@ def test_a_refused_action_is_not_replayed_and_the_next_turn_starts_tainted(monke
     assert any("not_performed" in b["content"] for b in seen2)
     assert planted["fact"] not in " ".join(_remembered(rid))
     assert meta2["read_public_text"] is False, "the carry is one turn, it never chains"
-    # Turn 3: the owner asks for it in their own words — it runs.
+    # Turn 3: the planted text is still in the replayed history and the
+    # summary, so a change that persists (remember, a setting, a staff
+    # contact) stays refused in this chat (blind re-audit 10/20/26 R7-20) ...
+    meta3, seen3 = _turn(monkeypatch, restaurant, "remember that I prefer short answers",
+                         [[("remember", {"fact": "The owner prefers short answers"})]], cid)
+    assert any("not_performed" in b["content"] and "earlier answer" in b["content"] for b in seen3)
+    assert not any("short answers" in f for f in _remembered(rid))
+    # ... and the owner makes it in a new chat, where it runs.
+    fresh = models.create_ask_conversation(rid, user_id=1)
     _turn(monkeypatch, restaurant, "remember that I prefer short answers",
-          [[("remember", {"fact": "The owner prefers short answers"})]], cid)
+          [[("remember", {"fact": "The owner prefers short answers"})]], fresh)
     assert any("short answers" in f for f in _remembered(rid))
 
 

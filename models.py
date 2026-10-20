@@ -11705,6 +11705,13 @@ def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -
     # Ends every session and clears must_reset_password (SEC-7, SEC-8).
     from auth import update_password
     update_password(user["id"], new_password, db_path=db_path)
+    # A reset proved the mailbox: the per-login sign-in-code lock a password
+    # holder ran up is lifted with the password they no longer have (R7-01).
+    try:
+        import security
+        security.clear_second_factor_failures(user["id"], db_path=db_path)
+    except Exception:
+        pass
     return True
 
 
@@ -16063,6 +16070,10 @@ ACCOUNT_EVENT_TYPES = (
     # access transparency (scale audit 10/19/26, SEC-12).
     "support_access_opened", "support_access_closed",
     "login_locked", "account_frozen", "memory_forgotten", "memory_added", "staff_pin_reset",
+    # Re-audit 10/20/26 R7-01 / R7-03: a login's sign-in codes locked after
+    # too many wrong ones; "This wasn't me" suspending the co-owner logins
+    # added in the days before it.
+    "two_factor_locked", "principal_logins_suspended",
     "time_off_decided", "covers_imported",
     "auto_publish_changed", "auto_order_changed", "weekly_plan_changed", "send_delay_changed",
     "auto_draft_changed", "auto_draft_day_changed", "auto_order_day_changed",
@@ -16126,6 +16137,8 @@ ACCOUNT_EVENT_LABELS = {
     "trusted_device_revoked": "Trusted device removed",
     "trusted_devices_cleared": "All trusted devices removed",
     "login_reported_not_me": "Sign-in reported as not you",
+    "two_factor_locked": "Sign-in codes paused after too many wrong ones",
+    "principal_logins_suspended": "New co-owner logins suspended after a sign-in was reported",
     "data_exported": "Data export emailed",
     "alert_settings_saved": "Alert settings saved",
     "login_notify_changed": "Sign-in notifications changed",

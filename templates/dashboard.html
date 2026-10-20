@@ -2295,6 +2295,71 @@ function loadFailed(el, d){
     document.body.appendChild(box);
   }
   window.cavSessionEnded = function(){ return ended; };
+  /* The account holder's step-up (re-audit 10/20/26 R7-03): a security
+     change answered 403 {reauth_required} asks for the password once
+     (POST /api/account/reauth), then the change is sent again. One prompt
+     at a time; Cancel leaves the refusal to the caller. */
+  var stepUpWait = null;
+  function stepUpModal(){
+    var m = document.getElementById('stepup-modal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'stepup-modal';
+    m.className = 'cmodal so-modal';
+    m.style.display = 'none';
+    m.setAttribute('role', 'dialog');
+    m.setAttribute('aria-modal', 'true');
+    m.setAttribute('aria-labelledby', 'stepup-t');
+    m.innerHTML = '<div class="so-card"><div class="hb-kicker">Security</div>'
+      + '<h3 id="stepup-t">Confirm it’s you</h3><p id="stepup-msg"></p>'
+      + '<input class="ac-input" id="stepup-pw" type="password" autocomplete="current-password" '
+      + 'placeholder="Your password" aria-label="Your password">'
+      + '<p class="load-err" id="stepup-err" role="status" aria-live="polite"></p>'
+      + '<div class="so-f"><button type="button" class="cbtn cbtn-secondary" id="stepup-no">Cancel</button>'
+      + '<button type="button" class="cbtn cbtn-primary" id="stepup-go">Confirm</button></div></div>';
+    document.body.appendChild(m);
+    return m;
+  }
+  function stepUp(info){
+    if (stepUpWait) return stepUpWait;
+    stepUpWait = new Promise(function(done){
+      var m = stepUpModal();
+      var pw = document.getElementById('stepup-pw');
+      var err = document.getElementById('stepup-err');
+      var settled = false;
+      function finish(ok){
+        if (settled) return;
+        settled = true;
+        m.style.display = 'none';
+        stepUpWait = null;
+        done(ok);
+      }
+      window.cavStepUpCancel = function(){ finish(false); };
+      document.getElementById('stepup-msg').textContent = 'This change to sign-in security needs your password. '
+        + 'It stays confirmed for ' + ((info && info.window_minutes) || 15) + ' minutes.';
+      err.textContent = '';
+      pw.value = '';
+      document.getElementById('stepup-no').onclick = function(){ finish(false); };
+      function send(){
+        if (!pw.value) return;
+        _fetch.call(window, '/api/account/reauth', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: pw.value})})
+          .then(function(r){ return r.json().then(function(d){ return {status: r.status, d: d}; }); })
+          .then(function(x){
+            if (x.d && x.d.ok) { finish(true); return; }
+            if (x.status === 401) { finish(false); ended = true; showEnded(); return; }
+            err.textContent = (x.d && x.d.error) || 'That password isn’t right.';
+            pw.value = '';
+            pw.focus();
+          }, function(){ err.textContent = 'Couldn’t check that. Try again.'; });
+      }
+      document.getElementById('stepup-go').onclick = send;
+      pw.onkeydown = function(e){ if (e.key === 'Enter') send(); };
+      if (window.cModal) window.cModal.open('stepup-modal', {close: 'cavStepUpCancel'});
+      else m.style.display = 'flex';
+    });
+    return stepUpWait;
+  }
   window.fetch = function(input, init){
     var mine = sameOrigin(input);
     if (ended && mine) {
@@ -2302,6 +2367,12 @@ function loadFailed(el, d){
         {status: 401, headers: {'Content-Type': 'application/json'}}));
     }
     return _fetch.apply(window, arguments).then(function(r){
+      if (r.status === 403 && mine) {
+        return r.clone().json().then(function(d){
+          if (!d || !d.reauth_required || String(d.reauth_url || '') !== '/api/account/reauth') return r;
+          return stepUp(d).then(function(ok){ return ok ? _fetch.call(window, input, init) : r; });
+        }, function(){ return r; });
+      }
       if (r.status !== 401 || !mine) return r;
       return r.clone().json().then(function(d){
         if (d && d.session_expired) { ended = true; showEnded(); }
@@ -34710,6 +34781,10 @@ function closeEmailModal(){
   document.getElementById('email-modal').style.display='none';
   document.getElementById('email-new').value='';
   document.getElementById('email-pw').value='';
+  var codeEl=document.getElementById('email-code');
+  if(codeEl){codeEl.value='';codeEl.style.display='none';}
+  var goEl=document.getElementById('email-go');
+  if(goEl)goEl.textContent='Update email';
   var st=document.getElementById('email-status');
   st.style.display='none';st.textContent='';
 }
@@ -34720,8 +34795,21 @@ function updateEmail(){
   if(!newEmail){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a new email address';return;}
   if(newEmail.indexOf('@')<1||newEmail.indexOf('.')<0){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a valid email address';return;}
   if(!pw){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter your current password';return;}
+  // The change is confirmed with a code sent to the NEW address (re-audit
+  // 10/20/26 R7-17): the first answer asks for it, the second carries it.
+  var codeEl=document.getElementById('email-code');
+  var code=(codeEl&&codeEl.style.display!=='none')?codeEl.value.trim():'';
   st.style.display='block';st.style.color='var(--ink3)';st.textContent='Updating...';
-  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(apiJson).then(function(d){
+  var payload={new_email:newEmail,current_password:pw};
+  if(code)payload.code=code;
+  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(apiJson).then(function(d){
+    if(d.verify_required){
+      if(codeEl){codeEl.style.display='block';codeEl.value='';codeEl.focus();}
+      var goEl=document.getElementById('email-go');
+      if(goEl)goEl.textContent='Confirm new email';
+      st.style.display='block';st.style.color='var(--ink3)';st.textContent=d.error||'Enter the code we emailed to the new address.';
+      return;
+    }
     if(d.ok){
       closeEmailModal();
       var disp=document.getElementById('acct-email-display');
@@ -37832,7 +37920,8 @@ document.addEventListener('click', function(e) {
     <div style="display:flex;flex-direction:column;gap:10px">
       <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:16px">
       <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:16px">
-      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" onclick="updateEmail()">Update email</button>
+      <input class="form-input" type="text" id="email-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code from the new address" style="font-size:16px;display:none">
+      <button class="cbtn cbtn-primary cbtn-lg cbtn-block" id="email-go" onclick="updateEmail()">Update email</button>
       <div id="email-status" style="font-size:15px;text-align:center;display:none"></div>
     </div>
   </div>

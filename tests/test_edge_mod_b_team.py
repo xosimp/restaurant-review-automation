@@ -374,7 +374,9 @@ def test_ask_cavnar_adding_a_phone_keeps_the_email(db_path, rid):
     so nothing else catches it."""
     import ask_cavnar_tools
     models.set_staff_contact(rid, "Maria G.", "maria@x.test", None, db_path=db_path)
-    out = ask_cavnar_tools._set_staff_contact(rid, employee_name="Maria G.", phone="+15555550123")
+    view = models.get_restaurant(rid, db_path=db_path)
+    view._ask_dsr_user = {"id": 1, "role": "client", "restaurant_id": rid}      # the asking login (R7-19)
+    out = ask_cavnar_tools._set_staff_contact(rid, employee_name="Maria G.", phone="+15555550123", _viewer=view)
     assert out["ok"] is True
     assert models.get_staff_contacts(rid, db_path=db_path)[0]["email"] == "maria@x.test"
 

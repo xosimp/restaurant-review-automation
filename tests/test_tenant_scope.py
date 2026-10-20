@@ -35,3 +35,25 @@ def test_the_tables_are_read_from_the_code():
     import check_tenant_scope as c
     t = c.tenant_tables()
     assert {"reviews", "guest_contacts", "memberships", "jobs"} <= t and "restaurants" not in t
+
+
+def test_no_new_unscoped_read_on_a_tenant_table():
+    """The reads half (blind re-audit 10/20/26 R7-18): a new
+    `SELECT ... FROM <tenant table> ... WHERE id=?` without restaurant_id."""
+    import check_tenant_scope as c
+    baseline = json.load(open(c.READS_BASELINE, encoding="utf-8"))
+    over = c.compare(c.scan_reads(), baseline)
+    assert not over, ("new unscoped reads (add AND restaurant_id=?, or raise "
+                      f"scripts/tenant_scope_reads_baseline.json naming the ownership check): {over}")
+
+
+def test_the_read_scan_sees_an_unscoped_select_and_passes_a_scoped_one(tmp_path, monkeypatch):
+    import check_tenant_scope as c
+    src = tmp_path / "y.py"
+    src.write_text('conn.execute("SELECT text FROM reviews WHERE id=?", (i,))\n'
+                   'conn.execute("SELECT text FROM reviews WHERE id=? AND restaurant_id=?", (i, r))\n'
+                   'conn.execute("SELECT text "\n             "FROM reviews WHERE id=?", (i,))\n'
+                   'conn.execute("DELETE FROM reviews WHERE id=?", (i,))\n')
+    monkeypatch.setattr(c, "ROOT", str(tmp_path))
+    monkeypatch.setattr(c, "_sources", lambda: ["y.py"])
+    assert c.scan_reads({"reviews"}) == {"y.py::reviews": 2}

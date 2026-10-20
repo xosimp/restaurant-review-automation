@@ -1632,9 +1632,11 @@ def _queue_state(job_id):
     return st
 
 
-def read_async_job(job_id, restaurant_id=None):
+def read_async_job(job_id, restaurant_id=None, kinds=None):
     """The job's {"status", "result"}, or None if it doesn't exist (or belongs
-    to another restaurant).
+    to another restaurant, or — with `kinds` — is another kind of job: a
+    route that polls schedule generations answers only those, so an invoice
+    scan's costs never come back through it; blind re-audit 10/20/26 R7-21).
 
     Reads are NON-destructive. This used to delete the row on the first read,
     "matching how the in-memory version popped its entry" — which meant a
@@ -1650,7 +1652,7 @@ def read_async_job(job_id, restaurant_id=None):
     try:
         conn = _async_conn()
         row = conn.execute(
-            "SELECT job_id, restaurant_id, status, result_json, progress_json, "
+            "SELECT job_id, kind, restaurant_id, status, result_json, progress_json, "
             "(deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) AS overdue, "
             "(deadline_at IS NOT NULL AND deadline_at < datetime('now', ?)) AS past_deadline, "
             "((deadline_at IS NULL AND COALESCE(started_at, created_at) < datetime('now', ?)) OR "
@@ -1671,6 +1673,9 @@ def read_async_job(job_id, restaurant_id=None):
         # call (scale audit 10/19/26, SEC-18: it failed open).
         if restaurant_id is not None and (row["restaurant_id"] is None
                                           or int(row["restaurant_id"]) != int(restaurant_id)):
+            conn.close()
+            return None
+        if kinds is not None and str(row["kind"] or "") not in tuple(kinds):
             conn.close()
             return None
         status = row["status"]

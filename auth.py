@@ -294,7 +294,8 @@ CREATE TABLE IF NOT EXISTS two_fa_challenges (
     pending_hash    TEXT    NOT NULL UNIQUE,
     code_hash       TEXT    NOT NULL,
     expires_at      TEXT    NOT NULL,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    attempts        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_two_fa_challenges_user
     ON two_fa_challenges(restaurant_id, user_id, purpose);
@@ -595,6 +596,15 @@ def init_auth(db_path: str = DB_PATH):
         # switch never reactivates a row carrying either stamp.
         "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
+        # Re-audit 10/20/26 R7-17: an email change waits on a code sent to the
+        # NEW address (start_email_change / finish_email_change).
+        "ALTER TABLE users ADD COLUMN email_change_pending TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_code TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_expires TEXT",
+        "ALTER TABLE users ADD COLUMN email_change_attempts INTEGER NOT NULL DEFAULT 0",
+        # Re-audit 10/20/26 R7-01: wrong codes typed against one challenge.
+        # It dies at TWO_FA_CHALLENGE_MAX_WRONG; a resend keeps the count.
+        "ALTER TABLE two_fa_challenges ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             conn_m = boot_conn(db_path)
@@ -2588,6 +2598,60 @@ def second_factor_throttle_key(user):
     return f"2fa-app:{user['id']}" if uses_authenticator_app(user) else None
 
 
+def second_factor_lock_left(user_id, db_path: str = DB_PATH) -> int:
+    """Seconds this login's second step stays locked (re-audit 10/20/26
+    R7-01: security.SECOND_FACTOR_DAY_MAX wrong codes in a rolling day, from
+    any address), 0 when it is open. Fails open on a read error — the
+    per-address and per-challenge limits still hold."""
+    try:
+        import security
+        return security.second_factor_lock_left(user_id, db_path=db_path)
+    except Exception:
+        return 0
+
+
+SECOND_FACTOR_LOCKED_MESSAGE = ("Too many wrong codes for this login. Sign-in codes are paused for now; "
+                                "we've emailed the account. Try again later, or sign in on a device you "
+                                "chose to remember.")
+
+
+def note_second_factor_failure(user, restaurant_id, ip=None, db_path: str = DB_PATH) -> dict:
+    """A wrong second step (code and backup code both failed) for `user`:
+    counted per login, and on the failure that locks it the login's
+    activity log says so and its own address is told (security mail). The
+    sign-in screens call this beside the per-address failure."""
+    uid = (user or {}).get("id")
+    if not uid:
+        return {"failures": 0, "locked": False}
+    try:
+        import security
+        res = security.record_second_factor_failure(uid, ip, db_path=db_path)
+    except Exception:
+        return {"failures": 0, "locked": False}
+    if res.get("locked"):
+        try:
+            from models import log_event
+            log_event(restaurant_id or user.get("restaurant_id"), "two_factor_locked",
+                      {"username": (user.get("username") or "")[:60], "ip": (ip or "")[:64],
+                       "failures": res.get("failures")}, db_path=db_path)
+        except Exception:
+            pass
+        try:
+            import emails
+            from models import get_restaurant
+            r = get_restaurant(restaurant_id or user.get("restaurant_id"))
+            to = (user.get("email") or "").strip()
+            if to and "@" in to and not to.lower().endswith("@staff.invalid"):
+                emails.send_security_notice_email(
+                    to, getattr(r, "name", "") or "your restaurant", "two_factor_locked",
+                    restaurant_id=restaurant_id or user.get("restaurant_id"),
+                    tz=getattr(r, "timezone", None))
+        except Exception as e:
+            import logging as _lg_sf
+            _lg_sf.getLogger(__name__).warning("two-factor lock notice failed for user %s: %s", uid, e)
+    return res
+
+
 def check_sign_in_code(user, restaurant_id: int, user_id: int, code: str, pending: str,
                        db_path: str = DB_PATH) -> str:
     """'ok' | 'wrong' | 'expired' | 'missing' for the code typed at a
@@ -2688,12 +2752,22 @@ def reissue_two_fa_code(restaurant_id: int, user_id: int, pending: str,
         conn.close()
 
 
+TWO_FA_CHALLENGE_MAX_WRONG = 5
+
+
 def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str = None,
                       purpose: str = "login", consume: bool = True, db_path: str = DB_PATH) -> str:
     """'ok', 'wrong', 'expired' or 'missing' for a code typed against one
     login's challenge. 'setup' challenges are looked up by login (pending
     None); 'login' ones by the pending secret. A correct, unexpired code
-    deletes the challenge when consume is set, so it works exactly once."""
+    deletes the challenge when consume is set, so it works exactly once.
+
+    A wrong code is counted on the challenge, and the
+    TWO_FA_CHALLENGE_MAX_WRONG-th deletes it (re-audit 10/20/26 R7-01): a
+    challenge used to stay guessable for its whole 10 minutes, bounded only
+    by the per-address budget. The sign-in then starts again from the
+    password; the per-login lock (security.SECOND_FACTOR_DAY_MAX) bounds
+    how many challenges a password holder can burn."""
     import hmac as _h
     conn = get_conn(db_path)
     try:
@@ -2702,6 +2776,17 @@ def check_two_fa_code(restaurant_id: int, user_id: int, code: str, pending: str 
             return "missing"
         expected = _two_fa_hash("code", row["pending_hash"] + ":" + (code or "").strip())
         if not _h.compare_digest(row["code_hash"], expected):
+            try:
+                spent = int(row["attempts"] or 0) + 1
+            except (IndexError, KeyError):
+                spent = 1
+            if spent >= TWO_FA_CHALLENGE_MAX_WRONG:
+                conn.execute("DELETE FROM two_fa_challenges WHERE id=? AND restaurant_id=?",
+                             (row["id"], restaurant_id))
+            else:
+                conn.execute("UPDATE two_fa_challenges SET attempts=? WHERE id=? AND restaurant_id=?",
+                             (spent, row["id"], restaurant_id))
+            conn.commit()
             return "wrong"
         expired = conn.execute("SELECT datetime('now') > ?", (row["expires_at"],)).fetchone()[0]
         if expired:
@@ -3119,11 +3204,62 @@ def otp_country_allowed(phone: str) -> bool:
     return False
 
 
-def _otp_hourly_cap() -> int:
+# Re-audit 10/20/26 R7-05: the fixed ceilings were below fleet demand —
+# onboarding 1,500 stores of ~30 staff is 45,000 first codes, 75 hours of a
+# 600-an-hour platform cap during which forgot-PIN failed everywhere, and a
+# 40-person staff meeting at one store got 30. The platform backstop now grows
+# with the restaurants that have a staff join code (STAFF_OTP_PER_RESTAURANT_
+# PLATFORM a store an hour, never below STAFF_OTP_HOURLY_CAP); a restaurant's
+# share grows with its staff (STAFF_OTP_SHARE_PER_STAFF_PCT of the larger of
+# its staff logins and roster contacts); sign-up and forgot-PIN are separate
+# lanes, so a join-code holder spending sign-ups cannot stop forgot-PIN; and a
+# sign-up code is sent only while the restaurant has a roster name nobody has
+# claimed.
+STAFF_OTP_PER_RESTAURANT_PLATFORM_DEFAULT = 4
+STAFF_OTP_SHARE_PER_STAFF_PCT_DEFAULT = 125
+_otp_platform_memo = {"at": 0.0, "n": 0}
+
+
+def _otp_join_restaurants(conn) -> int:
+    """Restaurants with a live staff join link — memoised 10 minutes."""
+    import time as _t_otp
+    now = _t_otp.monotonic()
+    if _otp_platform_memo["at"] and now - _otp_platform_memo["at"] < 600:
+        return _otp_platform_memo["n"]
     try:
-        return max(0, int(os.environ.get("STAFF_OTP_HOURLY_CAP", "") or STAFF_OTP_HOURLY_CAP_DEFAULT))
+        n = conn.execute("SELECT COUNT(DISTINCT restaurant_id) FROM staff_portal_tokens "
+                         "WHERE revoked_at IS NULL").fetchone()[0] or 0
+    except Exception:
+        n = _otp_platform_memo["n"]
+    _otp_platform_memo.update(at=now, n=int(n))
+    return int(n)
+
+
+def _otp_hourly_cap(conn=None) -> int:
+    try:
+        floor = max(0, int(os.environ.get("STAFF_OTP_HOURLY_CAP", "") or STAFF_OTP_HOURLY_CAP_DEFAULT))
     except ValueError:
-        return STAFF_OTP_HOURLY_CAP_DEFAULT
+        floor = STAFF_OTP_HOURLY_CAP_DEFAULT
+    if conn is None:
+        return floor
+    per = _env_cap("STAFF_OTP_PER_RESTAURANT_PLATFORM", STAFF_OTP_PER_RESTAURANT_PLATFORM_DEFAULT)
+    return max(floor, per * _otp_join_restaurants(conn))
+
+
+def _otp_restaurant_cap(conn, restaurant_id: int) -> int:
+    """One restaurant's hourly share: STAFF_OTP_RESTAURANT_HOURLY_CAP, or
+    more for a bigger staff (R7-05)."""
+    base = _env_cap("STAFF_OTP_RESTAURANT_HOURLY_CAP", STAFF_OTP_RESTAURANT_HOURLY_CAP_DEFAULT)
+    staff = 0
+    for sql in ("SELECT COUNT(*) FROM memberships WHERE restaurant_id=? AND role='employee' "
+                "AND COALESCE(is_active,1)=1",
+                "SELECT COUNT(*) FROM staff_contacts WHERE restaurant_id=?"):
+        try:
+            staff = max(staff, int(conn.execute(sql, (int(restaurant_id),)).fetchone()[0] or 0))
+        except Exception:
+            pass
+    pct = _env_cap("STAFF_OTP_SHARE_PER_STAFF_PCT", STAFF_OTP_SHARE_PER_STAFF_PCT_DEFAULT)
+    return max(base, -(-staff * pct // 100))
 
 
 def _env_cap(name: str, default: int) -> int:
@@ -3145,12 +3281,14 @@ def _otp_cap_reserve(conn, kind: str, restaurant_id: Optional[int] = None) -> bo
     conn.execute("DELETE FROM staff_otp_sends WHERE created_at < datetime('now', '-1 day')")
     n = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE created_at >= datetime('now', '-1 hour')"
                      ).fetchone()[0]
-    scope, refused = "platform", n >= _otp_hourly_cap()
+    scope, refused = "platform", n >= _otp_hourly_cap(conn)
     if not refused and restaurant_id:
-        mine = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE restaurant_id=? "
-                            "AND created_at >= datetime('now', '-1 hour')", (int(restaurant_id),)).fetchone()[0]
-        scope = f"restaurant {int(restaurant_id)}"
-        refused = mine >= _env_cap("STAFF_OTP_RESTAURANT_HOURLY_CAP", STAFF_OTP_RESTAURANT_HOURLY_CAP_DEFAULT)
+        # Its own share per lane (R7-05): sign-ups never spend forgot-PIN's.
+        mine = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE restaurant_id=? AND kind=? "
+                            "AND created_at >= datetime('now', '-1 hour')",
+                            (int(restaurant_id), kind)).fetchone()[0]
+        scope = f"restaurant {int(restaurant_id)} {kind}"
+        refused = mine >= _otp_restaurant_cap(conn, int(restaurant_id))
     elif not refused:
         anon = conn.execute("SELECT COUNT(*) FROM staff_otp_sends WHERE restaurant_id IS NULL "
                             "AND created_at >= datetime('now', '-1 hour')").fetchone()[0]
@@ -3229,6 +3367,36 @@ def _send_otp_text(phone: str, code: str, kind: str) -> dict:
     return out
 
 
+def _has_unclaimed_roster_name(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Whether the restaurant's roster has a name no active staff login holds
+    (the names sign-up offers). Fails open: a roster that cannot be read
+    never blocks a sign-up."""
+    try:
+        from staff_roster import roster_names_for_restaurant
+        names = [n for n, _job in roster_names_for_restaurant(restaurant_id)]
+        claimed = {(m.get("employee_name") or "").strip().lower()
+                   for m in get_memberships_for_restaurant(restaurant_id, role="employee", db_path=db_path)}
+        return any(n.strip().lower() not in claimed for n in names)
+    except Exception:
+        return True
+
+
+def rotate_join_code(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """A new join code on the restaurant's current staff link (the portal
+    link itself is kept: staff sign in with it). The answer to an employee
+    who left knowing the code (R7-05): an owner's deactivate or unlink of a
+    staff login rotates it. Returns the new code."""
+    get_or_create_staff_portal_token(restaurant_id, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE staff_portal_tokens SET join_code=NULL WHERE restaurant_id=? AND revoked_at IS NULL",
+                     (restaurant_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return get_join_code(restaurant_id, db_path=db_path)
+
+
 def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH,
                        join_code: Optional[str] = None) -> dict:
     """Send a verification code to a phone. {ok, sms_sent[, dev_code]} or
@@ -3258,6 +3426,12 @@ def start_staff_signup(phone: str, optin: bool = False, db_path: str = DB_PATH,
         rid = restaurant_for_join_code(join_code, db_path=db_path)
         if not rid:
             raise SignupError("We don't recognise that restaurant code. Check with your manager.")
+        # Nothing to claim, nothing to text (R7-05): a join code known to
+        # every past employee could otherwise spend this restaurant's share
+        # on codes that can never finish a sign-up.
+        if not _has_unclaimed_roster_name(rid, db_path=db_path):
+            raise SignupError("Everyone on this restaurant's roster already has an account. "
+                              "Ask your manager to add you.")
     elif otp_join_code_required():
         raise SignupError("Enter your restaurant code first.")
 
@@ -3904,7 +4078,15 @@ def staff_login_required(f):
             if wants_json:
                 return _jsonify_sr(ok=False, error="This isn't a staff account."), 403
             return redirect(url_for("staff.portal_entry"))
-        return f(*args, **kwargs, current_user=user)
+        # A staff session takes its share like a console login: the same
+        # start-rate buckets and the same in-flight share (re-audit 10/20/26
+        # R7-02 — it needed only a join code and a claimable name, and was
+        # counted nowhere).
+        import request_limits as _rl_st
+        limited = _rl_st.session_refusal(user)
+        if limited is not None:
+            return limited
+        return _rl_st.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
@@ -4617,7 +4799,8 @@ def delete_own_login(user_id: int, restaurant_id: int, db_path: str = DB_PATH) -
         # Columns added by migrations, each cleared only where it exists.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
         for col in ("phone", "recovery_email", "recovery_email_pending", "recovery_email_code",
-                    "recovery_email_expires", "google_id", "apple_user_id", "two_fa_method"):
+                    "recovery_email_expires", "google_id", "apple_user_id", "two_fa_method",
+                    "email_change_pending", "email_change_code", "email_change_expires"):
             if col in cols:
                 conn.execute(f"UPDATE users SET {col}=NULL WHERE id=?", (user_id,))
         conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
@@ -5316,9 +5499,13 @@ def get_session_user(token: str, db_path: str = DB_PATH, _revalidated: bool = Fa
     if device == "admin-view-as":
         # Read-only lives on the session row now; the old view_as_sessions
         # row still counts when it says read-only, never the other way.
-        user["view_as_read_only"] = bool(session_read_only) or _view_as_read_only(conn, token)
         user["acting_admin"] = acting_admin["username"] if acting_admin else None
         user["acting_admin_role"] = "admin" if (acting_admin and acting_admin["is_admin"]) else "support"
+        # Read-only is what the session row says — or what the admin behind
+        # it is NOW: an admin demoted to support keeps no writable view
+        # (re-audit 10/20/26 R7-06; the row was the only source).
+        user["view_as_read_only"] = (bool(session_read_only) or _view_as_read_only(conn, token)
+                                     or user["acting_admin_role"] != "admin")
         # The owner's grant of full control (restaurants.admin_control_until):
         # an admin (never support), in a writable view-as, before it runs out.
         user["view_as_full_control"] = False
@@ -5452,6 +5639,20 @@ def admin_set_role(user_id: int, role: str, acting_user_id: int = None, db_path:
         conn.close()
 
 
+def end_view_as_opened_by(admin_id: int, db_path: str = DB_PATH) -> int:
+    """End every view-as session this admin or support login opened
+    (re-audit 10/20/26 R7-06). Returns the sessions ended."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("DELETE FROM sessions WHERE acting_admin_id=?", (admin_id,)).rowcount or 0
+        conn.commit()
+        return n
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()
+
+
 def end_login_access(user_id: int, db_path: str = DB_PATH) -> dict:
     """End every way one login is signed in: its sessions (web, phone, staff
     PIN) and the devices it remembered for two-factor. Deactivate, and an
@@ -5459,6 +5660,15 @@ def end_login_access(user_id: int, db_path: str = DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         s = conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,)).rowcount or 0
+        # The view-as sessions this login opened too (re-audit 10/20/26
+        # R7-06): their user_id is the owner's, the admin only
+        # acting_admin_id, so "sign out everywhere" on a compromised admin or
+        # support login left every view it had open — a token lifted from a
+        # phone included — working for VIEW_AS_HOURS.
+        try:
+            s += conn.execute("DELETE FROM sessions WHERE acting_admin_id=?", (user_id,)).rowcount or 0
+        except sqlite3.OperationalError:
+            pass
         try:
             d = conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (user_id,)).rowcount or 0
         except sqlite3.OperationalError:
@@ -6205,11 +6415,13 @@ def login_required(f):
         moved = _tab_location_moved(user)
         if moved:
             return moved
+        # The view runs inside this login's in-flight share of the request
+        # threads (re-audit 10/20/26 R7-02; request_limits.run_counted).
         if view_as and request.method not in _SAFE_METHODS:
-            return _run_view_as_write(f, args, kwargs, user, view_as)
+            return _rl.run_counted(user, lambda: _run_view_as_write(f, args, kwargs, user, view_as))
         if view_as:
             record_view_as_read(view_as)
-        return f(*args, **kwargs, current_user=user)
+        return _rl.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
@@ -6365,6 +6577,124 @@ def reauth_refusal(user=None, minutes: int = RECENT_AUTH_MINUTES):
                        error="Enter your password again to do this."), 403
 
 
+# ── step-up for an account holder's own security changes (R7-03) ───────────
+#
+# Blind re-audit 10/20/26 R7-03: a stolen owner session (a phone left signed
+# in, a shared office browser) or an admin's writable view-as could invite a
+# co-owner, revoke the real owner, turn 2FA off and mint backup codes — and
+# nothing in that chain asked for a password. These ask for it: the session's
+# password typed within RECENT_AUTH_MINUTES (at sign-in, or again through
+# POST /api/account/reauth | /mobile/api/account/reauth), or a sign-in that
+# minutes old by any method (a Google, Apple or passkey sign-in is a fresh
+# authentication too, and such a login may have no password it knows). A
+# view-as never passes: the account holder's security is theirs alone.
+
+ACCOUNT_REAUTH_MAX_MISSES = 5
+VIEW_AS_SECURITY_MESSAGE = "Sign-in security is the account holder's to change, not in view-as."
+
+
+def _session_is_fresh(user, minutes: int = RECENT_AUTH_MINUTES) -> bool:
+    born = _parse_utc((user or {}).get("session_created_at"))
+    if born is None:
+        return False
+    from datetime import timedelta
+    age = datetime.utcnow() - born
+    return timedelta(minutes=-1) <= age <= timedelta(minutes=minutes)
+
+
+def account_step_up_ok(user, minutes: int = RECENT_AUTH_MINUTES) -> bool:
+    """Whether this (non-view-as) session proved itself in the window."""
+    if not user or user.get("acting_admin") or user.get("acting_admin_id"):
+        return False
+    return reauth_is_recent(user, minutes) or _session_is_fresh(user, minutes)
+
+
+def account_step_up_refusal(user, minutes: int = RECENT_AUTH_MINUTES):
+    """None when `user` may make an account-security change now, else the
+    (payload, status) refusal: 403 {view_as} in a view-as, else 403
+    {reauth_required, reauth_url, window_minutes}. Both clients answer the
+    second by asking for the password, posting it to reauth_url and sending
+    the change again."""
+    if user and (user.get("acting_admin") or user.get("acting_admin_id")):
+        return {"ok": False, "error": VIEW_AS_SECURITY_MESSAGE, "view_as": True}, 403
+    if account_step_up_ok(user, minutes):
+        return None
+    try:
+        mobile = request.path.startswith("/mobile/")
+    except Exception:
+        mobile = False
+    return {"ok": False, "reauth_required": True,
+            "reauth_url": "/mobile/api/account/reauth" if mobile else "/api/account/reauth",
+            "window_minutes": minutes,
+            "error": "Enter your password again to do this. Signed in with Google or Apple? "
+                     "Sign out and back in, then do it within 15 minutes."}, 403
+
+
+def account_reauth(user, password: str, ip: str = None):
+    """POST /api/account/reauth and its app twin: the account holder types
+    the password again, and this session may make security changes for
+    RECENT_AUTH_MINUTES. Five wrong passwords on one session in 15 minutes
+    end the session (the admin step-up's rule). (payload, status)."""
+    if user and (user.get("acting_admin") or user.get("acting_admin_id")):
+        return {"ok": False, "error": VIEW_AS_SECURITY_MESSAGE, "view_as": True}, 403
+    token = current_session_token()
+    if not token or not user:
+        return {"ok": False, "session_expired": True, "error": "Your session expired — please log in again."}, 401
+    import security as _sec_ar
+    key = "reauth:" + hash_session_token(token)[:24]
+    if not password_matches(user["id"], password or ""):
+        misses = _sec_ar.record_reauth_miss(key, ip)
+        if misses >= ACCOUNT_REAUTH_MAX_MISSES:
+            delete_session(token)
+            return {"ok": False, "session_expired": True,
+                    "error": "Too many wrong passwords — sign in again."}, 401
+        return {"ok": False, "error": "That password isn't right."}, 403
+    _sec_ar.clear_reauth_misses(key)
+    mark_reauthenticated(token)
+    return {"ok": True, "valid_minutes": RECENT_AUTH_MINUTES}, 200
+
+
+def account_holder_emails(restaurant_id, exclude_user_id=None, db_path: str = DB_PATH) -> list:
+    """The active account holders' (owner, co-owner) own addresses at one
+    restaurant — who hears about a security change there."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT LOWER(TRIM(email)) AS e FROM users WHERE restaurant_id=? AND is_active=1 AND is_admin=0 "
+            "AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') AND id != ? AND email LIKE '%@%' "
+            "AND email NOT LIKE '%@staff.invalid'", (restaurant_id, exclude_user_id or -1)).fetchall()
+    finally:
+        conn.close()
+    return [r["e"] for r in rows if r["e"]]
+
+
+def notify_account_holders(restaurant_id, kind: str, detail: str = None, exclude_user_id=None,
+                           db_path: str = DB_PATH) -> int:
+    """emails.send_security_notice_email to every account holder at the
+    restaurant (R7-03: a principal invited or promoted, 2FA turned off, new
+    backup codes). Never raises; returns the sends that went."""
+    sent = 0
+    try:
+        import emails
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        name = getattr(r, "name", "") or "your restaurant"
+        tz = getattr(r, "timezone", None)
+        targets = account_holder_emails(restaurant_id, exclude_user_id=exclude_user_id, db_path=db_path)
+        owner_email = (getattr(r, "owner_email", "") or "").strip().lower()
+        if owner_email and "@" in owner_email and owner_email not in targets:
+            targets.append(owner_email)
+        for to in targets:
+            res = emails.send_security_notice_email(to, name, kind, detail=detail, tz=tz,
+                                                    restaurant_id=restaurant_id)
+            sent += 1 if getattr(res, "ok", bool(res)) else 0
+    except Exception as e:
+        import logging as _lg_nah
+        _lg_nah.getLogger(__name__).warning("security notice %s for restaurant %s failed: %s",
+                                            kind, restaurant_id, e)
+    return sent
+
+
 def recent_auth_required(minutes: int = RECENT_AUTH_MINUTES):
     """Step-up for a sensitive admin action (owner decision, 9/29/26):
     refused with 403 {reauth_required: true} unless this session's password
@@ -6487,11 +6817,13 @@ def mobile_login_required(f):
             record_view_as_write(view_as, 403)
             from flask import jsonify as _jsonify_mvr
             return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
+        # The view runs inside this login's in-flight share of the request
+        # threads (re-audit 10/20/26 R7-02; request_limits.run_counted).
         if view_as and request.method not in _SAFE_METHODS:
-            return _run_view_as_write(f, args, kwargs, user, view_as)
+            return _rl.run_counted(user, lambda: _run_view_as_write(f, args, kwargs, user, view_as))
         if view_as:
             record_view_as_read(view_as)
-        return f(*args, **kwargs, current_user=user)
+        return _rl.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
@@ -6583,22 +6915,42 @@ def remembered_device_ok(user: dict, token: str, db_path: str = DB_PATH) -> bool
                              db_path=db_path, principal=principal)
 
 
-def get_trusted_devices(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
+def get_trusted_devices(restaurant_id: int, db_path: str = DB_PATH, user_id: int = None) -> list[dict]:
+    """The restaurant's remembered devices; with `user_id`, only that
+    login's own (a teammate's view — re-audit 10/20/26 R7-25)."""
     conn = get_conn(db_path)
-    rows = conn.execute("""
-        SELECT id, label, created_at, last_used_at, expires_at FROM trusted_devices
-        WHERE restaurant_id=? AND expires_at > datetime('now') ORDER BY created_at DESC, id DESC
-    """, (restaurant_id,)).fetchall()
+    sql = ("SELECT id, label, created_at, last_used_at, expires_at FROM trusted_devices "
+           "WHERE restaurant_id=? AND expires_at > datetime('now')")
+    args = [restaurant_id]
+    if user_id is not None:
+        sql += " AND user_id=?"
+        args.append(user_id)
+    rows = conn.execute(sql + " ORDER BY created_at DESC, id DESC", tuple(args)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def revoke_trusted_device(restaurant_id: int, device_id: int, db_path: str = DB_PATH) -> bool:
+def revoke_trusted_device(restaurant_id: int, device_id: int, db_path: str = DB_PATH,
+                          user_id: int = None) -> bool:
     conn = get_conn(db_path)
-    cur = conn.execute("DELETE FROM trusted_devices WHERE id=? AND restaurant_id=?", (device_id, restaurant_id))
+    if user_id is not None:
+        cur = conn.execute("DELETE FROM trusted_devices WHERE id=? AND restaurant_id=? AND user_id=?",
+                           (device_id, restaurant_id, user_id))
+    else:
+        cur = conn.execute("DELETE FROM trusted_devices WHERE id=? AND restaurant_id=?", (device_id, restaurant_id))
     conn.commit()
     conn.close()
     return (cur.rowcount or 0) > 0
+
+
+def revoke_own_trusted_devices(restaurant_id: int, user_id: int, db_path: str = DB_PATH) -> int:
+    """A teammate's "forget all my devices": that login's own only — never
+    the account holder's, never the restaurant's legacy slot (R7-25)."""
+    conn = get_conn(db_path)
+    cur = conn.execute("DELETE FROM trusted_devices WHERE restaurant_id=? AND user_id=?", (restaurant_id, user_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount or 0
 
 
 def revoke_all_trusted_devices(restaurant_id: int, db_path: str = DB_PATH):
@@ -6641,9 +6993,10 @@ def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
     conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE token IN (?, ?)",
                  (hash_session_token(token), token))
     user = _sign_out_everywhere(conn, user_id)
+    suspended = _suspend_recent_principals(conn, user) if user else []
     conn.commit()
     conn.close()
-    return dict(user) if user else None
+    return _reported(user, suspended, db_path)
 
 
 def report_not_me(user_id: int, db_path: str = DB_PATH) -> dict | None:
@@ -6654,15 +7007,70 @@ def report_not_me(user_id: int, db_path: str = DB_PATH) -> dict | None:
     The login's unused email links are spent with it: one report. Returns
     the user row, or None for an unknown login."""
     conn = get_conn(db_path)
+    suspended = []
     try:
         user = _sign_out_everywhere(conn, int(user_id))
         if user:
             conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE user_id=? AND used_at IS NULL",
                          (int(user_id),))
+            suspended = _suspend_recent_principals(conn, user)
         conn.commit()
     finally:
         conn.close()
-    return dict(user) if user else None
+    return _reported(user, suspended, db_path)
+
+
+NOT_ME_WINDOW_DAYS = 7
+
+
+def _suspend_recent_principals(conn, user) -> list:
+    """'This wasn't me' also reaches what a stolen session may have left
+    behind (re-audit 10/20/26 R7-03): an account-holder login (co-owner or
+    owner) created at the reporter's restaurant in the last NOT_ME_WINDOW_DAYS
+    and after the reporter's own login is suspended — deactivated, signed out
+    everywhere, its remembered devices forgotten. Older account holders are
+    never touched. Returns [{id, username, email}] for the record. The
+    caller commits."""
+    rid = user["restaurant_id"]
+    if not rid:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT id, username, email FROM users WHERE restaurant_id=? AND id != ? AND is_active=1 "
+            "AND is_admin=0 AND COALESCE(NULLIF(role,''),'client') IN ('client','owner') "
+            "AND created_at >= datetime('now', ?) AND created_at > ?",
+            (rid, user["id"], f"-{NOT_ME_WINDOW_DAYS} days", user["created_at"] or "")).fetchall()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        conn.execute("UPDATE users SET is_active=0 WHERE id=? AND restaurant_id=?", (r["id"], rid))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (r["id"],))
+        try:
+            conn.execute("DELETE FROM trusted_devices WHERE user_id=?", (r["id"],))
+        except sqlite3.OperationalError:
+            pass
+        out.append({"id": r["id"], "username": r["username"], "email": r["email"]})
+    return out
+
+
+def _reported(user, suspended, db_path):
+    """The report's answer: the reporting login's row, with
+    `suspended_logins` (usernames) — and, when any were, one activity line the
+    owner reads in Account → Security."""
+    if not user:
+        return None
+    out = dict(user)
+    out["suspended_logins"] = [s["username"] for s in suspended]
+    if suspended:
+        try:
+            from models import log_event
+            log_event(user["restaurant_id"], "principal_logins_suspended",
+                      {"logins": [s["username"] for s in suspended], "reported_by": user["username"]},
+                      db_path=db_path)
+        except Exception:
+            pass
+    return out
 
 
 def _sign_out_everywhere(conn, user_id):
@@ -6692,6 +7100,73 @@ def clear_must_reset_password(user_id: int, db_path: str = DB_PATH):
     conn.execute("UPDATE users SET must_reset_password=0 WHERE id=?", (user_id,))
     conn.commit()
     conn.close()
+
+
+# ── an email change, confirmed at the new address (R7-17) ────────────────────
+#
+# Blind re-audit 10/20/26 R7-17: the current password alone moved a login's
+# email — and an account holder's restaurants.owner_email, its 2FA email —
+# so a password holder could redirect resets and sign-in codes to an address
+# of their own. The change now waits on a 6-digit code sent to the new
+# address (15 minutes, 5 tries, stored hashed); the old address is still told
+# once it is done.
+EMAIL_CHANGE_MINUTES = 15
+EMAIL_CHANGE_MAX_TRIES = 5
+
+
+def _email_change_hash(user_id, email, code) -> str:
+    import hmac as _h, hashlib as _hl
+    return _h.new(_pending_key(), f"email-change:{int(user_id)}:{email}:{code}".encode(), _hl.sha256).hexdigest()
+
+
+def start_email_change(user_id: int, new_email: str, db_path: str = DB_PATH) -> str:
+    """Record `new_email` as this login's pending address and return the
+    code to send THERE. A new request replaces an older one."""
+    code = f"{secrets.randbelow(1000000):06d}"
+    email = (new_email or "").strip().lower()
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE users SET email_change_pending=?, email_change_code=?, email_change_attempts=0, "
+                     "email_change_expires=datetime('now', ?) WHERE id=?",
+                     (email, _email_change_hash(user_id, email, code), f"+{EMAIL_CHANGE_MINUTES} minutes",
+                      user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return code
+
+
+def finish_email_change(user_id: int, new_email: str, code: str, db_path: str = DB_PATH) -> str:
+    """'ok' | 'wrong' | 'expired' | 'missing' for the code typed for the
+    pending change to `new_email`. 'ok' clears the pending change (the caller
+    then makes it); the EMAIL_CHANGE_MAX_TRIES-th wrong code ends it."""
+    import hmac as _h
+    email = (new_email or "").strip().lower()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT email_change_pending, email_change_code, email_change_attempts, "
+                           "(email_change_expires < datetime('now')) AS stale FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+        if not row or not row["email_change_pending"] or row["email_change_pending"] != email:
+            return "missing"
+        if row["stale"]:
+            return "expired"
+        if not _h.compare_digest(row["email_change_code"] or "",
+                                 _email_change_hash(user_id, email, (code or "").strip())):
+            tries = int(row["email_change_attempts"] or 0) + 1
+            if tries >= EMAIL_CHANGE_MAX_TRIES:
+                conn.execute("UPDATE users SET email_change_pending=NULL, email_change_code=NULL, "
+                             "email_change_expires=NULL, email_change_attempts=0 WHERE id=?", (user_id,))
+            else:
+                conn.execute("UPDATE users SET email_change_attempts=? WHERE id=?", (tries, user_id))
+            conn.commit()
+            return "wrong"
+        conn.execute("UPDATE users SET email_change_pending=NULL, email_change_code=NULL, "
+                     "email_change_expires=NULL, email_change_attempts=0 WHERE id=?", (user_id,))
+        conn.commit()
+        return "ok"
+    finally:
+        conn.close()
 
 
 def start_recovery_email(user_id: int, email: str, db_path: str = DB_PATH) -> str:

@@ -311,20 +311,26 @@ def test_a_raw_restaurant_writer_bumps_the_row_version(app, path, monkeypatch):
     from auth_routes import auth_bp
     app.register_blueprint(auth_bp)
     monkeypatch.setattr(emails, "send_email_changed_email", lambda *a, **k: None)
+    # The change waits on a code sent to the new address (re-audit 10/20/26 R7-17).
+    codes = []
+    monkeypatch.setattr(emails, "send_email_change_code",
+                        lambda to, code, restaurant_id=None: codes.append(code) or emails.SendResult(True))
     rid = _restaurant()
     _uid, token = _owner(rid)
     before = _row_version(rid)
 
-    if path.startswith("/mobile"):
-        resp = app.test_client().post(path, headers={"Authorization": f"Bearer {token}"},
-                                      json={"new_email": "new@x.test", "current_password": "correct-horse-1"})
-    else:
+    def post(body):
+        if path.startswith("/mobile"):
+            return app.test_client().post(path, headers={"Authorization": f"Bearer {token}"}, json=body)
         # auth_bp's JSON posts carry their own double-submit CSRF check
         # (SEC-21), so the web half sends the token a browser would.
         web = _web(app, token)
         web.set_cookie("csrf_js", "edge-settings-csrf")
-        resp = web.post(path, json={"new_email": "new@x.test", "current_password": "correct-horse-1"},
-                        headers={"X-CSRF": "edge-settings-csrf"})
+        return web.post(path, json=body, headers={"X-CSRF": "edge-settings-csrf"})
+
+    body = {"new_email": "new@x.test", "current_password": "correct-horse-1"}
+    assert post(body).get_json()["verify_required"] is True
+    resp = post(dict(body, code=codes[-1]))
     assert resp.get_json()["ok"] is True
     assert get_restaurant(rid).owner_email == "new@x.test"
     assert _row_version(rid) > before

@@ -204,10 +204,42 @@ def test_google_authorize_returns_url_with_signed_state(client, db_path, monkeyp
     assert "accounts.google.com" in body["url"]
     assert "mobile-callback" in body["url"] or "redirect_uri=" in body["url"]
 
-    from gmb import verify_mobile_state
+    # The state names the login that started it, not only the restaurant
+    # (re-audit 10/20/26 R7-16).
+    from gmb import verify_bound_state, verify_mobile_state
     import urllib.parse
     state = urllib.parse.parse_qs(urllib.parse.urlparse(body["url"]).query)["state"][0]
-    assert verify_mobile_state(state) == rid
+    got = verify_bound_state(state)
+    assert got is not None and got[0] == rid and got[1].startswith("u")
+    assert verify_mobile_state(state) is None
+
+
+def test_google_mobile_callback_saves_nothing_until_the_login_confirms(app, client, db_path, monkeypatch):
+    """R7-16: the callback seals the result; only the login that started
+    the flow, at its restaurant, saves it."""
+    import gmb
+    app.register_blueprint(auth_routes.auth_bp)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(gmb, "exchange_code", lambda code, redirect_uri=None: {
+        "access_token": "acc-tok", "refresh_token": "ref-tok", "expires_in": 3600})
+    monkeypatch.setattr(gmb, "find_gmb_location", lambda tok, place: {"ok": True, "account": "a1", "location": "l1"})
+    rid = _restaurant(db_path, google_place_id="place-1")
+    token = _login(client, db_path, rid)
+    import urllib.parse
+    url = client.get("/mobile/api/connections/google/authorize", headers=_auth_headers(token)).get_json()["url"]
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    r = client.get("/auth/google/mobile-callback?code=c&state=" + urllib.parse.quote(state))
+    loc = r.headers["Location"]
+    assert loc.startswith("cavnarai://gmb-callback?status=confirm&ticket=")
+    assert not get_restaurant(rid, db_path=db_path).gmb_refresh_token
+    ticket = urllib.parse.unquote(loc.split("ticket=", 1)[1])
+    ok = client.post("/mobile/api/connections/google/confirm", headers=_auth_headers(token), json={"ticket": ticket})
+    assert ok.get_json()["ok"] is True
+    assert get_restaurant(rid, db_path=db_path).gmb_location_id == "l1"
+    # A restaurant-only state is not accepted any more.
+    legacy = gmb.sign_mobile_state(rid)
+    r = client.get("/auth/google/mobile-callback?code=c&state=" + urllib.parse.quote(legacy))
+    assert "status=error" in r.headers["Location"]
 
 
 def test_disconnect_google_clears_tokens(client, db_path):

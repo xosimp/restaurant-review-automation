@@ -1937,6 +1937,9 @@ UNREADABLE_OK = {
     ("ReviewsListViewModel.swift", "quickApprove"): "a swipe's approve is bulkApproveBodies([review]) - the same "
                                                     "BulkApproveBody (review_ids, limit, review_hashes) the bulk "
                                                     "approve sends, pinned to one reply (re-audit 10/8/26 H1)",
+    ("APIClient.swift", "stepUpAndResend"): "the step-up posts {password} (ReauthBody) to the route the server "
+                                             "named in reauth_url — /mobile/api/account/reauth (re-audit "
+                                             "10/20/26 R7-03)",
     ("PendingWriteQueue.swift", "drain"): "the offline queue replays the path, method and body it was given",
     ("PendingWriteQueue.swift", "enqueue"): "the offline queue replays the path, method and body it was given",
     ("TaskSheetsScreen.swift", "add"): "the line's fields are TSLineForm.save()'s [String: String] literal "

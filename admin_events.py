@@ -498,6 +498,65 @@ def _target_str(target):
     return str(target)[:160]
 
 
+def _status_of(resp) -> int:
+    if isinstance(resp, tuple):
+        for part in resp[1:]:
+            if isinstance(part, int):
+                return part
+        resp = resp[0]
+    return int(getattr(resp, "status_code", 200) or 200)
+
+
+def audited(action, snapshot=None):
+    """Decorator for an admin write that records itself through the one
+    typed call, record_admin_action (blind re-audit 10/20/26 R7-13: create
+    client, the RPOWER saves, the status banner, staff notes and
+    availability, uploads, templates and the changelog were in the trail
+    only as the generic request row). Goes innermost, under admin_required
+    (and the step-up), so a refused request records nothing here.
+
+    The row names the actor, the route's ids as the target, the restaurant
+    when the route takes `restaurant_id`, the names of the fields sent (never
+    their values — a token or a note is not copied into the audit), the
+    result by status, and `snapshot(kwargs)` before and after when given (a
+    dict of the state the write changes; secrets are redacted by key name
+    as always). Never raises into the route."""
+    def deco(f):
+        import functools
+
+        @functools.wraps(f)
+        def wrapped(*args, **kwargs):
+            before = None
+            if snapshot is not None:
+                try:
+                    before = snapshot(kwargs)
+                except Exception:
+                    before = None
+            resp = f(*args, **kwargs)
+            try:
+                from flask import request
+                user = kwargs.get("current_user") or {}
+                ids = {k: v for k, v in kwargs.items() if k != "current_user" and isinstance(v, (int, str))}
+                body = request.get_json(silent=True) if request.is_json else None
+                sent = sorted(body) if isinstance(body, dict) else sorted(request.form.keys() | request.files.keys())
+                after = {"fields": sent}
+                if snapshot is not None:
+                    try:
+                        after.update(snapshot(kwargs) or {})
+                    except Exception:
+                        pass
+                status = _status_of(resp)
+                record_admin_action(user, action, restaurant_id=kwargs.get("restaurant_id"),
+                                    target=ids or None, before=before, after=after,
+                                    result="ok" if status < 400 else ("refused" if status < 500 else "error"),
+                                    summary=f"{user.get('username') or 'admin'} {action} ({status})")
+            except Exception:
+                pass
+            return resp
+        return wrapped
+    return deco
+
+
 def record_admin_action(actor, action, restaurant_id=None, target=None, before=None, after=None,
                         result="ok", summary=None, db_path=None):
     """One typed admin action in the audit trail (source 'admin').

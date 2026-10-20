@@ -6467,6 +6467,12 @@ def _do_request_account_deletion(rid, current_user=None):
     if current_user is not None and not is_principal(current_user):
         return {"ok": False, "owner_only": True,
                 "error": "Only the account owner can ask to close the account."}, 403
+    # The password again, never in view-as (re-audit 10/20/26 R7-03).
+    if current_user is not None:
+        from auth import account_step_up_refusal
+        refused = account_step_up_refusal(current_user)
+        if refused:
+            return refused
     from models import request_account_deletion, get_deletion_requested_at
     restaurant = get_restaurant(rid)
     if not restaurant:

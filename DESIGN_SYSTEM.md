@@ -1413,6 +1413,8 @@ nothing sits over the text. On Home's status line a figure and its unit
 (`.nt`: "$6,150" + small "net") share one baseline, and the Report link sits
 on its own row (`.go`), never after a divider.
 
+**Step-up prompt (re-audit 10/20/26, R7-03).** A sign-in security change refused 403 `{reauth_required}` asks for the password once, then sends the change again. Web: `#stepup-modal`, a `cmodal so-modal` built by the dashboard's fetch wrapper — kicker "Security", "Confirm it’s you", one sentence with the window, an `.ac-input` password field, the error inline (`.load-err`), Cancel / Confirm. iOS: `StepUpPrompt` — a system alert with one secure field (no SwiftUI pattern can appear over whatever sheet started the change from the networking actor), titled "Confirm it’s you", Cancel / Confirm, the server's error above the sentence on a retry. Never a second password UI on a screen.
+
 **Passkey offer (9/30/26).** Right after a password sign-in, a login with no
 passkey is offered one: the browser's own quiet prompt where it supports
 conditional create, else one `so-modal` dialog — kicker "Faster sign-in",

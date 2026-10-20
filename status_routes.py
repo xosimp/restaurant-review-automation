@@ -108,6 +108,7 @@ def _json_body():
 
 @status_bp.route("/admin/status/update", methods=["POST"])
 @admin_required
+@_admin_events.audited("status.service_set")
 def admin_update_status(current_user):
     data    = _json_body()
     key     = data.get("service_key", "").strip()
@@ -133,6 +134,7 @@ def _text(data, key, default=""):
 
 @status_bp.route("/admin/status/incident", methods=["POST"])
 @admin_required
+@_admin_events.audited("status.incident_opened")
 def admin_create_incident(current_user):
     data     = _json_body()
     title    = _text(data, "title")
@@ -156,6 +158,7 @@ def admin_create_incident(current_user):
 
 @status_bp.route("/admin/status/incident/<int:inc_id>/update", methods=["POST"])
 @admin_required
+@_admin_events.audited("status.incident_updated")
 def admin_update_incident(inc_id, current_user):
     """Post an update to an incident, or resolve it (status "resolved").
     It existed with no caller and no validation: an unknown id wrote an
@@ -176,6 +179,7 @@ def admin_update_incident(inc_id, current_user):
 
 @status_bp.route("/admin/status/incident/<int:inc_id>/resolve", methods=["POST"])
 @admin_required
+@_admin_events.audited("status.incident_resolved")
 def admin_resolve_incident(inc_id, current_user):
     """Resolve an incident, with an optional closing message."""
     data = _json_body()

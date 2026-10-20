@@ -540,7 +540,7 @@ def test_the_settings_read_carries_the_save_contract(app, db_path):
     assert body["settings"]["voice_notes"] == "warm" and "weekly_revenue_target" not in body["settings"]
     assert set(body["settings"]) <= set(body["fields"]) and body["save_url"] == f"/admin/client-settings/{rid}"
     assert set(body["step_up_fields"]) == {"billing_status", "module_reviews", "module_labor", "module_inventory",
-                                           "module_marketing", "owner_email"}
+                                           "module_marketing", "owner_email", "owner_phone"}   # R7-13
     assert any(o["value"] == "America/Denver" for o in body["choices"]["timezone"])
     # A save under the contract it describes goes through.
     r = _post(c, f"/admin/client-settings/{rid}", {"voice_notes": "warmer", "expected_version": body["version"],

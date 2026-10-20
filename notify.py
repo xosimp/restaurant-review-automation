@@ -439,6 +439,29 @@ def _own_guest_service(restaurant_id):
         return None
 
 
+# Verification codes to one number in an hour, sign-in and staff alike
+# (R7-09): every password sign-in sends one, and email codes were already
+# capped at 8 an hour per address (emails.FLOOD_LIMITS) while texts were not.
+OTP_SMS_PER_NUMBER_HOURLY = 8
+OTP_NUMBER_CAP_ERROR_CODE = "cavnar_otp_number_cap"
+
+
+def _otp_number_capped(phone: str, db_path: str = None) -> bool:
+    """True when this number was sent OTP_SMS_PER_NUMBER_HOURLY codes in the
+    last hour (counted on sms_log by the number's hash). Fails open."""
+    try:
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM sms_log WHERE use_case='otp' AND to_hash=? "
+                             "AND status NOT IN ('blocked', 'not_configured') "
+                             "AND created_at >= datetime('now', '-1 hour')", (_sms_hash(phone),)).fetchone()[0]
+        finally:
+            conn.close()
+        return int(n or 0) >= OTP_SMS_PER_NUMBER_HOURLY
+    except Exception:
+        return False
+
+
 def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validity_seconds: int = None,
                     restaurant_id: int = None, db_path: str = None) -> SmsResult:
     """Send one SMS via Twilio and return what happened (SmsResult), with an
@@ -485,11 +508,19 @@ def send_sms_result(to_phone: str, message: str, use_case: str = "alert", validi
             # The showcase demo (Halsted & Rye) never texts anyone.
             return _done(SmsResult(False, status="blocked", error="demo store: texts are never sent",
                                    permanent=True))
-    if use_case != "otp" and not sms_country_allowed(phone):
+    # Every text, a verification code included (re-audit 10/20/26 R7-09: a
+    # sign-in code to a premium-rate number abroad, looped by anyone with the
+    # owner's password, is toll fraud billed to the platform).
+    if not sms_country_allowed(phone):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_COUNTRY_ERROR_CODE,
                           "a country Cavnar AI does not text", db_path=db_path)
         return _done(SmsResult(False, status="blocked", error_code=SMS_COUNTRY_ERROR_CODE,
                                error="a country Cavnar AI does not text", permanent=True, log_id=log_id))
+    if use_case == "otp" and _otp_number_capped(phone, db_path=db_path):
+        log_id = _log_sms(rid, use_case, phone, "blocked", OTP_NUMBER_CAP_ERROR_CODE,
+                          "too many codes to this number this hour", db_path=db_path)
+        return _done(SmsResult(False, status="blocked", error_code=OTP_NUMBER_CAP_ERROR_CODE,
+                               error="too many codes to this number this hour", permanent=True, log_id=log_id))
     if use_case != "otp" and sms_stopped_phones([to_phone], db_path=db_path or DB_PATH):
         log_id = _log_sms(rid, use_case, phone, "blocked", SMS_STOP_ERROR_CODE,
                           "the number replied STOP", db_path=db_path)

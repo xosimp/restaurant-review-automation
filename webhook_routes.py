@@ -466,11 +466,46 @@ _PAY_PAGE = ("<!doctype html><meta charset='utf-8'><meta name='viewport' content
              "sans-serif;max-width:480px;margin:12vh auto;padding:24px;color:#0e0c0a\"><h2>%s</h2><p>%s</p></div>")
 
 
+def _pay_signin_redirect(rid, token, period):
+    """None when this browser is signed in as an account holder of `rid`,
+    else a redirect to sign in and come back (blind re-audit 10/20/26 R7-08).
+
+    A pay token is fixed per restaurant and carried by every billing email
+    for life, so a forwarded or leaked email opened the Stripe Billing Portal
+    — change the card, read the invoices — for anyone, indefinitely. What
+    opens the portal (or another payer's) now needs the account holder
+    signed in; a first checkout for a client who has not paid still opens
+    from the link alone."""
+    try:
+        import auth
+        from permissions import is_principal
+        user = auth.get_current_user()
+    except Exception:
+        user = None
+    if user and not (user.get("acting_admin") or user.get("acting_admin_id")) and is_principal(user):
+        if int(user.get("restaurant_id") or 0) == int(rid) or int(user.get("base_restaurant_id") or 0) == int(rid):
+            return None
+        conn = get_conn()
+        try:
+            held = conn.execute("SELECT 1 FROM memberships WHERE user_id=? AND restaurant_id=? AND is_active=1 "
+                                "AND role IN ('client', 'owner')", (user["id"], int(rid))).fetchone()
+        except Exception:
+            held = None
+        finally:
+            conn.close()
+        if held:
+            return None
+    from urllib.parse import quote
+    return redirect("/login?next=" + quote(f"/pay/{token}/{period}", safe=""))
+
+
 @webhook_bp.route("/pay/<token>/<period>")
 def pay_link_route(token, period):
     """Where every billing email's buttons go. The signed token names one
     restaurant; the link never expires, because what it opens is decided at
-    click time (MOD-BIL-5):
+    click time (MOD-BIL-5) — and anything that opens Stripe's billing pages
+    for a paying client asks the account holder to sign in first
+    (_pay_signin_redirect, R7-08):
 
       monthly / annual  a fresh Checkout Session for a client who has not paid;
       card              a Stripe Billing Portal session (update the card);
@@ -501,6 +536,9 @@ def pay_link_route(token, period):
     if payer and payer != rid:
         p = get_restaurant(payer)
         if status == "past_due" or (p and (p.billing_status or "").lower() == "past_due"):
+            signin = _pay_signin_redirect(rid, token, period)
+            if signin is not None:
+                return signin
             url = _bj.fix_payment_url(p, prefer_invoice=(period != "card"))
             if url:
                 return redirect(url)
@@ -508,6 +546,9 @@ def pay_link_route(token, period):
                        f"{name} is billed together with {_esc_pay(p.name if p else 'your group')} — "
                        "one subscription covers the group, so there is nothing to pay here."), 200
     if status == "past_due" or period in ("card", "invoice"):
+        signin = _pay_signin_redirect(rid, token, period)
+        if signin is not None:
+            return signin
         url = _bj.fix_payment_url(r, prefer_invoice=(period != "card"))
         if url:
             return redirect(url)

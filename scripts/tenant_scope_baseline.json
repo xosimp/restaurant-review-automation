@@ -4,7 +4,7 @@
  "ai_utils.py::ai_usage": 2,
  "auth.py::staff_portal_tokens": 1,
  "auth.py::two_fa_challenges": 1,
- "auth.py::users": 18,
+ "auth.py::users": 21,
  "auth_routes.py::users": 4,
  "backoffice_ap.py::bo_files": 1,
  "backoffice_ap.py::bo_invoices": 3,

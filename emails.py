@@ -444,6 +444,8 @@ _SUPPRESSION_EXEMPT = {
     "send_password_changed_email",
     "send_email_changed_email",
     "send_passkey_added_email",
+    "send_security_notice_email",
+    "send_email_change_code",
     "send_recovery_email_code",
     "send_login_notification",
 }
@@ -514,6 +516,40 @@ def esc(value) -> str:
     a model before it goes into an email body (MOD-EML-2)."""
     import html as _h
     return _h.escape("" if value is None else str(value), quote=True)
+
+
+# Mail sent in waves rather than in answer to a person (R7-10): it shares
+# RESEND_BULK_PER_SECOND (rate_bucket "resend:bulk", every process), set
+# below the Resend team's rate so the rest is the lane for security and
+# transactional mail. Security mail (_SUPPRESSION_EXEMPT) and operator mail
+# never wait on it.
+BULK_EMAIL_TYPES = frozenset({
+    "guest_newsletter", "guest_review_request", "digest", "owner_digest", "send_morning_brief",
+    "send_monthly_summary_email", "send_quarterly_summary", "send_value_recap_email", "while_away",
+    "staff_announcement", "send_dsr_email", "send_onboarding_day2", "send_onboarding_day7",
+    "send_onboarding_day30", "send_onboarding_nudge", "send_reactivation_email", "referral",
+})
+RESEND_BULK_PER_SECOND_DEFAULT = 1.5
+BULK_SLOT_MAX_WAIT = 30.0
+
+
+def _pace_bulk(email_type) -> None:
+    """Take a bulk-lane slot for a bulk type (waits up to BULK_SLOT_MAX_WAIT
+    seconds; a bucket that cannot be reached, or a wait that runs out, sends
+    anyway — pacing is to leave room, never to drop mail)."""
+    if email_type not in BULK_EMAIL_TYPES:
+        return
+    try:
+        rate = float(os.environ.get("RESEND_BULK_PER_SECOND") or RESEND_BULK_PER_SECOND_DEFAULT)
+    except ValueError:
+        rate = RESEND_BULK_PER_SECOND_DEFAULT
+    if rate <= 0 or not _resend_key():
+        return
+    try:
+        import rate_bucket
+        rate_bucket.wait_for("resend:bulk", rate, burst=max(1.0, rate * 2), max_wait=BULK_SLOT_MAX_WAIT)
+    except Exception as e:
+        log.warning("bulk email pacing unavailable: %s", e)
 
 
 def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
@@ -610,6 +646,13 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
                 recipients, to_email = kept, kept[0]
         except Exception as e:
             log.warning("suppression check failed for %s: %s", to_email, e)
+
+    # The bulk lane (re-audit 10/20/26 R7-10): newsletters, digests, briefs,
+    # summaries and onboarding mail take a slot from one shared bucket below
+    # Resend's team rate, so a 20,000-contact newsletter or Monday's digest
+    # wave leaves room for sign-in codes and resets, which never wait.
+    if not operator and email_type not in _SUPPRESSION_EXEMPT:
+        _pace_bulk(email_type)
 
     # One Idempotency-Key for every attempt of THIS send, a new one for the
     # next. The loop retries timeouts and 5xx, and a timeout is often a send
@@ -819,6 +862,8 @@ FLOOD_LIMITS = {
     "send_email_changed_email": (6, 3600),
     "send_password_changed_email": (6, 3600),
     "send_passkey_added_email": (6, 3600),
+    "send_security_notice_email": (8, 3600),
+    "send_email_change_code": (6, 3600),
     "send_team_invite_email": (10, 3600),
     "digest_preview": (6, 3600),
 }
@@ -4044,6 +4089,77 @@ def send_passkey_added_email(to_email: str, restaurant_name: str, passkey_name: 
         return not_sent("build_error", str(e)[:300])
 
 
+# Re-audit 10/20/26 (R7-01, R7-03): what happened to sign-in security that
+# the account holder should hear about whoever did it. One sender, one
+# template; `kind` picks the sentence. Each says what happened, never a
+# secret, and where to turn if it wasn't them.
+SECURITY_NOTICES = {
+    "two_factor_locked": (
+        "Sign-in codes paused on your Cavnar AI login",
+        "Someone typed too many wrong sign-in codes for your <strong>{restaurant}</strong> login, so sign-in "
+        "codes are paused for up to a day. Typing a code needs your password first.",
+        "If this was you, wait and try again, or sign in on a device you chose to remember. If it wasn&rsquo;t, "
+        "change your password now: someone has it."),
+    "principal_added": (
+        "A co-owner was added to your Cavnar AI account",
+        "{detail} now has co-owner access to <strong>{restaurant}</strong>: they can change sign-in security, "
+        "billing and the team.",
+        "If you didn&rsquo;t expect this, remove them in Account &rarr; Team and change your password."),
+    "two_fa_disabled": (
+        "Two-factor was turned off on your Cavnar AI account",
+        "Two-factor sign-in was turned off for <strong>{restaurant}</strong>{detail_by}.",
+        "If you didn&rsquo;t expect this, turn it back on in Account &rarr; Security and change your password."),
+    "backup_codes_regenerated": (
+        "New backup codes were made for your Cavnar AI account",
+        "New two-factor backup codes were made for <strong>{restaurant}</strong>{detail_by}; the old ones no "
+        "longer work.",
+        "If you didn&rsquo;t expect this, make new ones yourself in Account &rarr; Security and change your "
+        "password."),
+}
+
+
+def send_security_notice_email(to_email: str, restaurant_name: str, kind: str, detail: str = None,
+                               tz: str = None, restaurant_id: int = None) -> "SendResult":
+    """A sign-in security change, said to an account holder's own address
+    (security mail: suppression-exempt, flood-capped). `detail` is the name
+    the sentence needs (who was added, who acted) — escaped here."""
+    spec = SECURITY_NOTICES.get(kind)
+    if not spec:
+        return not_sent("nothing_to_send", f"unknown security notice {kind!r}")
+    if not _resend_key():
+        log.warning("send_security_notice_email: RESEND_API_KEY not set — nothing sent")
+        return not_sent("not_configured", "RESEND_API_KEY not set")
+    subject, line, advice = spec
+    who = esc(detail) if detail else ""
+    body = line.format(restaurant=esc(restaurant_name), detail=who or "Someone",
+                       detail_by=(f" by {who}" if who else ""))
+    now_str = security_stamp(tz)
+    b = BRAND
+    html = f"""
+    <div style="background:{b["paper"]};width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:{_SANS};max-width:480px;margin:0 auto;background:{b["paper"]};padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="{_WORDMARK}" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:{b["card"]};border-radius:10px;padding:28px 24px;border:1px solid {b["border"]}">
+        <p style="color:{b["ink"]};font-size:15px;margin:0 0 16px">{body}</p>
+        <p style="color:{b["muted"]};font-size:13px;margin:0 0 12px">{now_str}</p>
+        <p style="color:{b["muted"]};font-size:13px;margin:16px 0 0;line-height:1.6">{advice} Questions: <a href="mailto:will@cavnar.ai" style="color:{b["ember"]}">will@cavnar.ai</a>.</p>
+      </div>
+      <p style="color:{b["muted"]};font-size:11px;text-align:center;margin-top:20px"><img src="{_SEAL}" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        return deliver(email_type="send_security_notice_email", restaurant_id=restaurant_id,
+                       payload={"from": sender("client"), "to": [to_email], "subject": subject,
+                                "preheader": "If this wasn't you, change your password now.",
+                                "html": _html_document(html)})
+    except Exception as e:
+        log.warning("send_security_notice_email: request to Resend failed: %s", e)
+        return not_sent("build_error", str(e)[:300])
+
+
 def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount: float, owner_name: str = None,
                                      restaurant_id: int = None) -> "SendResult":
     """The client-facing half of a failed card charge — webhook_routes.py's
@@ -4092,6 +4208,21 @@ def send_recovery_email_code(to_email: str, code: str, restaurant_id: int = None
       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">Enter this code in the app to finish adding this address as your recovery email. It expires in 15 minutes.</p>
       <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#c84b2f;margin:0 0 20px">{code}</p>
       <p style="font-size:12px;color:#7a736a;line-height:1.6">If you didn't request this, you can ignore it.</p>
+    """)
+
+
+def send_email_change_code(to_email: str, code: str, restaurant_id: int = None) -> "SendResult":
+    """The code that confirms a login's NEW sign-in email (re-audit 10/20/26
+    R7-17) — sent to the new address, so a password alone can no longer move
+    a login's email (and an account holder's 2FA email) somewhere else."""
+    return _send_branded(to_email, "Confirm your new Cavnar AI sign-in email",
+                         email_type="send_email_change_code", restaurant_id=restaurant_id,
+                         preheader="Expires in 15 minutes.",
+                         inner_html=f"""
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:{BRAND["strong"]}">Confirm your new sign-in email</h2>
+      <p style="font-size:14px;color:{BRAND["body"]};line-height:1.6;margin-bottom:20px">Enter this code where you asked to change your email. It expires in 15 minutes. Your sign-in email changes only once it is entered.</p>
+      <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:{BRAND["ember"]};margin:0 0 20px">{code}</p>
+      <p style="font-size:12px;color:{BRAND["muted"]};line-height:1.6">If you didn't ask for this, ignore it — nothing changes.</p>
     """)
 
 
