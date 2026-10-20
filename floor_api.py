@@ -194,6 +194,10 @@ def shift_edit_plan(u):
     b = _body()
     out = shift_edits.plan(_rid(u), str(b.get("op") or "").lower(), b, history_id=b.get("history_id"))
     out.pop("_rows", None)
+    # One shift's cost is that person's rate (R7-24): only for pay viewers.
+    if not _sr()._sees_pay(u):
+        out["cost"] = None
+        out["pay_hidden"] = True
     return out, (200 if out.get("ok") else 400)
 
 

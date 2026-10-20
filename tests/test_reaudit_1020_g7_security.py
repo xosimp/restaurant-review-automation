@@ -702,3 +702,22 @@ def test_the_listed_admin_writes_carry_a_typed_audit_and_the_step_ups():
     assert "\"client.created\"" in ar
     import admin_routes
     assert "owner_phone" in admin_routes._SETTINGS_STEP_UP_FIELDS
+
+
+# ── R7-24: wages stay with the logins that see pay ────────────────────────
+
+def test_a_login_that_does_not_see_pay_gets_no_wage_from_the_schedule_checks(monkeypatch):
+    import inspect
+    import floor_api
+    import strategy_routes
+    src = inspect.getsource(strategy_routes._do_schedule_violations)
+    assert "sees_pay = _sees_pay(u)" in src and 'out["cost"] = None' in src
+    assert "_grr(_rid(u)) if sees_pay else {}" in src
+    assert "_sees_pay(u)" in inspect.getsource(floor_api.shift_edit_plan)
+    app = Flask(__name__)
+    monkeypatch.setattr(strategy_routes, "_may_rate", lambda u: True)
+    monkeypatch.setattr(strategy_routes, "_sees_pay", lambda u: False)
+    for sent in (14.0, 99.0):
+        with app.test_request_context("/api/people/x", method="POST", json={"pay_rate": sent}):
+            body, status = strategy_routes._do_person_set({"id": 1, "restaurant_id": 1}, "x")
+        assert status == 400 and body["error"] == "Pay is set per role in Labor → Targets & rates."
