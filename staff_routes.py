@@ -60,10 +60,22 @@ def _throttled(ip):
     Every public portal route calls this — the roster reads used to be
     unthrottled entirely, which left token guessing and roster enumeration
     with no ceiling at all."""
+    # A flood is refused in memory before it reads or writes the database
+    # (scale audit 10/19/26, SEC-08); the durable per-address budget
+    # (portal_attempts) still decides for everything under it.
+    import request_limits
+    if ip and request_limits.memory_limited(f"portal:{ip}", PORTAL_FLOOD_PER_MINUTE, 60):
+        return jsonify(ok=False,
+                       error="Too many attempts from this device. Wait a few minutes."), 429
     if portal_attempts_exceeded(ip):
         return jsonify(ok=False,
                        error="Too many attempts from this device. Wait a few minutes."), 429
     return None
+
+
+# Above the durable budget's own pace (auth.PORTAL_MAX_REQUESTS a window), so
+# it only ever turns away a flood.
+PORTAL_FLOOD_PER_MINUTE = 120
 
 
 def _token_for_native_app(data, session_token):

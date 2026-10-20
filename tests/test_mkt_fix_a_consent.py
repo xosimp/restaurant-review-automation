@@ -428,7 +428,8 @@ def test_mb4_the_per_phone_limit_is_durable(db_path, web, texts):
     rids = [_rid(db_path, name=f"Place {i}", owner_email=f"p{i}@x.test") for i in range(4)]
     codes = []
     for rid in rids:
-        ai_utils._ai_call_log.clear()
+        import request_limits
+        request_limits.reset()       # the in-memory per-IP limit (SEC-08)
         codes.append(_join(web, rid, "3125550303").status_code)
     assert codes == [200, 200, 200, 429]
     assert len(texts) == 3

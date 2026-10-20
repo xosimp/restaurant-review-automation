@@ -540,8 +540,8 @@ def test_refusals_are_branded_pages_not_bare_text(db_path, monkeypatch):
     bad = c.post("/s/nope/availability", data={"csrf_token": "t", "unavailable": "Monday"})
     assert bad.status_code == 404 and "<html" in bad.get_data(as_text=True)
     assert "didn&rsquo;t work" in bad.get_data(as_text=True)
-    import ai_utils
-    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **k: True)
+    import request_limits     # in memory since scale fix 10/19/26 (SEC-08)
+    monkeypatch.setattr(request_limits, "memory_limited", lambda *a, **k: True)
     slow = c.post(f"/s/{token}/availability", data={"csrf_token": "t", "unavailable": "Monday"})
     assert slow.status_code == 302 and slow.headers["Location"].endswith("?error=throttled")
     assert "Too many updates" in c.get(f"/s/{token}?error=throttled").get_data(as_text=True)

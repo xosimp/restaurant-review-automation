@@ -87,6 +87,71 @@ def test_sec03_a_tenant_whose_texts_draw_stops_cannot_start_a_campaign(db_path, 
     assert refused and refused["blocked"] == "stop_rate"
 
 
+def test_sec07_one_login_cannot_hold_every_request_thread():
+    import request_limits as rl
+    rl.reset()
+    t = 1000.0
+    # A dashboard open (~23 reads at once) passes.
+    assert all(rl.check("u1", 5, "/api/x", now=t) == 0 for _ in range(30))
+    # The slow routes: three at once, then one every five seconds per login.
+    heavy = [rl.check("u2", 5, "/api/morning-brief", now=t) for _ in range(4)]
+    assert heavy[:3] == [0, 0, 0] and heavy[3] > 0
+    assert rl.check("u3", 5, "/api/morning-brief", now=t) == 0, "another login has its own share"
+    # A script hammering as one login is refused before the restaurant is.
+    rl.reset()
+    refused = sum(1 for _ in range(200) if rl.check("u4", 9, "/api/x", now=t) > 0)
+    assert refused >= 100
+    assert rl.check("u5", 9, "/api/x", now=t) == 0, "its teammates still get through"
+    rl.reset()
+
+
+def test_sec07_the_decorators_answer_429_with_retry_after(monkeypatch):
+    import inspect
+    import auth
+    for dec in (auth.login_required, auth.mobile_login_required):
+        assert "session_refusal(user)" in inspect.getsource(dec)
+    import request_limits as rl
+    from flask import Flask
+    monkeypatch.setenv("REQUEST_LIMITS", "1")
+    rl.reset()
+    app = Flask(__name__)
+    user = {"id": 31, "restaurant_id": 4, "role": "owner"}
+    with app.test_request_context("/api/good-news"):
+        got = [rl.session_refusal(user) for _ in range(4)]
+    assert got[:3] == [None, None, None]
+    assert got[3].status_code == 429 and int(got[3].headers["Retry-After"]) >= 1
+    rl.reset()
+
+
+def test_sec08_public_limits_do_not_write():
+    import inspect
+    import client_api
+    import marketing_links
+    import staff_routes
+    assert "ai_rate_limited(" not in inspect.getsource(marketing_links._tap_write_allowed)
+    assert 'memory_limited(f"guestoptin:{ip}"' in inspect.getsource(client_api.guest_optin_submit)
+    assert "memory_limited(f\"portal:{ip}\"" in inspect.getsource(staff_routes._throttled)
+    import request_limits as rl
+    rl.reset()
+    assert [rl.memory_limited("k", 2, 60, now=1.0) for _ in range(3)] == [False, False, True]
+    assert rl.memory_limited("k", 2, 60, now=62.0) is False, "the window slides"
+    rl.reset()
+
+
+def test_sec08_a_bad_signature_flood_stops_writing_the_ledger(db_path):
+    import models
+    from flask import Flask
+    app = Flask(__name__)
+    with app.test_request_context("/webhooks/resend", environ_base={"REMOTE_ADDR": "198.51.100.40"}):
+        for _ in range(models.REFUSED_WEBHOOK_WRITES_PER_MINUTE + 25):
+            models.record_inbound_webhook("resend", False, reason="bad signature", db_path=db_path)
+    conn = models.get_conn(db_path)
+    row = conn.execute("SELECT * FROM inbound_webhook_health WHERE provider='resend'").fetchone()
+    conn.close()
+    counts = [v for k, v in dict(row).items() if "fail" in k and isinstance(v, int)]
+    assert counts and max(counts) == models.REFUSED_WEBHOOK_WRITES_PER_MINUTE
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api

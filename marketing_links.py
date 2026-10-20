@@ -199,11 +199,13 @@ TAP_WRITES_PER_VISITOR_PER_MINUTE = 10
 
 
 def _tap_write_allowed(token: str, visitor: str) -> bool:
-    from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"gtap:{token}", max_calls=TAP_WRITES_PER_LINK_PER_MINUTE, window_secs=60):
+    # In memory (request_limits): ai_rate_limited wrote a row for every
+    # allowed call, so the limit on a public GET's writes was itself a write
+    # (scale audit 10/19/26, SEC-08).
+    import request_limits
+    if request_limits.memory_limited(f"gtap:{token}", TAP_WRITES_PER_LINK_PER_MINUTE, 60):
         return False
-    if visitor and ai_rate_limited(f"gtapv:{visitor}", max_calls=TAP_WRITES_PER_VISITOR_PER_MINUTE,
-                                   window_secs=60):
+    if visitor and request_limits.memory_limited(f"gtapv:{visitor}", TAP_WRITES_PER_VISITOR_PER_MINUTE, 60):
         return False
     return True
 

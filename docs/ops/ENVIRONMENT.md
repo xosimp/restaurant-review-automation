@@ -88,6 +88,7 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `GUEST_EMAIL_BOUNCE_PAUSE_PCT` | `5` | The same pause for bounces (SEC-02). | guest_email.py |
 | `GUEST_SMS_FLEET_PER_SECOND` | `0` (off) | Campaign texts per second across every restaurant (`rate_bucket` `guest_sms:fleet`). Set it below the guest campaign's registered MPS: review requests and join confirmations are not paced by it, so the gap is their lane (SEC-03). | guest_marketing.py |
 | `GUEST_SMS_STOP_PAUSE_PCT` | `3` | A restaurant whose campaign texts drew more than this % STOP replies over 7 days (at least 200 sent) cannot start a new campaign until the week clears (`guest_marketing.stop_rate_pause`, SEC-03). | guest_marketing.py |
+| `REQUEST_LIMITS` | `1` | `0` turns off the per-login and per-restaurant request share (`request_limits.session_refusal`, SEC-07). | request_limits.py |
 | `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
 | `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
 | `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |

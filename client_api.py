@@ -9777,7 +9777,11 @@ def guest_optin_submit(token):
         return jsonify(ok=False, error="Not found"), 404
     from ai_utils import ai_rate_limited
     ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
-    if ai_rate_limited(f"guestoptin:{ip}", max_calls=5, window_secs=300):
+    # In memory, not ai_rate_limited: that writes a row per allowed call,
+    # and this route is public (scale audit 10/19/26, SEC-08). The durable
+    # per-phone and per-IP limits are guest_optin_requests'.
+    import request_limits as _rl_join
+    if _rl_join.memory_limited(f"guestoptin:{ip}", 5, 300):
         return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -10832,7 +10836,8 @@ def staff_availability_submit(token):
                                restaurant_name=share.get("restaurant_name") or "", **_share_page_extras()), 410
 
     ip = request.remote_addr or "unknown"   # ProxyFix-vouched, never the client's own header (SEC-3)
-    if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
+    import request_limits as _rl_avail
+    if _rl_avail.memory_limited(f"staffavail:{ip}", 20, 300):     # public: no write per call (SEC-08)
         return redirect(f"/s/{token}?error=throttled")
 
     # The one save the app uses too, when this build has it (employee audit

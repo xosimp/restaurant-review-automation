@@ -6126,6 +6126,12 @@ def login_required(f):
             if state != "ok":
                 return _second_factor_refusal(state)
         _bind_log_context(user)
+        # A fair share of the four request threads per login and restaurant
+        # (scale audit 10/19/26, SEC-07; request_limits).
+        import request_limits as _rl
+        limited = _rl.session_refusal(user)
+        if limited is not None:
+            return limited
         if _console_denied(user):
             if _wants_json_response():
                 from flask import jsonify as _jsonify_cd
@@ -6407,6 +6413,10 @@ def mobile_login_required(f):
             if state != "ok":
                 return _second_factor_refusal(state)
         _bind_log_context(user)
+        import request_limits as _rl
+        limited = _rl.session_refusal(user)
+        if limited is not None:
+            return limited
         # Same console gate as the web decorator — the iOS app ships both the
         # owner dashboard and the staff portal against this one blueprint, so
         # a PIN session must be refused here too or the whole owner API is

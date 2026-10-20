@@ -18146,6 +18146,23 @@ def email_delivery_stats(days: int = 7, restaurant_id: int = None, db_path: str 
 INBOUND_WEBHOOK_CAPTURE_MINUTES = 60
 
 
+REFUSED_WEBHOOK_WRITES_PER_MINUTE = 30
+
+
+def _refused_flood(provider) -> bool:
+    """A bad-signature flood from one address writes no more ledger rows
+    past REFUSED_WEBHOOK_WRITES_PER_MINUTE a minute (scale audit 10/19/26,
+    SEC-08) — the requests are still refused; the count already says the
+    secret is failing."""
+    try:
+        from flask import request, has_request_context
+        ip = request.remote_addr if has_request_context() else None
+    except Exception:
+        ip = None
+    import request_limits
+    return request_limits.memory_limited(f"whref:{provider}:{ip or '-'}", REFUSED_WEBHOOK_WRITES_PER_MINUTE, 60)
+
+
 def record_inbound_webhook(provider: str, verified: bool, event_type: str = None, reason: str = None,
                            db_path: str = DB_PATH) -> bool:
     """One inbound webhook request from `provider` ('resend', 'twilio',
@@ -18157,6 +18174,8 @@ def record_inbound_webhook(provider: str, verified: bool, event_type: str = None
     provider, so a rotated secret pages once, not on every retry. Never
     raises: a ledger hiccup must not change the webhook's answer."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    if not verified and _refused_flood(provider):
+        return False
     now = _dt.now(_tz.utc)
     stamp = now.strftime("%Y-%m-%d %H:%M:%S")
     try:
