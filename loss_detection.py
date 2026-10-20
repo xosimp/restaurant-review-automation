@@ -96,16 +96,18 @@ def sync(restaurant_id, days=14, db_path=DB_PATH):
                 daily.setdefault((d0.isoformat(), kind), {"amount": 0.0, "events": 0, "by_approver": {},
                                                           "by_reason": {}})
             d0 += timedelta(days=1)
-        for (day, kind), d in daily.items():
-            conn.execute(
-                "INSERT INTO pos_loss_daily (restaurant_id, business_date, kind, amount, events, "
-                "by_approver, by_reason, provider) VALUES (?,?,?,?,?,?,?,?)",
-                (restaurant_id, day, kind, round(d["amount"], 2), d["events"],
-                 json.dumps({k: dict({"amount": round(v["amount"], 2), "events": v["events"]},
-                                     **({"name": v["name"]} if v.get("name") else {}))
-                             for k, v in d["by_approver"].items()}),
-                 json.dumps({k: {"amount": round(v["amount"], 2), "events": v["events"]}
-                             for k, v in d["by_reason"].items()}), provider))
+        # One executemany (scale audit 10/19/26 DB-05): a window's days x
+        # kinds, one savepoint each on Postgres, overflowed its cache.
+        conn.executemany(
+            "INSERT INTO pos_loss_daily (restaurant_id, business_date, kind, amount, events, "
+            "by_approver, by_reason, provider) VALUES (?,?,?,?,?,?,?,?)",
+            [(restaurant_id, day, kind, round(d["amount"], 2), d["events"],
+              json.dumps({k: dict({"amount": round(v["amount"], 2), "events": v["events"]},
+                                  **({"name": v["name"]} if v.get("name") else {}))
+                          for k, v in d["by_approver"].items()}),
+              json.dumps({k: {"amount": round(v["amount"], 2), "events": v["events"]}
+                          for k, v in d["by_reason"].items()}), provider)
+             for (day, kind), d in daily.items()])
         conn.commit()
     finally:
         conn.close()

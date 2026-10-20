@@ -42,6 +42,7 @@ def save(restaurant_id, rows, source="manual", db_path=DB_PATH):
     """rows: [{date, covers}]. Returns {written, skipped, errors}."""
     written = skipped = 0
     errors = []
+    want = []
     conn = get_conn(db_path)
     try:
         for r in list(rows or [])[:MAX_ROWS]:
@@ -56,11 +57,15 @@ def save(restaurant_id, rows, source="manual", db_path=DB_PATH):
                 skipped += 1
                 errors.append(f"{day}: {n} is not a cover count")
                 continue
-            conn.execute(
+            want.append((restaurant_id, day, n, source))
+            written += 1
+        # One executemany (scale audit 10/19/26 DB-05): up to MAX_ROWS
+        # statements in one transaction were a savepoint each on Postgres.
+        if want:
+            conn.executemany(
                 "INSERT INTO covers_daily (restaurant_id, date, covers, source) VALUES (?,?,?,?) "
                 "ON CONFLICT(restaurant_id, date) DO UPDATE SET covers=excluded.covers, source=excluded.source, "
-                "saved_at=datetime('now')", (restaurant_id, day, n, source))
-            written += 1
+                "saved_at=datetime('now')", want)
         conn.commit()
     finally:
         conn.close()

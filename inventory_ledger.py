@@ -1101,17 +1101,16 @@ def backfill_item_sales(restaurant_id: int, days: int = 60, max_days: int = BACK
         ids = {r["toast_guid"]: r["id"] for r in conn.execute(
             "SELECT id, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 AND toast_guid IS NOT NULL",
             (restaurant_id,)).fetchall()}
-        for d, qty in per_day.items():
-            for g, q in qty.items():
-                mid = ids.get(g)
-                if mid is None or q <= 0:
-                    continue
-                # Never over a row the nightly job wrote: it is the record.
-                conn.execute(
-                    "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
-                    "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) DO NOTHING",
-                    (restaurant_id, mid, d, q))
-                rows += 1
+        want = [(restaurant_id, ids[g], d, q) for d, qty in per_day.items() for g, q in qty.items()
+                if ids.get(g) is not None and q > 0]
+        # Never over a row the nightly job wrote: it is the record. One
+        # executemany (scale audit 10/19/26 DB-05: a savepoint a row on
+        # Postgres, a backfill's days x items of them).
+        if want:
+            conn.executemany(
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
+                "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) DO NOTHING", want)
+        rows += len(want)
         conn.commit()
     return {"days": len(per_day), "rows": rows, "remaining": len(missing) - len(todo), "failed": failed}
 
