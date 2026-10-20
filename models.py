@@ -16595,8 +16595,11 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
     """
     conn = get_conn(db_path)
     runs = conn.execute(
-        "SELECT DISTINCT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs "
-        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC LIMIT 2",
+        # Newest first, the later run winning a tie on the second (the order
+        # of tied groups is the database's own: Postgres picked the older
+        # one — blind re-audit 10/20/26 R9-02).
+        "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT 2",
         (restaurant_id,)).fetchall()
     if len(runs) < 2:
         conn.close()
@@ -16623,8 +16626,9 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
     conn = get_conn(db_path)
     try:
         run_rows = conn.execute(
-            "SELECT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs WHERE restaurant_id=? "
-            "GROUP BY run_id ORDER BY at DESC LIMIT ?", (restaurant_id, int(runs))).fetchall()
+            "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+            "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT ?",
+            (restaurant_id, int(runs))).fetchall()
         ids = [r["run_id"] for r in run_rows][::-1]
         if not ids:
             return {"runs": [], "queries": []}

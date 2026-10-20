@@ -927,6 +927,12 @@ def system_report(db_path=None) -> dict:
         try:
             database["journal"] = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
             database["clients"] = _sm.client_restaurant_count(conn)
+            if getattr(conn, "in_transaction", False):
+                # On Postgres the reads above opened a transaction and the
+                # probe refuses to run inside one: the Engineering card read
+                # "unknown" (blind re-audit 10/20/26 R9-02; /health's fix,
+                # status_manager). Only reads happened — ending it loses nothing.
+                conn.rollback()
             database["write"] = _sm.db_write_probe(conn=conn)
         finally:
             conn.close()

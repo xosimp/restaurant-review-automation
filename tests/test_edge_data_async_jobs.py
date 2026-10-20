@@ -125,6 +125,7 @@ def test_generate_after_a_restart_does_not_join_the_dead_job(client, db_path, mo
     assert ran.wait(10) and started, "no generation was started — the owner is polling a job nothing will finish"
 
 
+@pytest.mark.sqlite_only     # injects the failure with SQLite's PRAGMA query_only
 def test_a_job_whose_result_could_not_be_stored_does_not_poll_pending_forever(db_path, monkeypatch):
     ops.start_async_job("lost-result", "schedule", 4)
     real = models.get_conn
