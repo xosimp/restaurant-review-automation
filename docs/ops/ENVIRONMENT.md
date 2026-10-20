@@ -83,6 +83,9 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `TWILIO_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for owner alerts. | notify.py |
 | `TWILIO_OTP_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for sign-in codes. | notify.py |
 | `TWILIO_GUEST_MESSAGING_SERVICE_SID` | `""` | A2P messaging service for guest marketing texts. | notify.py |
+| `GUEST_FROM_EMAIL` | `""` | The address guest newsletters and review-request emails come from, on its own verified Resend domain (e.g. `news@guests.cavnar.ai`); unset keeps `FROM_EMAIL` / `reviews@cavnar.ai` (SEC-02). | config.py |
+| `GUEST_EMAIL_COMPLAINT_PAUSE_PCT` | `0.1` | A restaurant's guest mail pauses when more than this % of the last 7 days' accepted guest emails were marked spam (at least 50 accepted; `guest_email.guest_mail_paused`, SEC-02). | guest_email.py |
+| `GUEST_EMAIL_BOUNCE_PAUSE_PCT` | `5` | The same pause for bounces (SEC-02). | guest_email.py |
 | `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
 | `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
 | `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |

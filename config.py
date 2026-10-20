@@ -29,6 +29,16 @@ def from_email() -> str:
     return os.getenv("FROM_EMAIL", DEFAULT_SENDER)
 
 
+def guest_from_email() -> str:
+    """The address mail to a restaurant's GUESTS is sent from — newsletters
+    and review requests — or '' to keep the one it always used (scale audit
+    10/19/26, SEC-02). Guest mail on the same domain as owners' sign-in
+    codes and reset links let one tenant's stale list lower the reputation
+    of every owner's security mail. Set GUEST_FROM_EMAIL to an address on
+    its own verified Resend domain (e.g. news@guests.cavnar.ai)."""
+    return (os.getenv("GUEST_FROM_EMAIL") or "").strip()
+
+
 def will_email() -> str:
     """Where operator mail goes: failure digests, backups, drills, signups."""
     return os.getenv("WILL_EMAIL", DEFAULT_SENDER)

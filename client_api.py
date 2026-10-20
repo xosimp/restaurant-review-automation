@@ -7683,6 +7683,10 @@ def _do_send_review_request(rid, data, actor=None):
         _em = _emails_mod()
         if not _em._resend_key():
             return {"ok": False, "error": "Email not configured"}, 500
+        import guest_email as _ge_breaker
+        _paused = _ge_breaker.guest_mail_paused(rid)
+        if _paused:
+            return {"ok": False, "paused": True, "error": _paused}, 409
 
         import html as _html_escape
         # Everything the owner typed or the restaurant is called goes in
@@ -7734,7 +7738,7 @@ def _do_send_review_request(rid, data, actor=None):
         # complained or opted-out address was mailed anyway and nothing
         # reached email_log (MOD-EML-4).
         result = _em.deliver(email_type="guest_review_request", restaurant_id=rid, payload={
-            "from":    _em.display_from(rest_name, "reviews@cavnar.ai"),
+            "from":    _em.display_from(rest_name, config.guest_from_email() or "reviews@cavnar.ai"),
             "to":      [customer_email],
             "subject": f"How was your visit to {rest_name}?",
             "html":    _html_doc(html_body),
