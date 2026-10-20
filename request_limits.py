@@ -11,7 +11,8 @@ request threads, and these guard THAT process's threads and its one writer
    tenant queued. `session_refusal(user)` takes from two token buckets — the
    session's and the restaurant's — at a cost per route: the measured
    10-second-class reads (`HEAVY_PATHS`) cost HEAVY_COST and also take from a
-   small per-session heavy bucket, which bounds how many can run at once.
+   small per-session heavy bucket, which bounds how often they start (how
+   many run at once is the in-flight share below, R7-02).
    The buckets are sized well above a dashboard open (~23 reads at once).
    Internal logins (admin, support) have their own ceiling
    (`security.admin_request_allowed`) and are not counted here.
@@ -101,11 +102,12 @@ def _refund(key, cost, capacity):
         b[0] = min(capacity, b[0] + cost)
 
 
-def check(session_key: str, restaurant_id, path: str, now: float = None):
+def check(session_key: str, restaurant_id, path: str, now: float = None, rule: str = None):
     """0.0 when the request may run (its cost taken), else the seconds to
-    wait. Takes nothing when refused."""
+    wait. Takes nothing when refused. A route is heavy when it is in
+    HEAVY_PATHS or measured slow (`measured_heavy_routes`, R7-02)."""
     now = time.monotonic() if now is None else now
-    heavy = any(path == p or path.startswith(p + "/") for p in HEAVY_PATHS)
+    heavy = is_heavy(path, rule)
     cost = HEAVY_COST if heavy else 1.0
     taken = []
     with _lock:
@@ -122,6 +124,158 @@ def check(session_key: str, restaurant_id, path: str, now: float = None):
                 return wait
             taken.append((key, c, cap))
     return 0.0
+
+
+# ── in flight: a share of the threads, not just of the starts (R7-02) ───────
+#
+# The buckets above bound how often a login STARTS requests, never how many
+# run at once: one login at 3 a second on a 4-second route held all four
+# threads for as long as it kept going, inside its "fair share" (blind
+# re-audit 10/20/26 R7-02, reproduced). These count requests running right
+# now — per login, per restaurant, per login's heavy routes, and in total —
+# taken just before the view runs and given back when it returns
+# (`run_counted`, from login_required, mobile_login_required and
+# staff_login_required). Work-conserving: a login alone on an idle process
+# still runs CAPACITY-1 at once; it is held to SESSION_INFLIGHT only once the
+# process is down to its last free thread, so at least one thread is always
+# left for someone else. A refusal is a cheap 429 {in_flight: true} with
+# Retry-After 1, which both clients retry on their own. A streamed answer
+# gives its slot back when the view returns, before the stream ends.
+def _env_int(name, default):
+    try:
+        v = int((os.environ.get(name) or "").strip() or default)
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def capacity() -> int:
+    """The request threads this process serves (Procfile --threads 4)."""
+    return _env_int("REQUEST_THREADS", 4)
+
+
+def session_inflight() -> int:
+    return _env_int("REQUEST_INFLIGHT_PER_LOGIN", 2)
+
+
+def restaurant_inflight() -> int:
+    return min(_env_int("REQUEST_INFLIGHT_PER_RESTAURANT", 3), max(1, capacity() - 1))
+
+
+def heavy_inflight() -> int:
+    return _env_int("REQUEST_INFLIGHT_HEAVY_PER_LOGIN", 2)
+
+
+_inflight: dict = {}          # key -> requests running now
+# Routes measured slow (request_rollups, the last 7 days), refreshed every 10
+# minutes: a route that got slow joins HEAVY_PATHS without a deploy.
+HEAVY_MEASURED_MS = 2000.0
+_measured = {"at": 0.0, "routes": frozenset()}
+
+
+def measured_heavy_routes(now: float = None) -> frozenset:
+    """URL rules whose mean over the last 7 days is HEAVY_MEASURED_MS or more
+    (at least 20 requests). Read at most every 10 minutes; any failure keeps
+    the last answer (empty at first) — HEAVY_PATHS still hold."""
+    now = time.monotonic() if now is None else now
+    if _measured["at"] and now - _measured["at"] < 600:
+        return _measured["routes"]
+    _measured["at"] = now
+    try:
+        import models
+        conn = models.get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT route FROM request_rollups WHERE minute_at >= datetime('now', '-7 days') AND route <> '*' "
+                "GROUP BY route HAVING SUM(requests) >= 20 AND SUM(total_ms) / SUM(requests) >= ?",
+                (HEAVY_MEASURED_MS,)).fetchall()
+        finally:
+            conn.close()
+        _measured["routes"] = frozenset(str(r[0]) for r in rows if r[0])
+    except Exception:
+        pass
+    return _measured["routes"]
+
+
+def is_heavy(path: str, rule: str = None) -> bool:
+    if any(path == p or path.startswith(p + "/") for p in HEAVY_PATHS):
+        return True
+    return bool(rule) and rule in measured_heavy_routes()
+
+
+def inflight_enter(user, path: str = "", rule: str = None):
+    """(refusal_seconds, slot). refusal_seconds > 0: refuse, nothing taken.
+    Else `slot` (the keys taken, or None when not counted) goes to
+    inflight_leave."""
+    if not enabled() or not user:
+        return 0, None
+    try:
+        from auth import is_internal_login
+        if is_internal_login(user):
+            return 0, None
+    except Exception:
+        pass
+    uid = str(user.get("id") or "")
+    if not uid:
+        return 0, None
+    rid = user.get("restaurant_id")
+    heavy = is_heavy(path or "", rule)
+    with _lock:
+        total = _inflight.get("*", 0)
+        mine = _inflight.get(f"s:{uid}", 0)
+        if mine >= max(1, capacity() - 1):
+            return 1, None
+        if mine >= session_inflight() and total >= capacity() - 1:
+            return 1, None
+        if rid and _inflight.get(f"r:{rid}", 0) >= restaurant_inflight():
+            return 1, None
+        if heavy and _inflight.get(f"h:{uid}", 0) >= heavy_inflight():
+            return 1, None
+        keys = ["*", f"s:{uid}"] + ([f"r:{rid}"] if rid else []) + ([f"h:{uid}"] if heavy else [])
+        for k in keys:
+            _inflight[k] = _inflight.get(k, 0) + 1
+    return 0, keys
+
+
+def inflight_leave(slot):
+    if not slot:
+        return
+    with _lock:
+        for k in slot:
+            n = _inflight.get(k, 0) - 1
+            if n > 0:
+                _inflight[k] = n
+            else:
+                _inflight.pop(k, None)
+
+
+def _refusal(wait, **extra):
+    from flask import jsonify
+    retry = max(1, int(wait + 0.999))
+    resp = jsonify(ok=False, rate_limited=True, retry_after=retry,
+                   error="That's a lot of requests at once. Give it a moment and try again.", **extra)
+    resp.status_code = 429
+    resp.headers["Retry-After"] = str(retry)
+    return resp
+
+
+def run_counted(user, call):
+    """Run `call()` (the view) inside this login's in-flight share: a 429
+    when the share is spent, else the view's answer, the slot given back
+    however it ends."""
+    try:
+        from flask import request
+        rule = request.url_rule.rule if request.url_rule is not None else None
+        path = request.path or ""
+    except Exception:
+        rule, path = None, ""
+    wait, slot = inflight_enter(user, path, rule)
+    if wait > 0:
+        return _refusal(wait, in_flight=True)
+    try:
+        return call()
+    finally:
+        inflight_leave(slot)
 
 
 def session_refusal(user):
@@ -141,15 +295,11 @@ def session_refusal(user):
     session_key = str(user.get("id") or "")
     if not session_key:
         return None
-    wait = check(session_key, user.get("restaurant_id"), request.path or "")
+    wait = check(session_key, user.get("restaurant_id"), request.path or "",
+                 rule=(request.url_rule.rule if request.url_rule is not None else None))
     if wait <= 0:
         return None
-    retry = max(1, int(wait + 0.999))
-    resp = jsonify(ok=False, rate_limited=True, retry_after=retry,
-                   error="That's a lot of requests at once. Give it a moment and try again.")
-    resp.status_code = 429
-    resp.headers["Retry-After"] = str(retry)
-    return resp
+    return _refusal(wait)
 
 
 def reset():
@@ -157,3 +307,6 @@ def reset():
     with _lock:
         _windows.clear()
         _buckets.clear()
+        _inflight.clear()
+    _measured["at"] = 0.0
+    _measured["routes"] = frozenset()

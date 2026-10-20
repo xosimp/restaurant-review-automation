@@ -861,14 +861,34 @@ actor APIClient {
     private static func perform(
         _ request: URLRequest, on session: URLSession, mayRetry: Bool
     ) async throws -> (Data, URLResponse) {
+        var answer: (Data, URLResponse)
         do {
-            return try await session.data(for: request)
+            answer = try await session.data(for: request)
         } catch {
             guard mayRetry, isTransient(error), !Task.isCancelled else { throw error }
             try? await Task.sleep(for: .milliseconds(400))
             try Task.checkCancellation()
-            return try await session.data(for: request)
+            answer = try await session.data(for: request)
         }
+        // The server's in-flight share (re-audit 10/20/26 R7-02): a 429
+        // {in_flight: true} means this login already had its share of the
+        // server's request threads running, and the request was refused
+        // BEFORE it ran — so even a write is safe to send again. A few short
+        // waits, then the refusal stands like any other 429.
+        var tries = 0
+        while tries < 3, isInFlightRefusal(answer), !Task.isCancelled {
+            tries += 1
+            try? await Task.sleep(for: .milliseconds(350 * tries + Int.random(in: 0...250)))
+            try Task.checkCancellation()
+            answer = try await session.data(for: request)
+        }
+        return answer
+    }
+
+    nonisolated static func isInFlightRefusal(_ answer: (Data, URLResponse)) -> Bool {
+        guard let http = answer.1 as? HTTPURLResponse, http.statusCode == 429,
+              let object = try? JSONSerialization.jsonObject(with: answer.0) as? [String: Any] else { return false }
+        return (object["in_flight"] as? Bool) == true
     }
 
     /// The request URL: `path` under the base, then `query` as real query

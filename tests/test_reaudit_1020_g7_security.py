@@ -139,3 +139,84 @@ def test_the_web_second_step_honours_the_login_lock(db_path, client, sent):
                                             "next_url": "/", "csrf_token": csrf})
     assert resp.status_code == 429 and "Too many wrong codes" in resp.get_data(as_text=True)
     assert not client.get_cookie("session_token")
+
+
+# ── R7-02: a share of the request threads, not only of the starts ─────────
+
+def test_one_login_never_holds_every_thread(monkeypatch):
+    import request_limits as rl
+    monkeypatch.setenv("REQUEST_LIMITS", "1")
+    me = {"id": 7, "restaurant_id": 1, "role": "client"}
+    slots = []
+    for _ in range(3):                                    # alone: CAPACITY-1 at once
+        wait, slot = rl.inflight_enter(me, "/api/monthly-review")
+        assert wait == 0 and slot
+        slots.append(slot)
+    wait, slot = rl.inflight_enter(me, "/api/monthly-review")
+    assert wait > 0 and slot is None                       # the last thread stays free
+    other = {"id": 8, "restaurant_id": 2, "role": "client"}
+    wait, oslot = rl.inflight_enter(other, "/api/home/brief")
+    assert wait == 0                                        # someone else gets it
+    for s in slots:
+        rl.inflight_leave(s)
+    rl.inflight_leave(oslot)
+    assert rl._inflight == {}
+
+
+def test_under_contention_a_login_is_held_to_its_share(monkeypatch):
+    import request_limits as rl
+    monkeypatch.setenv("REQUEST_LIMITS", "1")
+    a = {"id": 1, "restaurant_id": 10}
+    b = {"id": 2, "restaurant_id": 20}
+    _, s1 = rl.inflight_enter(b, "/api/x")
+    _, s2 = rl.inflight_enter(a, "/api/x")
+    _, s3 = rl.inflight_enter(a, "/api/x")
+    wait, _ = rl.inflight_enter(a, "/api/x")              # 3 busy of 4: a holds its 2
+    assert wait > 0
+    for s in (s1, s2, s3):
+        rl.inflight_leave(s)
+
+
+def test_heavy_routes_and_restaurants_are_capped_in_flight(monkeypatch):
+    import request_limits as rl
+    monkeypatch.setenv("REQUEST_LIMITS", "1")
+    me = {"id": 3, "restaurant_id": 30}
+    held = [rl.inflight_enter(me, "/api/morning-brief")[1] for _ in range(rl.heavy_inflight())]
+    assert all(held)
+    assert rl.inflight_enter(me, "/api/morning-brief")[0] > 0
+    for s in held:
+        rl.inflight_leave(s)
+    mates = [{"id": 100 + i, "restaurant_id": 40} for i in range(rl.restaurant_inflight() + 1)]
+    taken = [rl.inflight_enter(m, "/api/x")[1] for m in mates[:-1]]
+    assert rl.inflight_enter(mates[-1], "/api/x")[0] > 0
+    for s in taken:
+        rl.inflight_leave(s)
+
+
+def test_a_route_measured_slow_counts_as_heavy(monkeypatch):
+    import request_limits as rl
+    monkeypatch.setattr(rl, "measured_heavy_routes", lambda now=None: frozenset({"/api/monthly-review"}))
+    assert rl.is_heavy("/api/monthly-review", "/api/monthly-review")
+    assert not rl.is_heavy("/api/x", "/api/x")
+
+
+def test_the_decorators_give_the_slot_back_and_staff_sessions_are_counted(db_path, client, monkeypatch):
+    import inspect
+    import request_limits as rl
+    src = inspect.getsource(auth.staff_login_required)
+    assert "session_refusal" in src and "run_counted" in src
+    assert inspect.getsource(auth.login_required).count("_rl.run_counted(user") == 2
+    assert inspect.getsource(auth.mobile_login_required).count("_rl.run_counted(user") == 2
+    monkeypatch.setenv("REQUEST_LIMITS", "1")
+    _setup(db_path, two_fa=False)
+    tok = _phone_login(client)["token"]
+    for _ in range(5):
+        assert client.get("/mobile/api/me", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+    assert rl._inflight == {}
+
+
+def test_both_clients_retry_an_in_flight_refusal():
+    js = open(os.path.join(TEMPLATES, "_csrf_fetch.html"), encoding="utf-8").read()
+    assert "in_flight" in js and "_sendCounted" in js
+    swift = open(os.path.join(ROOT, "ios/CavnarAI/CavnarAI/Core/APIClient.swift"), encoding="utf-8").read()
+    assert "isInFlightRefusal" in swift

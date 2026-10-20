@@ -105,6 +105,10 @@ Defaults are the code's own; "—" means none (unset is off or empty).
 | `GUEST_SMS_FLEET_PER_SECOND` | `0` (off) | Campaign texts per second across every restaurant (`rate_bucket` `guest_sms:fleet`). Set it below the guest campaign's registered MPS: review requests and join confirmations are not paced by it, so the gap is their lane (SEC-03). | guest_marketing.py |
 | `GUEST_SMS_STOP_PAUSE_PCT` | `3` | A restaurant whose campaign texts drew more than this % STOP replies over 7 days (at least 200 sent) cannot start a new campaign until the week clears (`guest_marketing.stop_rate_pause`, SEC-03). | guest_marketing.py |
 | `REQUEST_LIMITS` | `1` | `0` turns off the per-login and per-restaurant request share (`request_limits.session_refusal`, SEC-07). | request_limits.py |
+| `REQUEST_THREADS` | `4` | The request threads one process serves (match the Procfile's `--threads`); the in-flight share always leaves one of them for someone else (`request_limits.capacity`, re-audit 10/20/26 R7-02). | request_limits.py |
+| `REQUEST_INFLIGHT_PER_LOGIN` | `2` | Requests one login (console or staff) may have running at once once the process is down to its last free thread; alone on an idle process a login still runs `REQUEST_THREADS`-1 (R7-02). | request_limits.py |
+| `REQUEST_INFLIGHT_PER_RESTAURANT` | `3` | Requests one restaurant's logins may have running at once (at most `REQUEST_THREADS`-1) (R7-02). | request_limits.py |
+| `REQUEST_INFLIGHT_HEAVY_PER_LOGIN` | `2` | Heavy requests (`HEAVY_PATHS` and routes measured at 2 s or more over 7 days) one login may have running at once (R7-02). | request_limits.py |
 | `SMS_COUNTRY_CODES` | `"1"` | Country calling codes any alert, staff or guest text may go to (`notify.sms_country_allowed`; +1 needs exactly ten digits). Verification codes have their own list (`STAFF_OTP_COUNTRY_CODES`). SEC-05. | notify.py |
 | `GUEST_JOIN_FLEET_HOURLY_CAP` | `300` | Confirmation texts the public join forms may send across every restaurant in an hour (SEC-05). | guest_marketing.py |
 | `GUEST_JOIN_RESTAURANT_DAILY_CAP` | `150` | Confirmation texts one restaurant's join form may send in a day (SEC-05). | guest_marketing.py |

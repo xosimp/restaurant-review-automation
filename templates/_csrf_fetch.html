@@ -41,7 +41,22 @@
       init = init || {};
       _setHeader(init, 'X-Cavnar-Restaurant-Id', rid);
     }
-    return _origFetch.call(window, input, init);
+    if (external) return _origFetch.call(window, input, init);
+    return _sendCounted(input, init, 0);
   };
+  /* The server's in-flight share (re-audit 10/20/26 R7-02): a 429 with
+     in_flight true was refused before the route ran, so even a write is
+     safe to send again. A few short waits, then the 429 stands. */
+  function _sendCounted(input, init, tries){
+    return _origFetch.call(window, input, init).then(function(r){
+      if (r.status !== 429 || tries >= 3) return r;
+      return r.clone().json().then(function(d){
+        if (!d || !d.in_flight) return r;
+        return new Promise(function(done){
+          setTimeout(done, 350 * (tries + 1) + Math.floor(Math.random() * 250));
+        }).then(function(){ return _sendCounted(input, init, tries + 1); });
+      }, function(){ return r; });
+    });
+  }
 })();
 </script>

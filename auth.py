@@ -3983,7 +3983,15 @@ def staff_login_required(f):
             if wants_json:
                 return _jsonify_sr(ok=False, error="This isn't a staff account."), 403
             return redirect(url_for("staff.portal_entry"))
-        return f(*args, **kwargs, current_user=user)
+        # A staff session takes its share like a console login: the same
+        # start-rate buckets and the same in-flight share (re-audit 10/20/26
+        # R7-02 — it needed only a join code and a claimable name, and was
+        # counted nowhere).
+        import request_limits as _rl_st
+        limited = _rl_st.session_refusal(user)
+        if limited is not None:
+            return limited
+        return _rl_st.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
@@ -6284,11 +6292,13 @@ def login_required(f):
         moved = _tab_location_moved(user)
         if moved:
             return moved
+        # The view runs inside this login's in-flight share of the request
+        # threads (re-audit 10/20/26 R7-02; request_limits.run_counted).
         if view_as and request.method not in _SAFE_METHODS:
-            return _run_view_as_write(f, args, kwargs, user, view_as)
+            return _rl.run_counted(user, lambda: _run_view_as_write(f, args, kwargs, user, view_as))
         if view_as:
             record_view_as_read(view_as)
-        return f(*args, **kwargs, current_user=user)
+        return _rl.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
@@ -6566,11 +6576,13 @@ def mobile_login_required(f):
             record_view_as_write(view_as, 403)
             from flask import jsonify as _jsonify_mvr
             return _jsonify_mvr(ok=False, error=_VIEW_AS_READ_ONLY_MSG, read_only=True), 403
+        # The view runs inside this login's in-flight share of the request
+        # threads (re-audit 10/20/26 R7-02; request_limits.run_counted).
         if view_as and request.method not in _SAFE_METHODS:
-            return _run_view_as_write(f, args, kwargs, user, view_as)
+            return _rl.run_counted(user, lambda: _run_view_as_write(f, args, kwargs, user, view_as))
         if view_as:
             record_view_as_read(view_as)
-        return f(*args, **kwargs, current_user=user)
+        return _rl.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
 
