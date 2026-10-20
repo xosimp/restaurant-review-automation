@@ -173,7 +173,9 @@ def test_a_one_star_reply_gets_one_and_two_star_examples_and_never_five_star_one
     assert high == ["Five-star thanks!", "Thanks for the honest note."]
 
 
-def test_once_the_owner_has_edited_a_reply_unedited_approvals_are_no_longer_examples(db_path):
+def test_an_edited_reply_leads_the_examples_and_approvals_as_drafted_fill_the_rest(db_path):
+    """Since 10/20/26 (owner): one edit no longer drops every approval as
+    drafted - Simple EJ's 4-5 star drafts had one example left."""
     rid = _rid(db_path)
     _review(db_path, rid, status="approved", draft="Model text approved as is.", role="principal", via="normal",
             category="unchanged")
@@ -181,7 +183,8 @@ def test_once_the_owner_has_edited_a_reply_unedited_approvals_are_no_longer_exam
     _review(db_path, rid, status="approved", draft="My own words.", original="The model's words!", edited=1,
             role="principal", via="normal", category="heavy")
     got = models.get_approved_examples(rid, rating=5)
-    assert [e["response"] for e in got] == ["My own words."] and got[0]["edited"] is True
+    assert [e["response"] for e in got] == ["My own words.", "Model text approved as is."]
+    assert got[0]["edited"] is True and got[1]["edited"] is False
 
 
 def test_the_last_twelve_months_come_first(db_path):
@@ -318,3 +321,39 @@ def test_a_demo_account_drafts_from_its_voice_notes_alone(db_path, monkeypatch):
     drafter.draft_response(_review(db_path, rid, rating=1, status="pending", draft=None), 1, "Cold soup", "negative",
                            "Gia Mia", restaurant_id=rid)
     assert "truly sorry about the cold soup" not in seen[-1] and "Approved response examples" not in seen[-1]
+
+
+# ── a skip says why (10/20/26) ───────────────────────────────────────────────
+
+def test_a_skip_because_the_draft_was_off_teaches_the_drafter_and_no_reply_needed_does_not(db_path, monkeypatch):
+    """Owner, 10/20/26: a skip only counted against auto-approve trust, so a
+    draft turned down as wrong taught the wording nothing. 'draft_off' joins
+    the regenerated drafts (reply_draft_rejections, how='skip'); 'no_reply'
+    records the reason and nothing else."""
+    monkeypatch.setattr(drafter, "record_reply_outcome", lambda *a, **k: None)
+    rid = _rid(db_path)
+    owner = {"id": 1, "restaurant_id": rid, "role": "client"}
+    a = _review(db_path, rid, draft="Thanks so much!!! We are SO sorry and hope to see you soon!!!")
+    b = _review(db_path, rid, draft="Thank you.")
+    with Flask(__name__).test_request_context():
+        assert client_api._do_skip(a, rid, user=owner, reason="draft_off")[1] == 200
+        assert client_api._do_skip(b, rid, user=owner, reason="no_reply")[1] == 200
+    c = _conn(db_path)
+    rows = c.execute("SELECT review_id, how FROM reply_draft_rejections WHERE restaurant_id=?", (rid,)).fetchall()
+    reasons = {r["id"]: r["skip_reason"] for r in c.execute("SELECT id, skip_reason FROM reviews WHERE restaurant_id=?",
+                                                              (rid,)).fetchall()}
+    c.close()
+    assert [(r["review_id"], r["how"]) for r in rows] == [(a, "skip")]
+    assert reasons[a] == "draft_off" and reasons[b] == "no_reply"
+
+
+def test_an_unknown_skip_reason_is_stored_as_none(db_path, monkeypatch):
+    monkeypatch.setattr(drafter, "record_reply_outcome", lambda *a, **k: None)
+    rid = _rid(db_path)
+    r = _review(db_path, rid)
+    with Flask(__name__).test_request_context():
+        client_api._do_skip(r, rid, user={"id": 1, "restaurant_id": rid, "role": "client"}, reason="whatever")
+    c = _conn(db_path)
+    assert c.execute("SELECT skip_reason FROM reviews WHERE id=?", (r,)).fetchone()["skip_reason"] is None
+    assert c.execute("SELECT COUNT(*) FROM reply_draft_rejections").fetchone()[0] == 0
+    c.close()

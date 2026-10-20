@@ -804,7 +804,10 @@ def approve_all_reviews_api(current_user):
     return jsonify(**payload), status
 
 
-def _do_skip(rid, restaurant_id, user=None):
+SKIP_REASONS = ("no_reply", "draft_off")
+
+
+def _do_skip(rid, restaurant_id, user=None, reason=None):
     """Turn a draft down. Never a reply that is approved or posted: a
     bulk skip (or a stale card, or a queued replay) used to mark a live
     Google reply 'skipped', so it read as never answered while it stood in
@@ -816,7 +819,13 @@ def _do_skip(rid, restaurant_id, user=None):
     Who it is is read from the login itself, not only from the request:
     Ask's skip tool runs on the stream's worker thread, where there is no
     request, and a view-as skip there was filed as the owner's "no"
-    (re-audit #7b)."""
+    (re-audit #7b).
+
+    `reason` (10/20/26): 'no_reply' - the review needs no answer, which says
+    nothing about the draft's wording - or 'draft_off' - the draft was wrong,
+    which teaches the drafter what to avoid exactly like a regenerate
+    (reply_draft_rejections, how='skip'). None: no reason given, as before."""
+    reason = reason if reason in SKIP_REASONS else None
     conn = get_conn()
     try:
         # skipped_at dates the owner turning a draft down; auto_approve_trust
@@ -825,13 +834,22 @@ def _do_skip(rid, restaurant_id, user=None):
         # 9/29/26, view_as): response_action 'support_skipped', left out.
         from permissions import acting_via as _via_skip
         support = bool(_via_skip(user))
-        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), "
+        before = conn.execute("SELECT draft_response, draft_edited, rating FROM reviews WHERE id=? AND restaurant_id=?",
+                              (rid, restaurant_id)).fetchone()
+        cur = conn.execute("UPDATE reviews SET response_status='skipped', skipped_at=datetime('now'), skip_reason=?, "
                            "response_action=CASE WHEN ? THEN 'support_skipped' ELSE response_action END "
                            "WHERE id=? AND restaurant_id=? "
                            "AND COALESCE(response_status, '') NOT IN ('approved', 'posted')",
-                           (1 if support else 0, rid, restaurant_id))
+                           (reason, 1 if support else 0, rid, restaurant_id))
         conn.commit()
         if cur.rowcount:
+            if not support and reason == "draft_off" and before is not None \
+                    and (before["draft_response"] or "").strip() and not int(before["draft_edited"] or 0):
+                # The model's draft, turned down as wrong: its signals (never
+                # its words) join the regenerated drafts the drafter reads.
+                from models import record_reply_rejection
+                record_reply_rejection(restaurant_id, rid, before["draft_response"], rating=before["rating"],
+                                       how="skip", user=user)
             if not support:
                 # The owner turned the draft down: on the run that wrote it
                 # (orchestration Phase 5). Support's skip is not the owner's "no".
@@ -1066,7 +1084,8 @@ def delete_review(rid, current_user):
 @client_bp.route("/skip/<int:rid>", methods=["POST"])
 @login_required
 def skip(rid, current_user):
-    payload, status = _do_skip(rid, current_user["restaurant_id"], user=current_user)
+    reason = (request.get_json(silent=True) or {}).get("reason") or request.form.get("reason")
+    payload, status = _do_skip(rid, current_user["restaurant_id"], user=current_user, reason=reason)
     return jsonify(**payload), status
 
 

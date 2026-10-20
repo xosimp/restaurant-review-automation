@@ -669,11 +669,9 @@ def test_an_approval_records_the_edit_and_edited_replies_lead_the_examples(db_pa
     assert all(rows[i]["edit_category"] in ("heavy", "rewrite", "light") for i in ids)
     assert rows[plain]["edit_category"] == "unchanged"
     examples = models.get_approved_examples(rid, limit=4)
-    # The owner's own words only: once any reply was edited, an unedited
-    # approval (the model's text) is no longer an example (memory audit
-    # 9/29/26, reply_voice — it used to come last).
-    assert len(examples) == 3 and all(e["edited"] for e in examples)
-    assert "Thanks!" not in [e["response"] for e in examples]
+    # The edited replies lead; the approval as drafted fills in after them (10/20/26).
+    assert [e["edited"] for e in examples] == [True, True, True, False]
+    assert examples[-1]["response"] == "Thanks!"
     note = drafter.get_owner_edit_note(rid)
     assert "OWNER'S EDITS" in note and "they take out exclamation marks" in note
 

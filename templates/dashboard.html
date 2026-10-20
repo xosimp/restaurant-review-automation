@@ -1088,6 +1088,10 @@ span.cf-pill,.cbtn.cbtn-inline.cf-pill{padding:1px 8px;margin:0}
 .gx-file-in:focus-visible+label.cbtn{box-shadow:0 0 0 2px var(--cb-ring-gap),0 0 0 4px var(--cb-accent)}
 .gx-fname{flex:1 1 160px;min-width:0;font-size:15px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center}
 .gx-fname.on{color:var(--ink)}
+.rv-skipmenu{position:fixed;z-index:1200;width:250px;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:14px;background:var(--surface);border:1px solid var(--hb-line);box-shadow:0 18px 40px -16px rgba(0,0,0,.6)}
+.rv-skipmenu .k{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember)}
+.rv-skipmenu .cbtn{width:100%;justify-content:flex-start;height:40px}
+.rv-skipmenu small{font-size:12.5px;line-height:1.4;color:var(--ink3)}
 .gx-prev{display:flex;flex-direction:column;gap:12px;margin-top:4px;padding-top:16px;border-top:1px solid var(--cp-line)}
 .gx-prev-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:16px;color:var(--ink)}
 .gx-prev-h b{font-size:20px}
@@ -22278,12 +22282,41 @@ function undoElsewhereR(id,btn){
     toast('Back in your queue');
   }).catch(function(){done();toast('Couldn\u2019t reach Cavnar AI \u2014 try again','error');});
 }
-function skipR(id){
+// Skip asks why first (owner, 10/20/26): "No reply needed" says nothing
+// about the draft; "The draft was off" teaches the drafter what to avoid,
+// like a regenerate (client_api._do_skip, reply_draft_rejections).
+var _skipMenu=null;
+function skipMenuClose(){if(_skipMenu){if(_skipMenu.parentNode)_skipMenu.parentNode.removeChild(_skipMenu);_skipMenu=null;}}
+function skipAsk(id){
+  skipMenuClose();
+  var b=_revBtn('skipR',id);if(!b){skipR(id,null);return;}
+  var r=b.getBoundingClientRect(),m=document.createElement('div');
+  m.className='rv-skipmenu';m.setAttribute('role','menu');m.setAttribute('data-id',id);
+  m.innerHTML='<div class="k">Why skip it?</div>'
+    +'<button type="button" class="cbtn cbtn-secondary" role="menuitem" data-skip-why="no_reply">No reply needed</button>'
+    +'<button type="button" class="cbtn cbtn-secondary" role="menuitem" data-skip-why="draft_off">The draft was off</button>'
+    +'<small>The draft was off teaches Cavnar AI what to avoid next time.</small>';
+  document.body.appendChild(m);
+  var top=r.bottom+8;if(top+m.offsetHeight>window.innerHeight-12)top=Math.max(12,r.top-8-m.offsetHeight);
+  m.style.top=Math.round(top)+'px';m.style.left=Math.round(Math.max(12,Math.min(r.left,window.innerWidth-12-m.offsetWidth)))+'px';
+  _skipMenu=m;
+  var first=m.querySelector('button');if(first)first.focus();
+}
+document.addEventListener('click',function(e){
+  if(!_skipMenu)return;var t=e.target;if(!t||!t.closest)return;
+  var w=t.closest('[data-skip-why]');
+  if(w&&_skipMenu.contains(w)){var id=+_skipMenu.getAttribute('data-id'),why=w.getAttribute('data-skip-why');skipMenuClose();skipR(id,why);return;}
+  if(!_skipMenu.contains(t)&&!t.closest('[onclick^="skipR("]'))skipMenuClose();
+});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')skipMenuClose();});
+window.addEventListener('scroll',function(){skipMenuClose();},true);
+function skipR(id,reason){
+  if(reason===undefined){skipAsk(id);return;}
   if(_revInflight['skip'+id])return;
   _revInflight['skip'+id]=1;
   var done=cbtnBusy(_revBtn('skipR',id),'Working\u2026');
   function settle(){delete _revInflight['skip'+id];done();}
-  fetch('/skip/'+id,{method:'POST'}).then(apiJson).then(function(d){
+  fetch('/skip/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason||null})}).then(apiJson).then(function(d){
     settle();
     if(d.ok){
       var card = document.getElementById('rc-'+id);

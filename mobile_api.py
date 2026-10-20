@@ -1840,7 +1840,8 @@ def mobile_approve_all_reviews(current_user):
 @mobile_bp.route("/reviews/<int:review_id>/skip", methods=["POST"])
 @mobile_login_required
 def mobile_skip_review(review_id, current_user):
-    payload, status = _capi._do_skip(review_id, current_user["restaurant_id"], user=current_user)
+    reason = (request.get_json(silent=True) or {}).get("reason")
+    payload, status = _capi._do_skip(review_id, current_user["restaurant_id"], user=current_user, reason=reason)
     return jsonify(**payload), status
 
 

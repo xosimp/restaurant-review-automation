@@ -1795,6 +1795,9 @@ def ensure_columns(db_path: str = DB_PATH):
         # When a drafted reply was skipped: a skip is the owner declining the
         # draft, so it counts against auto-approve trust (audit #15).
         ("reviews", "skipped_at", "TEXT"),
+        # Why a draft was skipped (10/20/26): 'no_reply' (nothing to say) or
+        # 'draft_off' (the draft was wrong - reply_draft_rejections, how='skip').
+        ("reviews", "skip_reason", "TEXT"),
         # Who approved a reply (memory audit 9/29/26, reply_voice), set by
         # claim_approval in the statement that approves it: the login
         # (view-as: the admin behind it), its answer_authority (principal |
@@ -11736,10 +11739,9 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     it, never across it); the last 12 months first, then a known approver
     before an unknown one, then newest. rating=None reads every band.
 
-    Per band (memory re-audit 9/29/26, PROMPTS-11): a band with an edited
-    reply offers only its edited ones (an unedited approval is the model's
-    own text); a band with none offers its approvals as drafted before the
-    neighbour band is read. One light edit to a 5-star thank-you used to
+    Per band (memory re-audit 9/29/26, PROMPTS-11; 10/20/26): a band's
+    edited replies come first and its approvals as drafted fill the rest
+    before the neighbour band is read. One light edit to a 5-star thank-you used to
     discard every unedited approval in every band, so the 1-star drafts —
     where the owner's voice matters most — lost all their examples. Each
     band is read in SQL before its own LIMIT, so a busy 5-star stream no
@@ -11766,8 +11768,12 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
                   AND {reply_voice_sql(conn)}{tier_sql}
                 ORDER BY id DESC LIMIT ?
             """, (f"-{int(EXAMPLES_PREFER_DAYS)} days", restaurant_id, EXAMPLES_POOL)).fetchall()]
+            # Edited replies lead (the owner's own words), and the band's
+            # approvals as drafted fill the rest - an approval as drafted is
+            # still the owner choosing that reply (owner, 10/20/26: one
+            # rewrite left Simple EJ's 4-5 star drafts with one example).
             edited = [r for r in rows if r["edit_category"] in EDITED_CATEGORIES]
-            chosen += sorted(edited or rows, key=rank)
+            chosen += sorted(edited, key=rank) + sorted([r for r in rows if r not in edited], key=rank)
             if len(chosen) >= limit:
                 break
     finally:

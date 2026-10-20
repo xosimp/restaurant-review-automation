@@ -991,13 +991,18 @@ struct ReviewDetailView: View {
     private var activeButtons: some View {
         VStack(spacing: 8) {
         HStack(spacing: 12) {
-            Button {
-                Task { await viewModel.skip() }
+            // Skip asks why (10/20/26): only "The draft was off" teaches
+            // the drafter; "No reply needed" says nothing about its words.
+            Menu {
+                Button("No reply needed") { Task { await viewModel.skip(reason: "no_reply") } }
+                Button("The draft was off") { Task { await viewModel.skip(reason: "draft_off") } }
             } label: {
-                Text("Skip")
+                Text("Skip").frame(maxWidth: .infinity)
             }
+            .menuStyle(.button)
             .buttonStyle(CavnarGlassButtonStyle(isProminent: false, isDisabled: viewModel.isSubmitting))
             .disabled(viewModel.isSubmitting)
+            .accessibilityHint("Asks whether no reply is needed or the draft was off")
 
             Button {
                 Task { await viewModel.approve() }

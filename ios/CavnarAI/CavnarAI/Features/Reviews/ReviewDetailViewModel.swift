@@ -396,13 +396,18 @@ final class ReviewDetailViewModel {
         didComplete = true
     }
 
-    func skip() async {
+    private struct SkipBody: Encodable { let reason: String? }
+
+    /// `reason` (10/20/26): "no_reply" — the review needs no answer — or
+    /// "draft_off" — the draft was wrong, which teaches the drafter what to
+    /// avoid (client_api._do_skip). nil sends no reason.
+    func skip(reason: String? = nil) async {
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
         do {
             let _: APIClient.EmptyResponse = try await client.send(
-                "/mobile/api/reviews/\(review.id)/skip", method: .post
+                "/mobile/api/reviews/\(review.id)/skip", method: .post, body: SkipBody(reason: reason)
             )
             // Lighter than approve()'s .success() — skip is a decisive dismissal,
             // not an accomplishment, so it gets the same weight as everywhere
