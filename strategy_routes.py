@@ -5959,7 +5959,14 @@ def _do_cross_module(u):
     except Exception:
         _log_rank = False
     # The login's own answers leave its links too (CROSSMODULE-2).
-    brief = bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank)
+    # Kept per login for the business day (home_snapshots, scale audit
+    # 10/19/26 FE-01): a 3 s build on every Home open. Links answered since
+    # the build are left out below by their presentation.
+    import home_snapshots
+    brief = home_snapshots.serve(
+        "cross_module", _rid(u), home_snapshots.viewer_scope(u), _local_today(u),
+        lambda: bi.executive_brief(_rid(u), restaurant=r, ctx=_ctx, viewer=u, log_rank=_log_rank),
+        restaurant=r)
     # Every card that carries a question carries the question to ask. The
     # web phrased this in JS and iOS had no affordance at all; one string
     # from here means both surfaces ask Cavnar the same thing.
@@ -6109,8 +6116,14 @@ def _do_good_news(u):
     # and it fails closed: a role lookup that errors hides everything.
     view = viewer_restaurant(get_restaurant(_rid(u)), u)
     denied = set(getattr(view, "_ask_denied", frozenset()))
-    items = good_news.all_good_news(_rid(u), today=_local_today(u),
-                                    restaurant=view, denied_modules=denied)
+    # Kept per denied-module set for the business day (home_snapshots,
+    # FE-01): an 11 s build on every Home open.
+    import home_snapshots
+    today = _local_today(u)
+    items = home_snapshots.serve(
+        "good_news", _rid(u), home_snapshots.denied_scope(denied), today,
+        lambda: good_news.all_good_news(_rid(u), today=today, restaurant=view, denied_modules=denied),
+        restaurant=view)
     items = [dict(i, ask=f"What's behind this: {i.get('headline', '')}") for i in items]
     return {"ok": True, "items": items, "caveat": good_news.CAVEAT}, 200
 
@@ -6356,7 +6369,12 @@ def _do_monthly_review(u):
     import monthly_review
     from models import get_restaurant
     rid = _rid(u)
-    review = monthly_review.build(rid, today=_local_today(u), restaurant=get_restaurant(rid))
+    # The build is the same for every login (the filters below are per
+    # login), kept for the business day (home_snapshots, FE-01).
+    import home_snapshots
+    r, today = get_restaurant(rid), _local_today(u)
+    review = home_snapshots.serve("monthly_review", rid, home_snapshots.shared_scope(), today,
+                                  lambda: monthly_review.build(rid, today=today, restaurant=r), restaurant=r)
     review["metrics"] = [m for m in review["metrics"] if _metric_visible(u, m.get("key"))]
     review["results"] = [r for r in (review.get("results") or []) if _metric_visible(u, r.get("metric"))]
     review["goals"] = [g for g in (review.get("goals") or []) if _metric_visible(u, g.get("metric"))]
@@ -6419,7 +6437,15 @@ def _do_morning_brief(u):
     import morning_brief
     from models import get_restaurant
     r = get_restaurant(_rid(u))
-    brief = morning_brief.build(_rid(u), restaurant=r, today=_local_today(u), viewer=u)
+    # Kept per login for the business day (home_snapshots, FE-01): a 13 s
+    # build on every Home open. A line an answer has silenced since the
+    # build is dropped at serve time, as the build itself drops them.
+    import home_snapshots
+    today = _local_today(u)
+    brief = home_snapshots.serve(
+        "morning_brief", _rid(u), home_snapshots.viewer_scope(u), today,
+        lambda: morning_brief.build(_rid(u), restaurant=r, today=today, viewer=u), restaurant=r)
+    brief["lines"] = morning_brief._drop_answered(_rid(u), brief.get("lines") or [], viewer=u)
     # K6: Home's "Before service" card renders these lines, so a load that
     # names itself a Home view (?view=home, web and iOS Home) records them on
     # "home" — once a day per key. Every other reader (the settings screens)
@@ -7966,6 +7992,79 @@ def _do_policy_notice_dismiss(u):
     return {"ok": True, "dismissed": bool(ok)}, 200
 
 
+# ── Home's follow-through, one read (scale audit 10/19/26 FE-01) ─────────────
+# The web Home fired these fifteen reads at once after /api/home/brief —
+# fifteen requests, each through the auth stack, together holding all four
+# request threads. GET /api/home/follow answers them in one: each block is
+# its route's own body, under the gates its own path has (the module a plan
+# lacks, the module a role may not read), with the query its own request
+# sent. A block is null wherever its own read would not have answered 200,
+# exactly as the client treated a failed read. The four kept blocks
+# (home_snapshots) are served only from what is kept for today: one not yet
+# built is named in `missing` and the client reads it on its own, in
+# parallel, so the first open of a day is no slower than before.
+# (key, path the client used, its query, body)
+_HOME_FOLLOW = (
+    ("brief", "/api/morning-brief", {"view": "home"}, "_do_morning_brief"),
+    ("issues", "/api/issues", {"status": "unresolved"}, "_do_issues_list"),
+    ("goals", "/api/goals", {}, "_do_goals_list"),
+    ("outcomes", "/api/outcomes", {}, "_do_outcomes_list"),
+    ("actions", "/api/actions", {}, "_do_actions"),
+    ("closeout", "/api/closeout", {}, "_do_closeout_get"),
+    ("value", "/api/value", {}, "_do_value"),
+    ("cross", "/api/cross-module", {}, "_do_cross_module"),
+    ("news", "/api/good-news", {}, "_do_good_news"),
+    ("miles", "/api/milestones", {}, "_do_milestones"),
+    ("loss", "/api/loss-signals", {}, "_do_loss_signals"),
+    ("month", "/api/monthly-review", {}, "_do_monthly_review"),
+    ("timeline", "/api/recs/timeline", {"limit": "40"}, "_do_recs_timeline"),
+    ("worked", "/api/recs/what-worked", {"days": "180"}, "_do_recs_what_worked"),
+)
+
+
+class _QueryAs:
+    """The request's query string as one block's own read sent it (bodies
+    read request.args); the real one is put back after."""
+
+    def __init__(self, args):
+        from werkzeug.datastructures import ImmutableMultiDict
+        self.args = ImmutableMultiDict(args)
+
+    def __enter__(self):
+        self.req = request._get_current_object()
+        self.had = "args" in self.req.__dict__
+        self.was = self.req.__dict__.get("args")
+        self.req.__dict__["args"] = self.args
+        return self
+
+    def __exit__(self, *exc):
+        if self.had:
+            self.req.__dict__["args"] = self.was
+        else:
+            self.req.__dict__.pop("args", None)
+        return False
+
+
+def _do_home_follow(u):
+    import auth
+    import home_snapshots
+    blocks, missing = {}, []
+    for key, path, args, body_name in _HOME_FOLLOW:
+        if auth._module_blocked(u, path=path) or auth._module_permission_denied(u, path=path):
+            blocks[key] = None
+            continue
+        try:
+            with _QueryAs(args), home_snapshots.kept_only():
+                payload, status = globals()[body_name](u)
+            blocks[key] = payload if status == 200 and isinstance(payload, dict) and payload.get("ok") else None
+        except home_snapshots.SnapshotMiss:
+            missing.append(key)
+        except Exception as e:
+            print(f"[home-follow] {key} failed rid={_rid(u)}: {e}")
+            blocks[key] = None
+    return {"ok": True, "blocks": blocks, "missing": missing}, 200
+
+
 _ROUTES = [
     # (path, methods, body, endpoint)
     ("/account/policy-notice/dismiss", ["POST"], _do_policy_notice_dismiss, "policy_notice_dismiss"),
@@ -8013,6 +8112,7 @@ _ROUTES = [
     ("/labor/auto-draft", ["POST"], _do_auto_draft_set, "auto_draft_set"),
     ("/loss-signals", ["GET"], _do_loss_signals, "loss_signals"),
     ("/cross-module", ["GET"], _do_cross_module, "cross_module"),
+    ("/home/follow", ["GET"], _do_home_follow, "home_follow"),
     ("/good-news", ["GET"], _do_good_news, "good_news"),
     ("/milestones", ["GET"], _do_milestones, "milestones_list"),
     ("/monthly-review", ["GET"], _do_monthly_review, "monthly_review"),

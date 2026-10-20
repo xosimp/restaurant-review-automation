@@ -5381,8 +5381,21 @@ def mobile_guest_contacts(current_user):
     rid = current_user["restaurant_id"]
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
-    from guest_marketing import get_guest_contacts
-    return jsonify(ok=True, contacts=get_guest_contacts(rid))
+    # One page with ?limit= (and ?before= / ?q=), the whole list without -
+    # what every build in the field reads (FE-10).
+    from guest_marketing import contacts_page
+    return jsonify(ok=True, **contacts_page(rid, request.args))
+
+
+@mobile_bp.route("/guest-contacts/counts")
+@mobile_login_required
+def mobile_guest_contacts_counts(current_user):
+    """Twin of /api/guest-contacts/counts (FE-10)."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import guest_contact_counts
+    return jsonify(ok=True, **guest_contact_counts(rid))
 
 
 @mobile_bp.route("/guest-contacts", methods=["POST"])

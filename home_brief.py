@@ -3077,6 +3077,34 @@ def _location_record(conn, r, now):
             "last_active": last_active, "last_fetched_at": r.get("last_fetched_at")}
 
 
+def _location_record_kept(r, fresh=False):
+    """One location's row, kept for its business day (home_snapshots, scale
+    audit 10/19/26 FE-09): the group view ran every location's labor and
+    inventory analyses serially on one request thread, for every owner
+    opening it, every 60 seconds of cache. The row is the same for every
+    viewer, so a group of N locations now reads N kept rows; a row is built
+    on the request only the first time a business day asks for it, and is
+    rebuilt off the request when that location's data stamp moves or it
+    is older than HOME_SNAPSHOT_REFRESH_SECONDS."""
+    import home_snapshots
+    rid = r["id"]
+    loc = get_restaurant(rid)
+    try:
+        from time_utils import restaurant_now as _rn_kept
+        today = _rn_kept(loc).date() if loc else datetime.now(timezone.utc).date()
+    except Exception:
+        today = datetime.now(timezone.utc).date()
+
+    def build():
+        c = get_conn()
+        try:
+            return _location_record(c, r, datetime.now(timezone.utc))
+        finally:
+            c.close()
+    return home_snapshots.serve("location_record", rid, home_snapshots.shared_scope(), today, build,
+                                restaurant=loc, fresh=fresh)
+
+
 def _group_issue_confidence(rid, issues, labor, inv, rs, lab_ev):
     """Each group-view attention item that is advice carries its K1
     `confidence` (confidence round 2, T1) from the same evidence the
@@ -3192,9 +3220,8 @@ def build_group_brief(current_user, fresh=False):
     if not base or not base.location_group:
         return {"ok": False, "error": "No location group on this account"}, 400
     now = datetime.now(timezone.utc)
-    conn = get_conn()
-    locs = [_location_record(conn, r, now) for r in get_location_group(base.location_group, owner_email=base.owner_email)]
-    conn.close()
+    locs = [_location_record_kept(r, fresh=fresh)
+            for r in get_location_group(base.location_group, owner_email=base.owner_email)]
     for l in locs:
         l["active"] = l["id"] == current_user["restaurant_id"]
         # Each location's last night (density fix #19): the same row its own

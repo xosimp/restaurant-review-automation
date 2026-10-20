@@ -4861,6 +4861,10 @@ def init_db(db_path: str = DB_PATH):
     # index (blob_store — RM-14).
     from pg_shadow import init_pg_shadow
     init_pg_shadow(db_path)
+    # Home's slow blocks kept as per-restaurant read models (home_snapshots,
+    # scale audit 10/19/26 FE-01).
+    from home_snapshots import init_home_snapshots
+    init_home_snapshots(db_path)
     # The publish outbox: one row per person a Send, a changes send or a
     # resend tells, delivered and retried apart from the stamp (schedule
     # audit 10/10/26 ARCH-19, ARCH-20, BUGSLIFE-9).

@@ -7511,7 +7511,8 @@ def food_cost_tracker_data(rid):
     from models import get_client_data as _gcd_fc
     data = None
     try:
-        _fc_raw = _gcd_fc(rid)
+        # food_cost_json only, never the shift history (DB-12).
+        _fc_raw = _gcd_fc(rid, with_shifts=False)
         if _fc_raw and _fc_raw.get("food_cost_json"):
             data = _json_fc.loads(_fc_raw["food_cost_json"])
     except Exception:
@@ -9627,8 +9628,21 @@ _NO_MARKETING_MODULE_ERROR = "Guest text club requires the Marketing module — 
 def guest_contacts_list(current_user):
     if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
         return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    from guest_marketing import get_guest_contacts
-    return jsonify(ok=True, contacts=get_guest_contacts(current_user["restaurant_id"]))
+    # One page with ?limit= (and ?before= / ?q=), the whole list without
+    # (guest_marketing.contacts_page, FE-10).
+    from guest_marketing import contacts_page
+    return jsonify(ok=True, **contacts_page(current_user["restaurant_id"], request.args))
+
+
+@client_bp.route("/api/guest-contacts/counts", methods=["GET"])
+@login_required
+def guest_contacts_counts(current_user):
+    """{total, textable} - the Marketing summary's two figures, counted in
+    the database (scale audit 10/19/26 FE-10). Twin: /mobile/api/guest-contacts/counts."""
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import guest_contact_counts
+    return jsonify(ok=True, **guest_contact_counts(current_user["restaurant_id"]))
 
 @client_bp.route("/api/guest-contacts", methods=["POST"])
 @login_required
@@ -9730,8 +9744,14 @@ def guest_qr_code(current_user):
     img.save(buf, format="PNG")
     buf.seek(0)
     download = request.args.get("download") == "1"
-    return send_file(buf, mimetype="image/png", as_attachment=download,
-                      download_name="guest-text-club-qr.png" if download else None)
+    resp = send_file(buf, mimetype="image/png", as_attachment=download,
+                     download_name="guest-text-club-qr.png" if download else None)
+    # The same code every time for this restaurant: kept by this browser for
+    # an hour instead of drawn on every page load (scale audit 10/19/26
+    # FE-14). Private - never a shared cache.
+    if not download:
+        resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
 
 
 # ── Public, unauthenticated: media, short links, newsletter unsubscribe ────

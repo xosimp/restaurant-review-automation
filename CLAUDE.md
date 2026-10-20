@@ -229,7 +229,8 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Do not raise gunicorn `--workers` past 1** until the bounded pools
   that still multiply with workers are sized for it: the two admin pools —
   `ops.run_admin_task` and `admin_routes._submit_admin_job` — the webhook
-  and push delivery pools, the owner AI job pool `ai_async`, the AI
+  and push delivery pools, the owner AI job pool `ai_async`, Home's
+  snapshot rebuild pool (`home_snapshots`, `HOME_SNAPSHOT_WORKERS`), the AI
   background pools (Ask's read and summary pools, the shadow-review and
   scoring pools) and the schedule model-call pool — one per process,
   `schedule_engine._call_pool`, `SCHEDULE_CALL_POOL_WORKERS` (default
@@ -292,10 +293,13 @@ A deletion is only "verified" when the trace is written down alongside it.
   change a control and its sentence together.
 - **Static assets:** the dashboard's script and style blocks are served as
   content-hashed, immutable bundles (`/b/<hash>`, `static_bundles`), so they
-  may be cached forever. Everything else under `/static/` (e.g.
-  `/static/cavnar-orb.js`) has no cache-busting: do not add a far-future
-  `max-age` to those until they are hashed too, or a fix will be stranded in
-  browser caches.
+  may be cached forever. Since 10/19/26 (FE-04) every literal `/static/<file>`
+  in a template, and every `url()` in a `/static` stylesheet, is served as
+  `/static/<file>?v=<content hash>` (`static_bundles.version_refs`), and only
+  a request carrying the file's CURRENT hash is answered immutable. A bare
+  `/static/` URL (one built at run time, an email's absolute link, a
+  reference in a `/static` script) still has no cache-busting: never give
+  those a far-future `max-age`, or a fix will be stranded in browser caches.
 - **SQL must stay translatable to Postgres.** `models.get_conn` returns a
   Postgres connection when `DATABASE_URL` names one (`db_dialect`); run
   `scripts/pg_sql_audit.py` after adding SQL — it must report

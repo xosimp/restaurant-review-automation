@@ -5571,12 +5571,14 @@ def _required_module(path: str):
     return best[1] if best else None
 
 
-def _module_blocked(user):
-    """The module label to refuse this request for, or None to allow it."""
+def _module_blocked(user, path=None):
+    """The module label to refuse this request for, or None to allow it.
+    `path` asks it of a path other than the request's own (a combined read,
+    strategy_routes._do_home_follow, gates each read it makes)."""
     try:
         if not user or user.get("is_admin"):
             return None
-        key = _required_module(request.path or "")
+        key = _required_module(path if path is not None else (request.path or ""))
         if not key:
             return None
         from models import module_label, restaurant_has_module
@@ -5593,7 +5595,7 @@ def _module_blocked_message(label):
     return f"{label} isn't part of this plan. Contact will@cavnar.ai to add it."
 
 
-def _module_permission_denied(user):
+def _module_permission_denied(user, path=None):
     """The module label this ROLE may not read, or None to allow it.
 
     The sibling of _module_blocked, asking the other question of the same path
@@ -5607,7 +5609,8 @@ def _module_permission_denied(user):
     try:
         if not user or user.get("is_admin"):
             return None
-        key = _required_module(request.path or "")
+        path = path if path is not None else (request.path or "")
+        key = _required_module(path)
         if not key:
             return None
         from permissions import MODULE_VIEW_PERMISSIONS, has_permission, enter_path_allowed
@@ -5616,7 +5619,7 @@ def _module_permission_denied(user):
             return None
         # Counting, receiving and logging waste are open to FOOD_COST_ENTER
         # without the margins (U2-27); those routes withhold every dollar.
-        if key == "inventory" and enter_path_allowed(user, request.method, request.path or ""):
+        if key == "inventory" and enter_path_allowed(user, request.method, path):
             return None
         from models import module_label
         return module_label(key)

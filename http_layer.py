@@ -207,13 +207,14 @@ def add_cache_headers(response):
     per-tenant and may change on the next write, so it is no-store. That is a
     correctness and privacy statement, not a performance one.
 
-    Static assets are NOT given a long max-age, even though they are the
-    obvious candidate. They are referenced by bare path — /static/cavnar-orb.js,
-    no hash and no version query — so a far-future expiry would strand a
-    JavaScript fix in browser caches with no way to bust it. Flask's own
-    `no-cache` keeps the revalidation round trip but returns a bodiless 304,
-    which is most of the saving without the hazard. Worth revisiting only
-    alongside cache-busted asset URLs.
+    Static assets are NOT given a long max-age here. A bare reference —
+    /static/cavnar-orb.js, no version query — would strand a JavaScript fix
+    in browser caches with no way to bust it, so a bare request keeps Flask's
+    own `no-cache` (a revalidation round trip, a bodiless 304). Since the
+    scale audit (10/19/26 FE-04) the templates reference /static files with
+    their content hash (`?v=`, static_bundles.version_refs), and the static
+    view itself marks a request carrying the current hash immutable — this
+    function leaves a response that already has a Cache-Control alone.
 
     HTML pages are left alone too: caching them would risk serving a stale
     dashboard after an action, and the win there came from compression.

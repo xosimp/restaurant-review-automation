@@ -6082,19 +6082,30 @@ svg:hover .hb-xh{opacity:1}
     return r.verdict==='improved'?'good':(r.verdict==='worsened'?'critical':'watch');
   }
   var RESULTTONE={improved:'good',worsened:'critical'};
+  // Each read's own address: the fallback, and where a block the combined
+  // read has not kept yet is read on its own.
+  var HB_FOLLOW_URL={brief:'/api/morning-brief?view=home',issues:'/api/issues?status=unresolved',goals:'/api/goals',outcomes:'/api/outcomes',
+    actions:'/api/actions',closeout:'/api/closeout',value:'/api/value',cross:'/api/cross-module',news:'/api/good-news',miles:'/api/milestones',
+    loss:'/api/loss-signals',month:'/api/monthly-review',
+    // The record behind the check-in (which result belongs to which
+    // recommendation) and "What worked for you" (rec-ROI #21, #28).
+    timeline:'/api/recs/timeline?limit=40',worked:'/api/recs/what-worked?days=180'};
   function hbFollow(){
-    var got={},left=15;
+    var got={},left=15,k;
     // The status line under the greeting draws the moment the report row
     // lands, not after all fifteen reads (density fix #1).
     function done(k,v){got[k]=v;left--;if(k==='dsr')hbStatus(v);if(!left)renderFollow(got);}
     function get(k,url){fetch(url,{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){done(k,d&&d.ok?d:null);}).catch(function(){done(k,null);});}
-    get('brief','/api/morning-brief?view=home');get('issues','/api/issues?status=unresolved');get('goals','/api/goals');get('outcomes','/api/outcomes');
-    get('actions','/api/actions');get('closeout','/api/closeout');get('value','/api/value');
-    get('cross','/api/cross-module');get('news','/api/good-news');get('miles','/api/milestones');
-    get('loss','/api/loss-signals');get('month','/api/monthly-review');get('dsr','/api/dsr?limit=1');
-    // The record behind the check-in (which result belongs to which
-    // recommendation) and "What worked for you" (rec-ROI #21, #28).
-    get('timeline','/api/recs/timeline?limit=40');get('worked','/api/recs/what-worked?days=180');
+    function each(){for(var key in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(key))get(key,HB_FOLLOW_URL[key]);}}
+    get('dsr','/api/dsr?limit=1');
+    // The other fourteen in one read (scale audit 10/19/26 FE-01). A block
+    // not kept for today yet comes back in 'missing' and is read on its own.
+    fetch('/api/home/follow',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(!d||!d.ok||!d.blocks){each();return;}
+      var miss=d.missing||[],i;
+      for(k in HB_FOLLOW_URL){if(HB_FOLLOW_URL.hasOwnProperty(k)&&miss.indexOf(k)<0)done(k,d.blocks[k]||null);}
+      for(i=0;i<miss.length;i++){if(HB_FOLLOW_URL[miss[i]])get(miss[i],HB_FOLLOW_URL[miss[i]]);}
+    }).catch(function(){each();});
   }
   // ── last month, in the app ────────────────────────────────────────────────
   // The monthly review only ever went out as an email on the 1st. An owner
@@ -7179,7 +7190,19 @@ svg:hover .hb-xh{opacity:1}
     if(window.history&&window.history.replaceState)window.history.replaceState({},'',window.location.pathname+window.location.hash);
     if(q)setTimeout(function(){hbAsk(q);},400);
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){hbLoad(false);hbAskFromUrl();});else {hbLoad(false);hbAskFromUrl();}
+  // Home loads when Home is what is on screen (scale audit 10/19/26 FE-02):
+  // every page load used to run its whole fan-out, whichever tab, Studio,
+  // Bar or DNA page it opened on, and every reload of those repeated it.
+  // Checked after the address router has picked the tab; a page that opens
+  // elsewhere loads Home on its first visit (switchTab -> hbRefresh) or when
+  // the full-screen page over it closes (hbEnsure).
+  function hbOnScreen(){
+    var p=document.getElementById('panel-home');
+    return !!(p&&p.classList.contains('active'))&&!window._SS_BOOT&&!window._DNA_BOOT&&!window._BAR_BOOT;
+  }
+  window.hbEnsure=function(){var p=document.getElementById('panel-home');if(p&&p.classList.contains('active')&&!_hbLoadedAt&&!_hbData&&!_hbLoading)hbLoad(false);};
+  function hbBoot(){hbAskFromUrl();setTimeout(function(){if(hbOnScreen())hbLoad(false);},0);}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hbBoot);else hbBoot();
   document.addEventListener('visibilitychange',function(){if(!document.hidden&&document.getElementById('panel-home').classList.contains('active'))hbRefresh();});
 })();
 </script>
@@ -15376,7 +15399,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         </div>
         <div class="cp-card cp-qr">
           <div class="cp-qrhd">
-            <img src="/api/guest-qr" alt="QR code guests scan to join" width="164" height="164">
+            <img src="/api/guest-qr" alt="QR code guests scan to join" width="164" height="164" loading="lazy">
             <div><div class="t">Scan to join</div><div class="s">Guests opt in themselves &mdash; only they can.</div></div>
           </div>
           <div class="cp-places" aria-hidden="true">
@@ -17997,7 +18020,11 @@ function _setAskCavnarLoadingState(bubble, label, state) {
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
   load();
-  pollTimer = setInterval(load, 60000);
+  // Every two minutes (scale audit 10/19/26 FE-05): the feed changes as
+  // fast as the jobs that write it, and the server keeps each build for
+  // activity.ACTIVITY_TTL - a 60-second poll against a 45-second cache was
+  // a fresh ~20-query build on every tick for every open dashboard.
+  pollTimer = setInterval(load, 120000);
 })();
 
 function _appendAskCavnarEvidence(d) {
@@ -20673,7 +20700,10 @@ function switchTab(n,btn){
   // navigation, and writes nothing while it is routing Back itself.
   if(window.cavHistory)cavHistory('#'+n);else history.replaceState(null,null,'#'+n);
   if(!_same&&window.cavScrollRestore)cavScrollRestore('panel-'+n);
-  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
+  // One row per tab per five minutes, not one per switch (scale audit
+  // 10/19/26 FE-14): flicking between two tabs wrote a row and the
+  // restaurants row on every click.
+  if(cavStale('log-activity:'+n,300000))fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})}).catch(function(){});
 }
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
@@ -21442,14 +21472,17 @@ function cvReplyRate(cb){
   }).catch(function(){ window._cvRatesFailed = true; var ws = _cvRateWaiters || []; _cvRateWaiters = null; for(var i = 0; i < ws.length; i++) ws[i](null); });
 }
 
-// ── Auto-poll every 15 seconds when on reviews tab ────────
+// ── Auto-poll every minute when on reviews tab ────────
+// Once a minute, not every 15 seconds (scale audit 10/19/26 FE-06): reviews
+// arrive with the fetch sweeps, hours apart, and an approve or a reply
+// refreshes the counts itself.
 setInterval(function(){
   if(document.hidden) return;   // nobody is looking; the next tick after they are catches up (CLIENT-37)
   var reviewPanel = document.getElementById('panel-reviews');
   if(reviewPanel && reviewPanel.classList.contains('active')){
     updateReviewStats();
   }
-}, 15000);
+}, 60000);
 
 // ── Review request sender ──────────────────────────────────
 function rrToggleConsent(){
@@ -27925,6 +27958,8 @@ function studioClose(opts) {
     else { history.replaceState(null, '', '/#labor'); if (window.cavNav) cavNav('labor', {replace: true}); }
   }
   ssLaunchRefresh();
+  // Home under it loads now if the page opened on the Studio (FE-02).
+  setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
 }
 // The Schedule tab: active while the Studio is open; closing it gives the
 // tab bar back to the panel underneath. Any other tab closes the Studio
@@ -35230,10 +35265,12 @@ function cpPaintPerfSum() {
 function loadGuestContactsSummary() {
   var el = _cpEl('guest-contacts-summary');
   if (!el) return;
-  fetch('/api/guest-contacts').then(apiJson).then(function(d) {
+  // The two counts, counted by the server: the whole list used to be sent
+  // here just to be counted (scale audit 10/19/26 FE-10).
+  fetch('/api/guest-contacts/counts').then(apiJson).then(function(d) {
     if (!d.ok) { loadFailed(el, d); return; }
-    var total = d.contacts.length;
-    var consented = d.contacts.filter(function(c) { return c.consent && !c.unsubscribed; }).length;
+    var total = +d.total || 0;
+    var consented = +d.textable || 0;
     el.textContent = consented + ' can be texted · ' + total + ' on the list · add, remove or mark a visit';
   }).catch(function() { loadFailed(el, null); });
 }
@@ -36122,14 +36159,21 @@ function _fmtVisitDate(iso) {
   return month + '/' + day + '/' + year + ', ' + hour12 + ':' + minute + ' ' + ampm;
 }
 
-function _loadGuestContactsList() {
+// A page of guests at a time, newest first (FE-10): a club of thousands was
+// one response and one HTML string. "Load more guests" reads the next page
+// (the reviews inbox's Load more pattern).
+var GUEST_PAGE = 100;
+function _loadGuestContactsList(before) {
   var list = document.getElementById('guest-contacts-list');
-  list.innerHTML = mktLoading('Loading your guests\u2026');
-  fetch('/api/guest-contacts').then(apiJson).then(function(d){
-    if (!d.ok || !d.contacts.length) {
+  var more = document.getElementById('guest-contacts-more');
+  if (more && more.parentNode) more.parentNode.removeChild(more);
+  if (!before) list.innerHTML = mktLoading('Loading your guests\u2026');
+  fetch('/api/guest-contacts?limit=' + GUEST_PAGE + (before ? '&before=' + encodeURIComponent(before) : '')).then(apiJson).then(function(d){
+    if (!before && (!d.ok || !d.contacts.length)) {
       list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--ink3)">No contacts yet.</div>';
       return;
     }
+    if (!d.ok) { toast(d.error || 'Could not load more guests', 'error'); return; }
     var html = '';
     for (var i = 0; i < d.contacts.length; i++) {
       var c = d.contacts[i];
@@ -36148,8 +36192,10 @@ function _loadGuestContactsList() {
         + '</div>'
         + '</div>';
     }
-    list.innerHTML = html;
+    if (d.next_before) html += '<div id="guest-contacts-more" style="padding:12px 0"><button class="cbtn cbtn-secondary" onclick="_loadGuestContactsList(' + (+d.next_before) + ')">Load more guests</button></div>';
+    if (before) list.insertAdjacentHTML('beforeend', html); else list.innerHTML = html;
   }).catch(function(){
+    if (before) { toast('Could not load more guests', 'error'); return; }
     list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--red)">Could not load contacts.</div>';
   });
 }
@@ -46565,6 +46611,8 @@ function sfw2RuleCheck(chk) {
       else history.replaceState(null, '', '/');
     }
     if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+    // Home under it loads now if the page opened on DNA (FE-02).
+    setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
   };
   // Back and Forward cross the DNA page's address (cavRoute asks first).
   window.dnaOnRoute = function () {
@@ -49420,6 +49468,7 @@ function sfw2RuleCheck(chk) {
       else { history.replaceState(null, '', '/#inventory'); if (typeof cavNav === 'function') cavNav('inventory'); }
     }
     if (BACK_TO && BACK_TO.focus) { try { BACK_TO.focus(); } catch (e) { } }
+    setTimeout(function () { if (window.hbEnsure) window.hbEnsure(); }, 0);
   };
   window.barOnRoute = function () {
     var at = window.location.pathname === '/bar';
