@@ -109,9 +109,10 @@ def static_statements(root=ROOT):
 
 
 # Modules whose SQL is Postgres's own (the dialect layer's catalog reads, the
-# copy, the shadow's typed writes): never translated, so not audited as
+# copy, the shadow's typed writes, the partition upkeep — every statement
+# of pg_partitions runs through execute_native): never translated, so not audited as
 # SQLite.
-_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py"}
+_NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py"}
 
 
 def _nodes(root=ROOT):
@@ -198,6 +199,8 @@ def prepare_check(url, root=ROOT, build=True) -> dict:
                 sql = re.sub(r"^\s*UPDATE\s+OR\s+\w+", "UPDATE", sql, flags=re.I)
             try:
                 text, _ret = conn._final_text(sql)
+                # `col IS ?` as a value binds it (db_dialect.bind_is).
+                text = db_dialect.bind_is(text, None)[0]
             except Exception as e:
                 out["prepare_failed"].append({"at": f"{path}:{line}", "error": f"translate: {e}"[:200],
                                               "sql": sql[:160]})

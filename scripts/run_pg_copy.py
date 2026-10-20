@@ -7,6 +7,9 @@ runbook this is a step of). Run by the operator, never by the app.
     python scripts/run_pg_copy.py --sqlite snapshot.db --plan          # the schema it would build, no database
     python scripts/run_pg_copy.py --sqlite /data/reviews.db --database-url "$PG_URL" --verify-only
     python scripts/run_pg_copy.py --export out.db --database-url "$PG_URL"   # Postgres -> SQLite (rollback)
+    python scripts/run_pg_copy.py --database-url "$PG_URL" --partition-tables pos_payments,pos_item_daily
+                                  # live plain tables made monthly-partitioned, IN THE WRITE FREEZE
+                                  # (pg_partitions.convert_to_partitioned; `--drop-old` drops <t>__old)
 
 Copy a SNAPSHOT, never the live file: the nightly backup's newest local
 snapshot (gunzipped), or `models.checkpoint()` then a copy, taken while
@@ -34,8 +37,22 @@ def main(argv=None) -> int:
     ap.add_argument("--verify-only", action="store_true")
     ap.add_argument("--no-schema", action="store_true", help="the schema exists; copy rows only")
     ap.add_argument("--export", help="Postgres -> this SQLite file instead")
+    ap.add_argument("--partition-tables", help="comma-separated: make these live tables partitioned (the freeze)")
+    ap.add_argument("--drop-old", action="store_true", help="with --partition-tables: drop <table>__old after")
     a = ap.parse_args(argv)
     import pg_copy
+    if a.partition_tables:
+        if not a.database_url:
+            ap.error("--database-url (or TARGET_DATABASE_URL) is required")
+        import db_dialect
+        import pg_partitions
+        conn = db_dialect.connect(a.database_url)
+        try:
+            for t in [x.strip() for x in a.partition_tables.split(",") if x.strip()]:
+                print(json.dumps(pg_partitions.convert_to_partitioned(conn, t, drop_old=a.drop_old)))
+        finally:
+            conn.close()
+        return 0
     if a.export:
         rep = pg_copy.export_to_sqlite(a.export, url=a.database_url)
         print(json.dumps(rep, indent=2, default=str))

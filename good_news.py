@@ -57,6 +57,7 @@ from datetime import date, timedelta
 
 import metrics
 from models import DB_PATH
+from models import in_read_scope
 # M/D/YY in every owner-facing sentence (CLAUDE.md, re-audit A34).
 from time_utils import mdy as _mdy
 
@@ -422,6 +423,11 @@ _NEWS_TTL = 120
 _NEWS_MAX = 400
 
 
+# One unit of work (blind re-audit 10/20/26 R2-12): the restaurant row and
+# client_data read once for the whole build (models.read_scope) — off a
+# request (the scheduler's precompute, a delivery) it was read ~190 times,
+# each a round trip on Postgres.
+@in_read_scope
 def all_good_news(restaurant_id, today=None, db_path=DB_PATH, restaurant=None,
                   denied_modules=None, limit=None):
     """Every positive signal, best first. Records outrank streaks outrank

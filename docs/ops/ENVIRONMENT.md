@@ -280,6 +280,7 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `PG_LOCK_TIMEOUT_MS` | `30000` | On Postgres: a lock wait gives up after this (SQLite's 30 s busy_timeout); `0` = never (scale audit 10/19/26 DB-06). | db_dialect.py |
 | `PG_STATEMENT_TIMEOUT_MS` | `300000` | On Postgres: a statement is cancelled after this; `0` = never. | db_dialect.py |
 | `PG_IDLE_TX_TIMEOUT_MS` | `300000` | On Postgres: a session idle inside a transaction is ended after this; `0` = never. | db_dialect.py |
+| `PG_WORK_MEM` | unset | On Postgres: `work_mem` for this app's sessions (e.g. `16MB`; digits with `kB`/`MB`/`GB`, anything else ignored) — what one sort or hash may use before spilling to disk. Unset = the server's own (4 MB by default). The server-wide memory settings are not the app's: see docs/ops/POSTGRES_CUTOVER.md → *Server memory* (blind re-audit 10/20/26 R2-10). | db_dialect.py |
 | `PG_PREPARE_THRESHOLD` | unset | `off` never prepares statements server-side — set it behind PgBouncer in transaction mode older than 1.21 (DB-07). | db_dialect.py |
 | `PG_POOL_TIMEOUT` | `30` | Seconds a checkout waits for a free connection before it fails, said ("database connection pool exhausted"). | db_dialect.py |
 | `PG_CONNECT_TIMEOUT_S` | `5` | Seconds a new Postgres connection waits for the server before it fails (min 2; it was a fixed 10 — DB-22). | db_dialect.py |
