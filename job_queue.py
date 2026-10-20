@@ -797,6 +797,8 @@ def lease_lost(job=None) -> bool:
     job = job if job is not None else _CURRENT.get()
     if job is None or job.get("id") is None:
         return False
+    if job.get("lease_lost"):                # set with the mark by _LeaseKeeper._lose
+        return True
     with _lost_lock:
         return int(job["id"]) in _lost
 
