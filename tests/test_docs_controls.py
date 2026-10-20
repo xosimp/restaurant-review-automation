@@ -170,6 +170,10 @@ _STEP_UP_TODAY = {
     # Website analytics ownership (scale fix 10/19/26, SEC-01): approving a
     # pending GA4 / Search Console binding by hand.
     "/admin/api/external-bindings/approve",
+    # Blind re-audit 10/20/26 R7-13: creating a client (a restaurant and an
+    # owner login) and reactivating a login.
+    "/admin/create-client",
+    "/admin/reactivate-client/<int:user_id>",
 }
 
 # Routes that need the step-up for only PART of what they do, through
@@ -208,11 +212,12 @@ def test_the_step_up_routes_are_the_ones_the_doc_lists():
     for name in _STEP_UP_IN_PART:
         assert "reauth_refusal(" in inspect.getsource(getattr(admin_routes, name)), name
     assert tuple(admin_routes._SETTINGS_STEP_UP_FIELDS) == (
-        "billing_status", "module_reviews", "module_labor", "module_inventory", "module_marketing", "owner_email")
+        "billing_status", "module_reviews", "module_labor", "module_inventory", "module_marketing", "owner_email",
+        "owner_phone")
     assert tuple(offboarding.ACTING_STEPS) == ("integrations", "stripe", "docusign")
     _says(SECURITY, "applied today", f"the decorator, on {len(_STEP_UP_TODAY)} routes",
           "`offboarding.acting_steps`: integrations, stripe, docusign",
-          "the billing status, a module switch or the owner email (`_settings_step_up_fields`)",
+          "the billing status, a module switch, the owner email or the owner's phone (`_settings_step_up_fields`)",
           "five routes ask for it only for the part", "(a method switch — `admin_two_factor_send`, "
           "`admin_two_factor_verify`)")
 

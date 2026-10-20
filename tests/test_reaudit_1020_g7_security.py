@@ -24,7 +24,9 @@ TEMPLATES = os.path.join(ROOT, "templates")
 def _redirect(db_path, monkeypatch):
     real = models.get_conn
     redirect = lambda *a, **k: real(db_path)
-    for mod in (models, auth, auth_routes, mobile_api, client_api):
+    import admin_routes
+    import webhook_routes
+    for mod in (models, auth, auth_routes, mobile_api, client_api, admin_routes, webhook_routes):
         monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
     monkeypatch.setattr(auth, "DB_PATH", db_path)
@@ -653,3 +655,50 @@ def test_sentry_events_are_scrubbed():
         assert secret not in flat, secret
     src = open(os.path.join(ROOT, "sentry_setup.py"), encoding="utf-8").read()
     assert "include_local_variables=False" in src and "before_send=scrub_event" in src
+
+
+# ── R7-13: the remaining admin writes record themselves, typed ─────────────
+
+def test_the_audited_decorator_writes_one_typed_row_without_values(db_path, monkeypatch):
+    import admin_events
+    from flask import jsonify
+    rows = []
+    monkeypatch.setattr(admin_events, "record_admin_action",
+                        lambda actor, action, **k: rows.append((actor.get("username"), action, k)))
+
+    @admin_events.audited("thing.saved", snapshot=lambda kw: {"n": 1})
+    def route(restaurant_id, current_user):
+        return jsonify(ok=True)
+
+    app = Flask(__name__)
+    with app.test_request_context("/admin/x/4", method="POST", json={"token": "SECRET-VALUE", "note": "x"}):
+        route(restaurant_id=4, current_user={"id": 9, "username": "will"})
+    (who, action, k), = rows
+    assert (who, action, k["restaurant_id"], k["result"]) == ("will", "thing.saved", 4, "ok")
+    assert k["after"]["fields"] == ["note", "token"] and "SECRET-VALUE" not in repr(k)
+    assert k["before"] == {"n": 1}
+
+
+def test_the_listed_admin_writes_carry_a_typed_audit_and_the_step_ups():
+    import ast
+    # (Staff notes, the Instagram refresh and the review import already
+    # recorded themselves through their own typed calls.)
+    want = {"admin_routes.py": ("save_staff_availability_route", "delete_staff_availability_route", "upload_data",
+                                "upload_menu_pdf", "fetch_menu_from_url_route", "refresh_menu_notes",
+                                "admin_create_changelog", "admin_delete_changelog", "admin_create_template",
+                                "admin_delete_template"),
+            "status_routes.py": ("admin_update_status", "admin_create_incident", "admin_update_incident",
+                                 "admin_resolve_incident")}
+    for rel, names in want.items():
+        tree = ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read())
+        fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        for name in names:
+            decos = [ast.unparse(d) for d in fns[name].decorator_list]
+            assert any(".audited(" in d for d in decos), (rel, name)
+    rp = open(os.path.join(ROOT, "rpower_routes.py"), encoding="utf-8").read()
+    assert rp.count("_audited_rpower(\"rpower.") == 3
+    ar = open(os.path.join(ROOT, "admin_routes.py"), encoding="utf-8").read()
+    assert "@recent_auth_required()\ndef create_client(" in ar and "@recent_auth_required()\ndef reactivate_client(" in ar
+    assert "\"client.created\"" in ar
+    import admin_routes
+    assert "owner_phone" in admin_routes._SETTINGS_STEP_UP_FIELDS

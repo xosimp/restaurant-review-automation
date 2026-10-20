@@ -10,6 +10,7 @@ from datetime import datetime
 # Import everything needed from the main app
 from models import get_conn, get_restaurant, update_restaurant, create_restaurant, Restaurant, get_reviews_data, get_review_stats, log_email, get_changelog, save_changelog_entry, delete_changelog_entry, location_group_conflict, place_id_conflict
 from auth import get_session_user, delete_session, create_user, update_password, admin_required, login_required, recent_auth_required
+import admin_events as _admin_events_c   # the typed audit decorator on admin writes (R7-13)
 from emails import send_payment_email, send_welcome_email
 import emails as _emails
 
@@ -123,6 +124,7 @@ def _new_client_problem(data):
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def create_client(current_user):
     """Create the restaurant and its owner's login, then start the provider
     calls (the Places menu fetch, the DocuSign contract) as a background
@@ -256,6 +258,12 @@ def create_client(current_user):
             "actor": current_user.get("username") or "admin",
         }
         job_id, setup_error = _start_client_setup(rid, setup)
+        _audit_admin_action(current_user, "client.created", restaurant_id=rid, target=f"restaurant:{rid}",
+                            after={"restaurant_name": setup["restaurant_name"], "owner_email": setup["owner_email"],
+                                   "username": data["username"].strip(), "modules": module_names,
+                                   "location_group": (data.get("location_group") or "").strip() or None,
+                                   "timezone": timezone},
+                            summary=f"{current_user.get('username')} created {setup['restaurant_name']}"[:300])
         return jsonify(ok=True, restaurant_id=rid, setup_job_id=job_id, setup_error=setup_error,
                        envelope_id=None, docusign_skipped=False, timezone=timezone,
                        timezone_defaulted=not (data.get("timezone") or "").strip())
@@ -402,6 +410,7 @@ def deactivate_client(user_id, current_user):
 
 @admin_bp.route("/admin/reactivate-client/<int:user_id>", methods=["POST"])
 @admin_required
+@recent_auth_required()
 def reactivate_client(user_id, current_user):
     """Switch a login back on. Never an admin row (the deactivate twin
     always refused one; this did not — SECURITY #93). Any session left from
@@ -1060,6 +1069,7 @@ def get_staff_availability_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("staff_availability.saved")
 def save_staff_availability_route(restaurant_id, current_user):
     from models import save_staff_availability
     data = request.get_json() or {}
@@ -1076,6 +1086,7 @@ def save_staff_availability_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>/delete", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("staff_availability.deleted")
 def delete_staff_availability_route(restaurant_id, current_user):
     from models import delete_staff_availability
     data = request.get_json() or {}
@@ -1158,6 +1169,7 @@ def test_alert_sms_route(restaurant_id, current_user):
 
 @admin_bp.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("data.uploaded")
 def upload_data(restaurant_id, current_user):
     """A client's shifts or inventory CSV, loaded by an admin into THAT
     client's restaurant — the one the URL names. The console's data page
@@ -1223,7 +1235,9 @@ _SETTINGS_CONTROL_KEYS = frozenset({"touched", "expected_version", "base", "bill
 # client is sold and billed for) and the owner's email (where every account
 # and security email goes).
 _SETTINGS_STEP_UP_FIELDS = ("billing_status", "module_reviews", "module_labor", "module_inventory",
-                            "module_marketing", "owner_email")
+                            "module_marketing", "owner_email",
+                            # where an account holder's sign-in codes are texted (R7-13)
+                            "owner_phone")
 
 # The two targets this page sets: label, lowest, highest. The labor target
 # keeps the admin's stricter 5–60 (SCHED-36); food cost takes the owner
@@ -3173,6 +3187,7 @@ def inv_trend_api(current_user):
 
 @admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.uploaded")
 def upload_menu_pdf(restaurant_id, current_user):
     """Extract the menu from a PDF, as a background job; poll
     /admin/api/menu-extract/<job_id>. The text comes back to the page to
@@ -3205,6 +3220,7 @@ def _extract_menu_pdf(restaurant_id, pdf_bytes, restaurant_name):
 
 @admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.fetched_from_url")
 def fetch_menu_from_url_route(restaurant_id, current_user):
     """Extract the menu from a web page, as a background job; poll
     /admin/api/menu-extract/<job_id>. Returned to review, never saved here
@@ -3233,6 +3249,7 @@ def _extract_menu_url(restaurant_id, url):
 
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("menu.notes_refreshed")
 def refresh_menu_notes(restaurant_id, current_user):
     """Menu notes from Google Places, merged with the saved ones, as a
     background job; poll /admin/api/menu-extract/<job_id>. Returned to
@@ -3738,6 +3755,7 @@ def admin_get_changelog(current_user):
 
 @admin_bp.route("/admin/api/changelog", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("changelog.added")
 def admin_create_changelog(current_user):
     data = request.get_json(force=True) or {}
     title = (data.get("title") or "").strip()
@@ -3750,6 +3768,7 @@ def admin_create_changelog(current_user):
 
 @admin_bp.route("/admin/api/changelog/<int:entry_id>", methods=["DELETE"])
 @admin_required
+@_admin_events_c.audited("changelog.deleted")
 def admin_delete_changelog(entry_id, current_user):
     delete_changelog_entry(entry_id)
     return jsonify(ok=True)
@@ -6281,6 +6300,7 @@ def admin_list_templates(restaurant_id, current_user):
 
 @admin_bp.route("/admin/api/templates/<int:restaurant_id>", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("template.saved")
 def admin_create_template(restaurant_id, current_user):
     """The owner route's rules (mobile_api.mobile_create_template)."""
     from models import create_response_template
@@ -6304,6 +6324,7 @@ def admin_create_template(restaurant_id, current_user):
 
 @admin_bp.route("/admin/api/templates/<int:restaurant_id>/<int:template_id>/delete", methods=["POST"])
 @admin_required
+@_admin_events_c.audited("template.deleted")
 def admin_delete_template(restaurant_id, template_id, current_user):
     from models import delete_response_template
     delete_response_template(template_id, restaurant_id)

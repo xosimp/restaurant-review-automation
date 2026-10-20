@@ -61,7 +61,8 @@ def admin(app, db_path):
     home = create_restaurant(Restaurant(name="Cavnar HQ", owner_email="will@cavnar.test"), db_path=db_path)
     uid = create_user(home, "will", "will@cavnar.test", "Admin-pass-2026", is_admin=True, db_path=db_path)
     c = app.test_client()
-    c.set_cookie("session_token", create_session(uid, db_path=db_path))
+    # A session that just typed its password: creating a client asks for the step-up (R7-13).
+    c.set_cookie("session_token", create_session(uid, db_path=db_path, password_verified_at=True))
     c.set_cookie("csrf_js", CSRF)
     return c
 
