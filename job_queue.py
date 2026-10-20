@@ -196,19 +196,128 @@ def group_concurrency(grp) -> int:
     organisation's token budget can carry (model_gateway.
     max_concurrent_generations — no cap when the budget is not configured)."""
     if grp == "generation":
-        import schedule_engine
-        # Sized to the cores by default (blind re-audit 10/11/26 SCALE-16):
-        # each generation's solves run SCHEDULE_CPSAT_WORKERS threads, and
-        # more of them at once than the cores can carry end on the wall
-        # clock instead of their work budget. An explicit
+        # Sized to the container by default (blind re-audit 10/11/26
+        # SCALE-16; scale audit 10/19/26 A5-F2/F7): its cores over each
+        # solve's threads — more solves at once than the cores carry end on
+        # the wall clock instead of their work budget (A5-F6) — and its
+        # memory over what one generation takes. It was also held to a fixed
+        # 2 (SCHEDULE_GEN_WORKERS), so a bigger container's cores sat idle;
+        # SCHEDULE_GEN_WORKERS is now only an operator's ceiling. An explicit
         # QUEUE_GENERATION_CONCURRENCY is the operator's and is kept.
-        n = _int_env("QUEUE_GENERATION_CONCURRENCY",
-                     min(schedule_engine.SCHEDULE_GEN_WORKERS, cpu_generation_slots()))
+        n = _int_env("QUEUE_GENERATION_CONCURRENCY", default_generation_slots())
         cap = _gateway_streams()
         if cap:
             n = max(1, min(n, int(cap)))
+        _log_capacity_once(n)
         return n
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
+
+
+# What one generation holds at its peak on top of the container's baseline
+# (scale audit 10/19/26 A5-F7, MEASURED-LOCAL): the parent's growth plus its
+# CP-SAT solve process — about 1.0-1.4 GB at 60-250 people.
+GEN_SLOT_MB = float(os.getenv("SCHEDULE_GEN_SLOT_MB", "") or 1400)
+# What the container holds before any generation runs: the web process and
+# the queue worker's own baseline.
+GEN_MEMORY_RESERVE_MB = float(os.getenv("SCHEDULE_GEN_MEMORY_RESERVE_MB", "") or 1536)
+
+
+def default_generation_slots() -> int:
+    """The generation group's CPU slots when the operator set none: the
+    cores' slots (cpu_generation_slots), held to what the memory carries
+    (memory_generation_slots, when the container has a limit) and to
+    SCHEDULE_GEN_WORKERS when one is set. At least one."""
+    n = cpu_generation_slots()
+    mem = memory_generation_slots()
+    if mem:
+        n = min(n, mem)
+    try:
+        import schedule_engine
+        ceiling = int(schedule_engine.SCHEDULE_GEN_WORKERS or 0)
+    except Exception:
+        ceiling = 0
+    if ceiling > 0:
+        n = min(n, ceiling)
+    return max(1, int(n))
+
+
+def memory_limit_mb():
+    """The container's memory limit in MB — cgroup v2 memory.max, else v1
+    memory.limit_in_bytes — or None when it has none (or it cannot be
+    read): the host's memory is not the container's."""
+    raw = None
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as f:
+                raw = f.read().strip()
+            break
+        except Exception:
+            continue
+    if not raw or raw == "max":
+        return None
+    try:
+        mb = float(raw) / 1048576.0
+    except ValueError:
+        return None
+    # cgroup v1 writes a page-rounded 2^63 for "no limit".
+    if mb <= 0 or mb >= float(1 << 40):
+        return None
+    return mb
+
+
+def memory_generation_slots():
+    """Generations the container's memory carries at once: its limit less
+    GEN_MEMORY_RESERVE_MB, over GEN_SLOT_MB a generation; at least one.
+    None without a limit."""
+    lim = memory_limit_mb()
+    if lim is None:
+        return None
+    return max(1, int((lim - GEN_MEMORY_RESERVE_MB) // max(1.0, GEN_SLOT_MB)))
+
+
+def _solve_threads() -> int:
+    try:
+        import schedule_cpsat
+        return max(1, int(schedule_cpsat.WORKERS))
+    except Exception:
+        return 4
+
+
+def generation_capacity() -> dict:
+    """What the generation group is sized from, for the platform check and
+    the boot line: {cores, memory_mb, cpu_slots, memory_slots, slots,
+    solve_threads, oversubscribed} — oversubscribed when the slots' solver
+    threads outnumber the cores (solves then end on the wall clock, not
+    their work budget: A5-F6)."""
+    per = _solve_threads()
+    cores = cpu_cores()
+    slots = group_concurrency("generation")
+    mem = memory_limit_mb()
+    return {"cores": cores, "memory_mb": int(mem) if mem else None, "cpu_slots": cpu_generation_slots(),
+            "memory_slots": memory_generation_slots(), "slots": slots, "solve_threads": per,
+            "oversubscribed": slots * per > cores}
+
+
+_CAPACITY_LOGGED = []
+
+
+def _log_capacity_once(slots) -> None:
+    """The generation slots this process sized to, said once per process —
+    a warning when their solver threads outnumber the cores (an operator's
+    QUEUE_GENERATION_CONCURRENCY past them: A5-F6)."""
+    if _CAPACITY_LOGGED:
+        return
+    _CAPACITY_LOGGED.append(slots)
+    try:
+        per, cores, mem = _solve_threads(), cpu_cores(), memory_limit_mb()
+        line = (f"generation slots {slots}: {cores} cores / {per} solver threads, memory "
+                f"{int(mem) if mem else 'unlimited'} MB / {int(GEN_SLOT_MB)} MB a generation")
+        if slots * per > cores:
+            log.warning(line + " — more solver threads than cores: solves will end on the wall clock")
+        else:
+            log.info(line)
+    except Exception:
+        pass
 
 
 def cpu_cores() -> int:

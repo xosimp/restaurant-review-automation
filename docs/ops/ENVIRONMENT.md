@@ -170,7 +170,9 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `QUEUE_INTERACTIVE_RESERVED`, `QUEUE_SCHEDULED_RESERVED` | `"1"`, `"1"` | CPU slots of the generation group kept for owners' presses (always) and for the auto-draft (while drafts wait); each at most the slots less one. | job_queue.py |
 | `AUTO_DRAFT_SPREAD_MINUTES` | `"120"` | A restaurant's auto-draft row starts at its fixed place (a hash of its id) in this many minutes after the pass that queued it, so a timezone's drafts do not all become claimable at 6am. | strategy_jobs.py |
 | `QUEUE_WORKER_STALE_SECONDS` | `"90"` | A worker silent this long is gone: the web process consumes again. | job_queue.py |
-| `QUEUE_GENERATION_CONCURRENCY` | `SCHEDULE_GEN_WORKERS` (2) | Generations doing CODE work at once across EVERY process (CPU slots, a count of claimed rows), held under what `GATEWAY_ORG_OTPM` can stream; a generation waiting on the model holds none (`QUEUE_GENERATION_MAX_RUNNING` bounds those). | job_queue.py |
+| `QUEUE_GENERATION_CONCURRENCY` | the container's (`job_queue.default_generation_slots`: its cores over `SCHEDULE_CPSAT_WORKERS`, held to its memory limit less `SCHEDULE_GEN_MEMORY_RESERVE_MB` over `SCHEDULE_GEN_SLOT_MB`, and to `SCHEDULE_GEN_WORKERS` when set) | Generations doing CODE work at once across EVERY process (CPU slots, a count of claimed rows), held under what `GATEWAY_ORG_OTPM` can stream; a generation waiting on the model holds none (`QUEUE_GENERATION_MAX_RUNNING` bounds those). Was a fixed 2 until the scale audit of 10/19/26 (A5-F2). Keep slots x `SCHEDULE_CPSAT_WORKERS` at most the cores (a solve past them ends on the wall clock — the worker logs a warning and the platform check alerts on the rate) and slots x ~1.4 GB inside the container's memory (A5-F6/F7). | job_queue.py |
+| `SCHEDULE_GEN_SLOT_MB` | `1400` | The memory one generation holds at its peak (parent growth plus its CP-SAT solve process, measured 1.0-1.4 GB at 60-250 people): the default generation slots are the container's memory limit (cgroup `memory.max`) less `SCHEDULE_GEN_MEMORY_RESERVE_MB`, over this. No limit read: the cores alone. | job_queue.py |
+| `SCHEDULE_GEN_MEMORY_RESERVE_MB` | `1536` | What the container holds before any generation (the web process, the queue worker's baseline), kept out of the memory the generation slots are sized from. | job_queue.py |
 | `QUEUE_BULK_CONCURRENCY` | `"2"` | Learner rows running at once across every process. | job_queue.py |
 | `QUEUE_LEASE_SECONDS` | `"120"` | A claimed row's lease, renewed every quarter of it; a row whose lease ran out (its process died) is claimed again and resumed. | job_queue.py |
 | `QUEUE_POLL_SECONDS` | `"2"` | How often an idle worker looks for rows. | job_queue.py |
@@ -435,11 +437,11 @@ Changed or added by the AI cost audit (10/7/26):
 | `RUN_REQUEST_TTL_MINUTES` | `"30"` | ops.py |
 | `SCHEDULER_LEASE_STALE_SECONDS` | `"1800"` | ops.py |
 | `SCHEDULER_TICK_SECONDS` | `"300"` | admin_routes.py, scheduler.py |
-| `SCHEDULE_GEN_WORKERS` | `"2"` | schedule_engine.py |
+| `SCHEDULE_GEN_WORKERS` | unset (no ceiling) | An operator's ceiling on the default generation slots (`job_queue.default_generation_slots`); it was the fixed default of 2 until 10/19/26 | schedule_engine.py |
 | `SCHEDULE_PARALLEL_CALLS` | `"3"` | schedule_engine.py |
 | `SCHEDULE_PARALLEL_SPLIT_ROWS` | `"600"` | schedule_engine.py — a week an owner waits for past this many rows is written in parallel department parts (AI-21); `0` off |
 | `SCHEDULE_REFUSAL_FALLBACK` | — (off) | labor.py — `1` sends the synchronous schedule call with the server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`; never in a batch). ON in production since 10/14/26: one live call each on claude-sonnet-5-5 and claude-opus-5-5 returned end_turn with the beta and `fallbacks: "default"` (AI-30) |
-| `SCHEDULE_CALL_POOL_WORKERS` | `SCHEDULE_GEN_WORKERS x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
+| `SCHEDULE_CALL_POOL_WORKERS` | `job_queue.max_running("generation") x SCHEDULE_PARALLEL_CALLS` | schedule_engine.py |
 | `SCHEDULE_SLIM_REDO` | `"1"` | schedule_prompt.py — a model redo (an owner's redo the code could not draft, the quality gate's rewrite) is sent the redone dates and the seam only (AI-28); `0` sends the whole week's context again |
 | `STRIPE_RECONCILE_MAX_SECONDS` | `str(15 * 60` | billing_jobs.py |
 | `STUDIO_CACHE_BUDGET_MB` | `"512"` | schedule_engine.py — the Studio's kept inputs, sized in bytes, each week measured as kept and its scorer as it fills (SCALE-22; replaces `STUDIO_CACHE_BUDGET_ROWS`) |

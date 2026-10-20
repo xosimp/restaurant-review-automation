@@ -2250,11 +2250,21 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     gcap = out.get("schedule_capped") or {}
     if gcap.get("over"):
         warn_kinds.add("schedule_capped")
+        # What the slots are sized from (scale audit 10/19/26 A5-F6): solver
+        # threads past the cores is the usual cause of a wall-clock cut.
+        sizing = ""
+        try:
+            import job_queue as _jq_cap
+            cap = _jq_cap.generation_capacity()
+            sizing = (f" Sizing: {cap['slots']} generation slots x {cap['solve_threads']} solver threads on "
+                      f"{cap['cores']} cores" + (" — more threads than cores." if cap["oversubscribed"] else "."))
+        except Exception as e:
+            log.warning(f"generation capacity unavailable to the platform check: {e}")
         problems.append(f"Schedule solves are being cut short: {gcap['capped']} of the last {gcap['n']} generations "
                         f"({int(round(gcap['rate'] * 100))}%) had a solve ended by the wall clock or the memory "
                         "bound instead of its work budget ("
                         + ", ".join(f"{k} {v}" for k, v in list(gcap["kinds"].items())[:4])
-                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB.")
+                        + ") — lower QUEUE_GENERATION_CONCURRENCY or raise SCHEDULE_CPSAT_MEMORY_MB." + sizing)
     # The durable job queue's wait (scheduler audit 10/10/26 SCALE-21): an
     # owner's press waiting longer than QUEUE_WAIT_ALERT_SECONDS to start
     # (p95 over the last hour) is the trigger to move the queue to its own

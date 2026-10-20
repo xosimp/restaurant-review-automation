@@ -242,11 +242,16 @@ SCHEDULE_JOB_MAX_SECONDS = 40 * 60
 # minutes.
 SCHEDULE_CODE_JOB_SECONDS = int(float(os.getenv("SCHEDULE_CODE_JOB_SECONDS", "") or 10 * 60))
 
-# The generation group's CPU slots: job_queue.group_concurrency's
-# default (QUEUE_GENERATION_CONCURRENCY), a count of claimed rows across
-# every process. A row streaming a model answer holds no slot
-# (job_queue.model_wait).
-SCHEDULE_GEN_WORKERS = max(1, int(os.getenv("SCHEDULE_GEN_WORKERS", "2")))
+# An operator's ceiling on the generation group's CPU slots, when set (0 =
+# none, the default since the scale audit of 10/19/26 A5-F2 — it was a fixed
+# 2 whatever the container). The slots are job_queue.group_concurrency: the
+# container's cores and memory (job_queue.default_generation_slots), or
+# QUEUE_GENERATION_CONCURRENCY — a count of claimed rows across every
+# process. A row streaming a model answer holds no slot (job_queue.model_wait).
+try:
+    SCHEDULE_GEN_WORKERS = max(0, int(os.getenv("SCHEDULE_GEN_WORKERS", "") or 0))
+except ValueError:
+    SCHEDULE_GEN_WORKERS = 0
 
 
 STOPPED_MESSAGE = "Stopped — nothing was saved."
@@ -4528,7 +4533,7 @@ def parallel_calls() -> int:
 # multiplied with the generations running): at most call_pool_workers() model
 # streams at once in the process, a batch's calls queueing behind another
 # generation's when it is full. Its size: SCHEDULE_CALL_POOL_WORKERS, else
-# the generations a process runs (SCHEDULE_GEN_WORKERS) x a generation's own
+# the generations that may be in flight (job_queue.max_running) x a generation's own
 # parallel calls. Process-local, like the other bounded pools (CLAUDE.md,
 # gunicorn workers): a second worker gets its own. A call never submits to
 # this pool, so it cannot deadlock.
@@ -4551,7 +4556,7 @@ def call_pool_workers() -> int:
         running = _jq_pool.max_running("generation")
     except Exception as _sx:
         _degraded(f"max_running failed — went on without it: {_sx!r}", _sx)
-        running = SCHEDULE_GEN_WORKERS
+        running = SCHEDULE_GEN_WORKERS or 2
     return max(1, running * parallel_calls())
 
 

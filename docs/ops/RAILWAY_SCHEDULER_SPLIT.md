@@ -177,8 +177,10 @@ table (`job_queue.py`), not threads. Who runs them:
   inline in the scheduler thread, are gone.
 
 Slots: a generation row holds one of the group's CPU slots
-(`QUEUE_GENERATION_CONCURRENCY`, default `SCHEDULE_GEN_WORKERS` = 2) only
-while it does code work; while it waits on a model answer it gives the slot
+(`QUEUE_GENERATION_CONCURRENCY`; by default the container's cores over
+`SCHEDULE_CPSAT_WORKERS`, held to its memory at ~1.4 GB a generation —
+`job_queue.default_generation_slots`, scale audit 10/19/26 A5-F2/F7; it was
+a fixed 2) only while it does code work; while it waits on a model answer it gives the slot
 back (`job_queue.model_wait`, entered by `ai_utils.create_with_retry` around
 every attempt) and counts only against `QUEUE_GENERATION_MAX_RUNNING`
 (default 3 x the slots; under `GATEWAY_ORG_OTPM`, never more streams than
