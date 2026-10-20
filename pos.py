@@ -678,6 +678,91 @@ def fetch_loss_lines(restaurant_id, start_date, end_date):
     return fn(restaurant_id, start_date, end_date), name
 
 
+# ── the live snapshot: one read during service, shared (scale audit 10/19/26
+# A3-02 / A3-03 / A3-09) ─────────────────────────────────────────────────────
+#
+# Live labor (every 15 minutes), the coverage check (every 20), the hourly
+# capture, the closing summary and the /labor/live page each read the whole
+# day's sales and punches from the POS on their own: ~320 requests a store a
+# day at RPOWER, ~30x the rows. Now the first of them in LIVE_SNAPSHOT_SECONDS
+# reads, the read is kept (pos_io.pos_live_snapshot, shared by every process),
+# and the rest use it; one read per store and kind at a time in this process.
+# A web request never reads the POS: it gets the kept read while it is
+# younger than REQUEST_SNAPSHOT_MAX_SECONDS, else "not read lately"
+# (POSCapabilityError), and the page states its last reading instead.
+# `with pos.fresh_live_reads():` reads afresh whatever is kept (the coverage
+# check before it tells a manager someone has not clocked in).
+REQUEST_SNAPSHOT_MAX_SECONDS = 1800
+_live_ctx = threading.local()
+
+
+class POSNoSalesYet(Exception):
+    """The POS answered, with nothing posted yet for the day (a kept
+    answer): `not_yet`, as the provider's own exception says."""
+    not_yet = True
+
+    def __init__(self, message, provider=None):
+        super().__init__(message)
+        self.provider = provider
+
+
+class fresh_live_reads:
+    """Inside: every live read goes to the POS, past the kept snapshot."""
+
+    def __enter__(self):
+        self.prev = getattr(_live_ctx, "fresh", False)
+        _live_ctx.fresh = True
+        return self
+
+    def __exit__(self, *exc):
+        _live_ctx.fresh = self.prev
+        return False
+
+
+def _on_request_thread():
+    try:
+        from flask import has_request_context
+        return bool(has_request_context())
+    except Exception:
+        return False
+
+
+def _from_snapshot(snap, kind):
+    if snap["state"] == "not_yet":
+        raise POSNoSalesYet(f"no sales posted yet (as of {int(snap['age'] // 60)} minutes ago)", snap["provider"])
+    value = snap["value"]
+    return (float(value) if kind == "sales" else list(value or [])), snap["provider"]
+
+
+def _live_read(kind, restaurant_id, business_date, read):
+    """(value, provider) of `read()` — the POS read — through the shared
+    snapshot (see the note above)."""
+    import pos_io
+    day = business_date.isoformat() if hasattr(business_date, "isoformat") else str(business_date)[:10]
+    fresh = getattr(_live_ctx, "fresh", False)
+    snap = None if fresh else pos_io.snapshot_get(restaurant_id, kind, day)
+    if snap and snap["age"] < pos_io.LIVE_SNAPSHOT_SECONDS:
+        return _from_snapshot(snap, kind)
+    if _on_request_thread():
+        if snap and snap["age"] < REQUEST_SNAPSHOT_MAX_SECONDS:
+            return _from_snapshot(snap, kind)
+        raise POSCapabilityError("the POS has not been read during service lately; a page load never reads it")
+    with pos_io.snapshot_lock(restaurant_id, kind):
+        if not fresh:
+            snap = pos_io.snapshot_get(restaurant_id, kind, day)
+            if snap and snap["age"] < pos_io.LIVE_SNAPSHOT_SECONDS:
+                return _from_snapshot(snap, kind)       # another thread read it while this one waited
+        try:
+            value, provider = read()
+        except Exception as e:
+            if getattr(e, "not_yet", False) and kind == "sales":
+                pos_io.snapshot_put(restaurant_id, kind, day, None, provider=getattr(e, "provider", None),
+                                    state="not_yet")
+            raise
+        pos_io.snapshot_put(restaurant_id, kind, day, value, provider=provider)
+        return value, provider
+
+
 def fetch_sales_today(restaurant_id, business_date):
     """Net sales SO FAR today, from a POS that can be asked during service.
 
@@ -696,7 +781,7 @@ def fetch_sales_today(restaurant_id, business_date):
     fn = getattr(mod, "fetch_sales_today", None)
     if fn is None:
         raise POSCapabilityError(f"{name} cannot be read during service")
-    return fn(restaurant_id, business_date), name
+    return _live_read("sales", restaurant_id, business_date, lambda: (fn(restaurant_id, business_date), name))
 
 
 def department_sold_categories(restaurant_id, days=90):
@@ -720,7 +805,8 @@ def fetch_clock_ins_today(restaurant_id, business_date):
     fn = getattr(mod, "fetch_clock_ins_today", None)
     if fn is None:
         raise POSCapabilityError(f"{name} has no live clock-in feed")
-    return fn(restaurant_id, business_date), name
+    return _live_read("clock_ins", restaurant_id, business_date,
+                      lambda: (fn(restaurant_id, business_date), name))
 
 
 # ── the nightly DSR's reads (dsr/) ──────────────────────────────────────────

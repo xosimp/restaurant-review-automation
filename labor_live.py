@@ -1265,27 +1265,38 @@ def run_live_labor(db_path=None, restaurants=None) -> dict:
     """The `live_labor` job, every 15 minutes: every open restaurant with
     labor on, bounded and resumable (strategy_jobs._slot_iter's cursor and
     wall-clock bound). Standard counts."""
+    import threading
     import ops
     import strategy_jobs
     import time_utils as _tu
     dbp = db_path or _models_mod.DB_PATH
-    st = {"attempted": 0, "failed": 0}
-    offered = acted = 0
-    for r in strategy_jobs._slot_iter("live_labor", restaurants, dbp, state=st):
+    st = {"attempted": 0, "failed": 0, "offered": 0, "acted": 0}
+    lock = threading.Lock()
+
+    def _one(r):
         if not getattr(r, "module_labor", 0):
-            continue
+            return
         local = _tu.restaurant_now(r, naive=True)
         if not strategy_jobs._open_now(r, local):
-            continue
+            return
         if not ops.claim_period(f"live_labor:{r.id}", f"{local.date().isoformat()}-{local.hour}-"
                                                       f"{local.minute // CADENCE_MINUTES}"):
-            continue
-        st["attempted"] += 1
+            return
+        with lock:
+            st["attempted"] += 1
         try:
             out = run_for(r, now_local=local, db_path=db_path)
-            offered += 1 if out.get("offered") else 0
-            acted += 1 if out.get("acted") else 0
+            with lock:
+                st["offered"] += 1 if out.get("offered") else 0
+                st["acted"] += 1 if out.get("acted") else 0
         except Exception as e:
-            st["failed"] += 1
+            with lock:
+                st["failed"] += 1
             ops.capture(e, job="live_labor", context=f"restaurant_id={r.id}")
-    return strategy_jobs._slot_counts(st, offered=offered, acted=acted)
+
+    # A small pool, not a serial walk (scale audit 10/19/26 INF-14 / A3-03):
+    # the serial 4-minute walk reached ~96 stores a run, so at 500 open
+    # stores each was read every ~78 minutes, not every 15.
+    st["hit_bound"] = strategy_jobs._slot_sweep("live_labor", restaurants, _one, dbp,
+                                                workers=strategy_jobs.SLOT_WORKERS)
+    return strategy_jobs._slot_counts(st, offered=st["offered"], acted=st["acted"])

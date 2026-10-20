@@ -140,7 +140,10 @@ def pos_push_now(u):
 # ── live labor ──────────────────────────────────────────────────────────────
 
 def live_read(u):
-    """The kept read when fresh (the 15-minute job's), else read now."""
+    """The kept read when fresh (the 15-minute job's), else built again now
+    from the shared live snapshot (pos._live_read) — never a POS request on
+    this request thread (scale audit 10/19/26 A3-09): with no recent read the
+    page states the last hourly reading and the schedule instead."""
     if not _sr()._sees_labor(u):
         return _sr()._forbidden("Only someone who can see labor can see this.")
     import labor_live

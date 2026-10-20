@@ -2426,6 +2426,10 @@ def _open_now(r, local):
 INTRADAY_WORKERS = 4
 INTRADAY_CAPTURE_MAX_SECONDS = 10 * 60
 SLOT_JOB_MAX_SECONDS = 4 * 60
+# The POS-reading slot jobs (live labor, the coverage check) walk their
+# restaurants on this many workers, as the capture does (scale audit
+# 10/19/26 INF-14 / A3-03): serially they reached ~96 and ~185 stores a run.
+SLOT_WORKERS = max(1, int(os.getenv("SLOT_JOB_WORKERS", "4")))
 
 
 def slot_restaurants(db_path=DB_PATH) -> list:
@@ -2926,12 +2930,14 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
     every gap, and someone already on whose shift ends as the gap begins
     (the lunch server who could stay) is suggested before anyone off."""
     import intraday, issues, ops
+    import pos as _pos_live
     from time_utils import restaurant_now, business_date
-    opened = 0
-    st = {"attempted": 0, "failed": 0}
-    for r in _slot_iter("coverage_check", restaurants, db_path, state=st):
+    st = {"attempted": 0, "failed": 0, "opened": 0}
+    lock = threading.Lock()
+
+    def _one(r):
         if not getattr(r, "module_labor", 0):
-            continue
+            return
         local = restaurant_now(r, naive=True)
         # Every pass, open or not: a gap whose shift has ended stops asking
         # for a cover, and an earlier day's issue closes as a miss (it stayed
@@ -2941,12 +2947,24 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
         except Exception as ce:
             ops.capture(ce, job="coverage_check", context=f"restaurant_id={r.id} ended shifts")
         if not _open_now(r, local):
-            continue
+            return
         if "manager" not in issues.get_routing(r.id, db_path):
-            continue
-        st["attempted"] += 1
+            return
+        with lock:
+            st["attempted"] += 1
         try:
             gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
+            if gaps.get("missing"):
+                # The clock-ins came from the shared live read (up to
+                # pos_io.LIVE_SNAPSHOT_SECONDS old, scale audit A3-02):
+                # before anyone is told a person has not clocked in, read
+                # them afresh — they may have punched in since — unless the
+                # read was made this minute.
+                import pos_io as _pio_cov
+                snap = _pio_cov.snapshot_get(r.id, "clock_ins", str(gaps.get("business_date") or "")[:10])
+                if not snap or snap["age"] > 60:
+                    with _pos_live.fresh_live_reads():
+                        gaps = intraday.coverage_gaps(r.id, now_local=local, db_path=db_path, restaurant=r)
             # The service the clock is in — the date coverage_gaps read the
             # published week and the clock-ins for (E-4).
             bday = str(gaps.get("business_date") or business_date(r, local).isoformat())[:10]
@@ -2982,11 +3000,17 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                     continue
                 due.append(dict(m, hold=staff_comms.hold_sentence(hold)))
             if due:
-                opened += _raise_coverage(r, bday, due, gaps, local, db_path)
+                n = _raise_coverage(r, bday, due, gaps, local, db_path)
+                with lock:
+                    st["opened"] += n
         except Exception as e:
-            st["failed"] += 1
+            with lock:
+                st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
-    return _slot_counts(st, opened=opened)
+
+    # On SLOT_WORKERS, not a serial walk (INF-14 / A3-03).
+    st["hit_bound"] = _slot_sweep("coverage_check", restaurants, _one, db_path, workers=SLOT_WORKERS)
+    return _slot_counts(st, opened=st["opened"])
 
 
 # Covers suggested for each gap on a coverage issue (the issue page offers
