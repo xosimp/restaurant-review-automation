@@ -673,6 +673,29 @@ def db_write_probe(conn=None, db_path=None, timeout_ms=None) -> dict:
     def _ms():
         return round((_time.monotonic() - started) * 1000, 1)
     try:
+        import db_dialect
+        if db_dialect.is_postgres(conn):
+            # Postgres (blind re-audit 10/20/26 R2-05): BEGIN IMMEDIATE is
+            # the platform's EXCLUSIVE advisory lock, bounded only by the
+            # 30 s lock_timeout (busy_timeout is a no-op there) — a waiting
+            # probe queued every tenant writer behind it, then read the lock
+            # timeout as "failed" (500). The probe now waits timeout_ms for
+            # the lock SHARED (as a tenant writer does: it never holds the
+            # platform up) and asks the server whether it takes writes.
+            conn.execute("BEGIN")
+            began = True
+            conn.execute_native(f"SET LOCAL lock_timeout = '{int(timeout_ms)}ms'")
+            conn.execute_native(f"SET LOCAL statement_timeout = '{int(timeout_ms) + 1000}ms'")
+            row = conn.execute_native("SELECT pg_is_in_recovery(), current_setting('transaction_read_only')").fetchone()
+            if row[0] or str(row[1]).lower() == "on":
+                return {"state": "failed", "ms": _ms(), "error": "the database is read-only"}
+            conn.execute_native("SELECT pg_advisory_xact_lock_shared(%s)", (db_dialect.WRITE_LOCK_KEY,))
+            # An id assigned: refused by a server that takes no writes
+            # (wraparound protection, a standby).
+            conn.execute_native("SELECT pg_current_xact_id()")
+            conn.execute("ROLLBACK")
+            began = False
+            return {"state": "ok", "ms": _ms(), "error": None}
         conn.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
         conn.execute("BEGIN IMMEDIATE")
         began = True

@@ -27,6 +27,7 @@ import config
 from datetime import date, datetime, timedelta
 
 from models import DB_PATH
+from models import in_read_scope
 
 log = logging.getLogger(__name__)
 
@@ -495,6 +496,11 @@ def _prime_stamp(pp, health):
     return f" ({'; '.join(bits)})" if bits else ""
 
 
+# One unit of work (blind re-audit 10/20/26 R2-12): the restaurant row and
+# client_data read once for the whole build (models.read_scope) — off a
+# request (the scheduler's precompute, a delivery) it was read ~190 times,
+# each a round trip on Postgres.
+@in_read_scope
 def build(restaurant_id, restaurant=None, today=None, db_path=DB_PATH, viewer=None):
     """The brief as structured lines. Each line: {"key", "text", "tone", "ask"}.
     tone is good | bad | neutral | action.

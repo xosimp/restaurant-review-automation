@@ -722,7 +722,10 @@ def store_detail(conn, restaurant_id, obj) -> str:
     ref = hashlib.sha256(f"{int(restaurant_id)}:{raw}".encode("utf-8")).hexdigest()[:40]
     if conn.execute("SELECT 1 FROM quality_blobs WHERE hash=?", (ref,)).fetchone() is None:
         import blob_store
-        body = blob_store.store("quality", f"{int(restaurant_id)}/{ref}", zlib.compress(raw.encode("utf-8"), 6))
+        # Inside the caller's transaction (a save holds the write lock): no
+        # object-store PUT there — inline, moved by blob_offload (R2-06).
+        body = blob_store.store("quality", f"{int(restaurant_id)}/{ref}", zlib.compress(raw.encode("utf-8"), 6),
+                                in_transaction=bool(getattr(conn, "in_transaction", True)))
         conn.execute("INSERT OR IGNORE INTO quality_blobs (hash, restaurant_id, body, raw_bytes) VALUES (?,?,?,?)",
                      (ref, int(restaurant_id), body, len(raw)))
     return ref

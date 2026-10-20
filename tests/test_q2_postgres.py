@@ -239,8 +239,11 @@ class _AbortingCur:
             self.raw.aborted = False
         elif self.raw.aborted:
             raise RuntimeError("InFailedSqlTransaction: current transaction is aborted")
-        if "information_schema" in sql or "pg_index" in sql or "advisory" in sql:
+        if "information_schema" in sql or "pg_index" in sql or "advisory" in sql or "pg_attribute" in sql:
             self._rows, self.description = [], None
+            return
+        if "current_setting" in sql or "set_config" in sql:     # db_dialect.run_ddl_bounded
+            self._rows, self.description = [("30s",)], [("v",)]
             return
         try:
             c = self.raw.db.execute(sql.replace("%s", "?"), params or ())

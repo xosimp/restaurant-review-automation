@@ -360,6 +360,34 @@ def archive_day(restaurant_id, day, db_path=DB_PATH, provider=None) -> dict:
         ops.release_period("cooldown", claim)
 
 
+_REDATE_CHUNK = 500
+
+
+def _drop_redated(conn, table, key_col, restaurant_id, provider, iso, want) -> set:
+    """Delete this day's records stored under ANOTHER business date (a
+    ticket closed after midnight, a restatement); returns those dates.
+
+    On SQLite the key is (restaurant_id, provider, <id>), so INSERT OR
+    REPLACE moved a re-dated record. A partitioned table's key on Postgres
+    gained business_date (pg_copy), so the old copy stayed on its old day
+    beside the new one — counted twice in sales and labor (blind re-audit
+    10/20/26 R2-08). Measure with: SELECT restaurant_id, ticket_id,
+    COUNT(DISTINCT business_date) FROM pos_tickets GROUP BY 1, 2 HAVING
+    COUNT(DISTINCT business_date) > 1 (punch_id in pos_punches likewise)."""
+    ids = sorted({str(r.get(key_col)) for r in want if r.get(key_col) is not None})
+    days = set()
+    for i in range(0, len(ids), _REDATE_CHUNK):
+        part = ids[i:i + _REDATE_CHUNK]
+        marks = ",".join("?" for _ in part)
+        where = (f"restaurant_id=? AND provider=? AND business_date<>? AND {key_col} IN ({marks})")
+        args = (restaurant_id, provider, iso, *part)
+        found = conn.execute(f"SELECT DISTINCT business_date FROM {table} WHERE {where}", args).fetchall()
+        if found:
+            days.update(str(r[0]) for r in found)
+            conn.execute(f"DELETE FROM {table} WHERE {where}", args)
+    return days
+
+
 def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
     rows = mod.archive_rows(restaurant_id, day)
     net = round(sum(float(t.get("net_sales") or 0) for t in rows["tickets"]), 2)
@@ -377,10 +405,13 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
         db_dialect.lock(conn, "pos_archive", restaurant_id)
         prev = conn.execute("SELECT max_stamp, restated FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
                             "AND business_date=?", (restaurant_id, name, iso)).fetchone()
+        moved = set()                  # other days a record of this one was moved from
         for table, cols, key in _TABLES:
             conn.execute(f"DELETE FROM {table} WHERE restaurant_id=? AND provider=? AND business_date=?",
                          (restaurant_id, name, iso))
             want = rows.get(key) or []
+            if table in db_dialect.PARTITIONED:
+                moved.update(_drop_redated(conn, table, cols[0], restaurant_id, name, iso, want))
             marks = ",".join("?" for _ in range(len(cols) + 2))
             dflt = _not_null_defaults(conn, table)
             conn.executemany(
@@ -407,6 +438,11 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
             (restaurant_id, name, iso, len(rows["tickets"]), len(rows["lines"]), len(rows["punches"]), net,
              rows.get("max_stamp"), 1 if restated else 0, ARCHIVE_VERSION, links_ok, gap, unknown,
              1 if restated else 0))
+        # A day a record moved away from is rolled again (its item totals
+        # counted the record), as a restated day is.
+        for other in sorted(moved):
+            conn.execute("UPDATE pos_archive_days SET item_rollup=NULL WHERE restaurant_id=? AND provider=? "
+                         "AND business_date=?", (restaurant_id, name, other))
         # The day's lines by item (pos_item_daily, DB-11) in the same
         # transaction. A failure leaves the day unrolled (item_rollup NULL,
         # set just above): readers read its lines and the nightly roll

@@ -25,8 +25,10 @@ column keeping a pointer:
 A stored value is the blob itself, or POINTER + "<backend>:<key>" —
 resolve() reads either, so every reader works across the move and the
 old inline rows. New writes go to the store as they are made
-(schedule_output.record_call, schedule_versions.store_quality); offload()
-moves old inline rows in bounded chunks (the `blob_offload` job). A
+(schedule_output.record_call) — except one written inside an open database
+transaction (schedule_versions.store_quality under a save's write lock),
+which stays inline: no network call is made while locks are held (R2-06);
+offload() moves inline rows in bounded chunks (the `blob_offload` job). A
 quality blob the prune collects is deleted from the store with it;
 model-call blobs are expired by the bucket's own lifecycle rule on
 "model-calls/" (set it to the table's retention, 90 days, plus a margin).
@@ -87,14 +89,22 @@ def is_pointer(value) -> bool:
     return isinstance(value, (bytes, bytearray, memoryview)) and bytes(value[:len(POINTER)]) == POINTER
 
 
-def store(kind, key, data):
+def store(kind, key, data, in_transaction=False):
     """Keep `data` (bytes) under `kind`/`key`; returns what the column holds:
     the bytes themselves (BLOB_STORE=db, or the store failed — never lose a
-    blob over the store), or the pointer."""
+    blob over the store), or the pointer.
+
+    `in_transaction`: the caller writes the column inside an open database
+    transaction. An object-store PUT is never made there — up to 10 + 30 s
+    of network while the transaction's locks are held (a schedule save
+    holds the platform-wide write lock: every writer waited on R2, blind
+    re-audit 10/20/26 R2-06). The bytes are kept inline instead, and the
+    nightly `blob_offload` job moves them to the store as it moves every
+    inline row (a local-directory store is a file write, kept as is)."""
     if data is None:
         return None
     b = active()
-    if b == "db":
+    if b == "db" or (b == "s3" and in_transaction):
         return data
     full = f"{kind}/{key}"
     try:
