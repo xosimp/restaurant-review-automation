@@ -528,20 +528,84 @@ def _contact_dict(r):
             "source": r["source"]}
 
 
-def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
+def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH, limit=None, before_id=None,
+                       search=None):
     """consent_only=True is the enforcement point for actually sending a
     MARKETING text (marketing_text_sql) — same shape as
     notify.get_alert_contacts. Management UI wants consent_only=False so
     the owner can see (and remove) every contact, consented or not.
     `consent` in each row is marketing consent; `review_only` marks a guest
-    who agreed to review links and nothing else."""
+    who agreed to review links and nothing else.
+
+    Newest first. `limit` / `before_id` read one page by id (keyset: the
+    page after the one that ended at `before_id`), and `search` matches the
+    name or the phone's digits — the owner's list grows with the club, and
+    the whole of it was sent to be counted (scale audit 10/19/26 FE-10).
+    Without them, every contact, as before (the senders, iOS builds in the
+    field)."""
     conn = get_conn(db_path)
     query = f"SELECT {_CONTACT_COLS} FROM guest_contacts WHERE restaurant_id=?"
+    args = [restaurant_id]
     if consent_only:
         query += " AND " + marketing_text_sql()
-    rows = conn.execute(query + " ORDER BY id DESC", (restaurant_id,)).fetchall()
+    if before_id:
+        query += " AND id < ?"
+        args.append(int(before_id))
+    q = (search or "").strip().lower()
+    if q:
+        digits = "".join(ch for ch in q if ch.isdigit())
+        query += " AND (LOWER(COALESCE(name, '')) LIKE ?" + (" OR phone LIKE ?" if digits else "") + ")"
+        args.append(f"%{q}%")
+        if digits:
+            args.append(f"%{digits}%")
+    query += " ORDER BY id DESC"
+    if limit:
+        query += " LIMIT ?"
+        args.append(int(limit))
+    rows = conn.execute(query, args).fetchall()
     conn.close()
     return [_contact_dict(r) for r in rows]
+
+
+def guest_contact_counts(restaurant_id, db_path=DB_PATH) -> dict:
+    """{total, textable}: everyone on the list, and those with marketing
+    consent who have not unsubscribed — the summary line's two figures,
+    counted in the database instead of from the whole list (FE-10)."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(CASE WHEN consent=1 AND COALESCE(unsubscribed,0)=0 THEN 1 ELSE 0 END), 0) AS textable "
+            "FROM guest_contacts WHERE restaurant_id=?", (restaurant_id,)).fetchone()
+    finally:
+        conn.close()
+    return {"total": int(row["total"] or 0), "textable": int(row["textable"] or 0)}
+
+
+# The owner's list, a page at a time (web and phone).
+CONTACTS_PAGE_MAX = 500
+
+
+def contacts_page(restaurant_id, args, db_path=DB_PATH) -> dict:
+    """GET guest-contacts' answer from its query args: the whole list when no
+    `limit` is sent (older clients), else one page — {contacts, next_before}
+    (None on the last page) — with `before` and `q` applied."""
+    raw = args.get("limit")
+    if raw in (None, ""):
+        return {"contacts": get_guest_contacts(restaurant_id, db_path=db_path)}
+    try:
+        limit = max(1, min(CONTACTS_PAGE_MAX, int(raw)))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        before = int(args.get("before") or 0) or None
+    except (TypeError, ValueError):
+        before = None
+    rows = get_guest_contacts(restaurant_id, db_path=db_path, limit=limit + 1, before_id=before,
+                              search=args.get("q"))
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return {"contacts": rows, "next_before": rows[-1]["id"] if more and rows else None}
 
 
 # ── Consent evidence ────────────────────────────────────────────────────────

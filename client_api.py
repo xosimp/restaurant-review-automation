@@ -9525,8 +9525,21 @@ _NO_MARKETING_MODULE_ERROR = "Guest text club requires the Marketing module — 
 def guest_contacts_list(current_user):
     if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
         return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
-    from guest_marketing import get_guest_contacts
-    return jsonify(ok=True, contacts=get_guest_contacts(current_user["restaurant_id"]))
+    # One page with ?limit= (and ?before= / ?q=), the whole list without
+    # (guest_marketing.contacts_page, FE-10).
+    from guest_marketing import contacts_page
+    return jsonify(ok=True, **contacts_page(current_user["restaurant_id"], request.args))
+
+
+@client_bp.route("/api/guest-contacts/counts", methods=["GET"])
+@login_required
+def guest_contacts_counts(current_user):
+    """{total, textable} - the Marketing summary's two figures, counted in
+    the database (scale audit 10/19/26 FE-10). Twin: /mobile/api/guest-contacts/counts."""
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import guest_contact_counts
+    return jsonify(ok=True, **guest_contact_counts(current_user["restaurant_id"]))
 
 @client_bp.route("/api/guest-contacts", methods=["POST"])
 @login_required

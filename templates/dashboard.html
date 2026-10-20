@@ -35216,10 +35216,12 @@ function cpPaintPerfSum() {
 function loadGuestContactsSummary() {
   var el = _cpEl('guest-contacts-summary');
   if (!el) return;
-  fetch('/api/guest-contacts').then(apiJson).then(function(d) {
+  // The two counts, counted by the server: the whole list used to be sent
+  // here just to be counted (scale audit 10/19/26 FE-10).
+  fetch('/api/guest-contacts/counts').then(apiJson).then(function(d) {
     if (!d.ok) { loadFailed(el, d); return; }
-    var total = d.contacts.length;
-    var consented = d.contacts.filter(function(c) { return c.consent && !c.unsubscribed; }).length;
+    var total = +d.total || 0;
+    var consented = +d.textable || 0;
     el.textContent = consented + ' can be texted · ' + total + ' on the list · add, remove or mark a visit';
   }).catch(function() { loadFailed(el, null); });
 }
@@ -36108,14 +36110,21 @@ function _fmtVisitDate(iso) {
   return month + '/' + day + '/' + year + ', ' + hour12 + ':' + minute + ' ' + ampm;
 }
 
-function _loadGuestContactsList() {
+// A page of guests at a time, newest first (FE-10): a club of thousands was
+// one response and one HTML string. "Load more guests" reads the next page
+// (the reviews inbox's Load more pattern).
+var GUEST_PAGE = 100;
+function _loadGuestContactsList(before) {
   var list = document.getElementById('guest-contacts-list');
-  list.innerHTML = mktLoading('Loading your guests\u2026');
-  fetch('/api/guest-contacts').then(apiJson).then(function(d){
-    if (!d.ok || !d.contacts.length) {
+  var more = document.getElementById('guest-contacts-more');
+  if (more && more.parentNode) more.parentNode.removeChild(more);
+  if (!before) list.innerHTML = mktLoading('Loading your guests\u2026');
+  fetch('/api/guest-contacts?limit=' + GUEST_PAGE + (before ? '&before=' + encodeURIComponent(before) : '')).then(apiJson).then(function(d){
+    if (!before && (!d.ok || !d.contacts.length)) {
       list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--ink3)">No contacts yet.</div>';
       return;
     }
+    if (!d.ok) { toast(d.error || 'Could not load more guests', 'error'); return; }
     var html = '';
     for (var i = 0; i < d.contacts.length; i++) {
       var c = d.contacts[i];
@@ -36134,8 +36143,10 @@ function _loadGuestContactsList() {
         + '</div>'
         + '</div>';
     }
-    list.innerHTML = html;
+    if (d.next_before) html += '<div id="guest-contacts-more" style="padding:12px 0"><button class="cbtn cbtn-secondary" onclick="_loadGuestContactsList(' + (+d.next_before) + ')">Load more guests</button></div>';
+    if (before) list.insertAdjacentHTML('beforeend', html); else list.innerHTML = html;
   }).catch(function(){
+    if (before) { toast('Could not load more guests', 'error'); return; }
     list.innerHTML = '<div style="padding:12px 0;font-size:15px;color:var(--red)">Could not load contacts.</div>';
   });
 }
