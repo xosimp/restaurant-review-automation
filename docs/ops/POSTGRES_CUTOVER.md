@@ -27,7 +27,7 @@ What exists:
 | The boot on Postgres | `models.boot_conn`, `db_dialect.install_compat` / `install_triggers` | automatic: the boot builds or upgrades the Postgres schema itself |
 | A bounded connection pool | `db_dialect._Pool` (`PG_POOL_*`, ENVIRONMENT.md) | automatic |
 | CI against a real Postgres | `.github/workflows/ci.yml`, job `postgres` | every push |
-| The normalized schedule model, shadow-written | `pg_shadow.py`, `migrations/postgres/0001_schedule_model.sql` | `PG_SHADOW_WRITE=1` + `SHADOW_DATABASE_URL` |
+| The normalized schedule model, shadow-written (a shadow only: nothing reads `sched.*`, and after the switch nothing writes it — DB-19) | `pg_shadow.py`, `migrations/postgres/0001_schedule_model.sql` | `PG_SHADOW_WRITE=1` + `SHADOW_DATABASE_URL` |
 | Blobs in object storage | `blob_store.py` | `BLOB_STORE=s3` + `BLOB_S3_*` |
 | The write freeze | `http_layer.maintenance_gate`, `scheduler.scheduling_allowed`, `job_queue.claim` | `MAINTENANCE_READ_ONLY=1` |
 | The nightly backup on Postgres (an export to SQLite, then the usual scrub, encryption, off-site copy) | `scheduler._write_consistent_snapshot` → `pg_copy.export_to_sqlite` | automatic once `DATABASE_URL` is set |
@@ -212,7 +212,14 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    unset `MAINTENANCE_READ_ONLY`, nothing has changed.
 4. **Switch.** Set `DATABASE_URL=<private URL>` and remove
    `MAINTENANCE_READ_ONLY` in one change (Railway redeploys once). Remove
-   `PG_SHADOW_WRITE` / `SHADOW_DATABASE_URL` (the primary is the model now).
+   `PG_SHADOW_WRITE` / `SHADOW_DATABASE_URL`. (Not because the primary "is
+   the model": the app's tables on Postgres are SQLite's schema translated
+   (`schedule_history`, `schedule_versions`, `schedule_shifts`). The copy
+   creates the normalized `sched.*` tables (`0001_schedule_model.sql`) in
+   the primary too, and after the switch nothing reads or writes them —
+   they stay empty, or hold the shadow's rows as of the switch. Scale
+   audit 10/19/26 DB-19: moving readers onto `sched.*`, or dropping it, is
+   an open decision, not something the switch did.)
    The boot runs `init_db` against Postgres (every `CREATE … IF NOT EXISTS`
    a no-op, every already-applied ALTER refused under its own savepoint and
    tolerated — the transaction goes on; proven in CI by the copy-then-boot
