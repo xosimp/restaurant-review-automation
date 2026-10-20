@@ -256,6 +256,96 @@ def test_a_long_open_breaker_pages_once_per_opening(monkeypatch):
     assert pos_io.page_if_long_open("rpower") is False and len(pages) == 1
 
 
+# ── A3-07: the lists, kept per consolidation group ──────────────────────────
+
+def _stub(monkeypatch, routes):
+    calls = []
+
+    def fake(token, path, params=None):
+        calls.append(path)
+        return routes[path] if not callable(routes[path]) else routes[path]()
+    monkeypatch.setattr(rpower, "_request", fake)
+    return calls
+
+
+def test_a_list_is_read_once_for_every_store_of_the_group_and_every_process(monkeypatch):
+    _restaurant(1)
+    _restaurant(2, rpower_store_mid="store-2")
+    calls = _stub(monkeypatch, {"salestype/getbycg": [{"mid": "S", "type_sale": 1}]})
+    rpower.sales_types(1)
+    rpower.clear_caches()                            # another process, or a cold one after a deploy
+    assert rpower.sales_types(2) == {"S": {"mid": "S", "type_sale": 1}}
+    assert calls == ["salestype/getbycg"], "the second store and the second process used the kept copy"
+
+
+def test_a_kept_list_older_than_its_age_is_read_again(monkeypatch):
+    _restaurant(1)
+    calls = _stub(monkeypatch, {"voidreason/getbycg": [{"mid": "R1", "name": "Wrong"}]})
+    rpower.void_reasons(1)
+    conn = models.get_conn()
+    conn.execute("UPDATE pos_catalogs SET fetched_at=?", (time.time() - rpower.CATALOG_MAX_AGE_SECONDS - 5,))
+    conn.commit()
+    conn.close()
+    rpower.clear_caches()
+    rpower.void_reasons(1)
+    assert calls == ["voidreason/getbycg"] * 2
+
+
+def test_job_and_employee_lists_are_one_read_for_their_three_readers(monkeypatch):
+    _restaurant(1)
+    calls = _stub(monkeypatch, {"job/getbycg": [{"mid": "J1", "name": "Server", "ext_id": "10", "pyrlcat_mid": "P"}],
+                                "employee/getbycg": [{"mid": "E1", "fname": "Ana", "lname": "B", "payroll_id": "7"}],
+                                "payrollcategory/getbycg": [{"mid": "P", "name": "FOH"}]})
+    rpower.fetch_people(1)
+    rpower.job_categories(1)
+    rpower.fetch_job_codes(1)
+    rpower.pos_employees(1)
+    assert sorted(calls) == ["employee/getbycg", "job/getbycg", "payrollcategory/getbycg"]
+
+
+def test_a_page_load_uses_the_kept_list_at_any_age_and_never_reads_one_live(monkeypatch):
+    from flask import Flask
+    _restaurant(1)
+    calls = _stub(monkeypatch, {"salestype/getbycg": [{"mid": "S"}], "voidreason/getbycg": [{"mid": "R"}]})
+    rpower.sales_types(1)
+    conn = models.get_conn()
+    conn.execute("UPDATE pos_catalogs SET fetched_at=0")
+    conn.commit()
+    conn.close()
+    rpower.clear_caches()
+    calls.clear()
+    with Flask("t").test_request_context("/"):
+        assert "S" in rpower.sales_types(1)
+        with pytest.raises(rpower.RPowerArchiveMiss):
+            rpower.void_reasons(1)
+        with rpower.allow_live_reads():
+            assert "R" in rpower.void_reasons(1)
+    assert calls == ["voidreason/getbycg"], "only the owner's explicit action read live"
+
+
+def test_an_id_the_kept_list_lacks_reads_that_list_afresh_once(monkeypatch):
+    from datetime import date
+    _restaurant(1)
+    day = "2026-10-10"
+    types = [{"mid": "S", "impacts_sales": 1, "type_sale": 1}]
+    routes = {"salestype/getbycg": lambda: list(types), "menuitem/getbycg": [], "salescategory/getbycg": [],
+              "salesdepartment/getbycg": [], "voidreason/getbycg": [], "job/getbycg": [], "employee/getbycg": [],
+              "table/getbystore": [], "room/getbystore": [], "mealtime/getbycg": [], "profitcenter/getbycg": [],
+              "paymentmethod/getbycg": [], "payoutcategory/getbycg": [], "ticketitem/getbybusinessdate": [],
+              "ticketpayment/getbybusinessdate": [], "payout/getbydaterange": [], "timeclock/getbydaterange": [],
+              "ticket/getbybusinessdate": [],
+              "ticketsales/getbybusinessdate": [{"rid": "L1", "ticket_rid": "T1", "date": f"{day}T00:00:00",
+                                                 "slstype_mid": "N", "sales": 12.0, "qty": 1}]}
+    calls = _stub(monkeypatch, routes)
+    rpower.sales_types(1)                                   # kept before the store added type N
+    types.append({"mid": "N", "impacts_sales": 1, "type_sale": 1})
+    out = rpower.archive_rows(1, date(2026, 10, 10))
+    assert out["lines"][0]["kind"] == "sale", "the new sales type was read, not filed unknown"
+    assert calls.count("salestype/getbycg") == 2 and calls.count("menuitem/getbycg") == 1
+    rpower.archive_rows(1, date(2026, 10, 10))
+    assert calls.count("salestype/getbycg") == 2, "a refresh for a miss is not repeated within its window"
+
+
 # ── A3-14 / ONB-3 / INF-12: the two-level budget ────────────────────────────
 
 def test_requests_take_a_slot_in_the_token_bucket_and_the_fleet_bucket(monkeypatch):

@@ -785,6 +785,88 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
     return {"ok": True, "store": chosen, "applied": sorted(fields)}
 
 
+# ── the store's lists, kept per consolidation group (scale audit 10/19/26
+# A3-07) ─────────────────────────────────────────────────────────────────────
+#
+# Sales types, void reasons, jobs, employees, payroll categories, the menu,
+# its categories and departments, tables, rooms, meal times, profit centers,
+# payment methods, payout categories and price levels were each read per
+# process with a 10-minute cache: the web process and the queue worker each
+# found them cold every night, menuitem/salescategory were read by two
+# readers and job/getbycg by three, and every store in one group read the
+# same `getbycg` list again — about 15 requests on every cold archive. Each
+# list is now one row of pos_catalogs per (group[, store], path), read by
+# every process and every store of the group, refreshed when it is older
+# than CATALOG_MAX_AGE_SECONDS. A night that meets an id a kept list does
+# not name reads that list afresh once (archive_rows: refresh on a miss), so
+# a sales type, item or employee added today is never filed as unknown.
+# A web request uses the kept copy at any age and never reads a list live
+# (A3-09) — except inside allow_live_reads() (an owner's push preview).
+CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "21600"))
+_list_cache = _LRU(CACHE_MAX_KEYED)
+
+
+class _flag:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.prev = getattr(_io_ctx, self.name, False)
+        setattr(_io_ctx, self.name, True)
+        return self
+
+    def __exit__(self, *exc):
+        setattr(_io_ctx, self.name, self.prev)
+        return False
+
+
+def fresh_lists():
+    """`with rpower.fresh_lists():` — every list read inside goes to RPOWER
+    (and is kept again), past every cache."""
+    return _flag("fresh")
+
+
+def allow_live_reads():
+    """`with rpower.allow_live_reads():` — an owner's explicit action on a web
+    request (the schedule push preview) may read a list RPOWER has not
+    been asked for yet."""
+    return _flag("allow_live")
+
+
+def _fresh() -> bool:
+    return bool(getattr(_io_ctx, "fresh", False))
+
+
+def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name") -> list:
+    """Every row of one RPOWER configuration list for this store's group (or
+    the store itself, `by_store`): this process's copy for
+    CATALOG_CACHE_SECONDS, else the group's kept copy (pos_catalogs) while
+    younger than CATALOG_MAX_AGE_SECONDS, else RPOWER — and kept."""
+    import pos_io
+    token, base = _ctx(restaurant_id)
+    scope = ("demo:" if str(token).startswith("demo-store:") else "") + str(base["cg"]) + (
+        f":{base['storemid']}" if by_store else "")
+    key = (scope, path)
+    page_load = on_request_thread() and not getattr(_io_ctx, "allow_live", False)
+    if not _fresh():
+        hit = _list_cache.get(key)
+        if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
+            return hit[1]
+        kept = pos_io.catalog_get("rpower", scope, path)
+        if kept is not None and (page_load or time.time() - kept[0] < CATALOG_MAX_AGE_SECONDS):
+            _list_cache[key] = (time.monotonic(), kept[1])
+            return kept[1]
+    if page_load:
+        raise RPowerArchiveMiss(f"RPOWER's {path} list is not kept yet; not read live during a page load")
+    params = dict(base) if by_store else {"cg": base["cg"]}
+    if sortorder:
+        params["sortorder"] = sortorder
+    rows = _paged(token, path, params)
+    pos_io.catalog_put("rpower", scope, path, rows)
+    _list_cache[key] = (time.monotonic(), rows)
+    return rows
+
+
 def _ctx(restaurant_id: int) -> tuple:
     """(token, base params) for a connected restaurant, or raise."""
     c = _creds(restaurant_id)
@@ -809,10 +891,10 @@ def sales_types(restaurant_id: int) -> dict:
     restaurant comps in a week.
     """
     hit = _sales_type_cache.get(restaurant_id)
-    if hit and time.monotonic() - hit[0] < SALES_TYPE_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < SALES_TYPE_CACHE_SECONDS:
         return hit[1]
     token, base = _ctx(restaurant_id)
-    rows = _paged(token, "salestype/getbycg", {"cg": base["cg"]})
+    rows = _list(restaurant_id, "salestype/getbycg", sortorder=None)
     out = {str(r.get("mid")): r for r in rows if r.get("mid")}
     _sales_type_cache[restaurant_id] = (time.monotonic(), out)
     return out
@@ -827,7 +909,7 @@ _sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS)
 def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
-              _job_cat_cache):
+              _job_cat_cache, _list_cache, _archive_refreshed):
         c.clear()
     try:
         import pos_io
@@ -916,11 +998,11 @@ def void_reasons(restaurant_id: int) -> dict:
     VOID_REASON_CACHE_SECONDS. The reason on every comp and void line was
     kept as a bare id and never read (RPower endpoint audit, 9/29/26)."""
     hit = _void_reason_cache.get(restaurant_id)
-    if hit and time.monotonic() - hit[0] < VOID_REASON_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < VOID_REASON_CACHE_SECONDS:
         return hit[1]
     token, base = _ctx(restaurant_id)
     out = {str(r["mid"]): _tidy_name(r.get("name")) for r in
-           _paged(token, "voidreason/getbycg", {"cg": base["cg"], "sortorder": "name"}) if r.get("mid")}
+           _list(restaurant_id, "voidreason/getbycg") if r.get("mid")}
     _void_reason_cache[restaurant_id] = (time.monotonic(), out)
     return out
 
@@ -1061,7 +1143,7 @@ def fetch_menu_items(restaurant_id: int) -> list:
     an unpopulated field is a measurement.
     """
     token, base = _ctx(restaurant_id)
-    rows = _paged(token, "menuitem/getbycg", {"cg": base["cg"], "sortorder": "name"})
+    rows = _list(restaurant_id, "menuitem/getbycg")
     return [{
         "guid": r.get("mid"),
         "name": r.get("name"),
@@ -1153,11 +1235,11 @@ def menu_lookup(restaurant_id: int) -> dict:
     """{menuitem_mid: {"name", "category", "kind"}} for this store's menu,
     read once per MENU_CACHE_SECONDS (a discovery pass scans a week of days)."""
     hit = _menu_cache.get(restaurant_id)
-    if hit and time.monotonic() - hit[0] < MENU_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < MENU_CACHE_SECONDS:
         return hit[1]
     token, base = _ctx(restaurant_id)
     cats = {str(r.get("mid")): r.get("name") or ""
-            for r in _paged(token, "salescategory/getbycg", {"cg": base["cg"], "sortorder": "name"})}
+            for r in _list(restaurant_id, "salescategory/getbycg")}
     out = {}
     for m in fetch_menu_items(restaurant_id):
         category = clean_item_name(cats.get(str(m.get("sales_category_mid")), ""))
@@ -1710,11 +1792,11 @@ def fetch_people(restaurant_id: int) -> dict:
     their punches."""
     token, base = _ctx(restaurant_id)
     jobs, emps, stations = {}, {}, {}
-    for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+    for j in _list(restaurant_id, "job/getbycg"):
         name = _tidy_name(j.get("name"))
         if j.get("mid") and name:
             jobs[str(j["mid"])] = name
-    emp_recs = list(_paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}))
+    emp_recs = list(_list(restaurant_id, "employee/getbycg"))
     distinct = distinct_employee_names(emp_recs)
     for e in emp_recs:
         name = distinct.get(str(e.get("mid") or "").strip())
@@ -1758,14 +1840,14 @@ def job_categories(restaurant_id: int) -> dict:
     for labor by department. A job with no category is left out. Cached for
     PEOPLE_CACHE_SECONDS like the people list."""
     hit = _job_cat_cache.get(restaurant_id)
-    if hit and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
         return hit[1]
     token, base = _ctx(restaurant_id)
     cats = {str(c.get("mid")): _tidy_name(c.get("name"))
-            for c in _paged(token, "payrollcategory/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            for c in _list(restaurant_id, "payrollcategory/getbycg")
             if c.get("mid")}
     out = {}
-    for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"}):
+    for j in _list(restaurant_id, "job/getbycg"):
         name, cat = _tidy_name(j.get("name")), cats.get(str(j.get("pyrlcat_mid") or ""))
         if name and cat:
             out[name.lower()] = cat
@@ -1777,7 +1859,7 @@ def _people_cached(restaurant_id: int) -> dict:
     """fetch_people, read once per PEOPLE_CACHE_SECONDS: the coverage check
     runs every 20 minutes through service and the lists rarely change."""
     hit = _people_cache.get(restaurant_id)
-    if hit and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < PEOPLE_CACHE_SECONDS:
         return hit[1]
     out = fetch_people(restaurant_id)
     _people_cache[restaurant_id] = (time.monotonic(), out)
@@ -2062,7 +2144,7 @@ def fetch_job_codes(restaurant_id: int) -> dict:
     names the sync stores as `role`, for anything that writes back."""
     token, base = _ctx(restaurant_id)
     return {_tidy_name(j.get("name")).lower(): str(j.get("ext_id") or "").strip()
-            for j in _paged(token, "job/getbycg", {"cg": base["cg"], "sortorder": "name"})
+            for j in _list(restaurant_id, "job/getbycg")
             if _tidy_name(j.get("name")) and str(j.get("ext_id") or "").strip()}
 
 
@@ -2072,7 +2154,7 @@ def pos_employees(restaurant_id: int) -> list:
     2000-01-01 for "none")."""
     token, base = _ctx(restaurant_id)
     out = []
-    recs = list(_paged(token, "employee/getbycg", {"cg": base["cg"], "sortorder": "name"}))
+    recs = list(_list(restaurant_id, "employee/getbycg"))
     distinct = distinct_employee_names(recs)
     for e in recs:
         term = str(e.get("term_date") or "")
@@ -2157,6 +2239,11 @@ def preview_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = N
     id no current employee has, a job the store does not have or the person
     does not hold, a time not in RPOWER's format, a shift that ends before it
     starts or runs past MAX_SHIFT_HOURS, two shifts of one person that overlap."""
+    with allow_live_reads():               # the owner asked for it: a list not kept yet may be read
+        return _preview_labor_schedule(restaurant_id, shifts, job_codes)
+
+
+def _preview_labor_schedule(restaurant_id, shifts, job_codes=None):
     import re
     token, base = _ctx(restaurant_id)
     emps = pos_employees(restaurant_id)
@@ -2236,13 +2323,31 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
                 "skipped": skipped}
 
     import requests
+    import pos_io
+    # The one write passes the breaker and is counted like every read (A3-10 / A3-19).
+    gate, wait = pos_io.breaker_allow("rpower")
+    if gate == "open":
+        pos_io.record("rpower", restaurant_id, "laborschedule/push", "skipped")
+        return {"ok": False, "skipped": skipped, "retry_after": wait,
+                "error": f"RPOWER has been failing; the push waits {int(wait)}s for it to answer again."}
+    t0 = time.monotonic()
     try:
         resp = requests.post(
             f"{BASE_URL}/laborschedule/push",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=payload, timeout=TIMEOUT_SECONDS)
     except Exception as e:
+        pos_io.record("rpower", restaurant_id, "laborschedule/push", "transport", (time.monotonic() - t0) * 1000)
+        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: {type(e).__name__}", probe=gate == "probe")
         return {"ok": False, "error": f"Couldn't reach RPOWER: {e}", "skipped": skipped}
+    _ms = (time.monotonic() - t0) * 1000
+    _st = int(getattr(resp, "status_code", 0) or 0)
+    pos_io.record("rpower", restaurant_id, "laborschedule/push",
+                  "ok" if resp.ok else ("s5xx" if _st >= 500 else ("s429" if _st == 429 else "s4xx")), _ms)
+    if _st >= 500:
+        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: HTTP {_st}", probe=gate == "probe")
+    else:
+        pos_io.breaker_success("rpower", probe=gate == "probe")
 
     if resp.status_code in (401, 403):
         return {"ok": False, "skipped": skipped,
@@ -2269,15 +2374,13 @@ _catalog_cache = _LRU(CACHE_MAX_KEYED)
 
 def _catalog(restaurant_id: int, path: str, by_store: bool = False) -> dict:
     """{mid: row} of one RPOWER list (tables, rooms, meal times, profit
-    centers), read once per CATALOG_CACHE_SECONDS."""
+    centers), read once per CATALOG_CACHE_SECONDS — through _list, so the
+    group's kept copy answers before RPOWER does."""
     key = (restaurant_id, path)
     hit = _catalog_cache.get(key)
-    if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
+    if hit and not _fresh() and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
         return hit[1]
-    token, base = _ctx(restaurant_id)
-    params = dict(base) if by_store else {"cg": base["cg"]}
-    params["sortorder"] = "name"
-    out = {str(r["mid"]): r for r in _paged(token, path, params) if r.get("mid")}
+    out = {str(r["mid"]): r for r in _list(restaurant_id, path, by_store=by_store) if r.get("mid")}
     _catalog_cache[key] = (time.monotonic(), out)
     return out
 
@@ -2328,22 +2431,41 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
     token, base = _ctx(restaurant_id)
     iso = _d(day)
-    types = sales_types(restaurant_id)
-    menu = menu_lookup(restaurant_id)
-    reasons = void_reasons(restaurant_id)
-    people = _people_cached(restaurant_id)
+    # The night's records first, then the lists that name them: a list kept
+    # for the group (_list, A3-07) that does not name an id the night
+    # carries — a sales type, item, employee, table, payment method added
+    # since it was read — is read afresh once, so nothing is filed unknown.
+    raw_lines = _paged(token, "ticketsales/getbybusinessdate",
+                       {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    raw_tickets = _paged(token, "ticket/getbybusinessdate",
+                         {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
+    end = start + timedelta(days=1)
+    raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
+                   if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
+    raw_payments = _paged(token, "ticketpayment/getbybusinessdate",
+                          {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    # RPOWER's own example spells this one `startDate` (and `enddate`), a
+    # single day asked as start == end. UNPROVEN (bar audit 10/14/26 RPW-17
+    # / R26): that payout's enddate is inclusive — timeclock/getbydaterange
+    # treats its enddate as exclusive, and EJ's has one payout in 94 days (a
+    # $0.01 test, 8/29) to judge by. To probe once on a live store (the lead,
+    # read-only): ask a day with a known payout as start == end and as end =
+    # day + 1, and compare the rows.
+    raw_payouts = _paged(token, "payout/getbydaterange",
+                         {**base, "startDate": iso, "enddate": iso, "sortorder": "date"})
+    lists = _archive_lists(restaurant_id)
+    missed = _archive_misses(lists, raw_lines, raw_tickets, raw_punches, raw_payments, raw_payouts)
+    if missed:
+        lists = _refresh_missed(restaurant_id, lists, missed)
+    types, menu, reasons, people = lists["types"], lists["menu"], lists["reasons"], lists["people"]
     emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
-    tables = _catalog(restaurant_id, "table/getbystore", by_store=True)
-    rooms = _catalog(restaurant_id, "room/getbystore", by_store=True)
-    meals = _catalog(restaurant_id, "mealtime/getbycg")
-    centers = _catalog(restaurant_id, "profitcenter/getbycg")
+    tables, rooms, meals, centers = lists["tables"], lists["rooms"], lists["meals"], lists["centers"]
     # Each line's department and sales category as RPOWER filed it the night
     # it was archived (bar audit 10/14/26 F5): the Bar maps POS item
     # categories to beer / liquor / wine, and a night read back from the
     # archive needs them without asking RPOWER's catalog again.
-    menu_rows = _catalog(restaurant_id, "menuitem/getbycg")
-    cat_rows = _catalog(restaurant_id, "salescategory/getbycg")
-    dep_rows = _catalog(restaurant_id, "salesdepartment/getbycg")
+    menu_rows, cat_rows, dep_rows = lists["menu_rows"], lists["cat_rows"], lists["dep_rows"]
 
     def _name(cat, mid):
         row = cat.get(mid) if mid else None
@@ -2358,10 +2480,6 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         return (cat_id, ((cat.get("name") or "").strip() or None),
                 ((dep.get("name") or "").strip() or (UNASSIGNED_DEPARTMENT if item_mid else None)))
 
-    raw_lines = _paged(token, "ticketsales/getbybusinessdate",
-                       {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    raw_tickets = _paged(token, "ticket/getbybusinessdate",
-                         {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
     stamps = []
     lines, net_by_ticket = [], {}
     # Our line totals beside RPOWER's own per-ticket type totals (POS-11):
@@ -2450,10 +2568,6 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "cancelled": 1 if t.get("is_cancelled") else 0,
             "source_stamp": str(t.get("time_stamp") or "")[:19] or None,
             **{k: round(_num(t.get(k)), 2) for k in ("type_sale", "type_discnt", "type_promo", "type_comp")}})
-    start = datetime.combine(day, datetime.min.time()).replace(hour=BUSINESS_DAY_START_HOUR)
-    end = start + timedelta(days=1)
-    raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
-                   if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     stations = station_logins(raw_punches, people)
     punches = []
     for e in raw_punches:
@@ -2483,10 +2597,9 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "is_station": 1 if mid in stations else 0,
             "source_stamp": str(e.get("time_stamp") or "")[:19] or None})
         stamps.append(str(e.get("time_stamp") or ""))
-    methods = _catalog(restaurant_id, "paymentmethod/getbycg")
+    methods = lists["methods"]
     payments = []
-    for p in _paged(token, "ticketpayment/getbybusinessdate",
-                    {**base, "startdate": iso, "enddate": iso, "sortorder": "date"}):
+    for p in raw_payments:
         if _biz_date(p.get("date")) != iso or not p.get("rid"):
             continue
         m = methods.get(_id(p.get("paymeth_mid")) or "") or {}
@@ -2495,16 +2608,9 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "method": _tidy_name(m.get("name")) or None, "is_cash": 1 if m.get("is_cash") else 0,
             "is_card": 1 if m.get("is_cc") else 0, "amount": round(_num(p.get("paid_ticket")), 2),
             "tip": round(_num(p.get("paid_tip")), 2), "tip_fee": round(_num(p.get("tip_fee")), 2)})
-    cats = _catalog(restaurant_id, "payoutcategory/getbycg")
+    cats = lists["payout_cats"]
     payouts = []
-    # RPOWER's own example spells this one `startDate` (and `enddate`), a
-    # single day asked as start == end. UNPROVEN (bar audit 10/14/26 RPW-17
-    # / R26): that payout's enddate is inclusive — timeclock/getbydaterange
-    # treats its enddate as exclusive, and EJ's has one payout in 94 days (a
-    # $0.01 test, 8/29) to judge by. To probe once on a live store (the lead,
-    # read-only): ask a day with a known payout as start == end and as end =
-    # day + 1, and compare the rows.
-    for p in _paged(token, "payout/getbydaterange", {**base, "startDate": iso, "enddate": iso, "sortorder": "date"}):
+    for p in raw_payouts:
         if _biz_date(p.get("date")) != iso or not p.get("rid"):
             continue
         c = cats.get(_id(p.get("pocat_mid")) or "") or {}
@@ -2547,6 +2653,76 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
 
 
 _CASH_DISCOUNT = re.compile(r"\bcash\s*discount\b", re.I)
+
+
+def _archive_lists(restaurant_id: int) -> dict:
+    """Every list archive_rows names a night's records from (_list's kept
+    copies, or afresh inside fresh_lists())."""
+    return {"types": sales_types(restaurant_id), "menu": menu_lookup(restaurant_id),
+            "reasons": void_reasons(restaurant_id), "people": _people_cached(restaurant_id),
+            "tables": _catalog(restaurant_id, "table/getbystore", by_store=True),
+            "rooms": _catalog(restaurant_id, "room/getbystore", by_store=True),
+            "meals": _catalog(restaurant_id, "mealtime/getbycg"),
+            "centers": _catalog(restaurant_id, "profitcenter/getbycg"),
+            "menu_rows": _catalog(restaurant_id, "menuitem/getbycg"),
+            "cat_rows": _catalog(restaurant_id, "salescategory/getbycg"),
+            "dep_rows": _catalog(restaurant_id, "salesdepartment/getbycg"),
+            "methods": _catalog(restaurant_id, "paymentmethod/getbycg"),
+            "payout_cats": _catalog(restaurant_id, "payoutcategory/getbycg")}
+
+
+def _archive_misses(lists, lines, tickets, punches, payments, payouts) -> list:
+    """The kinds of list a night's records name an id the kept copy does not
+    hold — sales types (what counts as revenue), menu items (where a line
+    is filed), tables, jobs, payment methods, payout categories. Void reasons
+    and employee names are left out: a placeholder id on every line (RPOWER's
+    "1" reason) would read the lists afresh on every night."""
+    jobs = (lists["people"].get("jobs") or {})
+    want = (
+        [("types", r.get("slstype_mid")) for r in lines] + [("menu_rows", r.get("menuitem_mid")) for r in lines]
+        + [("tables", r.get("table_mid")) for r in tickets] + [("jobs", r.get("job_mid")) for r in punches]
+        + [("methods", r.get("paymeth_mid")) for r in payments]
+        + [("payout_cats", r.get("pocat_mid")) for r in payouts])
+    have = {"types": lists["types"], "menu_rows": lists["menu_rows"], "jobs": jobs, "tables": lists["tables"],
+            "methods": lists["methods"], "payout_cats": lists["payout_cats"]}
+    return sorted({k for k, v in want if _id(v) and str(_id(v)) not in have[k]})
+
+
+# A list read afresh for a miss is not read afresh again for the same store
+# within this many seconds: an id the POS no longer lists (a deleted item on
+# a backfilled night) would otherwise re-read it for every night of a backfill.
+ARCHIVE_REFRESH_SECONDS = 600
+_archive_refreshed = _LRU(CACHE_MAX_KEYED)
+
+
+def _refresh_missed(restaurant_id: int, lists: dict, missed: list) -> dict:
+    """Re-read, afresh, the lists `missed` names (each once per
+    ARCHIVE_REFRESH_SECONDS per store) into a copy of `lists`."""
+    out = dict(lists)
+    for kind in missed:
+        key = (restaurant_id, kind)
+        hit = _archive_refreshed.get(key)
+        if hit and time.monotonic() - hit < ARCHIVE_REFRESH_SECONDS:
+            continue
+        _archive_refreshed[key] = time.monotonic()
+        with fresh_lists():
+            if kind == "types":
+                out["types"] = sales_types(restaurant_id)
+            elif kind == "menu_rows":
+                out.update(menu=menu_lookup(restaurant_id),
+                           menu_rows=_catalog(restaurant_id, "menuitem/getbycg"),
+                           cat_rows=_catalog(restaurant_id, "salescategory/getbycg"),
+                           dep_rows=_catalog(restaurant_id, "salesdepartment/getbycg"))
+            elif kind == "tables":
+                out.update(tables=_catalog(restaurant_id, "table/getbystore", by_store=True),
+                           rooms=_catalog(restaurant_id, "room/getbystore", by_store=True))
+            elif kind == "jobs":
+                out["people"] = _people_cached(restaurant_id)
+            elif kind == "methods":
+                out["methods"] = _catalog(restaurant_id, "paymentmethod/getbycg")
+            elif kind == "payout_cats":
+                out["payout_cats"] = _catalog(restaurant_id, "payoutcategory/getbycg")
+    return out
 
 
 def _type_flag(st):
