@@ -594,3 +594,62 @@ def test_the_login_fallback_memory_is_pruned_on_write(monkeypatch):
     for i in range(100):
         auth_routes._record_failed_attempt(f"203.0.113.{i}")
     assert len(auth_routes._login_attempts) <= 20
+
+
+# ── R7-11: support's masking reaches every /admin JSON read, fails closed ──
+
+def _support_app(monkeypatch):
+    import admin_ops
+    import admin_routes
+    from flask import Blueprint, jsonify
+    bp = Blueprint("other_admin", __name__)
+
+    @bp.route("/admin/alert-contacts/<int:rid>")
+    def contacts(rid):
+        return jsonify(ok=True, contacts=[{"name": "Ana", "phone": "+13125550100", "email": "ana@x.test"}])
+
+    app = Flask(__name__)
+    app.register_blueprint(bp)
+    app.after_request(admin_routes._admin_support_redaction)
+    monkeypatch.setattr(admin_ops, "viewer_role", lambda: "support")
+    return app.test_client(), admin_ops
+
+
+def test_support_reads_are_masked_on_any_admin_blueprint(monkeypatch):
+    c, _ = _support_app(monkeypatch)
+    r = c.get("/admin/alert-contacts/3")
+    body = r.get_data(as_text=True)
+    assert r.headers.get("X-Redacted") == "support"
+    assert "ana@x.test" not in body and "5550100" not in body
+
+
+def test_support_masking_fails_closed(monkeypatch):
+    c, admin_ops = _support_app(monkeypatch)
+
+    def boom(_data):
+        raise RuntimeError("cannot mask")
+    monkeypatch.setattr(admin_ops, "redact_for_support", boom)
+    r = c.get("/admin/alert-contacts/3")
+    assert r.status_code == 500 and "ana@x.test" not in r.get_data(as_text=True)
+
+
+def test_the_app_registers_the_masking_hook_app_wide():
+    src = open(os.path.join(ROOT, "hosted_dashboard.py"), encoding="utf-8").read()
+    assert "app.after_request(_support_mask)" in src
+
+
+# ── R7-14: Sentry events leave scrubbed, without frame locals ──────────────
+
+def test_sentry_events_are_scrubbed():
+    import sentry_setup
+    event = {"exception": {"values": [{
+        "value": "GET https://maps.googleapis.com/x?key=AIzaSECRET&q=1 failed",
+        "stacktrace": {"frames": [{"function": "f", "vars": {"client_secret": "shh"}}]}}]},
+        "request": {"url": "https://x.test/cb?token=abc123", "query_string": "access_token=zzz"},
+        "extra": {"note": "Authorization: Bearer sk-live-123"}}
+    out = sentry_setup.scrub_event(event)
+    flat = repr(out)
+    for secret in ("AIzaSECRET", "shh", "abc123", "zzz", "sk-live-123"):
+        assert secret not in flat, secret
+    src = open(os.path.join(ROOT, "sentry_setup.py"), encoding="utf-8").read()
+    assert "include_local_variables=False" in src and "before_send=scrub_event" in src

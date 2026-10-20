@@ -259,6 +259,10 @@ for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp, rpow
     csrf_protect(_bp)
 
 app.register_blueprint(admin_bp)
+# Support's masking on every blueprint under /admin, not only admin_bp's
+# (re-audit 10/20/26 R7-11; applied once per response).
+from admin_routes import _admin_support_redaction as _support_mask
+app.after_request(_support_mask)
 from sales_audit_routes import audit_bp
 if not getattr(audit_bp, "_csrf_wired", False):
     csrf_protect(audit_bp)

@@ -6453,18 +6453,39 @@ def _admin_fleet_invalidate(resp):
 def _admin_support_redaction(resp):
     """What the read-only support role may see (#87): owner and login email
     addresses and phones, sign-in IPs and user agents, and Stripe ids are
-    masked in every /admin/api/ read answered to a support login."""
+    masked in every /admin JSON read answered to a support login.
+
+    Since the re-audit (10/20/26, R7-11) it is also registered app-wide
+    (hosted_dashboard), so it covers every blueprint under /admin — the
+    onboarding console's partner and provisioning reads had no hook — and
+    every /admin JSON GET, not only /admin/api/ (alert contacts and staff
+    availability answered support unmasked). It fails CLOSED for support: a
+    body that cannot be masked is a 500, never the unmasked body. Applied
+    once per response (X-Redacted)."""
     try:
-        if (request.method == "GET" and (request.path or "").startswith("/admin/api/") and resp.status_code == 200
-                and resp.mimetype == "application/json" and not resp.headers.get("Content-Encoding")
-                and not resp.direct_passthrough and _admin_ops_c.viewer_role() == "support"):
-            data = resp.get_json(silent=True)
-            if data is not None:
-                resp.set_data(json.dumps(_admin_ops_c.redact_for_support(data), default=str))
-                resp.headers["X-Redacted"] = "support"
+        if (request.method != "GET" or not (request.path or "").startswith("/admin")
+                or resp.status_code != 200 or resp.mimetype != "application/json"
+                or resp.headers.get("X-Redacted")):
+            return resp
+        role = _admin_ops_c.viewer_role()
     except Exception:
-        pass
-    return resp
+        return resp
+    if role != "support":
+        return resp
+    try:
+        if resp.headers.get("Content-Encoding") or resp.direct_passthrough:
+            raise ValueError("an encoded or streamed body cannot be masked")
+        data = resp.get_json(silent=True)
+        if data is not None:
+            resp.set_data(json.dumps(_admin_ops_c.redact_for_support(data), default=str))
+        resp.headers["X-Redacted"] = "support"
+        return resp
+    except Exception as e:
+        _ops.capture(e, job="support_redaction", context=f"path={request.path}")
+        refused = jsonify(ok=False, error="This page couldn't be shown with personal details masked.")
+        refused.status_code = 500
+        refused.headers["X-Redacted"] = "refused"
+        return refused
 
 
 def _page_args():
