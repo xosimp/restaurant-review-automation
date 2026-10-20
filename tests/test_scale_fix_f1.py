@@ -152,6 +152,26 @@ def test_sec08_a_bad_signature_flood_stops_writing_the_ledger(db_path):
     assert counts and max(counts) == models.REFUSED_WEBHOOK_WRITES_PER_MINUTE
 
 
+def test_sec10_the_tenant_name_scan_does_not_grow_with_the_fleet():
+    import re
+    import time
+    from intelligence import privacy
+    names = [f"Spot{i} Tavern Co" for i in range(20000)] + ["Simple EJ's", "Halsted & Rye", "Lou's Place"]
+    m = privacy._names_regex(names)
+    old = re.compile(r"(?<![\w'])(?:" + "|".join(re.escape(n) for n in sorted(
+        {n for n in names}, key=len, reverse=True)) + r")(?![\w'])", re.I)
+    cases = ["Simple EJ's runs 31%", "simple ej's", "Simple EJ'sX", "XSimple EJ's", "at halsted & rye tonight",
+             "Lou's Place.", "Lou's Places", "spot19999 tavern co", "pizza peers in Chicago", "", "Spot7 Tavern"]
+    for c in cases:
+        assert bool(m.search(c)) == bool(old.search(c)), c
+    text = "Pizza places in Lakeview, median labor 31%, the band moved this week. " * 6
+    t0 = time.perf_counter()
+    for _ in range(200):
+        m.search(text)
+    per = (time.perf_counter() - t0) / 200
+    assert per < 0.002, f"{per * 1000:.2f} ms a string with 20,000 names"
+
+
 def test_sec09_every_meta_connect_start_is_bound_to_its_login():
     import inspect
     import mobile_api

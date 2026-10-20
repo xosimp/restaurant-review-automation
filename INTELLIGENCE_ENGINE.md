@@ -203,7 +203,7 @@ deleted restaurant's kept rows keep the labels they had.
 
 | Module | Level | Responsibility |
 |---|---|---|
-| `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder), effect rounding |
+| `privacy.py` | all | `MIN_COHORT`, the forbidden-key list, `assert_anonymous()` (recursive; used by tests and by the admin payload builder; every tenant name is found through `_NameMatcher` — names indexed by first word, so a string costs the same at 10,000 restaurants as at 5; scale fix 10/19/26 SEC-10), effect rounding |
 | `stats.py` | all | pure-Python mean / sd / Cohen's d / percentiles / least-squares slope / **permutation test** (seeded, two-sided) / **Benjamini–Hochberg** |
 | `categories.py` | 3 | taxonomy; `category_for(restaurant)` → (category, source) — the confirmed concept first; `profile_for` / `partition_key(profile, family)` (the hard split: service model; × bar-led for labor and food; × menu family for food cost and waste) / `partition_label`; `infer_detail` (format before cuisine, name before menu, Google types, a confidence) and `suggestion` ("We think you're a pizzeria — is that right?"); `clean_profile` / `profile_payload` for the Account block |
 | `features.py` | 1 | `compute(rid, week_end)` from own tables (every query bounded above by the as-of day); `store()` at `FEATURES_VERSION`; `latest` / `series` / `latest_by_restaurant()` / `weekly_by_restaurant()` read only current-version rows; the backfill helpers (`weeks_to_backfill`, `backfill_week`) |
