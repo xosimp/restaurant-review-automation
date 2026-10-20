@@ -593,6 +593,117 @@ def run_for(restaurant_id, today=None, db_path=DB_PATH, now_utc=None) -> dict:
             "prices": prices, "catalog": catalog, "backfill_restated": backfill_restated}
 
 
+# ── the nightly labor read from the archive (scale audit 10/19/26 A3-06) ────
+#
+# rpower.build_shifts_csv read 60 days of timeclock every night (9 week-sized
+# requests) for punches the archive already held. It now reads live only the
+# last few weeks — where a manager still edits punches — and takes the older
+# days from pos_punches, but only days whose punches were read from the POS
+# once they had settled (`punches_read_at` at least the live window after
+# the day). The live read refreshes the archive's punches of the days it
+# covers, so every day is re-read at the end of the window before labor
+# takes it from the archive.
+
+def _archive_reads_on(restaurant_id):
+    import os
+    if os.getenv("POS_ARCHIVE_READS", "1").strip() in ("0", "false", "off", "no"):
+        return False
+    return str(restaurant_id) not in {x.strip() for x in os.getenv("POS_ARCHIVE_READS_OFF", "").split(",")
+                                      if x.strip()}
+
+
+def settled_punch_dates(restaurant_id, provider, lo_iso, hi_iso, settle_days, db_path=DB_PATH) -> set:
+    """Business dates in [lo, hi] the archive holds whose punches were last
+    read from the POS `settle_days` or more after the date."""
+    if not _archive_reads_on(restaurant_id):
+        return set()
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("SELECT business_date, punches_read_at FROM pos_archive_days WHERE restaurant_id=? "
+                            "AND provider=? AND business_date BETWEEN ? AND ? AND COALESCE(version, 1) >= ?",
+                            (restaurant_id, provider, lo_iso, hi_iso, READ_MIN_VERSION)).fetchall()
+    finally:
+        conn.close()
+    out = set()
+    for d, at in rows:
+        try:
+            if at and str(at)[:10] >= (date.fromisoformat(str(d)[:10]) + timedelta(days=settle_days)).isoformat():
+                out.add(str(d)[:10])
+        except ValueError:
+            continue
+    return out
+
+
+def archived_punches(restaurant_id, provider, dates, db_path=DB_PATH) -> list:
+    """pos_punches rows of `dates` (business dates), as dicts."""
+    if not dates:
+        return []
+    conn = get_conn(db_path)
+    try:
+        return [dict(r) for r in conn.execute(
+            f"SELECT {', '.join(_PUNCH_COLS)} FROM pos_punches WHERE restaurant_id=? AND provider=? "
+            f"AND business_date IN ({','.join('?' for _ in dates)})", (restaurant_id, provider, *dates)).fetchall()]
+    finally:
+        conn.close()
+
+
+def _punch_key(p):
+    return tuple((round(float(p.get(c)), 4) if isinstance(p.get(c), float) else p.get(c)) for c in _PUNCH_COLS)
+
+
+def refresh_punches(restaurant_id, provider, by_day, db_path=DB_PATH) -> dict:
+    """Store a fresh read of the punches of archived days: {iso: [punch
+    records shaped as archive_rows shapes them]}. A day whose punches are
+    unchanged only has `punches_read_at` stamped; a changed one has its
+    punches replaced whole (and its count). A day the archive does not hold,
+    or one being archived right now, is left alone. {"checked", "changed"}."""
+    import ops
+    out = {"checked": 0, "changed": 0}
+    if not by_day:
+        return out
+    conn = get_conn(db_path)
+    try:
+        held = {r[0] for r in conn.execute(
+            f"SELECT business_date FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
+            f"AND business_date IN ({','.join('?' for _ in by_day)})",
+            (restaurant_id, provider, *by_day)).fetchall()}
+    finally:
+        conn.close()
+    for iso in sorted(held):
+        claim = f"pos_archive_day:{restaurant_id}:{provider}:{iso}"
+        if not ops.claim_cooldown(claim, ARCHIVE_CLAIM_MINUTES):
+            continue                                # being archived: that read stores the punches
+        try:
+            new = by_day[iso]
+            conn = get_conn(db_path)
+            try:
+                old = [dict(r) for r in conn.execute(
+                    f"SELECT {', '.join(_PUNCH_COLS)} FROM pos_punches WHERE restaurant_id=? AND provider=? "
+                    f"AND business_date=?", (restaurant_id, provider, iso)).fetchall()]
+                same = sorted(map(_punch_key, old)) == sorted(map(_punch_key, new))
+                if not same:
+                    conn.execute("DELETE FROM pos_punches WHERE restaurant_id=? AND provider=? AND business_date=?",
+                                 (restaurant_id, provider, iso))
+                    marks = ",".join("?" for _ in range(len(_PUNCH_COLS) + 2))
+                    conn.executemany(f"INSERT OR REPLACE INTO pos_punches (restaurant_id, provider, "
+                                     f"{','.join(_PUNCH_COLS)}) VALUES ({marks})",
+                                     [(restaurant_id, provider, *[p.get(c) for c in _PUNCH_COLS]) for p in new])
+                conn.execute("UPDATE pos_archive_days SET punches_read_at=datetime('now')"
+                             + ("" if same else ", punches=?") + " WHERE restaurant_id=? AND provider=? "
+                             "AND business_date=?", ((() if same else (len(new),)) + (restaurant_id, provider, iso)))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            out["checked"] += 1
+            out["changed"] += 0 if same else 1
+        finally:
+            ops.release_period("cooldown", claim)
+    return out
+
+
 # ── who can work which job (RPower endpoint audit, High ROI #5) ─────────────
 
 ROLE_SOURCE = "sync"

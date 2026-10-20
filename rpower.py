@@ -1791,7 +1791,7 @@ def fetch_people(restaurant_id: int) -> dict:
     name is a station's (is_station_name); station_logins() decides from
     their punches."""
     token, base = _ctx(restaurant_id)
-    jobs, emps, stations = {}, {}, {}
+    jobs, emps, stations, payroll = {}, {}, {}, {}
     for j in _list(restaurant_id, "job/getbycg"):
         name = _tidy_name(j.get("name"))
         if j.get("mid") and name:
@@ -1800,6 +1800,8 @@ def fetch_people(restaurant_id: int) -> dict:
     distinct = distinct_employee_names(emp_recs)
     for e in emp_recs:
         name = distinct.get(str(e.get("mid") or "").strip())
+        if e.get("mid") and str(e.get("payroll_id") or "").strip():
+            payroll[str(e["mid"])] = str(e["payroll_id"]).strip()
         if e.get("mid") and name:
             emps[str(e["mid"])] = name
             # the POS's own full name ("To Go AM"; fname+lname lost the "Go")
@@ -1807,7 +1809,9 @@ def fetch_people(restaurant_id: int) -> dict:
                               or e.get("name"))
             if is_station_name(full, jobs.values()):
                 stations[str(e["mid"])] = full
-    return {"jobs": jobs, "employees": emps, "station_names": stations}
+    # `payroll`: each employee's payroll id, which a punch read back from the
+    # archive carries no copy of (build_shifts_csv, scale audit A3-06).
+    return {"jobs": jobs, "employees": emps, "station_names": stations, "payroll": payroll}
 
 
 # ── during service (the live view) ───────────────────────────────────────
@@ -2028,6 +2032,102 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
     return rows
 
 
+# The nightly labor read (scale audit 10/19/26 A3-06): the last this-many
+# days are read from RPOWER's timeclock every night — where a manager still
+# edits punches — and a day before them comes from the archive's punches
+# when they were read from RPOWER this long after the day (pos_archive.
+# settled_punch_dates); any other day is read live as before. The live read
+# refreshes the archive's punches of the archived days it covers, so a day
+# leaves the live window with its punches re-read. 60 or more reads all 60
+# days live, as before 10/19/26.
+LABOR_LIVE_DAYS = int(os.getenv("RPOWER_LABOR_LIVE_DAYS", "14"))
+
+
+def _labor_entries(restaurant_id: int, start, end) -> tuple:
+    """(entries, live entries, archived entries) — timeclock rows in RPOWER's
+    shape for calendar days start..end: a day whose punches the archive holds
+    settled (that day and the business date before it, whose after-midnight
+    punches fall on it) from pos_punches, every other day from RPOWER in
+    week-sized runs. A punch is one entry, whichever side it came from."""
+    import pos_archive
+    live_from = max(start, end - timedelta(days=LABOR_LIVE_DAYS))
+    covered = set()
+    if live_from > start:
+        try:
+            settled = pos_archive.settled_punch_dates(restaurant_id, "rpower", (start - timedelta(days=1)).isoformat(),
+                                                      live_from.isoformat(), LABOR_LIVE_DAYS)
+        except Exception as e:                       # the archive is an optimisation, never a dependency
+            log.warning("[rpower] archived punches not consulted for %s: %s", restaurant_id, e)
+            settled = set()
+        d = start
+        while d < live_from:
+            if d.isoformat() in settled and (d - timedelta(days=1)).isoformat() in settled:
+                covered.add(d)
+            d += timedelta(days=1)
+    archived = []
+    if covered:
+        bdates = sorted({x.isoformat() for d in covered for x in (d, d - timedelta(days=1))})
+        for p in pos_archive.archived_punches(restaurant_id, "rpower", bdates):
+            start_at = _punch_dt(p.get("clock_in"))
+            if start_at is None or start_at.date() not in covered:
+                continue
+            archived.append({"rid": p["punch_id"], "emp_mid": p.get("employee_id"), "in_dttm": p.get("clock_in"),
+                             "out_dttm": p.get("clock_out"), "job_mid": p.get("job_id"), "job_id": p.get("role") or "",
+                             "reg_hours": p.get("reg_hours"), "ot_hours": p.get("ot_hours"),
+                             "dt_hours": p.get("dt_hours"), "reg_rate": p.get("reg_rate"),
+                             "break_minutes": p.get("break_minutes"), "payroll_id": ""})
+    live, runs, run, d = [], [], [], start
+    while d <= end + timedelta(days=1):
+        if d <= end and d not in covered:
+            run.append(d)
+        elif run:
+            live.extend(fetch_time_entries(restaurant_id, run[0], run[-1]) or [])
+            runs.append((run[0], run[-1]))
+            run = []
+        d += timedelta(days=1)
+    seen = {str(e.get("rid")) for e in live if e.get("rid")}
+    archived = [e for e in archived if str(e["rid"]) not in seen]
+    return live + archived, live, archived, runs
+
+
+def _people_for(restaurant_id: int, entries: list) -> dict:
+    """The kept people lists, read afresh once when a finished punch names
+    an employee or job they do not hold (a hire since they were kept)."""
+    people = _people_cached(restaurant_id)
+    emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
+    if any((str(e.get("emp_mid") or "") not in emps or (_id(e.get("job_mid")) and str(_id(e.get("job_mid"))) not in jobs))
+           for e in entries if e.get("out_dttm") and not str(e.get("emp_mid") or "") in (people.get("station_names") or {})):
+        with fresh_lists():
+            people = _people_cached(restaurant_id)
+    return people
+
+
+def _refresh_archived_punches(restaurant_id: int, live: list, runs: list, people: dict) -> None:
+    """Store this live read's punches over the archive's for each archived
+    business date it fully covered (its own calendar day and the next one,
+    where its after-midnight punches fall), stamping when they were read. A
+    date the read found no punch for is left alone (an empty answer never
+    wipes a stored day; it simply stays unsettled). Never raises."""
+    try:
+        from time_utils import BUSINESS_DAY_START_HOUR
+        import pos_archive
+        by_day = {}
+        for e in live:
+            t = _punch_dt(e.get("in_dttm"))
+            if t is None:
+                continue
+            b = t.date() - timedelta(days=1) if t.hour < BUSINESS_DAY_START_HOUR else t.date()
+            by_day.setdefault(b, []).append(e)
+        span = {}
+        for b, rows in by_day.items():
+            if any(a <= b and b + timedelta(days=1) <= z for a, z in runs):
+                span[b.isoformat()] = _punch_records(rows, b.isoformat(), people)
+        if span:
+            pos_archive.refresh_punches(restaurant_id, "rpower", span)
+    except Exception as e:
+        log.warning("[rpower] archived punches not refreshed for %s: %s", restaurant_id, e)
+
+
 def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     """The last `days` of labor, in the CSV shape labor.load_shifts expects."""
     import csv
@@ -2038,9 +2138,12 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     from time_utils import restaurant_now_by_id
     end = restaurant_now_by_id(restaurant_id, naive=True).date()
     start = end - timedelta(days=days)
-    entries = fetch_time_entries(restaurant_id, start, end)
-    people = fetch_people(restaurant_id) if entries else {}
+    entries, live, archived, runs = _labor_entries(restaurant_id, start, end)
+    people = _people_for(restaurant_id, entries) if entries else {}
+    for e in archived:                      # the archive keeps no payroll id: the employee list has it
+        e["payroll_id"] = (people.get("payroll") or {}).get(str(e.get("emp_mid") or ""), "")
     _require_resolved(entries, people)
+    _refresh_archived_punches(restaurant_id, live, runs, people)
     sales = fetch_business_days(restaurant_id, start, end)
     rows = normalise_entries(entries, sales, people)
     left_out = station_logins(entries, people)
@@ -2568,35 +2671,8 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "cancelled": 1 if t.get("is_cancelled") else 0,
             "source_stamp": str(t.get("time_stamp") or "")[:19] or None,
             **{k: round(_num(t.get(k)), 2) for k in ("type_sale", "type_discnt", "type_promo", "type_comp")}})
-    stations = station_logins(raw_punches, people)
-    punches = []
-    for e in raw_punches:
-        if not e.get("rid"):
-            continue
-        mid = _id(e.get("emp_mid"))
-        punches.append({
-            "punch_id": str(e["rid"]), "business_date": iso,
-            "employee_id": mid, "employee_name": emps.get(mid) if mid else None,
-            "job_id": _id(e.get("job_mid")), "role": jobs.get(_id(e.get("job_mid")) or "") or None,
-            "clock_in": _local_stamp(e.get("in_dttm")), "clock_out": _local_stamp(e.get("out_dttm")),
-            "reg_hours": _num(e.get("reg_hours")), "ot_hours": _num(e.get("ot_hours")),
-            "dt_hours": _num(e.get("dt_hours")), "reg_rate": _num(e.get("reg_rate")),
-            "ot_rate": _num(e.get("ot_rate")),
-            "pay": round(sum(_num(e.get(k)) for k in ("reg_pay", "ot_pay", "dt_pay", "spread_pay", "callin_pay")), 2),
-            "ot_pay": round(_num(e.get("ot_pay")) + _num(e.get("dt_pay")), 2),
-            "tips": round(_num(e.get("tips_total")), 2), "tips_net": round(_num(e.get("tip_net")), 2),
-            "grats": round(_num(e.get("grats_actual")), 2),
-            "break_minutes": _num(e.get("break_minutes")),
-            "meal_minutes": _num(e.get("meal1_minutes")) + _num(e.get("meal2_minutes")),
-            "rest_minutes": sum(_num(e.get(f"rest{i}_minutes")) for i in (1, 2, 3)),
-            # editmgr_mid is one placeholder id on every punch at EJ's; an edit
-            # is real only when it has a real edit time.
-            "edited_by": _id(e.get("editmgr_mid")) if _punch_dt(e.get("edit_dttm")) else None,
-            "edited_at": _local_stamp(e.get("edit_dttm")),
-            "edit_what": _id(e.get("edit_what")),
-            "is_station": 1 if mid in stations else 0,
-            "source_stamp": str(e.get("time_stamp") or "")[:19] or None})
-        stamps.append(str(e.get("time_stamp") or ""))
+    punches = _punch_records(raw_punches, iso, people)
+    stamps.extend(str(e.get("time_stamp") or "") for e in raw_punches if e.get("rid"))
     methods = lists["methods"]
     payments = []
     for p in raw_payments:
@@ -2650,6 +2726,42 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None),
             "links_ok": links_ok, "checks": checks}
+
+
+def _punch_records(raw_punches: list, iso: str, people: dict) -> list:
+    """One business date's timeclock rows as the archive keeps them
+    (pos_punches) — archive_rows, and the nightly labor read's refresh of a
+    recent day (build_shifts_csv)."""
+    stations = station_logins(raw_punches, people)
+    emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
+    punches = []
+    for e in raw_punches:
+        if not e.get("rid"):
+            continue
+        mid = _id(e.get("emp_mid"))
+        punches.append({
+            "punch_id": str(e["rid"]), "business_date": iso,
+            "employee_id": mid, "employee_name": emps.get(mid) if mid else None,
+            "job_id": _id(e.get("job_mid")), "role": jobs.get(_id(e.get("job_mid")) or "") or None,
+            "clock_in": _local_stamp(e.get("in_dttm")), "clock_out": _local_stamp(e.get("out_dttm")),
+            "reg_hours": _num(e.get("reg_hours")), "ot_hours": _num(e.get("ot_hours")),
+            "dt_hours": _num(e.get("dt_hours")), "reg_rate": _num(e.get("reg_rate")),
+            "ot_rate": _num(e.get("ot_rate")),
+            "pay": round(sum(_num(e.get(k)) for k in ("reg_pay", "ot_pay", "dt_pay", "spread_pay", "callin_pay")), 2),
+            "ot_pay": round(_num(e.get("ot_pay")) + _num(e.get("dt_pay")), 2),
+            "tips": round(_num(e.get("tips_total")), 2), "tips_net": round(_num(e.get("tip_net")), 2),
+            "grats": round(_num(e.get("grats_actual")), 2),
+            "break_minutes": _num(e.get("break_minutes")),
+            "meal_minutes": _num(e.get("meal1_minutes")) + _num(e.get("meal2_minutes")),
+            "rest_minutes": sum(_num(e.get(f"rest{i}_minutes")) for i in (1, 2, 3)),
+            # editmgr_mid is one placeholder id on every punch at EJ's; an edit
+            # is real only when it has a real edit time.
+            "edited_by": _id(e.get("editmgr_mid")) if _punch_dt(e.get("edit_dttm")) else None,
+            "edited_at": _local_stamp(e.get("edit_dttm")),
+            "edit_what": _id(e.get("edit_what")),
+            "is_station": 1 if mid in stations else 0,
+            "source_stamp": str(e.get("time_stamp") or "")[:19] or None})
+    return punches
 
 
 _CASH_DISCOUNT = re.compile(r"\bcash\s*discount\b", re.I)

@@ -127,17 +127,40 @@ def _fact(row, source):
             "row_json": _row_json(row)}
 
 
+_FACT_COLS = ("business_date", "person_id", "employee_name", "employee_key", "role", "shift_start", "shift_end",
+              "scheduled_hours", "actual_hours", "pay_rate", "source", "external_id", "row_json")
+
+
+def _fact_value(v):
+    return round(float(v), 6) if isinstance(v, float) else v
+
+
 def _write_facts(conn, restaurant_id, facts, lo, hi):
-    """Replace this restaurant's facts inside [lo, hi] with `facts`."""
-    conn.execute("DELETE FROM shift_facts WHERE restaurant_id=? AND business_date BETWEEN ? AND ?",
-                 (restaurant_id, lo, hi))
-    conn.executemany(
-        "INSERT OR REPLACE INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, role, "
-        "shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [(restaurant_id, f["business_date"], f["person_id"], f["employee_name"], f["employee_key"], f["role"],
-          f["shift_start"], f["shift_end"], f["scheduled_hours"], f["actual_hours"], f["pay_rate"], f["source"],
-          f["external_id"], f.get("row_json")) for f in facts])
+    """Make this restaurant's facts inside [lo, hi] exactly `facts` — by
+    difference (scale audit 10/19/26 DB-09): a row the window no longer has
+    is deleted, a new or changed row written, an unchanged one left alone.
+    The nightly POS sync used to delete and re-insert all ~60 days (~2,400
+    rows) to add a night's ~40, and every unchanged week's `ingested_at`
+    moved with them, so its read was redone every night."""
+    have = {}
+    for r in conn.execute(f"SELECT id, {', '.join(_FACT_COLS)} FROM shift_facts WHERE restaurant_id=? "
+                          "AND business_date BETWEEN ? AND ?", (restaurant_id, lo, hi)).fetchall():
+        have[(r["business_date"], r["employee_key"], r["shift_start"] or "")] = (
+            r["id"], tuple(_fact_value(r[c]) for c in _FACT_COLS))
+    want = {}
+    for f in facts:
+        want[(f["business_date"], f["employee_key"], f["shift_start"] or "")] = tuple(
+            _fact_value(f.get(c)) for c in _FACT_COLS)
+    gone = [have[k][0] for k in have if k not in want]
+    if gone:
+        conn.executemany("DELETE FROM shift_facts WHERE id=? AND restaurant_id=?",
+                         [(i, restaurant_id) for i in gone])
+    write = [vals for k, vals in want.items() if k not in have or have[k][1] != vals]
+    if write:
+        conn.executemany(
+            "INSERT OR REPLACE INTO shift_facts (restaurant_id, business_date, person_id, employee_name, employee_key, "
+            "role, shift_start, shift_end, scheduled_hours, actual_hours, pay_rate, source, external_id, row_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [(restaurant_id, *vals) for vals in write])
 
 
 def ingest(restaurant_id, rows, source, db_path=None) -> dict:

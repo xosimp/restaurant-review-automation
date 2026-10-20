@@ -527,7 +527,8 @@ def save_synced_shifts(restaurant_id, csv_str, source):
                 "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                 "window": (dates[0], dates[-1]) if dates else None,
                 "complete_through": ct.isoformat() if ct else None}
-        save_labor_daily_history(restaurant_id, full_history_by_day(restaurant_id), provenance=prov)
+        save_labor_daily_history(restaurant_id, _history_to_save(restaurant_id, full_history_by_day(restaurant_id),
+                                                                 dates), provenance=prov)
         refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
@@ -540,6 +541,38 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     except Exception as e:
         log.warning(f"[{source} sync] insight cache not cleared: {e}")
     return int(got.get("rows") or 0)
+
+
+def _history_to_save(restaurant_id, by_day, window_dates):
+    """The days of a re-analysed history a POS pull must write (scale audit
+    10/19/26 DB-09): the pulled window, any day with no stored row, and any
+    day whose stored figure was costed on other rates (its `basis` is not
+    this restaurant's current rates key) — not the whole history every
+    night. Outside the window nothing the pull read changed a day; a rate
+    change still re-costs every day, as before. Never raises: on a failed
+    read it returns every day."""
+    if not window_dates:
+        return by_day
+    try:
+        from models import get_conn, labor_rates_key
+        key = labor_rates_key(restaurant_id)
+        lo, hi = min(window_dates), max(window_dates)
+        conn = get_conn()
+        try:
+            stored = {r[0]: r[1] for r in conn.execute(
+                "SELECT date, basis FROM labor_daily_history WHERE restaurant_id=?", (restaurant_id,)).fetchall()}
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning(f"labor history: saving every day for {restaurant_id} ({e})")
+        return by_day
+    keep = {}
+    for day, data in by_day.items():
+        basis = stored.get(day)
+        if (lo <= day <= hi or day not in stored or key is None or not basis
+                or not str(basis).startswith(f"{key}:")):
+            keep[day] = data
+    return keep
 
 
 def connection_status(restaurant_id):
