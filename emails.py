@@ -552,6 +552,63 @@ def _pace_bulk(email_type) -> None:
         log.warning("bulk email pacing unavailable: %s", e)
 
 
+# ── One logical email, one Resend Idempotency-Key (blind re-audit 10/20/26
+# R9-15) ─────────────────────────────────────────────────────────────────────
+#
+# deliver() keeps one key across its own retries. A CALLER that sends again
+# after a transient failure — the newsletter's retry, a released digest or
+# summary claim, onboarding's next tick — called deliver() afresh and got a
+# fresh key, so a send Resend had accepted (whose response timed out) went
+# out twice. A caller that may send the same email again wraps the send in
+# send_key("<what this email is>"): every deliver() inside derives its key
+# from that name, the type and the recipients, and Resend drops a repeat for
+# 24 hours. Without one, every deliver() keeps its own fresh key.
+
+import contextvars as _contextvars
+
+_SEND_KEY = _contextvars.ContextVar("cavnar_email_send_key", default=None)
+
+
+class send_key:
+    """with emails.send_key("digest:5:2026-10-20"): deliver(...) — the
+    sends inside are one logical email for Resend's idempotency."""
+
+    def __init__(self, name):
+        self.name = str(name) if name else None
+        self._tok = None
+
+    def __enter__(self):
+        self._tok = _SEND_KEY.set(self.name)
+        return self
+
+    def __exit__(self, *exc):
+        _SEND_KEY.reset(self._tok)
+        return False
+
+
+# Sent at most once per restaurant, ever (models.mark_onboarding_sent keys
+# them), and retried by the next hourly tick after a transient failure: the
+# restaurant is the logical email without a send_key.
+_ONCE_PER_RESTAURANT = ("send_onboarding_day2", "send_onboarding_day7", "send_onboarding_day30",
+                        "send_lifecycle_day")
+
+
+def _idempotency_key(email_type, recipients, restaurant_id=None):
+    """The Idempotency-Key for this deliver(): stable for one send_key's
+    email (or a once-per-restaurant type's) to these recipients, else fresh."""
+    import hashlib
+    import re as _re
+    import uuid as _uuid
+    name = _SEND_KEY.get()
+    if not name and restaurant_id and str(email_type or "").startswith(_ONCE_PER_RESTAURANT):
+        name = f"restaurant:{restaurant_id}"
+    if not name:
+        return f"{email_type or 'email'}-{_uuid.uuid4().hex}"
+    who = hashlib.sha256(",".join(sorted(str(r).lower() for r in recipients)).encode()).hexdigest()[:12]
+    stem = _re.sub(r"[^A-Za-z0-9:._-]", "_", f"{email_type or 'email'}-{name}")[:200]
+    return f"{stem}-{who}"
+
+
 def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
     """Send one email through Resend, with retry on transient failures, and
     record the real outcome in email_log.
@@ -659,8 +716,9 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # Resend accepted whose response never arrived — without the key the
     # retry was a second copy of a supplier order (AI-21). Resend drops a
     # repeat of a key it has already accepted.
-    import uuid as _uuid
-    idempotency_key = f"{email_type or 'email'}-{_uuid.uuid4().hex}"
+    # Inside a send_key the key is the logical email's, across a caller's
+    # own retries too (R9-15).
+    idempotency_key = _idempotency_key(email_type, recipients, restaurant_id)
     last = None
     spent = 0.0          # worst case so far: timeouts asked for plus backoff slept
     for attempt in range(1, _MAX_ATTEMPTS + 1):
@@ -884,9 +942,14 @@ def _flood_guard_ok(email_type, to_email):
         since = (datetime.now(timezone.utc) - timedelta(seconds=window)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_conn()
         try:
+            # Every send the provider accepted counts, whatever its webhook
+            # later moved it to (delayed, delivered, bounced, complained —
+            # models.DELIVERY_STATUS_RANK). Counting only 'sent' let a cap
+            # reset as fast as Resend reported delivery (blind re-audit
+            # 10/20/26 R9-04); only a send that never happened is left out.
             n = conn.execute(
                 "SELECT COUNT(*) FROM email_log WHERE email_type=? AND lower(to_email)=lower(?) "
-                "AND status='sent' AND sent_at >= ?",
+                "AND COALESCE(status, 'sent') <> 'failed' AND sent_at >= ?",
                 (email_type, to_email, since)).fetchone()[0]
         finally:
             conn.close()

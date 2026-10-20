@@ -1144,7 +1144,7 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
                     out["hit_bound"] = True
                     _unclaim([m for m in chunk[pos:] if m["id"] in mine], mine, db_path)
                     break
-                _deliver_claimed(n, ctx, out, base_url, db_path)
+                _deliver_claimed(n, ctx, out, base_url, db_path, token=mine[n["id"]])
             if out["hit_bound"]:
                 break
         if out["hit_bound"]:
@@ -1244,7 +1244,7 @@ def _unclaim(rows, mine, db_path=None) -> None:
         conn.close()
 
 
-def _deliver_claimed(n, ctx, out, base_url, db_path=None) -> None:
+def _deliver_claimed(n, ctx, out, base_url, db_path=None, token=None) -> None:
     """Tell one claimed notice's person, from the week's published copy,
     and keep what happened (deliver_notices)."""
     import people as _people
@@ -1254,7 +1254,8 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None) -> None:
         ctx[key] = _notice_context(n["restaurant_id"], n["history_id"], db_path)
     c = ctx[key]
     if c is None:
-        _finish_notice(n["id"], "cancelled", error="the week is gone or was never sent", db_path=db_path)
+        _finish_notice(n["id"], "cancelled", error="the week is gone or was never sent", db_path=db_path,
+                       token=token)
         return
     if n["employee_name"] not in c["reach"]:
         try:
@@ -1269,7 +1270,8 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None) -> None:
     except Exception as e:
         _ops.capture(e, job="schedule_notice", context=f"restaurant_id={n['restaurant_id']} notice={n['id']}")
         status, item = "failed", {"employee_name": n["employee_name"], "error": str(e)[:200]}
-    _finish_notice(n["id"], status, item=item, attempts=int(n["attempts"] or 0) + 1, db_path=db_path)
+    _finish_notice(n["id"], status, item=item, attempts=int(n["attempts"] or 0) + 1, db_path=db_path,
+                   token=token)
     out[status].append(item)
 
 
@@ -1295,8 +1297,16 @@ def _notice_context(restaurant_id, history_id, db_path=None):
             "week_label": _mdy_range(row["week_start"], row["week_end"] or row["week_start"])}
 
 
-def _finish_notice(notice_id, status, item=None, attempts=1, error=None, db_path=None):
+def _finish_notice(notice_id, status, item=None, attempts=1, error=None, db_path=None, token=None):
+    """Keep one notice's outcome — only over this deliverer's own claim
+    (`token`, the claimed_at its claim wrote): a slow deliverer whose lease
+    another pass took over must not overwrite the newer outcome (blind
+    re-audit 10/20/26 R9-23). The sent branch also yields to a push answer
+    that came back first (_notice_outcome)."""
     item = item or {}
+    mine, mine_args = "", ()
+    if token is not None:
+        mine, mine_args = " AND status='sending' AND claimed_at=?", (token,)
     conn = get_conn(db_path)
     try:
         if status == "sent":
@@ -1304,18 +1314,20 @@ def _finish_notice(notice_id, status, item=None, attempts=1, error=None, db_path
             # (_notice_outcome) already holds its final word.
             conn.execute("UPDATE schedule_notices SET status='sent', channel=?, sent_to=?, delivery=?, shifts=?, "
                          "sent_at=datetime('now'), last_error=NULL, next_attempt_at=NULL, claimed_at=NULL "
-                         "WHERE id=? AND status='sending'",
+                         "WHERE id=? AND status='sending'" + mine,
                          (item.get("channel"), item.get("sent_to"), item.get("delivery"), item.get("shifts"),
-                          notice_id))
+                          notice_id) + mine_args)
         elif status == "failed":
             retry = None
             if attempts < NOTICE_MAX_ATTEMPTS:
                 retry = _utc(_dt.utcnow() + _td(minutes=NOTICE_RETRY_MINUTES[min(attempts, len(NOTICE_RETRY_MINUTES)) - 1]))
             conn.execute("UPDATE schedule_notices SET status='failed', last_error=?, next_attempt_at=?, claimed_at=NULL "
-                         "WHERE id=?", ((item.get("error") or error or "not sent")[:300], retry, notice_id))
+                         "WHERE id=?" + mine, ((item.get("error") or error or "not sent")[:300], retry, notice_id)
+                         + mine_args)
         else:
             conn.execute("UPDATE schedule_notices SET status=?, last_error=?, next_attempt_at=NULL, claimed_at=NULL "
-                         "WHERE id=?", (status, (item.get("reason") or error or "")[:300] or None, notice_id))
+                         "WHERE id=?" + mine, (status, (item.get("reason") or error or "")[:300] or None, notice_id)
+                         + mine_args)
         conn.commit()
     finally:
         conn.close()

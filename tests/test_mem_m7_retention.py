@@ -223,6 +223,7 @@ def test_the_boot_login_prune_uses_the_registry_window_and_its_floor(db_path, mo
 
 def test_models_unscheduled_prune_honours_the_floor(db_path, monkeypatch):
     monkeypatch.setitem(models._LOG_RETENTION_DAYS, "activity_log", (5, "created_at"))
+    _x(db_path, "INSERT INTO restaurants (id, name, owner_email) VALUES (1, 'R', 'r@x.test')")   # the row's restaurant
     _x(db_path, "INSERT INTO activity_log (restaurant_id, event_type, created_at) VALUES (1, 'x', datetime('now','-30 days'))")
     out = models.prune_operational_logs(db_path=db_path)
     assert _n(db_path, "SELECT COUNT(*) FROM activity_log") == 1

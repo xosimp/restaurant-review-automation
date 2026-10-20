@@ -227,6 +227,22 @@ def _rate(rates_t, name, role, wage=None):
     return (float(rate) if rate else None), src
 
 
+def _done_at(pts, t):
+    """A past day's sales done by business-hour `t` (fractional) from its
+    hourly captures [(hour, net_sales)] in order: the last capture at or
+    before `t`, carried toward the next one in proportion to the time
+    between them. None before the day's first capture."""
+    before = [(hh, v) for hh, v in pts if hh <= t]
+    if not before:
+        return None
+    h0, v0 = before[-1]
+    after = [(hh, v) for hh, v in pts if hh > t]
+    if not after or t <= h0:
+        return v0
+    h1, v1 = after[0]
+    return v0 + (v1 - v0) * (t - h0) / float(h1 - h0)
+
+
 def _sales(restaurant, day, now_local, live=True, db_path=None) -> dict:
     """{so_far, basis, projected, projected_basis, typical, pace_pct, share,
     covers_booked}. `so_far` None when the POS cannot be read during
@@ -238,10 +254,19 @@ def _sales(restaurant, day, now_local, live=True, db_path=None) -> dict:
     hour = now_local.hour + 24 * max(0, (now_local.date() - day).days)
     out = {"so_far": None, "basis": None, "projected": None, "projected_basis": None, "typical": None,
            "pace_pct": None, "share": None, "covers_booked": None}
+    # The moment `so_far` stands at, in business hours (blind re-audit
+    # 10/20/26 R9-08): live sales are read to the minute, while each past
+    # day's history is one capture an hour (intraday, filed under its hour).
+    # The share done by then is read at that same moment — between a past
+    # day's two captures, in proportion — not at the hour's HH:00 capture,
+    # which at 7:50pm set 7:50's sales against 7:00's share and overstated
+    # the night's pace by up to an hour's trade.
+    at_t = float(hour)
     if live:
         try:
             net, provider = pos.fetch_sales_today(rid, day)
             out.update(so_far=round(float(net), 2), basis=f"live from {provider}")
+            at_t = hour + now_local.minute / 60.0
         except Exception:
             pass
     conn = get_conn(db_path)
@@ -252,6 +277,8 @@ def _sales(restaurant, day, now_local, live=True, db_path=None) -> dict:
                              (rid, day.isoformat(), hour)).fetchone()
             if r:
                 out.update(so_far=round(float(r["net_sales"]), 2), basis=f"the {r['captured_hour'] % 24}:00 reading")
+                # A captured reading is that hour's, so is its share.
+                at_t = float(int(r["captured_hour"]))
         # Same weekday's history: each past day's reading at this hour and its
         # last reading (the day's total), the share done by now per day.
         hist = conn.execute(
@@ -266,11 +293,11 @@ def _sales(restaurant, day, now_local, live=True, db_path=None) -> dict:
     shares, closes = [], []
     for _d, pts in by_day.items():
         total = pts[-1][1]
-        at = [v for hh, v in pts if hh <= hour]
         if total > 0:
             closes.append(total)
-            if at:
-                shares.append(at[-1] / total)
+            done = _done_at(pts, at_t)
+            if done is not None:
+                shares.append(done / total)
     share = _median(shares) if len(shares) >= intraday.MIN_PROFILE_SAMPLES else None
     if share is None:
         # The restaurant's measured sales curve (tickets first) — the share of

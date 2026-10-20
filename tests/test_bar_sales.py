@@ -363,6 +363,7 @@ def test_the_seed_reads_rpower_is_bar_and_names_and_never_a_mixed_name():
         assert s(name)["kind"] == "na", name
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_sales_query_uses_metric_range(db):
     src = open(os.path.join(ROOT, "bar", "sales.py"), encoding="utf-8").read()
     import re

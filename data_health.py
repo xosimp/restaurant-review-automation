@@ -730,7 +730,11 @@ def module_impact(restaurant_id, module, states_by_key, db_path=None) -> dict:
         q = ",".join("?" * len(mods))
         rows = conn.execute(
             f"SELECT evidence_pct, accuracy_pct FROM rec_instances WHERE restaurant_id=? AND status='open' "
-            f"AND module IN ({q}) AND evidence_pct IS NOT NULL ORDER BY id DESC LIMIT 25",
+            # Newest first. rec_instances has no `id` (its key is rec_id):
+            # "ORDER BY id" failed on both databases, and the swallow
+            # below meant this impact line was never shown (found by the
+            # recorded-statement PREPARE, blind re-audit 10/20/26 R9-02).
+            f"AND module IN ({q}) AND evidence_pct IS NOT NULL ORDER BY created_at DESC, rec_id DESC LIMIT 25",
             (restaurant_id, *mods)).fetchall()
     except Exception:
         return None

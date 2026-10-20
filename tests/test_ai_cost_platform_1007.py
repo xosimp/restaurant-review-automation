@@ -366,6 +366,7 @@ def _usage_at(db_path, stamp, cost=0.5):
     c.close()
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_the_rollup_finds_and_reads_days_by_range(db_path):
     ai_utils.init_ai_ops(db_path)
     _usage_at(db_path, "2026-10-01 08:00:00")
@@ -559,6 +560,7 @@ def live(tmp_path, db_path, monkeypatch):
     return tmp_path / "backups"
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_the_local_snapshot_is_gzip_and_restores_whole(live, tmp_path, db_path):
     with pytest.raises(scheduler.BackupFailed):      # no key: no off-site copy (#1), local still written
         scheduler.backup_db()
@@ -577,6 +579,7 @@ def test_the_local_snapshot_is_gzip_and_restores_whole(live, tmp_path, db_path):
     assert "VACUUM INTO" in inspect.getsource(scheduler._write_consistent_snapshot)
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot restore
 def test_restore_from_takes_a_gzipped_snapshot(live, tmp_path, monkeypatch):
     import db_restore
     with pytest.raises(scheduler.BackupFailed):
@@ -606,6 +609,7 @@ def test_a_corrupt_gzipped_snapshot_changes_nothing(tmp_path, monkeypatch):
     assert target.read_bytes() == b"live" and not (tmp_path / "reviews.db.restoring").exists()
 
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot drill
 def test_the_restore_drill_reads_a_gzipped_snapshot(live, monkeypatch):
     import emails
     monkeypatch.setattr(emails, "deliver", lambda **k: True)

@@ -374,6 +374,7 @@ def test_writes_without_a_version_keep_last_write_wins(db_path):
 
 # ── the backup is actually restorable ───────────────────────────────────────
 
+@pytest.mark.sqlite_only     # the SQLite file's snapshot
 def test_the_local_snapshot_keeps_credentials_and_the_emailed_copy_does_not(db_path, tmp_path):
     """Redaction used to be applied to the LOCAL snapshot, which is the
     primary restore artifact. That nulled every OAuth credential and deleted

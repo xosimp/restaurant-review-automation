@@ -1102,13 +1102,17 @@ def run_weekly_digests():
                                                  group_name=getattr(first_rest, "location_group", None))
                         subject = f"Your week across {len(items)} locations"
                         preheader = "Every location, one email — strongest and weakest first."
-                    result = _emails.deliver(email_type="digest", restaurant_id=first_rest.id, payload={
-                        "from": _emails.sender("client"),
-                        "to": [bucket["to"]],
-                        "subject": subject,
-                        "preheader": preheader,
-                        "html": _html_doc(html),
-                    })
+                    # One Resend key for this week's digest to this address:
+                    # a transient failure releases the claim and the next
+                    # tick sends again, never a second copy (R9-15).
+                    with _emails.send_key(f"digest:{key}:{sent_period}"):
+                        result = _emails.deliver(email_type="digest", restaurant_id=first_rest.id, payload={
+                            "from": _emails.sender("client"),
+                            "to": [bucket["to"]],
+                            "subject": subject,
+                            "preheader": preheader,
+                            "html": _html_doc(html),
+                        })
                 if getattr(result, "ok", False):
                     shown.flush()
                     _ops.claim_period(f"weekly_digest_to:{key}", sent_period)
@@ -3102,8 +3106,9 @@ def run_onboarding_nudges(local_hour: int = None):
             mark_onboarding_sent(r.id, key, status="covered")
             continue
         out["attempted"] += 1
-        result = send_onboarding_nudge(step, to_email=r.owner_email, restaurant_name=r.name,
-                                       owner_name=r.owner_name, restaurant_id=r.id)
+        with _emails.send_key(f"onboarding_nudge:{r.id}:{key}"):     # once per step (R9-15)
+            result = send_onboarding_nudge(step, to_email=r.owner_email, restaurant_name=r.name,
+                                           owner_name=r.owner_name, restaurant_id=r.id)
         if _onboarding_outcome(r, key, result, None):
             out["ok"] += 1
             continue
@@ -4375,25 +4380,29 @@ def run_monthly_summaries():
     groups = {}
     for r in due:
         groups.setdefault((r.owner_email or "").strip().lower(), []).append(r)
+    from time_utils import restaurant_now as _rn_month
     for _email, rs in groups.items():
-        try:
-            if len(rs) == 1:
-                r = rs[0]
-                result = send_monthly_summary_email(
-                    to_email=r.owner_email,
-                    restaurant_name=r.name,
-                    owner_name=r.owner_name,
-                    restaurant_id=r.id,
-                    has_reviews=bool(r.module_reviews),
-                    has_labor=bool(r.module_labor),
-                    has_inventory=bool(r.module_inventory),
-                    has_marketing=bool(r.module_marketing),
-                )
-            else:
-                result = send_monthly_group_summary_email(rs[0].owner_email, rs[0].owner_name,
-                                                          sorted(rs, key=lambda x: x.name))
-        except Exception as me:
-            result = _emails.not_sent("build_error", str(me)[:300])
+        # One Resend key for this owner's month: a transient failure gives
+        # the claims back and the next tick sends again, never twice (R9-15).
+        with _emails.send_key(f"monthly_summary:{_email}:{_rn_month(rs[0], naive=True).strftime('%Y-%m')}"):
+            try:
+                if len(rs) == 1:
+                    r = rs[0]
+                    result = send_monthly_summary_email(
+                        to_email=r.owner_email,
+                        restaurant_name=r.name,
+                        owner_name=r.owner_name,
+                        restaurant_id=r.id,
+                        has_reviews=bool(r.module_reviews),
+                        has_labor=bool(r.module_labor),
+                        has_inventory=bool(r.module_inventory),
+                        has_marketing=bool(r.module_marketing),
+                    )
+                else:
+                    result = send_monthly_group_summary_email(rs[0].owner_email, rs[0].owner_name,
+                                                              sorted(rs, key=lambda x: x.name))
+            except Exception as me:
+                result = _emails.not_sent("build_error", str(me)[:300])
         outcome = _summary_outcome("monthly_summary", rs, result, "monthly_summary")
         if outcome == "sent":
             sent += len(rs)
@@ -4435,8 +4444,10 @@ def run_quarterly_summaries():
             skipped += 1
             continue
         try:
-            result = send_quarterly_summary_email(to_email=r.owner_email, restaurant_name=r.name,
-                                                  owner_name=r.owner_name, restaurant_id=r.id)
+            from time_utils import restaurant_now as _rn_q
+            with _emails.send_key(f"quarterly_summary:{r.id}:{_rn_q(r, naive=True).strftime('%Y-%m')}"):
+                result = send_quarterly_summary_email(to_email=r.owner_email, restaurant_name=r.name,
+                                                      owner_name=r.owner_name, restaurant_id=r.id)
         except Exception as qe:
             result = _emails.not_sent("build_error", str(qe)[:300])
         outcome = _summary_outcome("quarterly_summary", [r], result, "quarterly_summary")

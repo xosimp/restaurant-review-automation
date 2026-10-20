@@ -86,6 +86,7 @@ def test_a_refetch_of_the_same_review_is_still_deduped(db_path):
     assert save_reviews([_google_review(rid)], db_path=db_path)[0] == 0
 
 
+@pytest.mark.sqlite_only     # reads sqlite_master's CREATE TABLE text
 def test_the_reviews_table_carries_the_per_restaurant_key(db_path):
     conn = models.get_conn(db_path)
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='reviews'").fetchone()[0]

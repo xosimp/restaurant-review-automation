@@ -191,6 +191,21 @@ def test_the_flood_guard_counts_a_utc_window(db_path, monkeypatch):
     assert emails._flood_guard_ok("send_2fa_code", "f@x.test") is False
 
 
+def test_the_flood_guard_still_counts_a_send_once_it_is_delivered(db_path, monkeypatch):
+    """R9-04 (blind re-audit 10/20/26): Resend's delivered webhook moves the
+    row past 'sent'; the cap must keep counting it, and leave out only a
+    send that failed."""
+    cap = emails.FLOOD_LIMITS["send_2fa_code"][0]
+    for n in range(cap):
+        models.log_email(None, "send_2fa_code", "g@x.test", "s", db_path=db_path, message_id=f"d{n}")
+    for n, status in zip(range(cap), ("delivered", "bounced", "complained", "delayed") * cap):
+        models.mark_email_delivery_event(f"d{n}", status, db_path=db_path)
+    assert emails._flood_guard_ok("send_2fa_code", "g@x.test") is False
+    for _ in range(cap):
+        models.log_email(None, "send_2fa_code", "h@x.test", "s", db_path=db_path, status="failed")
+    assert emails._flood_guard_ok("send_2fa_code", "h@x.test") is True
+
+
 def test_the_client_history_carries_the_local_time_beside_utc(db_path):
     rid = _rid(db_path, timezone="America/Chicago")
     conn = get_conn(db_path)

@@ -230,6 +230,7 @@ def test_a_save_that_omits_sms_consent_does_not_erase_consent_already_given(app,
 
 
 @pytest.mark.parametrize("surface", ["web", "mobile"])
+@pytest.mark.sqlite_only     # injects the failure with a SQLite CREATE TRIGGER ... RAISE
 def test_an_alert_save_that_fails_part_way_leaves_the_old_contacts_in_place(app, surface):
     rid = _restaurant()
     _uid, token = _owner(rid)

@@ -91,6 +91,7 @@ def test_a_guest_edit_never_rewrites_a_removed_review(db_path):
     assert row["rating"] == 2 and row["text"].startswith("The soup")
 
 
+@pytest.mark.sqlite_only     # the off-site copy of the SQLite file
 def test_the_offsite_copy_blanks_removed_reviews_at_once(db_path, tmp_path):
     import shutil
     import offsite_backup

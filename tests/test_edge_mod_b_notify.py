@@ -476,6 +476,7 @@ def test_a_full_push_queue_does_not_drop_devices(db_path, monkeypatch):
     assert sorted(got) == [f"tok-{i}" for i in range(5)]
 
 
+@pytest.mark.sqlite_only     # SQLite's EXPLAIN QUERY PLAN
 def test_the_per_alert_push_lookups_use_an_index(db_path):
     """MOD-NOT-13 — brief_pushed_today and get_device_tokens run on every
     alert; neither may be a full-table scan."""

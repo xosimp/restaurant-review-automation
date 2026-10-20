@@ -221,6 +221,104 @@ def _measure(restaurant_id, metric, start, end, db_path=DB_PATH):
     return value, detail
 
 
+# ── the salary basis (blind re-audit 10/20/26 R9-07) ────────────────────────
+#
+# Labor % is all-in (salaries included) for an account holder and in a job,
+# hourly-only for anyone else (models.viewer_sees_salaries). A tracker's
+# baseline was read in the request that started it and its "after" in the
+# nightly job, so a manager-started labor tracker compared an hourly baseline
+# with an all-in after: "worsened +16 pts" for nothing, priced into Value
+# delivered. The basis is now stored on the tracker when it starts
+# (salary_basis: 1 all-in, 0 hourly; NULL for a metric the salaries do not
+# touch) and every later reading of it — evaluation, re-check, daily accrual,
+# progress — is made on that basis, wherever it runs.
+
+def tracker_basis(r):
+    """1 / 0 for a salary-sensitive tracker's stored basis, else None. A
+    row from before the column (salary_basis NULL) is read all-in; boot
+    (init_outcomes) settles each one from its own stored baseline first."""
+    if not r or not metrics.salary_sensitive(r.get("metric")):
+        return None
+    b = r.get("salary_basis")
+    return 1 if b is None else (1 if int(b) else 0)
+
+
+class _on_basis:
+    """with _on_basis(r): readings of tracker `r` on its own salary basis."""
+
+    def __init__(self, r):
+        b = tracker_basis(r)
+        self._view = None if b is None else _models_mod.salary_view(bool(b))
+
+    def __enter__(self):
+        if self._view is not None:
+            self._view.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        if self._view is not None:
+            self._view.__exit__(*exc)
+        return False
+
+
+def _settle_legacy_bases(conn, db_path=DB_PATH) -> int:
+    """Boot (init_outcomes): every labor-% tracker from before salary_basis
+    gets the basis its stored baseline was read on (_settle_legacy_basis),
+    once. Never raises into the boot."""
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM recommendation_outcomes WHERE salary_basis IS NULL AND metric LIKE ?",
+            ("labor_pct%",)).fetchall()]
+    except Exception:
+        return 0
+    n = 0
+    for r in rows:
+        if not metrics.salary_sensitive(r.get("metric")):
+            continue
+        try:
+            basis = _settle_legacy_basis(r, db_path)
+            conn.execute("UPDATE recommendation_outcomes SET salary_basis=? WHERE id=? AND restaurant_id=? "
+                         "AND salary_basis IS NULL", (basis, r["id"], r["restaurant_id"]))
+            conn.commit()
+            n += 1
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    return n
+
+
+def _has_salaries(restaurant_id, db_path=DB_PATH) -> bool:
+    """Whether an all-in reading differs from the hourly one here at all."""
+    try:
+        rest = _models_mod.get_restaurant(restaurant_id, db_path)
+        return bool(_models_mod.salaried_day_share(rest))
+    except Exception:
+        return True
+
+
+def _settle_legacy_basis(r, db_path=DB_PATH):
+    """The basis a tracker started before salary_basis existed was read on:
+    its baseline window measured again both ways, and the one that matches
+    the stored reading (baseline_raw) wins. 1 when they agree (no salaries,
+    or none then and none now) or nothing matches."""
+    raw = r.get("baseline_raw") if r.get("baseline_raw") is not None else r.get("baseline_value")
+    if raw is None or not r.get("baseline_start") or not r.get("baseline_end"):
+        return 1
+    readings = {}
+    for b in (1, 0):
+        v, _ = metrics.measure(r["restaurant_id"], r["metric"], _iso(r["baseline_start"]),
+                               _iso(r["baseline_end"]), db_path, with_salaries=bool(b))
+        readings[b] = v
+    if readings[0] is not None and readings[1] is not None and abs(readings[0] - readings[1]) < 0.05:
+        return 1
+    for b in (1, 0):
+        if readings[b] is not None and abs(float(readings[b]) - float(raw)) < 0.05:
+            return b
+    return 1
+
+
 def _lower_first(label) -> str:
     """"Labor %" -> "labor %", "Sales on Tuesday" -> "sales on Tuesday"."""
     label = str(label or "")
@@ -1268,11 +1366,18 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
     # baseline that includes the day the change started is contaminated by it.
     if trigger == "auto":
         trigger = trigger_window_for(restaurant_id, rec, window, today, db_path=db_path)
-    b = _baseline(restaurant_id, metric, today, window, db_path, trigger=trigger)
-    nb = {"band": None, "sigma": None, "false_alarm_rate": None, "basis": None}
-    if b["value"] is not None:
-        nb = metrics.noise_band(restaurant_id, metric, window_days=window, end=b["end"], before=b["raw"],
-                                db_path=db_path)
+    # The salary basis this tracker is read on from now on: the starter's
+    # own view (an account holder or a job all-in, anyone else hourly), so
+    # what it showed when it started is what it is judged on (R9-07).
+    salary_basis = None
+    if metrics.salary_sensitive(metric):
+        salary_basis = 1 if _models_mod.viewer_sees_salaries() else 0
+    with _on_basis({"metric": metric, "salary_basis": salary_basis}):
+        b = _baseline(restaurant_id, metric, today, window, db_path, trigger=trigger)
+        nb = {"band": None, "sigma": None, "false_alarm_rate": None, "basis": None}
+        if b["value"] is not None:
+            nb = metrics.noise_band(restaurant_id, metric, window_days=window, end=b["end"], before=b["raw"],
+                                    db_path=db_path)
     evaluate_on = today + timedelta(days=window)
     mod = resolve_module(restaurant_id, source, rec, metric, module=module, db_path=db_path)
     trig = b.get("trigger")
@@ -1293,14 +1398,15 @@ def record(restaurant_id, source, source_key, title, metric, user_id=None,
                 "INSERT INTO recommendation_outcomes (restaurant_id, source, source_key, title, metric, "
                 "baseline_value, baseline_raw, baseline_kind, baseline_start, baseline_end, baseline_detail, "
                 "started_on, evaluate_on, status, created_by, module, trigger_value, trigger_start, trigger_end, "
-                "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis, measures_key) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?,?)",
+                "baseline_overlaps_trigger, noise_band, noise_sigma, false_alarm_rate, band_basis, measures_key, "
+                "salary_basis) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'tracking', ?, ?, ?,?,?,?,?,?,?,?,?,?)",
                 (restaurant_id, source, source_key, owner_title(title)[:200], metric, b["value"], b["raw"],
                  b["kind"], b["start"], b["end"], b["detail"], today.isoformat(), evaluate_on.isoformat(),
                  user_id, mod, b.get("trigger_value"),
                  _iso(trig[0]) if trig else None, _iso(trig[1]) if trig else None,
                  1 if b.get("overlaps_trigger") else 0, nb.get("band"), nb.get("sigma"),
-                 nb.get("false_alarm_rate"), nb.get("basis"), rec_key))
+                 nb.get("false_alarm_rate"), nb.get("basis"), rec_key, salary_basis))
         except sqlite3.IntegrityError:
             # The same key started by another connection that got there
             # first (a database without the lock's guarantee): answered by it.
@@ -2007,16 +2113,17 @@ def evaluate(outcome_id, db_path=DB_PATH, today=None):
     if today < ev:
         return None
     after_start, after_end = started, ev - timedelta(days=1)
-    after, after_detail = _measure(r["restaurant_id"], r["metric"], after_start.isoformat(),
-                                   after_end.isoformat(), db_path)
-    expected, scale, _kind = expected_for(r, after_start.isoformat(), after_end.isoformat(), db_path)
-    cmp = _cmp(r, expected, after, scale)
-    # Priced on the after-window's own sales and trading days (re-audit A1).
-    dollars = (metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path,
-                                       window=(after_start.isoformat(), after_end.isoformat()))
-               if cmp["verdict"] in _MOVED else None)
-    concurrent = find_concurrent(r, after_start.isoformat(), after_end.isoformat(), db_path)
-    concurrent.extend(_own_confounders(r, cmp["verdict"], after, db_path))
+    with _on_basis(r):
+        after, after_detail = _measure(r["restaurant_id"], r["metric"], after_start.isoformat(),
+                                       after_end.isoformat(), db_path)
+        expected, scale, _kind = expected_for(r, after_start.isoformat(), after_end.isoformat(), db_path)
+        cmp = _cmp(r, expected, after, scale)
+        # Priced on the after-window's own sales and trading days (re-audit A1).
+        dollars = (metrics.monthly_dollars(r["restaurant_id"], r["metric"], cmp["delta"], db_path,
+                                           window=(after_start.isoformat(), after_end.isoformat()))
+                   if cmp["verdict"] in _MOVED else None)
+        concurrent = find_concurrent(r, after_start.isoformat(), after_end.isoformat(), db_path)
+        concurrent.extend(_own_confounders(r, cmp["verdict"], after, db_path))
     attribution = grade(cmp["verdict"], cmp["multiple"], concurrent, checkin=_checkin_of(r),
                         overlaps=overlaps_trigger(r))
     recheck_on = recheck_on_for(r) if (cmp["verdict"] in _MOVED and not is_informational(r)) else None
@@ -2116,8 +2223,9 @@ def recheck(outcome_id, db_path=DB_PATH, today=None):
             or not r.get("recheck_on") or today < _day(r["recheck_on"]) or is_informational(r)):
         return None
     start, end = _aligned_window(r, _day(r["recheck_on"]) - timedelta(days=1))
-    value, _detail = _measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(), db_path)
-    expected, scale, _kind = expected_for(r, start.isoformat(), end.isoformat(), db_path)
+    with _on_basis(r):
+        value, _detail = _measure(r["restaurant_id"], r["metric"], start.isoformat(), end.isoformat(), db_path)
+        expected, scale, _kind = expected_for(r, start.isoformat(), end.isoformat(), db_path)
     cmp = _cmp(r, expected, value, scale)
     if cmp["verdict"] == "unknown":
         rv = "unknown"
@@ -2280,7 +2388,13 @@ def accrue_window(r, db_path=DB_PATH):
 def _read_day(r, d, db_path):
     """(held, amount) for one day after the window, from the trailing window
     ending that day (whole weeks, _aligned_window), or None when the day was
-    not measured or its window was too thinly measured (MIN_COVERAGE)."""
+    not measured or its window was too thinly measured (MIN_COVERAGE). On
+    the tracker's own salary basis (R9-07)."""
+    with _on_basis(r):
+        return _read_day_on_basis(r, d, db_path)
+
+
+def _read_day_on_basis(r, d, db_path):
     day = d.isoformat()
     measured = metrics.accrual_days(r["restaurant_id"], r["metric"], day, day, db_path)
     if measured is not None and not measured:
@@ -2584,15 +2698,23 @@ def progress(restaurant_id, db_path=DB_PATH, today=None):
     is a week old is a hint, not a result."""
     today = today or local_today(restaurant_id, db_path)
     out = []
+    hidden = None
     for r in list_outcomes(restaurant_id, status="tracking", db_path=db_path):
         started = _day(r["started_on"])
         end = today - timedelta(days=1)
+        if tracker_basis(r) == 1 and hidden is None:
+            hidden = not _models_mod.viewer_sees_salaries() and _has_salaries(restaurant_id, db_path)
         if end < started:
             r["interim"] = None
+        elif tracker_basis(r) == 1 and hidden:
+            # An all-in tracker's reading is the owner's figure: not shown
+            # to a login that does not see the salaries (R9-07).
+            r["interim"] = None
         else:
-            value, _ = metrics.measure(restaurant_id, r["metric"], started.isoformat(),
-                                       end.isoformat(), db_path)
-            expected, scale, _k = expected_for(r, started.isoformat(), end.isoformat(), db_path)
+            with _on_basis(r):
+                value, _ = metrics.measure(restaurant_id, r["metric"], started.isoformat(),
+                                           end.isoformat(), db_path)
+                expected, scale, _k = expected_for(r, started.isoformat(), end.isoformat(), db_path)
             days_in = (end - started).days + 1
             r["interim"] = {"value": value, "days": days_in, "days_in": days_in, "as_of": end.isoformat(),
                             "baseline": expected,
@@ -3152,6 +3274,11 @@ _ADDED_COLUMNS = (
     # (Not "rec_key": intelligence/predict aliases rec_instances.key AS
     # rec_key beside o.*, and payloads use rec_key for a card's own key.)
     ("measures_key", "TEXT"),
+    # The salary basis a labor-% tracker is read on, start to finish (blind
+    # re-audit 10/20/26 R9-07): 1 all-in, 0 hourly; NULL for a metric the
+    # salaries do not touch. Older rows are settled once at boot
+    # (_settle_legacy_basis).
+    ("salary_basis", "INTEGER"),
 )
 
 
@@ -3175,6 +3302,7 @@ def init_outcomes(db_path=DB_PATH):
             conn.commit()
         except Exception as e:
             print(f"[outcomes] calibration columns not added: {e}")
+        _settle_legacy_bases(conn, db_path)
         not_info = " AND ".join("source_key NOT LIKE ?" for _ in INFORMATIONAL_PREFIXES)
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM recommendation_outcomes WHERE module IS NULL OR baseline_kind IS NULL "

@@ -625,6 +625,9 @@ def _span_pace(restaurant, first, last, through, db_path=None, ahead=True):
     out = {"start": first.isoformat(), "end": last.isoformat(), "net": wtd,
            "nights_measured": len(measured), "nights_total": len(days),
            "nights_left": len([x for x in days if x > through])}
+    unmeasured = len(done) - len(measured)
+    if unmeasured:
+        out["nights_unmeasured"] = unmeasured
     budgets, label = {}, None
     for x in days:
         b = store.night_budget(rid, x, db_path=db_path) if db_path else store.night_budget(rid, x)
@@ -638,9 +641,17 @@ def _span_pace(restaurant, first, last, through, db_path=None, ahead=True):
                    budget_label=label)
         if len(budgets) == len(days):
             total = round(sum(budgets.values()), 2)
-            out.update(budget_total=total, budget_left=round(total - wtd, 2))
-            if ahead and out["nights_left"]:
-                out["budget_per_night_needed"] = round((total - wtd) / out["nights_left"], 2)
+            out["budget_total"] = total
+            # A night that has happened but was never measured (the POS
+            # missed it) is not $0 (blind re-audit 10/20/26 R9-11): what
+            # is left, and what each remaining night needs, are unknown
+            # until it is read - unless the measured nights alone have
+            # already made the budget.
+            left = round(total - wtd, 2)
+            if not unmeasured or left <= 0:
+                out["budget_left"] = left
+                if ahead and out["nights_left"] and not unmeasured:
+                    out["budget_per_night_needed"] = round((total - wtd) / out["nights_left"], 2)
     ly_days = {x.isoformat(): store.last_year_day(restaurant, x) for x in done if x.isoformat() in measured}
     ly = store.baselines_net(rid, [v for v in ly_days.values() if v], db_path=db_path) if db_path \
         else store.baselines_net(rid, [v for v in ly_days.values() if v])
@@ -744,6 +755,10 @@ def _pace_tile(p, view):
             if _num(w.get("typical_per_night")):
                 need += f" · typical {_money(w['typical_per_night'])}"
             sub.append(need)
+        elif w.get("nights_unmeasured"):
+            # Why there is no "needs": a night is missing (R9-11).
+            n = int(w["nights_unmeasured"])
+            sub.append(f"{n} night{'' if n == 1 else 's'} not read yet")
         if _num(ly):
             sub.append(f"{'↑' if ly > 0 else '↓' if ly < 0 else '→'} {abs(ly):.1f}% vs last year")
     elif _num(ly):

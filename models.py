@@ -4957,6 +4957,9 @@ def init_db(db_path: str = DB_PATH):
     # only the trackers that changed (memory audit PLATFORM-18) — after
     # init_outcomes, so every column the stamp watches exists.
     ensure_tracker_change_stamps(db_path)
+    # Postgres: the foreign keys the app breaks on purpose (a deleted
+    # restaurant's tombstoned learning) are not enforced there either.
+    _relax_by_design_foreign_keys(db_path)
     # A feature row written without a definition version is stamped the
     # current one (memory audit PLATFORM-5).
     from intelligence.features import init_feature_versions
@@ -6046,6 +6049,119 @@ def _tombstone_learning(conn, rid, restaurant_row) -> dict:
     return kept
 
 
+# Foreign keys a row breaks by design: a deleted restaurant's tombstoned
+# learning points at no restaurant (restaurant_id = -learning_tombstones.id).
+# SQLite never checks them (delete_restaurant turns its checks off and skips
+# tombstones); a Postgres enforces every key it holds, so the tombstone, and
+# with it every restaurant delete, failed there (blind re-audit 10/20/26
+# R9-02: the Postgres mode found it). The boot drops these on Postgres.
+_BY_DESIGN_FKS = (("intel_rec_events", "restaurant_id", "restaurants"),)
+
+
+def _relax_by_design_foreign_keys(db_path: str = DB_PATH) -> int:
+    """Boot (init_db), Postgres only: drop the keys in _BY_DESIGN_FKS.
+    Returns how many were dropped. Never raises into the boot."""
+    try:
+        conn = boot_conn(db_path)
+    except Exception:
+        return 0
+    n = 0
+    try:
+        import db_dialect as _dl
+        if not _dl.is_postgres(conn):
+            return 0
+        for table, col, parent in _BY_DESIGN_FKS:
+            for (name,) in conn.execute_native(
+                    "SELECT c.conname FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                    "AND a.attnum = c.conkey[1] WHERE c.contype = 'f' AND c.conrelid = to_regclass(%s) "
+                    "AND c.confrelid = to_regclass(%s) AND a.attname = %s AND array_length(c.conkey, 1) = 1",
+                    (table, parent, col)).fetchall():
+                conn.execute_native(f'ALTER TABLE "{table}" DROP CONSTRAINT IF EXISTS "{name}"')
+                n += 1
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning("by-design foreign keys not relaxed: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+    return n
+
+
+def _pg_delete_rows(conn, rid, tables) -> dict:
+    """delete_restaurant on Postgres, where foreign keys cannot be switched
+    off for a transaction: every row the SQLite path removes — each table's
+    rows with this restaurant_id (not _KEEP_ON_RESTAURANT_DELETE), the
+    restaurants row, then any row pointing (by a key that neither cascades
+    nor nulls) at one of those, to the end of the chain — deleted children
+    first, so no statement leaves a dangling key. {table: rows deleted}."""
+    rid = int(rid)
+    have_rid = set()
+    for t in tables:
+        if t in _KEEP_ON_RESTAURANT_DELETE:
+            continue
+        if "restaurant_id" in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            have_rid.add(t)
+    # Keys that leave the child row behind (NO ACTION / RESTRICT): the
+    # child's rows pointing at a deleted parent row must go first.
+    edges = [(c, cc, p, pc) for c, cc, p, pc in conn.execute_native(
+        "SELECT cl.relname, ca.attname, pl.relname, pa.attname FROM pg_constraint k "
+        "JOIN pg_class cl ON cl.oid = k.conrelid JOIN pg_class pl ON pl.oid = k.confrelid "
+        "JOIN pg_namespace n ON n.oid = cl.relnamespace "
+        "JOIN pg_attribute ca ON ca.attrelid = k.conrelid AND ca.attnum = k.conkey[1] "
+        "JOIN pg_attribute pa ON pa.attrelid = k.confrelid AND pa.attnum = k.confkey[1] "
+        "WHERE k.contype = 'f' AND array_length(k.conkey, 1) = 1 AND k.confdeltype IN ('a', 'r') "
+        "AND n.nspname = current_schema() AND NOT cl.relispartition").fetchall()
+        if c != p and c not in _KEEP_ON_RESTAURANT_DELETE]
+    preds = {t: [f"restaurant_id = {rid}"] for t in have_rid}
+    preds.setdefault("restaurants", []).append(f"id = {rid}")
+
+    def where(t, depth=0):
+        own = list(preds.get(t, []))
+        if depth < 6:
+            for c, cc, p, pc in edges:
+                if c == t and p in plan:
+                    sub = where(p, depth + 1)
+                    if sub:
+                        own.append(f'"{cc}" IN (SELECT "{pc}" FROM "{p}" WHERE {sub})')
+        return " OR ".join(f"({x})" for x in own)
+
+    # Every table some row of which may go: the seeds, then anything keyed
+    # to one of them, to the end of the chain.
+    plan = set(preds)
+    grew = True
+    while grew:
+        grew = False
+        for c, _cc, p, _pc in edges:
+            if p in plan and c not in plan:
+                plan.add(c)
+                grew = True
+    # Children before parents (a cycle, if any, keeps its found order).
+    order, done = [], set()
+
+    def visit(t, path=()):
+        if t in done or t in path:
+            return
+        for c, _cc, p, _pc in edges:
+            if p == t and c in plan:
+                visit(c, path + (t,))
+        done.add(t)
+        order.append(t)
+    for t in sorted(plan):
+        visit(t)
+    deleted = {}
+    for t in order:
+        w = where(t)
+        if not w:
+            continue
+        n = conn.execute(f'DELETE FROM "{t}" WHERE {w}').rowcount
+        if n:
+            deleted[t] = n
+    return deleted
+
+
 def _internal_home_ids_on(conn) -> set:
     """_internal_home_ids on a connection already open (inside a write
     transaction — no second connection)."""
@@ -6137,6 +6253,23 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
             n = _bm_del2.strip_member_hashes(conn, _band_hashes)
             if n:
                 deleted["intel_benchmarks.members"] = n
+        # preferences keys its scope by text, not restaurant_id: a location's
+        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
+        if "preferences" in tables:
+            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
+                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
+            if n:
+                deleted["preferences"] = n
+        import db_dialect as _dl_del
+        if _dl_del.is_postgres(conn):
+            # Postgres enforces every key in every statement: the same rows,
+            # children first (_pg_delete_rows) — the orphan sweep below
+            # reads SQLite's PRAGMA foreign_key_check (blind re-audit
+            # 10/20/26 R9-02: every delete failed there).
+            deleted.update(_pg_delete_rows(conn, rid, tables))
+            conn.commit()
+            _invalidate_request_cache(rid)
+            return deleted
         for t in tables:
             if t in _KEEP_ON_RESTAURANT_DELETE:
                 continue
@@ -6145,13 +6278,6 @@ def delete_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> dict:
                 n = conn.execute(f'DELETE FROM "{t}" WHERE restaurant_id=?', (rid,)).rowcount
                 if n:
                     deleted[t] = n
-        # preferences keys its scope by text, not restaurant_id: a location's
-        # rows are scope_id "<rid>", a login's "<user_id>:<rid>" (preferences.py).
-        if "preferences" in tables:
-            n = conn.execute("DELETE FROM preferences WHERE (scope='location' AND scope_id=?) "
-                             "OR (scope='login' AND scope_id LIKE ?)", (str(rid), f"%:{rid}")).rowcount
-            if n:
-                deleted["preferences"] = n
         n = conn.execute("DELETE FROM restaurants WHERE id=?", (rid,)).rowcount
         if n:
             deleted["restaurants"] = n
@@ -16561,8 +16687,11 @@ def ai_visibility_query_diff(restaurant_id: int, db_path: str = DB_PATH) -> dict
     """
     conn = get_conn(db_path)
     runs = conn.execute(
-        "SELECT DISTINCT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs "
-        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC LIMIT 2",
+        # Newest first, the later run winning a tie on the second (the order
+        # of tied groups is the database's own: Postgres picked the older
+        # one — blind re-audit 10/20/26 R9-02).
+        "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+        "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT 2",
         (restaurant_id,)).fetchall()
     if len(runs) < 2:
         conn.close()
@@ -16589,8 +16718,9 @@ def ai_visibility_query_history(restaurant_id: int, runs: int = 8, db_path: str 
     conn = get_conn(db_path)
     try:
         run_rows = conn.execute(
-            "SELECT run_id, MAX(created_at) AS at FROM ai_visibility_query_runs WHERE restaurant_id=? "
-            "GROUP BY run_id ORDER BY at DESC LIMIT ?", (restaurant_id, int(runs))).fetchall()
+            "SELECT run_id, MAX(created_at) AS at, MAX(id) AS last_id FROM ai_visibility_query_runs "
+            "WHERE restaurant_id=? GROUP BY run_id ORDER BY at DESC, last_id DESC LIMIT ?",
+            (restaurant_id, int(runs))).fetchall()
         ids = [r["run_id"] for r in run_rows][::-1]
         if not ids:
             return {"runs": [], "queries": []}

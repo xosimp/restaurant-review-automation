@@ -637,8 +637,12 @@ def init_ops(db_path=None):
         # 10/19/26 DB-14), for rows nothing has written there since.
         if not conn.execute("SELECT 1 FROM ops_markers WHERE key=?", (_MARKERS_CARRIED,)).fetchone():
             for pattern in _MARKER_PATTERNS:
+                # The pattern written into the statement (a module constant):
+                # db_dialect carries a literal GLOB to Postgres as a regex
+                # with its [0-9] class; a bound one only as * and ?, and the
+                # calibration markers were never carried there (R9-02).
                 conn.execute("INSERT OR IGNORE INTO ops_markers (key, created_at) "
-                             "SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB ?", (pattern,))
+                             f"SELECT job_key, claimed_at FROM job_period_claims WHERE job_key GLOB '{pattern}'")
             conn.execute("INSERT OR IGNORE INTO ops_markers (key) VALUES (?)", (_MARKERS_CARRIED,))
         _ensure_retention_indexes(conn)
         conn.commit()
@@ -748,6 +752,10 @@ def _reclaim_dead_run(conn, job, key):
     # The run is found by its job name OR the claim it ran under: the
     # "ops_digest" claim runs "ops_failure_digest", "intraday" runs six jobs,
     # and a lookup by claim key alone never found them (DH2-16).
+    # CASE WHEN, not SUM(<boolean>): Postgres has no sum(boolean), and this
+    # raised on every call there — every period a dead process held was
+    # never reclaimed, so a job a deploy killed lost its day (blind re-audit
+    # 10/20/26 R9-02: the recorded-statement PREPARE found it).
     try:
         runs = conn.execute(
             "SELECT SUM(CASE WHEN finished_at IS NULL OR COALESCE(error, '') LIKE ? THEN 1 ELSE 0 END), "

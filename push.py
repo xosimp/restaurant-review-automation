@@ -1054,13 +1054,26 @@ def _collapse_id(restaurant_id, alert_type, data) -> str:
     instead, which also means the daily job cannot stack duplicates if it runs
     twice. Apple caps this at 64 bytes.
     """
+    # Fixed once by fire_push and carried in the outbox row, so a push a
+    # restart re-drives (reap_push_outbox) keeps the id its first attempt
+    # had — a new one put a second banner beside the first (R9-22).
+    fixed = (data or {}).get("collapse_id")
+    if fixed:
+        return str(fixed)[:64]
     parts = [str(restaurant_id), str(alert_type or "alert")]
     review_id = (data or {}).get("review_id")
     explicit = (data or {}).get("collapse_key")
+    alert_id = (data or {}).get("alert_id")
     if explicit:
         parts.append(str(explicit))
     elif review_id:
         parts.append(f"r{review_id}")
+    elif alert_id:
+        # One alert_log row is one event: two distinct same-day alerts of a
+        # type (two platform pages, two products' price moves, two weeks'
+        # drafts) no longer replace each other on the lock screen (blind
+        # re-audit 10/20/26 R9-14).
+        parts.append(f"a{alert_id}")
     elif alert_type in _UNCOLLAPSIBLE_TYPES:
         # Several of these happen in one day and each one is its own event.
         # Keyed on the date, a second sign-in REPLACED the first on the lock
@@ -1069,7 +1082,14 @@ def _collapse_id(restaurant_id, alert_type, data) -> str:
         # with the ones it overwrote.
         parts.append(uuid.uuid4().hex[:12])
     else:
-        parts.append(datetime.now(timezone.utc).strftime("%Y%m%d"))
+        # The restaurant's own date, as this docstring always said: the UTC
+        # date turned over at 7pm Central, splitting one evening's alerts and
+        # joining one day's to the next (R9-14).
+        try:
+            from time_utils import restaurant_now_by_id
+            parts.append(restaurant_now_by_id(restaurant_id, naive=True).strftime("%Y%m%d"))
+        except Exception:
+            parts.append(datetime.now(timezone.utc).strftime("%Y%m%d"))
     key = "-".join(parts)
     if len(key.encode()) > 64:
         import hashlib
@@ -1223,7 +1243,9 @@ def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
         aps["interruption-level"] = "passive"
     payload = {
         "aps": aps,
-        "cavnar": {"alert_type": alert_type, "priority": priority, **(data or {})},
+        # The collapse id rides the apns-collapse-id header, not the payload.
+        "cavnar": {"alert_type": alert_type, "priority": priority,
+                   **{k: v for k, v in (data or {}).items() if k != "collapse_id"}},
     }
     payload_bytes = _fit_payload(payload)
     environment = device_token_row["environment"]
@@ -1691,6 +1713,12 @@ def fire_push(restaurant_id, alert_type, title, body, data=None, db_path=DB_PATH
         data.setdefault("nav", nav_for(alert_type, data))
     except Exception as e:
         print(f"[push] nav for {alert_type} failed: {e}")
+    # One collapse id for this push on every device and every attempt,
+    # including a re-drive after a restart (it rides the outbox row's data).
+    try:
+        data.setdefault("collapse_id", _collapse_id(restaurant_id, alert_type, data))
+    except Exception:
+        pass
     try:
         # A staff-app device only when the caller named its login, and only
         # for a staff type (COM-03): a restaurant-wide push never reaches one.
