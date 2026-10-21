@@ -30,7 +30,8 @@ PROVIDER_NAMES = ("toast", "square", "clover", "rpower")
 # zeroed every labor and food card's confidence and named the restaurant on
 # the public status page (re-audit B6#1).
 CREDENTIAL_COLUMNS = {"toast": ("toast_restaurant_guid",), "square": ("square_access_token",),
-                      "clover": ("clover_api_token",), "rpower": ("rpower_token", "rpower_store_mid")}
+                      "clover": ("clover_api_token",),
+                      "rpower": ("rpower_token", "rpower_credential_id", "rpower_store_mid")}
 
 # A stamp this far ahead of now is not a sync that happened (a few minutes
 # of clock skew between hosts is tolerated).
@@ -87,7 +88,14 @@ def provider_state(r, name, now=None) -> dict:
         raw = _get(r, f"{name}_last_synced")
         stamp = parse_stamp(raw)
         err = _get(r, f"{name}_sync_error") or None
-        out.update(connected=True, error=err, unreadable=bool(raw) and stamp is None)
+        shown = err
+        if name == "rpower" and err:
+            # Every surface this reading reaches shows an owner one fixed
+            # sentence per failure class, never RPOWER's raw text (Audit #23
+            # A7-14); the console reads the row's own column.
+            import rpower as _rp_sentence
+            shown = _rp_sentence.owner_error_sentence(err)
+        out.update(connected=True, error=shown, error_raw=err, unreadable=bool(raw) and stamp is None)
         age = None
         if stamp is not None:
             age = (now - stamp).total_seconds() / 86400.0

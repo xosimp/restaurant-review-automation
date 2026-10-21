@@ -391,6 +391,9 @@ body.role-support .w{display:none!important}
     <div class="dim">Issued by RPOWER to Cavnar AI (integrations@rpower.com). The store resolves once the token verifies.</div>
     <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p w" style="margin-top:8px" onclick="rpowerBind()">Bind store</button></div>
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p w" onclick="rpowerSave()">Verify &amp; save</button><button class="btn w" onclick="rpowerSync()">Sync now</button><button class="btn d w" onclick="rpowerDisconnect()">Disconnect</button></div>
+    <!-- Audit #23 F7: the partner credential held once (rotate in one step),
+         a demo's live-store override, a bulk store's owner hold. -->
+    <div id="rp-extra" class="dim" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
   </div>
 </div></div>
 <!-- Branding & peer profile (#23): filled from the client's own stored values
@@ -1444,14 +1447,15 @@ async function bulkPartners(){
     (d.partners||[]).forEach(p=>{ const o = document.createElement('option'); o.value = p.id; o.textContent = p.name + (p.billing_mode==='partner'?' (billed by partner)':''); sel.appendChild(o); }); }catch(e){}
 }
 function bulkRows(rows){
-  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}${r.owner_check==='held'?' <span class="dim">· POS data held for the owner\'s store check</span>':''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 async function bulkDry(){
   const d = await post('/admin/api/onboarding/provision/dry-run', {csv: $('bulk-csv').value});
   if(!d.ok){ $('bulk-out').innerHTML = `<div class="warnline">${esc(d.error||'The list could not be read')}</div>`; $('bulk-apply').disabled = true; return; }
   const c = d.counts || {}, bl = d.billing || {};
   $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix${d.joins_owner?` · <span class="n">${d.joins_owner}</span> join an existing owner's group`:''}</div>`
-    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '') + bulkRows(d.rows);
+    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '')
+    + (d.owner_check && (d.owner_check.held || d.owner_check.manifest) ? `<div class="dim" style="margin:6px 0">${esc(d.owner_check.note||'')}</div>` : '') + bulkRows(d.rows);
   $('bulk-apply').disabled = !(c.create > 0) || bl.ok === false;
 }
 async function bulkApply(){
@@ -2404,6 +2408,7 @@ async function offboardHtml(c){
   const body = `${rq ? `<span class="ink2" style="font-size:13px">The owner asked to close the account on ${esc(rq.requested_on)}. Finish the checklist and delete it by ${esc(rq.due_on)}, or withdraw the request with them.</span>` : '<span class="muted" style="font-size:13px">No deletion request is open. The checklist is here for a client you are closing yourself.</span>'}
     <div class="lst">${(d.steps||[]).map(s=>`<div class="li" style="padding:12px 0"><span style="width:92px;flex-shrink:0">${pill(STEP_TONE[s.status]||'neu', esc((s.status||'').replace('_',' ')), false)}</span><div class="tt"><b>${esc(s.label)}</b><span>${esc(s.note || s.hint || '')}${s.actor?' · '+esc(s.actor)+' '+fmtD(s.updated_at):''}${s.step==='integrations'&&conn.length&&s.status==='pending'?' · connected now: '+esc(conn.join(', ')):''}</span></div>
       ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')">Undo</button>`)}</div>`).join('')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn s w" onclick="posExport(${c.id})">POS archive (CSV zip)…</button><span class="dim" id="posx-${c.id}"></span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${rq?`<button class="btn s w" onclick="withdrawDeletion(${c.id},'${n}')">Withdraw the request…</button>`:''}<button class="btn s d w" ${d.ready_to_delete?'':'disabled'} title="${d.ready_to_delete?'Permanently delete this restaurant':esc('Finish the checklist first: ' + (d.outstanding||[]).join(', '))}" onclick="deleteRestaurant(${c.id},'${n}')">Delete permanently…</button><span class="dim">${d.ready_to_delete ? 'The checklist is finished. The audit trail and this checklist are kept after the delete.' : open + ' step' + (open===1?'':'s') + ' left before it can be deleted.'}</span></div>`;
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>${rq ? 'Close this account' : 'Offboarding'}</h2>${rq ? pill(rq.overdue ? 'bad' : 'warn', rq.overdue ? 'overdue' : 'due ' + esc(rq.due_on), false) : ''}</div>` + (rq ? body : `<details class="more-d" style="margin:0 -18px -18px"><summary>The checklist, withdraw and delete</summary><div style="padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">${body}</div></details>`);
 }
@@ -2420,6 +2425,22 @@ async function offStep(id, step, status, label, name){
   else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
   const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
   if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
+}
+// The POS archive for the export step (Audit #23 A7-13): built on the admin
+// pool, then downloaded once (the server deletes it as it sends it).
+async function posExport(id){
+  const el = $('posx-'+id); const d = await post('/admin/api/client/'+id+'/pos-export', {});
+  if(!okRes(d)){ if(el) el.textContent = errText(d); return; }
+  if(el) el.textContent = 'Building…';
+  let st = {status:'pending'};
+  for(let i = 0; i < 120 && st.status === 'pending'; i++){ await new Promise(r => setTimeout(r, 2000)); st = await api('/admin/api/client/'+id+'/pos-export/'+d.job_id); }
+  if(!st || st.ok === false || st.status !== 'done'){ if(el) el.textContent = errText(st, 'The export failed'); return; }
+  const go = async () => { const r = await fetch('/admin/api/client/'+id+'/pos-export/'+d.job_id+'/download', {method:'POST'});
+    if(r.status === 403){ const j = await r.json().catch(() => ({})); if(j.reauth_required && await reauth()) return go(); if(el) el.textContent = j.error || 'Refused'; return; }
+    if(!r.ok){ if(el) el.textContent = 'The file is gone; build it again.'; return; }
+    const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = st.file || 'pos-export.zip'; document.body.appendChild(a); a.click(); a.remove();
+    if(el) el.textContent = 'Downloaded ' + Math.round((st.bytes||0)/1024) + ' KB. Send it to the owner and note where in the export step.'; };
+  await go();
 }
 async function withdrawDeletion(id, name){
   const note = prompt('Withdraw ' + name + "'s request to close their account? The account carries on as before. A note for the record (optional):");
@@ -4806,7 +4827,20 @@ async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName 
 let _rpRid=null, _rpName='';
 function rpowerOpen(rid, name){ _rpRid=rid; _rpName=name||''; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
 async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'+_rpRid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
-  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected'); }
+  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected');
+  const cr = d.credential, x = [];
+  if(cr) x.push(`<span>Partner credential #${cr.id} · v${cr.version} · ${cr.stores} live store${cr.stores===1?'':'s'}${cr.rotated_at?' · rotated '+fmtDT(cr.rotated_at):''} <button class="btn s w" onclick="rpowerRotate(${cr.id})">Rotate token…</button></span>`);
+  if(d.is_demo) x.push(`<span>Demo: ${d.live_mirror?'may read this live store (override on)':'simulated stores only'} <button class="btn s w" onclick="rpowerLiveMirror(${d.live_mirror?'false':'true'})">${d.live_mirror?'Turn the override off':'Allow a live store…'}</button></span>`);
+  if(d.owner_hold) x.push(`<span>Held for the owner's store check since ${fmtDT(d.owner_hold)} <button class="btn s w" onclick="rpowerReleaseHold()">Owner confirmed another way…</button></span>`);
+  $('rp-extra').innerHTML = x.join(''); }
+async function rpowerRotate(id){ const t = prompt('Paste the NEW RPOWER token for credential #'+id+'. Every store on it reads with the new token from its next request.'); if(!t) return;
+  let d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim()});
+  if(d && d._status===409 && d.unseen && confirm(errText(d)+'\n\n'+d.unseen.map(u=>u.name).join(', ')+'\n\nRotate anyway?')) d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim(), force:true});
+  $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Rotated')) : ('✕ '+errText(d)); rpowerStatus(); }
+async function rpowerLiveMirror(on){ let reason = ''; if(on){ reason = prompt('Why should this DEMO read a live store? Every login on the demo sees that store\'s sales, wages and staff.'); if(!reason) return; }
+  const d = await post('/admin/rpower/live-mirror/'+_rpRid, {on, reason}); $('m-rpower-status').textContent = okRes(d) ? '✓ Saved' : ('✕ '+errText(d)); rpowerStatus(); }
+async function rpowerReleaseHold(){ const how = prompt('How did you confirm the owner (a call to the store, RPOWER)? This opens the store\'s numbers to its logins.'); if(!how) return;
+  const d = await post('/admin/rpower/owner-check/'+_rpRid, {how}); $('m-rpower-status').textContent = okRes(d) ? '✓ Released' : ('✕ '+errText(d)); rpowerStatus(); }
 async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rpower-status').textContent='✕ Paste the token first'; return; }
   $('m-rpower-status').textContent='Verifying…';
   const d = await post('/admin/rpower/save/'+_rpRid, {token:t});

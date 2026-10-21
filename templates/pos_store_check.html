@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Confirm your store — Cavnar AI</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<meta name="theme-color" content="#0c0c0c">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
+<link rel="stylesheet" href="/static/css/cavnar-buttons.css">
+{% include '_csrf_fetch.html' %}
+{# The bulk owner check (Audit #23 A7-02): a store onboarded from a list is
+   held until its owner confirms it. Dark only (DESIGN_SYSTEM.md). #}
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0c0c0c;--card:#16130f;--line:#2a2520;--ink:#f0ebe0;--ink2:#c9c1b4;--ink3:#8f877b;--ember:#d4583a;--green:#5fb98a;--r:8px}
+*:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+body{font-family:'Apfel Grotezk',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:32px 28px;width:100%;max-width:420px}
+.logo{font-family:'Clash Display',sans-serif;font-size:24px;color:var(--ink);margin-bottom:18px}
+.logo em{color:var(--ember);font-style:italic}
+.kicker{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ember);margin-bottom:8px}
+.heading{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;line-height:1.2;margin-bottom:10px}
+.desc{font-size:15px;color:var(--ink2);line-height:1.6;margin-bottom:18px}
+label{display:block;font-size:13px;color:var(--ink3);margin:12px 0 6px}
+input{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:var(--r);padding:11px 12px;font-size:15px;font-family:inherit}
+input.num{font-family:'Space Grotesk',sans-serif}
+.status{font-size:14px;line-height:1.5;margin-top:14px;min-height:20px;color:var(--ink2)}
+.status.ok{color:var(--green)}
+.status.err{color:var(--ember)}
+.actions{margin-top:18px}
+.back{display:block;text-align:center;margin-top:18px;font-size:13px;color:var(--ink3);text-decoration:none}
+.back:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Cavnar <em>AI</em></div>
+  <div class="kicker">Confirm your store</div>
+  <div class="heading">One check before your numbers open.</div>
+  {% if can_check %}
+  <div class="desc">Your store was added from a list. Enter its name and serial number as your RPOWER server shows them, so we know it's yours.</div>
+  <form id="sc-form" autocomplete="off">
+    <label for="sc-name">Store name</label>
+    <input id="sc-name" name="store_name" maxlength="200" required>
+    <label for="sc-serial">Serial number</label>
+    <input id="sc-serial" class="num" name="serial" maxlength="80" required>
+    <div class="actions"><button type="submit" class="cbtn cbtn-primary cbtn-lg cbtn-block" id="sc-go">Confirm</button></div>
+    <div class="status" id="sc-status" role="status" aria-live="polite"></div>
+  </form>
+  {% elif locked %}
+  <div class="desc">Too many tries. Wait an hour and try again, or email <a style="color:var(--ember)" href="mailto:{{ support }}">{{ support }}</a> and we'll confirm it with you.</div>
+  {% elif not is_principal %}
+  <div class="desc">The account owner confirms the store. Ask them to sign in and do it; your access opens right after.</div>
+  {% else %}
+  <div class="desc">We haven't read this store from RPOWER yet. Email <a style="color:var(--ember)" href="mailto:{{ support }}">{{ support }}</a> and we'll confirm it with you.</div>
+  {% endif %}
+  <a class="back" href="/logout">Sign out</a>
+</div>
+<script>
+(function () {
+  var f = document.getElementById('sc-form');
+  if (!f) return;
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = document.getElementById('sc-go'), st = document.getElementById('sc-status');
+    btn.disabled = true; st.className = 'status'; st.textContent = '';
+    fetch('/api/pos/store-check', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({store_name: document.getElementById('sc-name').value, serial: document.getElementById('sc-serial').value})})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        btn.disabled = false;
+        if (d && d.ok) { st.className = 'status ok'; st.textContent = 'Confirmed. Opening your dashboard.'; window.location.href = '/'; return; }
+        st.className = 'status err'; st.textContent = (d && d.error) || 'That didn’t go through. Try again.';
+      })
+      .catch(function () { btn.disabled = false; st.className = 'status err'; st.textContent = 'That didn’t go through. Check your connection.'; });
+  });
+})();
+</script>
+</body>
+</html>

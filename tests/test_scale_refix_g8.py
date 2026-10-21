@@ -363,8 +363,8 @@ def test_a_row_matched_since_the_plan_is_left_alone(db, monkeypatch):
     rows, _ = bp.parse_csv(CSV)
     real_plan = bp.plan
 
-    def plan_then_race(rows_, db_path=None):
-        p = real_plan(rows_, db_path)
+    def plan_then_race(rows_, db_path=None, **k):
+        p = real_plan(rows_, db_path, **k)
         rid = models.create_restaurant(models.Restaurant(name="Raced", owner_email="r@x.test"))
         models.update_restaurant(rid, {"rpower_cg": 1280, "rpower_store_mid": "7001"})
         return p
@@ -380,6 +380,13 @@ def test_the_dry_run_shows_a_row_that_joins_an_existing_owner(db):
     first = models.create_restaurant(models.Restaurant(name="Owner HQ", owner_email="one@bulk.test"))
     auth.create_user(first, "onebulk", "one@bulk.test", "Pass-word-2026!", role="owner")
     rows, _ = bp.parse_csv(CSV.replace("1280,7001", ","))
+    plan = bp.plan(rows)
+    # Since Audit #23 (A7-02) a join needs the row's own merge_owner=yes:
+    # without it the dry run shows the join as an error to fix.
+    assert plan["rows"][0]["action"] == "error" and "merge_owner=yes" in plan["rows"][0]["error"]
+    assert plan["rows"][0]["joins_owner"]["restaurant_id"] == first
+    for row in rows:
+        row["merge_owner"] = "yes"
     plan = bp.plan(rows)
     assert plan["rows"][0]["action"] == "create" and plan["rows"][0]["joins_owner"]["restaurant_id"] == first
     assert plan["joins_owner"] == 1

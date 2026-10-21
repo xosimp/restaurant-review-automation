@@ -38,8 +38,10 @@ def _redirect(db_path, monkeypatch):
 def _rid(db_path, rid=1, **cols):
     conn = models.get_conn(db_path)
     conn.execute("INSERT INTO restaurants (id, name, owner_email, rpower_token, rpower_cg, rpower_store_mid, timezone) "
-                 "VALUES (?,?,?,?,?,?,?)", (rid, f"D Co {rid}", f"d{rid}@x.test", "tok", 1280, "1123",
-                                            "America/Chicago"))
+                 "VALUES (?,?,?,?,?,?,?)", (rid, f"D Co {rid}", f"d{rid}@x.test", "tok", 1280,
+                                            # One store per live restaurant (the database
+                                            # holds it since Audit #23 A7-06).
+                                            "1123" if rid == 1 else f"1123-{rid}", "America/Chicago"))
     for k, v in cols.items():
         conn.execute(f"UPDATE restaurants SET {k}=? WHERE id=?", (v, rid))
     conn.commit()

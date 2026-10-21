@@ -72,10 +72,12 @@ def admin_onboarding_backfill(current_user):
 def admin_provision_dry_run(current_user):
     """Every row checked, nothing written."""
     import bulk_provisioning
-    rows, err = bulk_provisioning.parse_csv(_body().get("csv"))
+    body = _body()
+    rows, err = bulk_provisioning.parse_csv(body.get("csv"))
     if err:
         return jsonify(ok=False, error=err), 400
-    return jsonify(bulk_provisioning.plan(rows))
+    return jsonify(bulk_provisioning.plan(rows, manifest=bulk_provisioning.manifest_verified(
+        body.get("csv"), body.get("manifest_signature"))))
 
 
 @onboarding_bp.route("/admin/api/onboarding/provision/apply", methods=["POST"])
@@ -101,17 +103,27 @@ def admin_provision_apply(current_user):
     else:
         partner_id = None
     token = (data.get("rpower_token") or "").strip() or None
+    # A partner credential already held (Audit #23 A7-01) instead of a paste,
+    # and RPOWER's signature over the list (A7-02: its owners attested).
+    try:
+        credential_id = int(data.get("credential_id") or 0) or None
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Pick a partner credential from the list."), 400
+    csv_text = data.get("csv")
+    manifest_signature = (data.get("manifest_signature") or "").strip() or None
     send_welcome = bool(data.get("send_welcome", True))
     actor = current_user.get("username") or "admin"
     job_id = str(uuid.uuid4())
     _audit(current_user, "bulk_provision.started", target=f"job:{job_id}",
            after={"rows": len(rows), "partner_id": partner_id, "rpower_token_given": bool(token),
+                  "credential_id": credential_id, "manifest_signed": bool(manifest_signature),
                   "send_welcome": send_welcome})
     ops.start_async_job(job_id, "bulk_provision", None)
 
     def _run():
         out = bulk_provisioning.apply(rows, actor, partner_id=partner_id, rpower_token=token,
-                                      send_welcome=send_welcome)
+                                      send_welcome=send_welcome, credential_id=credential_id,
+                                      csv_text=csv_text, manifest_signature=manifest_signature)
         _audit(current_user, "bulk_provision.applied", target=f"batch:{out.get('batch_id')}",
                after={"counts": out.get("counts"), "partner_id": partner_id, "rpower_token_given": bool(token),
                       "send_welcome": send_welcome},

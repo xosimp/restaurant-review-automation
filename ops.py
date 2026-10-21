@@ -3447,6 +3447,11 @@ _RETENTION_DAYS = {
     # discounts (bar.sales.derive_nights, 10/15/26): kept as long as the
     # archive it is derived from.
     "bar_sales_nights":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # Audit #23 F7 (A7-13 / A7-07): the night's comps and voids by approver
+    # (names) kept as long as the archive they come from; the RPOWER checks
+    # matched to guests two years (the guest's usual order reads them).
+    "pos_loss_daily":     int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "guest_pos_visits":   int(os.getenv("RETAIN_GUEST_POS_VISITS_DAYS", "730")),
     # The lines by item and day (pos_archive.roll_item_days, DB-11 / DB-02):
     # about a tenth of the lines' rows, kept at least as long as the archive
     # so it outlives a shortened line window.
@@ -3666,6 +3671,7 @@ _RETENTION_COLUMN = {
     "pos_closed_days": "business_date", "pos_lane_ledger": "hour", "pos_request_nights": "last_at",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
+    "pos_loss_daily": "business_date", "guest_pos_visits": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
     "task_proof_media": "created_at",
     "ai_reads": "created_at", "ai_claims": "created_at",
@@ -3803,7 +3809,7 @@ _RETENTION_FLOOR_DAYS = {
     "dsr_reports": 400, "dsr_metrics": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
     "pos_request_nights": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
-    "bar_sales_nights": 400, "pos_item_daily": 400,
+    "bar_sales_nights": 400, "pos_item_daily": 400, "pos_loss_daily": 400, "guest_pos_visits": 365,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
     "task_assignments": 90, "task_line_completions": 90, "task_signoffs": 90, "task_proof_media": 30,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
@@ -4199,6 +4205,10 @@ def _ensure_retention_indexes(conn):
         ("dsr_reports", "CREATE INDEX IF NOT EXISTS idx_dsr_reports_bdate ON dsr_reports(business_date)"),
         ("dsr_metrics", "CREATE INDEX IF NOT EXISTS idx_dsr_metrics_bdate ON dsr_metrics(business_date)"),
         ("pos_intraday", "CREATE INDEX IF NOT EXISTS idx_pos_intraday_bdate ON pos_intraday(business_date)"),
+        # Audit #23 F7: the loss lines by approver and the guests' matched
+        # checks, now pruned at their age.
+        ("pos_loss_daily", "CREATE INDEX IF NOT EXISTS idx_pos_loss_daily_date ON pos_loss_daily(business_date)"),
+        ("guest_pos_visits", "CREATE INDEX IF NOT EXISTS idx_guest_pos_visits_date ON guest_pos_visits(business_date)"),
     ):
         if table in have:
             try:
@@ -5000,6 +5010,28 @@ def prune_ledgers(db_path=None):
                 counts["failed"] += 1
                 log.error(f"prune_ledgers could not prune the intake: {e}")
                 capture(e, job="prune_ledgers", context="intake", db_path=db_path)
+        # POS data after a disconnect or cancel (Audit #23 F7, A7-13), and
+        # the RPOWER lists no bound store reads any more (A7-03) — each on
+        # its own connection, inside this pass's wall-clock bound.
+        try:
+            import offboarding
+            res = offboarding.purge_disconnected_pos(deadline=deadline, db_path=db_path)
+            if res.get("purged"):
+                deleted["pos_after_disconnect"] = sum(res["purged"].values())
+            if res.get("unfinished"):
+                counts["hit_bound"] = True
+        except Exception as e:
+            counts["attempted"] += 1
+            counts["failed"] += 1
+            log.error(f"prune_ledgers could not purge disconnected POS data: {e}")
+            capture(e, job="prune_ledgers", context="pos_after_disconnect", db_path=db_path)
+        try:
+            import rpower
+            n = rpower.purge_catalogs(db_path)
+            if n:
+                deleted["pos_catalogs"] = n
+        except Exception as e:
+            log.warning(f"prune_ledgers skipped the RPOWER list purge: {e}")
         _optimize(conn)
     finally:
         conn.close()

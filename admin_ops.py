@@ -1489,7 +1489,7 @@ def _integrations_for(r, hooks, d=None):
         _pos_integration(r, "clover", "Clover POS", bool(r.get("clover_api_token")),
                          "token" if r.get("clover_api_token") else "none"),
         _pos_integration(r, "rpower", "RPOWER POS", bool(r.get("rpower_token") or r.get("rpower_store_mid")),
-                         "token" if r.get("rpower_token") else "none"),
+                         "credential" if r.get("rpower_credential_id") else "token" if r.get("rpower_token") else "none"),
         {"key": "instagram", "label": "Instagram & Facebook",
          "connected": bool(r.get("ig_token")) and (ig_days_left is None or ig_days_left >= 0),
          "configured": bool(r.get("ig_token")),

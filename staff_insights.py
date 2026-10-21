@@ -279,7 +279,10 @@ def my_punch_rows(restaurant_id, name, start, end, provider=None, db_path=None):
     POS id when the identity layer knows it, else by exact name when every
     punch under that name carries one id nobody else holds. Two people with
     one name in the POS is never guessed ("ambiguous"). Station logins (a
-    shared bar login) are never anyone's."""
+    shared bar login) are never anyone's. A staff login whose claim the
+    owner has not approved gets none ("pending_approval", A7-10)."""
+    if _pos_held():
+        return [], "pending_approval"
     provider = provider or _provider(restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
@@ -357,7 +360,18 @@ _EARNINGS_REASONS = {
                  "link it to you.",
     "ambiguous": "More than one person in the POS has your name, so Cavnar AI won't guess which punches are yours. "
                  "Ask your manager to link your POS id to you.",
+    "pending_approval": "Your POS hours and tips show once your manager confirms this login is yours.",
 }
+
+
+def _pos_held() -> bool:
+    """This staff request's login is a self-claimed name its owner has not
+    approved (auth.staff_login_required sets it — Audit #23 A7-10)."""
+    try:
+        from flask import g, has_request_context
+        return bool(has_request_context() and getattr(g, "staff_pos_held", False))
+    except Exception:
+        return False
 
 
 def my_earnings(restaurant_id, name, days=EARNINGS_DEFAULT_DAYS, today=None, db_path=None) -> dict:

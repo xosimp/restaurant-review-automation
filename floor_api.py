@@ -61,7 +61,10 @@ def floor_settings_get(u):
                            (_rid(u), today)).fetchone()
     finally:
         conn.close()
+    from permissions import is_principal
     return {"ok": True, "settings": floor_settings.get(_restaurant(u)), "can_edit": _sr()._may_publish(u),
+            # Only the account holder switches "Send to POS" (A7-11).
+            "can_switch_pos_push": is_principal(u),
             "pos": {"provider": name, "label": {"rpower": "RPOWER"}.get(name, (name or "").title() or None),
                     "schedule_push": bool(caps.get("schedule_push")),
                     "schedule_preview": bool(caps.get("schedule_preview"))},
@@ -75,6 +78,15 @@ def floor_settings_set(u):
         return _sr()._forbidden("Your login can't change these.")
     import floor_settings
     b = _body()
+    # "Send to POS" writes payroll-feeding records into the POS with the
+    # partner token (Audit #23 A7-11): the account holder's switch alone,
+    # either way, with its own entry in the account's activity.
+    push_change = "pos_push" in b
+    if push_change:
+        from permissions import is_principal
+        if not is_principal(u):
+            return {"ok": False, "owner_only": True,
+                    "error": "Only the account owner can turn sending schedules to the POS on or off."}, 403
     if b.get("pos_push") is True:
         # Turned on from the preview only: a POS that can't take a schedule
         # can't be switched on, and the owner has seen what would be sent.
@@ -93,6 +105,9 @@ def floor_settings_set(u):
     from client_api import log_account_event
     log_account_event(_rid(u), "floor_settings_changed", current_user=u,
                       detail=", ".join(f"{k}={b[k]}" for k in sorted(b) if k != "previewed")[:200])
+    if push_change:
+        log_account_event(_rid(u), "pos_schedule_push_switched", current_user=u,
+                          detail="on" if out.get("pos_push") else "off")
     return {"ok": True, "settings": out}, 200
 
 
@@ -170,7 +185,13 @@ def live_read(u):
                 rd["moves"] = labor_live.moves(r, rd=rd, now_local=local)
             except Exception:
                 rd["moves"] = []
-    return {"ok": True, "read": rd, "moves_today": labor_live.todays_moves(r.id, day),
+    today = labor_live.todays_moves(r.id, day)
+    # A move's dollars are one person's wage (Audit #23 A7-04): only for a
+    # login that sees pay (the principal, or whoever sends the schedule).
+    if not _sr()._sees_pay(u):
+        rd = labor_live.redact_read(rd)
+        today = [labor_live.redact_move(m) for m in today]
+    return {"ok": True, "read": rd, "moves_today": today,
             "can_act": _sr()._may_decide_requests(u)}, 200
 
 
@@ -178,6 +199,11 @@ def _move_call(u, move_id, fn):
     if not _sr()._may_decide_requests(u):
         return _sr()._forbidden("Your login can't change tonight's schedule.")
     out = fn(_rid(u), int(move_id), user=u)
+    if not _sr()._sees_pay(u) and isinstance(out, dict):
+        import labor_live
+        out = labor_live.redact_move(out)
+        if isinstance(out.get("move"), dict):
+            out["move"] = labor_live.redact_move(out["move"])
     return out, (200 if out.get("ok") else 409)
 
 

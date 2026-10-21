@@ -312,21 +312,29 @@ def _rpower_probe_targets(db_path=None, k=None):
     want = (os.getenv("RPOWER_PROBE_RESTAURANT_ID") or "").strip()
     conn = get_conn(db_path or DB_PATH)
     try:
-        rows = conn.execute("SELECT id FROM restaurants WHERE rpower_token IS NOT NULL AND rpower_token <> '' "
-                            "AND COALESCE(is_demo, 0) = 0 ORDER BY id LIMIT ?", (_RPOWER_PROBE_SCAN,)).fetchall()
+        rows = conn.execute("SELECT id FROM restaurants WHERE ((rpower_token IS NOT NULL AND rpower_token <> '') "
+                            "OR rpower_credential_id IS NOT NULL) AND COALESCE(is_demo, 0) = 0 "
+                            "ORDER BY id LIMIT ?", (_RPOWER_PROBE_SCAN,)).fetchall()
     finally:
         conn.close()
     ids = [int(r[0]) for r in rows]
     if want.isdigit():
         ids = [int(want)] + [i for i in ids if i != int(want)]
-    out, buckets = [], set()
+    out, buckets, sealed = [], set(), []
     for rid in ids:
         try:
             c = rpower._creds(rid)
         except Exception:
             continue
         token = c.get("token") or ""
-        if not token or token.startswith("demo-store:"):
+        if not token:
+            # A stored credential that no longer opens (a lost or changed
+            # CREDENTIAL_KEY, a revoked partner credential) is a failure,
+            # never "unconfigured" (Audit #23 A7-08): kept aside, reported
+            # by probe_rpower when no token at all opens.
+            sealed.append((rid, "", c.get("store_mid")))
+            continue
+        if token.startswith("demo-store:"):
             continue
         b = rpower._bucket_key(token)
         if b in buckets:
@@ -335,7 +343,7 @@ def _rpower_probe_targets(db_path=None, k=None):
         out.append((rid, token, c.get("store_mid")))
         if len(out) >= k:
             break
-    return out
+    return out or sealed[:1]
 
 
 def probe_rpower(db_path=None):
@@ -355,6 +363,10 @@ def probe_rpower(db_path=None):
     if not targets:
         return _result("unconfigured", "no restaurant has an RPOWER token")
     started = time.monotonic()
+    if not targets[0][1]:
+        import credentials
+        return _result("failing", f"restaurant {targets[0][0]}'s RPOWER credential does not open (CREDENTIAL_KEY "
+                                  f"is {credentials.key_state()}, or its partner credential is revoked)", None, started)
     import rpower
     ok, refused, paused, errors = [], [], [], []
     for rid, token, mid in targets:
