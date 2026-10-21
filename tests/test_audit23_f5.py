@@ -184,21 +184,30 @@ def test_the_budget_check_sheds_bulk_then_stretches_live_and_never_close_or_nigh
     monkeypatch.setattr(pos_capacity, "NIGHTLY_REQUESTS_PER_STORE", 50000)
     out = pos_capacity.budget_check(now=datetime(2026, 10, 22, 2, 0))
     assert out["shed_bulk"] is True and out["stretch_live"] is True
+    monkeypatch.setattr(pos_capacity, "window", lambda now=None: "nightly")
     assert pos_capacity.bulk_shed() and pos_capacity.live_stretched()
     assert "bulk work (onboarding) waits until 7am" in caught[-1]
     st = pos_capacity.state()
     assert datetime.fromtimestamp(st["until"], CHI).hour == 7
+    assert datetime.fromtimestamp(st["stretch_until"], CHI).hour == 22, "live labor: through the next service"
     # Shed bulk keeps a sliver and never borrows; nightly is untouched.
     assert pos_capacity.background_share("bulk", False, False) == pytest.approx(pos_capacity.SHED_BULK_SHARE)
     assert pos_capacity.background_share("nightly", False, False) is None
+    monkeypatch.setattr(pos_capacity, "window", lambda now=None: "service")
+    assert not pos_capacity.bulk_shed(), "never through the day's spare budget"
     monkeypatch.setenv("POS_BUDGET_SHED", "0")
-    assert not pos_capacity.bulk_shed()
+    assert not pos_capacity.bulk_shed() and not pos_capacity.live_stretched()
 
 
 def test_a_shed_verdict_lapses_when_the_window_ends(monkeypatch):
     _x("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now'))",
        (pos_capacity.STATE_KEY, json.dumps({"shed_bulk": True, "stretch_live": True, "until": time.time() - 5})))
     assert pos_capacity.bulk_shed() is False and pos_capacity.live_stretched() is False
+    _x("UPDATE job_cursors SET value=? WHERE key=?",
+       (json.dumps({"shed_bulk": True, "stretch_live": True, "until": time.time() - 5,
+                    "stretch_until": time.time() + 600}), pos_capacity.STATE_KEY))
+    pos_capacity.reset_for_tests()
+    assert pos_capacity.bulk_shed() is False and pos_capacity.live_stretched() is True
 
 
 def test_three_nights_over_the_alert_line_are_said_once(monkeypatch):
@@ -255,6 +264,7 @@ def test_onboarding_is_admitted_by_the_budget(monkeypatch):
 
 def test_shed_onboarding_waits_for_the_window_to_end(monkeypatch):
     import strategy_jobs
+    monkeypatch.setattr(pos_capacity, "window", lambda now=None: "nightly")
     until = time.time() + 3600
     _x("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now'))",
        (pos_capacity.STATE_KEY, json.dumps({"shed_bulk": True, "until": until})))

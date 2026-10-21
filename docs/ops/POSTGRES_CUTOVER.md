@@ -302,8 +302,17 @@ ALTER SYSTEM SET effective_cache_size = '<70% of RAM>';    -- a planner hint onl
 ALTER SYSTEM SET maintenance_work_mem = '256MB';           -- vacuum, index builds
 ALTER SYSTEM SET autovacuum_vacuum_scale_factor = 0.05;    -- big partitions vacuumed sooner
 ALTER SYSTEM SET autovacuum_analyze_scale_factor = 0.02;
+-- RPOWER audit #23 A5-10 (MEASURED 10/21/26: max_wal_size 1 GB,
+-- checkpoint_timeout 300 s): the 4-6am archive burst (~1,000 rows/s at
+-- 1,500 stores, 3-5 MB/s of WAL) forced a checkpoint every few minutes.
+ALTER SYSTEM SET max_wal_size = '8GB';                     -- 16GB past ~1,500 stores
+ALTER SYSTEM SET checkpoint_timeout = '15min';
+ALTER SYSTEM SET wal_compression = on;
 SELECT pg_reload_conf();
 ```
+
+Nothing in the app depends on these values (it reads none of them and sets
+only its own `work_mem`): each is safe to set, change or revert at any time.
 
 `work_mem` the app sets for its own sessions: `PG_WORK_MEM` (ENVIRONMENT.md;
 16MB is a sane first value — it is per sort or hash, per connection, and

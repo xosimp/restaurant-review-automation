@@ -353,7 +353,7 @@ NIGHTLY_REQUESTS_PER_STORE = _float_env("POS_NIGHTLY_REQUESTS_PER_STORE", 76)
 # The nightly window's length the budget is judged over (hours).
 NIGHTLY_WINDOW_HOURS = _float_env("POS_NIGHTLY_WINDOW_HOURS", 4)
 # A night whose nightly lane peaked above this is counted; three in a row is
-# said to the operator (ops.capture, kind data... no: a job finding).
+# said to the operator (ops.capture under the job's name, F6 surfaces it).
 UTIL_ALERT_PCT = _float_env("POS_BUDGET_ALERT_PCT", 85)
 UTIL_ALERT_NIGHTS = 3
 _state_cache = {"at": 0.0, "value": None}
@@ -375,9 +375,13 @@ def state(db_path=None) -> dict:
         finally:
             conn.close()
         value = json.loads(row[0]) if row and row[0] else {}
-        until = value.get("until")
-        if until and float(until) < time.time():
-            value = dict(value, shed_bulk=False, stretch_live=False, expired=True)
+        # Bulk is shed until the nightly window ends; live labor is stretched
+        # through the service day after it (the night's spill reaches it).
+        if value.get("until") and float(value["until"]) < time.time():
+            value = dict(value, shed_bulk=False)
+        stretch_until = value.get("stretch_until") or value.get("until")
+        if stretch_until and float(stretch_until) < time.time():
+            value = dict(value, stretch_live=False)
     except Exception:
         value = {}
     _state_cache.update(at=now, value=value)
@@ -390,9 +394,12 @@ def _forget_state():
 
 
 def bulk_shed(db_path=None) -> bool:
+    """Whether bulk work is shed now: tonight's verdict said so and it is the
+    close or nightly window (a check run by hand at 10am never holds
+    onboarding through the day's spare budget)."""
     if (os.getenv("POS_BUDGET_SHED", "") or "").strip().lower() in ("0", "off", "false", "no"):
         return False
-    return bool(state(db_path).get("shed_bulk"))
+    return bool(state(db_path).get("shed_bulk")) and window() != "service"
 
 
 def live_stretched(db_path=None) -> bool:
@@ -421,8 +428,8 @@ def _connected_stores(db_path=None) -> int:
 
 
 def measured_per_store(db_path=None, stores=None):
-    """Requests per store over the last 24 hours' nightly and bulk lanes, or
-    None before the lane ledger has a night (or with no stores)."""
+    """Requests per store over the last 24 hours' nightly lane, or None
+    before the lane ledger has a night (or with no stores)."""
     stores = stores if stores is not None else _connected_stores(db_path)
     if not stores:
         return None
@@ -473,10 +480,12 @@ def budget_check(db_path=None, now=None) -> dict:
         end += timedelta(days=1)
     from zoneinfo import ZoneInfo
     until = end.replace(tzinfo=ZoneInfo(LANE_TZ)).timestamp()
+    stretch_until = end.replace(hour=22, tzinfo=ZoneInfo(LANE_TZ)).timestamp()
     value = {"at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), "stores": stores,
              "rps": round(rps, 2), "per_store": round(per_store, 1), "demand": int(demand),
              "budget": int(nightly_budget), "ratio": round(demand / nightly_budget, 3) if nightly_budget else None,
              "shed_bulk": bool(shed_bulk), "stretch_live": bool(stretch_live), "until": until,
+             "stretch_until": stretch_until,
              "over_nights": over_nights, "nightly_peak_pct": peak,
              "lanes": {k: {"pct": v.get("pct"), "peak_hour_pct": v.get("peak_hour_pct")}
                        for k, v in (util.get("lanes") or {}).items()}}
