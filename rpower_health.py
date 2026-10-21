@@ -338,7 +338,9 @@ def _is_simulated_token(raw_token):
 def _first_read_suspect(raw):
     """Whether a night's first-read verdict (pos_archive_days.first_read,
     JSON {verdict, reasons, at}, F2's A4-04 / A6-07) says the read looked
-    short. Any verdict other than an all-clear counts; NULL is never judged."""
+    short and is still held (F2 writes ok | suspect | confirmed — "confirmed"
+    is a short read the re-read agreed with, kept as true). NULL is never
+    judged."""
     if not raw:
         return False
     try:
@@ -346,7 +348,7 @@ def _first_read_suspect(raw):
     except (TypeError, ValueError):
         return False
     verdict = str((v or {}).get("verdict") or "").strip().lower() if isinstance(v, dict) else ""
-    return bool(verdict) and verdict not in ("ok", "plausible", "pass", "passed", "normal", "clear")
+    return verdict == "suspect"
 
 
 def _night_gap(gap, net):
@@ -1093,12 +1095,13 @@ def _notify_auth(rows, db_path=None) -> int:
             notify.raise_alert(
                 rid, "connection_lost",
                 f"Cavnar AI: RPOWER stopped accepting this store's connection — sales and labor stopped syncing "
-                f"for {name}. Reconnect it in Account -> Connections.",
+                f"for {name}. Cavnar AI is on it; support@cavnar.ai if you changed anything at RPOWER.",
                 f"RPOWER needs reconnecting — {name}",
                 lines=["RPOWER refused the token Cavnar AI uses to read this store's sales and labor, so nothing "
                        "new is coming in: the nightly report, labor and food cost are using the last data read.",
-                       "Nothing already stored is lost. Open Account -> Connections and reconnect RPOWER, or ask "
-                       "your RPOWER contact for a new API token."], **kw)
+                       "Nothing already stored is lost. Cavnar AI connects RPOWER for you, so there is nothing to "
+                       "re-enter: we have been told and will reconnect it. If you revoked access or changed "
+                       "anything at RPOWER, email support@cavnar.ai."], **kw)
             sent += 1
         except Exception as e:
             log.warning("rpower auth notice failed for %s: %s", rid, e)
