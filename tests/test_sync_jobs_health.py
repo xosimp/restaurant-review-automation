@@ -90,7 +90,9 @@ def test_a_sweep_where_restaurants_failed_is_a_partial_or_failed_run(tmpdb):
 
 def test_the_pos_wrapper_no_longer_swallows_a_crash(tmpdb, monkeypatch):
     import pos, scheduler
-    monkeypatch.setattr(pos, "sync_all", lambda **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    # The nightly job queues the stores' rows (RPOWER audit #23 A5-02); a
+    # crash there still fails the run.
+    monkeypatch.setattr(pos, "queue_nightly_syncs", lambda **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
     assert ops.run_job("pos_sync", scheduler.run_toast_sync) is None
     run = _q(tmpdb, "SELECT ok FROM job_runs WHERE job='pos_sync'")[0]
     assert run["ok"] == 0

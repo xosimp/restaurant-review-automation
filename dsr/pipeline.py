@@ -284,10 +284,18 @@ def day_closed(restaurant, day, now_utc, trigger=None):
     the button's word — and the route refuses that before close
     (manual_close_refusal) unless the owner says they closed early."""
     import pos
+    import pos_closed
     import pos_io
     try:
         with pos_io.lane("close"):             # the night's report: ahead of the nightly work (R3-01)
-            closed, _provider = pos.fetch_day_closed(restaurant.id, day)
+            # One shared answer for every process (RPOWER audit #23 A1-24 /
+            # A5-04): a closed day is never asked again, an open answer is
+            # shared for CLOSED_SHARED_SECONDS (the archive's check included),
+            # and the stated close is kept for the close-lag learning.
+            closed = pos_closed.day_closed(
+                restaurant.id, day, lambda: pos.fetch_day_closed(restaurant.id, day)[0],
+                fresh_seconds=CLOSED_SHARED_SECONDS, close_epoch=_close_epoch(restaurant, day),
+                now=now_utc.replace(tzinfo=timezone.utc).timestamp())
         return "pos" if closed else None
     except pos.POSCapabilityError:
         if trigger == TRIGGER_MANUAL:
@@ -297,6 +305,45 @@ def day_closed(restaurant, day, now_utc, trigger=None):
     except Exception as e:
         log.warning("dsr: closeday check failed rid=%s day=%s: %s", restaurant.id, day, e)
         return None
+
+
+# An open closeday answer shared across processes this long (pos_closed).
+CLOSED_SHARED_SECONDS = 300
+
+
+def _close_epoch(restaurant, day):
+    """The stated close of business date `day` as a UTC epoch (the default
+    close for a restaurant with no hours that day), or None."""
+    try:
+        close = close_at(restaurant, day) or datetime.combine(day, _time(*DEFAULT_CLOSE))
+        return to_utc(restaurant, close).replace(tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def _close_poll(restaurant, day, now_utc, trigger):
+    """(hold, next poll as naive UTC) for a night awaiting its POS close
+    (RPOWER audit #23 A5-04): `hold` while it is before the store's learned
+    close lag (pos_closed — the POS is not asked yet), and when to ask next:
+    the first moment, then POLL_STEPS_MINUTES apart. A manual run never
+    holds; a POS with no closeday record, or one whose plan cannot be read,
+    polls every POLL_MINUTES as before."""
+    import pos_closed
+    close_epoch = _close_epoch(restaurant, day)
+    fallback = (False, now_utc + timedelta(minutes=POLL_MINUTES))
+    if close_epoch is None or trigger == TRIGGER_MANUAL:
+        return fallback
+    try:
+        now = now_utc.replace(tzinfo=timezone.utc).timestamp()
+        row = pos_closed.known(restaurant.id, day) or {}
+        if int(row.get("closed") or 0):
+            return False, now_utc
+        first = pos_closed.first_poll_at(restaurant.id, close_epoch)
+        nxt = pos_closed.next_poll_at(restaurant.id, day, close_epoch, now)
+        return now < first, datetime.fromtimestamp(nxt, timezone.utc).replace(tzinfo=None)
+    except Exception as e:
+        log.warning("dsr: close poll plan unreadable rid=%s day=%s: %s", restaurant.id, day, e)
+        return fallback
 
 
 EARLY_CLOSE_MINUTES = 30           # Close day on a POS with no close-day record: not before close − this
@@ -644,11 +691,18 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
             # the day was closed for that pull.
             how = ((probed["sales"].get("detail") or {}).get("closed_by")) or "manual"
         else:
-            how = day_closed(restaurant, day, now_utc, trigger)
+            # Asked only from the store's learned close lag, then on widening
+            # steps (pos_closed; RPOWER audit #23 A5-04): ~4 polls a night.
+            hold, nxt = _close_poll(restaurant, day, now_utc, trigger)
+            how = None if hold else day_closed(restaurant, day, now_utc, trigger)
+            if how is None and not hold:
+                nxt = _close_poll(restaurant, day, now_utc, trigger)[1]
         if how is None and not past_deadline:
             if status != "awaiting_close":
                 store.set_stage(report_id, "awaiting_close", db_path=db)
-            nxt = now_utc + timedelta(minutes=POLL_MINUTES)
+            # Never past the deadline, and never sooner than a minute.
+            nxt = max(now_utc + timedelta(minutes=1),
+                      min(nxt, to_utc(restaurant, deadline_at(restaurant, day))))
             store.schedule_retry(report_id, nxt, db_path=db, count=False)
             return _result("awaiting_close", store.get_report_by_id(report_id, db_path=db), next_attempt_at=_stamp(nxt))
         store.note(report_id, "closed_by", how or "deadline", db_path=db)

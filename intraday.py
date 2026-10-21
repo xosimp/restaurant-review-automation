@@ -107,6 +107,11 @@ def capture(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None, bus
     return {"ok": True, "net_sales": float(net), "hour": hour, "provider": provider}
 
 
+# The same weekdays a pulse compares against: the last year and a month
+# (pos_intraday's retention, RPOWER audit #23 A5-09).
+PROFILE_MAX_DAYS = 400
+
+
 def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
     """How today is tracking at this hour against the same weekday's profile.
 
@@ -129,8 +134,9 @@ def pulse(restaurant_id, now_local=None, db_path=DB_PATH, restaurant=None):
             return {"available": False, "reason": "nothing captured from the POS today"}
         history = [r["net_sales"] for r in conn.execute(
             "SELECT net_sales FROM pos_intraday WHERE restaurant_id=? AND weekday=? "
-            "AND captured_hour=? AND business_date<?",
-            (restaurant_id, weekday, today_row["captured_hour"], day.isoformat())).fetchall()]
+            "AND captured_hour=? AND business_date<? AND business_date>=?",
+            (restaurant_id, weekday, today_row["captured_hour"], day.isoformat(),
+             (day - timedelta(days=PROFILE_MAX_DAYS)).isoformat())).fetchall()]
     finally:
         conn.close()
     if len(history) < MIN_PROFILE_SAMPLES:

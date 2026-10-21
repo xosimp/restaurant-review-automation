@@ -109,7 +109,10 @@ def test_the_sub_daily_jobs_are_the_loops_sub_daily_claims():
         assert f'claim_period("{job}", f"{{today}}-{{now.hour}}-' in src, job
     # The DSR sweep claims its 10-minute slot in _submit_dsr_sweep (its own lane since F3, 10/19/26).
     assert 'slot = f"{now.date()}-{now.hour}-{now.minute // 10}"' in src and 'claim_period("dsr_sweep", slot)' in src
-    assert 'claim_period(f"live_labor:{r.id}", f"{local.date().isoformat()}-{local.hour}-"' in \
+    # Each store's slot at its adaptive cadence (RPOWER audit #23 A1-02):
+    # still a "live_labor:" claim, so the sub-daily prune takes it.
+    assert 'claim_period(f"live_labor:{r.id}", period)' in inspect.getsource(labor_live)
+    assert 'f"{local.date().isoformat()}-{local.hour}-{local.minute // cadence}/{cadence}"' in \
         inspect.getsource(labor_live)
     assert 'claim_period(f"intraday:{r.id}", f"{local.date().isoformat()}-{local.hour}")' in \
         inspect.getsource(strategy_jobs)

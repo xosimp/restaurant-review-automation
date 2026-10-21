@@ -80,7 +80,10 @@ def test_bulk_work_always_passes_the_background_share_and_nightly_work_only_besi
     key = rpower._bucket_key("tok")
     with pos_io.lane("bulk"):
         rpower._sleep_for_spacing("tok")
-    assert (key + ":bg", 0.001 / rpower.BACKGROUND_SHARE) in taken, "bulk work is held to its share"
+    # RPOWER audit #23 (A4-12 / A5-01): lanes BORROW an idle share — bulk
+    # alone on the bucket has all of it; beside live reads it keeps to its
+    # share of the window (pos_capacity.background_share).
+    assert [k for k, _ in taken] == [key], "nothing above bulk is active: it borrows the whole token"
     taken.clear()
     with pos_io.lane("nightly"):
         rpower._sleep_for_spacing("tok")
@@ -91,7 +94,12 @@ def test_bulk_work_always_passes_the_background_share_and_nightly_work_only_besi
     rpower._live_seen.clear()
     with pos_io.lane("nightly"):
         rpower._sleep_for_spacing("tok")
-    assert [k for k, _ in taken] == [key + ":bg", key], "beside live reads the nightly work keeps to its share"
+    assert [k for k, _ in taken] == [key + ":bg:nightly", key], "beside live reads the nightly work keeps to its share"
+    taken.clear()
+    with pos_io.lane("bulk"):
+        rpower._sleep_for_spacing("tok")
+    import pos_capacity
+    assert (key + ":bg:bulk", 0.001 / pos_capacity.share("bulk")) in taken, "beside live reads bulk keeps to its share"
 
 
 def test_a_request_thread_never_waits_past_its_limit_behind_a_held_bucket_lock(monkeypatch):

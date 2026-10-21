@@ -4953,6 +4953,15 @@ def init_db(db_path: str = DB_PATH):
     # live snapshot every intraday reader shares.
     from pos_io import init_pos_io
     init_pos_io(db_path)
+    # RPOWER audit #23 (F5): the one shared closeday answer per store-night
+    # (pos_closed) and the sale lines' cold-tier index (pos_cold).
+    from pos_closed import init_pos_closed
+    init_pos_closed(db_path)
+    from pos_cold import init_pos_cold
+    init_pos_cold(db_path)
+    # ...and the RPOWER budget's lane ledger (pos_capacity: utilisation %).
+    from pos_capacity import init_pos_capacity
+    init_pos_capacity(db_path)
     # Shared token buckets (rate_bucket, scale audit 10/19/26 SEC-03): the
     # fleet's and each restaurant's guest-text pace.
     from rate_bucket import init_rate_buckets

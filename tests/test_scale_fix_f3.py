@@ -254,7 +254,10 @@ def test_the_pos_archive_has_its_own_group_and_slots(db, monkeypatch):
     jq = db
     assert jq.KINDS["pos_archive"][0] == "pos_io" and "pos_io" in jq.GROUPS
     monkeypatch.delenv("QUEUE_POS_IO_CONCURRENCY", raising=False)
-    assert jq.group_concurrency("pos_io") == 4 and jq.group_concurrency("bulk") == 2
+    # Sized from the RPOWER budget since audit #23 (A4-11): never under 4.
+    import pos_capacity
+    assert jq.group_concurrency("pos_io") == pos_capacity.pos_io_concurrency() >= 4
+    assert jq.group_concurrency("bulk") == 2
     import inspect as _i
     assert _i.signature(jq.run_worker).parameters["groups"].default == jq.GROUPS
 

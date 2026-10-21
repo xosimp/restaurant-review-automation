@@ -599,6 +599,29 @@ same statement works on both):
 INSERT INTO job_period_claims (job_key) VALUES ('weekly_digests:YYYY-MM-DD') ON CONFLICT DO NOTHING;
 ```
 
+### Cold sale lines (RPOWER audit #23 A5-09)
+
+Sale lines (`pos_ticket_lines`) older than `RETAIN_POS_LINES_HOT_DAYS` (400)
+are not in the database once the cold tier runs (`pos_cold.tier`, inside the
+nightly retention pass, only with `BLOB_STORE=s3` and `BACKUP_ENCRYPTION_KEY`
+set). Each restaurant-month is one object in the blob bucket,
+`pos-cold/pos-lines/<restaurant>/<provider>/<YYYY-MM>-<sha12>.jsonl.gz.enc`
+(gzip JSON lines, Fernet under `BACKUP_ENCRYPTION_KEY`), indexed by
+`pos_cold_exports` (never pruned; it rides in every backup). A month was
+deleted only after its object was read back and its SHA-256 and row count
+matched, and after its days were rolled into `pos_item_daily` (which every
+owner view of an old month reads). So:
+
+- A database restore loses no cold month: the index comes back with the
+  database and the objects never left the bucket. Do not delete the blob
+  bucket's `pos-cold/` prefix, and give it no lifecycle rule.
+- To read an old month's lines (a dispute, an audit):
+  `railway ssh -- python3 -c "import pos_cold; print(pos_cold.restore(<rid>, 'YYYY-MM'))"`
+  puts it back (rows already there are kept) and holds it hot for 30 days.
+  It needs the same `BACKUP_ENCRYPTION_KEY` the export was sealed with.
+- `RETAIN_POS_LINES_HOT_DAYS=0` turns the tier off; nothing already exported
+  comes back by itself.
+
 ---
 
 ## Volume full

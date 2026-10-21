@@ -45,7 +45,7 @@ import time
 import uuid
 
 POINTER = b"cavnar-blob:"
-KINDS = ("model-calls", "quality", "fintech-files")
+KINDS = ("model-calls", "quality", "fintech-files", "pos-cold")
 
 
 def backend() -> str:

@@ -123,7 +123,14 @@ CLASSES = ("interactive", "scheduled", "bulk")
 # generation or a learner.
 # "home" (Home's kept blocks — home_snapshots: built here, never on a request
 # thread; blind re-audit 10/20/26 R6-F4/F5).
-GROUPS = ("generation", "bulk", "pos_io", "notify", "maintenance", "studio", "home")
+# "pos_bulk" (RPOWER audit #23 A4-11 / A5-11): a store's onboarding (60
+# nights of history at connect) — its own slots, so a rollout wave never
+# holds the slots the night's archive and sync rows need; the nightly rows
+# outrank it at the request budget too (lane "bulk" vs "nightly").
+# "live" (A5-03): live labor's per-store quarter hour, one row a store, in
+# the queue worker's process — off the scheduler's lane thread, with slots
+# sized from the budget (pos_capacity.live_concurrency).
+GROUPS = ("generation", "bulk", "pos_io", "notify", "maintenance", "studio", "home", "pos_bulk", "live")
 _CLASS_RANK = {c: i for i, c in enumerate(CLASSES)}
 
 # kind -> (group, default class, max attempts). A kind not listed runs in the
@@ -143,7 +150,16 @@ KINDS = {
     # first sync — off the request thread, at most the pos_io group's
     # concurrency of stores at once (strategy_jobs.run_queued_pos_onboard;
     # scale audit 10/19/26 ONB-6 / ONB-4).
-    "pos_onboard": ("pos_io", "bulk", 2),
+    "pos_onboard": ("pos_bulk", "bulk", 2),
+    # One store's nightly POS sync (labor and sales into client_data) at its
+    # own local hour (pos.sync_all fans out; strategy_jobs.run_queued_pos_sync
+    # — A5-02): the 45-minute sweep in the scheduler process reached 170-600
+    # stores a night.
+    "pos_sync": ("pos_io", "bulk", 2),
+    # One store's live labor quarter hour (labor_live.run_live_labor fans
+    # out at each store's adaptive cadence; labor_live.run_queued_live —
+    # A5-03 / A1-02). One try: the next slot is its retry.
+    "live_labor": ("live", "bulk", 1),
     # An owner's "Send this week now": the POS schedule push, off the web
     # request thread (pos_schedule_push.run_queued_push; blind re-audit
     # 10/20/26 R3-07 — it held one of the four request threads on a 30-second
@@ -194,6 +210,8 @@ HANDLERS = {
     "email_intake": "email_intake:run_queued",
     "pos_archive": "strategy_jobs:run_queued_pos_archive",
     "pos_onboard": "strategy_jobs:run_queued_pos_onboard",
+    "pos_sync": "strategy_jobs:run_queued_pos_sync",
+    "live_labor": "labor_live:run_queued_live",
     "pos_schedule_push": "pos_schedule_push:run_queued_push",
     "owner_words_read": "owner_rules:run_queued_read",
     "schedule_ablation": "schedule_job:run_queued_ablation",
@@ -217,6 +235,12 @@ EXPIRE_HOOKS = {
     # A nightly learner row that never started inside its day: recorded as
     # a missed run, never a silent skip (blind re-audit 10/20/26 R1-08).
     "learner": "strategy_jobs:on_learner_expired",
+    # The night's POS rows that never started inside their day (RPOWER audit
+    # #23 A4-11 / A5-11): a missed run of that store's night, never a silent
+    # skip (F6 shows ops.missed_windows); the next night's row re-reads it.
+    "pos_archive": "strategy_jobs:on_pos_row_expired",
+    "pos_onboard": "strategy_jobs:on_pos_row_expired",
+    "pos_sync": "strategy_jobs:on_pos_row_expired",
 }
 
 LEASE_SECONDS = int(os.getenv("QUEUE_LEASE_SECONDS", "120"))
@@ -287,8 +311,17 @@ def group_concurrency(grp) -> int:
         return n
     if grp == "pos_io":
         # Network-bound rows: their slots are not cores. RPOWER's own budget
-        # is its per-token bucket (rpower), not this count.
-        return _int_env("QUEUE_POS_IO_CONCURRENCY", 4)
+        # is its per-token bucket (rpower); the slots are sized from it —
+        # the nightly share of the effective req/s x seconds a request x
+        # headroom, never under 4 (RPOWER audit #23 A4-11, F5).
+        return _int_env("QUEUE_POS_IO_CONCURRENCY", _pos_default("pos_io_concurrency", 4))
+    if grp == "pos_bulk":
+        # Onboarding (A4-11 / A5-11): two stores at once, admitted by the
+        # budget (pos_capacity.onboard_not_before), never the night's slots.
+        return _int_env("QUEUE_POS_BULK_CONCURRENCY", 2)
+    if grp == "live":
+        # Live labor's rows (A5-03): sized from the live lane's budget.
+        return _int_env("QUEUE_LIVE_CONCURRENCY", _pos_default("live_concurrency", 2))
     if grp == "notify":
         # Sends and short checks (R1-08): slots of their own, so a backlog
         # of learner rows never holds a staff notice.
@@ -306,6 +339,16 @@ def group_concurrency(grp) -> int:
         # web process's four request threads (R6-F4/F5).
         return _int_env("QUEUE_HOME_CONCURRENCY", 2)
     return _int_env("QUEUE_BULK_CONCURRENCY", 2)
+
+
+def _pos_default(fn, fallback) -> int:
+    """pos_capacity's budget-sized default for a POS group (cached there);
+    `fallback` when it cannot be read."""
+    try:
+        import pos_capacity
+        return int(getattr(pos_capacity, fn)())
+    except Exception:
+        return fallback
 
 
 # What one generation holds at its peak on top of the container's baseline

@@ -3420,6 +3420,19 @@ _RETENTION_DAYS = {
     # counts per endpoint and store; the console reads a day, a quarter
     # keeps the trend RPOWER's limits will be argued from.
     "pos_request_ledger": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
+    # RPOWER audit #23 (A5-09 / A5-13, F5): the growing per-store tables that
+    # had no entry. The nightly report's versions and its figures are kept
+    # three years, as long as the archive they are built from (an owner's
+    # report history older than that is the stated rule's to drop); the hourly
+    # sales captures 400 days (their readers compare the last same weekdays);
+    # the shared closeday answers 400 days (the close lag reads 14 nights).
+    "dsr_reports":        int(os.getenv("RETAIN_DSR_REPORTS_DAYS", "1095")),
+    "dsr_metrics":        int(os.getenv("RETAIN_DSR_METRICS_DAYS", "1095")),
+    "pos_intraday":       int(os.getenv("RETAIN_POS_INTRADAY_DAYS", "400")),
+    "pos_closed_days":    int(os.getenv("RETAIN_POS_CLOSED_DAYS", "400")),
+    # Requests per hour per lane (pos_capacity's budget utilisation): the
+    # request ledger's quarter.
+    "pos_lane_ledger":    int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3610,6 +3623,8 @@ _RETENTION_COLUMN = {
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_request_ledger": "hour",
+    "dsr_reports": "business_date", "dsr_metrics": "business_date", "pos_intraday": "business_date",
+    "pos_closed_days": "business_date", "pos_lane_ledger": "hour",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
@@ -3742,6 +3757,10 @@ _RETENTION_FLOOR_DAYS = {
     "pos_payments": 400, "pos_payouts": 400,
     # The console reads a day of the request ledger (pos_io.summary).
     "pos_request_ledger": 30,
+    # The DSR's history and figures (canonical facts, trends, the seasonal
+    # reads) reach a year and a month; the intraday baselines the same;
+    # the close lag 14 nights.
+    "dsr_reports": 400, "dsr_metrics": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
     "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
@@ -3825,6 +3844,9 @@ _RETENTION_ROLLUP = {
     # the day goes (scale audit 10/19/26 DB-02); raises while a day past the
     # line window is not rolled yet.
     "pos_ticket_lines": "pos_archive:roll_item_days",
+    # The request ledger's hourly rows become one row a day after a week
+    # (pos_capacity.roll_ledger_daily; RPOWER audit #23 A5-13).
+    "pos_request_ledger": "pos_capacity:roll_ledger_daily",
 }
 # (reader, window, what a lifetime reader reads instead). A window is days,
 # or "module.CONSTANT" (the reader's own constant, read by the test), or
@@ -3839,6 +3861,8 @@ _RETENTION_READERS = {
     "pos_punches": (("service_performance.pay_and_tips", "service_performance.MAX_DAYS", None),),
     "pos_payments": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
     "pos_payouts": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
+    "pos_intraday": (("intraday.pulse", "intraday.PROFILE_MAX_DAYS", None), ("labor_live._sales", 56, None)),
+    "pos_closed_days": (("pos_closed.close_lag_minutes", "pos_closed.LAG_SAMPLE_NIGHTS", None),),
     "task_assignments": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
     "task_line_completions": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
     "task_signoffs": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
@@ -4014,6 +4038,14 @@ FINTECH_FILE_CONTENT_DAYS = int(os.getenv("RETAIN_FINTECH_FILE_CONTENT_DAYS", "3
 # price trends and food cost % bucket inventory by ISO week; the seasonal
 # baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
 # and the seasonal re-check further, from the weekly summary.
+def _pos_cold_days():
+    try:
+        import pos_cold
+        return int(pos_cold.HOT_DAYS)
+    except Exception:
+        return 0
+
+
 def _special_retention():
     return {
         "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
@@ -4034,6 +4066,11 @@ def _special_retention():
         "fintech_file_content": (FINTECH_FILE_CONTENT_DAYS, 90),
         # The sub-daily claims (DB-14, above), floor 1 day.
         "subdaily_claims": (SUBDAILY_CLAIMS_KEEP_DAYS, 1),
+        # The sale lines' cold tier (pos_cold; RPOWER audit #23 A5-09):
+        # months past RETAIN_POS_LINES_HOT_DAYS exported to object storage
+        # before their lines go; floor 400 (service_performance.MAX_DAYS
+        # and a year-over-year month). 0 turns the tier off.
+        "pos_lines_cold": (_pos_cold_days(), 400),
     }
 
 
@@ -4116,6 +4153,10 @@ def _ensure_retention_indexes(conn):
         ("ask_feedback", "CREATE INDEX IF NOT EXISTS idx_ask_feedback_created ON ask_feedback(created_at)"),
         # A received file's text past its year (ops "fintech_file_content").
         ("fintech_files", "CREATE INDEX IF NOT EXISTS idx_fintech_files_created ON fintech_files(created_at)"),
+        # RPOWER audit #23 (A5-09, F5): the business-date retention deletes.
+        ("dsr_reports", "CREATE INDEX IF NOT EXISTS idx_dsr_reports_bdate ON dsr_reports(business_date)"),
+        ("dsr_metrics", "CREATE INDEX IF NOT EXISTS idx_dsr_metrics_bdate ON dsr_metrics(business_date)"),
+        ("pos_intraday", "CREATE INDEX IF NOT EXISTS idx_pos_intraday_bdate ON pos_intraday(business_date)"),
     ):
         if table in have:
             try:
@@ -4886,6 +4927,23 @@ def prune_ledgers(db_path=None):
             except Exception:
                 pass
             log.warning(f"prune_ledgers skipped the sub-daily claims: {e}")
+        try:
+            st_cold = retention_state("pos_lines_cold")
+            if st_cold["state"] == "below_floor":
+                refused.append(st_cold)
+            elif st_cold["state"] == "ok" and rolled.get("pos_archive:roll_item_days", True):
+                import pos_cold
+                cold = pos_cold.tier(deadline=deadline, db_path=db_path)
+                if cold.get("deleted") or cold.get("exported"):
+                    deleted["pos_lines_cold"] = int(cold.get("deleted") or 0)
+                if cold.get("failed"):
+                    counts["attempted"] += 1
+                    counts["failed"] += 1
+                if cold.get("hit_bound"):
+                    counts["hit_bound"] = True
+        except Exception as e:
+            log.error(f"prune_ledgers: the sale lines' cold tier failed (their lines are kept): {e}")
+            capture(e, job="prune_ledgers", context="pos_lines_cold", db_path=db_path)
         try:
             deleted.update(_prune_intake(conn, deadline, refused=refused))
         except Exception as e:
