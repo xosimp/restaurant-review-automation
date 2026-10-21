@@ -695,6 +695,8 @@ def test_the_nightly_sync_uses_in_service(tmpdb, monkeypatch):
     monkeypatch.setattr(pos, "connected_provider", lambda r: ("toast", object()))
     monkeypatch.setattr(pos, "sync_restaurant", lambda r, **k: synced.append(r) or {"ok": True})
     monkeypatch.setattr(pos, "note_sync_failure", lambda r: None)
+    # Not about the local sync window (A4-15): due whatever the test's clock.
+    monkeypatch.setattr(pos, "sync_due_locally", lambda r, now_local=None: True)
     pos.sync_all()
     assert internal in synced
 

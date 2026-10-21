@@ -123,7 +123,7 @@ def test_rpower_runs_bulk_at_its_share_while_the_nightly_archive_is_reading(monk
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0.001)
     monkeypatch.setattr(rpower, "FLEET_RPS", 0)
     taken = []
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: (taken.append((key, s)), 0.0)[1])
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **kw: (taken.append((key, s)), 0.0)[1])
     key = rpower._bucket_key("tok")
     with pos_io.lane("nightly"):
         rpower._sleep_for_spacing("tok")                  # marks the bucket's nightly lane, for every process
@@ -137,7 +137,7 @@ def test_rpower_runs_bulk_at_its_share_while_the_nightly_archive_is_reading(monk
 def test_every_request_is_counted_in_its_lane_and_utilisation_reads_it(monkeypatch):
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
     monkeypatch.setattr(rpower, "FLEET_RPS", 10)
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: 0.0)
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **kw: 0.0)
     for _ in range(3):
         with pos_io.lane("nightly"):
             rpower._sleep_for_spacing("tok")

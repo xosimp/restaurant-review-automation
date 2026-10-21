@@ -1909,11 +1909,12 @@ def _run_for(restaurant_id, name, mod, today, db_path, now_utc) -> dict:
     else:
         tonight = []
     done, restated, failed, kept, retry_after, suspect = [], 0, [], [], None, []
+    store_down = False
     import pos_io
     import job_queue
     history = set(tonight) | set(stale_tonight)
     for d in dict.fromkeys(todo):
-        if retry_after is not None:
+        if retry_after is not None or store_down:
             failed.append(d.isoformat())
             continue
         # A queue row whose lease this process lost stops here (A4-09): the
@@ -1938,6 +1939,11 @@ def _run_for(restaurant_id, name, mod, today, db_path, now_utc) -> dict:
             failed.append(d.isoformat())
             if getattr(e, "retry_after", None):
                 retry_after = float(e.retry_after)         # the provider asked us to wait: stop asking
+            elif getattr(e, "store_failure", False):
+                # This store's own server failure (audit #23 A4-01): the next
+                # night would hit the same wall and count against the store
+                # again — stop; the row's next try reads them.
+                store_down = True
     owed_restated = {d.isoformat() for d in restated_dates if d.isoformat() in failed or d.isoformat() in kept}
     owed_restated |= {d for d in held_back if d in set(pending) | set(changed_dates or ())}
     if changed_dates is not None and not feed_doubt:
