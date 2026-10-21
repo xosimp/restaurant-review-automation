@@ -177,7 +177,8 @@ def test_the_rpower_sync_archives_the_days_once_and_writes_no_window(monkeypatch
     rid = _rid()
     csv_text = "date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes,pay_rate\n" + \
         "".join(f"2026-09-{d:02d},X,Ana B.,Server,16:00,22:00,6,6,1000,,20\n" for d in range(14, 28))
-    monkeypatch.setattr(rpower, "build_shifts_csv", lambda r, days=60: csv_text)
+    # The sync's one read (audit #23: rows, open punches and candidates together).
+    monkeypatch.setattr(rpower, "_labor_read", lambda r, days=60: {"csv": csv_text})
     monkeypatch.setattr(pos, "_complete_through_for", lambda r: date(2026, 9, 28))
     calls = []
     real = models.save_labor_daily_history

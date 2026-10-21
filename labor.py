@@ -873,6 +873,10 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
     result['over_margin_basis'] = (_day_fit or {}).get("basis")
     result['is_live'] = is_live
     result['salaried_hours_left_out'] = round(salaried_hours, 1)
+    # Punches the POS still shows open (audit #23 A3-01): hours no figure
+    # here carries yet, said beside it on Labor (names: whoever sees Labor
+    # sees who worked).
+    result['open_punches'] = open_punch_summary(restaurant_id) if is_live else None
     # The blended rate is what an hour here actually costs, priced by the
     # same chain as the labor cost (POS pay, the owner's person and role
     # rates, what the role's people make) — never the role-rates-and-flat
@@ -1299,6 +1303,7 @@ def labor_rate_basis(shifts: list, role_rates: dict, fallback: float, person_rat
 
 
 RATE_SOURCE_WORDS = {"punch": "POS pay", "person": "their own rate", "role_rate": "your rate for the role",
+                     "job_rate": "the POS's rate for the job",
                      "role_typical": "what the role's people make", "fallback": "assumed"}
 
 
@@ -1540,7 +1545,46 @@ def analyse_shifts(shifts: list[dict],
     overtime_premium = 0.0
     overtime_hours_total = 0.0
     premium_by_emp_week = {}
+    # The POS's own payroll overtime first (audit #23 A3-04): RPOWER splits
+    # each punch's hours into regular, OT and DT on the store's real payroll
+    # week (and across a group's stores) and says what it paid for them.
+    # Re-deriving a 40-hour week on Cavnar AI's own week_start_day (Monday
+    # until a person confirms it) put the premium in the wrong week and on
+    # the wrong days beside RPOWER's own OT hours. A row carrying
+    # `pos_ot_hours` is the POS's word: its premium is `pos_ot_premium`, or
+    # its OT hours x half the hour's rate (DT x a whole rate) when the punch
+    # could not say what was paid, on the punch's own day. A week with no
+    # such row is derived as before.
+    _pos_ot_weeks = set()
+    for s in shifts:
+        if str(s.get("pos_ot_hours", "")).strip() == "" or not s.get("date"):
+            continue
+        try:
+            _ot_h = float(s.get("pos_ot_hours") or 0)
+            _dt_h = float(s.get("pos_dt_hours") or 0)
+        except (TypeError, ValueError):
+            continue
+        _pos_ot_weeks.update((s.get("employee") or "Unknown", wk)
+                             for wk in week_hours_split(s, week_start_day, _shift_hours(s)))
+        if _ot_h <= 0 and _dt_h <= 0:
+            continue
+        try:
+            _prem = float(s.get("pos_ot_premium")) if str(s.get("pos_ot_premium", "")).strip() != "" else None
+        except (TypeError, ValueError):
+            _prem = None
+        if _prem is None:
+            _rate = _shift_rate(s, role_rates, hourly_rate, person_rates, role_typical)
+            _prem = (_ot_h * (OVERTIME_MULTIPLIER - 1.0) + _dt_h * 1.0) * float(_rate or 0)
+        overtime_premium += _prem
+        overtime_hours_total += _ot_h + _dt_h
+        _wk = _week_key(s["date"], week_start_day)
+        _k = (s.get("employee") or "Unknown", _wk)
+        premium_by_emp_week[_k] = round(premium_by_emp_week.get(_k, 0.0) + _prem, 2)
+        by_day[s["date"]]["labor_cost"] += _prem
+        premium_by_date[s["date"]] += _prem
     for (emp, wk), rows in _emp_week_rows.items():
+        if (emp, wk) in _pos_ot_weeks:
+            continue                     # the POS's payroll said (above)
         wk_hours = sum(_shift_hours(r) for r in rows)
         if wk_hours <= OVERTIME_THRESHOLD_HOURS:
             continue
@@ -7253,3 +7297,415 @@ def _cohort_block(restaurant_id, restaurant) -> str:
     except Exception as _sx:
         _degraded(f"cohort_comparisons failed — went on without it: {_sx!r}", _sx)
         return ""
+
+
+# ── what the nightly labor read found that the figures cannot carry (audit
+# #23, 10/21/26) ──────────────────────────────────────────────────────────────
+#
+# labor_flags (models.init_db), one row per (restaurant, kind, ref), each
+# kind replaced by every sync that reads it:
+#   open_punch         a punch with no clock-out (A3-01 / A6-08) — its hours
+#                      are in no figure until it is closed, so its business
+#                      date is held provisional (labor_daily_history final=0),
+#                      the DSR and Labor say "N punches still open", an
+#                      estimate to the store's close is shown beside the
+#                      figure (never in it), and a punch open past
+#                      OPEN_PUNCH_TASK_HOURS is an owner task (ops_issues
+#                      kind 'labor', closed when the punch is);
+#   station_candidate  a record that behaves like a station login
+#                      (rpower.station_candidates, A3-03) — proposed on the
+#                      setup step and the Data Health card, left out of labor
+#                      only once the owner confirms it;
+#   station_verdict    the owner's word on one record (station or person,
+#                      rpower.set_station_verdict) — written on its own;
+#   job_name           the name a job was first filed under (written once,
+#                      rpower._stable_job_names, A3-19);
+#   job_rename         a job the POS renamed, still filed under its first name.
+
+OPEN_PUNCH_TASK_HOURS = 16
+# An open punch is estimated to the store's close for its business date,
+# never past this many hours on the clock.
+OPEN_PUNCH_MAX_HOURS = 16.0
+
+
+def _flags_conn(db_path=None):
+    from models import get_conn
+    return get_conn(db_path) if db_path else get_conn()
+
+
+def _replace_flags(restaurant_id, kind, rows, lo=None, hi=None, db_path=None) -> list:
+    """Make `kind`'s rows for this restaurant exactly `rows` ([{ref,
+    business_date, detail}]) — within [lo, hi] by business date when given
+    (a row outside the read window is kept: the read said nothing about it).
+    A ref seen before keeps its first_seen_at. Returns the refs removed."""
+    import json as _json
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _flags_conn(db_path)
+    try:
+        sql = "SELECT ref, business_date FROM labor_flags WHERE restaurant_id=? AND kind=?"
+        args = [restaurant_id, kind]
+        if lo and hi:
+            sql += " AND business_date >= ? AND business_date <= ?"
+            args += [lo, hi]
+        held = [dict(r) for r in conn.execute(sql, args).fetchall()]
+        keep = {str(r["ref"]) for r in rows}
+        gone = [str(r["ref"]) for r in held if str(r["ref"]) not in keep]
+        if gone:
+            conn.executemany("DELETE FROM labor_flags WHERE restaurant_id=? AND kind=? AND ref=?",
+                             [(restaurant_id, kind, g) for g in gone])
+        if rows:
+            conn.executemany(
+                "INSERT INTO labor_flags (restaurant_id, kind, ref, business_date, detail_json, first_seen_at, "
+                "last_seen_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, kind, ref) DO UPDATE SET "
+                "business_date=excluded.business_date, detail_json=excluded.detail_json, "
+                "last_seen_at=excluded.last_seen_at",
+                [(restaurant_id, kind, str(r["ref"]), r.get("business_date"),
+                  _json.dumps(r.get("detail") or {}, default=str), now, now) for r in rows])
+        conn.commit()
+    finally:
+        conn.close()
+    return gone
+
+
+def put_flag(restaurant_id, kind, ref, detail=None, business_date=None, keep_existing=False, db_path=None) -> None:
+    """One labor_flags row, written on its own (an owner's answer, a job's
+    first name). `keep_existing`: a row already there is left as it is (a
+    job's kept name is never overwritten by a later spelling)."""
+    import json as _json
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _flags_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO labor_flags (restaurant_id, kind, ref, business_date, detail_json, first_seen_at, "
+            "last_seen_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, kind, ref) DO "
+            + ("NOTHING" if keep_existing else
+               "UPDATE SET business_date=excluded.business_date, detail_json=excluded.detail_json, "
+               "last_seen_at=excluded.last_seen_at"),
+            (restaurant_id, kind, str(ref), business_date, _json.dumps(detail or {}, default=str), now, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _setup_started(restaurant_id, db_path=None) -> bool:
+    """Whether this store's setup checklist was opened. A suggestion on a
+    store set up by hand before the checklist existed would open it — and
+    every other labor step would read pending and hold its auto-draft."""
+    try:
+        import onboarding
+        return bool(onboarding.confirmations(restaurant_id, **({"db_path": db_path} if db_path else {})))
+    except Exception:
+        return False
+
+
+def flags(restaurant_id, kind, dates=None, db_path=None) -> list:
+    """[{ref, business_date, first_seen_at, last_seen_at, **detail}] of one
+    kind, oldest business date first; only `dates` when given. [] when the
+    table cannot be read."""
+    import json as _json
+    try:
+        conn = _flags_conn(db_path)
+        try:
+            sql = ("SELECT ref, business_date, detail_json, first_seen_at, last_seen_at FROM labor_flags "
+                   "WHERE restaurant_id=? AND kind=?")
+            args = [restaurant_id, kind]
+            dates = sorted({str(d)[:10] for d in dates}) if dates else None
+            if dates:
+                sql += f" AND business_date IN ({','.join('?' for _ in dates)})"
+                args += dates
+            rows = conn.execute(sql + " ORDER BY business_date, ref", args).fetchall()
+        finally:
+            conn.close()
+    except Exception as _sx:
+        _degraded(f"labor_flags unreadable — went on without them: {_sx!r}", _sx)
+        return []
+    out = []
+    for r in rows:
+        try:
+            d = _json.loads(r["detail_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            d = {}
+        out.append(dict(d, ref=r["ref"], business_date=r["business_date"], first_seen_at=r["first_seen_at"],
+                        last_seen_at=r["last_seen_at"]))
+    return out
+
+
+def _open_estimate(restaurant, punch, now_local, rates):
+    """(hours, cost, basis) — an open punch costed to the store's close for
+    its business date (time_utils.service_window), or to now while that
+    close is still ahead; (None, None, reason) when the store's hours are
+    not set (nothing to estimate to). Priced on Labor's own rate chain."""
+    from time_utils import service_window
+    try:
+        start = datetime.fromisoformat(str(punch.get("clock_in"))[:19])
+        day = date.fromisoformat(str(punch.get("business_date"))[:10])
+    except (TypeError, ValueError):
+        return None, None, "no clock-in time"
+    window = service_window(restaurant, day) if restaurant is not None else None
+    if not window:
+        return None, None, "no closing time set for that day"
+    end = min(window[1], now_local) if now_local else window[1]
+    hours = max(0.0, min(OPEN_PUNCH_MAX_HOURS, (end - start).total_seconds() / 3600.0))
+    role_rates, people, typical, fallback = rates
+    try:
+        rate, _src = _shift_rate_source({"employee": punch.get("employee"), "role": punch.get("role"),
+                                         "pay_rate": punch.get("pay_rate"), "job_rate": punch.get("job_rate"),
+                                         "date": punch.get("business_date")},
+                                        role_rates, fallback, people, typical)
+        cost = round(hours * float(rate or 0), 2)
+    except Exception:
+        cost = None
+    basis = "to the store's close" if end == window[1] else "to now"
+    return round(hours, 2), cost, basis
+
+
+def record_open_punches(restaurant_id, punches, window=None, now_local=None, db_path=None) -> dict:
+    """Keep the read's open punches (A3-01 / A6-08): labor_flags
+    'open_punch' rows over the read's window (each with its estimate), an
+    owner task for each open past OPEN_PUNCH_TASK_HOURS, and the task
+    closed for one the POS has since closed. {count, dates, tasks_opened,
+    tasks_closed}. Never raises."""
+    out = {"count": len(punches or []), "dates": sorted({p["business_date"] for p in punches or []}),
+           "tasks_opened": 0, "tasks_closed": 0}
+    try:
+        from models import get_restaurant, get_role_rates, person_rates as _owner_rates
+        from time_utils import restaurant_now
+        r = get_restaurant(restaurant_id)
+        now_local = now_local or (restaurant_now(r, naive=True) if r is not None else datetime.now())
+        role_rates = get_role_rates(restaurant_id) or {}
+        try:
+            people, typical = rate_book(load_shifts_for_restaurant(restaurant_id) or [], _owner_rates(r))
+        except Exception:
+            people, typical = {}, {}
+        fallback = float(role_rates.get("_default") or getattr(r, "hourly_rate", None) or DEFAULT_HOURLY_RATE)
+        rates = (role_rates, people, typical, fallback)
+        rows = []
+        for p in punches or []:
+            hours, cost, basis = _open_estimate(r, p, now_local, rates)
+            rows.append({"ref": p["punch_id"], "business_date": p["business_date"],
+                         "detail": {"employee": p.get("employee"), "employee_id": p.get("employee_id"),
+                                    "role": p.get("role"), "clock_in": p.get("clock_in"),
+                                    "est_hours": hours, "est_cost": cost, "est_basis": basis}})
+        lo, hi = (window or (None, None))
+        gone = _replace_flags(restaurant_id, "open_punch", rows, lo, hi, db_path=db_path)
+        out["tasks_closed"] = _close_open_punch_tasks(restaurant_id, gone, db_path=db_path)
+        out["tasks_opened"] = _open_punch_tasks(restaurant_id, r, rows, now_local, db_path=db_path)
+    except Exception as _sx:
+        _degraded(f"open punches not recorded — went on without them: {_sx!r}", _sx)
+    return out
+
+
+def _open_punch_tasks(restaurant_id, restaurant, rows, now_local, db_path=None) -> int:
+    """An owner task (ops_issues kind 'labor', one per punch, keyed
+    open_punch:<punch id>) for each punch on the clock longer than
+    OPEN_PUNCH_TASK_HOURS: a forgotten clock-out never fixed was lost from
+    labor for good. Filed without a text (it is found at 3am); on Home and
+    in the issue list."""
+    import issues
+    from time_utils import mdy
+    n = 0
+    for row in rows:
+        d = row["detail"]
+        try:
+            start = datetime.fromisoformat(str(d.get("clock_in"))[:19])
+        except (TypeError, ValueError):
+            continue
+        if (now_local - start).total_seconds() < OPEN_PUNCH_TASK_HOURS * 3600:
+            continue
+        who = d.get("employee") or "Someone"
+        clock = f"{start.hour % 12 or 12}:{start.minute:02d}{'am' if start.hour < 12 else 'pm'}"
+        when = f"{mdy(row['business_date'])} at {clock}"
+        try:
+            _issue, token = issues.create_issue(
+                restaurant_id, "labor", f"{who}'s punch from {mdy(row['business_date'])} is still open",
+                detail=(f"The POS shows {who} clocked in on {when}"
+                        + (f" as {d['role']}" if d.get("role") else "")
+                        + " with no clock-out. Those hours aren't in labor, and the night's labor stays "
+                          "provisional, until the punch is closed in the POS — the next nightly sync picks "
+                          "up the fix and closes this."),
+                source_key=f"open_punch:{row['ref']}", notify=False,
+                meta={"punch_id": row["ref"], "business_date": row["business_date"]},
+                **({"db_path": db_path} if db_path else {}))
+            n += 1 if _issue else 0
+        except Exception as _sx:
+            _degraded(f"open-punch task not filed — went on without it: {_sx!r}", _sx)
+    return n
+
+
+def _close_open_punch_tasks(restaurant_id, refs, db_path=None) -> int:
+    """Resolve the open-punch task of each punch the POS has closed."""
+    if not refs:
+        return 0
+    import issues
+    n = 0
+    conn = _flags_conn(db_path)
+    try:
+        keys = [f"open_punch:{r}" for r in refs]
+        rows = conn.execute(f"SELECT id FROM ops_issues WHERE restaurant_id=? AND status != 'resolved' AND "
+                            f"source_key IN ({','.join('?' for _ in keys)})", (restaurant_id, *keys)).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            issues.resolve(restaurant_id, r["id"], note="The punch was closed in the POS.",
+                           **({"db_path": db_path} if db_path else {}))
+            n += 1
+        except Exception as _sx:
+            _degraded(f"open-punch task not closed — went on without it: {_sx!r}", _sx)
+    return n
+
+
+def open_punch_summary(restaurant_id, dates=None, with_names=True, db_path=None) -> dict:
+    """{count, dates, people: [{employee, role, clock_in, business_date,
+    est_hours, est_cost}], est_hours, est_cost, line} — the punches still
+    open (on `dates` when given) as every surface says them (the DSR's
+    Labor block, Labor's caveat, the Data Health card). The estimate is to
+    the store's close and labelled so; it is never added to a labor figure.
+    `with_names` False (a login that may not see who worked) leaves the
+    people out and says the count only."""
+    rows = flags(restaurant_id, "open_punch", dates=dates, db_path=db_path)
+    out = {"count": len(rows), "dates": sorted({r["business_date"] for r in rows}), "people": [],
+           "est_hours": None, "est_cost": None, "line": None}
+    if not rows:
+        return out
+    hrs = [r.get("est_hours") for r in rows if isinstance(r.get("est_hours"), (int, float))]
+    cost = [r.get("est_cost") for r in rows if isinstance(r.get("est_cost"), (int, float))]
+    out["est_hours"] = round(sum(hrs), 1) if hrs and len(hrs) == len(rows) else None
+    out["est_cost"] = round(sum(cost), 2) if cost and len(cost) == len(rows) else None
+    if with_names:
+        out["people"] = [{"employee": r.get("employee"), "role": r.get("role"), "clock_in": r.get("clock_in"),
+                          "business_date": r["business_date"], "est_hours": r.get("est_hours"),
+                          "est_cost": r.get("est_cost")} for r in rows]
+    from time_utils import mdy
+    n = len(rows)
+    names = ", ".join(sorted({str(r.get("employee") or "") for r in rows if r.get("employee")}))[:200]
+    line = (f"{n} punch{'es' if n != 1 else ''} still open" + (f" ({names})" if with_names and names else "")
+            + ": " + ("their" if n != 1 else "its") + " hours aren't in labor until "
+            + ("they're" if n != 1 else "it's") + " closed in the POS")
+    # The sentence without the estimate or the date, for a model's facts
+    # (the DSR's observation): the estimate is no measured figure.
+    out["line_short"] = line + "."
+    if out["est_cost"] is not None:
+        line += f" — about ${out['est_cost']:,.0f} if they ran to close (estimated)"
+    if len(out["dates"]) == 1 and not dates:
+        line += f", {mdy(out['dates'][0])}"
+    out["line"] = line + "."
+    return out
+
+
+def record_station_candidates(restaurant_id, candidates, db_path=None) -> None:
+    """Keep the read's station-login candidates (A3-03) as labor_flags rows,
+    and propose them on the `station_logins` setup step while it is
+    pending (onboarding.suggest never writes over a person's answer).
+    Never raises."""
+    try:
+        rows = [{"ref": mid, "business_date": None, "detail": dict(c)} for mid, c in (candidates or {}).items()]
+        _replace_flags(restaurant_id, "station_candidate", rows, db_path=db_path)
+        if candidates and _setup_started(restaurant_id, db_path=db_path):
+            import onboarding
+            onboarding.suggest(restaurant_id, "station_logins",
+                               {"stations": {mid: c.get("name") or mid for mid, c in candidates.items()},
+                                "candidates": [dict(c, employee_id=mid) for mid, c in candidates.items()]},
+                               source="POS punches: never paid, every punch beside a colleague's",
+                               **({"db_path": db_path} if db_path else {}))
+    except Exception as _sx:
+        _degraded(f"station candidates not recorded — went on without them: {_sx!r}", _sx)
+
+
+def record_job_renames(restaurant_id, renames, db_path=None) -> None:
+    """Keep the jobs the POS renamed that stay filed under their first name
+    (A3-19) as labor_flags rows. Never raises."""
+    try:
+        rows = [{"ref": mid, "business_date": None, "detail": {"kept": kept, "pos": now}}
+                for mid, (kept, now) in (renames or {}).items()]
+        _replace_flags(restaurant_id, "job_rename", rows, db_path=db_path)
+    except Exception as _sx:
+        _degraded(f"job renames not recorded — went on without them: {_sx!r}", _sx)
+
+
+def suggest_salaried(restaurant_id, names, db_path=None) -> list:
+    """Propose the people the POS marks salaried (RPOWER job/employeejob
+    is_salary, A3-09) on the `salaried` setup step — never over a person's
+    answer, and only names not already salaried. At 1,500 stores a store
+    whose owner never typed the salaried names had its salaried managers'
+    $0 punches costed by the hour. Returns the names proposed."""
+    try:
+        from models import get_restaurant, salaried_keys, salaried_name_key
+        have = salaried_keys(get_restaurant(restaurant_id))
+        new = sorted({n for n in names or () if n and salaried_name_key(n) not in have})
+        if new and _setup_started(restaurant_id, db_path=db_path):
+            import onboarding
+            onboarding.suggest(restaurant_id, "salaried", {"names": new},
+                               source="RPOWER marks their job salaried (is_salary)",
+                               **({"db_path": db_path} if db_path else {}))
+        return new
+    except Exception as _sx:
+        _degraded(f"salaried suggestion not recorded — went on without it: {_sx!r}", _sx)
+        return []
+
+
+def save_sales_days(restaurant_id, sales_by_date, provenance=None, db_path=None) -> int:
+    """A store whose POS has sales but no timeclock punches (A6-13): each
+    day's net sales into labor_daily_history — the sales history demand,
+    COGS and staffing read — with NO labor figure (labor_cost, hours and %
+    stay NULL, never $0 and 0%). A day that already has labor keeps it and
+    takes the sales (its % re-costed). Returns the days written."""
+    from datetime import datetime as _dt
+    prov = provenance or {}
+    ct = prov.get("complete_through")
+    rows = []
+    for day, sales in sorted((sales_by_date or {}).items()):
+        try:
+            v = float(sales)
+        except (TypeError, ValueError):
+            continue
+        if v <= 0:
+            continue
+        rows.append((restaurant_id, day, _dt.strptime(day, "%Y-%m-%d").strftime("%A"), round(v, 2),
+                     prov.get("source"), prov.get("provider"), prov.get("synced_at"),
+                     0 if (ct and day > ct) else 1))
+    if not rows:
+        return 0
+    conn = _flags_conn(db_path)
+    try:
+        conn.executemany(
+            "INSERT INTO labor_daily_history (restaurant_id, date, day_of_week, sales, source, provider, synced_at, "
+            "final) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, date) DO UPDATE SET sales=excluded.sales, "
+            "labor_pct=CASE WHEN labor_daily_history.labor_cost IS NOT NULL AND excluded.sales > 0 "
+            "THEN ROUND(labor_daily_history.labor_cost * 100.0 / excluded.sales, 1) ELSE NULL END, "
+            "synced_at=COALESCE(excluded.synced_at, labor_daily_history.synced_at), "
+            "provider=COALESCE(excluded.provider, labor_daily_history.provider), final=excluded.final", rows)
+        conn.commit()
+    finally:
+        conn.close()
+    return len(rows)
+
+
+def data_health_notes(restaurant_id, db_path=None) -> list:
+    """[{key, label, text, tone, action?}] — what the nightly labor read found
+    for the Data Health card (audit #23): punches still open, records that
+    behave like a station login (each with the owner's two answers), and
+    jobs the POS renamed. [] when there is nothing, or nothing readable."""
+    out = []
+    try:
+        op = open_punch_summary(restaurant_id, db_path=db_path)
+        if op["count"]:
+            out.append({"key": "open_punches", "label": "Open punches", "tone": "warn", "text": op["line"]})
+        for c in flags(restaurant_id, "station_candidate", db_path=db_path):
+            beside = ", ".join(c.get("beside") or [])[:120]
+            out.append({"key": f"station:{c['ref']}", "label": "Station login?", "tone": "warn",
+                        "text": (f"{c.get('name') or 'A POS record'} has never been paid and every one of its "
+                                 f"{c.get('punches') or 'recent'} punches sits beside someone else's"
+                                 + (f" ({beside})" if beside else "")
+                                 + " — it looks like a shared station login, which would count those hours "
+                                   "twice. It stays in labor until you say."),
+                        "action": {"kind": "station", "employee_id": c["ref"], "name": c.get("name"),
+                                   "web": "/api/data-health/station", "mobile": "/mobile/api/data-health/station"}})
+        for j in flags(restaurant_id, "job_rename", db_path=db_path):
+            out.append({"key": f"job_rename:{j['ref']}", "label": "Job renamed in the POS", "tone": "mid",
+                        "text": (f"The POS renamed “{j.get('kept')}” to “{j.get('pos')}”. Cavnar AI "
+                                 f"keeps calling it “{j.get('kept')}” so its history and your rate for it "
+                                 "still match.")})
+    except Exception as _sx:
+        _degraded(f"labor data-health notes failed — went on without them: {_sx!r}", _sx)
+    return out

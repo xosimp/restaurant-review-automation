@@ -2670,25 +2670,43 @@ def _punch_dt(raw) -> Optional[datetime]:
     return None if dt.year <= 2000 else dt
 
 
-def punch_business_date(t: datetime) -> date:
+def day_start(restaurant_id=None) -> int:
+    """Minutes past midnight at which this store's business date turns over
+    (time_utils.day_start_minutes: 4am, later when its hours close later) —
+    the one boundary its punches, its "today" and its complete nights share
+    (audit #23 A3-14 / A2-24). The default when the row cannot be read."""
+    from time_utils import day_start_minutes
+    if not restaurant_id:
+        return day_start_minutes(None)
+    try:
+        from models import get_restaurant
+        return day_start_minutes(get_restaurant(restaurant_id))
+    except Exception:
+        return day_start_minutes(None)
+
+
+def punch_business_date(t: datetime, start_minutes: int = None) -> date:
     """The business date a punch that STARTS at local wall-clock `t` is
-    worked for — the schedule's own rule (schedule_time.NIGHT_TAIL_BEFORE: a
-    start before 4am is the small hours of the night before). Every RPOWER
-    punch path files by it: the live clock-ins, the archive's punches, the
-    nightly labor rows (blind re-audit 10/20/26 R3-10 / R9-09). The clock-in
-    and archive paths used 5am, so a 4:30am baker was "hasn't clocked in"
+    worked for — the store's own boundary (`start_minutes`, day_start();
+    default the schedule's rule, schedule_time.NIGHT_TAIL_BEFORE: a start
+    before 4am is the small hours of the night before). Every RPOWER punch
+    path files by it: the live clock-ins, the archive's punches, the nightly
+    labor rows (blind re-audit 10/20/26 R3-10 / R9-09). The clock-in and
+    archive paths used 5am, so a 4:30am baker was "hasn't clocked in"
     against a 4:30 shift and filed on the night before; the labor rows used
     the calendar date, so a 12:10am job change was set against the next
     day's sales."""
-    from schedule_time import NIGHT_TAIL_BEFORE
-    return t.date() - timedelta(days=1) if t.hour * 60 + t.minute < NIGHT_TAIL_BEFORE else t.date()
+    if start_minutes is None:
+        from schedule_time import NIGHT_TAIL_BEFORE
+        start_minutes = NIGHT_TAIL_BEFORE
+    return t.date() - timedelta(days=1) if t.hour * 60 + t.minute < start_minutes else t.date()
 
 
-def _punch_window(day) -> tuple:
+def _punch_window(day, restaurant_id=None) -> tuple:
     """(start, end) local wall-clock of the punches worked for business date
-    `day` (punch_business_date's boundary to the same one the next morning)."""
-    from schedule_time import NIGHT_TAIL_BEFORE
-    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=NIGHT_TAIL_BEFORE)
+    `day` (the store's boundary, day_start(), to the same one the next
+    morning)."""
+    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=day_start(restaurant_id))
     return start, start + timedelta(days=1)
 
 
@@ -2773,7 +2791,13 @@ _STATION_WORDS = frozenset((
     # A shared cash drawer: Simple EJ's "Office Drawer" (never paid, clocked
     # in as Manager BOH and Host PM) was on the roster as a person - the
     # Bench's only BOH dinner manager (owner, 10/19/26).
-    "office drawer cash till").split())
+    "office drawer cash till "
+    # Ordering channels, places and devices a store names a login after
+    # (audit #23 A3-03: "Online Orders", "Doordash", "Rooftop Bar", "Beer
+    # Garden" read as people).
+    "order orders doordash grubhub ubereats uber eats postmates caviar seamless "
+    "rooftop roof garden beer wine cafe deck dining kiosk window drive thru "
+    "terminal pos ipad tablet").split())
 
 
 def _name_words(name) -> list:
@@ -2781,26 +2805,142 @@ def _name_words(name) -> list:
 
 
 def is_station_name(name, job_names=()) -> bool:
-    """Every word of `name` is a station / daypart / job word."""
+    """Every word of `name` is a station / daypart / job word, or a number
+    ("Bar 1", "Patio Bar 2": a number is never part of a person's name —
+    audit #23 A3-03; the docstrings said "Bar 1" was left out and it was
+    not). A name of numbers alone is not one."""
     words = _name_words(name)
     vocab = set(_STATION_WORDS)
     for j in job_names or ():
         vocab.update(_name_words(j))
-    return bool(words) and all(w in vocab for w in words)
+    return (bool(words) and any(not w.isdigit() for w in words)
+            and all(w in vocab or w.isdigit() for w in words))
 
 
 def _paid(entry) -> bool:
     return any(float(entry.get(k) or 0) > 0 for k in ("reg_rate", "reg_pay", "ot_pay", "dt_pay"))
 
 
+# A station login clocks in and out beside the real person on its job
+# (Simple EJ's Day Bar 9:51-3:31 beside Amy Baylis 9:51-3:31): two punches
+# on one job whose ins and outs are both within this many minutes are twins.
+STATION_TWIN_MINUTES = 3
+# A record is a station CANDIDATE by behaviour only past this many punches,
+# every one of them a twin (one shared shift is a trainee's first day).
+STATION_MIN_PUNCHES = 3
+
+
+def station_candidates(entries: list, people: dict) -> dict:
+    """{emp_mid: {"name", "punches", "beside"}} — records that behave like a
+    station login whatever they are called (audit #23 A3-03): never paid,
+    at least STATION_MIN_PUNCHES closed punches, and EVERY one of them
+    clocked in and out on the same job within STATION_TWIN_MINUTES of a
+    different employee's punch. Behaviour only proposes: a trainee shadowing
+    a trainer with no rate entered looks the same, so a candidate is left
+    out of labor only once the owner confirms it (station_owner); the
+    Data Health card and the setup step list them. Records already left out
+    (a station name, the owner's list) and ones the owner called a person
+    are not proposed."""
+    people = people or {}
+    emps = people.get("employees") or {}
+    owner = people.get("station_owner") or {}
+    skip = (set((owner.get("stations") or {}).keys()) | set((owner.get("people") or {}).keys())
+            | set(station_logins(entries, people).keys()))
+    paid, by_emp, by_job = set(), {}, {}
+    for e in entries or []:
+        mid = str(e.get("emp_mid") or "").strip()
+        if not mid:
+            continue
+        if _paid(e):
+            paid.add(mid)
+        a, z = _punch_dt(e.get("in_dttm")), _punch_dt(e.get("out_dttm"))
+        if a is None or z is None or z <= a:
+            continue
+        job = str(e.get("job_mid") or e.get("job_id") or "")
+        by_emp.setdefault(mid, []).append((job, a, z))
+        by_job.setdefault(job, []).append((mid, a, z))
+    tol = timedelta(minutes=STATION_TWIN_MINUTES)
+    out = {}
+    for mid, punches in by_emp.items():
+        if mid in paid or mid in skip or len(punches) < STATION_MIN_PUNCHES:
+            continue
+        beside = set()
+        for job, a, z in punches:
+            twin = next((m for m, a2, z2 in by_job.get(job) or () if m != mid
+                         and abs(a2 - a) <= tol and abs(z2 - z) <= tol), None)
+            if twin is None:
+                break
+            beside.add(emps.get(twin) or twin)
+        else:
+            out[mid] = {"name": emps.get(mid) or mid, "punches": len(punches), "beside": sorted(beside)}
+    return out
+
+
+def station_owner(restaurant_id) -> dict:
+    """{"stations": {emp_mid: name}, "people": {emp_mid: name}} — the
+    owner's own station list for this store (audit #23 A3-03): the
+    `station_logins` setup step (onboarding_confirmations) once confirmed —
+    its value when one was given, else the suggestion it confirmed — with
+    the owner's word on single records over it (labor_flags
+    `station_verdict`, the Data Health card). A key is present only when it
+    holds a record; {} when nothing is said or nothing can be read."""
+    out = {"stations": {}, "people": {}}
+    try:
+        import onboarding
+        c = (onboarding.confirmations(restaurant_id) or {}).get("station_logins") or {}
+    except Exception:
+        c = {}
+    if c.get("status") == "confirmed":
+        v = c.get("value") if isinstance(c.get("value"), dict) else (c.get("suggested") or {})
+        for k in ("stations", "people"):
+            got = v.get(k) if isinstance(v, dict) else None
+            if isinstance(got, dict):
+                out[k].update({str(m): str(n) for m, n in got.items()})
+            elif isinstance(got, list):
+                out[k].update({str(m): str(m) for m in got})
+    try:
+        import labor
+        for f in labor.flags(restaurant_id, "station_verdict"):
+            mid = str(f["ref"])
+            yes, no = ("stations", "people") if f.get("station") else ("people", "stations")
+            out[no].pop(mid, None)
+            out[yes][mid] = str(f.get("name") or mid)
+    except Exception as e:
+        log.info("[rpower] station verdicts unreadable rid=%s: %s", restaurant_id, e)
+    return {k: v for k, v in out.items() if v}
+
+
+def set_station_verdict(restaurant_id, emp_mid, name, is_station, who=None) -> dict:
+    """The owner's word on one record (audit #23 A3-03): a station login
+    (left out of labor from the next sync on) or a person (never proposed
+    again) — a labor_flags `station_verdict` row, so a store set up by hand
+    never has its setup checklist opened by it. Returns the new
+    {"stations", "people"}."""
+    import labor
+    mid = str(emp_mid or "").strip()
+    if not mid:
+        raise ValueError("no employee id")
+    labor.put_flag(restaurant_id, "station_verdict", mid,
+                   {"name": str(name or mid)[:80], "station": bool(is_station), "by": who})
+    _people_cache.pop(restaurant_id, None)
+    out = station_owner(restaurant_id)
+    return {"stations": out.get("stations") or {}, "people": out.get("people") or {}}
+
+
 def station_logins(entries: list, people: dict) -> dict:
     """{emp_mid: name} of the station logins among these punches: a station
-    name (fetch_people's `station_names`) with no pay on any punch."""
+    name (fetch_people's `station_names`) with no pay on any punch, and
+    every record the owner confirmed as a station (station_owner) — never
+    one the owner said is a person."""
+    people = people or {}
+    owner = people.get("station_owner") or {}
     cands = people.get("station_names") or {}
-    if not cands:
-        return {}
-    paid = {str(e.get("emp_mid") or "") for e in entries or [] if _paid(e)}
-    return {mid: nm for mid, nm in cands.items() if mid not in paid}
+    paid = {str(e.get("emp_mid") or "") for e in entries or [] if _paid(e)} if cands else set()
+    out = {mid: nm for mid, nm in cands.items() if mid not in paid}
+    out.update(owner.get("stations") or {})
+    for mid in owner.get("people") or {}:
+        out.pop(mid, None)
+    return out
 
 
 def _name_tag(emp: dict) -> str:
@@ -2814,15 +2954,32 @@ def _name_tag(emp: dict) -> str:
     return _tidy_name(parts[2]) if len(parts) > 2 else ""
 
 
-def distinct_employee_names(records) -> dict:
+def _is_current(emp: dict, today=None) -> bool:
+    """No termination date (RPOWER writes 2000-01-01 for none), or one still
+    ahead."""
+    term = str(emp.get("term_date") or "")[:10]
+    if not term or term[:4] <= "2000":
+        return True
+    today = (today or datetime.utcnow().date()).isoformat()
+    return term > today
+
+
+def distinct_employee_names(records, punching=None, today=None) -> dict:
     """{mid: display name} for RPOWER employee records, with two people who
     would read the same name told apart (owner, 10/14/26: two "Oscar
     Avelar"s - different records, pay and jobs - were one person to every
     schedule, overtime and rating check, a 68.6h week). A record with a
     distinguishing middle part reads "Oscar J. Avelar"; the one without
     keeps the plain name; records still alike all carry their payroll id. A
-    name only one record has is unchanged, so nobody else is renamed."""
-    base, groups = {}, {}
+    name only one record has is unchanged, so nobody else is renamed.
+
+    Only CURRENT records (no termination date, or in `punching`: ids with a
+    punch in the window) contend for a name (audit #23 A3-08): RPOWER keeps
+    records for people long gone, and a former John Smith on file renamed
+    the new hire "John Smith (AB12CD)" on every screen. A former employee
+    who shares a current one's name is the one told apart."""
+    punching = {str(m) for m in (punching or ())}
+    base, groups, current = {}, {}, set()
     for e in records or []:
         m = str(e.get("mid") or "").strip()
         name = employee_display_name(e)
@@ -2830,10 +2987,14 @@ def distinct_employee_names(records) -> dict:
             continue
         base[m] = (name, e)
         groups.setdefault(name.lower(), []).append(m)
+        if m in punching or _is_current(e, today):
+            current.add(m)
     out = {m: v[0] for m, v in base.items()}
-    for key, mids in groups.items():
-        if len(mids) < 2:
-            continue
+
+    def _tagged(m):
+        return f"{base[m][0]} ({str(base[m][1].get('payroll_id') or m)[-6:]})"
+
+    def _apart(mids):
         named = {}
         for m in mids:
             name, e = base[m]
@@ -2852,7 +3013,81 @@ def distinct_employee_names(records) -> dict:
             # the POS never picks one of two identical records by guess.
             if counts[named[m].lower()] > 1:
                 named[m] = f"{named[m]} ({str(base[m][1].get('payroll_id') or m)[-6:]})"
-            out[m] = named[m]
+        return named
+
+    for key, mids in groups.items():
+        if len(mids) < 2:
+            continue
+        live = [m for m in mids if m in current]
+        gone = [m for m in mids if m not in current]
+        if len(live) >= 2:
+            out.update(_apart(live))
+        if live:
+            # A former record beside a current one is the one told apart (its
+            # payroll id); the current keeps whatever it reads above.
+            for m in gone:
+                out[m] = _tagged(m)
+        elif len(gone) >= 2:
+            out.update(_apart(gone))
+    return out
+
+
+def _stable_job_names(restaurant_id, jobs: dict) -> tuple:
+    """({job_mid: role name}, {job_mid: (kept, now)} renames) — each job
+    keeps the name Cavnar AI first filed it under (audit #23 A3-19): roles,
+    the owner's rate for a role, history and person_roles all key on the
+    name, and a job renamed in RPOWER ("Server PM" → "Server Night") split
+    its history and dropped the owner's rate to the fallback. The job's id
+    is the key and its first name the display; a rename is reported (the
+    Data Health card), never applied silently. Kept per restaurant as
+    labor_flags `job_name` rows (written once, never overwritten); a job
+    never seen before takes its POS name; an unreadable store keeps the
+    POS's names."""
+    try:
+        import labor
+        kept = _kept_job_names(restaurant_id, strict=True)
+    except Exception:
+        return dict(jobs), {}
+    out, renamed = {}, {}
+    for mid, name in jobs.items():
+        old = kept.get(mid)
+        if old and old.lower() != name.lower():
+            out[mid] = old
+            renamed[mid] = (old, name)
+        else:
+            out[mid] = old or name
+            if not old:
+                try:
+                    labor.put_flag(restaurant_id, "job_name", mid, {"name": name}, keep_existing=True)
+                except Exception as e:
+                    log.warning("[rpower] job name not kept for %s: %s", restaurant_id, e)
+    return out, renamed
+
+
+def _kept_job_names(restaurant_id, strict=False) -> dict:
+    """{job_mid: the name it is filed under} (_stable_job_names), read only;
+    {} when none is kept. `strict` raises when the rows cannot be read."""
+    import json as _json
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT ref, detail_json FROM labor_flags WHERE restaurant_id=? AND kind='job_name'",
+                                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        if strict:
+            raise
+        return {}
+    out = {}
+    for r in rows:
+        try:
+            name = (_json.loads(r[1] or "{}") or {}).get("name")
+        except (TypeError, ValueError):
+            name = None
+        if name:
+            out[str(r[0])] = str(name)
     return out
 
 
@@ -2861,29 +3096,47 @@ def fetch_people(restaurant_id: int) -> dict:
     "station_names": {emp_mid: POS name}} for this store's consolidation
     group — one paged read of each list. `station_names` are records whose
     name is a station's (is_station_name); station_logins() decides from
-    their punches."""
+    their punches.
+
+    Also (audit #23): `job_rates` {job_mid: RPOWER's reg_rate for the job}
+    and `salaried_jobs` (job_mids RPOWER marks is_salary) for the rate
+    chain and the salaried suggestion (A3-02 / A3-09); `current` (employee
+    mids still employed, A3-08); `station_owner` (the owner's own station
+    list, A3-03); `job_renames` {job_mid: (kept name, POS name)} (A3-19)."""
     token, base = _ctx(restaurant_id)
     jobs, emps, stations, payroll = {}, {}, {}, {}
+    job_rates, salaried_jobs = {}, set()
     for j in _list(restaurant_id, "job/getbycg"):
         name = _tidy_name(j.get("name"))
         if j.get("mid") and name:
             jobs[str(j["mid"])] = name
+            if _num(j.get("reg_rate")) > 0:
+                job_rates[str(j["mid"])] = round(_num(j.get("reg_rate")), 2)
+            if str(j.get("is_salary") or "").strip().lower() in ("1", "true", "y", "yes"):
+                salaried_jobs.add(str(j["mid"]))
+    pos_job_names = dict(jobs)
+    jobs, renames = _stable_job_names(restaurant_id, jobs)
     emp_recs = list(_list(restaurant_id, "employee/getbycg"))
     distinct = distinct_employee_names(emp_recs)
+    current = set()
     for e in emp_recs:
         name = distinct.get(str(e.get("mid") or "").strip())
         if e.get("mid") and str(e.get("payroll_id") or "").strip():
             payroll[str(e["mid"])] = str(e["payroll_id"]).strip()
+        if e.get("mid") and _is_current(e):
+            current.add(str(e["mid"]))
         if e.get("mid") and name:
             emps[str(e["mid"])] = name
             # the POS's own full name ("To Go AM"; fname+lname lost the "Go")
             full = _tidy_name(" ".join(str(e.get(k) or "") for k in ("fname", "mname", "lname")).strip()
                               or e.get("name"))
-            if is_station_name(full, jobs.values()):
+            if is_station_name(full, list(jobs.values()) + list(pos_job_names.values())):
                 stations[str(e["mid"])] = full
     # `payroll`: each employee's payroll id, which a punch read back from the
     # archive carries no copy of (build_shifts_csv, scale audit A3-06).
-    return {"jobs": jobs, "employees": emps, "station_names": stations, "payroll": payroll}
+    return {"jobs": jobs, "employees": emps, "station_names": stations, "payroll": payroll,
+            "job_rates": job_rates, "salaried_jobs": salaried_jobs, "current": current,
+            "station_owner": station_owner(restaurant_id), "job_renames": renames}
 
 
 def fetch_customers(restaurant_id: int) -> dict:
@@ -2939,10 +3192,15 @@ def job_categories(restaurant_id: int) -> dict:
             for c in _list(restaurant_id, "payrollcategory/getbycg")
             if c.get("mid")}
     out = {}
+    kept = _kept_job_names(restaurant_id)
     for j in _list(restaurant_id, "job/getbycg"):
         name, cat = _tidy_name(j.get("name")), cats.get(str(j.get("pyrlcat_mid") or ""))
         if name and cat:
             out[name.lower()] = cat
+            # The name the job is filed under after a rename in RPOWER
+            # (_stable_job_names, audit #23 A3-19).
+            if kept.get(str(j.get("mid") or "")):
+                out.setdefault(kept[str(j["mid"])].lower(), cat)
     _job_cat_cache[restaurant_id] = (time.monotonic(), out)
     return out
 
@@ -2992,7 +3250,7 @@ def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
     labor and the coverage check for up to six hours, or, among 21 or more
     punches, vanished, and they were told "hasn't clocked in")."""
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
-    start, end = _punch_window(day)
+    start, end = _punch_window(day, restaurant_id)
     entries = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     if not entries:
@@ -3015,6 +3273,14 @@ def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
                      "clocked_out_at": (_punch_dt(e.get("out_dttm")).isoformat()
                                         if _punch_dt(e.get("out_dttm")) else None),
                      "hourly_wage": _num(e.get("reg_rate")) or None,
+                     # What payroll counts once the punch is closed (reg + OT
+                     # + DT, the nightly figure's own hours) and the unpaid
+                     # break and meal minutes so far (audit #23 A3-15: live
+                     # labor costed the wall clock, breaks included).
+                     "paid_hours": (round(sum(_num(e.get(k)) for k in ("reg_hours", "ot_hours", "dt_hours")), 3)
+                                    if _punch_dt(e.get("out_dttm")) else None) or None,
+                     "break_minutes": (_num(e.get("break_minutes")) + _num(e.get("meal1_minutes"))
+                                       + _num(e.get("meal2_minutes"))) or None,
                      "external_id": mid})
     return rows
 
@@ -3034,7 +3300,58 @@ def _require_resolved(entries: list, people: dict) -> None:
             "nothing was saved from this read")
 
 
-def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = None) -> list:
+def _ot_premium(e) -> Optional[float]:
+    """What RPOWER's payroll paid over straight time for this punch's
+    overtime and doubletime (audit #23 A3-04): ot_hours x (ot_rate -
+    reg_rate) (and the same for DT) where the rates are on the punch, else
+    read from ot_pay / dt_pay - which may be the whole OT pay or only the
+    premium (unconfirmed with RPOWER), so the ratio to the straight-time pay
+    decides: 1.2x or more is the whole pay (premium = pay - straight), 0.8x
+    or less is the premium itself, anything between is unreadable. 0.0 for
+    a punch with no OT or DT hours; None when the punch's pay cannot say (a
+    $0 punch, no rates or pays) - labor.analyse_shifts then prices the POS's
+    OT hours at the hour's own rate. An archived punch carries OT and DT
+    pay summed (`_ot_pay_combined`)."""
+    ot, dt = _num(e.get("ot_hours")), _num(e.get("dt_hours"))
+    if ot <= 0 and dt <= 0:
+        return 0.0
+    reg = _num(e.get("reg_rate"))
+    if reg <= 0:
+        return None
+
+    def _from_pay(hours, pay):
+        if pay <= 0 or hours <= 0:
+            return None
+        straight = hours * reg
+        ratio = pay / straight
+        if ratio >= 1.2:
+            return pay - straight
+        if ratio <= 0.8:
+            return pay
+        return None
+    if e.get("_ot_pay_combined"):
+        rate = _num(e.get("ot_rate"))
+        if dt <= 0 and rate > reg:
+            return round(ot * (rate - reg), 2)
+        got = _from_pay(ot + dt, _num(e.get("ot_pay")))
+        return None if got is None else round(max(0.0, got), 2)
+    prem = 0.0
+    for hours, rate_key, pay_key in ((ot, "ot_rate", "ot_pay"), (dt, "dt_rate", "dt_pay")):
+        if hours <= 0:
+            continue
+        rate = _num(e.get(rate_key))
+        if rate > reg:
+            prem += hours * (rate - reg)
+            continue
+        got = _from_pay(hours, _num(e.get(pay_key)))
+        if got is None:
+            return None
+        prem += got
+    return round(max(0.0, prem), 2)
+
+
+def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = None,
+                      start_minutes: int = None) -> list:
     """Timeclock punches into labor.py's CSV rows.
 
     Two things RPOWER gives us that Toast does not, and both are kept rather
@@ -3056,8 +3373,18 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
 
     `sales` is attached per day, not per shift — the same convention
     toast.normalise_entries uses, so labor.py's day aggregation is unchanged.
+
+    Audit #23 (10/21/26): each row also carries the job's RPOWER id
+    (`job_ext_id`, A3-19) and RPOWER's own rate for the job (`job_rate`,
+    the rate chain's link after the person's same-job pay, A3-02 / A3-09);
+    RPOWER's own overtime - `pos_ot_hours`, `pos_dt_hours` and the premium
+    its payroll paid (`pos_ot_premium`, blank when the punch cannot say;
+    A3-04), which labor.analyse_shifts uses instead of re-deriving overtime
+    on a 40-hour week of its own; and the business date is the store's own
+    boundary (`start_minutes`, A3-14).
     """
     people = people or {}
+    job_rates = people.get("job_rates") or {}
     job_names = people.get("jobs") or {}
     emp_names = people.get("employees") or {}
     # Not labor: a station login's punches double someone else's (above).
@@ -3077,7 +3404,7 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             continue
         # The business date the punch was worked for (R9-09): a 12:10am job
         # change is the night before's, as the archive and live paths file it.
-        day = punch_business_date(start).isoformat()
+        day = punch_business_date(start, start_minutes).isoformat()
         reg = float(e.get("reg_hours") or 0)
         ot = float(e.get("ot_hours") or 0)
         dt_h = float(e.get("dt_hours") or 0)
@@ -3096,6 +3423,8 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             notes.append(f"break {int(e['break_minutes'])}m")
         mid = str(e.get("emp_mid") or "").strip()
         named = mid in emp_names
+        job_mid = str(_id(e.get("job_mid")) or "")
+        premium = _ot_premium(e)
         rows.append({
             "date": day,
             "day": _DOW_NAMES[date.fromisoformat(day).weekday()],
@@ -3128,6 +3457,14 @@ def normalise_entries(time_entries: list, sales_by_date: dict, people: dict = No
             # has no rate on file, and labor.py then uses the owner's rate
             # for the role or the blended rate (labor._shift_rate).
             "pay_rate": round(float(e.get("reg_rate") or 0), 2) if float(e.get("reg_rate") or 0) > 0 else "",
+            # The job by its RPOWER id (A3-19) and RPOWER's own rate for it
+            # (A3-02 / A3-09: priced after the person's pay in the same job).
+            "job_ext_id": job_mid,
+            "job_rate": job_rates.get(job_mid, ""),
+            # RPOWER's payroll overtime for this punch (A3-04).
+            "pos_ot_hours": f"{ot:g}",
+            "pos_dt_hours": f"{dt_h:g}",
+            "pos_ot_premium": "" if premium is None else f"{premium:g}",
         })
     rows.sort(key=lambda r: (r["date"], r["shift_start"]))
     return rows
@@ -3183,6 +3520,7 @@ def _labor_entries(restaurant_id: int, start, end) -> tuple:
                              "out_dttm": p.get("clock_out"), "job_mid": p.get("job_id"), "job_id": p.get("role") or "",
                              "reg_hours": p.get("reg_hours"), "ot_hours": p.get("ot_hours"),
                              "dt_hours": p.get("dt_hours"), "reg_rate": p.get("reg_rate"),
+                             "ot_rate": p.get("ot_rate"), "ot_pay": p.get("ot_pay"), "_ot_pay_combined": True,
                              "break_minutes": p.get("break_minutes"), "payroll_id": ""})
     live, runs, run, d = [], [], [], start
     while d <= end + timedelta(days=1):
@@ -3240,7 +3578,7 @@ def _refresh_archived_punches(restaurant_id: int, live: list, runs: list, people
             t = _punch_dt(e.get("in_dttm"))
             if t is None:
                 continue
-            by_day.setdefault(punch_business_date(t), []).append(e)
+            by_day.setdefault(punch_business_date(t, day_start(restaurant_id)), []).append(e)
         span = {}
         for a, z in runs:
             b = a
@@ -3253,16 +3591,65 @@ def _refresh_archived_punches(restaurant_id: int, live: list, runs: list, people
         log.warning("[rpower] archived punches not refreshed for %s: %s", restaurant_id, e)
 
 
-def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
-    """The last `days` of labor, in the CSV shape labor.load_shifts expects."""
-    import csv
-    import io as _io
+def open_punches(entries: list, people: dict, start_minutes: int = None) -> list:
+    """[{punch_id, business_date, employee, employee_id, role, job_ext_id,
+    clock_in, pay_rate, job_rate}] — the punches with no clock-out (audit #23
+    A3-01 / A6-08): normalise_entries skips them (no duration), and nothing
+    counted them, so a closer still on the clock at the 3am read, or a
+    forgotten clock-out never fixed, left the night's labor low with no
+    word. Station logins are not anyone's."""
+    people = people or {}
+    stations = station_logins(entries, people)
+    emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
+    job_rates = people.get("job_rates") or {}
+    out = []
+    for e in entries or []:
+        mid = str(e.get("emp_mid") or "").strip()
+        if mid in stations:
+            continue
+        a = _punch_dt(e.get("in_dttm"))
+        if a is None or _is_closed_punch(e):
+            continue
+        job = str(_id(e.get("job_mid")) or "")
+        out.append({"punch_id": str(e.get("rid") or f"{mid}:{a.isoformat(timespec='minutes')}"),
+                    "business_date": punch_business_date(a, start_minutes).isoformat(),
+                    "employee": emps.get(mid) or (f"Unknown employee (POS …{mid[-4:]})" if mid else "Unknown employee"),
+                    "employee_id": mid, "role": jobs.get(job) or (e.get("job_id") or "").strip() or None,
+                    "job_ext_id": job, "clock_in": a.isoformat(timespec="minutes"),
+                    "pay_rate": round(_num(e.get("reg_rate")), 2) or None, "job_rate": job_rates.get(job)})
+    return out
 
+
+def _salaried_names(restaurant_id, entries: list, people: dict) -> list:
+    """The people RPOWER marks salaried who punched in this read (A3-09): a
+    punch on a job RPOWER marks is_salary, or an employeejob row marked
+    is_salary for someone who punched. Names, current staff only."""
+    emps, current = people.get("employees") or {}, people.get("current") or set()
+    sal_jobs = people.get("salaried_jobs") or set()
+    punched = {str(e.get("emp_mid") or "") for e in entries or []}
+    names = {emps[str(e.get("emp_mid") or "")] for e in entries or []
+             if str(_id(e.get("job_mid")) or "") in sal_jobs and str(e.get("emp_mid") or "") in emps}
+    try:
+        for row in fetch_employee_jobs(restaurant_id) or []:
+            mid = str(row.get("external_id") or "")
+            if row.get("salaried") is True and mid in punched and mid in emps:
+                names.add(emps[mid])
+    except Exception as e:
+        log.info("[rpower] employee jobs not read for the salaried suggestion rid=%s: %s", restaurant_id, e)
+    return sorted(n for n in names if not current or any(emps.get(m) == n for m in current))
+
+
+def _labor_read(restaurant_id: int, days: int = 60) -> dict:
+    """The last `days` of labor: {"rows" (labor.load_shifts' CSV rows),
+    "open" (open_punches), "candidates" (station_candidates), "salaried"
+    (_salaried_names), "renames" (job renames kept, A3-19), "window" (first,
+    last business date), "sales" ({date: net}), "start_minutes"}."""
     # The restaurant's own date (POS-18): on a UTC host the server's date is
     # tomorrow after 7pm Central.
     from time_utils import restaurant_now_by_id
     end = restaurant_now_by_id(restaurant_id, naive=True).date()
     start = end - timedelta(days=days)
+    boundary = day_start(restaurant_id)
     entries, live, archived, runs = _labor_entries(restaurant_id, start, end)
     people = _people_for(restaurant_id, entries) if entries else {}
     for e in archived:                      # the archive keeps no payroll id: the employee list has it
@@ -3270,46 +3657,239 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     _require_resolved(entries, people)
     _refresh_archived_punches(restaurant_id, live, runs, people)
     sales = fetch_business_days(restaurant_id, start, end)
-    # A punch before 4am on the window's first calendar day is the night
-    # before's (punch_business_date, R9-09) — a day outside this window that
-    # this read does not hold whole: left out, never stored as that day
-    # (shift_facts replaces the window the rows' dates span).
+    # A punch before the boundary on the window's first calendar day is the
+    # night before's (punch_business_date, R9-09) — a day outside this
+    # window that this read does not hold whole: left out, never stored as
+    # that day (shift_facts replaces the window the rows' dates span).
     before = (start - timedelta(days=1)).isoformat()
-    rows = [r for r in normalise_entries(entries, sales, people) if r["date"] != before]
+    rows = [r for r in normalise_entries(entries, sales, people, boundary) if r["date"] != before]
     left_out = station_logins(entries, people)
     if left_out:
         log.info("[rpower] rid=%s station logins left out of labor: %s",
                  restaurant_id, ", ".join(sorted(set(left_out.values()))))
+    return {"rows": rows, "open": [p for p in open_punches(entries, people, boundary) if p["business_date"] != before],
+            "candidates": station_candidates(entries, people) if entries else {},
+            "salaried": _salaried_names(restaurant_id, entries, people) if entries else [],
+            "renames": people.get("job_renames") or {}, "window": (start.isoformat(), end.isoformat()),
+            "sales": sales or {}, "start_minutes": boundary}
+
+
+_CSV_FIELDS = ["date", "day", "employee", "role", "shift_start", "shift_end",
+               "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate",
+               "employee_ext_id", "employee_payroll_id", "employee_named", "schedule_known",
+               # audit #23: the job's id and RPOWER rate (A3-19 / A3-02),
+               # RPOWER's own overtime (A3-04)
+               "job_ext_id", "job_rate", "pos_ot_hours", "pos_dt_hours", "pos_ot_premium"]
+
+
+def _rows_csv(rows: list) -> str:
+    import csv
+    import io as _io
     if not rows:
         return ""
-    fieldnames = ["date", "day", "employee", "role", "shift_start", "shift_end",
-                  "scheduled_hours", "actual_hours", "sales", "notes", "pay_rate",
-                  "employee_ext_id", "employee_payroll_id", "employee_named", "schedule_known"]
     buf = _io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
     return buf.getvalue()
 
 
+def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
+    """The last `days` of labor, in the CSV shape labor.load_shifts expects."""
+    return _rows_csv(_labor_read(restaurant_id, days)["rows"])
+
+
+# ── punch edits after the live window (audit #23 A3-06 / A1-21 / A4-19) ─────
+#
+# The nightly read takes the last LABOR_LIVE_DAYS of punches live and older
+# settled days from the archive, so a manager's correction to day 1 of a
+# biweekly pay period at payroll close (day 15-17) was never seen. Once a
+# week each store's punches edited since the last sweep are asked for by
+# the managers who edit them (timeclock/getbyeditmanager — the only punch
+# read filtered by edit time; the managers are the ids the archive's own
+# punches name in edited_by, one placeholder id at Simple EJ's), and every
+# business date older than the live window that holds an edited punch is
+# read again whole and stored over the archive's copy, so the night's sync
+# costs it from the corrected punches.
+EDIT_SWEEP_EVERY_DAYS = 7
+EDIT_SWEEP_FIRST_DAYS = 35          # the first sweep's reach back
+EDIT_SWEEP_MAX_DATES = 21           # days re-read in one sweep (the rest next time)
+
+
+def _edit_managers(restaurant_id, entries=()) -> list:
+    """The manager ids who edit this store's punches: the archive's
+    edited_by and this read's edit manager on a punch with a real edit
+    time."""
+    ids = {str(_id(e.get("editmgr_mid"))) for e in entries or ()
+           if _id(e.get("editmgr_mid")) and _punch_dt(e.get("edit_dttm"))}
+    try:
+        import pos_archive
+        conn = pos_archive.get_conn()
+        try:
+            ids |= {str(r[0]) for r in conn.execute(
+                "SELECT DISTINCT edited_by FROM pos_punches WHERE restaurant_id=? AND provider='rpower' "
+                "AND edited_by IS NOT NULL", (restaurant_id,)).fetchall() if r[0]}
+        finally:
+            conn.close()
+    except Exception as e:
+        log.info("[rpower] edit managers not read from the archive rid=%s: %s", restaurant_id, e)
+    return sorted(ids)
+
+
+def edited_punch_dates(restaurant_id, since, until, managers, start_minutes=None) -> set:
+    """Business dates holding a punch edited on since..until (dates), read
+    from timeclock/getbyeditmanager for each manager id. The edit time is
+    checked here too: the collection does not say which date the range
+    filters on (unconfirmed with RPOWER)."""
+    token, base = _ctx(restaurant_id)
+    out = set()
+    for mgr in managers or ():
+        rows = _paged(token, "timeclock/getbyeditmanager", {
+            **base, "editmgrmid": mgr, "startdate": _d(since), "enddate": _d(until + timedelta(days=1)),
+            "sortorder": "edit_dttm"})
+        for r in rows or ():
+            edited, start = _punch_dt(r.get("edit_dttm")), _punch_dt(r.get("in_dttm"))
+            if edited is None or start is None or not (since <= edited.date() <= until):
+                continue
+            out.add(punch_business_date(start, start_minutes))
+    return out
+
+
+def _edit_sweep_cursor(restaurant_id, value=None):
+    key = f"rpower_edit_sweep:{int(restaurant_id)}"
+    from models import get_conn
+    conn = get_conn()
+    try:
+        if value is None:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (key,)).fetchone()
+            return row[0] if row else None
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                     (key, value))
+        conn.commit()
+        return value
+    finally:
+        conn.close()
+
+
+def sweep_punch_edits(restaurant_id, today=None, force=False) -> dict:
+    """The weekly edit sweep (above): {"due", "managers", "dates", "stored"}.
+    Due once every EDIT_SWEEP_EVERY_DAYS per store (job_cursors
+    `rpower_edit_sweep:<rid>`, the date it last ran); the cursor moves only
+    when the sweep finished, so a failed one is asked again the next night.
+    Raises on an RPOWER error (the caller records it)."""
+    from time_utils import restaurant_now_by_id
+    today = today or restaurant_now_by_id(restaurant_id, naive=True).date()
+    last = _edit_sweep_cursor(restaurant_id)
+    try:
+        last_d = date.fromisoformat(str(last)[:10]) if last else None
+    except ValueError:
+        last_d = None
+    out = {"due": force or last_d is None or (today - last_d).days >= EDIT_SWEEP_EVERY_DAYS,
+           "managers": 0, "dates": [], "stored": 0}
+    if not out["due"]:
+        return out
+    since = last_d or (today - timedelta(days=EDIT_SWEEP_FIRST_DAYS))
+    boundary = day_start(restaurant_id)
+    managers = _edit_managers(restaurant_id)
+    out["managers"] = len(managers)
+    live_from = today - timedelta(days=LABOR_LIVE_DAYS)
+    dates = sorted(d for d in edited_punch_dates(restaurant_id, since, today, managers, boundary) if d < live_from)
+    left = dates[EDIT_SWEEP_MAX_DATES:]
+    dates = dates[:EDIT_SWEEP_MAX_DATES]
+    out["dates"] = [d.isoformat() for d in dates]
+    if dates:
+        import pos_archive
+        people = _people_cached(restaurant_id)
+        span = {}
+        for d in dates:
+            a, z = _punch_window(d, restaurant_id)
+            got = [e for e in fetch_time_entries(restaurant_id, d, d + timedelta(days=1)) or []
+                   if (lambda t: t is not None and a <= t < z)(_punch_dt(e.get("in_dttm")))]
+            span[d.isoformat()] = _punch_records(got, d.isoformat(), people)
+        out["stored"] = int((pos_archive.refresh_punches(restaurant_id, "rpower", span) or {}).get("changed") or 0)
+    # Read in full: the next sweep starts today. A capped sweep keeps its
+    # start, so the next night asks the same edits again and reads the dates
+    # it left (the ones it stored are unchanged by then).
+    _edit_sweep_cursor(restaurant_id, (since if left else today).isoformat())
+    return out
+
+
+def _record_step(restaurant_id, source, ok, error=None, data_through=None) -> None:
+    """One nightly sub-step on the Data Health ledger (A3-10): a failure is
+    a source_health row the console and the retry read, never only a log
+    line."""
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, source, ok, provider="rpower", error=error,
+                                   data_through=data_through)
+    except Exception as e:
+        log.warning("[rpower] %s not recorded for %s: %s", source, restaurant_id, e)
+
+
+def _held_by_open_punch(got) -> list:
+    return sorted({p["business_date"] for p in got.get("open") or []})
+
+
 def sync_to_db(restaurant_id: int) -> dict:
     """Nightly sync — the same contract toast.sync_to_db has, so pos.py can
-    call either without knowing which."""
-    from models import save_client_data, update_restaurant
+    call either without knowing which.
 
+    Audit #23 (10/21/26): punch edits older than the live window are swept
+    weekly first (A3-06); a business date with a punch still open is stored
+    provisional (final=0) and the punches are kept and said (A3-01); the
+    station-login candidates, the people RPOWER marks salaried and the jobs
+    it renamed are proposed to the owner (A3-03 / A3-09 / A3-19); a store
+    with no timeclock punches is a state, its sales kept on their own
+    (A6-13); and each sub-step's failure is on the Data Health ledger, the
+    run `partial` (A3-10)."""
+    from models import update_restaurant
+    partial = []
     try:
-        csv_str = build_shifts_csv(restaurant_id, days=60)
+        try:
+            sweep = sweep_punch_edits(restaurant_id)
+            if sweep.get("due"):
+                _record_step(restaurant_id, "pos_punch_edits", True)
+        except RPowerAuthError as e:
+            sweep = {"error": str(e)[:200]}         # the read below says so, once
+        except Exception as e:
+            sweep = {"error": str(e)[:200]}
+            partial.append("punch_edits")
+            _record_step(restaurant_id, "pos_punch_edits", False, error=str(e))
+        got = _labor_read(restaurant_id, days=60)
+        for k, v in (("open", []), ("candidates", {}), ("salaried", []), ("renames", {}), ("sales", {}),
+                     ("window", (None, None))):
+            got.setdefault(k, v)
+        csv_str = got["csv"] if "csv" in got else _rows_csv(got.get("rows") or [])
+        import labor as _labor
         if not csv_str:
+            # A store with no timeclock punches in 60 days (another payroll
+            # clock, a seasonal store) is a state, not a failed sync: its
+            # sales are kept on their own and nothing reads as an error.
+            import pos
+            ct = pos._complete_through_for(restaurant_id)
+            saved = _labor.save_sales_days(restaurant_id, got.get("sales") or {}, provenance={
+                "source": "rpower", "provider": "rpower",
+                "synced_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                "complete_through": ct.isoformat() if ct else None})
+            _labor.record_open_punches(restaurant_id, got["open"], window=got["window"])
             update_restaurant(restaurant_id, {
-                "rpower_sync_error": "No timeclock data returned for the last 60 days"})
-            return {"ok": False, "error": "No shift data returned from RPOWER"}
+                "rpower_last_synced": datetime.utcnow().isoformat(timespec="seconds"), "rpower_sync_error": None})
+            return {"ok": True, "rows": 0, "no_punches": True, "sales_days": saved,
+                    "open_punches": len(got["open"]), "partial": partial}
 
         rows = csv_str.count("\n") - 1
         import pos
-        pos.save_synced_shifts(restaurant_id, csv_str, "rpower")
+        held = _held_by_open_punch(got)
+        pos.save_synced_shifts(restaurant_id, csv_str, "rpower", held_dates=held)
         update_restaurant(restaurant_id, {
             "rpower_last_synced": datetime.utcnow().isoformat(timespec="seconds"),
             "rpower_sync_error": None})
+        # What the read found that the figures cannot carry (labor_flags).
+        opened = _labor.record_open_punches(restaurant_id, got["open"], window=got["window"])
+        _labor.record_station_candidates(restaurant_id, got["candidates"])
+        _labor.record_job_renames(restaurant_id, got["renames"])
+        _labor.suggest_salaried(restaurant_id, got["salaried"])
 
         # The per-day labor archive (labor_daily_history — what year-over-
         # year and the trend charts read) and the payroll-week labor periods
@@ -3318,28 +3898,33 @@ def sync_to_db(restaurant_id: int) -> dict:
         # then append a rolling-window "period": Simple EJ's 9/1 period was
         # saved three times on its first day (memory audit 9/29/26,
         # labor_periods).
+        #
+        # Same as the Toast sync: keep menu_items current so the dish a
+        # post names, the count sheet and recipe drafts have RPOWER's items
+        # to match against — not only when Food Cost is open. Each on the
+        # Data Health ledger (A3-10).
+        import inventory_ledger
         try:
-            # Same as the Toast sync: keep menu_items current so the dish a
-            # post names, the count sheet and recipe drafts have RPOWER's
-            # items to match against — not only when Food Cost is open.
-            try:
-                import inventory_ledger
-                inventory_ledger.discover_menu_items(restaurant_id, days=2)
-                # Dish sales for days the nightly job never recorded (it
-                # starts from the night it first runs): read from RPOWER,
-                # units only, then nothing until a day goes missing again.
-                inventory_ledger.backfill_item_sales(restaurant_id, days=60)
-                # The Daily Sales Report's grids for the nights before it
-                # started are their own job now (strategy_jobs.
-                # run_dsr_backfill, `dsr_backfill`, after this sync): a
-                # failure there used to be swallowed here with no job_runs
-                # row (bar audit 10/14/26 RPW-13 / R11).
-            except Exception as _menu_e:
-                log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
-        except Exception as e:
-            log.warning("[rpower] labor archive failed for %s: %s", restaurant_id, e)
-
-        return {"ok": True, "rows": rows}
+            inventory_ledger.discover_menu_items(restaurant_id, days=2)
+            _record_step(restaurant_id, "pos_menu_items", True)
+        except Exception as _menu_e:
+            partial.append("menu_items")
+            log.warning("[rpower sync] menu item discovery error for %s: %s", restaurant_id, _menu_e)
+            _record_step(restaurant_id, "pos_menu_items", False, error=str(_menu_e))
+        try:
+            # Dish sales for days the nightly job never recorded (it starts
+            # from the night it first runs): read from RPOWER, units only,
+            # then nothing until a day goes missing again. The Daily Sales
+            # Report's grids for the nights before it started are their own
+            # job (strategy_jobs.run_dsr_backfill, `dsr_backfill`).
+            inventory_ledger.backfill_item_sales(restaurant_id, days=60)
+            _record_step(restaurant_id, "pos_item_backfill", True)
+        except Exception as _bf_e:
+            partial.append("item_backfill")
+            log.warning("[rpower sync] item sales backfill error for %s: %s", restaurant_id, _bf_e)
+            _record_step(restaurant_id, "pos_item_backfill", False, error=str(_bf_e))
+        return {"ok": True, "rows": rows, "open_punches": opened.get("count", 0), "held_dates": held,
+                "edit_sweep": sweep, "partial": partial}
     except RPowerAuthError as e:
         update_restaurant(restaurant_id, {"rpower_sync_error": str(e)})
         return {"ok": False, "error": str(e), "auth": True}
@@ -3374,11 +3959,19 @@ def get_connection_status(restaurant_id: int) -> dict:
 
 def fetch_job_codes(restaurant_id: int) -> dict:
     """{job name lower-cased: RPOWER job code (ext_id)} — the reverse of the
-    names the sync stores as `role`, for anything that writes back."""
+    names the sync stores as `role`, for anything that writes back. A job
+    renamed in RPOWER answers to the name it is filed under too
+    (_stable_job_names, audit #23 A3-19)."""
     token, base = _ctx(restaurant_id)
-    return {_tidy_name(j.get("name")).lower(): str(j.get("ext_id") or "").strip()
-            for j in _list(restaurant_id, "job/getbycg")
-            if _tidy_name(j.get("name")) and str(j.get("ext_id") or "").strip()}
+    kept = _kept_job_names(restaurant_id)
+    out = {}
+    for j in _list(restaurant_id, "job/getbycg"):
+        name, code = _tidy_name(j.get("name")), str(j.get("ext_id") or "").strip()
+        if name and code:
+            out[name.lower()] = code
+            if kept.get(str(j.get("mid") or "")):
+                out.setdefault(kept[str(j["mid"])].lower(), code)
+    return out
 
 
 def pos_employees(restaurant_id: int) -> list:
@@ -3756,7 +4349,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         raw_lines, raw_tickets = feed["lines"], feed["tickets"]
     else:
         raw_lines, raw_tickets = _night_by_date(token, base, iso)
-    start, end = _punch_window(day)            # the schedule's boundary (R3-10)
+    start, end = _punch_window(day, restaurant_id)     # the store's boundary (R3-10, audit #23 A3-14)
     raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                    if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     raw_payments = _paged(token, "ticketpayment/getbybusinessdate",

@@ -469,7 +469,9 @@ def test_the_shifts_csv_matches_what_labor_already_parses(db_path, monkeypatch):
     # (attendance): RPOWER's never does.
     assert header == ("date,day,employee,role,shift_start,shift_end,"
                       "scheduled_hours,actual_hours,sales,notes,pay_rate,"
-                      "employee_ext_id,employee_payroll_id,employee_named,schedule_known")
+                      "employee_ext_id,employee_payroll_id,employee_named,schedule_known,"
+                      # audit #23: the job's RPOWER id and rate, RPOWER's own overtime
+                      "job_ext_id,job_rate,pos_ot_hours,pos_dt_hours,pos_ot_premium")
 
 
 def test_shifts_carry_the_stores_job_and_employee_names_not_its_codes(db_path, monkeypatch):
@@ -711,7 +713,7 @@ def test_a_non_json_body_is_an_error_not_a_guess(db_path, monkeypatch):
 
 def test_sync_records_an_auth_failure_against_the_restaurant(db_path, monkeypatch):
     rid = _connected(db_path)
-    monkeypatch.setattr(rpower, "build_shifts_csv",
+    monkeypatch.setattr(rpower, "_labor_read",
                         lambda r, days=60: (_ for _ in ()).throw(
                             rpower.RPowerAuthError("token rejected")))
     out = rpower.sync_to_db(rid)

@@ -404,6 +404,19 @@ def _labor(restaurant, day, now_local, rows, live=True, rates_t=None) -> dict:
             z = _local(p.get("clocked_out_at"), tz)
             end = min(z or now_local, now_local)
             hrs = max(0.0, (end - a).total_seconds() / 3600.0)
+            # Payroll's own hours once the punch is closed, else the clock
+            # less the unpaid break and meal minutes the POS has recorded —
+            # the night's final figure never costs a break, so live labor
+            # must not either (audit #23 A3-15).
+            try:
+                paid = float(p.get("paid_hours") or 0)
+                brk = float(p.get("break_minutes") or 0)
+            except (TypeError, ValueError):
+                paid, brk = 0.0, 0.0
+            if z is not None and z <= now_local and paid > 0:
+                hrs = paid
+            elif brk > 0:
+                hrs = max(0.0, hrs - brk / 60.0)
             mine = by_person.get(_key(name)) or []
             role = (mine[0].get("role") if mine else None) or p.get("role") or ""
             rate, _src = _rate(rates_t, name, role, p.get("hourly_wage"))

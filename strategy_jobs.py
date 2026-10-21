@@ -472,19 +472,20 @@ def _archive_night(restaurant, today=None):
     if today is not None:
         return (_date.fromisoformat(str(today)[:10]) - _td(days=1)).isoformat(), 0
     import pos
-    from time_utils import restaurant_now, business_date, BUSINESS_DAY_START_HOUR
+    from time_utils import restaurant_now, business_date, day_start_minutes
     aware = restaurant_now(restaurant)
     local = aware.replace(tzinfo=None)
     night = pos.complete_through(restaurant, local)
     trading = business_date(restaurant, local)
+    turn = day_start_minutes(restaurant)          # the one business-date boundary (audit #23 A3-14)
     if night < trading:
         # The night still trading ends at the next boundary: when that is
         # within ARCHIVE_WAIT_FOR_NIGHT_HOURS, wait for it, then archive it
         # (run_for computes the same night at run time). Any zone (Audit #23
         # A4-15): at the 4am Chicago fan-out a Hawaii store is at 11pm, and
         # its night was archived 18 hours late, the next night.
-        day = aware if local.hour < BUSINESS_DAY_START_HOUR else aware + _td(days=1)
-        boundary = day.replace(hour=BUSINESS_DAY_START_HOUR, minute=0, second=30, microsecond=0)
+        day = aware if local.hour * 60 + local.minute < turn else aware + _td(days=1)
+        boundary = day.replace(hour=turn // 60, minute=turn % 60, second=30, microsecond=0)
         if boundary - aware <= _td(hours=ARCHIVE_WAIT_FOR_NIGHT_HOURS):
             return trading.isoformat(), boundary.timestamp()
     return night.isoformat(), 0

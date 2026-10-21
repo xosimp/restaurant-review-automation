@@ -1966,11 +1966,15 @@ def _run_for(restaurant_id, name, mod, today, db_path, now_utc) -> dict:
                                                      - set(done))))
     catalog = backfill_restated = None
     roles = prices = None
+    steps_failed = []                                # audit #23 A3-10: a sub-step's failure is on the ledger
     if retry_after is None:
         try:
             catalog = sync_catalog(restaurant_id, db_path=db_path)
+            _step(restaurant_id, "pos_catalog", True, name)
         except Exception as e:                       # the archive stands; the catalog tries again tomorrow
             log.warning("pos_archive: catalog sync failed for %s: %s", restaurant_id, e)
+            steps_failed.append("catalog")
+            _step(restaurant_id, "pos_catalog", False, name, e)
     if restated_dates:
         try:
             # A night the DSR backfill filled is restated with the archive
@@ -1985,14 +1989,21 @@ def _run_for(restaurant_id, name, mod, today, db_path, now_utc) -> dict:
         job_queue.raise_if_lost()
         try:
             roles = sync_roles(restaurant_id, db_path=db_path)
+            _step(restaurant_id, "pos_roles", True, name)
         except Exception as e:                       # the archive stands; roles try again tomorrow
             log.warning("pos_archive: role sync failed for %s: %s", restaurant_id, e)
+            steps_failed.append("roles")
+            _step(restaurant_id, "pos_roles", False, name, e)
         try:
-            prices = (sync_prices(restaurant_id, db_path=db_path, today=today)
-                      if _prices_due(restaurant_id, name, y_iso, db_path)
+            due = _prices_due(restaurant_id, name, y_iso, db_path)
+            prices = (sync_prices(restaurant_id, db_path=db_path, today=today) if due
                       else {"ok": True, "skipped": f"read within {PRICE_SYNC_DAYS} days and no sold price moved"})
+            if due:
+                _step(restaurant_id, "pos_prices", True, name)
         except Exception as e:
             log.warning("pos_archive: price sync failed for %s: %s", restaurant_id, e)
+            steps_failed.append("prices")
+            _step(restaurant_id, "pos_prices", False, name, e)
         _keep_orders_due(restaurant_id, mod, today)
     return {"ok": not failed, "archived": done, "restated": restated, "failed": failed, "kept": kept,
             "not_closed": waiting, "unchanged": skipped, "retry_after": retry_after,
@@ -2003,7 +2014,10 @@ def _run_for(restaurant_id, name, mod, today, db_path, now_utc) -> dict:
             "suspect": suspect, "held_back": held_back, "quarantined": quarantined,
             "recent_gaps": [d.isoformat() for d in recent], "stale_layout": [d.isoformat() for d in stale_tonight],
             "verified": verify["checked"], "verify_moved": [d.isoformat() for d in verify["moved"]],
-            "cursor_age_hours": cursor_age, "feed_suspect": feed_doubt, "store_key": key}
+            "cursor_age_hours": cursor_age, "feed_suspect": feed_doubt, "store_key": key,
+            # The nightly sub-steps that failed (A3-10): the run is partial,
+            # never ok on the days alone with only a log line.
+            "partial": steps_failed}
 
 
 def _loads_list(value) -> list:
@@ -2012,6 +2026,17 @@ def _loads_list(value) -> list:
     except (TypeError, ValueError):
         return []
     return out if isinstance(out, list) else []
+
+
+def _step(restaurant_id, source, ok, provider, error=None) -> None:
+    """One nightly sub-step (the catalog, roles, prices) on the Data Health
+    ledger (audit #23 A3-10). Never raises."""
+    try:
+        import data_health
+        data_health.record_attempt(restaurant_id, source, ok, provider=provider,
+                                   error=None if ok else str(error or "failed"))
+    except Exception as e:
+        log.warning("pos_archive: %s not recorded for %s: %s", source, restaurant_id, e)
 
 
 # ── onboarding: a new store's history archived first (scale audit 10/19/26

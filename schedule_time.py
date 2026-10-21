@@ -22,10 +22,11 @@ after Friday's close). From 4:00am a start is the date's own early prep (a
 shift — never its end, so an hour's difference in when it ends can never move
 it a day. An end at or before its start runs past midnight.
 
-``time_utils.BUSINESS_DAY_START_HOUR`` (5am) is when "today" turns over for
-close-outs and the POS's business day; a shift starting 4:00-4:59am is a
-baker's prep for the coming day, so shift placement turns over an hour
-earlier on purpose.
+Which business DATE a moment or a punch belongs to turns over at the same
+4am (``time_utils.day_start_minutes``, later only for a restaurant whose own
+hours close later — audit #23 A3-14): "today", complete nights and the
+punches share it. ``time_utils.BUSINESS_DAY_START_HOUR`` (5am) is only the
+hour a curve keyed by clock hour starts its timeline at (business_minute).
 
 Real hours
 ----------

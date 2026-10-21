@@ -1021,6 +1021,46 @@ def _punch_pay(shift) -> float:
     return paid if 0 < paid <= 500 else 0.0
 
 
+class RateBook(dict):
+    """rate_book's people: {name key: rate} as before — the owner's own rate
+    for a person, else their latest paid punch in any job (what pricing a
+    drafted week reads) — carrying what the costing chain needs to price a
+    worked hour in the right order (audit #23 A3-02):
+
+    * `owner`: the owner's own rates for people (models.person_rates) — the
+      only person rate that outranks the owner's rate for the role;
+    * `paid`: {name key: {role key: [(date, rate), ...]}} every paid punch,
+      oldest first, so an hour is priced at the rate in force on its own
+      date in its own job (no retroactive raise)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.owner = {}
+        self.paid = {}
+
+    @staticmethod
+    def _at(history, day):
+        """The rate in force on `day` from [(date, rate)] oldest first: the
+        latest on or before it, else the earliest after (a punch before the
+        first paid one is priced at the first)."""
+        if not history:
+            return None
+        day = str(day or "")[:10]
+        if not day:
+            return history[-1][1]
+        before = [r for d, r in history if d <= day]
+        return before[-1] if before else history[0][1]
+
+    def in_job(self, name_key, role_key, day):
+        """This person's pay in this job in force on `day`, or None."""
+        return self._at((self.paid.get(name_key) or {}).get(role_key) or [], day)
+
+    def any_job(self, name_key, day):
+        """This person's pay in any job in force on `day`, or None."""
+        merged = sorted(x for hist in (self.paid.get(name_key) or {}).values() for x in hist)
+        return self._at(merged, day)
+
+
 def rate_book(shifts: list, person_rates: dict = None) -> tuple:
     """(people, roles): what each person and each role is paid an hour,
     read from the punches themselves, for the punches that carry no pay.
@@ -1028,21 +1068,35 @@ def rate_book(shifts: list, person_rates: dict = None) -> tuple:
     RPOWER puts a person's rate on some punches and $0 on others - at Simple
     EJ's every Host PM, Barback PM and most bartender job rows are $0 while
     the same people's AM punches carry $15-17 (9/30/26) - and those hours
-    were costed at the $26 blended default. A person's rate is their latest
-    paid punch; the owner's own rate for them (models.person_rates) wins over
-    it. A role's typical rate is the median of the rates of the people who
-    worked it - what a host costs when one host has no rate anywhere."""
-    people = {}
+    were costed at the $26 blended default. `people` (a RateBook) is each
+    person's latest paid punch, the owner's own rate for them
+    (models.person_rates) winning over it; it also carries every paid punch
+    by job and date, so the costing chain (_shift_rate_source) prices a $0
+    hour at the owner's role rate before another job's pay and at the rate
+    in force on its own date (audit #23 A3-02). A role's typical rate is the
+    median, over the people who worked it, of what each was paid IN that job
+    (else their own rate) - what a host costs when one host has no rate
+    anywhere."""
+    people = RateBook()
     for s in sorted(shifts or (), key=lambda x: str(x.get("date") or "")):
         paid = _punch_pay(s)
         if paid:
-            people[_name_key(s.get("employee"))] = round(paid, 2)
-    people.update(person_rates or {})
+            nk = _name_key(s.get("employee"))
+            people[nk] = round(paid, 2)
+            people.paid.setdefault(nk, {}).setdefault((s.get("role") or "").strip().lower(), []).append(
+                (str(s.get("date") or "")[:10], round(paid, 2)))
+    src = person_rates.owner if isinstance(person_rates, RateBook) else person_rates
+    owner = {k: v for k, v in (src or {}).items() if v}
+    people.update(owner)
+    people.owner = dict(owner)
     worked = {}
     for s in shifts or ():
-        rate = people.get(_name_key(s.get("employee")))
+        nk = _name_key(s.get("employee"))
+        role = (s.get("role") or "").strip().lower()
+        hist = (people.paid.get(nk) or {}).get(role)
+        rate = hist[-1][1] if hist else people.get(nk)
         if rate:
-            worked.setdefault((s.get("role") or "").strip().lower(), {})[_name_key(s.get("employee"))] = rate
+            worked.setdefault(role, {})[nk] = rate
     roles = {}
     for role, by_person in worked.items():
         vals = sorted(by_person.values())
@@ -1067,16 +1121,34 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: di
 
 # Where an hour's wage came from (_shift_rate_source): the POS's pay on the
 # punch, the person's own rate (the owner's for them, or their pay on their
-# other punches), the owner's rate for the role, what the role's people
-# make, or the flat fallback nothing on file backs.
-RATE_SOURCES = ("punch", "person", "role_rate", "role_typical", "fallback")
+# other punches), the owner's rate for the role, the POS's own rate for the
+# job (RPOWER job reg_rate), what the role's people make, or the flat
+# fallback nothing on file backs.
+RATE_SOURCES = ("punch", "person", "role_rate", "job_rate", "role_typical", "fallback")
+
+
+def _job_rate(shift) -> float:
+    try:
+        rate = float(shift.get("job_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return rate if 0 < rate <= 500 else 0.0
 
 
 def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
                        role_typical: dict = None) -> tuple:
     """(rate, source) for one shift — _shift_rate's one chain, saying which
     link priced the hour (RATE_SOURCES), so the budget's divisor can say how
-    much of it rests on a wage nobody entered."""
+    much of it rests on a wage nobody entered.
+
+    The order (audit #23 A3-02, 10/21/26): the punch's own pay → the owner's
+    rate for the person → the owner's rate for the role → the person's pay
+    in the SAME job in force on the shift's date → the POS's own rate for
+    the job → the person's pay in another job → what the role's people make
+    → the fallback. A $0 Bartender PM hour was priced at the person's $11
+    Barback AM pay ahead of the owner's $9 role rate, and a raise re-priced
+    three years of $0 punches. A plain dict for `person_rates` (no RateBook)
+    is the owner's own rates."""
     # What the POS's payroll pays this person (rpower.normalise_entries'
     # pay_rate) is what the hour cost - it beats any rate set for the role.
     # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
@@ -1084,13 +1156,12 @@ def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_ra
     paid = _punch_pay(shift)
     if paid:
         return paid, "punch"
-    # This person's own rate: the owner's for them (models.person_rates),
-    # else their pay on their other punches (rate_book) - a host's $0 PM
-    # punch costs what her AM punches pay.
-    if person_rates:
-        own = person_rates.get(_name_key(shift.get("employee")))
-        if own:
-            return own, "person"
+    nk = _name_key(shift.get("employee"))
+    book = person_rates if isinstance(person_rates, RateBook) else None
+    owner = (book.owner if book is not None else person_rates) or {}
+    own = owner.get(nk)
+    if own:
+        return own, "person"
     role_rates = role_rates or {}
     default = role_rates.get("_default", fallback)
     raw = shift.get("role", "") or ""
@@ -1100,6 +1171,18 @@ def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_ra
     for name, rate in role_rates.items():
         if name != "_default" and (name or "").strip().lower() == key:
             return rate, "role_rate"
+    day = str(shift.get("date") or "")[:10]
+    if book is not None:
+        same = book.in_job(nk, key, day)
+        if same:
+            return same, "person"
+    job = _job_rate(shift)
+    if job:
+        return job, "job_rate"
+    if book is not None:
+        other = book.any_job(nk, day)
+        if other:
+            return other, "person"
     # Nobody's rate and no rate set for the role: what the role's people make.
     if role_typical and role_typical.get(key):
         return role_typical[key], "role_typical"
