@@ -52,7 +52,7 @@ DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
 #                 Clover restaurant, there is none today
 #   * by BUSINESS DATE in the restaurant's timezone: an order or a shift
 #     is filed under the service it belongs to (time_utils.business_date —
-#     before BUSINESS_DAY_START_HOUR it is still last night), never the UTC
+#     before the restaurant's day_start_minutes it is still last night), never the UTC
 #     calendar date. Shift start/end times are local.
 #   * dollars to the cent, and blank — never 0 — for a day with no figure.
 #   * a page that fails mid-range fails the sync (nothing is saved), so a
@@ -230,15 +230,18 @@ def http_call(fn, url, *, timeout, tries=HTTP_TRIES, **kwargs):
 def complete_through(restaurant, now_local=None):
     """The last business date that had ENDED at `now_local` (the
     restaurant's naive local time): its close from the restaurant's hours
-    when it has them, else the BUSINESS_DAY_START_HOUR boundary. A pull at
-    3am Chicago is 1am in Los Angeles — the night before is still trading,
-    and a day read before it closed must not be stored or dated as whole."""
+    when it has them, else the restaurant's business-day boundary
+    (time_utils.day_start_minutes — the one its punches are filed on, audit
+    #23 A3-14). A pull at 3am Chicago is 1am in Los Angeles — the night
+    before is still trading, and a day read before it closed must not be
+    stored or dated as whole."""
     from datetime import timedelta
     from time_utils import restaurant_now, business_date, open_service_day, service_window, \
-        BUSINESS_DAY_START_HOUR
+        day_start_minutes
     local = now_local or restaurant_now(restaurant, naive=True)
     day = business_date(restaurant, local)
-    if open_service_day(restaurant, local) is None and local.hour < BUSINESS_DAY_START_HOUR:
+    if open_service_day(restaurant, local) is None and \
+            local.hour * 60 + local.minute < day_start_minutes(restaurant):
         try:
             window = service_window(restaurant, day)
         except Exception:
@@ -262,7 +265,7 @@ def local_complete_through(restaurant_id):
     default "through" of every POS window in the food and bar readers
     (food & bar audit 10/16/26 POS-17/18): never the server's date, which is
     tomorrow after 7pm Central on a UTC host, and never the night still
-    trading between midnight and the 5am boundary. Falls back to the
+    trading between midnight and the business-day boundary. Falls back to the
     restaurant's calendar yesterday when the row cannot be read."""
     from datetime import timedelta
     ct = _complete_through_for(restaurant_id)

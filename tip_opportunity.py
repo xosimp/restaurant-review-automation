@@ -130,7 +130,15 @@ def _worked(restaurant_id, weeks=TIP_WEEKS, today=None, db_path=None):
     punch in the window (a family with no tips at all is not tipped)."""
     import schedule_time as st
     from shift_quality import role_family
-    today = today or date.today()
+    # The restaurant's last complete business date, never the server's
+    # calendar date - tomorrow after 7pm Central on a UTC host (audit #23
+    # A3-14): the window slid a day and read tonight's half-archived punches.
+    if today is None:
+        try:
+            import pos
+            today = pos.local_complete_through(restaurant_id)
+        except Exception:
+            today = date.today()
     start = (today - timedelta(weeks=int(weeks))).isoformat()
     punches = _punches(restaurant_id, start, today.isoformat(), db_path)
     if not punches:

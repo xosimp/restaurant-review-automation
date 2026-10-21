@@ -190,10 +190,13 @@ def _overtime(ctx, provider, rows, all_rows):
 
 def _after_midnight(shift_start):
     """Whether a shift start is past midnight, before the business day
-    begins (00:30) — the previous business date's service."""
-    from time_utils import BUSINESS_DAY_START_HOUR
+    begins (00:30) — the previous business date's service. The punches' own
+    boundary (schedule_time.NIGHT_TAIL_BEFORE, rpower.punch_business_date):
+    a 4:30am start is the morning's, as the coverage check filed it (audit
+    #23 A3-14)."""
+    from schedule_time import NIGHT_TAIL_BEFORE
     m = _clock_minutes(shift_start)
-    return m is not None and m < BUSINESS_DAY_START_HOUR * 60
+    return m is not None and m < NIGHT_TAIL_BEFORE
 
 
 def _coverage(ctx, day_rows=()):

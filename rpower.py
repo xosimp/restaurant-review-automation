@@ -1818,25 +1818,43 @@ def _punch_dt(raw) -> Optional[datetime]:
     return None if dt.year <= 2000 else dt
 
 
-def punch_business_date(t: datetime) -> date:
+def day_start(restaurant_id=None) -> int:
+    """Minutes past midnight at which this store's business date turns over
+    (time_utils.day_start_minutes: 4am, later when its hours close later) —
+    the one boundary its punches, its "today" and its complete nights share
+    (audit #23 A3-14 / A2-24). The default when the row cannot be read."""
+    from time_utils import day_start_minutes
+    if not restaurant_id:
+        return day_start_minutes(None)
+    try:
+        from models import get_restaurant
+        return day_start_minutes(get_restaurant(restaurant_id))
+    except Exception:
+        return day_start_minutes(None)
+
+
+def punch_business_date(t: datetime, start_minutes: int = None) -> date:
     """The business date a punch that STARTS at local wall-clock `t` is
-    worked for — the schedule's own rule (schedule_time.NIGHT_TAIL_BEFORE: a
-    start before 4am is the small hours of the night before). Every RPOWER
-    punch path files by it: the live clock-ins, the archive's punches, the
-    nightly labor rows (blind re-audit 10/20/26 R3-10 / R9-09). The clock-in
-    and archive paths used 5am, so a 4:30am baker was "hasn't clocked in"
+    worked for — the store's own boundary (`start_minutes`, day_start();
+    default the schedule's rule, schedule_time.NIGHT_TAIL_BEFORE: a start
+    before 4am is the small hours of the night before). Every RPOWER punch
+    path files by it: the live clock-ins, the archive's punches, the nightly
+    labor rows (blind re-audit 10/20/26 R3-10 / R9-09). The clock-in and
+    archive paths used 5am, so a 4:30am baker was "hasn't clocked in"
     against a 4:30 shift and filed on the night before; the labor rows used
     the calendar date, so a 12:10am job change was set against the next
     day's sales."""
-    from schedule_time import NIGHT_TAIL_BEFORE
-    return t.date() - timedelta(days=1) if t.hour * 60 + t.minute < NIGHT_TAIL_BEFORE else t.date()
+    if start_minutes is None:
+        from schedule_time import NIGHT_TAIL_BEFORE
+        start_minutes = NIGHT_TAIL_BEFORE
+    return t.date() - timedelta(days=1) if t.hour * 60 + t.minute < start_minutes else t.date()
 
 
-def _punch_window(day) -> tuple:
+def _punch_window(day, restaurant_id=None) -> tuple:
     """(start, end) local wall-clock of the punches worked for business date
-    `day` (punch_business_date's boundary to the same one the next morning)."""
-    from schedule_time import NIGHT_TAIL_BEFORE
-    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=NIGHT_TAIL_BEFORE)
+    `day` (the store's boundary, day_start(), to the same one the next
+    morning)."""
+    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=day_start(restaurant_id))
     return start, start + timedelta(days=1)
 
 
@@ -2136,7 +2154,7 @@ def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
     labor and the coverage check for up to six hours, or, among 21 or more
     punches, vanished, and they were told "hasn't clocked in")."""
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
-    start, end = _punch_window(day)
+    start, end = _punch_window(day, restaurant_id)
     entries = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     if not entries:
@@ -2838,7 +2856,7 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
                        {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
     raw_tickets = _paged(token, "ticket/getbybusinessdate",
                          {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    start, end = _punch_window(day)            # the schedule's boundary (R3-10)
+    start, end = _punch_window(day, restaurant_id)     # the store's boundary (R3-10, audit #23 A3-14)
     raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                    if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     raw_payments = _paged(token, "ticketpayment/getbybusinessdate",

@@ -1665,7 +1665,10 @@ def run_daily_depletion_sync():
                     counts["skipped"] += 1
                     return
                 counts["total"] += 1
-                end = _chi_now().date()
+                # The restaurant's own last complete business date (audit
+                # #23 A2-18 / A3-14), never Chicago's calendar date: at 5am
+                # Central a Pacific store's night was still trading.
+                end = pos.complete_through(r) or _chi_now().date()
                 # Since the last depleted business date, capped (DH2-4) —
                 # idempotent, so the overlap re-syncs late edits for free.
                 start = _depletion_start(r.id, end)

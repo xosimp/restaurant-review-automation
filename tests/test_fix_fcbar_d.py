@@ -160,11 +160,13 @@ def test_pos_08_a_4_30am_fan_out_waits_for_the_boundary_and_archives_last_night(
     import strategy_jobs
     rid = _rid(db_path)
     r = models.get_restaurant(rid)
-    _freeze(monkeypatch, datetime(2026, 10, 16, 4, 30))
+    # The boundary is the restaurant's business-day turnover, 4am unless it
+    # trades later (audit #23 A3-14: the punches' own boundary, not 5am).
+    _freeze(monkeypatch, datetime(2026, 10, 16, 3, 30))
     night, not_before = strategy_jobs._archive_night(r)
     assert night == "2026-10-15"
-    assert not_before == datetime(2026, 10, 16, 5, 0, 30, tzinfo=CHI).timestamp()
-    _freeze(monkeypatch, datetime(2026, 10, 16, 5, 30))
+    assert not_before == datetime(2026, 10, 16, 4, 0, 30, tzinfo=CHI).timestamp()
+    _freeze(monkeypatch, datetime(2026, 10, 16, 4, 30))
     assert strategy_jobs._archive_night(r) == ("2026-10-15", 0)
     # ...and the row, when it runs at the boundary, stores that night.
     fake = _Fake()

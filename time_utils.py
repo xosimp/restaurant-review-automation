@@ -252,9 +252,26 @@ def mdy_range(start, end) -> str:
 # A service belongs to the day it OPENED — its business date. The hours past
 # midnight are that business date's, not the new calendar day's.
 
-# Before this hour, "today" is still last night's service (close-outs,
-# closing summaries and captures filed at 1am belong to yesterday).
+# The clock hour a sales or labor curve keyed by hour treats as the start of
+# the business day's timeline (an hour before it is the night's tail):
+# hour PLACEMENT only — schedule_time.business_minute, the DSR's hourly
+# curves, the iOS staff clock. WHICH business date it is turns over at
+# day_start_minutes() below (audit #23 A3-14 / A2-24).
 BUSINESS_DAY_START_HOUR = 5
+
+# The ONE business-date boundary (audit #23 A3-14 / A2-24, 10/21/26): the
+# date a moment, a punch or a "today" belongs to turns over here — the
+# schedule's own rule (schedule_time.NIGHT_TAIL_BEFORE, 4am: a 4:30am baker
+# is the morning's) — unless the restaurant trades past it, when its own
+# latest close is the boundary (a 4:30am-licence bar's 4:15 tickets and
+# punches are the night's). Punches filed on 4am while "today" turned over
+# at 5am: at 4:00-4:59 live labor read yesterday's schedule against 4am-4am
+# punches (a 4:30 baker unseen) and a night was "complete" an hour after its
+# punches had moved on.
+DAY_TURNOVER_MINUTES = 4 * 60
+# A boundary never runs past this (a close later than 6am is a 24-hour
+# store's, whose day turns over at the default).
+DAY_TURNOVER_MAX_MINUTES = 6 * 60
 
 
 def parse_clock(value):
@@ -350,12 +367,60 @@ def is_open_at(restaurant, local, default_hours=None):
     return False
 
 
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def day_start_minutes(restaurant=None) -> int:
+    """Minutes past local midnight at which this restaurant's business date
+    turns over — the one boundary (DAY_TURNOVER_MINUTES, 4am), moved later
+    only when its own hours close past it on some weekday (a 4:30am close
+    turns the day over at 4:30), never past DAY_TURNOVER_MAX_MINUTES. A
+    close past the boundary that is the same day's (a 7am-3pm cafe) or an
+    unreadable hours row leaves the default."""
+    base = DAY_TURNOVER_MINUTES
+    if restaurant is None:
+        return base
+    latest = base
+    for wd in _WEEKDAYS:
+        try:
+            hours = opening_hours(restaurant, wd)
+        except Exception:
+            hours = None
+        if not hours or not hours[1]:
+            continue
+        opens, closes = hours
+        cm = closes[0] * 60 + closes[1]
+        om = (opens[0] * 60 + opens[1]) if opens else None
+        # A small-hours close: past the boundary, before the cap, and before
+        # the day's own open (so it is last night's close, not today's).
+        if base < cm <= DAY_TURNOVER_MAX_MINUTES and (om is None or om > cm):
+            latest = max(latest, cm)
+    return min(latest, DAY_TURNOVER_MAX_MINUTES)
+
+
 def business_date(restaurant, local):
     """The service date `local` belongs to: the service open right now if
-    there is one, else the calendar date — except before
-    BUSINESS_DAY_START_HOUR, when it is still last night."""
+    there is one, else the calendar date — except before the restaurant's
+    day_start_minutes() (4am unless it trades later), when it is still last
+    night. The same boundary its punches are filed on
+    (rpower.punch_business_date), so "today" and the punches never disagree
+    for an hour (audit #23 A3-14)."""
     from datetime import timedelta as _td
     day = open_service_day(restaurant, local)
     if day is not None:
         return day
-    return (local.date() - _td(days=1)) if local.hour < BUSINESS_DAY_START_HOUR else local.date()
+    before = local.hour * 60 + local.minute < day_start_minutes(restaurant)
+    return (local.date() - _td(days=1)) if before else local.date()
+
+
+def business_date_by_id(restaurant_id, local=None):
+    """business_date for a restaurant id at `local` (its own wall clock when
+    None) — for a reader holding only the id. Its calendar date when the row
+    cannot be read."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+    except Exception:
+        r = None
+    local = local or restaurant_now(r, naive=True)
+    return business_date(r, local) if r is not None else local.date()

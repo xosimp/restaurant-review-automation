@@ -214,13 +214,16 @@ def test_depletion_catches_up_since_the_last_depleted_day_capped_at_fourteen(tmp
     end = scheduler._chi_now().date()
     dh.record_attempt(rid, "depletion", True, data_through=(end - timedelta(days=9)).isoformat())
     out = scheduler.run_daily_depletion_sync()
-    assert windows[-1] == (end - timedelta(days=9), end)
+    # Through the restaurant's own last complete business date (audit #23
+    # A2-18), never Chicago's calendar date.
+    ct = pos.complete_through(__import__("models").get_restaurant(rid))
+    assert windows[-1] == (end - timedelta(days=9), ct)
     assert out["attempted"] == 1 and out["ok"] == 1
     row = dh.health_rows(rid)["depletion"]
     assert row["consecutive_failures"] == 0 and row["provider"] == "rpower" and row["data_through"]
     dh.record_attempt(rid, "depletion", True, data_through=(end - timedelta(days=40)).isoformat())
     scheduler.run_daily_depletion_sync()
-    assert windows[-1][0] == end - timedelta(days=scheduler.DEPLETION_CATCHUP_MAX_DAYS)
+    assert windows[-1][0] == ct - timedelta(days=scheduler.DEPLETION_CATCHUP_MAX_DAYS)
 
 
 def test_a_failed_depletion_night_is_recorded_per_restaurant(tmpdb, monkeypatch):
