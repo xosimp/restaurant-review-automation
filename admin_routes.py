@@ -4333,8 +4333,39 @@ def admin_api_client(restaurant_id, current_user):
 @admin_bp.route("/admin/api/integrations")
 @admin_required
 def admin_api_integrations(current_user):
+    """Every connection, filtered, ordered and paged by the server (Audit #23
+    A6-15): ?f=all|error|revoked|off|stale|never|connected &q= &page= &per_page=."""
     import admin_ops
-    return jsonify(**admin_ops.integrations())
+    f = request.args.get("f", "all")
+    return jsonify(**admin_ops.integrations(f=f if f in admin_ops.INTEGRATION_FILTERS else "all",
+                                            q=request.args.get("q"), page=request.args.get("page", 1, type=int),
+                                            per_page=request.args.get("per_page", 50, type=int)))
+
+
+@admin_bp.route("/admin/api/rpower-health")
+@admin_required
+def admin_api_rpower_health(current_user):
+    """Operations → RPOWER (Audit #23 A6-01): the fleet strip, the fleet
+    rules and one keyset page of stores from the precomputed rollup.
+    ?health=failing,auth &type=archive &q= &bucket= &partner= &anomaly=1
+    &coverage_lt=0.9 &after=<rank>:<id> &limit=50 &demo=1. Read-only."""
+    import admin_ops
+    a = request.args
+    return jsonify(**admin_ops.rpower_health_view(
+        health=a.get("health"), q=a.get("q"), data_type=a.get("type"), bucket=a.get("bucket"),
+        partner=a.get("partner"), anomaly=a.get("anomaly") == "1", coverage_lt=a.get("coverage_lt"),
+        after=a.get("after"), limit=a.get("limit", 50, type=int), include_demo=a.get("demo") == "1"))
+
+
+@admin_bp.route("/admin/api/rpower-health/<int:restaurant_id>")
+@admin_required
+def admin_api_rpower_store(restaurant_id, current_user):
+    """One RPOWER store's drill-down: the 90-day archive calendar, each data
+    type's last good read, its queue rows, 7 days of requests, punch issues,
+    data findings and binding facts. Read-only."""
+    import admin_ops
+    out = admin_ops.rpower_store_view(restaurant_id)
+    return jsonify(**out), (200 if out.get("ok") else 404)
 
 
 @admin_bp.route("/admin/api/ai")
@@ -6595,8 +6626,14 @@ def admin_api_pos_traffic(current_user):
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):
-    """Every data source's sync state per restaurant, failing first (#46). ?segment=customer|internal|all"""
-    return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer")))
+    """Every data source's sync state per restaurant, failing first (#46),
+    paged by the server (Audit #23 A6-15). ?segment=customer|internal|all
+    &page= &per_page= &failing=1 &source="""
+    return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer"),
+                                               page=request.args.get("page", 1, type=int),
+                                               per_page=request.args.get("per_page", 50, type=int),
+                                               failing=request.args.get("failing") == "1",
+                                               source=request.args.get("source") or None))
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/timeline")

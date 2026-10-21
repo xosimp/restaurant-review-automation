@@ -3373,7 +3373,86 @@ def _fill_days(rows, key, days, value_key=None, count_key="n", sum_key=None, zon
     return list(buckets.values())
 
 
-def integrations():
+def rpower_health_view(health=None, q=None, data_type=None, bucket=None, partner=None, anomaly=False,
+                       coverage_lt=None, after=None, limit=50, include_demo=False):
+    """Operations → RPOWER (Audit #23 A6-01, A6 section 3.3): the fleet strip,
+    the fleet rules, the queue by kind (A6-02), a 30-day trend, and one
+    keyset page of the stores — every figure read from the precomputed
+    rollup (rpower_health), nothing computed per store on the request."""
+    import rpower_health as rh
+    errors = []
+
+    def read(name, fn, default):
+        try:
+            return fn()
+        except Exception as e:
+            errors.append({"query": name, "error": str(e)[:200]})
+            log.warning("rpower health view: %s unreadable: %s", name, e)
+            return default
+    fleet = read("rpower_store_health", rh.fleet, {})
+    pg = read("rpower_store_health", lambda: rh.page(health=health, q=q, data_type=data_type, bucket=bucket,
+                                                     partner=partner, anomaly=anomaly, coverage_lt=coverage_lt,
+                                                     after=after, limit=limit, include_demo=include_demo),
+              {"rows": [], "next": None, "total": 0, "counts": {}})
+    rules = read("rpower_fleet_rules", rh.fleet_rules, [])
+    trend = read("rpower_fleet_health_daily", lambda: rh.fleet_trend(30), [])
+    for r in pg.get("rows") or []:
+        _rpower_stamps_z(r)
+    if fleet.get("as_of"):
+        fleet["as_of"] = _iso_z(fleet["as_of"], "UTC")
+    return {"ok": True, "fleet": fleet, "rules": rules, "trend": trend, "health_states": list(rh.HEALTH_STATES),
+            "data_types": list(rh.DATA_TYPES), **pg, "errors": errors,
+            "generated_at": _iso_z(_utc_stamp(), "UTC")}
+
+
+_RPOWER_STAMPS = ("auth_failed_at", "last_labor_ok", "last_archived_at", "last_change_read", "last_catalog_ok",
+                  "last_prices_ok", "last_live_ok", "last_intraday_ok", "last_loss_ok", "last_dsr_ok",
+                  "first_failed_at", "next_retry_at", "health_since", "updated_at")
+
+
+def _rpower_stamps_z(r):
+    """Every stamp on a rollup row as ISO Z (the console's one parseable
+    form): they are UTC, some naive with a 'T' (rpower_last_synced)."""
+    for c in _RPOWER_STAMPS:
+        if r.get(c):
+            r[c] = _iso_z(r[c], "UTC")
+    return r
+
+
+def rpower_store_view(restaurant_id):
+    """One store's drill-down drawer (rpower_health.store_detail)."""
+    import rpower_health as rh
+    out = rh.store_detail(int(restaurant_id))
+    if out.get("row"):
+        _rpower_stamps_z(out["row"])
+    for t in out.get("timeline") or []:
+        if t.get("last_ok"):
+            t["last_ok"] = _iso_z(t["last_ok"], "UTC")
+    for q in out.get("queue") or []:
+        for c in ("not_before", "deadline", "enqueued_at", "finished_at"):
+            if q.get(c):
+                q[c] = _iso_z(q[c], "UTC")
+    for f in out.get("findings") or []:
+        f["created_at"] = _iso_z(f.get("created_at"), "UTC")
+    out.setdefault("ok", True)
+    return out
+
+
+# The Integrations list's filters, applied by the server (Audit #23 A6-15):
+# the whole fleet's rows were sent and filtered in the browser — 70-100k
+# rows in one response at 10,000 stores.
+INTEGRATION_FILTERS = {
+    "all": lambda r: True, "error": lambda r: r["state"] == "error", "revoked": lambda r: bool(r.get("revoked_at")),
+    "off": lambda r: r["state"] == "off", "stale": lambda r: r.get("freshness") == "stale",
+    "never": lambda r: r.get("freshness") == "never", "connected": lambda r: r["state"] == "connected"}
+_INT_STATE_RANK = {"error": 0, "connected": 1, "off": 2}
+
+
+def integrations(f="all", q=None, page=None, per_page=None):
+    """Every connection across the fleet. With `page` the server filters
+    (`f`, one of INTEGRATION_FILTERS; `q` a name or id), orders (failing
+    first) and pages; `counts` are over the full set. Without it, every row
+    (internal callers)."""
     with _collecting() as bucket:
         recs, _d, meta = _records_cached()
         rows = []
@@ -3407,7 +3486,19 @@ def integrations():
             inbound = _webhook_health(conn)
         finally:
             conn.close()
-    return {"ok": True, "rows": rows, "systemic": [{"label": k, "failing": v} for k, v in systemic.items() if v >= 2],
+    counts = {k: sum(1 for r in rows if fn(r)) for k, fn in INTEGRATION_FILTERS.items()}
+    paging = {}
+    if page is not None:
+        fn = INTEGRATION_FILTERS.get(f or "all", INTEGRATION_FILTERS["all"])
+        needle = str(q or "").strip().lower()
+        sel = [r for r in rows if fn(r) and (not needle or needle in str(r.get("restaurant") or "").lower()
+                                             or needle == str(r.get("restaurant_id")))]
+        sel.sort(key=lambda r: (_INT_STATE_RANK.get(r["state"], 3), str(r.get("restaurant") or "").lower(),
+                                r.get("integration") or ""))
+        rows, pg, pp, total, pages = _page(sel, page, per_page)
+        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages, "filter": f or "all"}
+    return {"ok": True, "rows": rows, "counts": counts, **paging,
+            "systemic": [{"label": k, "failing": v} for k, v in systemic.items() if v >= 2],
             "webhooks_inbound": inbound, **_payload_meta(meta, bucket)}
 
 
@@ -6806,9 +6897,11 @@ def queues():
     return {"ok": True, "queues": out, **_merge_problems(bucket)}
 
 
-def data_sources(segment="customer"):
+def data_sources(segment="customer", page=None, per_page=None, failing=False, source=None):
     """Every data source's sync state per restaurant (#46): failures in a
-    row, since when, the last error, the next retry — failing first."""
+    row, since when, the last error, the next retry — failing first. With
+    `page` the server pages (Audit #23 A6-15) and filters (`failing`, one
+    `source`); the summary is over the full set."""
     with _collecting() as bucket:
         recs, d, meta = _records_cached()
     try:
@@ -6835,7 +6928,13 @@ def data_sources(segment="customer"):
             agg["failing"] += 1 if n else 0
     rows.sort(key=lambda x: (-x["failures"], (x["restaurant"] or "").lower(), x["source"]))
     real = _real(recs)
-    return {"ok": True, "rows": rows, "summary": sorted(summary.values(), key=lambda x: (-x["failing"], x["source"])),
+    paging = {}
+    if page is not None:
+        sel = [r for r in rows if (not failing or r["failures"]) and (not source or r["source"] == source)]
+        rows, pg, pp, total, pages = _page(sel, page, per_page)
+        paging = {"page": pg, "per_page": pp, "total": total, "pages": pages}
+    return {"ok": True, "rows": rows, **paging,
+            "summary": sorted(summary.values(), key=lambda x: (-x["failing"], x["source"])),
             "data_health_median": _median([r["data_health"]["overall"] for r in real
                                            if r["data_health"].get("overall") is not None and not r["data_health"].get("stale")]),
             "stale_snapshots": sum(1 for r in real if r["data_health"].get("stale")),
