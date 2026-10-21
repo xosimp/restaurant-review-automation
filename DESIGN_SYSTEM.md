@@ -2038,7 +2038,7 @@ never with text: the rebuild cut the visible text across its screens by 69%
 (51% leaving out the three long logs), measured on the same database.
 
 - **The five areas** — Overview, Operations (Jobs, Email & SMS, Push & alerts,
-  AI, Integrations, Event calendar — every followed series' games with an
+  AI, Integrations, RPOWER — see below, Event calendar — every followed series' games with an
   inline correction row: only the changed fields are sent, a corrected game
   carries a "corrected" chip and a Revert, and an if-necessary game whose
   date has passed with no result a "needs a result" chip — the existing
@@ -2165,6 +2165,25 @@ never with text: the rebuild cut the visible text across its screens by 69%
 - **A cursor-paged log** (the audit trail, refused attempts) ends in an
   "Older" row (`.more`) that appends the next page by `before_id`; filters go
   to the server. A numbered `.pager` is for lists the server pages by number.
+  The Integrations list and the data sources page by number on the server
+  (Audit #23 A6-15).
+- **A fleet health table that pages by keyset** (Operations → RPOWER, Audit
+  #23 A6-01, 10/21/26): the figure strip (`stripCell`) over the precomputed
+  rollup, then the fleet rules firing in one `.warnbox` (each with a `pages` /
+  `console` pill), a `.seg` of health states with the full set's counts, the
+  rest of the filters (data type, has an anomaly, search) in one `.filters`
+  row, and an operational list whose row is the store's health pill, why,
+  last labor pull · last archived night, coverage, gaps, requests · errors
+  and the one action. The `.pager` here reads "N stores · page K" with
+  Previous / Next only — the server hands back the next row's cursor, never a
+  page count (no OFFSET at 10,000 stores). A row opens its drawer in place
+  (loaded on open, `lazyRead`): **one square a night** for 90 nights — the
+  `.sq` idea at 10 px, green archived (green text-tone restated), red missing
+  or failed, amber suspect or a recon / pay gap, the line colour for a night
+  nobody owed — each with its M/D/YY, tickets and net against the weekday's
+  median in its title; then each data type's state pill and last good read,
+  the binding, punch issues, the reasons, and the queue, request and findings
+  tables.
 - **Admin-only reads carry `.w` too.** A control that opens a prompt and a
   model's output (the call trace) is hidden from a support login like a
   write.

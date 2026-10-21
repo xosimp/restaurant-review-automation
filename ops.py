@@ -47,7 +47,12 @@ CREATE TABLE IF NOT EXISTS job_failures (
 # 'restaurant_id=N' and matched rid 50-59 when asked for rid 5 — and what
 # kind of failure it is.
 _FAILURE_COLUMNS = (("restaurant_id", "INTEGER"), ("kind", "TEXT NOT NULL DEFAULT 'job'"))
-CAPTURE_KINDS = ("job", "request", "ai_quality", "audit")
+# "data_quality" (Audit #23, 10/21/26, A6-04): a check of the data itself
+# found something — a reconcile gap, a payments gap, a DSR/POS mismatch, a
+# short first read. The run that found it worked: the console lists it per
+# store as a data issue (admin_ops) and never as "Job X failed", which at
+# 1,500 stores was a permanent critical.
+CAPTURE_KINDS = ("job", "request", "ai_quality", "audit", "data_quality")
 
 # "restaurant_id=5" or "rid=5" in a capture's context, as a whole number:
 # "rid=5" never matches "rid=50", and "grid=5" is not a rid.
@@ -2453,6 +2458,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or disk.get("state") == "critical"
                 or (out.get("pg_volume") or {}).get("state") == "critical"
                 or (out.get("requests") or {}).get("error_rate_over")
+                or any(r.get("page") == "urgent" for r in out.get("rpower_rules") or [])
                 or not write_ok)
 
 
@@ -2679,13 +2685,35 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # outage and one page (a warning: once a day for the set), never one
     # console issue per store; a breaker held open past its page threshold
     # pages once per opening (pos_io.page_if_long_open).
+    # The RPOWER fleet rules (Audit #23, A6 section 3.6), evaluated here from
+    # the rollup only (rpower_health.fleet_rules): a data type failing or
+    # stale across the fleet, an auth wave (urgent: a partner token revoked
+    # is one problem, not N reconnects — A4-16), archive gaps, the queue's
+    # failed and expired rows per kind (A6-02), the request budget and volume
+    # (A6-17). A rule without a page is the console's alone.
+    out["rpower_rules"] = []
+    if send:
+        try:
+            import rpower_health as _rh_sla
+            out["rpower_rules"] = [r for r in _rh_sla.fleet_rules(db_path=db_path) if r.get("page")]
+        except Exception as e:
+            log.warning(f"the RPOWER fleet rules unavailable to the platform check: {e}")
+    for rule in out["rpower_rules"]:
+        if rule["page"] != "urgent":
+            warn_kinds.add(rule["key"])
+        problems.append(f"{rule['title']} — {rule['detail']}")
+    rpower_fleet_said = any(r["key"].startswith(("rpower_failing:", "rpower_stale", "rpower_auth_wave"))
+                            for r in out["rpower_rules"])
     try:
         import pos_health as _ph_sla
-        # Read only when paging: /health's read-only call stays lean.
-        fleet = _ph_sla.fleet_state() if send else {}
+        # Read only when paging: /health's read-only call stays lean. The
+        # restaurants' sync columns narrowly, RPOWER from its rollup (A6-16).
+        fleet = (_ph_sla.fleet_state(db_path=db_path) if db_path else _ph_sla.fleet_state()) if send else {}
         out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
                             for p, f in fleet.items()}
         for prov, f in fleet.items():
+            if prov == "rpower" and rpower_fleet_said:
+                continue        # the rollup's own rule says it, by data type
             if f["outage"]:
                 warn_kinds.add(f"pos_fleet_{prov}")
                 problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
@@ -3064,19 +3092,23 @@ def failures_last_24h():
         return []
 
 
-def failures_since(since):
+def failures_since(since, data_checks=None):
     """[{job, cnt, last_at, sample_error}] since `since` (UTC stamp), the
     sample being each job's NEWEST error — MAX(error) was the alphabetically
-    last one."""
+    last one. `data_checks`: None every kind; True only the data findings
+    (kind 'data_quality'); False everything else (Audit #23 A6-04 — the
+    digest lists the data checks apart from the failures)."""
     try:
         from models import get_conn
         conn = get_conn()
         try:
-            rows = conn.execute("""
+            cond = "" if data_checks is None else (
+                " AND COALESCE({t}.kind,'job') {op} 'data_quality'".replace("{op}", "=" if data_checks else "<>"))
+            rows = conn.execute(f"""
                 SELECT f.job, COUNT(*) AS cnt, MAX(f.created_at) AS last_at,
-                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?
+                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?{cond.format(t='g')}
                         ORDER BY g.id DESC LIMIT 1) AS sample_error
-                FROM job_failures f WHERE f.created_at >= ? GROUP BY f.job ORDER BY cnt DESC
+                FROM job_failures f WHERE f.created_at >= ?{cond.format(t='f')} GROUP BY f.job ORDER BY cnt DESC
             """, (since, since)).fetchall()
             return [dict(r) for r in rows]
         finally:
@@ -3347,6 +3379,9 @@ _RETENTION_DAYS = {
     # One row per restaurant per day; the trend reads months, a year covers
     # the same month last year.
     "data_health_daily":  int(os.getenv("RETAIN_DATA_HEALTH_DAILY_DAYS", "400")),
+    # The RPOWER fleet's daily health row (rpower_health, Audit #23 A6-01):
+    # one row a day, a year and a bit of trend.
+    "rpower_fleet_health_daily": 400,
     # Webhook idempotency: Stripe retries an event for three days.
     "stripe_events_seen": int(os.getenv("RETAIN_STRIPE_EVENTS_SEEN_DAYS", "90")),
     # A session row a day past its own expiry can never authenticate again.
@@ -3614,6 +3649,7 @@ _RETENTION_COLUMN = {
     "marketing_link_taps": "tapped_at",
     "live_activity_runs": "created_at", "live_activity_tokens": "updated_at",
     "admin_events": "created_at", "data_health_daily": "created_at", "stripe_events_seen": "seen_at",
+    "rpower_fleet_health_daily": "date",
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
@@ -3741,6 +3777,7 @@ _RETENTION_FLOOR_DAYS = {
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
     "tock_events": 30,
+    "rpower_fleet_health_daily": 30,
     # A sent week's delivery list (schedule_publish.notice_status) is read
     # while the week is current — a few weeks, never more than two months.
     "schedule_notices": 60,
@@ -3896,6 +3933,7 @@ _RETENTION_READERS = {
     "notification_opens": (("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),),
     "admin_events": (("admin_ops._load_with", 400, None),),
     "data_health_daily": (("admin_ops._load_with", 14, None),),
+    "rpower_fleet_health_daily": (("rpower_health.fleet_trend", 30, None),),
     "rec_events": (("admin_ops.confidence_calibration", 730, None),
                    ("rec_learning.effectiveness", "rec_learning.EFFECT_WINDOW_DAYS", None)),
     "backup_runs": (("ops.storage_trend", 60, None),),
@@ -5090,7 +5128,10 @@ def send_failure_digest():
     returning False into an ok=1 run nobody saw."""
     started = _now_utc_stamp()
     since = _digest_since()
-    failures = failures_since(since)
+    # The data checks' findings apart from the failures (Audit #23 A6-04): a
+    # reconcile gap is the data's news, not a job that broke.
+    failures = failures_since(since, data_checks=False)
+    checks = failures_since(since, data_checks=True)
     stuck = stuck_jobs()
     overdue = jobs_overdue()
     backup = backup_status()
@@ -5106,7 +5147,7 @@ def send_failure_digest():
     # A job that died without raising leaves no failure row, so "no failures"
     # was never the same thing as "nothing went wrong".
     # (tests/test_security.py pins the first three conjuncts in this order.)
-    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed:
+    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed and not checks:
         _mark_digest_sent(started)
         ping_healthcheck()
         return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False, "sent": False}
@@ -5126,6 +5167,8 @@ def send_failure_digest():
 
     fail_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in failures]
+    check_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
+                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in checks]
     stuck_items = [f'<b>{_html.escape(j["job"])}</b> running {int(j.get("minutes") or 0)} min '
                    f'(bound {int(j.get("bound_minutes") or 0)} min) — '
                    f'{_html.escape((j.get("context") or "")[:100])}' for j in stuck]
@@ -5140,6 +5183,8 @@ def send_failure_digest():
         + _section("Overdue", overdue_items, "No successful run inside the job's SLA.")
         + _section("Backup", backup_items)
         + _section("Failures", fail_items)
+        + _section("Data checks", check_items, "The data disagreed with itself; each store's findings are on "
+                   "its console page. Nothing failed.")
         + _section("Running past their bound", stuck_items,
                    "Still running past the job's own bound; a run a deploy killed is closed at boot.")
         + _section("Windows missed", missed_items, "Due in a restaurant's local window, which closed first.")
@@ -5157,6 +5202,8 @@ def send_failure_digest():
         parts.append(f"{len(stuck)} started and never finished")
     if missed:
         parts.append("windows missed")
+    if checks:
+        parts.append("data checks")
     if sec_lines and not parts:
         parts.append("security")
     subject = "⚠ Background jobs: " + " · ".join(parts)

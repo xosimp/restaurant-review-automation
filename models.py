@@ -4966,6 +4966,11 @@ def init_db(db_path: str = DB_PATH):
     # ...and the RPOWER budget's lane ledger (pos_capacity: utilisation %).
     from pos_capacity import init_pos_capacity
     init_pos_capacity(db_path)
+    # One precomputed health row per RPOWER store and the fleet's daily row
+    # (rpower_health — Audit #23 A6-01 / A4-10), written by the 15-minute
+    # rpower_health_rollup job and read by the console and the alert rules.
+    from rpower_health import init_rpower_health
+    init_rpower_health(db_path)
     # Shared token buckets (rate_bucket, scale audit 10/19/26 SEC-03): the
     # fleet's and each restaurant's guest-text pace.
     from rate_bucket import init_rate_buckets

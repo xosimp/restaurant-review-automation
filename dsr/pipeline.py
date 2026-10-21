@@ -1461,8 +1461,9 @@ MISSING_AFTER_DEADLINE = timedelta(hours=1)
 def nights_missing(db_path=None, now_utc=None, use_cache=True):
     """[{restaurant_id, restaurant, business_date, status}] for every live,
     non-demo restaurant with the DSR on and a POS connected whose last
-    business night has no final or provisional report an hour past its
-    deadline (#17). Nothing watched this: dsr_delivery had no SLA and the
+    business night has no FINAL report an hour past its deadline (#17) — a
+    provisional night went out without its sales, so it is listed too
+    (status "provisional", Audit #23 A6-20). Nothing watched this: dsr_delivery had no SLA and the
     console never read dsr_reports, so a night that failed read green."""
     import time as _t
     key = (db_path or "", now_utc.isoformat() if now_utc else None)
@@ -1488,9 +1489,13 @@ def nights_missing(db_path=None, now_utc=None, use_cache=True):
         if night is None:
             continue
         row = (latest.get(r.id) or {}).get(night.isoformat())
-        if row and row["status"] in store.FINISHED:
+        # A provisional night went out WITHOUT its sales (REQUIRED_BLOCKS is
+        # sales alone), so it is missing for the SLA list and its share
+        # (Audit #23 A6-20): FINISHED counted it done, and a store whose sales
+        # stopped for two nights was on no list. Only a final night is done.
+        if row and row["status"] == "final":
             continue
-        if row and int(row.get("version") or 1) > 1 and \
+        if row and row["status"] != "provisional" and int(row.get("version") or 1) > 1 and \
                 store.get_finished_report(r.id, night, db_path=db) is not None:
             # A later version still in flight (a late-data version waiting
             # on its batched narrative, AI cost audit 10/7/26 #20) does not

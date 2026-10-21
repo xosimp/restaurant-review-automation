@@ -297,8 +297,10 @@ def test_ai_reads_vendors_outcomes_ceilings_health_quality_and_the_trace(page):
 
 def test_integrations_read_revocation_webhooks_and_data_sources(page):
     i = _fn(page, "opsIntegrations")
+    # The server pages the list since Audit #23 A6-15, so fresh rides as
+    # "&fresh=1" after the filter and page.
     for key in ("r.revoked_at", "r.error_since", "d.webhooks_inbound", "/admin/api/data-sources", "x.summary",
-                "x.stale_snapshots", "?fresh=1"):
+                "x.stale_snapshots", "fresh=1", "page=", "d.counts", "pager("):
         assert key in i, key
 
 
