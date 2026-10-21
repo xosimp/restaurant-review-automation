@@ -348,7 +348,7 @@ def test_a_comp_spike_needs_both_a_multiple_and_a_dollar_floor(db_path):
     _synced_baseline(db_path, rid, "comp", 50, 3)       # $50/week
     _seed_loss(db_path, rid, _day(-2), "comp", 260, 9,
                {"11": {"amount": 130, "events": 5}, "12": {"amount": 130, "events": 4}})
-    sig = ld.signals(rid)
+    sig = ld.signals(rid, today=date.today())
     comp = next(k for k in sig["kinds"] if k["kind"] == "comp")
     assert any(f["type"] == "spike" for f in comp["flags"])
     assert "not a finding of wrongdoing" in sig["note"]
@@ -359,7 +359,7 @@ def test_a_small_week_is_not_an_alarm_whatever_its_multiple(db_path):
     rid = _rid(db_path)
     _synced_baseline(db_path, rid, "void", 10, 1)
     _seed_loss(db_path, rid, _day(-2), "void", 40, 5, {"11": {"amount": 40, "events": 5}})
-    void = next(k for k in ld.signals(rid)["kinds"] if k["kind"] == "void")
+    void = next(k for k in ld.signals(rid, today=date.today())["kinds"] if k["kind"] == "void")
     assert void["flags"] == []
 
 
@@ -368,7 +368,7 @@ def test_one_approver_concentration_is_flagged_with_an_alternative(db_path):
     rid = _rid(db_path)
     _seed_loss(db_path, rid, _day(-2), "comp", 300, 10,
                {"11": {"amount": 250, "events": 8}, "12": {"amount": 50, "events": 2}})
-    comp = next(k for k in ld.signals(rid)["kinds"] if k["kind"] == "comp")
+    comp = next(k for k in ld.signals(rid, today=date.today())["kinds"] if k["kind"] == "comp")
     conc = [f for f in comp["flags"] if f["type"] == "concentration"]
     assert conc and conc[0]["approver"] == "11" and conc[0]["alternative"]
 
@@ -473,7 +473,7 @@ def test_sparse_comp_days_do_not_inflate_the_baseline(db_path):
     import loss_detection as ld
     rid = _rid(db_path)
     _synced_baseline(db_path, rid, "comp", 50, 3)
-    comp = next(k for k in ld.signals(rid)["kinds"] if k["kind"] == "comp")
+    comp = next(k for k in ld.signals(rid, today=date.today())["kinds"] if k["kind"] == "comp")
     assert comp["weekly_baseline"] == 50.0
 
 
