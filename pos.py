@@ -1088,6 +1088,12 @@ def _net_day(raw):
         "voids": _money(raw.get("voids")),
         "refunds": _money(raw.get("refunds")),
         "tax": _money(raw.get("tax")),
+        # Audit #23 (F3): the POS's own tax adjustment, shown beside tax and
+        # never added (A2-20); the units the kitchen made per item, sold and
+        # comped (A2-12); a daylight-saving change inside the night (A2-23).
+        "tax_adjust": _money(raw.get("tax_adjust")),
+        "items_made": list(raw.get("items_made") or []),
+        "dst": raw.get("dst"),
         "by_department": {k: net_of(v) for k, v in (raw.get("by_department") or {}).items()},
         # The POS's item categories inside each department, where it has
         # that level (RPOWER): {department: {category: net}}.

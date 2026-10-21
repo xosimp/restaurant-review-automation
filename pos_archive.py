@@ -87,7 +87,7 @@ _TICKET_COLS = ("ticket_id", "business_date", "ticket_no", "opened_at", "closed_
                 "need_at", "server_id", "server_name", "table_id", "table_name", "room_name", "is_bar",
                 "guest_count", "entree_count", "bev_count", "net_sales", "discount", "tip", "grat", "tax",
                 "mealtime", "profit_center", "cancelled", "source_stamp", "type_sale", "type_discnt", "type_promo",
-                "type_comp", "customer_id")
+                "type_comp", "customer_id", "tax_adjust")
 _LINE_COLS = ("line_id", "ticket_id", "business_date", "item_id", "item_name", "item_kind", "kind", "qty",
               "sales", "price", "regular_price", "loss_amount", "reason", "approver_id", "item_at", "mealtime",
               "profit_center", "price_level_id", "source_stamp", "sales_type_id", "voided", "mgr_id",
@@ -95,13 +95,15 @@ _LINE_COLS = ("line_id", "ticket_id", "business_date", "item_id", "item_name", "
               # layout 4 (F5): where RPOWER filed the line, its bar-relevant
               # fields, and which line a modifier modifies (never summed).
               "department", "sales_category", "category_id", "cost", "discounted", "aqu_count", "fraction",
-              "atom", "parent_atom", "mod_level", "parent_line_id")
+              "atom", "parent_atom", "mod_level", "parent_line_id",
+              # Audit #23 A2-01: the sales type's flags the night it was archived.
+              "sales_type_flags")
 _PUNCH_COLS = ("punch_id", "business_date", "employee_id", "employee_name", "job_id", "role", "clock_in",
                "clock_out", "reg_hours", "ot_hours", "dt_hours", "reg_rate", "ot_rate", "pay", "ot_pay", "tips",
                "tips_net", "grats", "break_minutes", "meal_minutes", "rest_minutes", "edited_by", "edited_at",
                "edit_what", "is_station", "source_stamp")
 _PAYMENT_COLS = ("payment_id", "ticket_id", "business_date", "method", "is_cash", "is_card", "amount", "tip",
-                 "tip_fee")
+                 "tip_fee", "cash_change", "target_amt")
 _PAYOUT_COLS = ("payout_id", "business_date", "category", "is_payin", "amount", "manager_id", "manager_name",
                 "paid_at", "reference")
 _TABLES = (("pos_tickets", _TICKET_COLS, "tickets"), ("pos_ticket_lines", _LINE_COLS, "lines"),
