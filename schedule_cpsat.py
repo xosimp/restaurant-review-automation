@@ -423,6 +423,12 @@ def _rate_cents(prob, p, u) -> int:
 
 
 def _ot_rate_cents(prob, p) -> int:
+    """A person's overtime hour (the model's overtime is per person and
+    payroll week, no role): the solver Problem's ot_rate — the forward
+    chain in the role they are drafted most hours in (audit #23 A3-02)."""
+    ot_rate = getattr(prob, "ot_rate", None)
+    if ot_rate is not None:
+        return int(round(ot_rate(p) * 100))
     rate = prob.person_rates.get(" ".join(prob.names[p].lower().split())) or prob.blended or 15.0
     return int(round(rate * 100))
 
@@ -2397,16 +2403,23 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
     secs = float(max_seconds or DEFAULT_SECONDS)
     sig = dict(signals or {})
     ot = sig.get("overtime") or {}
+    owner_roles = {k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"}
     rates = dict(ot.get("role_typical") or {})
-    rates.update({k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"})
+    rates.update(owner_roles)
     blended = ot.get("default_rate") or (ot.get("rates") or {}).get("_default")
     hist_all = list(history_rows or []) + list(last_week_rows or [])
     ctx = objective
     if ctx is None:
+        # The owner's role rates and the typical apart (the context merges
+        # them as before): a drafted person's hour is priced by the forward
+        # chain, their pay in the job before the role's typical (A3-02).
         ctx = _obj.ObjectiveContext.build(getattr(constraints, "restaurant_id", None), dates, budget=budget_dollars,
                                           last_week_rows=last_week_rows, requirements=requirements,
                                           demand_curve=demand_curve or sig.get("demand_curve"),
-                                          history_rows=hist_all, rates=rates,
+                                          history_rows=hist_all, rates=owner_roles,
+                                          role_typical=ot.get("role_typical"),
+                                          owner_person_rates=ot.get("owner_person_rates"),
+                                          person_job_rates=ot.get("person_job_rates"),
                                           person_rates=ot.get("person_rates"), blended_rate=blended,
                                           ot_line=ot.get("line"), constraints=constraints,
                                           budget_held=budget_held)
@@ -2434,6 +2447,8 @@ def solver_draft(dates, constraints, requirements, concurrent=None, history_rows
                                 blended_rate=blended, budget_dollars=budget_dollars, roster_roles=roster_roles,
                                 max_seconds=s1_secs, seed=seed, staffing_value=sig.get("staffing_value"),
                                 person_rates=ot.get("person_rates"), objective=ctx, exclude=exclude,
+                                owner_person_rates=ot.get("owner_person_rates"),
+                                person_job_rates=ot.get("person_job_rates"), role_typical=ot.get("role_typical"),
                                 wall_cap=wall_left())
     stats = {"shapes": shaped["stats"], "engine": "shapes+cp-sat", "seed": int(seed),
              "budget": {"shapes": round(s1_secs, 2), "assign": round(s2_secs, 2), "unit": "deterministic",

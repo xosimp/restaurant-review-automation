@@ -891,7 +891,8 @@ def _length_bounds(c, role, d, roster_roles, min_h, max_h) -> tuple:
 def shape_week(dates, constraints, requirements, concurrent=None, history_rows=None, context_rows=None,
                last_week_rows=None, rates=None, blended_rate=None, budget_dollars=None, roster_roles=None,
                demand_curve=None, max_seconds=DEFAULT_SECONDS, seed=7, staffing_value=None, person_rates=None,
-               objective=None, exclude=None, workers=None, wall_cap=None) -> dict:
+               objective=None, exclude=None, workers=None, wall_cap=None, owner_person_rates=None,
+               person_job_rates=None, role_typical=None) -> dict:
     """The week's shift shapes: {"rows": [slot rows, no employee, `_open`,
     `_floor` where a floor needs them, `_s1` the person Stage 1 chose — the
     hint Stage 2 starts from], "short": [{date, role, minutes, people, why,
@@ -904,7 +905,9 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     schedule_objective.ObjectiveContext (built here from the same inputs
     when not passed); `exclude` people code may not choose (an unread note).
     `max_seconds` is a deterministic work budget; `wall_cap` the emergency
-    wall-clock cap."""
+    wall-clock cap. A person's wage is the forward chain
+    (schedule_objective.forward_rate_source) when the context carries its
+    maps (`owner_person_rates` / `person_job_rates`, audit #23 A3-02)."""
     c = constraints
     out = {"rows": [], "short": [], "assumed": [], "stats": {"status": "nothing_to_solve"}}
     if not available() or not dates:
@@ -922,7 +925,9 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
         ctx = _obj.ObjectiveContext.build(None, dates, budget=budget_dollars, last_week_rows=last_week_rows,
                                           requirements=requirements, demand_curve=demand_curve,
                                           history_rows=hist_rows, rates=rates, person_rates=person_rates,
-                                          blended_rate=blended_rate, constraints=c)
+                                          blended_rate=blended_rate, constraints=c,
+                                          owner_person_rates=owner_person_rates,
+                                          person_job_rates=person_job_rates, role_typical=role_typical)
     prof = ctx.profile
     # The one shortest shift (contract #2, schedule_rules.min_shift_minutes); per
     # role and date it is lowered to what the people who may work it can
@@ -999,12 +1004,22 @@ def shape_week(dates, constraints, requirements, concurrent=None, history_rows=N
     rates_l = {str(k).strip().lower(): float(v) for k, v in (rates or {}).items() if v and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates_l.values()) / len(rates_l) if rates_l else 15.0)
     prates = {" ".join(str(k).lower().split()): float(v) for k, v in (person_rates or {}).items() if v}
+    # The forward chain when the objective carries its maps (rate_maps).
+    forward = (getattr(ctx, "owner_person_rates", None) is not None
+               or getattr(ctx, "person_job_rates", None) is not None)
 
     def wage(p, role):
         if p is None:
             return rates_l.get(role.strip().lower()) or rates_l.get(family(role)) or blended
         if p.salaried:
             return 0.0
+        if forward:
+            r_, f_ = role.strip().lower(), family(role)
+            return _obj.forward_rate(p.name, role, people=ctx.person_rates, owner=ctx.owner_person_rates,
+                                     jobs=ctx.person_job_rates,
+                                     role_rate=ctx.owner_role_rates.get(r_) or ctx.owner_role_rates.get(f_) or 0.0,
+                                     typical_rate=ctx.role_typical.get(r_) or ctx.role_typical.get(f_) or 0.0,
+                                     fallback=blended)
         return prates.get(" ".join(p.name.lower().split())) or rates_l.get(role.strip().lower()) or \
             rates_l.get(family(role)) or blended
     last_shapes = Counter()

@@ -411,10 +411,15 @@ def _context(restaurant_id, db_path=None, on=None):
     except Exception:
         salaried = {}
 
+    import schedule_objective as _obj
+    _people, _owner, _jobs = _obj.forward_maps(people)
+
     def rate_of(name, role):
-        k = _key(name)
-        rt = (people or {}).get(k) or roles.get((role or "").strip().lower()) or (typical or {}).get(
-            (role or "").strip().lower())
+        # The forward chain (audit #23 A3-02): the owner's rate for the
+        # person, for the role, their pay in this job, in any job, the
+        # role's typical.
+        rt = _obj.forward_rate(name, role, role_rates=roles, people=_people, owner=_owner, jobs=_jobs,
+                               role_typical=typical or {})
         try:
             return float(rt) if rt else None
         except (TypeError, ValueError):

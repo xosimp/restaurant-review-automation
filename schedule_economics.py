@@ -143,7 +143,8 @@ def _hours_text(row, constraints=None) -> str:
 def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: float = 40.0,
                 base_hours: dict = None, multiplier: float = 1.5, bucket=None, daily_ot_hours: float = None,
                 salaried=None, person_rates=None, role_typical=None, rounded: bool = True,
-                daily_dt_hours: float = None, seventh_day_ot: bool = False, rest_rule: dict = None) -> dict:
+                daily_dt_hours: float = None, seventh_day_ot: bool = False, rest_rule: dict = None,
+                owner_person_rates=None, person_job_rates=None) -> dict:
     """Dollars for the week with every overtime hour at the multiplier.
 
     Weekly overtime is counted per PAYROLL week: `bucket(date)` names the
@@ -165,7 +166,15 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     person_rates / role_typical (labor.person_rate_book): what each person
     is paid an hour, and a role's typical rate. A drafted cook's shift costs
     his own $22, not the $26 blended rate a role with no rate set fell to;
-    the owner's role rate still beats the typical one.
+    the owner's role rate still beats the typical one. With
+    owner_person_rates / person_job_rates (schedule_objective.rate_maps —
+    or a RateBook as person_rates, which carries them) each hour is priced
+    by the forward chain (schedule_objective.forward_rate_source): the
+    owner's rate for the person, the owner's rate for the role, the
+    person's latest pay in the same job, in any job, the role's typical,
+    the blended — a $0-tipped Bartender PM shift costs the owner's $9, not
+    the person's $11 Barback AM pay (audit #23 A3-02). Without them the old
+    order holds: the person map, then the role.
 
     rounded False keeps the cents: the optimizer and the solver weigh a
     half-hour move by what it costs.
@@ -180,6 +189,9 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
     sal = {" ".join(str(n or "").lower().split()) for n in (salaried or ())}
     rates = {str(k).strip().lower(): float(v) for k, v in (role_rates or {}).items() if k and k != "_default"}
     blended = float(blended_rate or 0) or (sum(rates.values()) / len(rates) if rates else 0.0)
+    from schedule_objective import forward_maps as _fmaps, forward_rate as _frate
+    _people, _owner, _jobs = _fmaps(person_rates, owner_person_rates, person_job_rates)
+    _typ = {str(k).strip().lower(): float(v) for k, v in (role_typical or {}).items() if k and v}
     try:
         daily = float(daily_ot_hours or 0)
     except (TypeError, ValueError):
@@ -195,8 +207,8 @@ def priced_cost(rows: list, role_rates: dict, blended_rate: float, ceiling: floa
         if not n or " ".join(n.lower().split()) in sal:
             continue
         role = (r.get("role") or "").strip().lower()
-        rate = ((person_rates or {}).get(" ".join(n.lower().split())) or rates.get(role)
-                or (role_typical or {}).get(role) or blended)
+        rate = _frate(n, role, role_rates=rates, people=_people, owner=_owner, jobs=_jobs,
+                      role_typical=_typ, fallback=blended)
         per_person.setdefault(n, []).append((r.get("date") or "", _minutes(r.get("shift_start", "")) or 0, _hours(r), rate))
         raw_rows.setdefault(n, []).append(r)
     straight = premium = ot_hours = 0.0
@@ -333,8 +345,11 @@ def week_pricing(restaurant_id, constraints=None, blended_rate=None) -> dict:
     except Exception:
         ppl, typ = {}, {}
     c = constraints
+    import schedule_objective as _objr
     return {"role_rates": rates, "blended_rate": blended_rate or rates.get("_default"),
             "person_rates": ppl or {}, "role_typical": typ or {},
+            # The forward chain's maps (audit #23 A3-02), as plain dicts.
+            **_objr.rate_maps(ppl),
             "ceiling": float(_lab.OVERTIME_THRESHOLD_HOURS),
             "salaried": set(getattr(c, "salaried", None) or ()) if c is not None else set(),
             "base_hours": ({n: dict(v) for n, v in (getattr(c, "base_hours", None) or {}).items()}
@@ -391,7 +406,8 @@ def price_week(rows: list, pricing: dict, rounded: bool = True) -> dict:
                        salaried=p.get("salaried"), person_rates=p.get("person_rates"),
                        role_typical=p.get("role_typical"), rounded=rounded,
                        daily_dt_hours=p.get("daily_dt_hours"), seventh_day_ot=bool(p.get("seventh_day_ot")),
-                       rest_rule=p.get("rest_rule"))
+                       rest_rule=p.get("rest_rule"), owner_person_rates=p.get("owner_person_rates"),
+                       person_job_rates=p.get("person_job_rates"))
 
 
 def _hourly_hours(rows: list, salaried=None) -> float:
@@ -2423,17 +2439,22 @@ def trim_to_budget(rows: list, hours_budget: float, daily_targets: dict, constra
 
     _rates = {str(k).strip().lower(): float(v) for k, v in ((pricing or {}).get("role_rates") or {}).items()
               if k and k != "_default" and v}
-    _people = (pricing or {}).get("person_rates") or {}
-    _blend = float((pricing or {}).get("blended_rate") or 0) or 1.0
+    from schedule_objective import forward_maps as _fmaps, forward_rate as _frate
+    _pp = pricing or {}
+    _people, _owner, _jobs = _fmaps(_pp.get("person_rates"), _pp.get("owner_person_rates"), _pp.get("person_job_rates"))
+    _blend = float(_pp.get("blended_rate") or 0) or 1.0
 
     def _rate(r, person_hours):
         """What an hour of `r` costs, for ordering equally discretionary
-        hours (dollars mode; 1 an hour otherwise): the person's rate, else
-        the role's, at the overtime premium once they are past 40h."""
+        hours (dollars mode; 1 an hour otherwise): priced_cost's forward
+        chain (the owner's rate for the person, the role's, the person's
+        pay in the job, in any job — not the typical, as before), at the
+        overtime premium once they are past 40h."""
         if not dollars:
             return 1.0
         n = " ".join(str(r.get("employee") or "").lower().split())
-        base = float(_people.get(n) or _rates.get(str(r.get("role") or "").strip().lower()) or _blend)
+        base = float(_frate(n, r.get("role"), role_rates=_rates, people=_people, owner=_owner, jobs=_jobs,
+                            fallback=_blend) or _blend)
         return base * (1.5 if person_hours.get(n, 0.0) > 40.05 else 1.0)
 
     import schedule_rules as _sr

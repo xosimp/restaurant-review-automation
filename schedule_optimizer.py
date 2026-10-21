@@ -206,7 +206,11 @@ def pricing_inputs(signals: dict, inputs: dict = None, constraints=None):
     if salaried is None and constraints is not None:
         salaried = getattr(constraints, "salaried", None)
     published = ot.get("published") or {}
+    # The forward chain's maps (schedule_objective.rate_maps, audit #23
+    # A3-02); None on an old payload, which keeps the old order.
+    _people, owner, jobs = _obj.forward_maps(person, ot.get("owner_person_rates"), ot.get("person_job_rates"))
     return {"rates": rates, "blended": blended, "person_rates": person, "role_typical": ot.get("role_typical") or {},
+            "owner_person_rates": owner, "person_job_rates": jobs,
             "ceiling": float(ot.get("line") or 40.0), "base_hours": {_low(k): v for k, v in published.items()},
             "bucket": bucket, "daily": ot.get("daily_line"), "salaried": set(salaried or ())}
 
@@ -221,7 +225,8 @@ def labor_dollars(rows: list, pricing: dict) -> float:
                             base_hours=pricing["base_hours"], bucket=pricing["bucket"],
                             daily_ot_hours=pricing["daily"], salaried=pricing["salaried"],
                             person_rates=pricing["person_rates"], role_typical=pricing["role_typical"],
-                            rounded=False)
+                            rounded=False, owner_person_rates=pricing.get("owner_person_rates"),
+                            person_job_rates=pricing.get("person_job_rates"))
     return float(out.get("total") or 0.0)
 
 
@@ -527,17 +532,25 @@ class _State:
         self.pricing = pricing_inputs(signals, inputs, constraints)
 
     def rate(self, name, role) -> float:
-        """What an hour of `name` in `role` costs (labor.person_rate_book's
-        order: their own rate, the role's, the role's typical, the blended);
-        0 for somebody salaried, and for everybody with no rate on file."""
+        """What an hour of `name` in `role` costs — priced_cost's forward
+        chain (schedule_objective.forward_rate_source): the owner's rate for
+        them, the owner's for the role, their latest pay in the job, in any
+        job, the role's typical, the blended; 0 for somebody salaried, and
+        for everybody with no rate on file."""
         p = self.pricing
         if not p:
             return 0.0
         if sq.name_key(name) in {sq.name_key(n) for n in p["salaried"]}:
             return 0.0
-        role = str(role or "").strip().lower()
-        return float(p["person_rates"].get(" ".join(str(name or "").lower().split())) or p["rates"].get(role)
-                     or p["role_typical"].get(role) or p["blended"] or 0.0)
+        fwd = p.get("_fwd")
+        if fwd is None:
+            fwd = (*_obj.forward_maps(p["person_rates"], p.get("owner_person_rates"), p.get("person_job_rates")),
+                   {str(k).strip().lower(): float(v) for k, v in (p["rates"] or {}).items() if k and k != "_default" and v},
+                   {str(k).strip().lower(): float(v) for k, v in (p["role_typical"] or {}).items() if k and v})
+            p["_fwd"] = fwd
+        people, owner, jobs, rates, typ = fwd
+        return float(_obj.forward_rate(name, role, role_rates=rates, people=people, owner=owner, jobs=jobs,
+                                       role_typical=typ, fallback=float(p["blended"] or 0.0)) or 0.0)
 
     def family(self, role) -> str:
         return sq.role_family(role, self.families)
