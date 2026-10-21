@@ -7582,6 +7582,9 @@ def open_punch_summary(restaurant_id, dates=None, with_names=True, db_path=None)
     line = (f"{n} punch{'es' if n != 1 else ''} still open" + (f" ({names})" if with_names and names else "")
             + ": " + ("their" if n != 1 else "its") + " hours aren't in labor until "
             + ("they're" if n != 1 else "it's") + " closed in the POS")
+    # The sentence without the estimate or the date, for a model's facts
+    # (the DSR's observation): the estimate is no measured figure.
+    out["line_short"] = line + "."
     if out["est_cost"] is not None:
         line += f" — about ${out['est_cost']:,.0f} if they ran to close (estimated)"
     if len(out["dates"]) == 1 and not dates:

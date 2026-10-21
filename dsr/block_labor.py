@@ -692,7 +692,7 @@ def collect(ctx):
                                        f"{top['early'] + top['late']} min)."})
     if open_p.get("count"):
         observations.append({"key": "open_punches", "facts": ["labor.open_punches"],
-                             "text": str(open_p.get("line") or "").replace(
+                             "text": str(open_p.get("line_short") or open_p.get("line") or "").replace(
                                  "aren't in labor", "aren't in tonight's labor")})
     if cov["measured"] and cov["no_shows"]:
         n = len(cov["no_shows"])
@@ -886,9 +886,12 @@ def restate(restaurant_id, dates, db_path=None, now=None) -> dict:
                                    "after the report" + (f" (it said {' and '.join(bits)})" if bits else "") + ".")}
         obs = [o for o in nd.get("observations") or [] if o.get("key") not in ("restated", "open_punches")]
         if open_now.get("count"):
-            obs.append({"key": "open_punches", "facts": ["labor.open_punches"], "text": open_now.get("line")})
+            obs.append({"key": "open_punches", "facts": ["labor.open_punches"],
+                        "text": open_now.get("line_short") or open_now.get("line")})
+        # The figures it said before stay in detail.restated (the page's
+        # note); the observation carries none a model could repeat.
         obs.append({"key": "restated", "facts": ["labor.hours"] + (["labor.cost"] if costed else []),
-                    "text": nd["restated"]["line"]})
+                    "text": "Labor was updated after the report: the POS's punches for this night changed."})
         nd["observations"] = obs
         try:
             store.save_block(rep["id"], "labor", nb, db_path=db)
