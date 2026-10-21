@@ -1964,6 +1964,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("pos_archive_days", "last_error", "TEXT"),
         ("pos_archive_days", "first_read", "TEXT"),
         ("pos_archive_state", "store_key", "TEXT"),
+        # Audit #23 F2 (A4-06): the store's per-night failure ledger, JSON
+        # {date: {n, err, at, next, quarantined}} — a night never stored has
+        # no pos_archive_days row to carry attempts/last_error.
+        ("pos_archive_state", "day_failures", "TEXT"),
         # When the POS's price list was last read (UTC; R3-11): unchanged
         # prices are no longer rewritten, so MAX(seen_at) no longer says it.
         ("pos_archive_state", "prices_read_at", "TEXT"),
