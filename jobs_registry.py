@@ -715,6 +715,18 @@ JOBS = {
         description="Write each published week whose owner turned the POS push on to the POS time clock (preview "
                     "first, per-shift status, retries a POS-side failure; bounded, the queue is the cursor)",
         target=("pos_schedule_push", "run_queue"), max_minutes=5, lane="live"),
+    # Audit #23 (10/21/26) A6-01 / A4-10: one health row per RPOWER store and
+    # the fleet's daily row, which the console, the alert rules, the fleet
+    # POS reading and the status page read instead of every restaurant row.
+    # Sends: the owner's one RPOWER-reconnect notice on the transition into
+    # an auth failure (gated inside on scheduling_allowed).
+    "rpower_health_rollup": dict(
+        cadence="every 15 minutes", sla_minutes=60, sends=True, runnable=True,
+        label="RPOWER health rollup",
+        description="Each RPOWER store's health per data type (labor, archive, change read, catalog, prices, live, "
+                    "intraday, loss, DSR), coverage, gaps, queue, requests and anomalies, in grouped reads "
+                    "(bounded, resumable); tell an owner once when RPOWER refuses their store's token",
+        target=("rpower_health", "run_rollup"), max_minutes=5),
     "live_labor": dict(
         cadence="every 15 minutes while open", sla_minutes=60, sends=True, runnable=True,
         label="Live labor",

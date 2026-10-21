@@ -6967,6 +6967,14 @@ def scheduler_loop():
                 import provider_health as _provider_health
                 _ops.run_job("provider_probes", _provider_health.run_probes)
 
+            # Every 15 minutes — each RPOWER store's health row and the
+            # fleet's (rpower_health, Audit #23 A6-01): grouped reads, bounded
+            # and resumable; the console, the fleet alert rules and the status
+            # page read it, never every restaurant row.
+            if _ops.claim_period("rpower_health_rollup", f"{today}-{now.hour}-{now.minute // 15}"):
+                import rpower_health as _rpower_health
+                _ops.run_job("rpower_health_rollup", _rpower_health.run_rollup)
+
             # Hourly — received intake mail still queued after an hour with
             # no live job is queued again, or marked failed after three
             # (email_intake.reconcile_stale, bar fix round 10/15/26 V13).

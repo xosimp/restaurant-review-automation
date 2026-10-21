@@ -47,7 +47,12 @@ CREATE TABLE IF NOT EXISTS job_failures (
 # 'restaurant_id=N' and matched rid 50-59 when asked for rid 5 — and what
 # kind of failure it is.
 _FAILURE_COLUMNS = (("restaurant_id", "INTEGER"), ("kind", "TEXT NOT NULL DEFAULT 'job'"))
-CAPTURE_KINDS = ("job", "request", "ai_quality", "audit")
+# "data_quality" (Audit #23, 10/21/26, A6-04): a check of the data itself
+# found something — a reconcile gap, a payments gap, a DSR/POS mismatch, a
+# short first read. The run that found it worked: the console lists it per
+# store as a data issue (admin_ops) and never as "Job X failed", which at
+# 1,500 stores was a permanent critical.
+CAPTURE_KINDS = ("job", "request", "ai_quality", "audit", "data_quality")
 
 # "restaurant_id=5" or "rid=5" in a capture's context, as a whole number:
 # "rid=5" never matches "rid=50", and "grid=5" is not a rid.
@@ -2453,6 +2458,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or disk.get("state") == "critical"
                 or (out.get("pg_volume") or {}).get("state") == "critical"
                 or (out.get("requests") or {}).get("error_rate_over")
+                or any(r.get("page") == "urgent" for r in out.get("rpower_rules") or [])
                 or not write_ok)
 
 
@@ -2679,13 +2685,35 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # outage and one page (a warning: once a day for the set), never one
     # console issue per store; a breaker held open past its page threshold
     # pages once per opening (pos_io.page_if_long_open).
+    # The RPOWER fleet rules (Audit #23, A6 section 3.6), evaluated here from
+    # the rollup only (rpower_health.fleet_rules): a data type failing or
+    # stale across the fleet, an auth wave (urgent: a partner token revoked
+    # is one problem, not N reconnects — A4-16), archive gaps, the queue's
+    # failed and expired rows per kind (A6-02), the request budget and volume
+    # (A6-17). A rule without a page is the console's alone.
+    out["rpower_rules"] = []
+    if send:
+        try:
+            import rpower_health as _rh_sla
+            out["rpower_rules"] = [r for r in _rh_sla.fleet_rules(db_path=db_path) if r.get("page")]
+        except Exception as e:
+            log.warning(f"the RPOWER fleet rules unavailable to the platform check: {e}")
+    for rule in out["rpower_rules"]:
+        if rule["page"] != "urgent":
+            warn_kinds.add(rule["key"])
+        problems.append(f"{rule['title']} — {rule['detail']}")
+    rpower_fleet_said = any(r["key"].startswith(("rpower_failing:", "rpower_stale", "rpower_auth_wave"))
+                            for r in out["rpower_rules"])
     try:
         import pos_health as _ph_sla
-        # Read only when paging: /health's read-only call stays lean.
-        fleet = _ph_sla.fleet_state() if send else {}
+        # Read only when paging: /health's read-only call stays lean. The
+        # restaurants' sync columns narrowly, RPOWER from its rollup (A6-16).
+        fleet = (_ph_sla.fleet_state(db_path=db_path) if db_path else _ph_sla.fleet_state()) if send else {}
         out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
                             for p, f in fleet.items()}
         for prov, f in fleet.items():
+            if prov == "rpower" and rpower_fleet_said:
+                continue        # the rollup's own rule says it, by data type
             if f["outage"]:
                 warn_kinds.add(f"pos_fleet_{prov}")
                 problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
@@ -3347,6 +3375,9 @@ _RETENTION_DAYS = {
     # One row per restaurant per day; the trend reads months, a year covers
     # the same month last year.
     "data_health_daily":  int(os.getenv("RETAIN_DATA_HEALTH_DAILY_DAYS", "400")),
+    # The RPOWER fleet's daily health row (rpower_health, Audit #23 A6-01):
+    # one row a day, a year and a bit of trend.
+    "rpower_fleet_health_daily": 400,
     # Webhook idempotency: Stripe retries an event for three days.
     "stripe_events_seen": int(os.getenv("RETAIN_STRIPE_EVENTS_SEEN_DAYS", "90")),
     # A session row a day past its own expiry can never authenticate again.
@@ -3598,6 +3629,7 @@ _RETENTION_COLUMN = {
     "marketing_link_taps": "tapped_at",
     "live_activity_runs": "created_at", "live_activity_tokens": "updated_at",
     "admin_events": "created_at", "data_health_daily": "created_at", "stripe_events_seen": "seen_at",
+    "rpower_fleet_health_daily": "date",
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
@@ -3723,6 +3755,7 @@ _RETENTION_FLOOR_DAYS = {
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
     "tock_events": 30,
+    "rpower_fleet_health_daily": 30,
     # A sent week's delivery list (schedule_publish.notice_status) is read
     # while the week is current — a few weeks, never more than two months.
     "schedule_notices": 60,
@@ -3868,6 +3901,7 @@ _RETENTION_READERS = {
     "notification_opens": (("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),),
     "admin_events": (("admin_ops._load_with", 400, None),),
     "data_health_daily": (("admin_ops._load_with", 14, None),),
+    "rpower_fleet_health_daily": (("rpower_health.fleet_trend", 30, None),),
     "rec_events": (("admin_ops.confidence_calibration", 730, None),
                    ("rec_learning.effectiveness", "rec_learning.EFFECT_WINDOW_DAYS", None)),
     "backup_runs": (("ops.storage_trend", 60, None),),

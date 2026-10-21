@@ -216,22 +216,74 @@ def fleet_from_records(recs) -> dict:
     return _fleet(rows)
 
 
-def fleet_state(restaurants=None, now=None) -> dict:
-    """The fleet reading from the restaurants table (every live, non-demo
-    restaurant's primary POS through pos_sync_state). Never raises."""
+# The restaurants columns a POS reading needs — and only those (Audit #23
+# A6-16): the SLA check used to hydrate every restaurant's ~281 columns every
+# five minutes for this one reading.
+SYNC_COLUMNS = tuple(["id", "name", "is_demo", "billing_status", "pos_system"]
+                     + sorted({c for cols in CREDENTIAL_COLUMNS.values() for c in cols})
+                     + [f"{p}_{k}" for p in PROVIDER_NAMES for k in ("last_synced", "sync_error")])
+
+
+def sync_rows(db_path=None) -> list:
+    """Every in-service restaurant's POS sync columns (SYNC_COLUMNS), as
+    dicts — one narrow SELECT. Raises on a database error."""
+    import models
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
     try:
-        if restaurants is None:
-            from models import get_all_restaurants, in_service
-            restaurants = [r for r in get_all_restaurants() if in_service(r)]
-        rows = []
-        for r in restaurants:
-            if int(_get(r, "is_demo") or 0):
-                continue
-            st = pos_sync_state(r, now=now)
-            if st.get("connected"):
-                rows.append((st["provider"], st["state"] == "error",
-                             {"id": _get(r, "id"), "name": _get(r, "name")}))
-        return _fleet(rows)
+        rows = conn.execute(f"SELECT {', '.join(SYNC_COLUMNS)} FROM restaurants WHERE id > 0 AND "
+                            f"{models.in_service_sql()}").fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def _rpower_rollup(db_path=None):
+    """rpower_health.fleet_failing() when its rollup is fresh, else None (a
+    deliberate function-scope read of the L2 rollup, so the fleet reading and
+    the status page take RPOWER from one per-data-type reading)."""
+    try:
+        import rpower_health
+        roll = rpower_health.fleet_failing(db_path=db_path)
+        return roll if roll.get("fresh") else None
+    except Exception as e:
+        import logging
+        logging.getLogger("pos_health").warning("RPOWER rollup unreadable: %s", e)
+        return None
+
+
+def fleet_rows(restaurants=None, now=None, db_path=None) -> list:
+    """(provider, failing, {id, name}) per connected, non-demo store. RPOWER
+    stores come from the health rollup while it is fresh — failing there is a
+    data type failing, the token refused, or the archive or labor pull past
+    48 hours (error AND stale, A6-12); the other providers (and RPOWER when
+    the rollup is stale) from their sync columns, failing = `error`."""
+    if restaurants is None:
+        restaurants = sync_rows(db_path)
+        roll = _rpower_rollup(db_path)
+    else:
+        roll = None
+    rows = []
+    for r in restaurants:
+        if int(_get(r, "is_demo") or 0):
+            continue
+        st = pos_sync_state(r, now=now)
+        if not st.get("connected") or (roll is not None and st["provider"] == "rpower"):
+            continue
+        rows.append((st["provider"], st["state"] == "error", {"id": _get(r, "id"), "name": _get(r, "name")}))
+    if roll is not None:
+        bad = {s["id"] for s in roll["failing"]} | {s["id"] for s in roll["stale"]}
+        names = {s["id"]: s["name"] for s in roll["failing"] + roll["stale"]}
+        rows += [("rpower", True, {"id": i, "name": names.get(i)}) for i in sorted(bad)]
+        rows += [("rpower", False, {"id": None, "name": None})] * max(0, int(roll["connected"]) - len(bad))
+    return rows
+
+
+def fleet_state(restaurants=None, now=None, db_path=None) -> dict:
+    """The fleet reading: every live, non-demo restaurant's primary POS —
+    the sync columns read narrowly, RPOWER from its health rollup
+    (fleet_rows). Never raises."""
+    try:
+        return _fleet(fleet_rows(restaurants, now=now, db_path=db_path))
     except Exception as e:
         print(f"[pos_health] fleet unreadable: {e}")
         return {}
