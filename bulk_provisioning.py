@@ -30,8 +30,9 @@ refused for a person to reconcile.
 
 RPOWER: with one partner token for the batch (RPOWER's store listing — the
 token a reseller or a group holds), the token is checked once against
-RPOWER and each row's store must be one it sees; the store is bound and the
-token kept (encrypted, credentials.py). Without a token the store is
+RPOWER and each row's store must be one it sees; the store is bound to the
+partner credential that holds the token once (credentials.pos_credentials,
+sealed — Audit #23 A7-01), never a copy per row. Without a token the store is
 recorded (it reserves the store against a second restaurant) and the token
 is pasted per store later (Data & integrations → RPOWER). The payroll week
 RPOWER suggests is a setup confirmation, never applied (ONB-11).
@@ -69,7 +70,175 @@ import models as _models_mod
 MAX_ROWS = 200
 MODULE_KEYS = ("reviews", "labor", "inventory", "marketing")
 COLUMNS = ("restaurant_name", "owner_email", "owner_name", "owner_phone", "timezone", "google_place_id",
-           "modules", "location_group", "location_name", "rpower_cg", "rpower_store_mid")
+           "modules", "location_group", "location_name", "rpower_cg", "rpower_store_mid", "merge_owner")
+_YES = ("1", "yes", "y", "true", "on")
+
+# Audit #23 F7 (10/21/26):
+#   * OWNER CHECK (A7-02): an owner email in a list proves nothing — one
+#     stale or mistyped address in 1,500 rows gave a stranger a real store's
+#     sales, wages and staff. Every store a list binds to RPOWER is HELD
+#     (restaurants.pos_owner_hold): its archive runs, but every login of it
+#     sees only the store check until the owner confirms the store — its
+#     name as RPOWER has it and its serial number, from their own RPOWER
+#     server (verify_owner) — or an admin who has spoken to them releases it
+#     (release_hold, audited). A list signed by RPOWER (manifest_verified:
+#     HMAC-SHA256 of the CSV text under RPOWER_MANIFEST_HMAC_KEY) holds
+#     nothing: RPOWER attests the owners. The dry run says which (`owner_check`).
+#   * MERGE (A7-02): a row whose owner email already signs in as an owner
+#     joins that owner's group only with merge_owner=yes on the row; without
+#     it the row is an error the dry run shows.
+#   * ONE CREDENTIAL (A7-01): the batch's token is held once
+#     (credentials.pos_credentials) and every row binds its id — never a copy
+#     of the token per row.
+#   * CAP (A5-01): at most RPOWER_MAX_STORES_PER_CREDENTIAL (500) live stores
+#     on one partner credential until RPOWER states its limit — one token is
+#     one request budget.
+OWNER_CHECK_STEP = "pos_owner"
+OWNER_CHECK_MAX_FAILS = 5
+OWNER_CHECK_WINDOW_MINUTES = 60
+OWNER_CHECK_SECRET = "pos_owner_check"
+
+
+def max_stores_per_credential() -> int:
+    try:
+        return max(1, int(os.getenv("RPOWER_MAX_STORES_PER_CREDENTIAL", "500") or 500))
+    except ValueError:
+        return 500
+
+
+def manifest_verified(csv_text, signature) -> bool:
+    """Whether `signature` is RPOWER's HMAC-SHA256 (hex) of this exact CSV
+    text under RPOWER_MANIFEST_HMAC_KEY. False without a key or signature —
+    the format is provisional until RPOWER confirms one (Audit #23 §5 Q5)."""
+    import hashlib
+    import hmac
+    key = (os.getenv("RPOWER_MANIFEST_HMAC_KEY") or "").strip()
+    sig = (signature or "").strip().lower()
+    if not key or not sig or not isinstance(csv_text, str):
+        return False
+    want = hmac.new(key.encode(), csv_text.strip().encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(want, sig)
+
+
+def _norm_name(s) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).split())
+
+
+def _serial_key(serial, db_path=None):
+    """A keyed digest of a store's serial number (never kept as typed)."""
+    import hashlib
+    import hmac
+    norm = re.sub(r"[^A-Za-z0-9]+", "", str(serial or "")).upper()
+    if not norm:
+        return None
+    key = _models_mod.kept_secret(OWNER_CHECK_SECRET, 1, **({"db_path": db_path} if db_path else {}))
+    return hmac.new(key, norm.encode(), hashlib.sha256).hexdigest()[:32] if key else None
+
+
+def _check_row(rid, db_path=None):
+    import onboarding
+    return (onboarding.confirmations(rid, db_path) or {}).get(OWNER_CHECK_STEP) or {}
+
+
+def _write_check(rid, suggested, db_path=None):
+    import json
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO onboarding_confirmations (restaurant_id, step, status, suggested_json, source) "
+                     "VALUES (?, ?, 'pending', ?, 'bulk owner check') ON CONFLICT(restaurant_id, step) DO UPDATE "
+                     "SET status='pending', suggested_json=excluded.suggested_json, value_json=NULL, "
+                     "confirmed_by=NULL, confirmed_at=NULL",
+                     (int(rid), OWNER_CHECK_STEP, json.dumps(suggested)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def hold_for_owner(rid, store=None, via="bulk", db_path=None) -> None:
+    """Hold a store's POS data for its owner's check (see the note above)."""
+    from time_utils import utc_stamp
+    dbp = {"db_path": db_path} if db_path else {}
+    _models_mod.update_restaurant(rid, {"pos_owner_hold": utc_stamp()}, **dbp)
+    sug = {"via": via, "fails": 0, "fail_at": None, "store_name": None, "serial_key": None}
+    if store:
+        sug.update(store_name=store.get("name"), serial_key=_serial_key(store.get("serial_number"), db_path))
+    _write_check(rid, sug, db_path)
+
+
+def record_store_facts(rid, store, db_path=None) -> None:
+    """A held store bound later (its token pasted after the list): the name
+    and serial the owner's check compares with."""
+    sug = dict(_check_row(rid, db_path).get("suggested") or {"via": "bind", "fails": 0})
+    sug.update(store_name=store.get("name"), serial_key=_serial_key(store.get("serial_number"), db_path))
+    _write_check(rid, sug, db_path)
+
+
+def _locked(sug) -> bool:
+    from datetime import datetime, timedelta
+    if int(sug.get("fails") or 0) < OWNER_CHECK_MAX_FAILS or not sug.get("fail_at"):
+        return False
+    try:
+        at = datetime.strptime(str(sug["fail_at"])[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    return datetime.utcnow() - at < timedelta(minutes=OWNER_CHECK_WINDOW_MINUTES)
+
+
+def owner_check_state(rid, db_path=None) -> dict:
+    """{held, store_known, locked, can_check} for the store check page."""
+    r = _models_mod.get_restaurant(rid, **({"db_path": db_path} if db_path else {}))
+    held = bool(r is not None and getattr(r, "pos_owner_hold", None))
+    sug = _check_row(rid, db_path).get("suggested") or {}
+    locked = _locked(sug)
+    return {"held": held, "store_known": bool(sug.get("serial_key")), "locked": locked,
+            "can_check": held and bool(sug.get("serial_key")) and not locked}
+
+
+def verify_owner(rid, store_name, serial, who, db_path=None) -> dict:
+    """The owner's store check (A7-02): the store's name as RPOWER has it
+    and its serial number. Five misses in an hour lock it for the hour.
+    {ok, error?, released?, locked?}."""
+    import hmac as _hmac
+    from time_utils import utc_stamp
+    state = owner_check_state(rid, db_path)
+    if not state["held"]:
+        return {"ok": True, "released": False}
+    sug = dict(_check_row(rid, db_path).get("suggested") or {})
+    if not sug.get("serial_key"):
+        return {"ok": False, "error": "Cavnar AI hasn't read this store from RPOWER yet, so it can't be checked "
+                                      "here. Contact support and we'll confirm it with you."}
+    if _locked(sug):
+        return {"ok": False, "locked": True,
+                "error": "Too many tries. Wait an hour, or contact support and we'll confirm it with you."}
+    name_ok = bool(_norm_name(store_name)) and _norm_name(store_name) == _norm_name(sug.get("store_name"))
+    serial_ok = _hmac.compare_digest(_serial_key(serial, db_path) or "", str(sug.get("serial_key") or ""))
+    if not (name_ok and serial_ok):
+        fails = int(sug.get("fails") or 0)
+        if fails >= OWNER_CHECK_MAX_FAILS:
+            fails = 0                                   # the last lock lapsed
+        sug.update(fails=fails + 1, fail_at=utc_stamp())
+        _write_check(rid, sug, db_path)
+        return {"ok": False, "error": "That doesn't match RPOWER's record of this store. Check the store name and "
+                                      "the serial number on your RPOWER server."}
+    release_hold(rid, who, "owner_check", db_path=db_path)
+    return {"ok": True, "released": True}
+
+
+def release_hold(rid, who, how, db_path=None) -> None:
+    """End the hold: the owner checked the store, or an admin confirmed it."""
+    import json
+    from time_utils import utc_stamp
+    _models_mod.update_restaurant(rid, {"pos_owner_hold": None}, **({"db_path": db_path} if db_path else {}))
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO onboarding_confirmations (restaurant_id, step, status, value_json, confirmed_by, "
+                     "confirmed_at) VALUES (?, ?, 'confirmed', ?, ?, ?) ON CONFLICT(restaurant_id, step) DO UPDATE "
+                     "SET status='confirmed', value_json=excluded.value_json, confirmed_by=excluded.confirmed_by, "
+                     "confirmed_at=excluded.confirmed_at",
+                     (int(rid), OWNER_CHECK_STEP, json.dumps({"how": how}), (who or "")[:120] or None, utc_stamp()))
+        conn.commit()
+    finally:
+        conn.close()
 _EMAIL = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
 # The billing status every store a list creates starts at (R8-07). `trial`
@@ -212,13 +381,17 @@ def check_row(row, db_path=None):
     return None
 
 
-def plan(rows, db_path=None) -> dict:
+def plan(rows, db_path=None, manifest=False) -> dict:
     """The dry run: [{line, store_key, action, restaurant_id, error,
-    restaurant_name, owner_email, rpower_store_mid, joins_owner}] and counts,
-    and the billing status the new stores start at. Nothing is written.
-    `joins_owner` ({restaurant_id, name, group}) on a create row whose owner
-    email already signs in as an owner: the new store joins that owner's
-    group and login (R7-12) — shown, so it is never a surprise."""
+    restaurant_name, owner_email, rpower_store_mid, joins_owner,
+    owner_check}] and counts, and the billing status the new stores start
+    at. Nothing is written. `joins_owner` ({restaurant_id, name, group}) on
+    a create row whose owner email already signs in as an owner: the new
+    store joins that owner's group and login (R7-12) — only with
+    merge_owner=yes on the row (A7-02), else the row is an error.
+    `owner_check` on an RPOWER create row: "held" (its POS data waits for
+    the owner's store check) or "manifest" (`manifest`: RPOWER signed the
+    list, nothing is held)."""
     out, seen = [], {}
     for row in rows:
         item = {"line": row["line"], "restaurant_name": row.get("restaurant_name"),
@@ -247,10 +420,24 @@ def plan(rows, db_path=None) -> dict:
             if u and is_owner:
                 item["joins_owner"] = {"restaurant_id": u.get("restaurant_id"), "name": u.get("name"),
                                        "group": (u.get("location_group") or "").strip() or u.get("name")}
+                if str(row.get("merge_owner") or "").strip().lower() not in _YES:
+                    item.update(action="error", error=(
+                        f"{row['owner_email'].strip().lower()} already signs in as the owner of "
+                        f"{u.get('name')}. Set merge_owner=yes on this row to add the store to that owner's "
+                        f"group, or use a different owner email."))
+            if item["action"] == "create" and row.get("rpower_store_mid"):
+                item["owner_check"] = "manifest" if manifest else "held"
         out.append(item)
     counts = {a: sum(1 for i in out if i["action"] == a) for a in ("create", "exists", "error")}
     return {"ok": True, "rows": out, "counts": counts, "billing": billing_note(),
-            "joins_owner": sum(1 for i in out if i.get("joins_owner"))}
+            "joins_owner": sum(1 for i in out if i.get("joins_owner")),
+            "owner_check": {"held": sum(1 for i in out if i.get("owner_check") == "held"),
+                            "manifest": sum(1 for i in out if i.get("owner_check") == "manifest"),
+                            "note": ("RPOWER signed this list: its owners are attested and nothing is held."
+                                     if manifest else
+                                     "Each RPOWER store's POS data is held until its owner confirms the store "
+                                     "(its name and serial number) or an admin confirms it; the archive "
+                                     "still runs.")}}
 
 
 def _conflicts(row, db_path=None):
@@ -282,16 +469,21 @@ def _username_for(email, db_path=None):
     return provisioning._username_for(email, db_path or _models_mod.DB_PATH)
 
 
-def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=None):
+def _create_one(row, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False):
     """One row's restaurant, owner, store binding and modules. Returns the
     new restaurant id; raises (after taking the half-made restaurant back
-    out) on any failure."""
+    out) on any failure. `cred_id` is the batch's partner credential (A7-01):
+    the row binds it, never a copy of the token. An RPOWER store is held for
+    its owner's check unless `manifest` (A7-02)."""
     from auth import create_user
     import auth as _auth
     dbp = {"db_path": db_path} if db_path else {}
     email = row["owner_email"].strip().lower()
     keys, _bad = _modules(row.get("modules"))
     u, is_owner = _owner_login(email, db_path)
+    if u and is_owner and str(row.get("merge_owner") or "").strip().lower() not in _YES:
+        raise ValueError(f"{email} already signs in as an owner; set merge_owner=yes to add the store to that "
+                         f"owner's group")
     rid = _models_mod.create_restaurant(_models_mod.Restaurant(
         name=row["restaurant_name"].strip()[:200], owner_email=email,
         owner_name=(row.get("owner_name") or "").strip()[:120] or None,
@@ -327,12 +519,14 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
                             "pos_system": "RPOWER"})
             if store is not None:
                 from datetime import datetime as _dt
-                updates.update({"rpower_token": token, "rpower_store_name": store.get("name"),
+                updates.update({"rpower_credential_id": cred_id, "rpower_store_name": store.get("name"),
                                 "rpower_verified_at": _dt.utcnow().isoformat(timespec="seconds"),
                                 "rpower_sync_error": None})
                 if store.get("timezone") and not (row.get("timezone") or "").strip():
                     updates["timezone"] = store["timezone"]
         _models_mod.update_restaurant(rid, updates, **dbp)
+        if row.get("rpower_store_mid") and not manifest:
+            hold_for_owner(rid, store, via="bulk", db_path=db_path)
         import onboarding
         onboarding.start_setup(rid, db_path=db_path)
         if partner_id:
@@ -376,33 +570,54 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
     return rid
 
 
-def apply(rows, actor, partner_id=None, rpower_token=None, send_welcome=True, db_path=None) -> dict:
+def apply(rows, actor, partner_id=None, rpower_token=None, send_welcome=True, db_path=None,
+          credential_id=None, csv_text=None, manifest_signature=None) -> dict:
     """Create every `create` row of plan(rows); `exists` and `error` rows are
     recorded and left alone. One provision_batches row; returns {ok,
-    batch_id, counts, rows, error?}."""
-    stores = None
+    batch_id, counts, rows, credential_id?, error?}. The RPOWER token is the
+    pasted `rpower_token` or a partner credential already held
+    (`credential_id`); either way the rows bind the credential (A7-01).
+    `manifest_signature` over `csv_text` (manifest_verified) means RPOWER
+    attests the owners and no store is held (A7-02)."""
+    stores, cred_id = None, None
     if not billing_note()["ok"]:
         return {"ok": False, "error": billing_note()["note"]}
+    import credentials
     token = (rpower_token or "").strip() or None
+    if not token and credential_id:
+        token = credentials.credential_token(credential_id, **({"db_path": db_path} if db_path else {}))
+        if not token:
+            return {"ok": False, "error": "That partner credential can't be read (revoked, or its key is missing)."}
     if token and any(r.get("rpower_store_mid") for r in rows):
+        refused = credentials.saves_refused()
+        if refused:
+            return {"ok": False, "error": refused}
         import rpower
         probe = rpower.test_token(token)
         if not probe.get("ok"):
             return {"ok": False, "error": f"RPOWER refused the token: {probe.get('error')}"}
         stores = probe.get("stores") or []
+        try:
+            cred_id = credentials.credential_for_token("rpower", token, actor=actor, label="RPOWER partner token",
+                                                       **({"db_path": db_path} if db_path else {}))
+        except credentials.CredentialKeyError as e:
+            return {"ok": False, "error": str(e)}
+    manifest = manifest_verified(csv_text, manifest_signature)
     batch_id, busy = _start_batch(actor, partner_id, len(rows), db_path)
     if batch_id is None:
         return {"ok": False, "error": busy}
     try:
-        planned = plan(rows, db_path)
+        planned = plan(rows, db_path, manifest=manifest)
         by_line = {r["line"]: r for r in rows}
-        results = _apply_rows(planned, by_line, partner_id, stores, token, send_welcome, actor, db_path)
+        results = _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, actor, db_path,
+                              manifest=manifest)
     except BaseException:
         _finish_batch(batch_id, [], {"created": 0, "exists": 0, "error": 0}, "failed", db_path)
         raise
     counts = {a: sum(1 for i in results if i["action"] == a) for a in ("created", "exists", "error")}
     _finish_batch(batch_id, results, counts, "done", db_path)
-    return {"ok": True, "batch_id": batch_id, "counts": counts, "rows": results}
+    return {"ok": True, "batch_id": batch_id, "counts": counts, "rows": results, "credential_id": cred_id,
+            "manifest": manifest}
 
 
 def _start_batch(actor, partner_id, n_rows, db_path=None):
@@ -431,8 +646,13 @@ def _start_batch(actor, partner_id, n_rows, db_path=None):
         conn.close()
 
 
-def _apply_rows(planned, by_line, partner_id, stores, token, send_welcome, actor, db_path=None):
+def _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False):
     results = []
+    cap = max_stores_per_credential()
+    on_cred = None
+    if cred_id:
+        import credentials
+        on_cred = credentials.stores_on(cred_id, **({"db_path": db_path} if db_path else {}))
     for item in planned["rows"]:
         if item["action"] == "create":
             row = by_line[item["line"]]
@@ -448,10 +668,19 @@ def _apply_rows(planned, by_line, partner_id, stores, token, send_welcome, actor
                 item.update(action="error", error=err)
                 results.append(item)
                 continue
+            binds = bool(row.get("rpower_store_mid") and stores is not None and cred_id)
+            if binds and on_cred is not None and on_cred >= cap:
+                item.update(action="error", error=(
+                    f"the partner token already serves {on_cred} stores, the most one token may serve until "
+                    f"RPOWER states its limit (RPOWER_MAX_STORES_PER_CREDENTIAL={cap})."))
+                results.append(item)
+                continue
             try:
-                item["restaurant_id"] = _create_one(row, partner_id, stores, token, send_welcome,
-                                                    actor, db_path=db_path)
+                item["restaurant_id"] = _create_one(row, partner_id, stores, cred_id, send_welcome,
+                                                    actor, db_path=db_path, manifest=manifest)
                 item["action"] = "created"
+                if binds and on_cred is not None:
+                    on_cred += 1
             except Exception as e:
                 item.update(action="error", error=str(e)[:300])
         results.append(item)

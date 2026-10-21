@@ -702,7 +702,9 @@ def test_the_listed_admin_writes_carry_a_typed_audit_and_the_step_ups():
             decos = [ast.unparse(d) for d in fns[name].decorator_list]
             assert any(".audited(" in d for d in decos), (rel, name)
     rp = open(os.path.join(ROOT, "rpower_routes.py"), encoding="utf-8").read()
-    assert rp.count("_audited_rpower(\"rpower.") == 3
+    # token_saved, bootstrapped, disconnected — and since Audit #23 (F7)
+    # the live-mirror override and the owner-check release.
+    assert rp.count("_audited_rpower(\"rpower.") == 5
     ar = open(os.path.join(ROOT, "admin_routes.py"), encoding="utf-8").read()
     assert "@recent_auth_required()\ndef create_client(" in ar and "@recent_auth_required()\ndef reactivate_client(" in ar
     assert "\"client.created\"" in ar

@@ -110,6 +110,9 @@ extension DSRBlock {
         let pctOfSales: Double?
         let roles: [String]
         var salaried = false
+        /// A one-person department's cost withheld outside the pay view
+        /// (Audit #23 A7-05): the cost would be that person's pay.
+        var payHidden = false
         var id: String { name }
     }
 
@@ -216,7 +219,8 @@ extension DSRBlock {
             guard let name = x["department"]?.string else { return nil }
             return Department(name: name, hours: x["hours"]?.double, cost: x["cost"]?.double,
                               pctOfSales: x["pct_of_sales"]?.double,
-                              roles: x["roles"]?.array.compactMap(\.string) ?? [])
+                              roles: x["roles"]?.array.compactMap(\.string) ?? [],
+                              payHidden: x["pay_hidden"]?.bool ?? false)
         }
         let withCost = out.contains { $0.cost != nil }
         if withCost, !out.isEmpty, let sal = metric("salaried_cost") {
@@ -883,7 +887,8 @@ struct DSRLaborDepartments: View {
 
     var body: some View {
         let ds = labor.departments
-        let withCost = ds.contains { $0.cost != nil && !$0.salaried }
+        let payHidden = ds.contains { $0.payHidden }
+        let withCost = !payHidden && ds.contains { $0.cost != nil && !$0.salaried }
         let weights = ds.map { withCost ? ($0.cost ?? 0) : ($0.hours ?? 0) }
         let total = max(weights.reduce(0, +), 1)
         VStack(alignment: .leading, spacing: 12) {
@@ -928,6 +933,11 @@ struct DSRLaborDepartments: View {
             if withCost, let sal = labor.metric("salaried_cost") {
                 let all = ds.filter { !$0.salaried }.compactMap(\.cost).reduce(0, +) + sal
                 HomeMixedText.make("\(DSRFormat.money(all)) all in, salaries included.", role: .secondary)
+            }
+            if payHidden {
+                Text("A department one person worked shows no cost: it would be their pay.")
+                    .cavnarText(.caption, color: .cavnarInk2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let basis = labor.departmentsBasis {
                 Text(DSRNightDetail.cap(basis)).cavnarText(.caption, color: .cavnarInk2)

@@ -48,6 +48,7 @@ run_live_labor()  the 15-minute job: the read kept for the screens, the
 """
 import json
 import math
+import re
 from datetime import date, datetime, timedelta
 
 import models as _models_mod
@@ -889,6 +890,74 @@ def _adds(restaurant, day, now_local, rows, week, crew, factor, first, rates_t, 
 
 # ── the ledger, earned autonomy and acting on a move ───────────────────────
 
+# ── what a login that does not see pay may see of a move (Audit #23 A7-04) ──
+#
+# A move's dollars are that ONE person's hours x their own POS or role rate:
+# "Let Maria go … saves 2h (~$36)" is Maria's wage, $18/h, on a teammate's
+# Live screen and on a lock screen. R7-24's pay view (strategy_routes.
+# _sees_pay: the principal, or whoever sends the schedule) now decides the
+# moves too: every dollar field is dropped and the sentence loses its money.
+MOVE_PAY_FIELDS = ("dollars", "net", "premium")
+_PAY_TEXT = (
+    re.compile(r"\s*\(~\$[\d,]+(?:\.\d+)?\)"),                           # " (~$36)"
+    re.compile(r",\s*about \$[\d,]+(?:\.\d+)?"),                         # ", about $36"
+    re.compile(r",\s*less \$[\d,]+(?:\.\d+)? predictability pay under [^.—]+"),
+)
+
+
+def strip_pay_text(text) -> str:
+    """A move's sentence with its dollar figures taken out. A sentence that
+    still carries a $ after that (a wording this does not know) is replaced
+    by one with no figure at all."""
+    t = str(text or "")
+    for rx in _PAY_TEXT:
+        t = rx.sub("", t)
+    if "$" in t:
+        t = "A change to tonight's schedule is suggested. Open Live labor to see it."
+    return t
+
+
+def redact_move(m) -> dict:
+    """A copy of a move (suggested or from the ledger) with no pay in it."""
+    out = dict(m or {})
+    for k in MOVE_PAY_FIELDS:
+        if k in out:
+            out[k] = None
+    if "text" in out:
+        out["text"] = strip_pay_text(out.get("text"))
+    out["pay_hidden"] = True
+    return out
+
+
+def redact_read(rd) -> dict:
+    """A live read whose moves carry no pay (the read's own labor totals
+    stay: an aggregate, as every labor view shows)."""
+    if not isinstance(rd, dict):
+        return rd
+    out = dict(rd)
+    if isinstance(out.get("moves"), list):
+        out["moves"] = [redact_move(m) for m in out["moves"]]
+    return out
+
+
+def _audience_sees_pay(users, user_ids) -> bool:
+    """Whether EVERY recipient of a push may see pay (A7-04): a lock screen
+    is read by whoever holds the phone. `users` are the brief's recipient
+    dicts (role and grants at this restaurant); a recipient not among them
+    counts as no."""
+    try:
+        import permissions
+        by_id = {int(u["id"]): u for u in users or ()}
+        for uid in user_ids or ():
+            u = by_id.get(int(uid))
+            if not u or not (permissions.is_principal(u)
+                             or permissions.has_permission(u, permissions.SCHEDULE_PUBLISH)):
+                return False
+        return bool(user_ids)
+    except Exception:
+        return False
+
+
 def _store_move(restaurant_id, m, db_path=None):
     """The move's ledger row (one per key, ever). Returns (id, is_new)."""
     conn = get_conn(db_path)
@@ -1220,14 +1289,18 @@ def _offer_to_managers(restaurant, move_id, m, db_path=None) -> bool:
         return False
     if not notify.briefing_allowed(restaurant.id, "intraday_pulse", dbp):
         return False
+    recips = morning_brief.recipients(restaurant.id, dbp)
     audience = strategy_jobs.deliverable_audience(
-        restaurant.id, {u["id"] for u in morning_brief.recipients(restaurant.id, dbp)}, dbp,
+        restaurant.id, {u["id"] for u in recips}, dbp,
         alert_type="intraday_pulse")
     if not audience:
         return False
     title = {"cut": "Tonight's running slow", "extend": "Tonight's running ahead",
              "call_in": "Tonight's running ahead"}[m["kind"]]
-    queued = push.fire_push(restaurant.id, "intraday_pulse", title, m["text"],
+    # A lock screen carries no one's pay unless every phone it goes to may
+    # see pay (Audit #23 A7-04).
+    body = m["text"] if _audience_sees_pay(recips, audience) else strip_pay_text(m["text"])
+    queued = push.fire_push(restaurant.id, "intraday_pulse", title, body,
                             data={"live_move_id": move_id, "live_move_kind": m["kind"], "surface": "alert_push",
                                   "answerable": False},
                             db_path=dbp, user_ids=audience)

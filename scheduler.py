@@ -5056,8 +5056,8 @@ def _drill_offsite(backup_dir):
         sealed = offsite_backup.sealed_count(plain)
         opened = offsite_backup.unseal_file(plain)
         _lap("unseal")
-        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE rpower_token IS NOT NULL "
-                                          "AND rpower_token != ''")
+        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE (rpower_token IS NOT NULL "
+                                          "AND rpower_token != '') OR rpower_credential_id IS NOT NULL")
         seals_ok = not opened.get("failed")
         ok = integrity == "ok" and restaurants > 0 and seals_ok
         return {"checked": True, "ok": ok, "stages": stages, "sealed": sealed,

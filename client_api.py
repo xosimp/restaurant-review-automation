@@ -5695,6 +5695,13 @@ def guests_inbox_api(current_user):
     return _m("mobile_guests_inbox")(current_user)
 
 
+@client_bp.route("/api/guests/pos-match", methods=["GET", "POST"])
+@login_required
+def guests_pos_match_api(current_user):
+    """Web twin — the one body is mobile_api.mobile_guests_pos_match."""
+    return _m("mobile_guests_pos_match")(current_user)
+
+
 @client_bp.route("/api/guest-campaigns")
 @login_required
 def guest_campaigns_api(current_user):
@@ -13371,6 +13378,13 @@ def account_staff_unlock(current_user, membership_id):
 def account_staff_unlink(current_user, membership_id):
     """Take a claimed name back from whoever claimed it."""
     return _m("mobile_unlink_staff")(current_user, membership_id)
+
+
+@client_bp.route("/api/account/staff/<int:membership_id>/approve-pos", methods=["POST"])
+@login_required
+def account_staff_approve_pos(current_user, membership_id):
+    """Web twin — the one body is mobile_api.mobile_approve_staff_pos."""
+    return _m("mobile_approve_staff_pos")(current_user, membership_id)
 
 
 @client_bp.route("/api/account/staff/<int:membership_id>/deactivate", methods=["POST"])

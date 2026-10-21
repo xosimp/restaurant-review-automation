@@ -155,6 +155,9 @@ struct FloorSettingsResponse: Decodable {
     var liveMoves = false
     var autopilot = false
     var canEdit = false
+    /// Only the account holder switches "Send to POS" (Audit #23 A7-11);
+    /// an older server that does not say falls back to can_edit.
+    var canSwitchPosPush = false
     var posLabel: String? = nil
     var posProvider: String? = nil
     var posCanPush = false
@@ -165,6 +168,7 @@ struct FloorSettingsResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case ok, error, settings, pos, autopilot
         case canEdit = "can_edit"
+        case canSwitchPosPush = "can_switch_pos_push"
         case publishedScheduleId = "published_schedule_id"
     }
     enum SettingsKeys: String, CodingKey {
@@ -191,6 +195,7 @@ struct FloorSettingsResponse: Decodable {
             autopilot = s.sfBool(.autopilot) ?? false
         }
         canEdit = c.sfBool(.canEdit) ?? false
+        canSwitchPosPush = c.sfBool(.canSwitchPosPush) ?? canEdit
         if let p = try? c.nestedContainer(keyedBy: PosKeys.self, forKey: .pos) {
             posProvider = p.sfText(.provider); posLabel = p.sfText(.label)
             posCanPush = (p.sfBool(.schedulePush) ?? false) || (p.sfBool(.schedulePreview) ?? false)
@@ -582,7 +587,7 @@ struct FloorSettingsSheet: View {
                                 role: .caption)
             }
             let busy = store.busy != nil
-            if s.canEdit && pv.supported && !s.posPush && pv.external == nil {
+            if s.canSwitchPosPush && pv.supported && !s.posPush && pv.external == nil {
                 Button { Task { await store.set(.init(posPush: true, previewed: true)) } } label: {
                     Text("Send published weeks to \(pos)").frame(maxWidth: .infinity)
                 }
@@ -598,11 +603,13 @@ struct FloorSettingsSheet: View {
                 }
                 .buttonStyle(CavnarSecondaryButtonStyle())
                 .disabled(busy)
-                Button { Task { await store.set(.init(posPush: false)) } } label: {
-                    Text("Stop sending to the POS").frame(maxWidth: .infinity)
+                if s.canSwitchPosPush {
+                    Button { Task { await store.set(.init(posPush: false)) } } label: {
+                        Text("Stop sending to the POS").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
+                    .disabled(busy)
                 }
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .disabled(busy)
             }
         }
     }

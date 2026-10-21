@@ -596,6 +596,11 @@ def init_auth(db_path: str = DB_PATH):
         # switch never reactivates a row carrying either stamp.
         "ALTER TABLE memberships ADD COLUMN unlinked_at TEXT",
         "ALTER TABLE memberships ADD COLUMN deleted_at TEXT",
+        # Audit #23 A7-10: whether a SELF-CLAIMED name may see the POS's
+        # hours and tips under it — the claim's phone matched the POS
+        # record's (pos_pay_ok_by 'pos_phone'), or the owner approved it.
+        "ALTER TABLE memberships ADD COLUMN pos_pay_ok_at TEXT",
+        "ALTER TABLE memberships ADD COLUMN pos_pay_ok_by TEXT",
         # Re-audit 10/20/26 R7-17: an email change waits on a code sent to the
         # NEW address (start_email_change / finish_email_change).
         "ALTER TABLE users ADD COLUMN email_change_pending TEXT",
@@ -666,6 +671,7 @@ def init_auth(db_path: str = DB_PATH):
 
     normalize_session_rows(db_path=db_path)
     backfill_memberships(db_path=db_path)
+    grandfather_staff_pos_pay(db_path=db_path)
     prune_login_history(db_path=db_path)
     sweep_orphan_pin_attempts(db_path=db_path)
 
@@ -3591,26 +3597,54 @@ class AlreadyMemberError(SignupError):
         self.employee_name = employee_name
 
 
-def _write_claim(conn, user_id, restaurant_id, phone, name, job_role, pin_hash, signup_token):
+def _pos_phone_verdict(restaurant_id, name, phone) -> str:
+    """Whether a claimed name's POS record vouches for the claiming phone
+    (Audit #23 A7-10): "match" (the POS record carries this phone),
+    "mismatch" (it carries another), "no_phone" (it carries none) or
+    "no_record" (no POS record of that name is kept). Read from the kept
+    RPOWER employee list only — never a POS request on this thread; the
+    list keeps phones only as keyed digests (rpower.phone_key)."""
+    try:
+        import rpower
+        keys = rpower.employee_phone_keys(restaurant_id, name, _name_key)
+    except Exception:
+        keys = None
+    if keys is None:
+        return "no_record"
+    if not keys:
+        return "no_phone"
+    try:
+        import rpower
+        return "match" if rpower.phone_key(phone) in keys else "mismatch"
+    except Exception:
+        return "no_record"
+
+
+def _write_claim(conn, user_id, restaurant_id, phone, name, job_role, pin_hash, signup_token, pay_ok=False):
     """The claim's writes, inside the caller's BEGIN IMMEDIATE: the membership
     (a new row, or this identity's own row here brought back), its claim
-    stamp and PIN, cleared counters, and the spent signup token. Returns the
-    membership id."""
+    stamp and PIN, cleared counters, and the spent signup token. `pay_ok`:
+    the POS record's phone is this phone, so the POS's hours and tips under
+    the name are shown at once (A7-10); otherwise they wait for the owner
+    (approve_staff_pos_pay). Returns the membership id."""
+    ok_at = "datetime('now')" if pay_ok else "NULL"
+    ok_by = "pos_phone" if pay_ok else None
     mine = conn.execute("SELECT id FROM memberships WHERE user_id=? AND restaurant_id=?",
                         (user_id, restaurant_id)).fetchone()
     if mine:
         conn.execute(
             "UPDATE memberships SET role='employee', employee_name=?, job_role=COALESCE(?, job_role), "
             "is_active=1, claimed_by_phone=?, claimed_at=datetime('now'), pin_hash=?, "
-            "pin_set_at=datetime('now'), unlinked_at=NULL, deleted_at=NULL, updated_at=datetime('now') "
-            "WHERE id=?", (name, job_role, phone, pin_hash, mine["id"]))
+            "pin_set_at=datetime('now'), unlinked_at=NULL, deleted_at=NULL, updated_at=datetime('now'), "
+            f"pos_pay_ok_at={ok_at}, pos_pay_ok_by=? "
+            "WHERE id=?", (name, job_role, phone, pin_hash, ok_by, mine["id"]))
         mid = mine["id"]
     else:
         mid = conn.execute(
             "INSERT INTO memberships (user_id, restaurant_id, role, employee_name, job_role, "
-            "claimed_by_phone, claimed_at, pin_hash, pin_set_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,datetime('now'),?,datetime('now'),datetime('now'))",
-            (user_id, restaurant_id, "employee", name, job_role, phone, pin_hash)).lastrowid
+            "claimed_by_phone, claimed_at, pin_hash, pin_set_at, updated_at, pos_pay_ok_at, pos_pay_ok_by) "
+            f"VALUES (?,?,?,?,?,?,datetime('now'),?,datetime('now'),datetime('now'),{ok_at},?)",
+            (user_id, restaurant_id, "employee", name, job_role, phone, pin_hash, ok_by)).lastrowid
     for table in _PIN_COUNTERS.values():
         conn.execute(f"DELETE FROM {table} WHERE membership_id=?", (mid,))
     conn.execute("DELETE FROM staff_signups WHERE token_hash=?", (hash_session_token(signup_token),))
@@ -3661,6 +3695,8 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
     existing = get_user_by_phone(phone, db_path=db_path)
     # The KDF (~57 ms) runs before the write lock is taken, not inside it.
     pin_hash = _encode_pin_hash(generate_password_hash(_peppered(pin)))
+    # Whether the POS record of this name vouches for this phone (A7-10).
+    pos_verdict = _pos_phone_verdict(restaurant_id, match["name"], phone)
 
     def _checks(conn, user_id):
         if user_id:
@@ -3727,7 +3763,8 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
         _checks(conn, user_id)
         try:
             mid = _write_claim(conn, user_id, restaurant_id, phone, match["name"],
-                               (match.get("job_role") or "").strip() or None, pin_hash, signup_token)
+                               (match.get("job_role") or "").strip() or None, pin_hash, signup_token,
+                               pay_ok=pos_verdict == "match")
         except sqlite3.IntegrityError as exc:
             if ACTIVE_NAME_INDEX in str(exc):
                 raise SignupError("That name isn't available. Ask your manager.") from exc
@@ -3740,7 +3777,63 @@ def claim_staff_name(signup_token: str, restaurant_id: int, employee_name: str,
         conn.close()
     return {"user_id": user_id, "membership_id": mid,
             "employee_name": match["name"], "job_role": match.get("job_role"),
-            "phone_last4": mask_phone_last4(phone)}
+            "phone_last4": mask_phone_last4(phone),
+            # POS hours and tips under the name: shown now (the POS record's
+            # phone matched) or held for the owner's approval (A7-10).
+            "pos_pay_held": pos_verdict != "match", "pos_phone": pos_verdict}
+
+
+def staff_pos_pay_held(membership_id, restaurant_id, db_path: str = DB_PATH) -> bool:
+    """Whether a staff login's POS hours and tips are held (A7-10): a
+    SELF-CLAIMED name (claimed_by_phone) the POS record's phone did not
+    vouch for and the owner has not approved. A login the owner made is
+    never held. Fails closed on a self-claimed row it cannot read."""
+    if not membership_id:
+        return False
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT claimed_by_phone, pos_pay_ok_at FROM memberships WHERE id=? AND restaurant_id=?",
+                           (int(membership_id), int(restaurant_id or 0))).fetchone()
+    except Exception:
+        return True
+    finally:
+        conn.close()
+    if not row:
+        return False
+    return bool((row["claimed_by_phone"] or "").strip()) and not row["pos_pay_ok_at"]
+
+
+def approve_staff_pos_pay(membership_id: int, restaurant_id: int, who: str, db_path: str = DB_PATH) -> bool:
+    """The owner says this self-claimed login is the person: the POS's hours
+    and tips under the name are shown to it from now on."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE memberships SET pos_pay_ok_at=datetime('now'), pos_pay_ok_by=? WHERE id=? "
+                         "AND restaurant_id=? AND role='employee'",
+                         ((who or "owner")[:120], int(membership_id), int(restaurant_id))).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return bool(n)
+
+
+STAFF_POS_PAY_MIGRATION = "staff_pos_pay_grandfather_v1"
+
+
+def grandfather_staff_pos_pay(db_path: str = DB_PATH) -> int:
+    """Once (data_migrations): every name already claimed keeps seeing its
+    POS hours and tips (A7-10 holds only claims made from now on)."""
+    import models
+
+    def run(conn):
+        n = conn.execute("UPDATE memberships SET pos_pay_ok_at=COALESCE(claimed_at, datetime('now')), "
+                         "pos_pay_ok_by='grandfathered' WHERE COALESCE(claimed_by_phone,'') <> '' "
+                         "AND pos_pay_ok_at IS NULL").rowcount
+        return int(n or 0), f"{int(n or 0)} self-claimed staff logins keep their POS hours and tips"
+    try:
+        return models._once(STAFF_POS_PAY_MIGRATION, run, db_path)
+    except Exception:
+        return 0
 
 
 def unlink_claimed_membership(membership_id: int, restaurant_id: int,
@@ -4082,6 +4175,14 @@ def staff_login_required(f):
         limited = _rl_st.session_refusal(user)
         if limited is not None:
             return limited
+        # A self-claimed name the POS did not vouch for sees no POS hours or
+        # tips until the owner approves it (Audit #23 A7-10); staff_insights
+        # reads this for the request.
+        try:
+            from flask import g as _g_st
+            _g_st.staff_pos_held = staff_pos_pay_held(user.get("membership_id"), user.get("restaurant_id"))
+        except Exception:
+            pass
         return _rl_st.run_counted(user, lambda: f(*args, **kwargs, current_user=user))
     return decorated
 
@@ -5749,6 +5850,58 @@ _BILLING_BLOCKED_MESSAGE = (
 )
 
 
+# ── the bulk owner check (Audit #23 F7, A7-02) ──────────────────────────────
+#
+# A store onboarded from a list is held (restaurants.pos_owner_hold) until its
+# owner confirms it — an owner email in a list proves nothing, and one wrong
+# address gave a stranger a real store's sales, wages and staff. While held,
+# every login of that restaurant reaches only the store check, sign-out and
+# its own account basics; the POS archive keeps running behind it. An admin
+# (and an admin's view-as) is never held. bulk_provisioning has the rest.
+_POS_HOLD_EXEMPT_PREFIXES = (
+    "/login", "/logout", "/health", "/static/", "/privacy", "/terms",
+    "/api/pos/store-check", "/mobile/api/pos/store-check",
+    "/api/account/reauth", "/mobile/api/account/reauth", "/api/switch-location",
+    "/api/account/request-deletion", "/api/account/delete-login",
+    "/mobile/api/login", "/mobile/api/logout", "/mobile/api/me", "/admin",
+)
+POS_HOLD_MESSAGE = ("Confirm your store first: sign in at cavnar.ai and enter its name and serial number from your "
+                    "RPOWER server. Your numbers open right after.")
+
+
+def _pos_owner_hold(user) -> bool:
+    """True when this request is refused for a store held for its owner's
+    check. Fails CLOSED on a held row it can read; a row it cannot read at
+    all fails open (the same rule as the billing gate)."""
+    try:
+        if not user or user.get("is_admin") or user.get("acting_admin") or user.get("acting_admin_id"):
+            return False
+        path = request.path or ""
+        if any(path.startswith(p) for p in _POS_HOLD_EXEMPT_PREFIXES):
+            return False
+        from models import get_restaurant
+        r = get_restaurant(user["restaurant_id"])
+        return bool(r is not None and getattr(r, "pos_owner_hold", None))
+    except Exception:
+        return False
+
+
+def _pos_hold_page(user):
+    from flask import render_template
+    import config
+    can_check, locked, principal = False, False, False
+    try:
+        import bulk_provisioning
+        from permissions import is_principal
+        st = bulk_provisioning.owner_check_state(user["restaurant_id"])
+        principal = is_principal(user)
+        can_check, locked = bool(st.get("can_check") and principal), bool(st.get("locked"))
+    except Exception:
+        pass
+    return render_template("pos_store_check.html", can_check=can_check, locked=locked, is_principal=principal,
+                           support=config.support_email()), 403
+
+
 # ── module entitlement ──────────────────────────────────────────────────────
 #
 # Modules are sold separately (see pricing.py), and the dashboard and the app
@@ -6394,6 +6547,11 @@ def login_required(f):
             from flask import jsonify as _jsonify_bb
             _msg, _extra = _billing_blocked_message(user)
             return _jsonify_bb(ok=False, error=_msg, billing_inactive=True, **_extra), 402
+        if _pos_owner_hold(user):
+            if not _wants_json_response():
+                return _pos_hold_page(user)
+            from flask import jsonify as _jsonify_ph
+            return _jsonify_ph(ok=False, error=POS_HOLD_MESSAGE, pos_store_check=True), 403
         locked = _module_blocked(user)
         if locked:
             from flask import jsonify as _jsonify_ml
@@ -6799,6 +6957,9 @@ def mobile_login_required(f):
             from flask import jsonify as _jsonify_mbb
             _msg, _extra = _billing_blocked_message(user)
             return _jsonify_mbb(ok=False, error=_msg, billing_inactive=True, **_extra), 402
+        if _pos_owner_hold(user):
+            from flask import jsonify as _jsonify_mph
+            return _jsonify_mph(ok=False, error=POS_HOLD_MESSAGE, pos_store_check=True), 403
         locked = _module_blocked(user)
         if locked:
             from flask import jsonify as _jsonify_mml

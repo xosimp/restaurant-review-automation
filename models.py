@@ -556,6 +556,26 @@ class Restaurant:
     # A1-13/A6-09): set by any RPowerAuthError, cleared by a successful read
     # or a reconnect. While set, the store's calls are short-circuited.
     rpower_auth_failed_at: Optional[str] = None
+    # Audit #23 F7 (10/21/26). The partner credential this store reads RPOWER
+    # with (credentials.pos_credentials.id, A7-01): the token is held once
+    # there, sealed and versioned, and rotated in one step; rpower_token is
+    # only the legacy per-row copy, read while this is NULL.
+    rpower_credential_id: Optional[int]  = None
+    # A store onboarded in bulk whose owner has not yet shown they own it
+    # (A7-02): UTC stamp of the hold, NULL = none. While set, every login of
+    # this restaurant sees only the store check (auth._pos_owner_hold); the
+    # POS archive still runs.
+    pos_owner_hold: Optional[str]        = None
+    # The nightly RPOWER guest match (guest_hub.run_pos_guest_match, A7-07):
+    # off unless the restaurant opts in.
+    pos_guest_match: int                 = 0
+    # A demo restaurant may read a LIVE POS store only with this audited
+    # admin override (A7-15); a demo-store: (simulated) token never needs it.
+    pos_live_mirror: int                 = 0
+    # When this restaurant's POS was disconnected (UTC, A7-13): its POS
+    # archive is purged POS_PURGE_AFTER_DISCONNECT_DAYS later unless it
+    # connects again (cleared on every connect).
+    pos_disconnected_at: Optional[str]   = None
     # Back Office (Buyers Edge) — the inventory system inventory_sync reads
     # (backoffice.py). Entered by Cavnar, never by the owner.
     backoffice_api_key: Optional[str]    = None
@@ -2894,6 +2914,14 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN rpower_sync_error TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_verified_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_auth_failed_at TEXT",
+        # Audit #23 F7 (10/21/26): the partner credential (A7-01), the bulk
+        # owner hold (A7-02), the guest-match opt-in (A7-07), a demo's
+        # live-store override (A7-15), the POS disconnect stamp (A7-13).
+        "ALTER TABLE restaurants ADD COLUMN rpower_credential_id INTEGER",
+        "ALTER TABLE restaurants ADD COLUMN pos_owner_hold TEXT",
+        "ALTER TABLE restaurants ADD COLUMN pos_guest_match INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN pos_live_mirror INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN pos_disconnected_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
         "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
@@ -4948,6 +4976,9 @@ def init_db(db_path: str = DB_PATH):
     init_bar_mapping(db_path)
     from rpower import init_rate_limit
     init_rate_limit(db_path)
+    # The POS partner credential, held once (Audit #23 F7, A7-01).
+    from credentials import init_pos_credentials
+    init_pos_credentials(db_path)
     # The POS traffic controls (pos_io, scale audit 10/19/26 A3): the
     # request ledger, the provider breakers, the catalogs per group and the
     # live snapshot every intraday reader shares.
@@ -5182,6 +5213,14 @@ def init_db(db_path: str = DB_PATH):
         print(f"[people] labelled-name repair skipped: {e}")
     # Runs after ensure_columns() so organization_id exists to write into.
     backfill_organizations(db_path=db_path)
+    # One POS store, one live restaurant — held by the database too (Audit
+    # #23 F7, A7-06 / A6-19), and the two F7 grandfathers, once each: a demo
+    # already mirroring a live store keeps its override (A7-15, Will's demo of
+    # Simple EJ's), and every restaurant the nightly guest match already ran
+    # for keeps it on (A7-07).
+    ensure_pos_binding_indexes(db_path=db_path)
+    grandfather_pos_live_mirror(db_path=db_path)
+    grandfather_pos_guest_match(db_path=db_path)
     # A target seeded from a figure the registry no longer seeds from goes
     # back to Cavnar's default, alerts off (Benchmarking re-audit #3).
     backfill_seeded_targets(db_path=db_path)
@@ -5679,6 +5718,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
         "rpower_last_synced","rpower_sync_error","rpower_verified_at","rpower_auth_failed_at",
+        "rpower_credential_id","pos_owner_hold","pos_guest_match","pos_live_mirror","pos_disconnected_at",
         "backoffice_api_key","backoffice_account_id",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -6829,6 +6869,11 @@ def _restaurant_from_row(row) -> Restaurant:
         rpower_sync_error=row["rpower_sync_error"] if "rpower_sync_error" in row.keys() else None,
         rpower_verified_at=row["rpower_verified_at"] if "rpower_verified_at" in row.keys() else None,
         rpower_auth_failed_at=row["rpower_auth_failed_at"] if "rpower_auth_failed_at" in row.keys() else None,
+        rpower_credential_id=row["rpower_credential_id"] if "rpower_credential_id" in row.keys() else None,
+        pos_owner_hold=row["pos_owner_hold"] if "pos_owner_hold" in row.keys() else None,
+        pos_guest_match=(row["pos_guest_match"] or 0) if "pos_guest_match" in row.keys() else 0,
+        pos_live_mirror=(row["pos_live_mirror"] or 0) if "pos_live_mirror" in row.keys() else 0,
+        pos_disconnected_at=row["pos_disconnected_at"] if "pos_disconnected_at" in row.keys() else None,
         toast_restaurant_guid=row["toast_restaurant_guid"] if "toast_restaurant_guid" in row.keys() else None,
         toast_access_token=row["toast_access_token"] if "toast_access_token" in row.keys() else None,
         toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,
@@ -9215,7 +9260,8 @@ _INPUTS_VOLATILE = frozenset({
     "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
     "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
     "clover_api_token", "clover_last_synced", "rpower_token", "rpower_last_synced", "rpower_verified_at",
-    "rpower_auth_failed_at", "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
+    "rpower_auth_failed_at", "rpower_credential_id", "pos_disconnected_at", "pos_owner_hold", "pos_guest_match",
+    "pos_live_mirror", "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
     "gbp_review_count", "gbp_rating_updated_at", "optin_invites_ack_at", "demo_cleared_at",
 })
 
@@ -14941,7 +14987,171 @@ def pos_binding_conflict(provider: str, values, exclude_id=None, db_path: str = 
     return None
 
 
-_POS_LABELS = {"toast": "Toast restaurant", "square": "Square location", "clover": "Clover merchant",
+# One POS store, one live restaurant, held by the database (Audit #23 F7,
+# A7-06 / A6-19): pos_binding_conflict is a check-then-write, so two binds at
+# once (an admin save during a bulk apply) could both pass it. A partial
+# unique index per provider makes the second write fail; demo rows are left
+# out exactly as the app check leaves them out (and A7-15 decides when a demo
+# may hold a live store at all). An index that cannot be made — two live
+# restaurants ALREADY on one store — is logged and captured, never a failed
+# boot, and pos_binding_duplicates() names them.
+POS_BINDING_INDEXES = {
+    "rpower": ("uq_restaurants_rpower_store", "rpower_cg, rpower_store_mid",
+               "rpower_store_mid IS NOT NULL AND rpower_store_mid <> ''"),
+    "toast": ("uq_restaurants_toast_guid", "toast_restaurant_guid",
+              "toast_restaurant_guid IS NOT NULL AND toast_restaurant_guid <> ''"),
+    "square": ("uq_restaurants_square_location", "square_location_id",
+               "square_location_id IS NOT NULL AND square_location_id <> ''"),
+    "clover": ("uq_restaurants_clover_merchant", "clover_merchant_id",
+               "clover_merchant_id IS NOT NULL AND clover_merchant_id <> ''"),
+}
+
+
+def ensure_pos_binding_indexes(db_path: str = DB_PATH) -> dict:
+    """{provider: "ok" | "duplicates" | "error: …"} — at boot only."""
+    import logging
+    out = {}
+    for provider, (name, cols, present) in POS_BINDING_INDEXES.items():
+        conn = get_conn(db_path)
+        try:
+            conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON restaurants({cols}) "
+                         f"WHERE COALESCE(is_demo, 0) = 0 AND {present}")
+            conn.commit()
+            out[provider] = "ok"
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            dup = pos_binding_duplicates(provider, db_path=db_path)
+            out[provider] = "duplicates" if dup else f"error: {type(e).__name__}"
+            logging.getLogger(__name__).error("POS binding index %s not made (%s): duplicates %s",
+                                              name, e, dup)
+            try:
+                import ops
+                ops.capture(e, job="pos_binding_index", context=f"{provider} duplicates={dup}",
+                            kind="data_quality")
+            except Exception:
+                pass
+        finally:
+            conn.close()
+    return out
+
+
+def pos_binding_duplicates(provider: str = "rpower", db_path: str = DB_PATH) -> list:
+    """[[restaurant ids], ...] — live (non-demo) restaurants bound to the
+    same POS store, the state the unique index exists to forbid."""
+    cols = POS_BINDING_COLUMNS[provider]
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(f"SELECT id, {', '.join(cols)} FROM restaurants WHERE COALESCE(is_demo,0)=0").fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    by = {}
+    for r in rows:
+        vals = tuple(str(r[c] if r[c] is not None else "").strip().lower() for c in cols)
+        if not vals[-1]:
+            continue
+        by.setdefault(vals, []).append(int(r["id"]))
+    return sorted(sorted(v) for v in by.values() if len(v) > 1)
+
+
+def demo_binding_refusal(restaurant_id: int, db_path: str = DB_PATH):
+    """When a demo restaurant is made real (admin_api_set_demo, A7-06), the
+    sentence refusing it because another live restaurant already holds one
+    of its POS stores — else None. The flip used to write is_demo=0 with no
+    check, leaving two live tenants on one store."""
+    r = get_restaurant(restaurant_id, db_path)
+    if r is None:
+        return None
+    for provider, cols in POS_BINDING_COLUMNS.items():
+        vals = tuple(getattr(r, c, None) for c in cols)
+        if not str(vals[-1] or "").strip():
+            continue
+        clash = pos_binding_conflict(provider, vals, exclude_id=restaurant_id, db_path=db_path)
+        if clash:
+            return (f"{r.name} is bound to the same {_POS_LABELS.get(provider, provider)} as {clash}. "
+                    f"Disconnect it here (or there) before making this a real client: one store can feed only "
+                    f"one live restaurant.")
+    return None
+
+
+POS_LIVE_MIRROR_MIGRATION = "pos_live_mirror_grandfather_v1"
+POS_GUEST_MATCH_MIGRATION = "pos_guest_match_grandfather_v1"
+
+
+def _rpower_rows_for_grandfather(conn, db_path=None):
+    """[(id, is_demo, billing_status, plain token or '', store_mid)] — the
+    token read through credentials (it is ciphertext at rest)."""
+    import credentials as _cr
+    out = []
+    for r in conn.execute("SELECT id, COALESCE(is_demo,0) AS is_demo, COALESCE(billing_status,'') AS bs, "
+                          "rpower_token, rpower_credential_id, COALESCE(rpower_store_mid,'') AS sm "
+                          "FROM restaurants").fetchall():
+        tok = _cr.decrypt(r["rpower_token"]) if r["rpower_token"] else None
+        if not tok and r["rpower_credential_id"]:
+            tok = _cr.credential_token(r["rpower_credential_id"], db_path=db_path)
+        out.append((int(r["id"]), int(r["is_demo"] or 0), r["bs"], (tok or "").strip(), (r["sm"] or "").strip()))
+    return out
+
+
+def _once(name, fn, db_path):
+    """Run fn(conn) -> (n, detail) inside one write with its data_migrations
+    marker; retried at the next boot on failure. Returns n (0 when done)."""
+    import logging
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM data_migrations WHERE name=?", (name,)).fetchone():
+            conn.rollback()
+            return 0
+        n, detail = fn(conn)
+        conn.execute("INSERT INTO data_migrations (name, detail) VALUES (?, ?)", (name, detail))
+        conn.commit()
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("%s failed (will retry at next boot): %s", name, e)
+        return 0
+    finally:
+        conn.close()
+
+
+def grandfather_pos_live_mirror(db_path=None) -> int:
+    """Once: every DEMO restaurant already bound to a live (not demo-store:)
+    RPOWER store keeps that binding, with the override recorded (A7-15) —
+    rid 4, Will's demo of Simple EJ's store. Every later one needs the
+    audited admin override (rpower_routes live-mirror)."""
+    def run(conn):
+        ids = [rid for rid, demo, _bs, tok, sm in _rpower_rows_for_grandfather(conn, db_path)
+               if demo and sm and tok and not tok.startswith("demo-store:")]
+        for rid in ids:
+            conn.execute("UPDATE restaurants SET pos_live_mirror=1 WHERE id=?", (rid,))
+        return len(ids), f"demo restaurants mirroring a live RPOWER store kept: {ids}"
+    return _once(POS_LIVE_MIRROR_MIGRATION, run, db_path)
+
+
+def grandfather_pos_guest_match(db_path=None) -> int:
+    """Once: the nightly RPOWER guest match becomes opt-in (A7-07), and every
+    restaurant it already ran for keeps it on — the ones with an RPOWER token
+    that were not cancelled or internal (Simple EJ's built its guest flow on
+    it, 10/20/26), except a demo reading a LIVE store, whose diners are a real
+    restaurant's (the simulated store's demo-store: guests are fine)."""
+    def run(conn):
+        ids = [rid for rid, demo, bs, tok, _sm in _rpower_rows_for_grandfather(conn, db_path)
+               if tok and bs not in ("cancelled", "internal") and (not demo or tok.startswith("demo-store:"))]
+        for rid in ids:
+            conn.execute("UPDATE restaurants SET pos_guest_match=1 WHERE id=?", (rid,))
+        return len(ids), f"restaurants the guest match already ran for, kept on: {ids}"
+    return _once(POS_GUEST_MATCH_MIGRATION, run, db_path)
+
+
+_POS_LABELS ={"toast": "Toast restaurant", "square": "Square location", "clover": "Clover merchant",
                "rpower": "RPOWER store"}
 
 

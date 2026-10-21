@@ -754,7 +754,9 @@ def test_the_owner_card_syncs_and_disconnects_but_never_takes_a_token():
     src = open(rpower_routes.__file__).read()
     assert '"/api/rpower/sync", methods=["POST"]' in src
     assert '"/api/rpower/disconnect", methods=["POST"]' in src
-    assert 'principal_only(current_user, "the RPower connection")' in src
+    # Principal only, with the password step-up (Audit #23 A7-12).
+    assert "def disconnect_refusal(current_user)" in src and "account_step_up_refusal(current_user)" in src
+    assert "disconnect_refusal(current_user) or do_disconnect(current_user)" in src
     assert "/api/rpower/save" not in src and "/admin/rpower/save/" in src
 
 

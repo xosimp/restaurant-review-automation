@@ -452,8 +452,12 @@ def departments(ctx, provider, day_rows, all_rows, cost, net):
         role = (r.get("role") or "").strip()
         dept = department_of(role, cats.get(role.lower()))
         h = _shift_hours(r)
-        d = out.setdefault(dept, {"department": dept, "hours": 0.0, "raw": 0.0, "roles": set()})
+        d = out.setdefault(dept, {"department": dept, "hours": 0.0, "raw": 0.0, "roles": set(), "people": set()})
         d["hours"] += h
+        # How many people: a one-person department's cost is that person's
+        # pay, withheld outside the pay view (dsr.access, Audit #23 A7-05).
+        if (r.get("employee") or "").strip():
+            d["people"].add((r.get("employee") or "").strip().lower())
         try:
             d["raw"] += h * float(_shift_rate(r, role_rates, fallback, people, typical) or 0)
         except Exception:
@@ -469,7 +473,7 @@ def departments(ctx, provider, day_rows, all_rows, cost, net):
         c = (round(cost * d["raw"] / raw_total, 2) if isinstance(cost, (int, float)) and raw_total > 0 else None)
         res.append({"department": name, "hours": round(d["hours"], 2), "cost": c,
                     "pct_of_sales": round(c / net * 100.0, 1) if c is not None and net else None,
-                    "roles": sorted(d["roles"])})
+                    "roles": sorted(d["roles"]), "people": len(d["people"])})
     return res
 
 

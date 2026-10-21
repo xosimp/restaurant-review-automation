@@ -567,6 +567,11 @@ def seal_plan(conn):
     if "restaurants" in tables:
         have = {r[1] for r in conn.execute('PRAGMA table_info("restaurants")')}
         out += [("restaurants", f, "credential") for f in credentials.FIELDS if f in have]
+    # Credentials sealed at rest outside restaurants (the RPOWER partner
+    # token, Audit #23 A7-01): carried as they are, like FIELDS.
+    for (t, c) in credentials.AT_REST_SEALED:
+        if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            out.append((t, c, "credential"))
     for (t, c) in sorted(SEAL_COLUMNS):
         if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
             out.append((t, c, "sealed"))
@@ -796,7 +801,8 @@ def scrub_plan(conn, sealed=()):
     sealed_tables = {t for t in SEAL_TABLES if (t, SEAL_TABLES[t][0]) in sealed}
     # A sealable table this run cannot seal (no key) is emptied, as before.
     wipe = sorted(t for t in set(SCRUB_TABLES) | (set(SEAL_TABLES) - sealed_tables) if t in tables)
-    named = set(SCRUB_COLUMNS) | set(SEAL_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    named = set(SCRUB_COLUMNS) | set(SEAL_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS} \
+        | set(credentials.AT_REST_SEALED)
     registry = set(credentials.credential_columns(conn))
     unclassified = []
     for t, c in sorted(set(credential_columns(conn)) | registry):

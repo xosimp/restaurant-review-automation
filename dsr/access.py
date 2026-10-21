@@ -140,6 +140,8 @@ def redact(facts, user):
             if isinstance(game.get(side), dict):
                 for k in GAME_LABOR_KEYS:
                     game[side].pop(k, None)
+    if isinstance(blocks.get("labor"), dict) and not sees_pay(user, view):
+        hidden |= _redact_pay(blocks["labor"])
     for name, need in perms.items():
         # A block this login may not read is hidden whether or not tonight
         # collected it — a line naming its subject is still not theirs.
@@ -153,6 +155,61 @@ def redact(facts, user):
     # tomorrow_for, per view — never passed through whole (D3-2).
     out.pop("tomorrow", None)
     return out, hidden
+
+
+def sees_pay(user, view=None):
+    """Whether this login may see one person's pay in the report (Audit #23
+    A7-05): the owner view, an admin, or whoever sends the schedule — the
+    pay view R7-24 drew for the schedule (strategy_routes._sees_pay)."""
+    from permissions import SCHEDULE_PUBLISH
+    view = view if view is not None else view_for(user)
+    return view == OWNER or _sees(user, SCHEDULE_PUBLISH)
+
+
+_DOLLAR_PHRASE = None
+
+
+def _redact_pay(labor) -> set:
+    """Take one person's pay out of the Labor block, in place: the overtime
+    drift's per-person and total dollars (priced at that person's own rate —
+    "Alex late 30 min, $9.50" is Alex's wage) and a department's cost when
+    one person is the department (or the count is unknown). Returns the
+    citations withheld, for the narrative filter."""
+    import re
+    global _DOLLAR_PHRASE
+    if _DOLLAR_PHRASE is None:
+        _DOLLAR_PHRASE = re.compile(r",\s*about \$[\d,]+(?:\.\d+)?")
+    hidden = set()
+    det = labor.get("detail") if isinstance(labor.get("detail"), dict) else {}
+    drift = det.get("overtime_drift")
+    if isinstance(drift, dict):
+        drift = dict(drift)
+        drift["people"] = [{k: v for k, v in p.items() if k != "dollars"} if isinstance(p, dict) else p
+                           for p in drift.get("people") or []]
+        drift.pop("dollars", None)
+        drift["pay_hidden"] = True
+        det["overtime_drift"] = drift
+        hidden.add("labor.drift_dollars")
+    depts = det.get("departments")
+    if isinstance(depts, list):
+        out = []
+        for d in depts:
+            # A report from before the count was kept: more hours than one
+            # shift can hold (16) is more than one person.
+            alone = (int(d.get("people") or 0) <= 1) if isinstance(d, dict) and d.get("people") is not None \
+                else (isinstance(d, dict) and float(d.get("hours") or 0) <= 16)
+            if isinstance(d, dict) and alone:
+                d = dict(d, cost=None, pct_of_sales=None, pay_hidden=True)
+            out.append(d)
+        det["departments"] = out
+    obs = det.get("observations")
+    if isinstance(obs, list):
+        det["observations"] = [dict(o, text=_DOLLAR_PHRASE.sub("", str(o.get("text") or "")))
+                               if isinstance(o, dict) and o.get("key") == "overtime_drift" else o for o in obs]
+    metrics = labor.get("metrics") if isinstance(labor.get("metrics"), dict) else {}
+    if "drift_dollars" in metrics:
+        metrics.pop("drift_dollars", None)
+    return hidden
 
 
 def _cites_hidden(cites, hidden):

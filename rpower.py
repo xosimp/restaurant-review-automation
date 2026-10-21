@@ -40,6 +40,7 @@ Not documented anywhere in RPOWER's 120 endpoints: rate limits, and any
 response code other than 200. Both are handled defensively here and both are
 open questions with RPOWER.
 """
+import json
 import logging
 import os
 import random
@@ -252,15 +253,39 @@ class RPowerBudgetExceeded(RPowerTryLater):
 # ── credentials ─────────────────────────────────────────────────────────────
 
 def _creds(restaurant_id: int) -> dict:
+    """{token, cg, store_mid, name, credential_id} for a restaurant.
+
+    The token comes from the partner credential the store is bound to
+    (credentials.pos_credentials, Audit #23 F7 A7-01) — one sealed row every
+    store on that token shares, rotated in one step — and from the
+    restaurant's own legacy rpower_token only while it has no credential id.
+    A bound store whose credential is revoked or unreadable has NO token: it
+    never falls back to the per-row copy of the old one.
+
+    Inside a models.read_scope() the answer is kept for the block (A1-22):
+    every helper of one archive or one sync used to read the restaurant row
+    and decrypt the token again — 20 to 30 times a night per store."""
+    import models
+    return models.scope_read(("restaurant", int(restaurant_id), "rpower_creds"), lambda: _read_creds(restaurant_id))
+
+
+def _read_creds(restaurant_id: int) -> dict:
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     if not r:
         raise RPowerAuthError("no such restaurant")
+    cred_id = getattr(r, "rpower_credential_id", None)
+    if cred_id:
+        import credentials
+        token = (credentials.credential_token(cred_id) or "").strip()
+    else:
+        token = (getattr(r, "rpower_token", None) or "").strip()
     return {
-        "token": (getattr(r, "rpower_token", None) or "").strip(),
+        "token": token,
         "cg": getattr(r, "rpower_cg", None),
         "store_mid": (getattr(r, "rpower_store_mid", None) or "").strip() or None,
         "name": getattr(r, "rpower_store_name", None),
+        "credential_id": int(cred_id) if cred_id else None,
     }
 
 
@@ -298,6 +323,7 @@ _io_ctx = threading.local()
 def _note_store(restaurant_id=None, store_mid=None):
     _io_ctx.rid = int(restaurant_id) if restaurant_id else None
     _io_ctx.store = str(store_mid) if store_mid else None
+    _io_ctx.cred = _io_ctx.tok = None                   # _ctx names the credential after this
 
 
 def _current_rid():
@@ -356,8 +382,15 @@ def init_rate_limit(db_path=None):
 
 
 def _bucket_key(token: str, store=None) -> str:
+    """The per-token budget's bucket: keyed by the partner credential's id
+    when the request is for a store bound to one (Audit #23 F7, A7-01 /
+    A5-01) — so a rotation keeps the same bucket, and every store on one
+    credential shares it — else by a hash of the token (never the token)."""
     import hashlib
-    raw = str(token or "") + (f"|{store}" if store else "")
+    cred = getattr(_io_ctx, "cred", None) if getattr(_io_ctx, "tok", None) == token else None
+    if cred:
+        return f"rpower:cred:{int(cred)}" + (f"|{store}" if store else "")
+    raw =str(token or "") + (f"|{store}" if store else "")
     return "rpower:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
@@ -912,6 +945,13 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
     # sales and labor into both, and each looks entirely normal (fix round
     # #143). A demo may mirror a live store, as it may a live Google listing.
     r = get_restaurant(restaurant_id)
+    # A demo reads a LIVE store only with the audited admin override (Audit
+    # #23 F7, A7-15): a demo's logins are shared and reviewers' accounts are
+    # demos, and a live store is a real restaurant's sales, wages and staff.
+    # The simulated store (demo-store:) needs nothing.
+    refusal = demo_live_store_refusal(r, c["token"])
+    if refusal:
+        return {"ok": False, "stores": stores, "error": refusal}
     if not (r is not None and int(getattr(r, "is_demo", 0) or 0)):
         from models import pos_binding_conflict
         clash = pos_binding_conflict("rpower", (chosen.get("cg"), chosen.get("store_mid")),
@@ -927,6 +967,8 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
         "rpower_store_name": chosen.get("name"),
         "rpower_verified_at": datetime.utcnow().isoformat(timespec="seconds"),
         "rpower_sync_error": None,
+        # Connected again: the POS purge clock stops (A7-13).
+        "pos_disconnected_at": None,
     }
     # RPOWER's own timezone and payroll-week anchor, which are the same two
     # settings an admin was being asked to know. Only filled when Cavnar has
@@ -954,6 +996,14 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
         except (TypeError, ValueError):
             suggested_week_start = None
     update_restaurant(restaurant_id, fields)
+    # A store held for its owner's check (bulk onboarding, A7-02) learns the
+    # serial number the owner confirms it with.
+    if r is not None and getattr(r, "pos_owner_hold", None):
+        try:
+            import bulk_provisioning
+            bulk_provisioning.record_store_facts(restaurant_id, chosen)
+        except Exception as e:
+            log.warning("rpower bootstrap: owner-check facts not recorded for %s: %s", restaurant_id, e)
     if suggested_week_start is not None:
         try:
             import onboarding
@@ -990,8 +1040,89 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
 # A web request uses the kept copy at any age and never reads a list live
 # (A3-09) — except inside allow_live_reads(), which no web route uses since
 # the push preview went to the kept lists (blind re-audit 10/20/26 R3-07).
-CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "21600"))
+#
+# Audit #23 (10/21/26):
+#   * A1-20: a kept list is refreshed when it is a day old (was six hours) —
+#     a night or a punch that names an id the list lacks already reads it
+#     afresh (archive_rows' refresh on a miss, _people_for), so the age
+#     refresh only catches renames; one unknown employee is read alone
+#     (employee/getbymid) instead of the whole group's list.
+#   * A7-03 / A3-07: a list is kept per CREDENTIAL and group (scope
+#     "c<credential id>:<cg>[:<store>]", or "t<token digest>:<cg>…" for a
+#     store on a legacy per-row token) — two RPOWER customers that happen to
+#     share a cg number can never read each other's lists — and employee
+#     records are PROJECTED before they are kept: names, payroll id and term
+#     date, never the phone, mobile or anything else RPOWER sends; a phone
+#     survives only as a keyed digest (phone_key), which is all the staff
+#     sign-up check needs. A scope no bound restaurant uses any more is
+#     purged (purge_catalogs, nightly in ops.prune_ledgers).
+CATALOG_MAX_AGE_SECONDS = float(os.getenv("RPOWER_CATALOG_MAX_AGE_SECONDS", "86400"))
 _list_cache = _LRU(CACHE_MAX_KEYED)
+
+# What is kept of an employee record (A7-03). Every reader of the kept list
+# reads only these (employee_display_name, distinct_employee_names,
+# _name_tag, pos_employees, fetch_people).
+EMPLOYEE_KEEP = ("mid", "fname", "mname", "lname", "name", "aname", "payroll_id", "term_date")
+_PHONE_FIELDS = ("phone", "mobile", "cell", "phone2")
+PHONE_KEY_SECRET = "pos_phone_keys"
+
+
+def phone_key(raw):
+    """A keyed digest of a phone number's last ten digits (HMAC under this
+    install's kept secret), or None — so a POS phone can be MATCHED (the
+    staff sign-up check, A7-10) without being kept. Never reversible from a
+    database copy without app_secrets."""
+    import hashlib
+    import hmac
+    digits = "".join(ch for ch in str(raw or "") if ch.isdigit())[-10:]
+    if len(digits) < 10:
+        return None
+    try:
+        from models import kept_secret
+        key = kept_secret(PHONE_KEY_SECRET, 1)
+    except Exception:
+        key = None
+    if not key:
+        return None
+    return hmac.new(key, digits.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _project(path, rows):
+    """A list as it may be kept: employee records cut to EMPLOYEE_KEEP plus
+    their phones' keyed digests (`phone_keys`); every other list as sent."""
+    if path not in ("employee/getbycg", "employee/getbymid"):
+        return rows
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        keep = {k: r.get(k) for k in EMPLOYEE_KEEP if k in r}
+        keys = sorted({k for k in (phone_key(r.get(f)) for f in _PHONE_FIELDS) if k})
+        if keys:
+            keep["phone_keys"] = keys
+        elif r.get("phone_keys"):
+            keep["phone_keys"] = list(r["phone_keys"])
+        out.append(keep)
+    return out
+
+
+def catalog_scope(token, cg, credential_id=None, store_mid=None) -> str:
+    """The pos_catalogs scope for a store's list (A7-03 / A3-07)."""
+    if str(token or "").startswith("demo-store:"):
+        head = "demo:"
+    elif credential_id:
+        head = f"c{int(credential_id)}:"
+    else:
+        import credentials
+        head = f"t{credentials.fingerprint(token)[:12]}:"
+    return head + str(cg) + (f":{store_mid}" if store_mid else "")
+
+
+def _scope(restaurant_id, token, base, by_store):
+    """The scope for the store _ctx just resolved on this thread (its
+    credential is the one _ctx noted for this token)."""
+    cred = getattr(_io_ctx, "cred", None) if getattr(_io_ctx, "tok", None) == token else None
+    return catalog_scope(token, base["cg"], cred, base["storemid"] if by_store else None)
 
 
 class _flag:
@@ -1032,8 +1163,7 @@ def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name
     younger than CATALOG_MAX_AGE_SECONDS, else RPOWER — and kept."""
     import pos_io
     token, base = _ctx(restaurant_id)
-    scope = ("demo:" if str(token).startswith("demo-store:") else "") + str(base["cg"]) + (
-        f":{base['storemid']}" if by_store else "")
+    scope = _scope(restaurant_id, token, base, by_store)
     key = (scope, path)
     page_load = _reader_only() and not getattr(_io_ctx, "allow_live", False)
     if not _fresh():
@@ -1050,10 +1180,181 @@ def _list(restaurant_id: int, path: str, by_store: bool = False, sortorder="name
     params.update(extra or {})
     if sortorder:
         params["sortorder"] = sortorder
-    rows = _paged(token, path, params)
+    rows = _project(path, _paged(token, path, params))
     pos_io.catalog_put("rpower", scope, path, rows)
     _list_cache[key] = (time.monotonic(), rows)
     return rows
+
+
+def _list_add_one(restaurant_id: int, list_path: str, mid_path: str, mid) -> bool:
+    """Read ONE record by id (`mid_path`, e.g. employee/getbymid — collection
+    #6 and its siblings) and add it to the kept list `list_path` (A1-20),
+    instead of re-reading the group's whole list for one new hire. True when
+    the record came back and was kept. Never for the simulated store."""
+    import pos_io
+    token, base = _ctx(restaurant_id)
+    if str(token).startswith("demo-store:") or not mid:
+        return False
+    body = _request(token, mid_path, {"mid": str(mid)})
+    recs = [r for r in (body if isinstance(body, list) else [body]) if isinstance(r, dict) and r.get("mid")]
+    if not recs:
+        return False
+    scope = _scope(restaurant_id, token, base, False)
+    kept = pos_io.catalog_get("rpower", scope, list_path)
+    rows = list(kept[1]) if kept else list(_list(restaurant_id, list_path))
+    have = {str(r.get("mid")) for r in rows}
+    rows += [r for r in _project(list_path, recs) if str(r.get("mid")) not in have]
+    pos_io.catalog_put("rpower", scope, list_path, rows)
+    _list_cache[(scope, list_path)] = (time.monotonic(), rows)
+    return True
+
+
+def _live_scopes(db_path=None) -> set:
+    """The group-level scopes (no store part) of every restaurant still bound
+    to an RPOWER store."""
+    import models
+    import credentials
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        rows = conn.execute("SELECT rpower_cg, rpower_token, rpower_credential_id FROM restaurants "
+                            "WHERE COALESCE(rpower_store_mid,'') <> '' AND rpower_cg IS NOT NULL").fetchall()
+    finally:
+        conn.close()
+    out = set()
+    for r in rows:
+        cred = r["rpower_credential_id"]
+        tok = None if cred else credentials.decrypt(r["rpower_token"])
+        if not cred and not tok:
+            continue
+        out.add(catalog_scope(tok or "", r["rpower_cg"], cred))
+    return out
+
+
+def _group_scope(scope: str):
+    """'c3:9999:12' -> 'c3:9999'; a scope from before A7-03 ('9999:12',
+    'demo:9999') -> its own group part, which no live scope matches unless
+    it is the simulated store's."""
+    parts = str(scope).split(":")
+    if parts[0] == "demo" or parts[0][:1] in ("c", "t"):
+        return ":".join(parts[:2])
+    return None                                # the old cg-only form: never live
+
+
+POS_CATALOG_ORPHAN_DAYS = int(os.getenv("RETAIN_POS_CATALOG_ORPHAN_DAYS", "7"))
+
+
+def purge_catalogs(db_path=None, orphan_days=None) -> int:
+    """Delete RPOWER lists no bound restaurant reads any more (A7-03): a
+    scope whose group no restaurant is bound to (a disconnect, an account
+    delete, a credential retired) once it has not been refreshed for
+    `orphan_days` (RETAIN_POS_CATALOG_ORPHAN_DAYS, 7), and at once every list
+    kept under the pre-A7-03 cg-only scope — those held RPOWER's employee
+    records whole (phones and all). Returns rows deleted. Nightly
+    (ops.prune_ledgers) and once at boot."""
+    import models
+    days = POS_CATALOG_ORPHAN_DAYS if orphan_days is None else int(orphan_days)
+    live = _live_scopes(db_path)
+    cutoff = time.time() - max(0, days) * 86400.0
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    n = 0
+    try:
+        rows = conn.execute("SELECT scope, path, fetched_at FROM pos_catalogs WHERE provider='rpower'").fetchall()
+        for r in rows:
+            group = _group_scope(r["scope"])
+            if group is not None and group in live:
+                continue
+            if group is not None and float(r["fetched_at"] or 0) >= cutoff:
+                continue                       # an orphan, but recent: a reconnect may want it
+            n += conn.execute("DELETE FROM pos_catalogs WHERE provider='rpower' AND scope=? AND path=?",
+                              (r["scope"], r["path"])).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    _list_cache.clear()
+    return int(n or 0)
+
+
+def migrate_catalog_scopes(db_path=None) -> dict:
+    """Once per boot, idempotent (A7-03 / A3-07): every list kept under the
+    old cg-only scope is copied, projected, to the new scope of each bound
+    restaurant on that group — so no store reads its lists cold after the
+    deploy — and then the old row (which held employees' phones) is
+    deleted. {moved, deleted}."""
+    import models
+    import credentials
+    out = {"moved": 0, "deleted": 0}
+    conn = models.get_conn(db_path) if db_path else models.get_conn()
+    try:
+        old = [dict(r) for r in conn.execute("SELECT scope, path, payload, fetched_at FROM pos_catalogs "
+                                             "WHERE provider='rpower'").fetchall()
+               if _group_scope(r["scope"]) is None or str(r["scope"]).startswith("demo:")]
+        bound = conn.execute("SELECT rpower_cg, rpower_store_mid, rpower_token, rpower_credential_id FROM restaurants "
+                             "WHERE COALESCE(rpower_store_mid,'') <> '' AND rpower_cg IS NOT NULL").fetchall()
+    finally:
+        conn.close()
+    targets = []
+    for b in bound:
+        cred = b["rpower_credential_id"]
+        tok = None if cred else (credentials.decrypt(b["rpower_token"]) or "")
+        if not cred and not tok:
+            continue
+        targets.append((str(b["rpower_cg"]), str(b["rpower_store_mid"]), tok or "", cred))
+    for r in old:
+        scope = str(r["scope"])
+        demo = scope.startswith("demo:")
+        parts = scope.split(":")[1:] if demo else scope.split(":")
+        cg, store = parts[0], (parts[1] if len(parts) > 1 else None)
+        try:
+            rows = json.loads(r["payload"] or "[]")
+        except (TypeError, ValueError):
+            rows = []
+        rows = _project(r["path"], rows)
+        dests = set()
+        for t_cg, t_store, tok, cred in targets:
+            if t_cg != cg or (store is not None and t_store != store):
+                continue
+            if demo != str(tok).startswith("demo-store:"):
+                continue
+            dests.add(catalog_scope(tok, cg, cred, store))
+        conn = models.get_conn(db_path) if db_path else models.get_conn()
+        try:
+            for dest in sorted(dests - {scope}):
+                if conn.execute("SELECT 1 FROM pos_catalogs WHERE provider='rpower' AND scope=? AND path=?",
+                                (dest, r["path"])).fetchone():
+                    continue
+                conn.execute("INSERT INTO pos_catalogs (provider, scope, path, payload, rows_n, fetched_at) "
+                             "VALUES ('rpower',?,?,?,?,?)",
+                             (dest, r["path"], json.dumps(rows, default=str), len(rows), float(r["fetched_at"] or 0)))
+                out["moved"] += 1
+            if demo:
+                # The simulated store keeps its scope; only its employees are projected.
+                if r["path"].startswith("employee/"):
+                    conn.execute("UPDATE pos_catalogs SET payload=? WHERE provider='rpower' AND scope=? AND path=?",
+                                 (json.dumps(rows, default=str), scope, r["path"]))
+            else:
+                out["deleted"] += conn.execute("DELETE FROM pos_catalogs WHERE provider='rpower' AND scope=? "
+                                               "AND path=?", (scope, r["path"])).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+    _list_cache.clear()
+    return out
+
+
+def _one_store_scope(fn):
+    """Run one store's unit of RPOWER work (a night's archive, a shifts
+    build, a live read) inside models.read_scope() (Audit #23 A1-22): the
+    restaurant row is read and its token resolved once for the unit, not by
+    every helper it calls. One unit only — never a loop over stores, which
+    must see a row change under it. Shares an open scope."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        import models
+        with models.read_scope():
+            return fn(*a, **k)
+    return run
 
 
 def _ctx(restaurant_id: int) -> tuple:
@@ -1063,6 +1364,8 @@ def _ctx(restaurant_id: int) -> tuple:
         raise RPowerAuthError(
             "RPOWER is not fully connected — run bootstrap to resolve the store.")
     _note_store(restaurant_id, c["store_mid"])          # the ledger's and the budget's store
+    _io_ctx.cred = c.get("credential_id")              # the budget's credential (A7-01)
+    _io_ctx.tok = c["token"]
     return c["token"], {"cg": c["cg"], "storemid": c["store_mid"]}
 
 
@@ -1584,6 +1887,7 @@ def _parts():
     return {"gross": 0.0, "discounts": 0.0, "comps": 0.0}
 
 
+@_one_store_scope
 def fetch_day_sales(restaurant_id: int, business_date) -> dict:
     """One business date's sales in pos.fetch_day_sales' PARTS shape — pos
     nets them by pos.NET_DEDUCTIONS, the one place gross becomes net.
@@ -2050,6 +2354,43 @@ def fetch_customers(restaurant_id: int) -> dict:
     return out
 
 
+# One customer record per id, kept in this process only (never written
+# anywhere), shared by every store of one group on one credential.
+CUSTOMER_CACHE_SECONDS = 6 * 3600
+_customer_cache = _LRU(CACHE_MAX_KEYED * 4)
+
+
+def fetch_customers_by_mid(restaurant_id: int, mids) -> dict:
+    """{customer mid: {name, phone, email, company}} for just these ids —
+    customer/getbymid (collection #6), one request per id not already read
+    for this group in the last CUSTOMER_CACHE_SECONDS (Audit #23 A1-06 /
+    A7-07). The guest match used to page the group's WHOLE customer file
+    (names, phones, emails, addresses, card_acct) every night to resolve the
+    handful of ids on last night's checks. An id RPOWER does not answer is
+    left out."""
+    token, base = _ctx(restaurant_id)
+    group = _scope(restaurant_id, token, base, False)
+    out = {}
+    for mid in sorted({str(m).strip() for m in mids or () if str(m or "").strip()}):
+        hit = _customer_cache.get((group, mid))
+        if hit and time.monotonic() - hit[0] < CUSTOMER_CACHE_SECONDS:
+            if hit[1]:
+                out[mid] = hit[1]
+            continue
+        body = _request(token, "customer/getbymid", {"mid": mid})
+        recs = [c for c in (body if isinstance(body, list) else [body]) if isinstance(c, dict)]
+        c = next((c for c in recs if str(c.get("mid") or "").strip() == mid), recs[0] if len(recs) == 1 else None)
+        rec = None
+        if c:
+            rec = {"name": _tidy_name(c.get("name")) or None, "phone": str(c.get("phone") or "").strip() or None,
+                   "email": str(c.get("email") or "").strip() or None,
+                   "company": str(c.get("company") or "").strip() or None}
+        _customer_cache[(group, mid)] = (time.monotonic(), rec)
+        if rec:
+            out[mid] = rec
+    return out
+
+
 # ── during service (the live view) ───────────────────────────────────────
 #
 # RPOWER's above-store database is fed while the store trades. Read-only
@@ -2106,6 +2447,7 @@ def _people_cached(restaurant_id: int) -> dict:
     return out
 
 
+@_one_store_scope
 def fetch_sales_today(restaurant_id: int, business_date) -> float:
     """Net sales posted so far for this business date — the same revenue
     rules as fetch_business_days, so the hourly figure and the night's total
@@ -2119,6 +2461,7 @@ def fetch_sales_today(restaurant_id: int, business_date) -> float:
     return float(value)
 
 
+@_one_store_scope
 def fetch_clock_ins_today(restaurant_id: int, business_date) -> list:
     """Everyone who has clocked in this business day: [{"employee", "role",
     "clocked_in_at", "external_id"}] — the shape intraday.coverage_gaps
@@ -2356,14 +2699,30 @@ def _people_for(restaurant_id: int, entries: list) -> dict:
     to read the six-hour-old list and blank live labor (R3-06)."""
     people = _people_cached(restaurant_id)
     emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
-    if any((str(e.get("emp_mid") or "") not in emps or (_id(e.get("job_mid")) and str(_id(e.get("job_mid"))) not in jobs))
-           for e in entries if _punch_dt(e.get("in_dttm")) is not None
-           and not str(e.get("emp_mid") or "") in (people.get("station_names") or {})):
+    seen = [e for e in entries if _punch_dt(e.get("in_dttm")) is not None
+            and not str(e.get("emp_mid") or "") in (people.get("station_names") or {})]
+    new_emps = {str(e.get("emp_mid") or "") for e in seen if str(e.get("emp_mid") or "") not in emps}
+    new_jobs = {str(_id(e.get("job_mid"))) for e in seen if _id(e.get("job_mid")) and str(_id(e.get("job_mid"))) not in jobs}
+    if new_emps or new_jobs:
         hit = _people_refreshed.get(restaurant_id)
         if hit is None or time.monotonic() - hit >= PEOPLE_REFRESH_SECONDS:
             _people_refreshed[restaurant_id] = time.monotonic()
-            with fresh_lists():
+            # One new hire on a known job: read that one record (A1-20), not
+            # the group's whole employee list. Anything more, or a failed
+            # single read, refreshes the lists as before.
+            single = len(new_emps) == 1 and not new_jobs and "" not in new_emps
+            added = False
+            if single and not _reader_only():
+                try:
+                    added = _list_add_one(restaurant_id, "employee/getbycg", "employee/getbymid", next(iter(new_emps)))
+                except Exception as e:      # the single read is an optimisation: any failure reads the list
+                    log.info("rpower employee/getbymid for rid %s failed, reading the list: %s", restaurant_id, e)
+            if added:
+                _people_cache.pop(restaurant_id, None)
                 people = _people_cached(restaurant_id)
+            else:
+                with fresh_lists():
+                    people = _people_cached(restaurant_id)
     return people
 
 
@@ -2397,6 +2756,7 @@ def _refresh_archived_punches(restaurant_id: int, live: list, runs: list, people
         log.warning("[rpower] archived punches not refreshed for %s: %s", restaurant_id, e)
 
 
+@_one_store_scope
 def build_shifts_csv(restaurant_id: int, days: int = 60) -> Optional[str]:
     """The last `days` of labor, in the CSV shape labor.load_shifts expects."""
     import csv
@@ -2492,25 +2852,80 @@ def sync_to_db(restaurant_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def demo_live_store_refusal(restaurant, token):
+    """The sentence refusing a DEMO restaurant a live RPOWER store without
+    the admin override (A7-15), else None. A demo-store: token is simulated
+    and always allowed; a real restaurant is never refused here."""
+    if restaurant is None or not int(getattr(restaurant, "is_demo", 0) or 0):
+        return None
+    if str(token or "").startswith("demo-store:") or int(getattr(restaurant, "pos_live_mirror", 0) or 0):
+        return None
+    return ("This is a demo restaurant, and that is a live RPOWER store. A demo may mirror a live store only "
+            "with the live-mirror override (RPOWER → Live store on a demo), which is audited.")
+
+
+# What an owner's screen says about a failed sync (Audit #23 F7, A7-14): one
+# fixed sentence per class of failure. The raw text — the vendor's body, a
+# URL with the cg and store id — is the admin console's only
+# (rpower_sync_error, /admin/rpower/status).
+OWNER_ERROR_SENTENCES = {
+    "auth": "RPOWER refused Cavnar AI's access to this store. We've been alerted and are on it.",
+    "setup": "RPOWER isn't fully connected yet. Cavnar AI is finishing the setup.",
+    "unavailable": "RPOWER wasn't answering when we last synced. We'll try again automatically.",
+    "no_data": "RPOWER sent no timeclock data for the last 60 days.",
+    "unresolved": "Some timeclock punches name people RPOWER hasn't listed yet. We'll try again tonight.",
+    "other": "The last RPOWER sync didn't finish. We've been alerted and will try again.",
+}
+
+
+def owner_error_class(raw) -> Optional[str]:
+    """The class of a stored sync error (see OWNER_ERROR_SENTENCES), or None
+    for no error."""
+    t = str(raw or "").strip().lower()
+    if not t:
+        return None
+    if "rejected the token" in t or "(401)" in t or "(403)" in t or "authorized for" in t:
+        return "auth"
+    if "not fully connected" in t or "no rpower token" in t or "bootstrap" in t or "isn't one this token" in t:
+        return "setup"
+    if "no timeclock data" in t:
+        return "no_data"
+    if "punches name" in t or "unresolved" in t or "not listed" in t:
+        return "unresolved"
+    if any(k in t for k in ("paused", "http 5", "http 429", "failed after", "request failed", "non-json",
+                            "timed out", "timeout", "unavailable", "try later", "budget")):
+        return "unavailable"
+    return "other"
+
+
+def owner_error_sentence(raw) -> Optional[str]:
+    cls = owner_error_class(raw)
+    return OWNER_ERROR_SENTENCES[cls] if cls else None
+
+
 def get_connection_status(restaurant_id: int) -> dict:
     """What the account screen shows. Distinguishes the three real states:
-    nothing on file, a token that has never been verified, and connected."""
+    nothing on file, a token that has never been verified, and connected.
+    `error` is the raw text (admins only); `owner_error` the fixed sentence
+    an owner's screen shows (A7-14)."""
     try:
         c = _creds(restaurant_id)
     except RPowerError as e:
-        return {"connected": False, "state": "error", "error": str(e)}
+        return {"connected": False, "state": "error", "error": str(e), "owner_error": owner_error_sentence(e)}
     if not c["token"]:
-        return {"connected": False, "state": "not_configured"}
+        return {"connected": False, "state": "not_configured", "credential_id": c.get("credential_id")}
     if not (c["cg"] and c["store_mid"]):
-        return {"connected": False, "state": "needs_bootstrap",
+        return {"connected": False, "state": "needs_bootstrap", "credential_id": c.get("credential_id"),
                 "message": "Token saved — choose which RPOWER store this is."}
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
+    raw = getattr(r, "rpower_sync_error", None)
     return {
         "connected": True, "state": "connected",
         "store_name": c["name"], "cg": c["cg"], "store_mid": c["store_mid"],
+        "credential_id": c.get("credential_id"),
         "last_synced": getattr(r, "rpower_last_synced", None),
-        "error": getattr(r, "rpower_sync_error", None),
+        "error": raw, "owner_error": owner_error_sentence(raw),
     }
 
 
@@ -2539,6 +2954,32 @@ def pos_employees(restaurant_id: int) -> list:
                     "payroll_id": str(e.get("payroll_id") or "").strip(),
                     "current": not term or term[:4] <= "2000"})
     return out
+
+
+def employee_phone_keys(restaurant_id: int, name, keyfn=None):
+    """The phone digests (phone_key) on the POS employee record(s) whose
+    name is `name` — read from the KEPT list only, never RPOWER on this
+    thread — for the staff sign-up check (Audit #23 A7-10). None when no
+    kept record has that name (or the store is not connected); an empty set
+    when the record carries no phone. `keyfn` normalises a name for the
+    comparison (auth._name_key)."""
+    import pos_io
+    try:
+        token, base = _ctx(restaurant_id)
+    except RPowerError:
+        return None
+    kept = pos_io.catalog_get("rpower", _scope(restaurant_id, token, base, False), "employee/getbycg")
+    if not kept:
+        return None
+    recs = kept[1] or []
+    names = distinct_employee_names(recs)
+    norm = keyfn or (lambda s: " ".join(str(s or "").lower().split()))
+    want = norm(name)
+    hits = [r for r in recs if want and (norm(names.get(str(r.get("mid") or "").strip()) or "") == want
+                                          or norm(employee_display_name(r)) == want)]
+    if not hits:
+        return None
+    return {k for r in hits for k in (r.get("phone_keys") or [])}
 
 
 def _payroll_by_name(restaurant_id: int) -> dict:
@@ -2764,8 +3205,7 @@ def _list_scope(restaurant_id: int, by_store: bool = False) -> str:
     if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
         return hit[1]
     token, base = _ctx(restaurant_id)
-    scope = ("demo:" if str(token).startswith("demo-store:") else "") + str(base["cg"]) + (
-        f":{base['storemid']}" if by_store else "")
+    scope = _scope(restaurant_id, token, base, by_store)
     _scope_cache[key] = (time.monotonic(), scope)
     return scope
 
@@ -2817,6 +3257,7 @@ def line_kind(row: dict, types: dict) -> str:
     return "other" if kind in ("unknown", "excluded") else kind
 
 
+@_one_store_scope
 def archive_rows(restaurant_id: int, business_date) -> dict:
     """One business date's tickets, sale lines and punches, every field the
     archive keeps, names resolved from RPOWER's own lists:

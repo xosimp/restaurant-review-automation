@@ -301,8 +301,8 @@ def _rpower_probe_restaurant(db_path=None):
     want = (os.getenv("RPOWER_PROBE_RESTAURANT_ID") or "").strip()
     conn = get_conn(db_path or DB_PATH)
     try:
-        sql = ("SELECT id FROM restaurants WHERE rpower_token IS NOT NULL AND rpower_token <> '' "
-               "AND COALESCE(is_demo, 0) = 0")
+        sql = ("SELECT id FROM restaurants WHERE ((rpower_token IS NOT NULL AND rpower_token <> '') "
+               "OR rpower_credential_id IS NOT NULL) AND COALESCE(is_demo, 0) = 0")
         args = ()
         if want.isdigit():
             sql += " AND id=?"
@@ -317,7 +317,12 @@ def _rpower_probe_restaurant(db_path=None):
         token = rpower._creds(int(row[0]))["token"]
     except Exception:
         return None
-    return (int(row[0]), token) if token and not token.startswith("demo-store:") else None
+    if not token:
+        # A stored credential that no longer opens (a lost or changed
+        # CREDENTIAL_KEY, a revoked partner credential) is a failure, never
+        # "unconfigured" — which paged nobody (Audit #23 A7-08).
+        return (int(row[0]), "")
+    return (int(row[0]), token) if not token.startswith("demo-store:") else None
 
 
 def probe_rpower(db_path=None):
@@ -331,6 +336,10 @@ def probe_rpower(db_path=None):
         return _result("unconfigured", "no restaurant has an RPOWER token")
     rid, token = pick
     started = time.monotonic()
+    if not token:
+        import credentials
+        return _result("failing", f"restaurant {rid}'s RPOWER credential does not open (CREDENTIAL_KEY is "
+                                  f"{credentials.key_state()}, or its partner credential is revoked)", None, started)
     import rpower
     try:
         with rpower.for_store(rid):

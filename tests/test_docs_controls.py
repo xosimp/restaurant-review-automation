@@ -152,6 +152,15 @@ _STEP_UP_TODAY = {
     "/admin/rpower/save/<int:restaurant_id>",
     "/admin/rpower/bootstrap/<int:restaurant_id>",
     "/admin/rpower/disconnect/<int:restaurant_id>",
+    # Audit #23 F7 (10/21/26): the RPOWER partner credential's rotation and
+    # revocation, a demo's live-store override, releasing a bulk store's
+    # owner hold, and the offboarding POS archive export (build, download).
+    "/admin/rpower/credentials/<int:cred_id>/rotate",
+    "/admin/rpower/credentials/<int:cred_id>/revoke",
+    "/admin/rpower/live-mirror/<int:restaurant_id>",
+    "/admin/rpower/owner-check/<int:restaurant_id>",
+    "/admin/api/client/<int:restaurant_id>/pos-export",
+    "/admin/api/client/<int:restaurant_id>/pos-export/<job_id>/download",
     # The AI routes console (orchestration design 10/7/26): route overrides,
     # their revert, the learner's recommendations, and the invoice entry.
     "/admin/api/ai-routes/<workflow>/override",
