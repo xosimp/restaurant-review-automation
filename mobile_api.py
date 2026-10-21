@@ -8286,6 +8286,18 @@ def mobile_disconnect_rpower(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/pos/store-check", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_pos_store_check(current_user):
+    """Twin of /api/pos/store-check (Audit #23 A7-02): a bulk-onboarded
+    store's owner confirms it (its RPOWER name and serial) — one body,
+    rpower_routes.store_check_get / store_check_post."""
+    import rpower_routes
+    fn = rpower_routes.store_check_get if request.method == "GET" else rpower_routes.store_check_post
+    payload, status = fn(current_user)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/connections/google/authorize", methods=["GET"])
 @mobile_login_required
 def mobile_google_authorize(current_user):

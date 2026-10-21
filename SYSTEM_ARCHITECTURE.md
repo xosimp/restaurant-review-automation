@@ -32,7 +32,7 @@ review_automation/
 ├── jobs_registry.py           # the one table of scheduled jobs (SLA, sends, runnable, bound, retry, lane)
 ├── offsite_backup.py          # the S3/R2 copy of the nightly backup and the credential scrub registry
 ├── billing_jobs.py            # the billing outbox (owed_sends), invoices, the subscription mirror, dunning, reconcile
-├── offboarding.py             # closing an account: the audited checklist, integration revocation, the delete
+├── offboarding.py             # closing an account: the audited checklist, integration revocation, the delete; the POS export and the purge after a disconnect
 ├── strategy_jobs.py           # the scheduled half of the strategic features (loss sync, outcomes, weekly plan, ...)
 ├── delayed.py / decisions.py  # undo-window actions; the owner's decision record
 ├── milestones.py / good_news.py / first_look.py / monthly_review.py / weekly_review.py / review_common.py

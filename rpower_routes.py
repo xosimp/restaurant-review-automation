@@ -20,7 +20,7 @@ Client endpoints (login_required, scoped to the session's restaurant):
   POST /api/rpower/sync          the account card's Sync button (429 within
                                  SYNC_NOW_COOLDOWN_MINUTES of the last press)
   POST /api/rpower/disconnect    principal only, with the password step-up
-  GET  /api/pos/store-check      the bulk owner check's state (and its app twin)
+  GET  /api/pos/store-check      the bulk owner check's state (app twin: mobile_api)
   POST /api/pos/store-check      {store_name, serial} — the owner confirms the store
 
 Connecting RPOWER is deliberately admin-only and has no client-facing save.
@@ -31,7 +31,7 @@ partner credential (credentials.pos_credentials), and a restaurant binds the
 credential's id: a rotation is one step, not one paste per store.
 """
 from flask import Blueprint, request, jsonify
-from auth import admin_required, login_required, mobile_login_required, recent_auth_required
+from auth import admin_required, login_required, recent_auth_required
 from models import update_restaurant
 
 rpower_bp = Blueprint("rpower", __name__)
@@ -532,17 +532,5 @@ def store_check_get_web(current_user):
 def store_check_post_web(current_user):
     payload, status = store_check_post(current_user)
     return jsonify(**payload), status
-
-
-@rpower_bp.route("/mobile/api/pos/store-check", methods=["GET"])
-@mobile_login_required
-def store_check_get_mobile(current_user):
-    payload, status = store_check_get(current_user)
-    return jsonify(**payload), status
-
-
-@rpower_bp.route("/mobile/api/pos/store-check", methods=["POST"])
-@mobile_login_required
-def store_check_post_mobile(current_user):
-    payload, status = store_check_post(current_user)
-    return jsonify(**payload), status
+# The app's twins are mobile_api.mobile_pos_store_check (on mobile_bp: bearer
+# auth, no CSRF cookie), over these same two bodies.
