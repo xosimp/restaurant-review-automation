@@ -34,6 +34,18 @@ Reads what the product already syncs; calls no POS itself.
   shift quality     the published week's Shift Quality evaluation
                     (schedule_history.quality_json) for this date's shifts
 
+Open punches (audit #23 A3-01): a punch the POS still shows open is in
+no figure. A night whose only gap is open punches (labor_daily_history
+final=0 held by them, the night itself over) is READY with
+metrics.open_punches and the people and an estimate to close in
+detail.open_punches, said in an observation — never UNAVAILABLE forever
+for a forgotten clock-out. restate() puts a reported night's labor right
+when a later sync moves it (A3-05).
+
+Salaried staff are left out of the night's rows once, at the top of
+collect (A3-20): hours, the after-6pm share, the POS-pay share, departments
+and overtime read the same crew.
+
 Status:
   ready          labor $ and hours are on file for the day
   awaiting       a POS is connected and has not synced since the night closed
@@ -503,7 +515,23 @@ def collect(ctx):
     provider, _mod = pos.connected_provider(ctx.restaurant_id)
     hist = _history_row(ctx)
     all_rows, has_file = _shifts(ctx)
-    day_rows = [r for r in all_rows if str(r.get("date") or "")[:10] == ctx.day]
+    crew_rows = [r for r in all_rows if str(r.get("date") or "")[:10] == ctx.day]
+    # The salaried left out ONCE (A3-20): the hours and cost already exclude
+    # them (labor._without_salaried), and the after-6pm share and the
+    # POS-pay share were measured over a different crew. Coverage still
+    # reads everyone who worked (a salaried manager who came is no no-show).
+    sal = _salaried_keys(ctx)
+    if sal:
+        from models import salaried_name_key
+        day_rows = [r for r in crew_rows if salaried_name_key(r.get("employee")) not in sal]
+    else:
+        day_rows = crew_rows
+    try:
+        import labor as _lab_op
+        open_p = _lab_op.open_punch_summary(ctx.restaurant_id, dates=[ctx.day])
+    except Exception as e:
+        log.warning("dsr labor: open punches unreadable rid=%s: %s", ctx.restaurant_id, e)
+        open_p = {"count": 0}
 
     if hist is None or not (hist.get("labor_cost") or hist.get("total_hours")):
         if not provider and not has_file:
@@ -513,7 +541,8 @@ def collect(ctx):
                              detail={"waiting_for": "pos_sync"})
         return dsr.block(dsr.UNAVAILABLE, source=provider or "upload", reason=REASON_NOTHING, block_name="labor")
 
-    if not int(hist.get("final") or 0):
+    held_open = bool(open_p.get("count")) and _night_over(ctx)
+    if not int(hist.get("final") or 0) and not held_open:
         # The archive row was written while the business day was still
         # trading (models.save_labor_daily_history final=0: a "Sync now"
         # during service, a retry, the 3am sync west of Central) — half a
@@ -568,7 +597,7 @@ def collect(ctx):
 
     after_share = round(after / worked * 100.0, 1) if worked else None
     sales_after = (sales.get("metrics") or {}).get("evening_share_pct") if net else None
-    cov = _coverage(ctx, day_rows)
+    cov = _coverage(ctx, crew_rows)
     quality = _quality(ctx)
     scheduled = _scheduled(ctx)
     try:
@@ -606,6 +635,9 @@ def collect(ctx):
         # None when the punches or the published week aren't there to say.
         "drift_minutes": drift.get("minutes") if drift.get("available") else None,
         "drift_dollars": drift.get("dollars") if drift.get("available") else None,
+        # Punches the POS still shows open on the night (A3-01): their hours
+        # are in none of the figures above.
+        "open_punches": int(open_p.get("count") or 0),
     }
     # The owner's labor, salaries in (owner, 9/30/26: "Erik is going to want
     # to see labor with salaries included in the report - that's his actual
@@ -658,6 +690,10 @@ def collect(ctx):
                                      + (f", about ${drift['dollars']:,.0f}" if drift.get("dollars") else "")
                                      + f" — most by {top['employee']} ({top['role'] or 'staff'}, "
                                        f"{top['early'] + top['late']} min)."})
+    if open_p.get("count"):
+        observations.append({"key": "open_punches", "facts": ["labor.open_punches"],
+                             "text": str(open_p.get("line") or "").replace(
+                                 "aren't in labor", "aren't in tonight's labor")})
     if cov["measured"] and cov["no_shows"]:
         n = len(cov["no_shows"])
         observations.append({"key": "no_shows", "facts": ["labor.no_shows"],
@@ -698,6 +734,9 @@ def collect(ctx):
                               "name"),
         "hourly_hours": {str(h): v for h, v in hourly_hours(day_rows).items()},
         "coverage": cov,
+        # Who is still on the clock in the POS, and what their hours would
+        # cost run to close — an estimate, never in labor $ (A3-01).
+        "open_punches": open_p if open_p.get("count") else None,
         "overtime_drift": drift,
         "shift_quality": quality,
         # Earned against scheduled and worked hours, per meal and role family
@@ -707,3 +746,155 @@ def collect(ctx):
         "observations": observations,
     }
     return dsr.block(dsr.READY, source=source, metrics=metrics, detail=detail, block_name="labor")
+
+
+def _night_over(ctx) -> bool:
+    """Whether the night has ended by the restaurant's own clock
+    (pos.complete_through) — the only gap left in a held row is then its
+    open punches, never trading still under way."""
+    try:
+        import pos
+        from dsr import pipeline
+        local = pipeline.local_time(ctx.restaurant, ctx.now_utc)
+        ct = pos.complete_through(ctx.restaurant, local)
+        return ct is not None and ct >= ctx.business_date
+    except Exception:
+        return False
+
+
+# ── restating a reported night's labor (audit #23 A3-05) ────────────────────
+#
+# labor_daily_history is re-saved for the whole synced window every night —
+# a late clock-out, a punch edit, the POS's overtime landing — but a
+# report's labor figures were fixed when it was written: Monday's DSR said
+# $2,410 while Labor and the trends showed $2,470 for the same night, and
+# the DSR's KPI streaks and sparklines (dsr_metrics labor.*) kept $2,410 for
+# good. restate() compares each finished report's Labor block with the
+# archive and, past the tolerance, rewrites the block's labor figures in
+# place (store.save_block: the facts and dsr_metrics), keeps what it said
+# before in detail.restated and notes the report `restated` — the sales,
+# narrative and every other block stay the report's own. F2's sync and F3's
+# re-derive job call it with the dates they moved; pos.save_synced_shifts
+# calls it for every pulled window.
+RESTATE_MIN_DOLLARS = 5.0
+RESTATE_MIN_SHARE = 0.01
+RESTATE_MIN_HOURS = 0.25
+
+
+def _moved(old, new, floor) -> bool:
+    if old is None and new is None:
+        return False
+    if old is None or new is None:
+        return True
+    return abs(float(new) - float(old)) > max(floor, abs(float(old)) * RESTATE_MIN_SHARE)
+
+
+def restate(restaurant_id, dates, db_path=None, now=None) -> dict:
+    """Restate the Labor block of each finished report on `dates` whose
+    night the archive (labor_daily_history, final) now costs or hours
+    differently past the tolerance — or whose open punches have closed.
+    {"checked", "restated": [dates]}. Never raises."""
+    import copy
+    from datetime import datetime as _dt, timezone as _tz
+    out = {"checked": 0, "restated": []}
+    days = sorted({str(d)[:10] for d in dates or () if d})
+    if not days:
+        return out
+    try:
+        db = db_path
+        conn = store.get_conn(db)
+        try:
+            marks = ",".join("?" for _ in days)
+            # Only nights a report finished (one read, not one per day).
+            reported = {str(r[0])[:10] for r in conn.execute(
+                f"SELECT DISTINCT business_date FROM dsr_reports WHERE restaurant_id=? AND business_date IN ({marks}) "
+                f"AND status IN (?, ?)", (restaurant_id, *days, *store.FINISHED)).fetchall()}
+            hist = {str(r["date"])[:10]: dict(r) for r in conn.execute(
+                f"SELECT date, labor_cost, total_hours, labor_pct, COALESCE(final, 1) AS final FROM labor_daily_history "
+                f"WHERE restaurant_id=? AND date IN ({marks})", (restaurant_id, *days)).fetchall()}
+        finally:
+            conn.close()
+        days = [d for d in days if d in reported]
+    except Exception as e:
+        log.warning("dsr labor restate: history unreadable rid=%s: %s", restaurant_id, e)
+        return out
+    now = now or _dt.now(_tz.utc)
+    for day in days:
+        try:
+            rep = store.get_finished_report(restaurant_id, day, db_path=db)
+        except Exception:
+            rep = None
+        if not rep:
+            continue
+        facts = rep.get("facts") or {}
+        blk = ((facts.get("blocks") or {}).get("labor")) or {}
+        h = hist.get(day)
+        if blk.get("status") != dsr.READY or not h or not int(h.get("final") or 0):
+            continue
+        out["checked"] += 1
+        m = blk.get("metrics") or {}
+        was_open = int(m.get("open_punches") or 0)
+        try:
+            import labor as _lab
+            open_now = _lab.open_punch_summary(restaurant_id, dates=[day], db_path=db_path)
+        except Exception:
+            open_now = {"count": 0}
+        new_cost = round(float(h["labor_cost"]), 2) if h.get("labor_cost") is not None else None
+        new_hours = round(float(h["total_hours"]), 2) if h.get("total_hours") is not None else None
+        costed = m.get("cost") is not None
+        moved = (_moved(m.get("hours"), new_hours, RESTATE_MIN_HOURS)
+                 or (costed and _moved(m.get("cost"), new_cost, RESTATE_MIN_DOLLARS))
+                 or was_open != int(open_now.get("count") or 0))
+        if not moved:
+            continue
+        nb = copy.deepcopy(blk)
+        nm, nd = nb.setdefault("metrics", {}), nb.setdefault("detail", {})
+        was = {"cost": m.get("cost"), "hours": m.get("hours"), "pct": m.get("pct"), "open_punches": was_open}
+        if new_hours is not None:
+            nm["hours"] = new_hours
+        if costed and new_cost is not None:
+            old_cost = float(m.get("cost") or 0)
+            nm["cost"] = new_cost
+            net = ((((facts.get("blocks") or {}).get("sales") or {}).get("metrics")) or {}).get("net")
+            if net:
+                nm["pct"] = round(new_cost / float(net) * 100.0, 1)
+            elif h.get("labor_pct") is not None:
+                nm["pct"] = round(float(h["labor_pct"]), 1)
+            if nm.get("pct") is not None and nm.get("target_pct") is not None:
+                nm["vs_target_pts"] = round(float(nm["pct"]) - float(nm["target_pct"]), 1)
+            if nm.get("salaried_cost") is not None and net:
+                nm["salaried_total_cost"] = round(new_cost + float(nm["salaried_cost"]), 2)
+                nm["salaried_total_pct"] = round((new_cost + float(nm["salaried_cost"])) / float(net) * 100.0, 1)
+                if nm.get("target_pct") is not None:
+                    nm["salaried_vs_target_pts"] = round(nm["salaried_total_pct"] - float(nm["target_pct"]), 1)
+            if old_cost > 0:
+                for d in nd.get("departments") or []:
+                    if isinstance(d.get("cost"), (int, float)):
+                        d["cost"] = round(d["cost"] * new_cost / old_cost, 2)
+                        d["pct_of_sales"] = round(d["cost"] / float(net) * 100.0, 1) if net else d.get("pct_of_sales")
+        nm["open_punches"] = int(open_now.get("count") or 0)
+        nd["open_punches"] = open_now if open_now.get("count") else None
+        from time_utils import mdy
+        at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        bits = []
+        if costed and was["cost"] is not None and nm.get("cost") != was["cost"]:
+            bits.append(f"${float(was['cost']):,.0f}")
+        if was["hours"] is not None and nm.get("hours") != was["hours"]:
+            bits.append(f"{float(was['hours']):g}h")
+        nd["restated"] = {"at": at, "was": was,
+                          "line": (f"Updated {mdy(now.date().isoformat())}: the POS's punches for this night changed "
+                                   "after the report" + (f" (it said {' and '.join(bits)})" if bits else "") + ".")}
+        obs = [o for o in nd.get("observations") or [] if o.get("key") not in ("restated", "open_punches")]
+        if open_now.get("count"):
+            obs.append({"key": "open_punches", "facts": ["labor.open_punches"], "text": open_now.get("line")})
+        obs.append({"key": "restated", "facts": ["labor.hours"] + (["labor.cost"] if costed else []),
+                    "text": nd["restated"]["line"]})
+        nd["observations"] = obs
+        try:
+            store.save_block(rep["id"], "labor", nb, db_path=db)
+            store.note(rep["id"], "restated", dict((rep.get("stages") or {}).get("restated") or {},
+                                                   labor={"at": at, "was": was}), db_path=db)
+            out["restated"].append(day)
+        except Exception as e:
+            log.warning("dsr labor restate failed rid=%s %s: %s", restaurant_id, day, e)
+    return out

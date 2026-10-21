@@ -4463,6 +4463,23 @@ def init_db(db_path: str = DB_PATH):
             PRIMARY KEY (restaurant_id, provider, punch_id)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_pos_punches_day ON pos_punches(restaurant_id, business_date)",
+        # What the nightly labor read found that the figures cannot carry
+        # (audit #23, 10/21/26 - labor.py): kind 'open_punch' (a punch with no
+        # clock-out, ref = punch id, A3-01 / A6-08), 'station_candidate' (a
+        # record that behaves like a station login, ref = POS employee id,
+        # A3-03) and 'job_rename' (a job RPOWER renamed, ref = job id,
+        # A3-19). Each kind is replaced per sync; detail_json holds the rest.
+        """CREATE TABLE IF NOT EXISTS labor_flags (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            kind            TEXT NOT NULL,
+            ref             TEXT NOT NULL,
+            business_date   TEXT,
+            detail_json     TEXT,
+            first_seen_at   TEXT NOT NULL,
+            last_seen_at    TEXT NOT NULL,
+            PRIMARY KEY (restaurant_id, kind, ref)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_labor_flags_day ON labor_flags(restaurant_id, kind, business_date)",
         # The line archive by item and day (scale audit 10/19/26 DB-11,
         # DB-02): the Bar's bought-vs-sold walk and the recipes' sold-by-name
         # read moved a store's whole window of lines into Python on every
@@ -13452,9 +13469,10 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     against the new labor (DATABASE_SCHEMA.md → labor_daily_history).
 
     `provenance` (a POS pull, pos.save_synced_shifts): {source, provider,
-    synced_at, window: (first, last), complete_through}. Days inside the
-    pulled window carry it, with final=0 past complete_through (a business
-    day still trading when it was read); days outside keep what they had.
+    synced_at, window: (first, last), complete_through, held_dates}. Days
+    inside the pulled window carry it, with final=0 past complete_through (a
+    business day still trading when it was read) or in held_dates (a punch
+    still open on it, audit #23 A3-01); days outside keep what they had.
     Without it (an upload) the provenance columns are left as they were."""
     from datetime import datetime as _dt
     # Every day saved here is re-costed on the restaurant's current rates:
@@ -13468,13 +13486,14 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
     prov = provenance or {}
     win = prov.get("window") or None
     ct = prov.get("complete_through")
+    held = set(prov.get("held_dates") or ())
     rows = []
     for date_str, day_data in by_day.items():
         in_win = bool(prov) and bool(win) and win[0] <= date_str <= win[1]
         p_src = prov.get("source") if in_win else None
         p_prov = prov.get("provider") if in_win else None
         p_at = prov.get("synced_at") if in_win else None
-        p_final = (0 if (ct and date_str > ct) else 1) if in_win else None
+        p_final = (0 if ((ct and date_str > ct) or date_str in held) else 1) if in_win else None
         try:
             sales = float(day_data.get("sales")) if day_data.get("sales") is not None else None
         except (TypeError, ValueError):

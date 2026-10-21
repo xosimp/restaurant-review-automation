@@ -4108,6 +4108,44 @@ def _do_data_verify(u):
             "message": "Thanks \u2014 recommendations resting on it are back at full confidence"}, 200
 
 
+def _do_data_station(u):
+    """POST /data-health/station {"employee_id", "name", "station": bool} —
+    the owner's word on a POS record that behaves like a station login
+    (audit #23 A3-03, the Data Health card's "Station login?" row): a
+    station is left out of labor from the next sync on; a person is never
+    proposed again. Principal only: what counts as a person's hours is the
+    owner's call."""
+    if not _principal(u):
+        return _forbidden("Only the owner can say which logins are stations.")
+    b = _body()
+    mid, name = b.get("employee_id"), b.get("name")
+    if not isinstance(mid, str) or not mid.strip() or not isinstance(b.get("station"), bool):
+        return {"ok": False, "error": "Which record, and is it a station?"}, 400
+    import rpower
+    import labor as _lab_st
+    try:
+        who = f"owner:{u.get('username') or u.get('email') or 'owner'}"
+        out = rpower.set_station_verdict(_rid(u), mid.strip(), name if isinstance(name, str) else None,
+                                         b["station"], who=who)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}, 400
+    # The candidate is answered: off the card now, not at the next sync.
+    try:
+        rest = [c for c in _lab_st.flags(_rid(u), "station_candidate") if c["ref"] != mid.strip()]
+        _lab_st._replace_flags(_rid(u), "station_candidate",
+                               [{"ref": c["ref"], "business_date": None,
+                                 "detail": {k: v for k, v in c.items()
+                                            if k not in ("ref", "business_date", "first_seen_at", "last_seen_at")}}
+                                for c in rest])
+        import data_health
+        data_health.invalidate(_rid(u))
+    except Exception:
+        pass
+    return {"ok": True, "stations": sorted((out.get("stations") or {}).values()),
+            "message": ("Left out of labor from the next sync on" if b["station"]
+                        else "Counted as a person; Cavnar AI won't ask again")}, 200
+
+
 def _do_rec_conflict(u):
     """POST /recs/conflict {"conflict", "prefer"} — the owner chose between
     two recommendations that pull against each other ("Trim Tuesday" and
@@ -8275,6 +8313,7 @@ _ROUTES = [
     ("/account/targets", ["GET"], _do_targets_get, "targets_get"),
     ("/account/targets", ["POST"], _do_targets_set, "targets_set"),
     ("/data-health/verify", ["POST"], _do_data_verify, "data_health_verify"),
+    ("/data-health/station", ["POST"], _do_data_station, "data_health_station"),
     ("/recs/conflict", ["POST"], _do_rec_conflict, "rec_conflict"),
 ]
 

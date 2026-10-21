@@ -622,7 +622,7 @@ def _serialized_write(fn):
 
 
 @_serialized_write
-def save_synced_shifts(restaurant_id, csv_str, source):
+def save_synced_shifts(restaurant_id, csv_str, source, held_dates=None):
     """Store a provider's synced window and archive its per-day history.
 
     Two things every provider did differently or not at all:
@@ -633,7 +633,13 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     - Only Toast archived labor_daily_history (what YoY and trends read), so
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
-    by _write_lock_for (the sweep's fetches run four at a time)."""
+    by _write_lock_for (the sweep's fetches run four at a time).
+
+    `held_dates`: business dates the pull saw a punch still open on (audit
+    #23 A3-01) — stored provisional (final=0) however long ago they ended,
+    until a pull finds the punch closed. After the history is written, a
+    reported night whose labor moved is restated (dsr.block_labor.restate,
+    A3-05)."""
     from datetime import datetime, timezone
     from labor import load_shifts
     import shift_facts
@@ -669,12 +675,22 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         prov = {"source": source, "provider": source,
                 "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                 "window": (dates[0], dates[-1]) if dates else None,
-                "complete_through": ct.isoformat() if ct else None}
+                "complete_through": ct.isoformat() if ct else None,
+                "held_dates": sorted(held_dates or ())}
         save_labor_daily_history(restaurant_id, _history_to_save(restaurant_id, full_history_by_day(restaurant_id),
                                                                  dates), provenance=prov)
         refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
+    if dates:
+        try:
+            # A reported night whose labor the pull moved past the tolerance
+            # (a late clock-out, a punch edit, the overtime premium) has its
+            # labor figures restated and the report marked updated (A3-05).
+            from dsr.block_labor import restate as _restate_labor
+            _restate_labor(restaurant_id, dates)
+        except Exception as e:
+            log.warning(f"[{source} sync] reported labor not restated: {e}")
     # The synced figures just changed: the cached Labor read (and Home and
     # Ask, which invalidate_insight_cache clears with it) must not narrate
     # the pre-sync numbers for the rest of its window (DH4-21, #46).

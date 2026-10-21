@@ -6713,6 +6713,7 @@ svg:hover .hb-xh{opacity:1}
         h+=dhRow(s.label||s.key,dhTone(s.tone),s.pct==null?'':(+s.pct)+'%',s.line||'',det.join(' · '));}
     }
     h+=dhDistrustHtml(d.distrusted);
+    h+=dhLaborNotesHtml(d.labor_notes);
     var nc=d.not_connected||[];
     if(nc.length){
       h+='<div class="cf-p-k">Not connected</div>';
@@ -6737,6 +6738,30 @@ svg:hover .hb-xh{opacity:1}
         +(x.text?'<div class="b">'+num(x.text)+'</div>':'')
         +'<div class="dh-verify"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-verify="'+esc(x.source)+'" data-dh-verify-route="'+esc((x.verify&&x.verify.web)||'/api/data-health/verify')+'">Re-verified</button><span class="dh-verify-msg" aria-live="polite"></span></div></div>';}
     return h?'<div class="cf-p-k">Data you said you don’t trust</div>'+h:'';
+  }
+  // What the nightly labor read found the figures can't carry (audit #23:
+  // labor.data_health_notes): punches still open, a record that behaves
+  // like a station login (the owner's two answers, POST
+  // /api/data-health/station), a job the POS renamed.
+  function dhLaborNotesHtml(list){
+    var h='',i;list=list||[];
+    for(i=0;i<list.length;i++){var x=list[i]||{},a=x.action||null;if(!x.text)continue;
+      h+='<div class="cf-p-row '+(x.tone==='warn'?'warn':'mid')+'"><div class="cf-p-h"><span class="t"><i class="dh-dot" aria-hidden="true"></i>'+esc(x.label||'Labor')+'</span></div>'
+        +'<div class="b">'+num(x.text)+'</div>'
+        +(a&&a.kind==='station'?'<div class="dh-verify"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-station="1" data-emp="'+esc(a.employee_id||'')+'" data-name="'+esc(a.name||'')+'" data-route="'+esc(a.web||'/api/data-health/station')+'">It\u2019s a station</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-station="0" data-emp="'+esc(a.employee_id||'')+'" data-name="'+esc(a.name||'')+'" data-route="'+esc(a.web||'/api/data-health/station')+'">It\u2019s a person</button><span class="dh-verify-msg" aria-live="polite"></span></div>':'')
+        +'</div>';}
+    return h?'<div class="cf-p-k">Labor data to check</div>'+h:'';
+  }
+  function dhStation(btn){
+    var box=btn.parentNode,msg=box&&box.querySelector('.dh-verify-msg'),bs=box?box.querySelectorAll('button'):[],i;
+    for(i=0;i<bs.length;i++)bs[i].disabled=true;
+    fetch(btn.getAttribute('data-route')||'/api/data-health/station',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({employee_id:btn.getAttribute('data-emp'),name:btn.getAttribute('data-name'),station:btn.getAttribute('data-dh-station')==='1'})})
+      .then(apiJson).then(function(r){
+        if(!r||!r.ok){for(i=0;i<bs.length;i++)bs[i].disabled=false;if(msg){msg.className='dh-verify-msg err';msg.textContent=(r&&r.error)||'That couldn\u2019t be saved.';}return;}
+        if(msg){msg.className='dh-verify-msg';msg.textContent=r.message||'Saved';}
+        if(typeof toast==='function')toast(r.message||'Saved','success');
+      }).catch(function(){for(i=0;i<bs.length;i++)bs[i].disabled=false;});
   }
   function dhVerify(btn){
     var src=btn.getAttribute('data-dh-verify'),box=btn.parentNode,msg=box&&box.querySelector('.dh-verify-msg');
@@ -6810,9 +6835,10 @@ svg:hover .hb-xh{opacity:1}
     }
   }
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-dh-open],[data-dh-sync],[data-dh-verify]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-dh-open],[data-dh-sync],[data-dh-verify],[data-dh-station]'):null;if(!t)return;
     e.preventDefault();
     if(t.hasAttribute('data-dh-verify')){if(!t.disabled)dhVerify(t);return;}
+    if(t.hasAttribute('data-dh-station')){if(!t.disabled)dhStation(t);return;}
     if(t.hasAttribute('data-dh-sync')){if(!t.disabled)dhSync(t);return;}
     dhOpen();
   });
@@ -9417,8 +9443,13 @@ svg:hover .hb-xh{opacity:1}
   }
   function laborHtml(lab,p){
     if(!lab||lab.status!=='ready')return '';
-    var ds=(lab.detail&&lab.detail.departments)||[],m=lab.metrics||{};
-    if(!ds.length)return '';
+    // Punches still open on the night and a later sync's restatement
+    // (audit #23 A3-01 / A3-05: block_labor detail.open_punches / restated).
+    var ld=lab.detail||{},notes='';
+    if(ld.open_punches&&ld.open_punches.line)notes+='<div class="dr-note">'+prose(ld.open_punches.line)+'</div>';
+    if(ld.restated&&ld.restated.line)notes+='<div class="dr-note">'+prose(ld.restated.line)+'</div>';
+    var ds=ld.departments||[],m=lab.metrics||{};
+    if(!ds.length)return notes?'<section class="hb-card dr-dep" aria-label="Labor"><div class="hb-kicker">Labor</div>'+notes+'</section>':'';
     var withCost=false,i,tot=0;for(i=0;i<ds.length;i++)if(isNum(ds[i].cost)){withCost=true;tot+=ds[i].cost;}
     var sal=isNum(m.salaried_cost)?m.salaried_cost:null,all=tot+(sal||0),bar='',rows='';
     var tones=['c0','c1','c2','c3'];
@@ -9436,7 +9467,7 @@ svg:hover .hb-xh{opacity:1}
     // 10/17/26).
     return '<section class="hb-card dr-dep" aria-label="Where the labor went"><div class="hb-kicker">Where the labor went'+itip('How labor is priced by department',said((lab.detail||{}).departments_basis))+'</div>'
       +'<div class="dr-dep-bar" role="img" aria-label="Labor by department">'+bar+'</div><div class="dr-dep-rows">'+rows+'</div>'
-      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, with salaries.</div>':'')+'</section>';
+      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, with salaries.</div>':'')+notes+'</section>';
   }
   function serversHtml(svc){
     if(!svc||svc.status!=='ready')return '';
@@ -12956,7 +12987,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          computed these for a while and no surface showed them, so a
          percentage covering four of fourteen days looked exactly like one
          covering all fourteen. #}
-      {% if labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.duplicate_rows_ignored or labor.period_too_short_to_project) %}
+      {% if labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.duplicate_rows_ignored or labor.period_too_short_to_project or (labor.open_punches and labor.open_punches.count)) %}
       {# One line, the detail behind it (density round #45). #}
       <details class="how-this" style="margin-top:6px;color:var(--amber)">
         <summary>Heads up: what this figure leaves out</summary><div>
@@ -12965,6 +12996,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {% if labor.days_with_conflicting_sales %} {{ labor.days_with_conflicting_sales|length }} day(s) had two different sales figures on different rows and were left out of the percentage.{% endif %}
         {% if labor.duplicate_rows_ignored %} {{ labor.duplicate_rows_ignored }} duplicate row(s) ignored.{% endif %}
         {% if labor.period_too_short_to_project %} The period is under a week, so there's no monthly figure.{% endif %}
+        {# Punches the POS still shows open (audit #23 A3-01, labor.open_punch_summary). #}
+        {% if labor.open_punches and labor.open_punches.count %} {{ labor.open_punches.line }}{% endif %}
       </div></details>
       {% endif %}
       <span id="labor-gap-banner" hidden></span>
