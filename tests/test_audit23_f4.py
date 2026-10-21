@@ -533,7 +533,7 @@ def test_a_failed_nightly_sub_step_is_on_the_data_health_ledger(db_path, monkeyp
 
 def test_the_archives_sub_steps_record_their_own_source():
     import inspect
-    src = inspect.getsource(pos_archive.run_for)
+    src = inspect.getsource(pos_archive._run_for)    # run_for claims the store, _run_for reads (A4-09)
     for s in ("pos_catalog", "pos_roles", "pos_prices"):
         assert f'_step(restaurant_id, "{s}", False' in src and f'_step(restaurant_id, "{s}", True' in src
     assert '"partial": steps_failed' in src

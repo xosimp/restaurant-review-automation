@@ -717,7 +717,7 @@ def test_a_hawaii_store_waits_for_its_own_boundary_and_archives_that_night(monke
                         if k.get("naive") else now)
     night, not_before = strategy_jobs._archive_night(r)
     assert night == "2026-10-21"
-    assert datetime.fromtimestamp(not_before, ZoneInfo("Pacific/Honolulu")).strftime("%m-%d %H:%M") == "10-22 05:00"
+    assert datetime.fromtimestamp(not_before, ZoneInfo("Pacific/Honolulu")).strftime("%m-%d %H:%M") == "10-22 04:00"   # the one 4am boundary (A3-14)
     east = datetime(2026, 10, 21, 5, 0, 10, tzinfo=ZoneInfo("America/New_York"))
     monkeypatch.setattr(time_utils, "restaurant_now", lambda *a, **k: east.replace(tzinfo=None)
                         if k.get("naive") else east)
