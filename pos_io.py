@@ -863,7 +863,7 @@ def page_if_long_open(provider, db_path=None) -> bool:
 # store's (or token's) requests are refused before they are sent; then ONE
 # request, claimed by compare-and-swap, is the re-probe — an answer clears
 # the latch, a refusal renews it. A token is latched whole when a call made
-# with it alone (store/get) is refused, or two of its stores are. Many
+# with it alone (store/get) is refused, or AUTH_WAVE_STORES of its stores are. Many
 # stores (AUTH_WAVE_STORES) or tokens (AUTH_WAVE_TOKENS) newly refused within
 # an hour is a wave: the operator is paged once and the owners' "hasn't
 # synced" notices are held (auth_wave). rpower writes the store's
@@ -984,7 +984,7 @@ def auth_latch(provider, bucket, store=None, restaurant_id=None, status=None, db
                 n = conn.execute("SELECT COUNT(*) FROM pos_auth_latch WHERE provider=? AND bucket=? AND store<>'' "
                                  "AND soft=0 AND failed_at>=?", (provider, bucket, now - AUTH_WAVE_WINDOW_SECONDS)
                                  ).fetchone()[0]
-                if int(n or 0) >= 2:
+                if int(n or 0) >= AUTH_WAVE_STORES:
                     tok = conn.execute("SELECT soft, first_at FROM pos_auth_latch WHERE provider=? AND bucket=? "
                                        "AND store=''", (provider, bucket)).fetchone()
                     conn.execute(sql, (provider, bucket, "", 0, status,

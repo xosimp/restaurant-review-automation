@@ -3420,6 +3420,9 @@ _RETENTION_DAYS = {
     # counts per endpoint and store; the console reads a day, a quarter
     # keeps the trend RPOWER's limits will be argued from.
     "pos_request_ledger": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
+    # ...and its reads per business night (audit #23 A6-24), by when the
+    # night was last read: a backfilled old night is kept as long as a new one.
+    "pos_request_nights": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3609,7 +3612,7 @@ _RETENTION_COLUMN = {
     "alert_storm_caps": "started_at", "login_history": "created_at",
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
-    "pos_request_ledger": "hour",
+    "pos_request_ledger": "hour", "pos_request_nights": "last_at",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
@@ -3741,7 +3744,7 @@ _RETENTION_FLOOR_DAYS = {
     "pos_tickets": 400, "pos_ticket_lines": 400, "pos_punches": 400, "pos_archive_days": 400,
     "pos_payments": 400, "pos_payouts": 400,
     # The console reads a day of the request ledger (pos_io.summary).
-    "pos_request_ledger": 30,
+    "pos_request_ledger": 30, "pos_request_nights": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
     "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).

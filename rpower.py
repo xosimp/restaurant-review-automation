@@ -903,7 +903,7 @@ HTTP_POOL_MAXSIZE = 8
 _http = threading.local()
 
 
-def _session():
+def _thread_session():
     """This thread's requests.Session for RPOWER."""
     sess = getattr(_http, "session", None)
     if sess is None:
@@ -916,6 +916,11 @@ def _session():
         sess.mount("https://", adapter)
         _http.session = sess
     return sess
+
+
+# What every RPOWER request is sent through (tests/conftest.py routes it to the
+# `requests` module so a test's patched requests.get answers).
+_session = _thread_session
 
 
 def _night_of(path: str, params: dict):
@@ -1169,14 +1174,13 @@ def _row_key(row: dict) -> str:
 # stored at $0, an empty night, or a change feed that advanced its cursor
 # past rows it could not see.
 RESPONSE_CONTRACT = {
-    "ticketsales/getbybusinessdate": {"rid": "id", "date": "date", "sales": "num", "qty": "num",
-                                      "slstype_mid": "key"},
+    "ticketsales/getbybusinessdate": {"rid": "id", "date": "date", "sales": "num"},
     # The change feeds are read for each row's business date and write stamp
     # only (changed_business_stamps): those two are their contract.
     "ticketsales/getbytimestamp": {"date": "date", "time_stamp": "date"},
     "ticket/getbybusinessdate": {"rid": "id", "date": "date"},
     "ticket/getbytimestamp": {"date": "date", "time_stamp": "date"},
-    "ticket/getbyneeddatetime": {"rid": "id", "date": "date"},
+    "ticket/getbyneeddatetime": {"need_dttm": "date"},
     "ticketpayment/getbybusinessdate": {"rid": "id", "date": "date"},
     "ticketitem/getbybusinessdate": {"rid": "id", "date": "date"},
     "payout/getbydaterange": {"rid": "id", "date": "date"},

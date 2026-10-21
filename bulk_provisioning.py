@@ -212,6 +212,27 @@ def check_row(row, db_path=None):
     return None
 
 
+def _rpower_page_size():
+    import rpower
+    return rpower.PAGE_SIZE
+
+
+def _rpower_store(token, cg, store_mid):
+    """One store by its mid (rpower.store_by_mid), in test_token's shape, when
+    it is in group `cg`; None otherwise or when RPOWER can't say."""
+    import rpower
+    try:
+        one = rpower.store_by_mid(token, store_mid)
+    except rpower.RPowerError:
+        return None
+    if not one or str(one.get("cg")) != str(cg):
+        return None
+    tz, problem = rpower.store_timezone(one.get("timezone"))
+    return {"cg": one.get("cg"), "store_mid": one.get("mid"), "name": one.get("name"), "timezone": tz,
+            "timezone_raw": one.get("timezone"), "timezone_problem": problem, "ot_dow": one.get("ot_dow"),
+            "week_dow": one.get("week_dow"), "open_days": one.get("open_days")}
+
+
 def plan(rows, db_path=None) -> dict:
     """The dry run: [{line, store_key, action, restaurant_id, error,
     restaurant_name, owner_email, rpower_store_mid, joins_owner}] and counts,
@@ -321,6 +342,10 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
             if stores is not None:
                 store = next((s for s in stores if str(s.get("store_mid")) == row["rpower_store_mid"]
                               and str(s.get("cg")) == str(row["rpower_cg"])), None)
+                if store is None and len(stores) >= _rpower_page_size():
+                    # A partner token's list may not name every store it can
+                    # read (audit #23 A1-05): the store is asked for itself.
+                    store = _rpower_store(token, row["rpower_cg"], row["rpower_store_mid"])
                 if store is None:
                     raise ValueError("the RPOWER token cannot see that store")
             updates.update({"rpower_cg": int(row["rpower_cg"]), "rpower_store_mid": row["rpower_store_mid"],
@@ -330,9 +355,15 @@ def _create_one(row, partner_id, stores, token, send_welcome, actor, db_path=Non
                 updates.update({"rpower_token": token, "rpower_store_name": store.get("name"),
                                 "rpower_verified_at": _dt.utcnow().isoformat(timespec="seconds"),
                                 "rpower_sync_error": None})
+                # RPOWER's timezone, checked against the tz database (A1-18):
+                # a name it does not know is never stored, and is said.
                 if store.get("timezone") and not (row.get("timezone") or "").strip():
                     updates["timezone"] = store["timezone"]
         _models_mod.update_restaurant(rid, updates, **dbp)
+        if (row.get("rpower_store_mid") and (store or {}).get("timezone_problem")
+                and not (row.get("timezone") or "").strip()):
+            import rpower
+            rpower.flag_timezone(rid, store.get("timezone_raw"), store.get("name"))
         import onboarding
         onboarding.start_setup(rid, db_path=db_path)
         if partner_id:
