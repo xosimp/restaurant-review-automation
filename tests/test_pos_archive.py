@@ -246,7 +246,7 @@ def test_a_pos_price_change_is_logged_as_a_price_change_after_the_baseline(db_pa
                           "archive_rows": staticmethod(lambda r, d: None)})
     monkeypatch.setattr(pos_archive, "provider_for", lambda r: ("rpower", fake))
     first = pos_archive.sync_prices(rid, db_path=db_path)
-    assert first == {"ok": True, "baseline": True, "tracked": 2, "changes": 0}
+    assert first == {"ok": True, "baseline": True, "tracked": 2, "changes": 0, "dropped": 0}
     prices[0]["price"], prices[1]["price"] = 19.0, 16.0
     out = pos_archive.sync_prices(rid, db_path=db_path)
     assert (out["changes"], out["logged"]) == (2, 2)

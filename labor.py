@@ -675,14 +675,23 @@ def _covers_guidance(analysis: dict) -> str:
 CURRENT_WINDOW_DAYS = 28
 
 
-def current_window(shifts, window_days=CURRENT_WINDOW_DAYS, today=None):
+def current_window(shifts, window_days=CURRENT_WINDOW_DAYS, today=None, complete_through=None):
     """The shifts inside the trailing `window_days` ending on the latest
     dated shift; all of them when window_days is None. With `today` (the
     restaurant's local date), a shift dated after today + FUTURE_SHIFT_DAYS
     is dropped first, so a typo row can never anchor the window (re-audit
-    B3#4)."""
+    B3#4). With `complete_through` (a POS restaurant's last complete
+    business date, pos.local_complete_through), a shift dated after it is
+    dropped too (Audit #23 A2-13): a "Sync now" at 8pm, or the 3am sync at a
+    bar still trading, paired today's closed punches with today's partial
+    sales, and the Labor page's days, weekday averages and Home's labor %
+    carried that half day — and anchored the window on it — until the next
+    nightly sync."""
     if today is not None and shifts:
         shifts = drop_future_shifts(shifts, today=today)
+    if complete_through is not None and shifts:
+        ct = str(complete_through)[:10]
+        shifts = [x for x in shifts if not x.get("date") or str(x.get("date"))[:10] <= ct]
     if not window_days or not shifts:
         return shifts
     dates = sorted({str(x.get("date") or "")[:10] for x in shifts if x.get("date")})
@@ -821,7 +830,17 @@ def _analyse_for_restaurant(restaurant_id, client_data, window_days, with_salari
     rows = _window_rows(restaurant_id, client_data, window_days, _today)
     if rows is None:
         rows = load_shifts_for_restaurant(restaurant_id, allow_sample=True, client_data=client_data)
-    shifts = current_window(rows, window_days, today=_today)
+    # A POS restaurant's window ends on its last COMPLETE business day (A2-13).
+    _ct = None
+    if is_live:
+        try:
+            import pos as _pos_ct
+            if _pos_ct.connected_provider(restaurant_id)[0]:
+                _ct = _pos_ct.local_complete_through(restaurant_id)
+        except Exception as _sx:
+            _degraded(f"complete-through failed — went on without it: {_sx!r}", _sx)
+            _ct = None
+    shifts = current_window(rows, window_days, today=_today, complete_through=_ct)
     # A salaried person's pay is their salary (salaried_summary), not their
     # punches: costed by the hour too, Erik's own 2.1h on Manager FOH was $55
     # of "labor" at the $26 default on top of the salary (owner, 9/28/26).

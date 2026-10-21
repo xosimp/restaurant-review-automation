@@ -260,8 +260,8 @@ def test_a_comped_plate_still_depletes_stock(db_path, monkeypatch):
         ],
     })
     out = rpower.fetch_order_selections(rid, "2026-09-10")
-    assert out == [{"item": {"guid": "burger"}, "quantity": 3.0}], \
-        "2 sold + 1 comped = 3 depleted; the refund is excluded"
+    assert out == [{"item": {"guid": "burger"}, "quantity": 3.0, "sold": 2.0}], \
+        "2 sold + 1 comped = 3 depleted; the refund is excluded; only the 2 sold are sold (Audit #23 A2-12)"
 
 
 def test_voided_lines_never_deplete(db_path, monkeypatch):
@@ -274,7 +274,7 @@ def test_voided_lines_never_deplete(db_path, monkeypatch):
         ],
     })
     assert rpower.fetch_order_selections(rid, "2026-09-10") == [
-        {"item": {"guid": "burger"}, "quantity": 2.0}]
+        {"item": {"guid": "burger"}, "quantity": 2.0, "sold": 2.0}]
 
 
 def test_selections_match_the_shape_the_ledger_already_reads(db_path, monkeypatch):
@@ -286,7 +286,9 @@ def test_selections_match_the_shape_the_ledger_already_reads(db_path, monkeypatc
         "ticketsales/getbybusinessdate": [_ticketsale("100", 20.0, qty=2, menuitem="g1")],
     })
     rows = rpower.fetch_order_selections(rid, "2026-09-10")
-    assert rows and set(rows[0]) == {"item", "quantity"}
+    # `sold` beside the depletion `quantity` (Audit #23 A2-12): the ledger
+    # reads quantity as before, and menu_item_sales keeps both.
+    assert rows and set(rows[0]) == {"item", "quantity", "sold"}
     assert set(rows[0]["item"]) == {"guid"}
 
 

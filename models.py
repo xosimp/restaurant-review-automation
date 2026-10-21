@@ -556,6 +556,10 @@ class Restaurant:
     # A1-13/A6-09): set by any RPowerAuthError, cleared by a successful read
     # or a reconnect. While set, the store's calls are short-circuited.
     rpower_auth_failed_at: Optional[str] = None
+    # The store's own sales-classification overrides (Audit #23 A2-10 /
+    # A2-14; JSON {transfer_reasons, not_transfer_reasons, not_revenue_items,
+    # revenue_items}, rpower.store_sales_rules). NULL = the defaults.
+    pos_sales_rules: Optional[str]       = None
     # Back Office (Buyers Edge) — the inventory system inventory_sync reads
     # (backoffice.py). Entered by Cavnar, never by the owner.
     backoffice_api_key: Optional[str]    = None
@@ -1971,6 +1975,20 @@ def ensure_columns(db_path: str = DB_PATH):
         # When the POS's price list was last read (UTC; R3-11): unchanged
         # prices are no longer rewritten, so MAX(seen_at) no longer says it.
         ("pos_archive_state", "prices_read_at", "TEXT"),
+        # Audit #23 (10/21/26) sales semantics (F3): the flags of the sales
+        # type a line was rung under, frozen when it was archived (A2-01 —
+        # readers classify an archived line from them, never today's list;
+        # NULL = archived before); the ticket's own tax adjustment, kept and
+        # shown, never added (A2-20); a payment's change and the amount it
+        # was due, beside `amount` (the amount applied, A2-11); a dish's
+        # units MADE (sold + comped + made-in-error) beside qty_sold, now the
+        # units SOLD (A2-12 / A3-12; NULL = a row from before, whose qty_sold
+        # was the made count).
+        ("pos_ticket_lines", "sales_type_flags", "TEXT"),
+        ("pos_tickets", "tax_adjust", "REAL"),
+        ("pos_payments", "cash_change", "REAL"),
+        ("pos_payments", "target_amt", "REAL"),
+        ("menu_item_sales", "qty_made", "REAL"),
         # The model's first text on a saved marketing draft, kept when the
         # owner edits it (memory audit 9/29/26, mkt_edits): an edit used to
         # overwrite `body` and the original was gone.
@@ -2898,6 +2916,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN rpower_sync_error TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_verified_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_auth_failed_at TEXT",
+        "ALTER TABLE restaurants ADD COLUMN pos_sales_rules TEXT",
         "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
         "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
@@ -5715,7 +5734,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
-        "rpower_last_synced","rpower_sync_error","rpower_verified_at","rpower_auth_failed_at",
+        "rpower_last_synced","rpower_sync_error","rpower_verified_at","rpower_auth_failed_at","pos_sales_rules",
         "backoffice_api_key","backoffice_account_id",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -6866,6 +6885,7 @@ def _restaurant_from_row(row) -> Restaurant:
         rpower_sync_error=row["rpower_sync_error"] if "rpower_sync_error" in row.keys() else None,
         rpower_verified_at=row["rpower_verified_at"] if "rpower_verified_at" in row.keys() else None,
         rpower_auth_failed_at=row["rpower_auth_failed_at"] if "rpower_auth_failed_at" in row.keys() else None,
+        pos_sales_rules=row["pos_sales_rules"] if "pos_sales_rules" in row.keys() else None,
         toast_restaurant_guid=row["toast_restaurant_guid"] if "toast_restaurant_guid" in row.keys() else None,
         toast_access_token=row["toast_access_token"] if "toast_access_token" in row.keys() else None,
         toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,

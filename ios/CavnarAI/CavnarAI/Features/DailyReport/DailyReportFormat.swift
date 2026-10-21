@@ -200,6 +200,13 @@ extension DSRBlock {
             let takes = (definition?["net_deductions"]?.array ?? []).compactMap(\.string)
             if !takes.isEmpty { parts.append("Net takes off \(takes.joined(separator: " and ")).") }
         }
+        // The night's own sentences (Audit #23): a clock change inside it,
+        // the POS's tax adjustment, net after refunds and comps that don't
+        // reconcile — `loss_notes` reaches only a login that may see comps
+        // and voids (the server drops it otherwise).
+        for key in ["notes", "loss_notes"] {
+            parts += (detail[key]?.array ?? []).compactMap(\.string)
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 

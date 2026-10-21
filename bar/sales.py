@@ -418,6 +418,49 @@ def bar_sales(restaurant_id, db_path=None, since=None, until=None, mapping=None)
     return detail
 
 
+def night_drinks(restaurant_id, day, metrics=None, db_path=None, mapping=None):
+    """One night's drink sales — beer, liquor and wine, the pour categories —
+    on the Bar's own basis (POS drink sales after comps and check discounts,
+    under the bar mapping as it stands): {net, gross, source, gap}, or None
+    when the night has nothing a drink maps to. `metrics` are tonight's
+    Sales block metrics (net, dep:*, depcat:*, cat:*) for a night whose
+    report is being built and not stored yet. The nightly report's beverage
+    KPI and prime cost read this (Audit #23 A3-11): they summed the report
+    categories whose name was in a fixed list, before check discounts — a
+    second drink figure for the same night, and none at all for a store
+    whose category is "Bar" or "Draft"."""
+    rid = int(restaurant_id)
+    iso = str(day)[:10]
+    conn = get_conn(db_path)
+    try:
+        met = {} if metrics is not None else _metrics(conn, rid, iso, iso).get(iso, {})
+        arch = _archived(conn, rid, iso, iso).get(iso)
+    finally:
+        conn.close()
+    if metrics is not None:
+        met = {f"sales.{k}": float(v) for k, v in metrics.items()
+               if isinstance(v, (int, float)) and not isinstance(v, bool)
+               and (k == "net" or str(k).startswith(("dep:", "depcat:", "cat:")))}
+    n = _night(mapping or Mapping(rid, db_path), met, arch)
+    cells = [n["drinks"][k] for k in POUR_CATEGORIES if n["drinks"][k]["cells"]]
+    if n["gap"] or not cells:
+        return None
+    return {"net": round(sum(c["net"] for c in cells), 2), "gross": round(sum(c["gross"] for c in cells), 2),
+            "source": n["source"], "gap": None,
+            "basis": "POS drink sales (beer, liquor, wine) after comps and check discounts, under the bar mapping"}
+
+
+def drinks_by_night(restaurant_id, since, until, db_path=None) -> dict:
+    """{date: drink sales} over a window on night_drinks' basis (the Bar's
+    nights; a night with a sales gap or no drinks left out)."""
+    by = bar_sales(restaurant_id, db_path=db_path, since=since, until=until)["by_category"]
+    out = {}
+    for k in POUR_CATEGORIES:
+        for d, v in (by.get(k) or {}).items():
+            out[d] = round(out.get(d, 0.0) + float(v or 0), 2)
+    return out
+
+
 def window_basis(detail, start=None, end=None, expected=None) -> dict:
     """The sales basis of [start, end] (PLAN payload `sales_basis`): {label,
     discounts_usd, comps_usd, unmapped_usd, unmapped_pct (of the drink

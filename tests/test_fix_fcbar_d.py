@@ -130,7 +130,8 @@ def test_pos_07_an_error_correct_line_is_not_depleted_unless_the_food_was_made(d
               "sales": 15.0, "voidrsn_mid": "R1"}]                        # error made: it left the kitchen
     _stub(monkeypatch, _routes(ISO, lines=lines))
     monkeypatch.setenv("POS_ARCHIVE_READS", "0")
-    assert rpower.fetch_order_selections(rid, DAY) == [{"item": {"guid": "M1"}, "quantity": 4.0}]
+    # 3 sold + 1 made in error = 4 made; `sold` beside it (Audit #23 A2-12).
+    assert rpower.fetch_order_selections(rid, DAY) == [{"item": {"guid": "M1"}, "quantity": 4.0, "sold": 3.0}]
 
 
 # ── POS-08: the nightly archive archives last night ─────────────────────────

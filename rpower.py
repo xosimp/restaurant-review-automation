@@ -1947,7 +1947,7 @@ def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
               _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
-              _scope_cache, _feed_nights, _leases):
+              _scope_cache, _feed_nights, _leases, _kept_cache):
         c.clear()
     _change_datetime_refused.update(at=None, why=None)
     _store_count["at"] = -1e9
@@ -1959,10 +1959,11 @@ def clear_caches():
 
 
 def _counts_as_revenue(row: dict, types: dict) -> bool:
-    """Whether one ticketsales line belongs in net sales."""
+    """Whether one ticketsales line's SALES TYPE puts it in net sales (the
+    item and the void reason are _classify's: SalesRules)."""
     if row.get("voided"):
         return False
-    st = types.get(str(row.get("slstype_mid")))
+    st = _type_of(row, types)
     if st is None:
         # An unknown sales type is not assumed to be revenue. RPOWER's own
         # data drives this decision and a missing lookup means we cannot make
@@ -1977,6 +1978,309 @@ def _counts_as_revenue(row: dict, types: dict) -> bool:
         if st.get(flag):
             return False
     return True
+
+
+# ── what a line IS, frozen when it was archived (Audit #23, 10/21/26) ───────
+#
+# A2-01: an archived night was classified again on every read against the
+# sales-type list as it stands TODAY. A store that deleted a "HH Promo" type,
+# or flipped its impacts_sales, re-scored every archived night it was rung on
+# (an unknown type is out of net) — and the 60-day sync rewrote labor history
+# lower with nobody told — while the archive's own `kind` (what the bar,
+# service and staffing read) kept the night's. The line now keeps the flags of
+# the sales type it was rung under (pos_ticket_lines.sales_type_flags) and
+# every reader classifies an archived line from them; a line archived before
+# 10/21/26 has none and falls back to the current list, and a type the list no
+# longer names is raised once (ops kind data_quality).
+ARCHIVED_TYPE = "_archived_type"          # the frozen flags a row rebuilt from the archive carries
+ARCHIVED_REASON = "_archived_reason"      # its void reason's name as archived
+TICKET_CANCELLED = "_ticket_cancelled"    # whether its ticket was cancelled (archived rows)
+_TYPE_FLAG_KEYS = ("impacts_sales", "impacts_costs")
+
+
+def frozen_type_flags(st) -> Optional[str]:
+    """The flags of one sales type that decide what its lines are, as the
+    JSON pos_ticket_lines.sales_type_flags keeps: every truthy type_* flag,
+    impacts_sales / impacts_costs, and its mid and name. None for no type."""
+    if not st:
+        return None
+    import json
+    keep = {k: 1 for k, v in st.items() if v and (k.startswith("type_") or k in _TYPE_FLAG_KEYS)}
+    keep["mid"] = str(st.get("mid")) if st.get("mid") is not None else None
+    keep["name"] = (str(st.get("name") or "").strip() or None)
+    return json.dumps(keep, sort_keys=True)
+
+
+def _thaw_flags(raw):
+    """A stored sales_type_flags back into a sales-type row, or None."""
+    if not raw:
+        return None
+    import json
+    try:
+        out = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (TypeError, ValueError):
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def _type_of(row: dict, types: dict):
+    """The sales type a line was rung under: the flags it was archived with,
+    else the store's list as it stands (a live line, or one archived before
+    10/21/26)."""
+    frozen = row.get(ARCHIVED_TYPE)
+    if frozen:
+        return frozen
+    return types.get(str(row.get("slstype_mid")))
+
+
+# A2-10: RPOWER files an item moved to another check as a void on the source
+# check whose reason says so ("TRANSFERRED" in its void-reason list). The
+# plate was not lost — it is rung on the check it moved to — so it is not a
+# void, not a loss and not a control signal. Matched by the reason's name,
+# with a per-store override (restaurants.pos_sales_rules).
+TRANSFER_REASON_RE = re.compile(r"\btransfer", re.I)
+# A2-14: a gift card sold, a house-account payment ("Received on Account") or
+# a gratuity rung as an ordinary Sale-type ITEM is money taken, not revenue: a
+# gift card counts again when it is redeemed for food. Matched by the item's
+# name or its sales category, with a per-store override. Narrower than
+# _NOT_ITEM_CATEGORY_RE on purpose: "Open" food and "Retail" are revenue.
+NOT_REVENUE_ITEM_RE = re.compile(
+    r"gift\s*-?\s*card|gift\s*cert|gratuit|received\s+on\s+account|house\s+account|\bon\s+account\b", re.I)
+
+
+def _rule_names(values) -> set:
+    return {" ".join(str(v).lower().split()) for v in (values or []) if str(v or "").strip()}
+
+
+def store_sales_rules(restaurant_id) -> dict:
+    """The store's own overrides (restaurants.pos_sales_rules, JSON):
+    {transfer_reasons, not_transfer_reasons, not_revenue_items,
+    revenue_items} — names matched whole, case-insensitively, against a void
+    reason (the first two) or an item's name or sales category (the last
+    two). {} when none or unreadable."""
+    import json
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        raw = getattr(r, "pos_sales_rules", None) if r is not None else None
+        out = json.loads(raw) if isinstance(raw, str) and raw.strip() else (raw or {})
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
+class SalesRules:
+    """What a line's sales type alone cannot say: whether a void was a
+    transfer (its reason) and whether a Sale-type line was a gift card or
+    an account payment (its item). One per read; the void reasons and the
+    menu are read only when a line needs them, from the kept lists, and a
+    list that cannot be read decides nothing (never an error)."""
+
+    def __init__(self, restaurant_id=None, overrides=None, reasons=None, menu=None):
+        self.restaurant_id = restaurant_id
+        o = overrides if overrides is not None else (store_sales_rules(restaurant_id) if restaurant_id else {})
+        self.transfer = _rule_names(o.get("transfer_reasons"))
+        self.not_transfer = _rule_names(o.get("not_transfer_reasons"))
+        self.not_revenue_names = _rule_names(o.get("not_revenue_items"))
+        self.revenue_names = _rule_names(o.get("revenue_items"))
+        self._reasons = reasons
+        self._menu = menu
+
+    def _load(self, what):
+        try:
+            if what == "reasons":
+                return void_reasons(self.restaurant_id)
+            menu = _catalog(self.restaurant_id, "menuitem/getbycg")
+            cats = _catalog(self.restaurant_id, "salescategory/getbycg")
+            return {mid: (clean_item_name(m.get("name")),
+                          clean_item_name((cats.get(str(m.get("slscat_mid"))) or {}).get("name")))
+                    for mid, m in menu.items()}
+        except RPowerAuthError:
+            raise
+        except Exception as e:                   # the line keeps its sales type's verdict
+            log.warning("[rpower] %s unavailable for the sales rules of %s: %s", what, self.restaurant_id, e)
+            return {}
+
+    def reason(self, row):
+        if ARCHIVED_REASON in row:
+            return row.get(ARCHIVED_REASON)
+        rmid = str(row.get("voidrsn_mid") or "").strip()
+        if not rmid or self.restaurant_id is None:
+            return None
+        if self._reasons is None:
+            self._reasons = self._load("reasons")
+        return self._reasons.get(rmid)
+
+    def is_transfer(self, row) -> bool:
+        name = " ".join(str(self.reason(row) or "").lower().split())
+        if not name or name in self.not_transfer:
+            return False
+        return name in self.transfer or bool(TRANSFER_REASON_RE.search(name))
+
+    def item_names(self, row):
+        filed = row.get(ARCHIVED_FILING) or {}
+        if filed.get("item_name") or filed.get("sales_category"):
+            return filed.get("item_name"), filed.get("sales_category")
+        mid = str(row.get("menuitem_mid") or "")
+        if not mid or self.restaurant_id is None:
+            return None, None
+        if self._menu is None:
+            self._menu = self._load("menu")
+        return self._menu.get(mid) or (None, None)
+
+    def not_revenue(self, row) -> bool:
+        names = [" ".join(str(n).lower().split()) for n in self.item_names(row) if n]
+        if not names or any(n in self.revenue_names for n in names):
+            return False
+        return any(n in self.not_revenue_names for n in names) or any(NOT_REVENUE_ITEM_RE.search(n) for n in names)
+
+
+def loss_value(row: dict) -> float:
+    """THE dollar value of a comp, void or refund line (A2-03) — the
+    nightly report's voids and comps, the archive's loss_amount (what the
+    service block, loss signals, service_performance and the bar read) and
+    fetch_loss_lines all use it: |sales| (what the line carried on the
+    check), else the regular price x qty, else the price x qty. The DSR used
+    |sales| first and the archive regular price first, so a $5 happy-hour
+    void read $5 in one block and $8 in the next and comp_void added the two
+    bases together. RPOWER leaves both prices 0 on comp and Error Correct
+    lines (9/29/26) and carries the value in `sales`, so at Simple EJ's the
+    two orders agreed (10/21/26: 0 lines apart)."""
+    def num(key):
+        try:
+            return float(row.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    sales = num("sales")
+    if sales:
+        return round(abs(sales), 2)
+    qty = abs(num("qty") or 1) or 1
+    for key in ("regular_price", "price"):
+        unit = abs(num(key))
+        if unit > 0:
+            return round(unit * qty, 2)
+    return 0.0
+
+
+def _kept_types(restaurant_id, ids) -> dict:
+    """{sales type mid: flags} for ids the store's list no longer names, from
+    the newest archived line that was rung under each (A2-01): a type
+    deleted at the store keeps classifying the lines rung under it."""
+    ids = sorted({str(i) for i in ids if i})
+    if not ids:
+        return {}
+    out, todo = {}, []
+    now = time.monotonic()
+    for i in ids[:50]:
+        hit = _kept_cache.get((restaurant_id, i))
+        if hit and now - hit[0] < ARCHIVE_REFRESH_SECONDS:
+            if hit[1]:
+                out[i] = hit[1]
+        else:
+            todo.append(i)
+    if not todo:
+        return out
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            for i in todo:
+                row = conn.execute(
+                    "SELECT sales_type_flags FROM pos_ticket_lines WHERE restaurant_id=? AND provider='rpower' "
+                    "AND sales_type_id=? AND sales_type_flags IS NOT NULL ORDER BY business_date DESC LIMIT 1",
+                    (restaurant_id, i)).fetchone()
+                flags = _thaw_flags(row[0]) if row else None
+                # A miss is remembered too: an id the archive never held is
+                # not looked for again on every live read (a scan).
+                _kept_cache[(restaurant_id, i)] = (now, flags)
+                if flags:
+                    out[i] = flags
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("[rpower] kept sales types not read for %s: %s", restaurant_id, e)
+    return out
+
+
+_kept_cache = _LRU(CACHE_MAX_KEYED)
+
+
+def _quality_event(restaurant_id, key, sig, message, job="pos_sales_rules"):
+    """A data finding about the POS's records, raised once per key and
+    signature (ops kind data_quality — Audit #23 shared contract)."""
+    try:
+        import ops
+        if not ops.claim_period(f"{job}:{restaurant_id}:{key}", str(sig)[:200]):
+            return False
+        ops.capture(RuntimeError(message), job=job, context=f"restaurant_id={restaurant_id}",
+                    restaurant_id=restaurant_id, kind="data_quality")
+        return True
+    except Exception:
+        return False
+
+
+def _types_for(restaurant_id: int, rows: list) -> dict:
+    """The sales-type list `rows` are classified against: the store's list,
+    read afresh (once per ARCHIVE_REFRESH_SECONDS per store, the throttle
+    archive_rows' refresh shares) when a LIVE line names a type it does not
+    hold (A2-08 — a type added at 11am was out of the live labor % and the
+    night's first DSR for up to 6 hours), with any type it still does not
+    name filled from the archive's kept flags (_kept_types). An archived line
+    whose type the list no longer names is raised once (A2-01). Never raises
+    past an auth error."""
+    types = sales_types(restaurant_id)
+
+    def _missing(archived):
+        return {str(r.get("slstype_mid")) for r in rows
+                if (ARCHIVED_TYPE in r) == archived and r.get("slstype_mid") not in (None, "")
+                and str(r.get("slstype_mid")) not in types}
+    if _missing(False) and not _reader_only():
+        try:
+            types = _refresh_missed(restaurant_id, {"types": types}, ["types"])["types"]
+        except RPowerAuthError:
+            raise
+        except Exception as e:
+            log.warning("[rpower] sales types not re-read for %s: %s", restaurant_id, e)
+    gone = {}
+    for r in rows:
+        mid = r.get("slstype_mid")
+        if ARCHIVED_TYPE in r and mid not in (None, "") and str(mid) not in types:
+            gone.setdefault(str(mid), (r.get(ARCHIVED_TYPE) or {}).get("name"))
+    missing = {str(r.get("slstype_mid")) for r in rows if not r.get(ARCHIVED_TYPE)
+               and r.get("slstype_mid") not in (None, "") and str(r.get("slstype_mid")) not in types}
+    if missing:
+        kept = _kept_types(restaurant_id, missing)
+        if kept:
+            types = {**kept, **types}
+            for mid, flags in kept.items():
+                if gone.get(mid) is None:
+                    gone[mid] = flags.get("name")
+    if gone:
+        names = ", ".join(f"{n or 'unnamed'} ({m})" for m, n in sorted(gone.items()))
+        _quality_event(restaurant_id, "type_gone", "|".join(sorted(gone)),
+                       f"RPOWER's sales-type list no longer names {names}: lines rung under it keep the "
+                       f"classification they were archived with (Audit #23 A2-01)", job="pos_sales_type_gone")
+    return types
+
+
+def _cancelled_ids(tickets, day=None) -> set:
+    """The ids of cancelled tickets in a ticket read (A2-02)."""
+    return {str(t.get("rid")) for t in tickets or []
+            if t.get("is_cancelled") and (day is None or _biz_date(t.get("date")) == day)}
+
+
+def _on_cancelled(row, cancelled=None) -> bool:
+    """Whether a line belongs to a cancelled ticket (A2-02): an archived row
+    says so itself; a live one is looked up in the night's ticket read where
+    the reader has one (fetch_day_sales). A day read live without its
+    tickets (not archived yet: the intraday figure, the last hours before
+    the night's archive) keeps a cancelled ticket's lines until it is
+    archived — no second RPOWER read on every live sales read — and the
+    archive's figure replaces it at the next sync (10/21/26: no cancelled
+    ticket with a revenue line at Simple EJ's)."""
+    if row.get(TICKET_CANCELLED):
+        return True
+    return bool(cancelled) and str(row.get("ticket_rid")) in cancelled
 
 
 # ── the reads pos.py and the modules need ───────────────────────────────────
@@ -1995,38 +2299,40 @@ def fetch_business_days(restaurant_id: int, start_date, end_date) -> dict:
 
 
 def _business_days(restaurant_id: int, start_date, end_date, use_archive: bool = True) -> dict:
+    """{day: net} — every line through _classify (the one rule): sale and
+    discount lines, an archived cancelled ticket's lines left out (A2-02,
+    _on_cancelled)."""
     token, base = _ctx(restaurant_id)
-    types = sales_types(restaurant_id)
     out = {}
     rows = (_day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", start_date, end_date)
             if use_archive else
             [r for cs, ce in _chunk_range(start_date, end_date)
              for r in _paged(token, "ticketsales/getbybusinessdate",
                              {**base, "startdate": _d(cs), "enddate": _d(ce), "sortorder": "date"})])
+    types = _types_for(restaurant_id, rows)
+    rules = SalesRules(restaurant_id)
     for row in rows:
         day = _biz_date(row.get("date"))
-        if not day or not _counts_as_revenue(row, types):
+        if not day or _on_cancelled(row):
+            continue
+        if _classify(row, types, rules) not in ("sale", "discount"):
             continue
         out[day] = round(out.get(day, 0.0) + float(row.get("sales") or 0), 2)
     return out
 
 
-def _loss_kind(row: dict, types: dict):
+def _loss_kind(row: dict, types: dict, rules=None):
     """comp | void | refund, or None for an ordinary sale.
 
     A void is either a line flagged `voided` or a line of an "error" sales
     type: RPOWER stores the store's voids as Error Correct lines (Simple
     EJ's, 9/29/26: 64 in a week, `voided` 0 on every line of 9,720), so a
-    flag-only test counted no voids at all. A transfer to another check is a
-    "nonsale" line and is no loss."""
-    st = types.get(str(row.get("slstype_mid"))) or {}
-    if row.get("voided") or st.get("type_error"):
-        return "void"
-    if st.get("type_comp"):
-        return "comp"
-    if st.get("type_refund") or st.get("type_return"):
-        return "refund"
-    return None
+    flag-only test counted no voids at all. A transfer to another check is
+    no loss: a "nonsale" line, or a void whose reason says it was
+    transferred (A2-10, with `rules`). _classify's verdict, for the three
+    loss kinds."""
+    kind = _classify(row, types, rules)
+    return kind if kind in ("void", "comp", "refund") else None
 
 
 VOID_REASON_CACHE_SECONDS = 600
@@ -2048,22 +2354,12 @@ def void_reasons(restaurant_id: int) -> dict:
 
 
 def _loss_amount(row: dict) -> float:
-    """What the line was worth: the item's regular price x qty, else its
-    price x qty, else |sales|. RPOWER leaves both prices 0 on comp and
-    error-correct lines and carries the value in `sales` — preferring a zero
-    price made every comp at Simple EJ's $0.00 (9/29/26: $332.59 in a week)."""
-    qty = abs(float(row.get("qty") or 1) or 1)
-    for key in ("regular_price", "price"):
-        try:
-            unit = abs(float(row.get(key) or 0))
-        except (TypeError, ValueError):
-            unit = 0.0
-        if unit > 0:
-            return round(unit * qty, 2)
-    try:
-        return round(abs(float(row.get("sales") or 0)), 2)
-    except (TypeError, ValueError):
-        return 0.0
+    """What the line was worth — loss_value, the one rule (A2-03). Kept by
+    this name for the archive and the Toast twin's callers. (RPOWER leaves
+    both prices 0 on comp and error-correct lines and carries the value in
+    `sales` — preferring a zero price made every comp at Simple EJ's $0.00,
+    9/29/26.)"""
+    return loss_value(row)
 
 
 def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
@@ -2079,12 +2375,12 @@ def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
     decision, and the data says whose.
 
     Checked live 9/29/26: a comp line's `sales` IS the comped value and both
-    prices are 0, so _loss_amount falls back to |sales|. Each line carries its
+    prices are 0, so loss_value takes |sales|. Each line carries its
     reason's name (void_reasons) and the approver's name — "as reported by
-    RPOWER".
+    RPOWER". A cancelled ticket's lines (A2-02) and a void that was a
+    transfer to another check (A2-10) are no loss.
     """
     token, base = _ctx(restaurant_id)
-    types = sales_types(restaurant_id)
     try:
         reasons = void_reasons(restaurant_id)
     except RPowerAuthError:
@@ -2100,29 +2396,41 @@ def fetch_loss_lines(restaurant_id: int, start_date, end_date) -> list:
         log.warning("[rpower] manager names unavailable for %s: %s", restaurant_id, e)
         names = {}
     out = []
-    for row in _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", start_date, end_date):
-        kind = _loss_kind(row, types)
+    rows = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", start_date, end_date)
+    types = _types_for(restaurant_id, rows)
+    rules = SalesRules(restaurant_id, reasons=reasons)
+    for row in rows:
+        if _on_cancelled(row):
+            continue
+        kind = _loss_kind(row, types, rules)
         if not kind:
             continue
         approver = row.get("voidmgr_mid") if kind == "void" else row.get("mgr_mid")
         approver = str(approver).strip() if approver not in (None, "", 0, "0") else None
         rmid = str(row.get("voidrsn_mid") or "").strip()
         out.append({"business_date": _biz_date(row.get("date")), "kind": kind,
-                    "amount": _loss_amount(row), "approver": approver,
+                    "amount": loss_value(row), "approver": approver,
                     "approver_name": names.get(approver) if approver else None,
-                    "reason": reasons.get(rmid) or None, "reason_id": rmid or None,
+                    "reason": rules.reason(row) or reasons.get(rmid) or None, "reason_id": rmid or None,
                     "shift": row.get("shift")})
     return out
 
 
 def fetch_order_selections(restaurant_id: int, business_date) -> list:
-    """One business date's sold items, in toast.fetch_order_selections' shape:
-    [{"item": {"guid": <menuitem_mid>}, "quantity": n}, ...].
+    """One business date's items, in toast.fetch_order_selections' shape:
+    [{"item": {"guid": <menuitem_mid>}, "quantity": made, "sold": sold}, ...].
 
     Shaped this way on purpose — inventory_ledger.compute_daily_depletion
     reads exactly this, and matching it means recipe-driven depletion, menu
     discovery and menu_item_sales all work for an RPOWER restaurant without a
     line of change in that module.
+
+    Two counts (Audit #23 A2-12 / A3-12): `quantity` is what left the kitchen
+    (depletion: sale, comp and "made" void lines), `sold` what guests paid
+    for (the sale lines _classify keeps in net, a cancelled ticket's left
+    out). Menu engineering, popularity and revenue read sold; depletion and
+    plate cost read made. They were one figure, so a dish comped ten times
+    read ten sales in menu engineering's revenue.
 
     Reads `ticketsales`, NOT `ticketitem`: RPOWER states plainly that ticket
     items are for reconstructing a receipt and must not be used for totals,
@@ -2130,16 +2438,23 @@ def fetch_order_selections(restaurant_id: int, business_date) -> list:
     as five items sold.
     """
     token, base = _ctx(restaurant_id)
-    types = sales_types(restaurant_id)
     day = _d(business_date)
     rows = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", day, day)
+    types = _types_for(restaurant_id, rows)
+    rules = SalesRules(restaurant_id)
     reasons = None
 
-    by_item = {}
+    made, sold = {}, {}
     for row in rows:
+        guid = row.get("menuitem_mid")
+        qty = float(row.get("qty") or 0)
+        if not guid or qty <= 0:
+            continue
+        if not _on_cancelled(row) and _classify(row, types, rules) == "sale":
+            sold[guid] = sold.get(guid, 0.0) + qty
         if row.get("voided"):
             continue
-        st = types.get(str(row.get("slstype_mid")))
+        st = _type_of(row, types)
         # A comped or wasted plate still LEAVES THE KITCHEN — it depletes
         # stock even though it earns nothing. So depletion deliberately keeps
         # what `_counts_as_revenue` drops, and only skips lines that never
@@ -2161,16 +2476,13 @@ def fetch_order_selections(restaurant_id: int, business_date) -> list:
                     log.warning("[rpower] void reasons unavailable for %s: %s", restaurant_id, e)
                     reasons = {}
             from pos_food_waste import is_waste_reason
-            if not is_waste_reason(reasons.get(str(row.get("voidrsn_mid") or "").strip())):
+            name = row.get(ARCHIVED_REASON) if ARCHIVED_REASON in row else \
+                reasons.get(str(row.get("voidrsn_mid") or "").strip())
+            if not is_waste_reason(name):
                 continue
-        guid = row.get("menuitem_mid")
-        if not guid:
-            continue
-        qty = float(row.get("qty") or 0)
-        if qty <= 0:
-            continue
-        by_item[guid] = by_item.get(guid, 0.0) + qty
-    return [{"item": {"guid": g}, "quantity": q} for g, q in by_item.items()]
+        made[guid] = made.get(guid, 0.0) + qty
+    return [{"item": {"guid": g}, "quantity": made.get(g, 0.0), "sold": round(sold.get(g, 0.0), 4)}
+            for g in sorted(set(made) | set(sold))]
 
 
 def fetch_menu_items(restaurant_id: int) -> list:
@@ -2356,6 +2668,10 @@ CLOSEDAY_LOOKBACK_DAYS = 3
 #     discount -3.75, type_discnt -3.75).
 #   * whether a closeday row covering the date means every shift is closed
 #     (from_shift / thru_shift are read but not interpreted).
+# Since 10/21/26 (Audit #23 A2-09) comp lines are reconciled against
+# RPOWER's own per-ticket type_comp every night (source_checks.comp_gap,
+# a `pos_comp_reconcile` data_quality event, a note on the report): the
+# night a comp sits beside its sale line says so instead of passing quietly.
 DAY_SALES_UNVERIFIED = True
 
 
@@ -2368,26 +2684,29 @@ DAY_SALES_UNVERIFIED = True
 DISCOUNT_FLAGS = ("type_discnt", "type_promo", "type_hashdisc")
 
 
-def _classify(row: dict, types: dict) -> str:
+def _classify(row: dict, types: dict, rules=None) -> str:
     """The ONE classification of a ticketsales line:
-    void | comp | refund | unknown | nonsale | excluded | discount | sale.
+    void | transfer | comp | refund | unknown | nonsale | excluded |
+    discount | not_revenue | sale.
 
-    sale + discount are exactly the lines `_counts_as_revenue` keeps, so the
-    report's net, fetch_business_days' net and the archive's ticket net are
-    one number by construction."""
-    if row.get("voided"):
-        return "void"
-    st = types.get(str(row.get("slstype_mid")))
-    if st is None:
-        return "unknown"
+    sale + discount are exactly the lines net counts, so the report's net,
+    fetch_business_days' net and the archive's ticket net are one number by
+    construction. The sales type is the one the line was archived under
+    when it was (_type_of, A2-01). With `rules` (SalesRules): a void whose
+    reason says the item moved to another check is a `transfer` (A2-10), and
+    a Sale-type line for a gift card, an account payment or a gratuity is
+    `not_revenue` (A2-14) — neither is in net, voids or loss."""
+    st = _type_of(row, types)
     # An "error" sales type is a void, as in _loss_kind: RPOWER stores the
     # store's voids as Error Correct lines (`voided` is 0 on every line at
     # Simple EJ's). Without this the night's voids read $0 while the service
     # block listed 6 voided lines for $34.48, and the report called "voids
     # zero" a win beside them (owner, 10/13/26). Net is unchanged: an error
     # line never counted as revenue.
-    if st.get("type_error"):
-        return "void"
+    if row.get("voided") or (st is not None and st.get("type_error")):
+        return "transfer" if (rules is not None and rules.is_transfer(row)) else "void"
+    if st is None:
+        return "unknown"
     if st.get("type_comp"):
         return "comp"
     if st.get("type_refund") or st.get("type_return"):
@@ -2396,29 +2715,24 @@ def _classify(row: dict, types: dict) -> str:
         return "nonsale" if st.get("type_nonsale") else "excluded"
     if any(st.get(f) for f in DISCOUNT_FLAGS):
         return "discount"
+    if rules is not None and rules.not_revenue(row):
+        return "not_revenue"
     return "sale"
 
 
-def _line_kind(row: dict, types: dict) -> str:
+def _line_kind(row: dict, types: dict, rules=None) -> str:
     """What one ticketsales line is to the day's sales (the nightly report):
     sale | discount | comp | refund | void | excluded | unknown — _classify,
-    with a non-sale line excluded like any other line outside revenue."""
-    kind = _classify(row, types)
-    return "excluded" if kind == "nonsale" else kind
+    with a non-sale line, a transfer and a not-revenue item excluded like any
+    other line outside revenue (fetch_day_sales counts them apart)."""
+    kind = _classify(row, types, rules)
+    return "excluded" if kind in ("nonsale", "transfer", "not_revenue") else kind
 
 
 def _line_value(row: dict) -> float:
-    """The dollar value of a comp, void or refund line (see
-    DAY_SALES_UNVERIFIED): |sales|, else the rung price times quantity."""
-    sales = float(row.get("sales") or 0)
-    if sales:
-        return abs(sales)
-    qty = abs(float(row.get("qty") or 1) or 1)
-    for key in ("regular_price", "price"):
-        unit = float(row.get(key) or 0)
-        if unit:
-            return abs(unit) * qty
-    return 0.0
+    """The dollar value of a comp, void or refund line: loss_value, the one
+    rule every path uses (A2-03)."""
+    return loss_value(row)
 
 
 def _hour_of(raw) -> Optional[str]:
@@ -2434,41 +2748,77 @@ def _parts():
     return {"gross": 0.0, "discounts": 0.0, "comps": 0.0}
 
 
+def dst_shift(restaurant_id: int, business_date) -> Optional[dict]:
+    """{"kind": "repeated" | "missing", "note"} when the business night
+    (BUSINESS_DAY_START_HOUR to the next morning, the restaurant's clock)
+    crosses a daylight-saving change, else None (A2-23): RPOWER's stamps are
+    local wall clock with no offset, so on the first Sunday of November the
+    1am hour holds two hours of sales, and in March 2am does not exist."""
+    try:
+        from models import get_restaurant
+        from time_utils import BUSINESS_DAY_START_HOUR, restaurant_tz
+        r = get_restaurant(restaurant_id)
+        tz = restaurant_tz(r)
+        day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
+        start = datetime(day.year, day.month, day.day, BUSINESS_DAY_START_HOUR, tzinfo=tz)
+        nxt = day + timedelta(days=1)
+        end = datetime(nxt.year, nxt.month, nxt.day, BUSINESS_DAY_START_HOUR, tzinfo=tz)
+        a, b = start.utcoffset(), end.utcoffset()
+    except Exception:
+        return None
+    if a is None or b is None or a == b:
+        return None
+    if b < a:
+        return {"kind": "repeated", "note": ("Clocks went back an hour this night: the POS stamps local time, so "
+                                             "one hour's sales show twice in the hour they repeat.")}
+    return {"kind": "missing", "note": ("Clocks went forward an hour this night: one hour of the night does not "
+                                        "exist on the POS's clock.")}
+
+
 def fetch_day_sales(restaurant_id: int, business_date) -> dict:
     """One business date's sales in pos.fetch_day_sales' PARTS shape — pos
     nets them by pos.NET_DEDUCTIONS, the one place gross becomes net.
 
     Reads (all by business date, all paged):
       ticketsales/getbybusinessdate  every line: the money, by sales type
-      ticket/getbybusinessdate       per ticket: guest_count, tax, open_dttm,
-                                     is_cancelled, and RPOWER's own type_*
-                                     totals for source_checks
+      ticket/getbybusinessdate       per ticket: guest_count, tax, tax_adjust,
+                                     open_dttm, is_cancelled, and RPOWER's own
+                                     type_* totals for source_checks
       salestype/getbycg              via sales_types(): what each line IS
       menuitem/getbycg -> salescategory/getbycg -> salesdepartment/getbycg
                                      the line's department (Erik's sheet
                                      splits by these)
 
-    Every line goes through the same sales-type rules as the rest of this
-    module (`_line_kind` over `_counts_as_revenue`): gross is sale lines plus
-    the value of comped items; discounts are the discount/promo lines
+    Every line goes through the one rule (`_classify`): gross is sale lines
+    plus the value of comped items; discounts are the discount/promo lines
     (RPOWER rings them as negative lines, so the figure is their negation);
-    comps are the comp lines' value; voids and refunds are reported and never
-    in gross. A line whose sales type is missing from the lookup is counted
-    in source_checks, never guessed into revenue.
+    comps are the comp lines' value (loss_value); voids and refunds are
+    reported and never in gross. A line whose sales type is missing from the
+    lookup is counted in source_checks, never guessed into revenue; a line of
+    a CANCELLED ticket is in nothing (A2-02); a transfer and a gift card /
+    account payment sold as an item are counted apart (A2-10, A2-14).
 
-    A transaction is a ticket with at least one sale line. Guests are the
-    sum of guest_count over those tickets, None when the store does not
-    record covers (all zero). Hours are the ticket's open hour, local wall
-    clock — the item's own time when the ticket is missing.
+    A transaction is a check (pos_checks: a ticket not cancelled with a sale
+    line). Guests are the sum of guest_count over those, None when the
+    store does not record covers or a check is missing from the ticket feed.
+    Hours are the ticket's open hour, local wall clock — the item's own time
+    when the ticket is missing; `dst` says when the night crossed a clock
+    change (A2-23). Each item carries `qty` (sold) and `made_qty` (sold plus
+    comped plates — what the kitchen made, A2-12). `tax_adjust` is RPOWER's
+    own field beside tax, shown and never added (A2-20, RPOWER question 5).
     """
+    import pos_checks
     token, base = _ctx(restaurant_id)
     day = _d(business_date)
-    types = sales_types(restaurant_id)
     lines = _day_rows(restaurant_id, token, base, "ticketsales/getbybusinessdate", day, day)
     tickets = _day_rows(restaurant_id, token, base, "ticket/getbybusinessdate", day, day)
+    types = _types_for(restaurant_id, lines)
     menu = _catalog(restaurant_id, "menuitem/getbycg")
     cats = _catalog(restaurant_id, "salescategory/getbycg")
     deps = _catalog(restaurant_id, "salesdepartment/getbycg")
+    rules = SalesRules(restaurant_id, menu={
+        mid: (clean_item_name(m.get("name")), clean_item_name((cats.get(str(m.get("slscat_mid"))) or {}).get("name")))
+        for mid, m in menu.items()})
 
     def department(item):
         cat = cats.get(str((item or {}).get("slscat_mid"))) or {}
@@ -2486,31 +2836,48 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
         if _biz_date(t.get("date")) != day or t.get("is_cancelled"):
             continue
         live[str(t.get("rid"))] = t
+    cancelled = _cancelled_ids(tickets, day)
 
     total = _parts()
     voids = refunds = 0.0
     by_dep, by_hour, items, by_dep_cat = {}, {}, {}, {}
     sale_tickets = set()
     checks = {"lines": 0, "lines_sale": 0.0, "lines_discount": 0.0, "lines_comp_sales": 0.0,
-              "unknown_type_lines": 0, "unknown_type_sales": 0.0, "excluded_lines": 0}
+              "lines_comp_value": 0.0, "unknown_type_lines": 0, "unknown_type_sales": 0.0, "excluded_lines": 0,
+              "cancelled_lines": 0, "cancelled_sales": 0.0, "transfer_lines": 0, "transfer_value": 0.0,
+              "not_revenue_lines": 0, "not_revenue_sales": 0.0}
     for row in lines:
         if _biz_date(row.get("date")) != day:
             continue
         checks["lines"] += 1
-        kind = _line_kind(row, types)
         sales = float(row.get("sales") or 0)
+        if _on_cancelled(row, cancelled):
+            # A cancelled ticket's lines are in no figure (A2-02): its ticket
+            # is out of the checks, the covers and the reconcile already.
+            checks["cancelled_lines"] += 1
+            checks["cancelled_sales"] = round(checks["cancelled_sales"] + sales, 2)
+            continue
+        kind = _classify(row, types, rules)
         if kind == "unknown":
             checks["unknown_type_lines"] += 1
             checks["unknown_type_sales"] = round(checks["unknown_type_sales"] + sales, 2)
             continue
-        if kind == "excluded":
+        if kind == "transfer":
+            checks["transfer_lines"] += 1
+            checks["transfer_value"] = round(checks["transfer_value"] + loss_value(row), 2)
+            continue
+        if kind == "not_revenue":
+            checks["not_revenue_lines"] += 1
+            checks["not_revenue_sales"] = round(checks["not_revenue_sales"] + sales, 2)
+            continue
+        if kind in ("nonsale", "excluded"):
             checks["excluded_lines"] += 1
             continue
         if kind == "void":
-            voids += _line_value(row)
+            voids += loss_value(row)
             continue
         if kind == "refund":
-            refunds += _line_value(row)
+            refunds += loss_value(row)
             continue
         item = menu.get(str(row.get("menuitem_mid"))) or {}
         filed = row.get(ARCHIVED_FILING)
@@ -2526,10 +2893,11 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             delta["discounts"] = -sales
             checks["lines_discount"] = round(checks["lines_discount"] + sales, 2)
         else:  # comp
-            value = _line_value(row)
+            value = loss_value(row)
             delta["gross"] = value
             delta["comps"] = value
             checks["lines_comp_sales"] = round(checks["lines_comp_sales"] + sales, 2)
+            checks["lines_comp_value"] = round(checks["lines_comp_value"] + value, 2)
         buckets = [total, by_dep.setdefault(dep, _parts())]
         sub = filed.get("sales_category") if filed else sales_category(item)
         if sub:
@@ -2543,35 +2911,66 @@ def fetch_day_sales(restaurant_id: int, business_date) -> dict:
             key = str(row.get("menuitem_mid") or "")
             it = items.setdefault(key, {"name": (clean_item_name(item.get("name"))
                                                  or (filed or {}).get("item_name") or "Unknown item"),
-                                        "department": dep, "qty": 0.0, "parts": _parts(),
+                                        "department": dep, "qty": 0.0, "made_qty": 0.0, "parts": _parts(),
                                         "guid": key or None})
             buckets.append(it["parts"])
+            q = float(row.get("qty") or 0)
             if kind == "sale":
-                it["qty"] += float(row.get("qty") or 0)
+                it["qty"] += q
+            if q > 0:
+                it["made_qty"] += q            # sold and comped plates both left the kitchen
         for b in buckets:
             for k, v in delta.items():
                 b[k] += v
 
-    counted = [live[t] for t in sale_tickets if t in live]
-    guests = sum(int(t.get("guest_count") or 0) for t in counted)
+    counted = pos_checks.count(live, sale_tickets)
     tax = round(sum(float(t.get("tax") or 0) for t in live.values()), 2) if live else None
+    tax_adjust = round(sum(_num(t.get("tax_adjust")) for t in live.values()), 2) if live else None
     for k in ("type_sale", "type_discnt", "type_promo", "type_comp"):
         checks[f"ticket_{k}"] = round(sum(float(t.get(k) or 0) for t in live.values()), 2)
     checks["tickets"] = len(live)
+    # Comps against RPOWER's own per-ticket comp totals (A2-09): gross adds
+    # each comp line's value, which counts a comped plate twice if RPOWER
+    # rings the comp BESIDE the original sale line (RPOWER question 2). The
+    # two apart by more than COMP_RECONCILE_TOLERANCE is said on the night.
+    checks["comp_gap"] = round(abs(checks["lines_comp_value"]) - abs(checks["ticket_type_comp"]), 2)
+    checks["comps_reconciled"] = abs(checks["comp_gap"]) <= COMP_RECONCILE_TOLERANCE
+    if not checks["comps_reconciled"]:
+        _quality_event(restaurant_id, f"comp_gap:{day}", f"{checks['comp_gap']:.2f}",
+                       f"Comps {day}: comp lines ${checks['lines_comp_value']:,.2f} vs RPOWER's ticket comp totals "
+                       f"${abs(checks['ticket_type_comp']):,.2f} — gross and comps % may count a comped plate "
+                       f"twice (Audit #23 A2-09)", job="pos_comp_reconcile")
+    if checks["not_revenue_lines"] or checks["cancelled_lines"] or checks["transfer_lines"]:
+        _quality_event(restaurant_id, f"left_out:{day}",
+                       f"{checks['not_revenue_sales']:.2f}|{checks['cancelled_sales']:.2f}|{checks['transfer_value']:.2f}",
+                       f"Sales {day}: left out of net — {checks['not_revenue_lines']} gift card / account / gratuity "
+                       f"item line(s) ${checks['not_revenue_sales']:,.2f}, {checks['cancelled_lines']} line(s) of "
+                       f"cancelled tickets ${checks['cancelled_sales']:,.2f}; {checks['transfer_lines']} transfer "
+                       f"void(s) ${checks['transfer_value']:,.2f} out of voids (Audit #23 A2-02/A2-10/A2-14)",
+                       job="pos_sales_left_out")
     return {
         "gross": total["gross"], "discounts": total["discounts"], "comps": total["comps"],
-        "voids": round(voids, 2), "refunds": round(refunds, 2), "tax": tax,
-        "transactions": len(sale_tickets),
+        "voids": round(voids, 2), "refunds": round(refunds, 2), "tax": tax, "tax_adjust": tax_adjust,
+        "transactions": counted["checks"],
         # Tickets missing from the summary feed carry no guest count, so a
-        # partial feed cannot report covers honestly.
-        "guests": guests if guests and len(counted) == len(sale_tickets) else None,
+        # partial feed cannot report covers honestly (pos_checks.count).
+        "guests": counted["guests"],
         "by_department": by_dep, "by_hour": by_hour,
         "by_department_category": by_dep_cat,
         # Sold at least once; an item that was only ever comped was served,
-        # not sold, and its value is already in comps.
+        # not sold, and its value is already in comps (`items_made` keeps it
+        # for the food estimate's units made).
         "items": [it for it in items.values() if it["qty"] > 0],
+        "items_made": [{"guid": it["guid"], "name": it["name"], "made_qty": round(it["made_qty"], 3)}
+                       for it in items.values() if it["made_qty"] > 0 and it["guid"]],
+        "dst": dst_shift(restaurant_id, day),
         "source_checks": checks,
     }
+
+
+# Comp lines and RPOWER's own ticket comp totals this far apart is a night
+# whose comps do not reconcile (A2-09).
+COMP_RECONCILE_TOLERANCE = 1.00
 
 
 def fetch_day_closed(restaurant_id: int, business_date) -> bool:
@@ -4291,12 +4690,14 @@ def _local_stamp(raw):
     return dt.strftime("%Y-%m-%dT%H:%M:%S") if dt else None
 
 
-def line_kind(row: dict, types: dict) -> str:
+def line_kind(row: dict, types: dict, rules=None) -> str:
     """What one ticketsales line is, as the archive stores it: sale | comp |
-    void | refund | discount | nonsale | other — _classify, the same rule the
-    nightly report uses (POS-06), with a line of an unknown or excluded
-    sales type (tax, gratuity, fee) filed as "other"."""
-    kind = _classify(row, types)
+    void | transfer | refund | discount | nonsale | not_revenue | other —
+    _classify, the same rule the nightly report uses (POS-06), with a line
+    of an unknown or excluded sales type (tax, gratuity, fee) filed as
+    "other". `transfer` (A2-10) and `not_revenue` (A2-14) are Audit #23's:
+    no reader counts either as a void, a sale or a loss."""
+    kind = _classify(row, types, rules)
     return "other" if kind in ("unknown", "excluded") else kind
 
 
@@ -4318,6 +4719,49 @@ def store_key(restaurant_id: int):
 # against RPOWER's per-ticket type totals like any read; past this gap, or
 # with a line of an unknown type, the night is read by business date instead.
 FEED_NIGHT_TOLERANCE = 1.00
+
+
+def _archive_rules(restaurant_id, lists, raw_lines, raw_tickets, iso):
+    """(types, rules, cancelled ids) archive_rows classifies a night with
+    (Audit #23): the list as refreshed for a miss, any type it still does not
+    name filled from the archive's kept flags (A2-01); the void reasons and
+    the menu the night already read (A2-10, A2-14); the cancelled tickets
+    (A2-02)."""
+    types = lists["types"]
+    missing = {str(r.get("slstype_mid")) for r in raw_lines
+               if r.get("slstype_mid") not in (None, "") and str(r.get("slstype_mid")) not in types}
+    if missing:
+        kept = _kept_types(restaurant_id, missing)
+        if kept:
+            types = {**kept, **types}
+    cats = lists.get("cat_rows") or {}
+    menu = {mid: (clean_item_name(m.get("name")),
+                  clean_item_name((cats.get(_id(m.get("slscat_mid")) or "") or {}).get("name")))
+            for mid, m in (lists.get("menu_rows") or {}).items()}
+    rules = SalesRules(restaurant_id, reasons=lists.get("reasons") or {}, menu=menu)
+    return types, rules, _cancelled_ids(raw_tickets, iso)
+
+
+def _applied_amount(p) -> float:
+    import pos_checks
+    return pos_checks.applied_amount(_num(p.get("paid_ticket")), _num(p.get("cash_change")),
+                                     _num(p.get("target_amt")))
+
+
+def _reconcile_comps(restaurant_id, iso, checks, live_tickets):
+    """Comp lines against RPOWER's own per-ticket comp totals (A2-09), into
+    the night's checks: lines_comp, tickets_comp, comp_gap — and one
+    data_quality event when they are more than COMP_RECONCILE_TOLERANCE
+    apart (gross keeps its rule; the night is flagged)."""
+    lines = round(abs(float(checks.get("lines_comp") or 0)), 2)
+    theirs = round(abs(sum(_num(t.get("type_comp")) for t in live_tickets)), 2)
+    gap = round(lines - theirs, 2)
+    checks.update(lines_comp=lines, tickets_comp=theirs, comp_gap=gap)
+    if abs(gap) > COMP_RECONCILE_TOLERANCE:
+        _quality_event(restaurant_id, f"comp_gap:{iso}", f"{gap:.2f}",
+                       f"Comps {iso}: comp lines ${lines:,.2f} vs RPOWER's ticket comp totals ${theirs:,.2f} "
+                       f"(gap ${gap:,.2f}) — gross and comps % may count a comped plate twice (Audit #23 A2-09)",
+                       job="pos_comp_reconcile")
 
 
 def archive_rows(restaurant_id: int, business_date) -> dict:
@@ -4396,6 +4840,7 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
     if missed:
         lists = _refresh_missed(restaurant_id, lists, missed)
     types, menu, reasons, people = lists["types"], lists["menu"], lists["reasons"], lists["people"]
+    types, rules, cancelled = _archive_rules(restaurant_id, lists, raw_lines, raw_tickets, iso)   # Audit #23 (F3)
     emps, jobs = people.get("employees") or {}, people.get("jobs") or {}
     tables, rooms, meals, centers = lists["tables"], lists["rooms"], lists["meals"], lists["centers"]
     # Each line's department and sales category as RPOWER filed it the night
@@ -4430,18 +4875,24 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
     for r in raw_lines:
         if _biz_date(r.get("date")) != iso or not r.get("rid"):
             continue
-        kind = line_kind(r, types)
+        kind = line_kind(r, types, rules)
         tid = _id(r.get("ticket_rid"))
         item = _id(r.get("menuitem_mid"))
         sales = round(_num(r.get("sales")), 2)
         if kind in ("sale", "discount") and tid:
             net_by_ticket[tid] = round(net_by_ticket.get(tid, 0.0) + sales, 2)
-        if kind in ("sale", "discount"):
-            key = "lines_sale" if kind == "sale" else "lines_discount"
-            checks[key] = round(checks[key] + sales, 2)
-            flag = _type_flag(types.get(str(r.get("slstype_mid"))))
+        if tid and tid in cancelled:
+            pass                     # the reconcile leaves a cancelled ticket out on both sides (A2-02)
+        elif kind in ("sale", "discount", "not_revenue"):
+            # A gift card sold as a Sale-type item is in RPOWER's type_sale:
+            # it stays on both sides of the reconcile, apart from net (A2-14).
+            key = {"sale": "lines_sale", "discount": "lines_discount"}.get(kind, "not_revenue_sales")
+            checks[key] = round(checks.get(key, 0.0) + sales, 2)
+            flag = _type_flag(_type_of(r, types))
             if flag:
                 by_flag[flag] = round(by_flag.get(flag, 0.0) + sales, 2)
+        elif kind == "comp":
+            checks["lines_comp"] = round(checks.get("lines_comp", 0.0) + loss_value(r), 2)
         elif _classify(r, types) == "unknown":
             checks["unknown_type_lines"] += 1
             checks["unknown_type_sales"] = round(checks["unknown_type_sales"] + sales, 2)
@@ -4469,7 +4920,11 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
             "item_kind": (menu.get(item) or {}).get("kind") if item else None,
             "kind": kind, "qty": _num(r.get("qty"), 0.0), "sales": sales,
             "price": round(_num(r.get("price")), 2), "regular_price": round(_num(r.get("regular_price")), 2),
-            "loss_amount": _loss_amount(r) if kind in ("comp", "void", "refund") else None,
+            "loss_amount": loss_value(r) if kind in ("comp", "void", "refund", "transfer") else None,
+            # The flags of the sales type the line was rung under (A2-01):
+            # every reader classifies this line from them, whatever the list
+            # says later.
+            "sales_type_flags": frozen_type_flags(_type_of(r, types)),
             "reason": reasons.get(reason) if reason else None, "approver_id": approver,
             "item_at": _local_stamp(r.get("item_dttm")),
             "mealtime": _name(meals, _id(r.get("mealtime_mid"))),
@@ -4507,6 +4962,7 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
             "bev_count": int(_num(t.get("bev_count"))), "net_sales": net_by_ticket.get(tid, 0.0),
             "discount": round(_num(t.get("discount")), 2), "tip": round(_num(t.get("tip")), 2),
             "grat": round(_num(t.get("grat")), 2), "tax": round(_num(t.get("tax")), 2),
+            "tax_adjust": round(_num(t.get("tax_adjust")), 2),        # kept, never added (A2-20)
             "mealtime": _name(meals, _id(t.get("mealtime_mid"))),
             "profit_center": _name(centers, _id(t.get("pcenter_mid"))),
             "cancelled": 1 if t.get("is_cancelled") else 0,
@@ -4524,7 +4980,11 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
         payments.append({
             "payment_id": str(p["rid"]), "ticket_id": _id(p.get("ticket_rid")), "business_date": iso,
             "method": _tidy_name(m.get("name")) or None, "is_cash": 1 if m.get("is_cash") else 0,
-            "is_card": 1 if m.get("is_cc") else 0, "amount": round(_num(p.get("paid_ticket")), 2),
+            "is_card": 1 if m.get("is_cc") else 0,
+            # The amount APPLIED to the check (A2-11, pos_checks.applied_amount);
+            # RPOWER's change and target kept beside it.
+            "amount": _applied_amount(p),
+            "cash_change": round(_num(p.get("cash_change")), 2), "target_amt": round(_num(p.get("target_amt")), 2),
             "tip": round(_num(p.get("paid_tip")), 2), "tip_fee": round(_num(p.get("tip_fee")), 2)})
     cats = lists["payout_cats"]
     payouts = []
@@ -4565,6 +5025,7 @@ def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw
     checks.update(lines_by_type=dict(sorted(by_flag.items())), tickets_by_type=theirs,
                   gap=round(sum(by_flag.values()) - sum(theirs.values()) - explained, 2), tickets=len(live),
                   cash_discount_unreflected=explained)
+    _reconcile_comps(restaurant_id, iso, checks, live)                     # A2-09 (Audit #23, F3)
     return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             # The night's net as fetch_business_days counts it: every sale and
             # discount line, a line whose ticket the ticket read did not
@@ -5168,31 +5629,41 @@ def _raw_from_archive(restaurant_id: int, path: str, dates: list) -> list:
     try:
         if path == "ticketsales/getbybusinessdate":
             rows = conn.execute(
-                f"SELECT line_id, ticket_id, business_date, item_id, qty, sales, price, regular_price, item_at, "
-                f"sales_type_id, voided, mgr_id, void_mgr_id, reason_id, shift, department, sales_category, "
-                f"item_name FROM pos_ticket_lines "
-                f"WHERE restaurant_id=? AND provider='rpower' AND business_date IN ({marks})",
+                f"SELECT l.line_id, l.ticket_id, l.business_date, l.item_id, l.qty, l.sales, l.price, "
+                f"l.regular_price, l.item_at, l.sales_type_id, l.voided, l.mgr_id, l.void_mgr_id, l.reason_id, "
+                f"l.reason, l.shift, l.department, l.sales_category, l.item_name, l.sales_type_flags, "
+                f"t.cancelled AS ticket_cancelled FROM pos_ticket_lines l LEFT JOIN pos_tickets t "
+                f"ON t.restaurant_id=l.restaurant_id AND t.provider=l.provider AND t.ticket_id=l.ticket_id "
+                f"AND t.business_date=l.business_date "
+                f"WHERE l.restaurant_id=? AND l.provider='rpower' AND l.business_date IN ({marks})",
                 (restaurant_id, *dates)).fetchall()
             # ARCHIVED_FILING: where RPOWER filed the line the night it was
             # archived (layout 4). fetch_day_sales prefers it to today's
             # catalog, so a night re-read after an item moved department, or
             # was deleted, stays in the department it sold under (POS-20).
+            # ARCHIVED_TYPE: the sales type's flags the night it was archived
+            # (A2-01, None before 10/21/26); ARCHIVED_REASON its void reason's
+            # name then; TICKET_CANCELLED its ticket's state (A2-02).
             return [{"rid": r["line_id"], "ticket_rid": r["ticket_id"], "date": f"{r['business_date']}T00:00:00",
                      "menuitem_mid": r["item_id"], "qty": r["qty"], "sales": r["sales"], "price": r["price"],
                      "regular_price": r["regular_price"], "item_dttm": _stamp_raw(r["item_at"]),
                      "slstype_mid": r["sales_type_id"], "voided": r["voided"], "mgr_mid": r["mgr_id"],
                      "voidmgr_mid": r["void_mgr_id"], "voidrsn_mid": r["reason_id"], "shift": r["shift"],
                      ARCHIVED_FILING: ({"department": r["department"], "sales_category": r["sales_category"],
-                                        "item_name": r["item_name"]} if r["department"] else None)}
+                                        "item_name": r["item_name"]} if r["department"] else None),
+                     ARCHIVED_TYPE: _thaw_flags(r["sales_type_flags"]),
+                     ARCHIVED_REASON: r["reason"],
+                     TICKET_CANCELLED: bool(r["ticket_cancelled"])}
                     for r in rows]
         if path == "ticket/getbybusinessdate":
             rows = conn.execute(
-                f"SELECT ticket_id, business_date, opened_at, cancelled, guest_count, tax, type_sale, type_discnt, "
-                f"type_promo, type_comp FROM pos_tickets WHERE restaurant_id=? AND provider='rpower' "
+                f"SELECT ticket_id, business_date, opened_at, cancelled, guest_count, tax, tax_adjust, type_sale, "
+                f"type_discnt, type_promo, type_comp FROM pos_tickets WHERE restaurant_id=? AND provider='rpower' "
                 f"AND business_date IN ({marks})", (restaurant_id, *dates)).fetchall()
             return [{"rid": r["ticket_id"], "date": f"{r['business_date']}T00:00:00",
                      "open_dttm": _stamp_raw(r["opened_at"]), "is_cancelled": r["cancelled"],
-                     "guest_count": r["guest_count"], "tax": r["tax"], "type_sale": r["type_sale"],
+                     "guest_count": r["guest_count"], "tax": r["tax"], "tax_adjust": r["tax_adjust"],
+                     "type_sale": r["type_sale"],
                      "type_discnt": r["type_discnt"], "type_promo": r["type_promo"], "type_comp": r["type_comp"]}
                     for r in rows]
     finally:
