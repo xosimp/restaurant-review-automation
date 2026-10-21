@@ -4467,8 +4467,10 @@ def init_db(db_path: str = DB_PATH):
         # (audit #23, 10/21/26 - labor.py): kind 'open_punch' (a punch with no
         # clock-out, ref = punch id, A3-01 / A6-08), 'station_candidate' (a
         # record that behaves like a station login, ref = POS employee id,
-        # A3-03) and 'job_rename' (a job RPOWER renamed, ref = job id,
-        # A3-19). Each kind is replaced per sync; detail_json holds the rest.
+        # A3-03), 'station_verdict' (the owner's word on one record),
+        # 'job_name' (the name a job was first filed under) and 'job_rename'
+        # (a job RPOWER renamed, ref = job id, A3-19). The read's kinds are
+        # replaced per sync; detail_json holds the rest.
         """CREATE TABLE IF NOT EXISTS labor_flags (
             restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
             kind            TEXT NOT NULL,

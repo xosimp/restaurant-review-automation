@@ -587,3 +587,26 @@ def test_punch_edits_older_than_the_live_window_are_swept_weekly(db_path, monkey
     # Not due again for a week.
     assert rpower.sweep_punch_edits(rid, today=today + timedelta(days=3))["due"] is False
     assert rpower.sweep_punch_edits(rid, today=today + timedelta(days=7))["due"] is True
+
+
+def test_a_store_set_up_by_hand_never_has_its_checklist_opened(db_path):
+    """A suggestion would open the checklist, and every other labor step
+    would then read pending and hold the store's auto-draft."""
+    import onboarding
+    rid = _restaurant()
+    labor.record_station_candidates(rid, {"S": {"name": "Sunset Crew", "punches": 3, "beside": ["Amy"]}})
+    labor.suggest_salaried(rid, ["Erik Baylis"])
+    rpower.set_station_verdict(rid, "S", "Sunset Crew", True, who="owner:t")
+    assert onboarding.confirmations(rid) == {}
+    assert onboarding.labor_setup_pending({"id": rid, "module_labor": 1}) == []
+    assert rpower.station_owner(rid) == {"stations": {"S": "Sunset Crew"}}
+    # The owner changes their mind: a person.
+    rpower.set_station_verdict(rid, "S", "Sunset Crew", False, who="owner:t")
+    assert rpower.station_owner(rid) == {"people": {"S": "Sunset Crew"}}
+
+
+def test_a_jobs_kept_name_is_never_overwritten(db_path):
+    rid = _restaurant()
+    rpower._stable_job_names(rid, {"7": "Server PM"})
+    labor.put_flag(rid, "job_name", "7", {"name": "Server Night"}, keep_existing=True)
+    assert rpower._kept_job_names(rid) == {"7": "Server PM"}

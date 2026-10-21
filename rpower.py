@@ -2028,46 +2028,51 @@ def station_owner(restaurant_id) -> dict:
     """{"stations": {emp_mid: name}, "people": {emp_mid: name}} — the
     owner's own station list for this store (audit #23 A3-03): the
     `station_logins` setup step (onboarding_confirmations) once confirmed —
-    its value when one was given, else the suggestion it confirmed. Empty
-    when nothing is confirmed or the row cannot be read."""
+    its value when one was given, else the suggestion it confirmed — with
+    the owner's word on single records over it (labor_flags
+    `station_verdict`, the Data Health card). A key is present only when it
+    holds a record; {} when nothing is said or nothing can be read."""
+    out = {"stations": {}, "people": {}}
     try:
         import onboarding
         c = (onboarding.confirmations(restaurant_id) or {}).get("station_logins") or {}
     except Exception:
-        return {}
-    if c.get("status") != "confirmed":
-        return {}
-    v = c.get("value") if isinstance(c.get("value"), dict) else (c.get("suggested") or {})
-    out = {}
-    for k in ("stations", "people"):
-        got = v.get(k) if isinstance(v, dict) else None
-        if isinstance(got, dict):
-            out[k] = {str(m): str(n) for m, n in got.items()}
-        elif isinstance(got, list):
-            out[k] = {str(m): str(m) for m in got}
-    return out
+        c = {}
+    if c.get("status") == "confirmed":
+        v = c.get("value") if isinstance(c.get("value"), dict) else (c.get("suggested") or {})
+        for k in ("stations", "people"):
+            got = v.get(k) if isinstance(v, dict) else None
+            if isinstance(got, dict):
+                out[k].update({str(m): str(n) for m, n in got.items()})
+            elif isinstance(got, list):
+                out[k].update({str(m): str(m) for m in got})
+    try:
+        import labor
+        for f in labor.flags(restaurant_id, "station_verdict"):
+            mid = str(f["ref"])
+            yes, no = ("stations", "people") if f.get("station") else ("people", "stations")
+            out[no].pop(mid, None)
+            out[yes][mid] = str(f.get("name") or mid)
+    except Exception as e:
+        log.info("[rpower] station verdicts unreadable rid=%s: %s", restaurant_id, e)
+    return {k: v for k, v in out.items() if v}
 
 
 def set_station_verdict(restaurant_id, emp_mid, name, is_station, who=None) -> dict:
     """The owner's word on one record (audit #23 A3-03): a station login
     (left out of labor from the next sync on) or a person (never proposed
-    again). Kept on the `station_logins` setup step's value, which this
-    confirms. Returns the new {"stations", "people"}."""
-    import onboarding
-    cur = station_owner(restaurant_id)
-    st, ppl = dict(cur.get("stations") or {}), dict(cur.get("people") or {})
+    again) — a labor_flags `station_verdict` row, so a store set up by hand
+    never has its setup checklist opened by it. Returns the new
+    {"stations", "people"}."""
+    import labor
     mid = str(emp_mid or "").strip()
     if not mid:
         raise ValueError("no employee id")
-    st.pop(mid, None)
-    ppl.pop(mid, None)
-    (st if is_station else ppl)[mid] = str(name or mid)[:80]
-    value = {"stations": st, "people": ppl}
-    out = onboarding.confirm(restaurant_id, "station_logins", value=value, who=who)
-    if not out.get("ok"):
-        raise ValueError(out.get("error") or "not saved")
+    labor.put_flag(restaurant_id, "station_verdict", mid,
+                   {"name": str(name or mid)[:80], "station": bool(is_station), "by": who})
     _people_cache.pop(restaurant_id, None)
-    return value
+    out = station_owner(restaurant_id)
+    return {"stations": out.get("stations") or {}, "people": out.get("people") or {}}
 
 
 def station_logins(entries: list, people: dict) -> dict:
@@ -2182,20 +2187,16 @@ def _stable_job_names(restaurant_id, jobs: dict) -> tuple:
     name, and a job renamed in RPOWER ("Server PM" → "Server Night") split
     its history and dropped the owner's rate to the fallback. The job's id
     is the key and its first name the display; a rename is reported (the
-    Data Health card), never applied silently. Kept per restaurant in
-    pos_catalogs (`restaurant:<id>`, `job_names`); a job never seen before
-    takes its POS name; an unreadable copy keeps the POS's names."""
-    import pos_io
-    scope = f"restaurant:{int(restaurant_id)}"
+    Data Health card), never applied silently. Kept per restaurant as
+    labor_flags `job_name` rows (written once, never overwritten); a job
+    never seen before takes its POS name; an unreadable store keeps the
+    POS's names."""
     try:
-        got = pos_io.catalog_get("rpower", scope, "job_names")
-        kept = (got[1] if got else None) or {}
+        import labor
+        kept = _kept_job_names(restaurant_id, strict=True)
     except Exception:
         return dict(jobs), {}
-    if not isinstance(kept, dict):
-        kept = {}
-    kept = dict(kept)
-    out, renamed, changed = {}, {}, False
+    out, renamed = {}, {}
     for mid, name in jobs.items():
         old = kept.get(mid)
         if old and old.lower() != name.lower():
@@ -2204,26 +2205,38 @@ def _stable_job_names(restaurant_id, jobs: dict) -> tuple:
         else:
             out[mid] = old or name
             if not old:
-                kept[mid] = name
-                changed = True
-    if changed:
-        try:
-            pos_io.catalog_put("rpower", scope, "job_names", kept)
-        except Exception as e:
-            log.warning("[rpower] job names not kept for %s: %s", restaurant_id, e)
+                try:
+                    labor.put_flag(restaurant_id, "job_name", mid, {"name": name}, keep_existing=True)
+                except Exception as e:
+                    log.warning("[rpower] job name not kept for %s: %s", restaurant_id, e)
     return out, renamed
 
 
-def _kept_job_names(restaurant_id) -> dict:
+def _kept_job_names(restaurant_id, strict=False) -> dict:
     """{job_mid: the name it is filed under} (_stable_job_names), read only;
-    {} when none is kept."""
+    {} when none is kept. `strict` raises when the rows cannot be read."""
+    import json as _json
     try:
-        import pos_io
-        got = pos_io.catalog_get("rpower", f"restaurant:{int(restaurant_id)}", "job_names")
-        kept = (got[1] if got else None) or {}
-        return kept if isinstance(kept, dict) else {}
+        from models import get_conn
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT ref, detail_json FROM labor_flags WHERE restaurant_id=? AND kind='job_name'",
+                                (restaurant_id,)).fetchall()
+        finally:
+            conn.close()
     except Exception:
+        if strict:
+            raise
         return {}
+    out = {}
+    for r in rows:
+        try:
+            name = (_json.loads(r[1] or "{}") or {}).get("name")
+        except (TypeError, ValueError):
+            name = None
+        if name:
+            out[str(r[0])] = str(name)
+    return out
 
 
 def fetch_people(restaurant_id: int) -> dict:

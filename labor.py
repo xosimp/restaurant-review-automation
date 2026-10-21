@@ -7316,8 +7316,11 @@ def _cohort_block(restaurant_id, restaurant) -> str:
 #                      (rpower.station_candidates, A3-03) — proposed on the
 #                      setup step and the Data Health card, left out of labor
 #                      only once the owner confirms it;
-#   job_rename         a job the POS renamed, still filed under its first name
-#                      (rpower._stable_job_names, A3-19).
+#   station_verdict    the owner's word on one record (station or person,
+#                      rpower.set_station_verdict) — written on its own;
+#   job_name           the name a job was first filed under (written once,
+#                      rpower._stable_job_names, A3-19);
+#   job_rename         a job the POS renamed, still filed under its first name.
 
 OPEN_PUNCH_TASK_HOURS = 16
 # An open punch is estimated to the store's close for its business date,
@@ -7362,6 +7365,37 @@ def _replace_flags(restaurant_id, kind, rows, lo=None, hi=None, db_path=None) ->
     finally:
         conn.close()
     return gone
+
+
+def put_flag(restaurant_id, kind, ref, detail=None, business_date=None, keep_existing=False, db_path=None) -> None:
+    """One labor_flags row, written on its own (an owner's answer, a job's
+    first name). `keep_existing`: a row already there is left as it is (a
+    job's kept name is never overwritten by a later spelling)."""
+    import json as _json
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _flags_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO labor_flags (restaurant_id, kind, ref, business_date, detail_json, first_seen_at, "
+            "last_seen_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(restaurant_id, kind, ref) DO "
+            + ("NOTHING" if keep_existing else
+               "UPDATE SET business_date=excluded.business_date, detail_json=excluded.detail_json, "
+               "last_seen_at=excluded.last_seen_at"),
+            (restaurant_id, kind, str(ref), business_date, _json.dumps(detail or {}, default=str), now, now))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _setup_started(restaurant_id, db_path=None) -> bool:
+    """Whether this store's setup checklist was opened. A suggestion on a
+    store set up by hand before the checklist existed would open it — and
+    every other labor step would read pending and hold its auto-draft."""
+    try:
+        import onboarding
+        return bool(onboarding.confirmations(restaurant_id, **({"db_path": db_path} if db_path else {})))
+    except Exception:
+        return False
 
 
 def flags(restaurant_id, kind, dates=None, db_path=None) -> list:
@@ -7564,7 +7598,7 @@ def record_station_candidates(restaurant_id, candidates, db_path=None) -> None:
     try:
         rows = [{"ref": mid, "business_date": None, "detail": dict(c)} for mid, c in (candidates or {}).items()]
         _replace_flags(restaurant_id, "station_candidate", rows, db_path=db_path)
-        if candidates:
+        if candidates and _setup_started(restaurant_id, db_path=db_path):
             import onboarding
             onboarding.suggest(restaurant_id, "station_logins",
                                {"stations": {mid: c.get("name") or mid for mid, c in candidates.items()},
@@ -7596,7 +7630,7 @@ def suggest_salaried(restaurant_id, names, db_path=None) -> list:
         from models import get_restaurant, salaried_keys, salaried_name_key
         have = salaried_keys(get_restaurant(restaurant_id))
         new = sorted({n for n in names or () if n and salaried_name_key(n) not in have})
-        if new:
+        if new and _setup_started(restaurant_id, db_path=db_path):
             import onboarding
             onboarding.suggest(restaurant_id, "salaried", {"names": new},
                                source="RPOWER marks their job salaried (is_salary)",
