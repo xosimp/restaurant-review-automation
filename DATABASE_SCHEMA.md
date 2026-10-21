@@ -778,7 +778,7 @@ All created at boot (`init_db` and the `init_*` it calls, or the boot block for 
 | `pos_item_daily` | 1095 (`RETAIN_POS_ITEM_DAILY_DAYS`, else `RETAIN_POS_ARCHIVE_DAYS`) | `business_date` | 400 | — |
 | `pos_request_ledger` | 90 (`RETAIN_POS_REQUEST_LEDGER_DAYS`) | `hour` | 30 | `pos_capacity.roll_ledger_daily` (RPOWER audit #23 A5-13: hourly rows older than `POS_LEDGER_HOURLY_DAYS`, 7, become one row a day — `hour` holds the date alone, 'YYYY-MM-DD', which sorts before that day's hours) |
 | `pos_lane_ledger` | 90 (`RETAIN_POS_REQUEST_LEDGER_DAYS`; RPOWER requests per UTC hour per budget lane, `pos_capacity` — the console's budget utilisation %) | `hour` | 30 | — |
-| `dsr_reports`, `dsr_metrics` | 1095 (`RETAIN_DSR_REPORTS_DAYS`, `RETAIN_DSR_METRICS_DAYS`; RPOWER audit #23 A5-09/A5-13: the nightly report's versions and its figures, three years like the archive they are built from — 28 KB a report-night) | `business_date` | 400 | — |
+| `dsr_reports` | 1095 (`RETAIN_DSR_REPORTS_DAYS`; RPOWER audit #23 A5-09/A5-13: the nightly report's versions, three years like the archive they are built from — 28 KB a report-night; its figures, `dsr_metrics`, are kept forever — the canonical nightly net) | `business_date` | 400 | — |
 | `pos_intraday` | 400 (`RETAIN_POS_INTRADAY_DAYS`; the hourly sales captures — `intraday.pulse` compares the same weekdays of the last `PROFILE_MAX_DAYS`, live labor 8 weeks) | `business_date` | 400 | — |
 | `pos_closed_days` | 400 (`RETAIN_POS_CLOSED_DAYS`; the shared closeday answers, `pos_closed` — the close lag reads 14 nights) | `business_date` | 30 | — |
 | `pos_request_nights` | 90 (`RETAIN_POS_REQUEST_LEDGER_DAYS`) | `last_at` | 30 | — |

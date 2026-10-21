@@ -7413,7 +7413,8 @@ def _setup_started(restaurant_id, db_path=None) -> bool:
     try:
         import onboarding
         return bool(onboarding.confirmations(restaurant_id, **({"db_path": db_path} if db_path else {})))
-    except Exception:
+    except Exception as e:
+        log.warning("labor: setup checklist state unreadable for %s: %s", restaurant_id, e)
         return False
 
 
@@ -7472,7 +7473,8 @@ def _open_estimate(restaurant, punch, now_local, rates):
                                          "date": punch.get("business_date")},
                                         role_rates, fallback, people, typical)
         cost = round(hours * float(rate or 0), 2)
-    except Exception:
+    except Exception as e:
+        log.warning("labor: open punch not costed (%s): %s", punch.get("punch_id"), e)
         cost = None
     basis = "to the store's close" if end == window[1] else "to now"
     return round(hours, 2), cost, basis
@@ -7494,7 +7496,8 @@ def record_open_punches(restaurant_id, punches, window=None, now_local=None, db_
         role_rates = get_role_rates(restaurant_id) or {}
         try:
             people, typical = rate_book(load_shifts_for_restaurant(restaurant_id) or [], _owner_rates(r))
-        except Exception:
+        except Exception as e:
+            log.warning("labor: rate book unreadable for %s, open punches costed by role: %s", restaurant_id, e)
             people, typical = {}, {}
         fallback = float(role_rates.get("_default") or getattr(r, "hourly_rate", None) or DEFAULT_HOURLY_RATE)
         rates = (role_rates, people, typical, fallback)

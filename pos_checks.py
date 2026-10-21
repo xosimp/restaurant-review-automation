@@ -58,8 +58,16 @@ def count(tickets, sale_ticket_ids):
 
 
 def is_check(ticket) -> bool:
-    """For an archived ticket row that carries `is_check` (IS_CHECK_SQL)."""
-    return bool(int((ticket or {}).get("is_check") or 0))
+    """For an archived ticket row that carries `is_check` (IS_CHECK_SQL); a
+    ticket built elsewhere, without the flag, is a check when it carries
+    net sales (a fully comped or $0 ticket is not — A2-04)."""
+    t = ticket or {}
+    if "is_check" in t:
+        return bool(int(t.get("is_check") or 0))
+    try:
+        return abs(float(t.get("net_sales") or 0)) > 0.004
+    except (TypeError, ValueError):
+        return False
 
 
 def tips_by_ticket(payments) -> dict:

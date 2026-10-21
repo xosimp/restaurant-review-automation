@@ -663,7 +663,10 @@ def test_the_retention_pass_runs_the_cold_tier(cold, monkeypatch):
 
 
 def test_the_growing_tables_have_their_stated_windows():
-    for table, days, col in (("dsr_reports", 1095, "business_date"), ("dsr_metrics", 1095, "business_date"),
+    # dsr_metrics is kept forever on purpose (the canonical nightly net —
+    # tests/test_mem_m5_canonical_facts.py); only the report versions age out.
+    assert "dsr_metrics" not in ops._RETENTION_DAYS
+    for table, days, col in (("dsr_reports", 1095, "business_date"),
                              ("pos_intraday", 400, "business_date"), ("pos_closed_days", 400, "business_date"),
                              ("pos_lane_ledger", 90, "hour")):
         assert ops._RETENTION_DAYS[table] == days and ops._RETENTION_COLUMN[table] == col, table

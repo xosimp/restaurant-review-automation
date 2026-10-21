@@ -6016,7 +6016,7 @@ def admin_api_pos_export(restaurant_id, current_user):
 
     def _run():
         out = offboarding.pos_export_to_file(restaurant_id)
-        _admin_events.record_admin_action(current_user, "offboarding.pos_export_built", restaurant_id=restaurant_id,
+        _admin_events_c.record_admin_action(current_user, "offboarding.pos_export_built", restaurant_id=restaurant_id,
                                           target=f"restaurant:{restaurant_id}",
                                           after={"tables": out.get("tables"), "bytes": out.get("bytes")},
                                           summary=f"{actor} built the POS archive export")
@@ -6054,7 +6054,7 @@ def admin_api_pos_export_download(restaurant_id, job_id, current_user):
         os.remove(path)
     except OSError:
         pass
-    _admin_events.record_admin_action(current_user, "offboarding.pos_export_downloaded", restaurant_id=restaurant_id,
+    _admin_events_c.record_admin_action(current_user, "offboarding.pos_export_downloaded", restaurant_id=restaurant_id,
                                       target=f"restaurant:{restaurant_id}", after={"file": name, "bytes": len(data)})
     resp = make_response(data)
     resp.headers["Content-Type"] = "application/zip"

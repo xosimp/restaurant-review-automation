@@ -3467,7 +3467,6 @@ _RETENTION_DAYS = {
     # sales captures 400 days (their readers compare the last same weekdays);
     # the shared closeday answers 400 days (the close lag reads 14 nights).
     "dsr_reports":        int(os.getenv("RETAIN_DSR_REPORTS_DAYS", "1095")),
-    "dsr_metrics":        int(os.getenv("RETAIN_DSR_METRICS_DAYS", "1095")),
     "pos_intraday":       int(os.getenv("RETAIN_POS_INTRADAY_DAYS", "400")),
     "pos_closed_days":    int(os.getenv("RETAIN_POS_CLOSED_DAYS", "400")),
     # Requests per hour per lane (pos_capacity's budget utilisation): the
@@ -3667,7 +3666,7 @@ _RETENTION_COLUMN = {
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_request_ledger": "hour",
-    "dsr_reports": "business_date", "dsr_metrics": "business_date", "pos_intraday": "business_date",
+    "dsr_reports": "business_date", "pos_intraday": "business_date",
     "pos_closed_days": "business_date", "pos_lane_ledger": "hour", "pos_request_nights": "last_at",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
@@ -3806,7 +3805,7 @@ _RETENTION_FLOOR_DAYS = {
     # The DSR's history and figures (canonical facts, trends, the seasonal
     # reads) reach a year and a month; the intraday baselines the same;
     # the close lag 14 nights.
-    "dsr_reports": 400, "dsr_metrics": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
+    "dsr_reports": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
     "pos_request_nights": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
     "bar_sales_nights": 400, "pos_item_daily": 400, "pos_loss_daily": 400, "guest_pos_visits": 365,
@@ -4203,7 +4202,6 @@ def _ensure_retention_indexes(conn):
         ("fintech_files", "CREATE INDEX IF NOT EXISTS idx_fintech_files_created ON fintech_files(created_at)"),
         # RPOWER audit #23 (A5-09, F5): the business-date retention deletes.
         ("dsr_reports", "CREATE INDEX IF NOT EXISTS idx_dsr_reports_bdate ON dsr_reports(business_date)"),
-        ("dsr_metrics", "CREATE INDEX IF NOT EXISTS idx_dsr_metrics_bdate ON dsr_metrics(business_date)"),
         ("pos_intraday", "CREATE INDEX IF NOT EXISTS idx_pos_intraday_bdate ON pos_intraday(business_date)"),
         # Audit #23 F7: the loss lines by approver and the guests' matched
         # checks, now pruned at their age.

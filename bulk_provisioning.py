@@ -490,7 +490,7 @@ def _username_for(email, db_path=None):
     return provisioning._username_for(email, db_path or _models_mod.DB_PATH)
 
 
-def _create_one(row, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False):
+def _create_one(row, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False, token=None):
     """One row's restaurant, owner, store binding and modules. Returns the
     new restaurant id; raises (after taking the half-made restaurant back
     out) on any failure. `cred_id` is the batch's partner credential (A7-01):
@@ -641,7 +641,7 @@ def apply(rows, actor, partner_id=None, rpower_token=None, send_welcome=True, db
         planned = plan(rows, db_path, manifest=manifest)
         by_line = {r["line"]: r for r in rows}
         results = _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, actor, db_path,
-                              manifest=manifest)
+                              manifest=manifest, token=token)
     except BaseException:
         _finish_batch(batch_id, [], {"created": 0, "exists": 0, "error": 0}, "failed", db_path)
         raise
@@ -677,7 +677,8 @@ def _start_batch(actor, partner_id, n_rows, db_path=None):
         conn.close()
 
 
-def _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False):
+def _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, actor, db_path=None, manifest=False,
+                token=None):
     results = []
     cap = max_stores_per_credential()
     on_cred = None
@@ -708,7 +709,7 @@ def _apply_rows(planned, by_line, partner_id, stores, cred_id, send_welcome, act
                 continue
             try:
                 item["restaurant_id"] = _create_one(row, partner_id, stores, cred_id, send_welcome,
-                                                    actor, db_path=db_path, manifest=manifest)
+                                                    actor, db_path=db_path, manifest=manifest, token=token)
                 item["action"] = "created"
                 if binds and on_cred is not None:
                     on_cred += 1
