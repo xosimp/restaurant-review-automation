@@ -61,7 +61,7 @@ def _q(sql, args=()):
 # ── R3-01 / R3-07 / R3-08: the request budget ───────────────────────────────
 
 def test_a_background_request_never_takes_a_slot_while_a_live_one_waits(monkeypatch):
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: 0.0)
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: 0.0)
     key = "rpower:test-bucket"
     rpower._priority_waiting[key] = 1                      # a live read is waiting on this bucket
     try:
@@ -76,7 +76,7 @@ def test_bulk_work_always_passes_the_background_share_and_nightly_work_only_besi
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0.001)
     monkeypatch.setattr(rpower, "FLEET_RPS", 0)
     taken = []
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: (taken.append((key, s)), 0.0)[1])
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: (taken.append((key, s)), 0.0)[1])
     key = rpower._bucket_key("tok")
     with pos_io.lane("bulk"):
         rpower._sleep_for_spacing("tok")
@@ -119,7 +119,7 @@ def test_the_fleet_ceiling_stands_when_the_per_token_spacing_is_off(monkeypatch)
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0)
     monkeypatch.setattr(rpower, "FLEET_RPS", 10.0)
     taken = []
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: (taken.append(key), 0.0)[1])
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: (taken.append(key), 0.0)[1])
     rpower._sleep_for_spacing("tok")
     assert rpower.FLEET_BUCKET in taken
 

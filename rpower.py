@@ -52,11 +52,27 @@ from typing import Optional
 
 log = logging.getLogger("rpower")
 
-BASE_URL = "https://rpowerpos.com/api/v1/coreapi"
+DEFAULT_BASE_URL = "https://rpowerpos.com/api/v1/coreapi"
+
+
+def _base_url_from_env() -> str:
+    """RPOWER_BASE_URL, when set (audit #23 A1-23: a partner host, a staging
+    host or an egress proxy for IP allow-listing is a setting, not a deploy)
+    — https only: a plain-http value is refused (logged) and the default
+    stands, because the bearer token travels in every request."""
+    raw = (os.getenv("RPOWER_BASE_URL") or "").strip().rstrip("/")
+    if not raw:
+        return DEFAULT_BASE_URL
+    if not raw.lower().startswith("https://") or len(raw) <= len("https://"):
+        log.error("RPOWER_BASE_URL is not an https URL; it is ignored and %s is used", DEFAULT_BASE_URL)
+        return DEFAULT_BASE_URL
+    return raw
+
 
 # RPOWER's intro links these endpoints over http://. Every example in the
 # collection uses https, and a bearer token over plaintext is not acceptable
-# regardless — so the base above is https and this module never downgrades.
+# regardless — so the base is https and this module never downgrades.
+BASE_URL = _base_url_from_env()
 PAGE_SIZE = 1000
 
 # RPOWER's pagination description is self-contradictory (see module docstring).
@@ -87,7 +103,8 @@ RETRY_BACKOFF = 2.0
 TIMEOUT_SECONDS = (3.05, 30)
 # Small answers get a short read (INF-11): the DSR sweep polls closeday every
 # 10 minutes per closing store, and one hung poll held the serial sweep.
-TIMEOUT_BY_PATH = {"closeday/getbybusinessdate": (3.05, 10), "store/get": (3.05, 10)}
+TIMEOUT_BY_PATH = {"closeday/getbybusinessdate": (3.05, 10), "store/get": (3.05, 10),
+                   "store/getbymid": (3.05, 10), "store/getbycg": (3.05, 10)}
 # A 429's Retry-After is slept up to this many seconds, never more (food &
 # bar audit 10/16/26 POS-13): an uncapped header could hold a thread for as
 # long as the server liked. A longer one is no longer cut short and retried
@@ -143,11 +160,50 @@ CACHE_MAX_RESTAURANTS = 64        # per-restaurant entries kept in each cache
 CACHE_MAX_KEYED = 1024            # caches keyed (restaurant, something): catalogs, closed days
 
 
+# The small caches — refresh stamps and flags, a few bytes an entry — are
+# sized by the connected store count instead (audit #23 A5-14): at 1,500
+# stores a 64-entry stamp LRU forgot a store's "read a minute ago" and its
+# lists were re-read far more often than PEOPLE_REFRESH_SECONDS meant. The
+# heavy caches (menus, lists) stay at the fixed bound above — the point of it.
+_STORE_COUNT_SECONDS = 600.0
+_store_count = {"n": 0, "at": -1e9}
+
+
+def connected_store_count() -> int:
+    """RPOWER-connected restaurants (re-counted every 10 minutes; 0 when the
+    database can't be read)."""
+    now = time.monotonic()
+    if now - _store_count["at"] < _STORE_COUNT_SECONDS:
+        return _store_count["n"]
+    _store_count["at"] = now
+    try:
+        import models
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM restaurants WHERE rpower_store_mid IS NOT NULL "
+                               "AND rpower_store_mid <> ''").fetchone()
+        finally:
+            conn.close()
+        _store_count["n"] = int(row[0] or 0)
+    except Exception:
+        pass
+    return _store_count["n"]
+
+
 class _LRU:
-    def __init__(self, maxsize):
-        self.maxsize = int(maxsize)
+    def __init__(self, maxsize, per_store=0):
+        self._base = int(maxsize)
+        self.per_store = int(per_store or 0)
         self._d = OrderedDict()
         self._lock = threading.Lock()
+
+    @property
+    def maxsize(self):
+        """The fixed bound, or — for a cache sized by stores — per_store x the
+        connected stores (+25%), whichever is larger."""
+        if not self.per_store:
+            return self._base
+        return max(self._base, int(self.per_store * connected_store_count() * 1.25))
 
     def get(self, key, default=None):
         with self._lock:
@@ -165,8 +221,10 @@ class _LRU:
         with self._lock:
             self._d[key] = value
             self._d.move_to_end(key)
-            while len(self._d) > self.maxsize:
-                self._d.popitem(last=False)
+            if len(self._d) > self._base:
+                limit = self.maxsize
+                while len(self._d) > limit:
+                    self._d.popitem(last=False)
 
     def __contains__(self, key):
         with self._lock:
@@ -249,6 +307,50 @@ class RPowerBudgetExceeded(RPowerTryLater):
     within the wait allowed: the request is not sent over budget (A3-14)."""
 
 
+class RPowerStoreQuarantined(RPowerTryLater):
+    """This store's requests have been failing (audit #23 A1-07 / A4-01):
+    the store is parked by its own quarantine (pos_io.store_allow) — not the
+    fleet — and asked again by one probe after `retry_after`."""
+    store_quarantined = True
+
+
+class RPowerAuthLatched(RPowerAuthError):
+    """RPOWER refused this store's (or token's) token in the last
+    POS_AUTH_LATCH_SECONDS: nothing is sent until the latch's one re-probe
+    (audit #23 A1-13 / A4-16 / A6-09). `retry_after` says when."""
+    latched = True
+
+    def __init__(self, message, retry_after=900.0):
+        super().__init__(message)
+        self.retry_after = max(1.0, float(retry_after or 0))
+
+
+class RPowerServerError(RPowerError):
+    """One request that failed after its retries: 5xx answers or transport
+    failures (audit #23 A4-01). `store_failure` — counted against this store
+    (pos_io.breaker_failure) — so a per-store loop (pos_archive.run_for) can
+    stop at the first one instead of walking the next night into the same
+    wall. Carries no `retry_after`: it spends a queue row's try."""
+    store_failure = True
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+class RPowerSchemaError(RPowerError):
+    """RPOWER answered 200 in a shape this client does not know (audit #23
+    A1-09 / A4-17): an object where a list is documented, or a row without
+    a field the money, dates or identities are read from. Nothing from the
+    read is kept — a renamed `sales` would otherwise be stored as $0 nights.
+    `endpoint` and `detail` say what broke."""
+    schema_error = True
+
+    def __init__(self, message, endpoint=None, detail=None):
+        super().__init__(message)
+        self.endpoint, self.detail = endpoint, detail
+
+
 # ── credentials ─────────────────────────────────────────────────────────────
 
 def _creds(restaurant_id: int) -> dict:
@@ -261,6 +363,7 @@ def _creds(restaurant_id: int) -> dict:
         "cg": getattr(r, "rpower_cg", None),
         "store_mid": (getattr(r, "rpower_store_mid", None) or "").strip() or None,
         "name": getattr(r, "rpower_store_name", None),
+        "auth_failed_at": getattr(r, "rpower_auth_failed_at", None),
     }
 
 
@@ -295,9 +398,12 @@ def has_token(restaurant_id: int) -> bool:
 _io_ctx = threading.local()
 
 
-def _note_store(restaurant_id=None, store_mid=None):
+def _note_store(restaurant_id=None, store_mid=None, auth_failed_at=None):
     _io_ctx.rid = int(restaurant_id) if restaurant_id else None
     _io_ctx.store = str(store_mid) if store_mid else None
+    # The store's restaurants.rpower_auth_failed_at as _ctx read it: an
+    # answer clears it (audit #23 A1-13).
+    _io_ctx.auth_failed = auth_failed_at or None
 
 
 def _current_rid():
@@ -341,7 +447,10 @@ _last_request_at = {}             # bucket -> monotonic time of its last request
 
 
 def init_rate_limit(db_path=None):
-    """The shared request budget's table (boot only, models.init_db)."""
+    """The shared request budget's tables (boot only, models.init_db):
+    `rpower_rate_slots`, one row per bucket — its next free slot (`tat`),
+    its 429 slow-down and the fleet's retry allowance — and
+    `rpower_rate_bucket`, which keeps the lanes' `:live` marks."""
     import models
     conn = models.get_conn(db_path) if db_path else models.get_conn()
     try:
@@ -349,6 +458,16 @@ def init_rate_limit(db_path=None):
             bucket      TEXT PRIMARY KEY,
             tokens      REAL NOT NULL,
             updated_at  REAL NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS rpower_rate_slots (
+            bucket       TEXT PRIMARY KEY,
+            tat          REAL NOT NULL DEFAULT 0,
+            factor       REAL NOT NULL DEFAULT 1,
+            slow_until   REAL NOT NULL DEFAULT 0,
+            last_429     REAL,
+            retry_window REAL NOT NULL DEFAULT 0,
+            retry_n      INTEGER NOT NULL DEFAULT 0,
+            updated_at   REAL NOT NULL DEFAULT 0
         )""")
         conn.commit()
     finally:
@@ -361,36 +480,90 @@ def _bucket_key(token: str, store=None) -> str:
     return "rpower:" + hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _take_shared_slot(token: str, spacing: float, key: str = None):
-    """Seconds to wait before this request may go (0: go now, the slot is
-    taken), or None when the shared budget can't be reached."""
+# The bucket is a reserved schedule (audit #23 A5-07): each row keeps its
+# next free slot (`tat`, epoch seconds — the generic cell rate algorithm),
+# and one round trip RESERVES the next slot, or the next n for this
+# process's waiters at once (at most LEASE_SECONDS of them: _leases holds
+# the rest, handed out in memory). A waiter is told when its slot is and
+# sleeps exactly that long — no polling herd of SELECT/UPDATE/COMMIT, and the
+# database work per request falls from four statements to a fraction of one
+# while a bucket is busy. A leased slot that passes unused by more than one
+# spacing is dropped, never spent late as a burst.
+#
+# A 429 slows every process (audit #23 A1-08 / A4-02, _note_pressure): the
+# bucket's rate is halved (AIMD; once per PRESSURE_WINDOW_SECONDS, down to
+# PRESSURE_MIN_FACTOR), held until `slow_until` — at least Retry-After, at
+# least PRESSURE_HOLD_SECONDS — then recovers PRESSURE_RECOVER_PER_MINUTE of
+# the full rate a minute; Retry-After also moves the bucket's next slot past
+# it, so nobody sends before RPOWER asked.
+LEASE_SECONDS = 1.0
+PRESSURE_WINDOW_SECONDS = 10.0
+PRESSURE_HOLD_SECONDS = 30.0
+PRESSURE_MIN_FACTOR = 1.0 / 16
+PRESSURE_RECOVER_PER_MINUTE = 0.10
+# Retries (any attempt after a request's first) may spend at most this share
+# of the fleet budget a minute (RPOWER_FLEET_RPS x 60), shared by every
+# process: a sick RPOWER is not asked three times as often (A4-02).
+RETRY_BUDGET_SHARE = max(0.0, float(os.getenv("RPOWER_RETRY_BUDGET_SHARE", "0.10") or 0))
+RETRY_BUCKET = "rpower:retries"
+_leases = {}                      # bucket -> deque of epoch slot times this process has reserved
+
+
+def _rate_factor(factor, slow_until, now) -> float:
+    """The bucket's share of its full rate now: the stored factor while the
+    slow-down holds, then recovering linearly to 1."""
+    f = max(PRESSURE_MIN_FACTOR, min(1.0, float(factor if factor is not None else 1.0)))
+    hold = float(slow_until or 0)
+    if now < hold:
+        return f
+    return min(1.0, f + PRESSURE_RECOVER_PER_MINUTE * (now - hold) / 60.0)
+
+
+def _take_shared_slot(token: str, spacing: float, key: str = None, max_wait: float = None, n: int = 1):
+    """Reserve bucket `key`'s next slot: the seconds until it (0.0: go now)
+    — the slot is TAKEN — or, when the next free slot is further off than
+    `max_wait`, that wait with nothing taken. n > 1 reserves up to n slots
+    in the one round trip (never past `max_wait`); the first is the caller's
+    and the rest join this process's lease. None when the shared budget
+    can't be reached (the caller falls back to local spacing)."""
     import models
+    from collections import deque
     key = key or _bucket_key(token)
     try:
         conn = models.get_conn()
     except Exception:
         return None
     try:
-        for _ in range(8):                         # compare-and-swap retries
+        for _ in range(16):                        # compare-and-swap retries
             now = time.time()
-            row = conn.execute("SELECT tokens, updated_at FROM rpower_rate_bucket WHERE bucket=?",
+            row = conn.execute("SELECT tat, factor, slow_until FROM rpower_rate_slots WHERE bucket=?",
                                (key,)).fetchone()
             if row is None:
-                cur = conn.execute("INSERT INTO rpower_rate_bucket (bucket, tokens, updated_at) VALUES (?,?,?) "
-                                   "ON CONFLICT(bucket) DO NOTHING", (key, float(RATE_BURST - 1), now))
+                conn.execute("INSERT INTO rpower_rate_slots (bucket, tat, factor, slow_until, updated_at) "
+                             "VALUES (?, 0, 1, 0, ?) ON CONFLICT(bucket) DO NOTHING", (key, now))
                 conn.commit()
-                if cur.rowcount == 1:
-                    return 0.0
                 continue
-            tokens = min(float(RATE_BURST), float(row[0]) + max(0.0, now - float(row[1])) / spacing)
-            if tokens < 1.0:
-                return (1.0 - tokens) * spacing
-            cur = conn.execute("UPDATE rpower_rate_bucket SET tokens=?, updated_at=? WHERE bucket=? AND updated_at=?",
-                               (tokens - 1.0, now, key, float(row[1])))
+            old_tat = float(row[0] or 0)
+            step = float(spacing) / _rate_factor(row[1], row[2], now)
+            first = max(now, old_tat)
+            wait = first - now
+            if max_wait is not None and wait > max_wait:
+                return wait
+            take = max(1, int(n or 1))
+            if max_wait is not None and step > 0:
+                take = max(1, min(take, int((max_wait - wait) / step) + 1))
+            cur = conn.execute("UPDATE rpower_rate_slots SET tat=?, updated_at=? WHERE bucket=? AND tat=?",
+                               (first + take * step, now, key, old_tat))
             conn.commit()
             if cur.rowcount == 1:
-                return 0.0
-        return spacing                               # contended: wait one slot and ask again
+                if take > 1:
+                    with _rate_lock:
+                        if len(_leases) > 4096:
+                            _leases.clear()
+                        q = _leases.setdefault(key, deque())
+                        q.extend(first + i * step for i in range(1, take))
+                return wait
+        return None                                   # contended past reason: local spacing this once
     except Exception:
         try:
             conn.rollback()
@@ -399,6 +572,107 @@ def _take_shared_slot(token: str, spacing: float, key: str = None):
         return None
     finally:
         conn.close()
+
+
+def _lease_pop(key, spacing, now):
+    """This process's next reserved slot of bucket `key` (epoch), or None."""
+    with _rate_lock:
+        q = _leases.get(key)
+        while q:
+            t = q.popleft()
+            if t >= now - spacing:
+                return t
+    return None
+
+
+def _lease_return(key, slot):
+    with _rate_lock:
+        q = _leases.get(key)
+        if q is not None:
+            q.appendleft(slot)
+
+
+def _note_pressure(keys, retry_after=0.0) -> None:
+    """A 429 on a request that used buckets `keys` (A1-08 / A4-02): slow
+    every process's use of them (see above). Never raises."""
+    import models
+    now = time.time()
+    ra = max(0.0, float(retry_after or 0))
+    for key in keys:
+        with _rate_lock:
+            _leases.pop(key, None)
+        try:
+            conn = models.get_conn()
+            try:
+                conn.execute("INSERT INTO rpower_rate_slots (bucket, tat, factor, slow_until, updated_at) "
+                             "VALUES (?, 0, 1, 0, ?) ON CONFLICT(bucket) DO NOTHING", (key, now))
+                row = conn.execute("SELECT tat, factor, slow_until, last_429 FROM rpower_rate_slots WHERE bucket=?",
+                                   (key,)).fetchone()
+                f = _rate_factor(row[1], row[2], now)
+                if row[3] is None or now - float(row[3]) > PRESSURE_WINDOW_SECONDS:
+                    f = max(PRESSURE_MIN_FACTOR, f / 2.0)
+                conn.execute("UPDATE rpower_rate_slots SET factor=?, slow_until=?, last_429=?, tat=?, updated_at=? "
+                             "WHERE bucket=?",
+                             (f, max(float(row[2] or 0), now + max(ra, PRESSURE_HOLD_SECONDS)), now,
+                              max(float(row[0] or 0), now + ra), now, key))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("[rpower] 429 slow-down not shared: %s", e)
+
+
+def rate_state(token: str = None) -> dict:
+    """{bucket: {rate_share, slow_for, next_slot_in}} of the fleet bucket
+    (and `token`'s): how hard 429s have slowed us (the console)."""
+    import models
+    keys = [FLEET_BUCKET] + ([_bucket_key(token)] if token else [])
+    out = {}
+    try:
+        conn = models.get_conn()
+        try:
+            for key in keys:
+                row = conn.execute("SELECT tat, factor, slow_until FROM rpower_rate_slots WHERE bucket=?",
+                                   (key,)).fetchone()
+                if row is None:
+                    continue
+                now = time.time()
+                out["fleet" if key == FLEET_BUCKET else "token"] = {
+                    "rate_share": round(_rate_factor(row[1], row[2], now), 3),
+                    "slow_for": max(0, round(float(row[2] or 0) - now)),
+                    "next_slot_in": max(0.0, round(float(row[0] or 0) - now, 2))}
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return out
+
+
+def _retry_allowed() -> bool:
+    """One more try of a failed request, if the fleet's retry allowance for
+    this minute (RETRY_BUDGET_SHARE of RPOWER_FLEET_RPS x 60, every process)
+    is not spent. Unreadable: allowed."""
+    if not (FLEET_RPS and FLEET_RPS > 0) or RETRY_BUDGET_SHARE <= 0:
+        return True
+    import models
+    allowance = max(1, int(RETRY_BUDGET_SHARE * float(FLEET_RPS) * 60))
+    now = time.time()
+    minute = float(int(now // 60) * 60)
+    try:
+        conn = models.get_conn()
+        try:
+            conn.execute("INSERT INTO rpower_rate_slots (bucket, tat, factor, slow_until, updated_at) "
+                         "VALUES (?, 0, 1, 0, ?) ON CONFLICT(bucket) DO NOTHING", (RETRY_BUCKET, now))
+            cur = conn.execute("UPDATE rpower_rate_slots SET retry_n = CASE WHEN retry_window=? THEN retry_n + 1 "
+                               "ELSE 1 END, retry_window=?, updated_at=? WHERE bucket=? "
+                               "AND (retry_window<>? OR retry_n<?)",
+                               (minute, minute, now, RETRY_BUCKET, minute, allowance))
+            conn.commit()
+            return cur.rowcount == 1
+        finally:
+            conn.close()
+    except Exception:
+        return True
 
 
 # Lanes (blind re-audit 10/20/26 R3-01; pos_io.lane): live reads and the
@@ -435,17 +709,23 @@ def _budget_refused(limit, wait=5.0, why="our own budget"):
     return RPowerBudgetExceeded(f"no RPOWER request slot within {limit:.0f}s ({why})", retry_after=max(wait, 5.0))
 
 
+_waiters = {}                     # bucket -> this process's threads waiting on it
+
+
 def _wait_for_bucket(token, key, spacing, limit, lane="nightly", deadline=None):
     """Take one slot of bucket `key`, waiting up to `limit` seconds (or until
     `deadline`, a time.monotonic() value). Raises RPowerBudgetExceeded when
-    none came in time. The bucket's process lock is held only while a slot
-    is taken, never while waiting for one."""
+    none comes in time. The slot is reserved (this process's lease, else one
+    round trip that may reserve a slot for each thread waiting here) and the
+    thread sleeps until it — the bucket's process lock is held only while a
+    slot is taken, never while waiting for one."""
     import pos_io
     deadline = deadline if deadline is not None else time.monotonic() + float(limit)
     priority = lane not in pos_io.BACKGROUND_LANES
     lock = _bucket_lock(key)
-    if priority:
-        with _rate_lock:
+    with _rate_lock:
+        _waiters[key] = _waiters.get(key, 0) + 1
+        if priority:
             _priority_waiting[key] = _priority_waiting.get(key, 0) + 1
     try:
         while True:
@@ -458,35 +738,45 @@ def _wait_for_bucket(token, key, spacing, limit, lane="nightly", deadline=None):
             if not lock.acquire(timeout=remaining):
                 raise _budget_refused(limit, why="this process's queue for the bucket")
             try:
-                wait = _take_shared_slot(token, spacing, key=key)
-                now = time.monotonic()
-                if wait is None:
-                    # The local fallback: reserve the next slot under the lock,
-                    # wait for it outside it.
-                    slot = max(now, _last_request_at.get(key, 0.0) + spacing)
-                    if slot - now > remaining:
-                        raise _budget_refused(limit, wait=slot - now)
-                    _last_request_at[key] = slot
-                    wait = slot - now
-                    if wait > 0:
-                        lock.release()
-                        try:
-                            time.sleep(wait)
-                        finally:
-                            lock.acquire()
-                    return
-                if wait <= 0:
-                    with _rate_lock:
-                        if len(_last_request_at) > 4096:
-                            _last_request_at.clear()
-                        _last_request_at[key] = now
-                    return
+                now = time.time()
+                slot = _lease_pop(key, spacing, now)
+                if slot is not None:
+                    wait = max(0.0, slot - now)
+                    if wait > remaining:
+                        _lease_return(key, slot)
+                        raise _budget_refused(limit, wait=wait)
+                else:
+                    want = max(1, min(_waiters.get(key, 1), int(LEASE_SECONDS / spacing) if spacing > 0 else 1))
+                    wait = _take_shared_slot(token, spacing, key=key, max_wait=remaining, n=want)
+                    if wait is None:
+                        # The local fallback: reserve the next slot under the lock,
+                        # wait for it outside it.
+                        mnow = time.monotonic()
+                        slot_m = max(mnow, _last_request_at.get(key, 0.0) + spacing)
+                        if slot_m - mnow > remaining:
+                            raise _budget_refused(limit, wait=slot_m - mnow)
+                        _last_request_at[key] = slot_m
+                        wait = slot_m - mnow
+                    elif wait > remaining:
+                        raise _budget_refused(limit, wait=wait)
+                    else:
+                        with _rate_lock:
+                            if len(_last_request_at) > 4096:
+                                _last_request_at.clear()
+                            _last_request_at[key] = time.monotonic() + wait
             finally:
                 lock.release()
-            time.sleep(max(0.005, min(wait, 1.0, remaining)))
+            if wait > 0:
+                time.sleep(wait)
+            return
     finally:
-        if priority:
-            with _rate_lock:
+        with _rate_lock:
+            n = _waiters.get(key, 0) - 1
+            if n > 0:
+                _waiters[key] = n
+            else:
+                _waiters.pop(key, None)
+            if priority:
                 n = _priority_waiting.get(key, 0) - 1
                 if n > 0:
                     _priority_waiting[key] = n
@@ -644,10 +934,130 @@ def _backoff(attempt: int) -> float:
 
 
 def _retry_after(resp) -> float:
+    """Retry-After in seconds: delta-seconds, or an HTTP-date (audit #23
+    A1-08 — the date form used to read as 0). Absent or unreadable: 0."""
     try:
-        return max(0.0, float((resp.headers or {}).get("Retry-After", 0) or 0))
-    except (TypeError, ValueError, AttributeError):
+        raw = (resp.headers or {}).get("Retry-After")
+    except AttributeError:
         return 0.0
+    if raw in (None, ""):
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import timezone as _tz
+        when = parsedate_to_datetime(str(raw))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_tz.utc)
+        return max(0.0, (when - datetime.now(_tz.utc)).total_seconds())
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return 0.0
+
+
+# One HTTP session per thread (audit #23 A1-12): a connection to RPOWER is
+# kept alive and reused by the thread's next request instead of a new TCP and
+# TLS handshake every time. The adapter never retries on its own
+# (max_retries=0: _request's retries are the only ones, budgeted and
+# counted); every call still names its timeout. The session keeps no
+# cookies: one thread serves many stores' tokens, and nothing one answer
+# set may ride along with another store's request.
+HTTP_POOL_CONNECTIONS = 4
+HTTP_POOL_MAXSIZE = 8
+_http = threading.local()
+
+
+def _thread_session():
+    """This thread's requests.Session for RPOWER."""
+    sess = getattr(_http, "session", None)
+    if sess is None:
+        import requests
+        from http.cookiejar import DefaultCookiePolicy
+        from requests.adapters import HTTPAdapter
+        sess = requests.Session()
+        sess.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+        adapter = HTTPAdapter(pool_connections=HTTP_POOL_CONNECTIONS, pool_maxsize=HTTP_POOL_MAXSIZE, max_retries=0)
+        sess.mount("https://", adapter)
+        _http.session = sess
+    return sess
+
+
+# What every RPOWER request is sent through (tests/conftest.py routes it to the
+# `requests` module so a test's patched requests.get answers).
+_session = _thread_session
+
+
+def _night_of(path: str, params: dict):
+    """The business date a read is about, for the request ledger's per-night
+    count (A6-24): a getbybusinessdate read of one date. None otherwise."""
+    if "getbybusinessdate" not in str(path):
+        return None
+    p = params or {}
+    start, end = str(p.get("startdate") or "")[:10], str(p.get("enddate") or "")[:10]
+    return start if start and start == end else None
+
+
+def _set_auth_failed(restaurant_id, when) -> None:
+    """restaurants.rpower_auth_failed_at — the store's latch, for the console
+    and the store's health (F6 reads it). Never raises."""
+    try:
+        from models import update_restaurant
+        update_restaurant(int(restaurant_id), {"rpower_auth_failed_at": when})
+    except Exception as e:
+        log.warning("[rpower] auth latch not written on restaurant %s: %s", restaurant_id, e)
+
+
+def _auth_refused(bucket, store, rid, status, path, explicit):
+    """The exception a 401/403 becomes (audit #23 A1-13 / A4-16): a first
+    403 on a store that answered within the hour is try-later (a gateway or a
+    limit wearing the wrong code); anything else latches the store (and the
+    token, pos_io.auth_latch) and sets restaurants.rpower_auth_failed_at."""
+    import pos_io
+    if (status == 403 and not explicit and pos_io.recent_ok("rpower", rid)
+            and pos_io.auth_first_soft("rpower", bucket, store, rid)):
+        return RPowerTryLater(f"RPOWER answered 403 for {path} on a token that worked within the hour; asked again "
+                              "in 5 minutes before it is taken as refused", retry_after=300)
+    got = pos_io.auth_latch("rpower", bucket, store, rid, status)
+    # An admin's check of a token being pasted (explicit) says nothing about
+    # the token the restaurant holds now: its column is left alone.
+    if rid and not explicit and (got.get("new") or not getattr(_io_ctx, "auth_failed", None)):
+        when = datetime.utcnow().isoformat(timespec="seconds")
+        _set_auth_failed(rid, when)
+        if getattr(_io_ctx, "rid", None) == rid:
+            _io_ctx.auth_failed = when
+    return RPowerAuthError(
+        f"RPOWER rejected the token ({status}). Check that the token is "
+        f"current and that it is authorized for this store.")
+
+
+def _auth_answered(bucket, store, rid, probing) -> None:
+    """An answer: a latch this request probed is cleared, and the store's
+    rpower_auth_failed_at with it."""
+    import pos_io
+    if probing:
+        pos_io.auth_clear("rpower", bucket, store)
+    if rid and getattr(_io_ctx, "auth_failed", None) and getattr(_io_ctx, "rid", None) == rid:
+        _io_ctx.auth_failed = None
+        if not probing:
+            pos_io.auth_clear("rpower", bucket, store)
+        _set_auth_failed(rid, None)
+
+
+class explicit_check:
+    """`with rpower.explicit_check():` — the requests inside are an admin's
+    own check of a token (test_token): they pass the auth latch, and are
+    never taken as a 403 that could be a gateway's."""
+
+    def __enter__(self):
+        self.prev = getattr(_io_ctx, "explicit", False)
+        _io_ctx.explicit = True
+        return self
+
+    def __exit__(self, *exc):
+        _io_ctx.explicit = self.prev
+        return False
 
 
 def _request(token: str, path: str, params: dict = None) -> object:
@@ -657,15 +1067,20 @@ def _request(token: str, path: str, params: dict = None) -> object:
     RPOWER documents only 200 responses across all 120 endpoints, so the
     status handling here is defensive rather than specified: anything 2xx is
     taken as success, 401/403 raise RPowerAuthError (never retried — a bad
-    token is bad on the third attempt too), 429 and 5xx back off, and a
-    non-JSON body is an error rather than something to guess at.
+    token is bad on the third attempt too) and latch the store, 429 slows
+    every process and backs off, 5xx backs off, and a non-JSON body is an
+    error rather than something to guess at.
 
-    Every request passes the RPOWER breaker (pos_io: refused at once while
-    it is open, one caller probing once it lapses), both request budgets,
-    and is counted in the request ledger by endpoint and store (A3-10,
-    A3-14, A3-19).
+    Every request passes, in order: the auth latch (pos_io.auth_gate — a
+    refused store or token is not asked again for POS_AUTH_LATCH_SECONDS,
+    then once; an admin's own token check, explicit_check, passes it), the
+    provider's breaker and the store's own quarantine (pos_io: refused at
+    once while open, one caller probing once it lapses), both request
+    budgets, and is counted in the request ledger by endpoint, store and —
+    for a one-date read — business night (A3-10, A3-14, A3-19, audit #23).
+    A failure is reported to the breaker ONCE per request, after its
+    retries; retries spend the fleet's retry allowance (_retry_allowed).
     """
-    import requests
     import pos_io
 
     # Halsted & Rye, the showcase demo (demo_store): a demo-store token is
@@ -679,31 +1094,60 @@ def _request(token: str, path: str, params: dict = None) -> object:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     rid = _current_rid()
     page_load = on_request_thread()
-    last_error = None
-    for attempt in range(MAX_RETRIES):
-        last = attempt + 1 >= MAX_RETRIES
+    night = _night_of(path, params)
+    first_page = str((params or {}).get("pagenumber") or 1) == "1"
+    bucket = _bucket_key(token)
+    store = getattr(_io_ctx, "store", None) or ""
+    explicit = bool(getattr(_io_ctx, "explicit", False))
+
+    def rec(outcome, ms=None, rows=None):
+        pos_io.record("rpower", rid, path, outcome, ms, rows=rows, night=night, first_page=first_page)
+
+    auth_probe = False
+    if not explicit:
+        agate, left = pos_io.auth_gate("rpower", bucket, store)
+        if agate == "latched":
+            rec("skipped")
+            raise RPowerAuthLatched(f"RPOWER refused this store's token; it is asked again in {left / 60:.0f} "
+                                    "minutes (one re-probe), not on every read", retry_after=left)
+        auth_probe = agate == "probe"
+    keys = [_bucket_key(token, store if BUDGET_PER_STORE else None)]
+    if FLEET_RPS and FLEET_RPS > 0:
+        keys.append(FLEET_BUCKET)
+    attempts = 1 if page_load else MAX_RETRIES
+    last_error, last_kind, last_status, last_ra = None, None, None, 0.0
+    fleet_probe = store_probe = False
+    for attempt in range(attempts):
+        last = attempt + 1 >= attempts
+        if attempt and not _retry_allowed():
+            last_error = f"{last_error}; not tried again: the fleet's retry allowance for this minute is spent"
+            break
         gate, wait = pos_io.breaker_allow("rpower")
         if gate == "open":
-            pos_io.record("rpower", rid, path, "skipped")
+            rec("skipped")
             raise RPowerUnavailable(f"RPOWER requests are paused for {wait:.0f}s: it has been failing "
                                     f"({last_error or 'see the breaker'})", retry_after=wait)
-        probe = gate == "probe"
+        sgate, swait = pos_io.store_allow("rpower", rid)
+        if sgate == "open":
+            rec("skipped")
+            raise RPowerStoreQuarantined(f"this store's RPOWER requests are parked for {swait:.0f}s: they have "
+                                         f"been failing ({last_error or 'see its quarantine'})", retry_after=swait)
+        fleet_probe, store_probe = gate == "probe", sgate == "probe"
+        probing = fleet_probe or store_probe
         try:
             _sleep_for_spacing(token)
         except RPowerBudgetExceeded:
-            pos_io.record("rpower", rid, path, "skipped")
+            rec("skipped")
             raise
         t0 = time.monotonic()
         try:
-            resp = requests.get(url, headers=headers, params=params or {},
-                                timeout=TIMEOUT_BY_PATH.get(path, TIMEOUT_SECONDS))
+            resp = _session().get(url, headers=headers, params=params or {},
+                                  timeout=TIMEOUT_BY_PATH.get(path, TIMEOUT_SECONDS))
         except Exception as e:
-            ms = (time.monotonic() - t0) * 1000.0
-            pos_io.record("rpower", rid, path, "transport", ms)
-            pos_io.breaker_failure("rpower", rid, f"{path}: {type(e).__name__}", probe=probe)
-            last_error = f"request failed: {e}"
-            if page_load:
-                break                                # one try on a page load, never three
+            rec("transport", (time.monotonic() - t0) * 1000.0)
+            last_error, last_kind, last_status = f"request failed: {e}", "transport", None
+            if probing:
+                break                                # a probe is one request
             if not last:
                 time.sleep(_backoff(attempt))
             continue
@@ -711,44 +1155,63 @@ def _request(token: str, path: str, params: dict = None) -> object:
         status = int(getattr(resp, "status_code", 0) or 0)
 
         if status in (401, 403):
-            pos_io.record("rpower", rid, path, "s4xx", ms)
-            pos_io.breaker_success("rpower", probe=probe)
-            raise RPowerAuthError(
-                f"RPOWER rejected the token ({status}). Check that the token is "
-                f"current and that it is authorized for this store.")
-        if status == 429 or status >= 500:
-            # Undocumented but assumed to exist. Honour Retry-After when the
-            # server sends one rather than guessing over the top of it.
-            pos_io.record("rpower", rid, path, "s429" if status == 429 else "s5xx", ms)
-            if status >= 500:
-                pos_io.breaker_failure("rpower", rid, f"{path}: HTTP {status}", probe=probe)
-            else:
-                pos_io.breaker_success("rpower", probe=probe)     # it answered: up, but asking us to slow
-            last_error = f"HTTP {status}"
-            if page_load:
-                raise RPowerError(f"{path} answered HTTP {status}; not retried on a page load")
+            rec("s4xx", ms)
+            pos_io.breaker_success("rpower", probe=fleet_probe, restaurant_id=rid, store_probe=store_probe)
+            raise _auth_refused(bucket, store, rid, status, path, explicit)
+        if status == 429:
+            # Pressure, not a failure and not an answer (A1-08 / A4-02): every
+            # process slows on these buckets, and the last try raises with a
+            # retry_after so a night loop stops asking.
+            rec("s429", ms)
             ra = _retry_after(resp)
-            if ra > RETRY_AFTER_MAX_SECONDS:
-                raise RPowerRateLimited(f"{path} answered HTTP {status} with Retry-After {ra:.0f}s", retry_after=ra)
+            _note_pressure(keys, ra)
+            last_error, last_kind, last_status, last_ra = "HTTP 429", "429", 429, ra
+            if page_load or probing or ra > RETRY_AFTER_MAX_SECONDS:
+                break
             if not last:
                 time.sleep(max(_backoff(attempt), ra))
             continue
+        if status >= 500:
+            rec("s5xx", ms)
+            last_error, last_kind, last_status = f"HTTP {status}", "5xx", status
+            if page_load or probing:
+                break
+            if not last:
+                time.sleep(max(_backoff(attempt), min(_retry_after(resp), RETRY_AFTER_MAX_SECONDS)))
+            continue
         if not resp.ok:
-            pos_io.record("rpower", rid, path, "s4xx", ms)
-            pos_io.breaker_success("rpower", probe=probe)
+            rec("s4xx", ms)
+            pos_io.breaker_success("rpower", probe=fleet_probe, restaurant_id=rid, store_probe=store_probe)
             raise RPowerError(f"HTTP {status} from {path}: {resp.text[:200]}")
         try:
             body = resp.json()
         except ValueError:
             # A maintenance page answered 200: RPOWER is not serving data.
-            pos_io.record("rpower", rid, path, "s5xx", ms)
-            pos_io.breaker_failure("rpower", rid, f"{path}: non-JSON body", probe=probe)
-            raise RPowerError(f"{path} returned a non-JSON body: {resp.text[:200]}")
-        pos_io.record("rpower", rid, path, "ok", ms, rows=len(body) if isinstance(body, list) else 1)
-        pos_io.breaker_success("rpower", probe=probe)
+            rec("s5xx", ms)
+            pos_io.breaker_failure("rpower", rid, f"{path}: non-JSON body", probe=fleet_probe,
+                                   store_probe=store_probe)
+            raise RPowerServerError(f"{path} returned a non-JSON body: {resp.text[:200]}", status=status)
+        rec("ok", ms, rows=len(body) if isinstance(body, list) else 1)
+        pos_io.breaker_success("rpower", probe=fleet_probe, restaurant_id=rid, store_probe=store_probe)
+        _auth_answered(bucket, store, rid, auth_probe)
         return body
 
-    raise RPowerError(f"{path} failed after {MAX_RETRIES} attempts: {last_error}")
+    if last_kind == "429":
+        raise RPowerRateLimited(f"{path} answered HTTP 429 (Retry-After {last_ra:.0f}s); RPOWER asked us to slow "
+                                "down, so this waits at least a minute", retry_after=max(last_ra, 60.0))
+    pos_io.breaker_failure("rpower", rid, f"{path}: {last_error}", probe=fleet_probe, store_probe=store_probe)
+    # A failed probe leaves its breaker or quarantine open again: the caller
+    # waits out the new cooldown like every other caller (a queue row is
+    # rescheduled by it, not charged a try).
+    if fleet_probe:
+        st = pos_io.breaker_state("rpower")
+        raise RPowerUnavailable(f"RPOWER is still failing ({last_error}); requests stay paused",
+                                retry_after=max(1.0, float(st.get("open_until") or 0) - time.time()))
+    if store_probe:
+        _g, left = pos_io.store_allow("rpower", rid)
+        raise RPowerStoreQuarantined(f"this store's RPOWER requests are still failing ({last_error}); it stays "
+                                     "parked", retry_after=max(1.0, float(left or 60.0)))
+    raise RPowerServerError(f"{path} failed after {attempt + 1} attempt(s): {last_error}", status=last_status)
 
 
 def _row_key(row: dict) -> str:
@@ -766,7 +1229,114 @@ def _row_key(row: dict) -> str:
     return _j.dumps(row, sort_keys=True, default=str)
 
 
-def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
+# ── the response contract (audit #23 A1-09 / A4-17) ─────────────────────────
+#
+# The fields each endpoint's rows are read by, checked on the FIRST row of
+# every page: a list where a list is documented, and each named field present
+# with a value of its kind. "id" — present and not empty; "num" — a number
+# (or a numeric string); "date" — "YYYY-MM-DD..." text; "key" — present.
+# A miss raises RPowerSchemaError before anything is kept, and is reported
+# to pos_io.schema_error (from two stores at once the provider is paused and
+# the operator paged). The configuration lists (getbycg / getbystore) need
+# their `mid`. A field RPOWER renames is then a refused read, not a night
+# stored at $0, an empty night, or a change feed that advanced its cursor
+# past rows it could not see.
+RESPONSE_CONTRACT = {
+    "ticketsales/getbybusinessdate": {"rid": "id", "date": "date", "sales": "num"},
+    # The change feeds are read for each row's business date and write stamp
+    # only (changed_business_stamps): those two are their contract.
+    "ticketsales/getbytimestamp": {"date": "date", "time_stamp": "date"},
+    "ticket/getbybusinessdate": {"rid": "id", "date": "date"},
+    "ticket/getbytimestamp": {"date": "date", "time_stamp": "date"},
+    "ticket/getbyneeddatetime": {"need_dttm": "date"},
+    "ticketpayment/getbybusinessdate": {"rid": "id", "date": "date"},
+    "ticketitem/getbybusinessdate": {"rid": "id", "date": "date"},
+    "payout/getbydaterange": {"rid": "id", "date": "date"},
+    "timeclock/getbydaterange": {"rid": "id", "in_dttm": "date", "emp_mid": "id"},
+    "closeday/getbybusinessdate": {"from_date": "date", "thru_date": "key"},
+    "store/get": {"cg": "id", "mid": "id"},
+    "store/getbycg": {"cg": "id", "mid": "id"},
+    "store/getbymid": {"cg": "id", "mid": "id"},
+    "store/getbyserialnumber": {"cg": "id", "mid": "id"},
+    "customer/getbycg": {"mid": "id"},
+}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _contract_for(path: str) -> dict:
+    spec = RESPONSE_CONTRACT.get(path)
+    if spec is not None:
+        return spec
+    if path.endswith("/getbycg") or path.endswith("/getbystore"):
+        return {"mid": "id"}
+    return {}
+
+
+def _kind_ok(value, kind) -> bool:
+    if kind == "key":
+        return True
+    if kind == "id":
+        return value is not None and str(value) != ""
+    if kind == "date":
+        return isinstance(value, str) and bool(_DATE_RE.match(value))
+    if kind == "num":
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return True
+        try:
+            float(str(value))
+            return isinstance(value, str)
+        except ValueError:
+            return False
+    return True
+
+
+def _schema_refused(path, detail):
+    import pos_io
+    rid = _current_rid()
+    pos_io.schema_error("rpower", rid, path, detail)
+    log.error("[rpower] %s broke its contract (restaurant %s): %s", path, rid, detail)
+    return RPowerSchemaError(f"RPOWER's {path} answered in a shape Cavnar AI does not know ({detail}); nothing "
+                             "from this read was kept", endpoint=path, detail=detail)
+
+
+def _check_row(path, row, where="row"):
+    if not isinstance(row, dict):
+        raise _schema_refused(path, f"a {type(row).__name__} {where} where an object is documented")
+    for field, kind in _contract_for(path).items():
+        if field not in row:
+            raise _schema_refused(path, f"no `{field}` on the {where}")
+        if not _kind_ok(row[field], kind):
+            raise _schema_refused(path, f"`{field}` on the {where} is {type(row[field]).__name__} "
+                                        f"{str(row[field])[:20]!r}, not {kind}")
+    return row
+
+
+def _contract_rows(path: str, body) -> list:
+    """The rows of a list answer, checked against the endpoint's contract
+    (first row of the page). An empty answer (null, [], {}) is no rows."""
+    if not body:
+        return []
+    if not isinstance(body, list):
+        keys = ", ".join(sorted(str(k) for k in body)[:5]) if isinstance(body, dict) else ""
+        raise _schema_refused(path, f"a {type(body).__name__} where a list is documented"
+                                    + (f" (keys: {keys})" if keys else ""))
+    _check_row(path, body[0], "first row")
+    return body
+
+
+class PagedRows(list):
+    """A paged read's rows, with how it was read: `pages` requested,
+    `reread` — read a second time because `verify` found a gap (A1-11),
+    `verified` — True / False when a verify was given and the read spanned
+    pages, None otherwise. A plain list everywhere else."""
+    pages = 1
+    reread = False
+    verified = None
+
+
+def _paged(token: str, path: str, params: dict, max_pages: int = 200, verify=None) -> list:
     """Every page of a result set, with the pagination ambiguity handled.
 
     RPOWER says omitting `pagenumber` returns only the first 1000 records —
@@ -787,7 +1357,39 @@ def _paged(token: str, path: str, params: dict, max_pages: int = 200) -> list:
     (`date`, `time_stamp`; RPOWER documents no unique one). The whole read
     starts again from page 1, once; a second overlap raises, so no caller
     stores or reports a short set as whole.
+
+    A row DELETED between two pages shifts the next page down by one, so a
+    row is skipped and nothing repeats (audit #23 A1-11 / A4-21). `verify`
+    — a callable(rows) -> bool, or the row count the caller expects (the
+    ticket summary's) — is asked after a read that spanned pages: on a gap
+    the set is read once more and returned as `reread`, with `verified`
+    saying whether the second read passed (pos_archive's hook).
     """
+    rows = _paged_attempts(token, path, params, max_pages)
+    if verify is None or rows.pages <= 1:
+        return rows
+    if _verified(verify, rows):
+        rows.verified = True
+        return rows
+    log.warning("[rpower] %s: %s rows over %s pages failed the caller's check — reading it again once",
+                path, len(rows), rows.pages)
+    again = _paged_attempts(token, path, params, max_pages)
+    again.reread = True
+    again.verified = _verified(verify, again)
+    return again
+
+
+def _verified(verify, rows) -> bool:
+    try:
+        if callable(verify):
+            return bool(verify(rows))
+        return len(rows) >= int(verify)
+    except Exception as e:
+        log.warning("[rpower] a paged read's check failed to run: %s", e)
+        return False
+
+
+def _paged_attempts(token, path, params, max_pages):
     for attempt in range(PAGED_ATTEMPTS):
         try:
             return _paged_once(token, path, params, max_pages)
@@ -805,13 +1407,28 @@ class _PageOverlap(Exception):
     """A page shared rows with the pages before it: rows were skipped."""
 
 
+def _looks_like_page_size(n: int) -> bool:
+    """A first page this long may be the server's page size rather than the
+    end of the set (A1-10): a round number below PAGE_SIZE."""
+    return 50 <= n < PAGE_SIZE and n % 50 == 0
+
+
 def _paged_once(token: str, path: str, params: dict, max_pages: int = 200) -> list:
-    out, seen = [], set()
+    out, seen = PagedRows(), set()
+    # The page size is the documented 1,000 — unless the first page is a
+    # round number short of it (A1-10): then it may be the server's own page
+    # size, so the next page is asked for, and the set ends only on an empty
+    # page or one shorter than the first. (A server page of 500 used to end a
+    # 1,300-line night after 500 lines, with no error.)
+    page_size = PAGE_SIZE
     for page in range(1, max_pages + 1):
         body = _request(token, path, {**params, "pagenumber": page})
-        rows = body if isinstance(body, list) else ([body] if body else [])
+        out.pages = page
+        rows = _contract_rows(path, body)
         if not rows:
             break
+        if page == 1 and _looks_like_page_size(len(rows)):
+            page_size = len(rows)
 
         fresh = []
         duplicates = 0
@@ -826,11 +1443,13 @@ def _paged_once(token: str, path: str, params: dict, max_pages: int = 200) -> li
             seen.add(key)
             fresh.append(row)
 
-        # A fully repeated page means paging is not advancing. A SHORT one is
-        # the end of the set. A FULL one means more rows exist that we cannot
-        # reach — returning what we have stored a busy Saturday at the first
-        # thousand lines as the whole night, so it fails the sync instead and
-        # the previous data stays (pos.py's contract, DH2-6).
+        # A fully repeated page means paging is not advancing. Short of the
+        # documented 1,000 it is the end of the set (an endpoint that ignores
+        # `pagenumber` repeats a whole answer). A FULL one means more rows
+        # exist that we cannot reach — returning what we have stored a busy
+        # Saturday at the first thousand lines as the whole night, so it
+        # fails the sync instead and the previous data stays (pos.py's
+        # contract, DH2-6).
         if duplicates and not fresh:
             if len(rows) >= PAGE_SIZE:
                 raise RPowerError(f"{path} truncated: page {page} repeated the previous page in full, so "
@@ -841,13 +1460,29 @@ def _paged_once(token: str, path: str, params: dict, max_pages: int = 200) -> li
             raise _PageOverlap(f"page {page} repeated {duplicates} row(s) of the pages before it, so as many "
                                "were never returned (rows moved between requests)")
         out.extend(fresh)
-        if len(rows) < PAGE_SIZE:
+        if len(rows) < page_size:
             break
     else:
         # More pages than the ceiling: the result is incomplete, never
         # returned as though it were whole (DH2-6).
         raise RPowerError(f"{path} truncated: more than {max_pages} pages; nothing was saved from this read")
     return out
+
+
+# RPOWER writes 2000-01-01T00:00:00 for "no value" — a ticket not closed, a
+# store with no kitchen screens, no "needed by" time, a punch never edited,
+# a close with no end date (checked on Simple EJ's, 9/29/26). One reading of
+# it for every stamp and date (audit #23 A1-17 / A2-21): it is never a time,
+# and never a date.
+def _is_unset(raw) -> bool:
+    """RPOWER's "no value" stamp (year 2000 or earlier), or nothing at all."""
+    s = str(raw or "").strip()
+    if len(s) < 10:
+        return True
+    try:
+        return int(s[:4]) <= 2000
+    except ValueError:
+        return True
 
 
 def _d(value) -> str:
@@ -865,8 +1500,8 @@ def _biz_date(raw) -> Optional[str]:
     re-formatting would invite a timezone conversion, and there is no
     timezone here to convert.
     """
-    if not raw:
-        return None
+    if not raw or _is_unset(raw):
+        return None          # RPOWER's 2000-01-01 "no value" is no date (A1-17)
     return str(raw)[:10] or None
 
 
@@ -890,28 +1525,145 @@ class for_store:
         return False
 
 
-def list_stores(token: str) -> list:
-    """Every store this token may read. RPOWER's documented first call."""
+def list_stores(token: str, explicit: bool = False, groups=()) -> list:
+    """Every store this token may read. RPOWER's documented first call.
+
+    `store/get` documents no paging ("Optional Parameters: None"), so it is
+    asked once and its answer is never paged (audit #23 A1-05: paging it
+    threw a COMPLETE 1,200-store answer away as "truncated" when page 2
+    repeated page 1). An answer of 1,000 or more stores may still be whole
+    or capped, so every consolidation group it names — and `groups` the
+    caller already knows — is read through `store/getbycg`, which documents
+    `pagenumber`, and merged in by (cg, mid). `explicit`: an admin's own
+    check of a token (test_token) — it passes the auth latch and an answer
+    clears the token's latch.
+    """
     _note_store(getattr(_io_ctx, "pin", None))
-    body = _request(token, "store/get")
-    rows = body if isinstance(body, list) else ([body] if body else [])
-    if len(rows) >= PAGE_SIZE:
-        # A full first page (scale audit A3-16): every other RPOWER list
-        # truncates at 1,000 without `pagenumber`, so a partner token that
-        # sees more stores is read through _paged — never bound from the
-        # first thousand only. Under 1,000 stores this is never asked.
-        rows = _paged(token, "store/get", {})
+    if explicit:
+        with explicit_check():
+            body = _request(token, "store/get")
+    else:
+        body = _request(token, "store/get")
+    rows = list(_contract_rows("store/get", body))
+    if explicit:
+        import pos_io
+        pos_io.auth_clear("rpower", _bucket_key(token))
+    if len(rows) < PAGE_SIZE and not groups:
+        return rows
+    seen = {(str(r.get("cg")), str(r.get("mid"))) for r in rows}
+    cgs = sorted({str(r.get("cg")) for r in rows if r.get("cg") is not None} | {str(g) for g in groups if g})
+    if len(rows) < PAGE_SIZE:
+        cgs = [g for g in cgs if g not in {str(r.get("cg")) for r in rows}]
+    for cg in cgs:
+        for r in _paged(token, "store/getbycg", {"cg": cg, "sortorder": "name"}):
+            k = (str(r.get("cg")), str(r.get("mid")))
+            if k not in seen:
+                seen.add(k)
+                rows.append(r)
     return rows
 
 
-def test_token(token: str) -> dict:
+def store_by_mid(token: str, store_mid) -> Optional[dict]:
+    """One store by its mid (`store/getbymid`, documented, one object): the
+    way to bind or probe a single store without listing every store a
+    partner token sees (A1-05). None when RPOWER has no such store."""
+    _note_store(getattr(_io_ctx, "pin", None))
+    body = _request(token, "store/getbymid", {"mid": str(store_mid)})
+    if not body:
+        return None
+    if isinstance(body, list):
+        body = body[0] if len(body) == 1 else None
+        if body is None:
+            raise _schema_refused("store/getbymid", "a list where one object is documented")
+    return _check_row("store/getbymid", body, "store")
+
+
+def store_by_serial(token: str, cg, serial) -> Optional[dict]:
+    """One store by its consolidation group and four-digit serial number
+    (`store/getbyserialnumber`). None when RPOWER has no such store."""
+    _note_store(getattr(_io_ctx, "pin", None))
+    body = _request(token, "store/getbyserialnumber", {"cg": cg, "sn": serial})
+    if not body:
+        return None
+    if isinstance(body, list):
+        body = body[0] if len(body) == 1 else None
+        if body is None:
+            raise _schema_refused("store/getbyserialnumber", "a list where one object is documented")
+    return _check_row("store/getbyserialnumber", body, "store")
+
+
+# RPOWER documents its store timezone only by one IANA sample
+# ("Pacific/Honolulu"). A Windows-style name would have been stored as given
+# and read by time_utils as America/Chicago without a word (audit #23 A1-18):
+# a California store's business dates, 4am boundary, live windows and 3am
+# sync two hours off. A name is checked against the tz database at bind time;
+# Windows' names map to their IANA zone; anything else is refused and said.
+WINDOWS_TIMEZONES = {
+    "eastern standard time": "America/New_York",
+    "us eastern standard time": "America/Indiana/Indianapolis",
+    "central standard time": "America/Chicago",
+    "mountain standard time": "America/Denver",
+    "us mountain standard time": "America/Phoenix",
+    "pacific standard time": "America/Los_Angeles",
+    "alaskan standard time": "America/Anchorage",
+    "hawaiian standard time": "Pacific/Honolulu",
+    "atlantic standard time": "America/Halifax",
+    "newfoundland standard time": "America/St_Johns",
+    "central america standard time": "America/Guatemala",
+    "central standard time (mexico)": "America/Mexico_City",
+    "mountain standard time (mexico)": "America/Mazatlan",
+    "pacific standard time (mexico)": "America/Tijuana",
+    "aleutian standard time": "America/Adak",
+    "utc": "UTC",
+}
+
+
+def store_timezone(raw):
+    """(IANA name or None, problem or None) for a timezone RPOWER sent."""
+    name = str(raw or "").strip()
+    if not name:
+        return None, None
+    mapped = WINDOWS_TIMEZONES.get(name.lower(), name)
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(mapped)
+    except Exception:
+        return None, f"RPOWER's timezone {name[:60]!r} is not one Cavnar AI knows"
+    return mapped, None
+
+
+def flag_timezone(restaurant_id, raw, store_name=None) -> None:
+    """Say, once, that a store's RPOWER timezone was refused at bind time:
+    an operator event (data quality) and an activity row on the account —
+    the restaurant keeps the timezone it had, never a silent default."""
+    _tz, problem = store_timezone(raw)
+    if not problem:
+        return
+    detail = f"{problem}; set this restaurant's timezone by hand ({store_name or 'RPOWER store'})"
+    try:
+        import ops
+        ops.capture(RuntimeError(detail), job="rpower_bootstrap", context=f"restaurant_id={restaurant_id}",
+                    restaurant_id=restaurant_id, kind="data_quality")
+    except Exception:
+        pass
+    try:
+        from models import log_event
+        log_event(restaurant_id, "pos_timezone_unrecognised", {"provider": "rpower", "timezone": str(raw)[:60],
+                                                               "detail": detail})
+    except Exception as e:
+        log.warning("[rpower] timezone flag not recorded for %s: %s", restaurant_id, e)
+
+
+def test_token(token: str, groups=()) -> dict:
     """Does this token work, and what does it see?
 
     Used by the admin connect screen before anything is saved, so a typo is
     caught at paste time rather than by a sync failing quietly at 5am.
+    `timezone` is RPOWER's checked against the tz database (Windows names
+    mapped; None and `timezone_problem` when it is not one, A1-18).
     """
     try:
-        stores = list_stores(token)
+        stores = list_stores(token, explicit=True, groups=groups)
     except RPowerAuthError as e:
         return {"ok": False, "error": str(e)}
     except RPowerError as e:
@@ -927,7 +1679,9 @@ def test_token(token: str) -> dict:
             "store_mid": s.get("mid"),
             "name": s.get("name"),
             "serial_number": s.get("serial_number"),
-            "timezone": s.get("timezone"),
+            "timezone": store_timezone(s.get("timezone"))[0],
+            "timezone_raw": s.get("timezone"),
+            "timezone_problem": store_timezone(s.get("timezone"))[1],
             "week_dow": s.get("week_dow"),
             "ot_dow": s.get("ot_dow"),
             "open_days": s.get("open_days"),
@@ -965,6 +1719,21 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
     if store_mid:
         chosen = next((s for s in stores if str(s["store_mid"]) == str(store_mid)), None)
         if not chosen:
+            # A partner token's list may not name every store it can read
+            # (A1-05): the store is asked for by its own mid.
+            try:
+                with for_store(restaurant_id):
+                    one = store_by_mid(c["token"], store_mid)
+            except RPowerError:
+                one = None
+            if one:
+                chosen = {"cg": one.get("cg"), "store_mid": one.get("mid"), "name": one.get("name"),
+                          "serial_number": one.get("serial_number"),
+                          "timezone": store_timezone(one.get("timezone"))[0], "timezone_raw": one.get("timezone"),
+                          "timezone_problem": store_timezone(one.get("timezone"))[1],
+                          "week_dow": one.get("week_dow"), "ot_dow": one.get("ot_dow"),
+                          "open_days": one.get("open_days")}
+        if not chosen:
             return {"ok": False, "error": "That store isn't one this token can see.",
                     "stores": stores}
     elif len(stores) == 1:
@@ -993,12 +1762,19 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
         "rpower_store_name": chosen.get("name"),
         "rpower_verified_at": datetime.utcnow().isoformat(timespec="seconds"),
         "rpower_sync_error": None,
+        # A reconnect clears the auth latch (A1-13): the token answered.
+        "rpower_auth_failed_at": None,
     }
     # RPOWER's own timezone and payroll-week anchor, which are the same two
     # settings an admin was being asked to know. Only filled when Cavnar has
     # nothing already — an operator's explicit choice outranks the POS.
+    # Checked at bind time (A1-18): a name the tz database does not know is
+    # never stored (time_utils would read it as Chicago) — it is said.
+    tz_problem = chosen.get("timezone_problem")
     if chosen.get("timezone") and not (r and r.timezone and r.timezone != "America/Chicago"):
         fields["timezone"] = chosen["timezone"]
+    elif tz_problem:
+        flag_timezone(restaurant_id, chosen.get("timezone_raw"), chosen.get("name"))
     suggested_week_start = None
     if chosen.get("ot_dow") is not None and r is not None and not getattr(r, "week_start_day", 0):
         # Two different conventions for the same fact, so this conversion is
@@ -1034,8 +1810,14 @@ def bootstrap(restaurant_id: int, store_mid: str = None, probe: dict = None) -> 
     if not str(c["token"]).startswith("demo-store:"):
         import strategy_jobs
         strategy_jobs.enqueue_pos_onboard(restaurant_id, f"{chosen.get('cg')}:{chosen.get('store_mid')}")
+    try:
+        import pos_io
+        pos_io.auth_clear("rpower", _bucket_key(c["token"]))
+    except Exception:
+        pass
     return {"ok": True, "store": chosen, "applied": sorted(fields),
-            "suggested_week_start_day": suggested_week_start}
+            "suggested_week_start_day": suggested_week_start,
+            "timezone_warning": tz_problem if tz_problem and "timezone" not in fields else None}
 
 
 # ── the store's lists, kept per consolidation group (scale audit 10/19/26
@@ -1128,7 +1910,7 @@ def _ctx(restaurant_id: int) -> tuple:
     if not (c["token"] and c["cg"] and c["store_mid"]):
         raise RPowerAuthError(
             "RPOWER is not fully connected — run bootstrap to resolve the store.")
-    _note_store(restaurant_id, c["store_mid"])          # the ledger's and the budget's store
+    _note_store(restaurant_id, c["store_mid"], c.get("auth_failed_at"))   # ledger's, budget's, latch's store
     return c["token"], {"cg": c["cg"], "storemid": c["store_mid"]}
 
 
@@ -1158,16 +1940,17 @@ def sales_types(restaurant_id: int) -> dict:
 # Read once per this many seconds: every sales read consults the list, and
 # the nightly jobs read several days in a row (9/29/26).
 SALES_TYPE_CACHE_SECONDS = 600
-_sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_sales_type_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
 
 
 def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
               _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
-              _scope_cache, _feed_nights):
+              _scope_cache, _feed_nights, _leases):
         c.clear()
     _change_datetime_refused.update(at=None, why=None)
+    _store_count["at"] = -1e9
     try:
         import pos_io
         pos_io.reset_for_tests()
@@ -1247,7 +2030,7 @@ def _loss_kind(row: dict, types: dict):
 
 
 VOID_REASON_CACHE_SECONDS = 600
-_void_reason_cache = _LRU(CACHE_MAX_RESTAURANTS)
+_void_reason_cache = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
 
 
 def void_reasons(restaurant_id: int) -> dict:
@@ -1642,7 +2425,7 @@ def _hour_of(raw) -> Optional[str]:
     """"HH" from an RPOWER local wall-clock stamp ("2020-01-21T11:16:00").
     RPOWER's "never set" is 2000-01-01, which is no hour at all."""
     s = str(raw or "")
-    if len(s) < 13 or s.startswith("2000-01-01"):
+    if len(s) < 13 or _is_unset(s):
         return None
     return s[11:13] if s[11:13].isdigit() else None
 
@@ -1807,6 +2590,8 @@ def fetch_day_closed(restaurant_id: int, business_date) -> bool:
     want = day.isoformat()
     for row in rows:
         start = _biz_date(row.get("from_date"))
+        # An unset thru_date (2000-01-01) closes the from_date alone (A1-17):
+        # _biz_date reads the sentinel as no date.
         end = _biz_date(row.get("thru_date")) or start
         if start and start <= want <= end:
             return True
@@ -1873,7 +2658,7 @@ def _punch_dt(raw) -> Optional[datetime]:
     """One timeclock punch as a datetime. RPOWER sends local wall-clock with
     no offset ("2019-06-23T06:58:00"), which is what the CSV wants, so this
     parses without attaching or converting a timezone."""
-    if not raw:
+    if not raw or _is_unset(raw):
         return None
     try:
         dt = datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S")
@@ -2417,7 +3202,7 @@ def _labor_entries(restaurant_id: int, start, end) -> tuple:
 # often (the live clock-ins run every 15 minutes during service: an id the
 # POS never lists must not re-read them every time).
 PEOPLE_REFRESH_SECONDS = 600
-_people_refreshed = _LRU(CACHE_MAX_RESTAURANTS)
+_people_refreshed = _LRU(CACHE_MAX_RESTAURANTS, per_store=1)
 
 
 def _people_for(restaurant_id: int, entries: list) -> dict:
@@ -2776,30 +3561,64 @@ def push_labor_schedule(restaurant_id: int, shifts: list, job_codes: dict = None
 
     import requests
     import pos_io
-    # The one write passes the breaker and is counted like every read (A3-10 / A3-19).
+    # The one write passes the breaker, the store's quarantine and auth latch
+    # and the request budget, and is counted like every read (A3-10 / A3-19;
+    # audit #23 A1-19 — it used to skip the budget).
     gate, wait = pos_io.breaker_allow("rpower")
-    if gate == "open":
+    sgate, swait = pos_io.store_allow("rpower", restaurant_id)
+    if gate == "open" or sgate == "open":
         pos_io.record("rpower", restaurant_id, "laborschedule/push", "skipped")
-        return {"ok": False, "skipped": skipped, "retry_after": wait,
-                "error": f"RPOWER has been failing; the push waits {int(wait)}s for it to answer again."}
+        w = wait if gate == "open" else swait
+        return {"ok": False, "skipped": skipped, "retry_after": w,
+                "error": f"RPOWER has been failing; the push waits {int(w)}s for it to answer again."}
+    agate, left = pos_io.auth_gate("rpower", _bucket_key(token), base.get("storemid"))
+    if agate == "latched":
+        pos_io.record("rpower", restaurant_id, "laborschedule/push", "skipped")
+        return {"ok": False, "skipped": skipped, "retry_after": left,
+                "error": "RPOWER refused this store's token; the push waits until it answers again."}
+    try:
+        _sleep_for_spacing(token)
+    except RPowerBudgetExceeded as e:
+        pos_io.record("rpower", restaurant_id, "laborschedule/push", "skipped")
+        return {"ok": False, "skipped": skipped, "retry_after": e.retry_after,
+                "error": "RPOWER's request budget had no slot for the push; it goes on the next try."}
+    fleet_probe, store_probe = gate == "probe", sgate == "probe"
     t0 = time.monotonic()
     try:
-        resp = requests.post(
+        resp = _session().post(
             f"{BASE_URL}/laborschedule/push",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=payload, timeout=TIMEOUT_SECONDS)
     except Exception as e:
         pos_io.record("rpower", restaurant_id, "laborschedule/push", "transport", (time.monotonic() - t0) * 1000)
-        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: {type(e).__name__}", probe=gate == "probe")
+        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: {type(e).__name__}",
+                               probe=fleet_probe, store_probe=store_probe)
+        # Refused before it was sent (no connection) is a failure; anything
+        # after the body may have left — a read timed out, a connection reset
+        # mid-answer — is UNKNOWN: RPOWER may have applied it. It is never
+        # retried on its own (a duplicate push is not known to be harmless,
+        # Q13) until someone has looked at the store's schedule.
+        sent_maybe = not isinstance(e, (requests.exceptions.ConnectTimeout, requests.exceptions.SSLError,
+                                        requests.exceptions.InvalidURL, requests.exceptions.MissingSchema))
+        if sent_maybe and isinstance(e, requests.exceptions.ConnectionError):
+            sent_maybe = "NewConnectionError" not in repr(e) and "Name or service" not in repr(e)
+        if sent_maybe:
+            return {"ok": False, "unknown": True, "skipped": skipped,
+                    "error": "RPOWER didn't answer in time, so whether it took the schedule is unknown. Check the "
+                             "week in RPOWER before pushing again."}
         return {"ok": False, "error": f"Couldn't reach RPOWER: {e}", "skipped": skipped}
     _ms = (time.monotonic() - t0) * 1000
     _st = int(getattr(resp, "status_code", 0) or 0)
     pos_io.record("rpower", restaurant_id, "laborschedule/push",
                   "ok" if resp.ok else ("s5xx" if _st >= 500 else ("s429" if _st == 429 else "s4xx")), _ms)
     if _st >= 500:
-        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: HTTP {_st}", probe=gate == "probe")
+        pos_io.breaker_failure("rpower", restaurant_id, f"laborschedule/push: HTTP {_st}", probe=fleet_probe,
+                               store_probe=store_probe)
+    elif _st == 429:
+        _note_pressure([_bucket_key(token, base.get("storemid") if BUDGET_PER_STORE else None)]
+                       + ([FLEET_BUCKET] if FLEET_RPS and FLEET_RPS > 0 else []), _retry_after(resp))
     else:
-        pos_io.breaker_success("rpower", probe=gate == "probe")
+        pos_io.breaker_success("rpower", probe=fleet_probe, restaurant_id=restaurant_id, store_probe=store_probe)
 
     if resp.status_code in (401, 403):
         return {"ok": False, "skipped": skipped,
@@ -2824,7 +3643,7 @@ CATALOG_CACHE_SECONDS = 600
 _catalog_cache = _LRU(CACHE_MAX_KEYED)
 
 
-_scope_cache = _LRU(CACHE_MAX_KEYED)
+_scope_cache = _LRU(CACHE_MAX_KEYED, per_store=2)
 
 
 def _list_scope(restaurant_id: int, by_store: bool = False) -> str:
@@ -3239,7 +4058,7 @@ def _archive_misses(lists, lines, tickets, punches, payments, payouts) -> list:
 # within this many seconds: an id the POS no longer lists (a deleted item on
 # a backfilled night) would otherwise re-read it for every night of a backfill.
 ARCHIVE_REFRESH_SECONDS = 600
-_archive_refreshed = _LRU(CACHE_MAX_KEYED)
+_archive_refreshed = _LRU(CACHE_MAX_KEYED, per_store=4)
 
 
 def _refresh_missed(restaurant_id: int, lists: dict, missed: list) -> dict:
@@ -3715,7 +4534,7 @@ def fetch_orders_due(restaurant_id: int, start_date, end_date) -> list:
 # RPOWER as before.
 
 CLOSED_CACHE_SECONDS = 600
-_closed_cache = _LRU(CACHE_MAX_KEYED)
+_closed_cache = _LRU(CACHE_MAX_KEYED, per_store=8)
 
 
 def day_closed_cached(restaurant_id: int, business_date) -> bool:

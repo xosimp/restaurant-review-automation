@@ -437,10 +437,19 @@ def _reset_rpower_caches():
     """rpower caches its lists (sales types, menu, void reasons, people,
     tables and rooms, the closed-day answer) per restaurant id for minutes;
     every test's fresh database reuses ids, so one test's stubbed list would
-    be another's answer."""
+    be another's answer.
+
+    RPOWER's requests go through a per-thread requests.Session (audit #23
+    A1-12); under test they go through the `requests` module's own get/post,
+    so a test's `monkeypatch.setattr("requests.get", ...)` is what answers
+    (tests/test_audit23_f1.py exercises the real session)."""
+    import requests
     import rpower
     rpower.clear_caches()
+    real_session = rpower._session
+    rpower._session = lambda: requests
     yield
+    rpower._session = real_session
     rpower.clear_caches()
 
 

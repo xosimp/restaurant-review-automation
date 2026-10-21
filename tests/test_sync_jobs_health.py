@@ -336,8 +336,10 @@ def test_a_day_pulled_while_trading_is_provisional_and_does_not_date_sales(db_pa
 
 def test_rpower_hitting_its_page_ceiling_raises(monkeypatch):
     import rpower
+    # Rows in ticketsales' contract (audit #23 A1-09: a row without them is refused first).
     monkeypatch.setattr(rpower, "_request", lambda token, path, params=None:
-                        [{"rid": f"{params['pagenumber']}-{n}"} for n in range(rpower.PAGE_SIZE)])
+                        [{"rid": f"{params['pagenumber']}-{n}", "date": "2026-10-10T00:00:00", "sales": 1, "qty": 1,
+                          "slstype_mid": "1"} for n in range(rpower.PAGE_SIZE)])
     with pytest.raises(rpower.RPowerError, match="truncated"):
         rpower._paged("tok", "ticketsales/getbybusinessdate", {}, max_pages=2)
 

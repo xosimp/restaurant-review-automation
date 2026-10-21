@@ -48,8 +48,13 @@ REASONS = [{"mid": "R1", "name": "Error Made"}, {"mid": "R2", "name": "*Manager 
            {"mid": "R3", "name": "TRANSFERRED"}, {"mid": "R4", "name": "Unhappy Customer"}]
 
 
+_RIDS = iter(range(1, 10 ** 6))
+
+
 def _line(day, stype, sales, reason="1", mgr="M1", voidmgr="0", **kw):
-    row = {"date": f"{day}T00:00:00", "slstype_mid": stype, "sales": sales, "qty": 1.0, "price": 0.0,
+    # Every RPOWER line has its rid (audit #23 A1-09: a row without one is refused).
+    row = {"rid": f"L{next(_RIDS)}", "date": f"{day}T00:00:00", "slstype_mid": stype, "sales": sales, "qty": 1.0,
+           "price": 0.0,
            "regular_price": 0.0, "voided": 0.0, "voidrsn_mid": reason, "mgr_mid": mgr,
            "voidmgr_mid": voidmgr, "shift": 1}
     row.update(kw)

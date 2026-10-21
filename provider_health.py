@@ -21,10 +21,12 @@ sends, spends or writes anything on the provider's side:
                  under its no-charge ID-refresh SKU
   apns           mint the ES256 provider token (no network: it proves the .p8
                  parses and signs, which is how push failed for months)
-  rpower         store/get with one connected store's token
-                 (RPOWER_PROBE_RESTAURANT_ID, else the lowest id), through the
-                 RPOWER breaker — the half-open probe once it lapses (scale
-                 audit 10/19/26 A3-10 / OPS-6)
+  rpower         store/getbymid for up to three stores on different tokens
+                 (RPOWER_PROBE_RESTAURANT_ID first, else the lowest ids),
+                 counted as no store, through the RPOWER breaker — the
+                 half-open probe once it lapses (scale audit 10/19/26 A3-10 /
+                 OPS-6); failing only when two or more tokens are refused
+                 (audit #23 A6-11)
 
 Each answer is recorded in provider_health (one row per probe). A provider
 that goes from anything else to failing, or stays unreachable for three
@@ -293,55 +295,89 @@ def probe_apns(db_path=None):
         return _result("failing", f"APNS_PRIVATE_KEY does not sign: {type(e).__name__}", None, started)
 
 
-def _rpower_probe_restaurant(db_path=None):
-    """(restaurant id, token) to probe RPOWER with: RPOWER_PROBE_RESTAURANT_ID
-    when set, else the lowest-id live, non-demo restaurant with an RPOWER
-    token. None when no restaurant has one."""
+# How many stores the RPOWER probe asks, each on a DIFFERENT token (audit #23
+# A6-11): one store's token is one store's, never the provider's.
+RPOWER_PROBE_STORES = 3
+# Rows read looking for distinct tokens (a partner token is shared by many).
+_RPOWER_PROBE_SCAN = 60
+
+
+def _rpower_probe_targets(db_path=None, k=None):
+    """[(restaurant id, token, store mid)] — up to `k` (RPOWER_PROBE_STORES)
+    live, non-demo restaurants with an RPOWER token, each on a different
+    token: RPOWER_PROBE_RESTAURANT_ID first when set, then the lowest ids."""
     from models import get_conn, DB_PATH
+    import rpower
+    k = int(k or RPOWER_PROBE_STORES)
     want = (os.getenv("RPOWER_PROBE_RESTAURANT_ID") or "").strip()
     conn = get_conn(db_path or DB_PATH)
     try:
-        sql = ("SELECT id FROM restaurants WHERE rpower_token IS NOT NULL AND rpower_token <> '' "
-               "AND COALESCE(is_demo, 0) = 0")
-        args = ()
-        if want.isdigit():
-            sql += " AND id=?"
-            args = (int(want),)
-        row = conn.execute(sql + " ORDER BY id LIMIT 1", args).fetchone()
+        rows = conn.execute("SELECT id FROM restaurants WHERE rpower_token IS NOT NULL AND rpower_token <> '' "
+                            "AND COALESCE(is_demo, 0) = 0 ORDER BY id LIMIT ?", (_RPOWER_PROBE_SCAN,)).fetchall()
     finally:
         conn.close()
-    if not row:
-        return None
-    import rpower
-    try:
-        token = rpower._creds(int(row[0]))["token"]
-    except Exception:
-        return None
-    return (int(row[0]), token) if token and not token.startswith("demo-store:") else None
+    ids = [int(r[0]) for r in rows]
+    if want.isdigit():
+        ids = [int(want)] + [i for i in ids if i != int(want)]
+    out, buckets = [], set()
+    for rid in ids:
+        try:
+            c = rpower._creds(rid)
+        except Exception:
+            continue
+        token = c.get("token") or ""
+        if not token or token.startswith("demo-store:"):
+            continue
+        b = rpower._bucket_key(token)
+        if b in buckets:
+            continue
+        buckets.add(b)
+        out.append((rid, token, c.get("store_mid")))
+        if len(out) >= k:
+            break
+    return out
 
 
 def probe_rpower(db_path=None):
-    """store/get with one connected store's token (scale audit 10/19/26
-    A3-10 / OPS-6): read-only, the documented first call. Goes through the
-    same breaker as every RPOWER request, so while the breaker is open this
-    probe is refused (and recorded as unreachable), and once it lapses the
-    probe IS the half-open probe that closes it."""
-    pick = _rpower_probe_restaurant(db_path)
-    if pick is None:
+    """RPOWER answers, read-only (scale audit 10/19/26 A3-10 / OPS-6; audit
+    #23 A5-15 / A6-11): up to RPOWER_PROBE_STORES stores, each on a
+    different token, each asked for ITSELF (`store/getbymid`, one row — a
+    token-wide `store/get` only for a store not yet bound). Counted in the
+    request ledger as no store (restaurant 0), not billed to a tenant. Goes
+    through the same breaker as every RPOWER request: while it is open this
+    probe is refused (recorded as unreachable), and once it lapses the probe
+    IS the half-open probe that closes it.
+
+    'failing' (pages on the turn) only when two or more tokens are refused —
+    one refused token is that store's issue (its auth latch,
+    restaurants.rpower_auth_failed_at), and RPOWER itself answered."""
+    targets = _rpower_probe_targets(db_path)
+    if not targets:
         return _result("unconfigured", "no restaurant has an RPOWER token")
-    rid, token = pick
     started = time.monotonic()
     import rpower
-    try:
-        with rpower.for_store(rid):
-            stores = rpower.list_stores(token)
-    except rpower.RPowerAuthError as e:
-        return _result("failing", f"token refused: {e}", None, started)
-    except rpower.RPowerTryLater as e:
-        return _result("error", f"paused: {e}", None, started)
-    except Exception as e:
-        return _result("error", f"unreachable: {type(e).__name__}", None, started)
-    return _result("ok" if stores else "failing", None if stores else "the token sees no store", 200, started)
+    ok, refused, paused, errors = [], [], [], []
+    for rid, token, mid in targets:
+        try:
+            with rpower.for_store(None):
+                got = rpower.store_by_mid(token, mid) if mid else rpower.list_stores(token)
+            (ok if got else refused).append(rid)
+        except rpower.RPowerAuthError:
+            refused.append(rid)
+        except rpower.RPowerTryLater as e:
+            paused.append(f"#{rid}: {e}")
+        except Exception as e:
+            errors.append(f"#{rid}: {type(e).__name__}")
+    if len(refused) >= 2:
+        return _result("failing", f"token refused for {len(refused)} of {len(targets)} probed tokens "
+                                  f"(stores {', '.join('#' + str(r) for r in refused)})", None, started)
+    note = (f"; store #{refused[0]}'s token was refused — that store's issue" if refused else "")
+    if ok or refused:
+        return _result("ok", (f"{len(ok)} of {len(targets)} tokens answered{note}" if (note or len(targets) > 1)
+                              else None), 200, started)
+    if paused:
+        return _result("error", f"paused: {paused[0]}", None, started)
+    return _result("error", f"unreachable: {errors[0] if errors else 'no answer'}", None, started)
 
 
 PROBES = {"resend": probe_resend, "twilio": probe_twilio, "anthropic": probe_anthropic,

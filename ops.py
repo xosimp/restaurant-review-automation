@@ -3433,6 +3433,9 @@ _RETENTION_DAYS = {
     # Requests per hour per lane (pos_capacity's budget utilisation): the
     # request ledger's quarter.
     "pos_lane_ledger":    int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
+    # ...and its reads per business night (audit #23 A6-24), by when the
+    # night was last read: a backfilled old night is kept as long as a new one.
+    "pos_request_nights": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3624,7 +3627,7 @@ _RETENTION_COLUMN = {
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_request_ledger": "hour",
     "dsr_reports": "business_date", "dsr_metrics": "business_date", "pos_intraday": "business_date",
-    "pos_closed_days": "business_date", "pos_lane_ledger": "hour",
+    "pos_closed_days": "business_date", "pos_lane_ledger": "hour", "pos_request_nights": "last_at",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
@@ -3761,6 +3764,7 @@ _RETENTION_FLOOR_DAYS = {
     # reads) reach a year and a month; the intraday baselines the same;
     # the close lag 14 nights.
     "dsr_reports": 400, "dsr_metrics": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
+    "pos_request_nights": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
     "bar_sales_nights": 400, "pos_item_daily": 400,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).

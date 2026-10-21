@@ -40,9 +40,12 @@ from datetime import datetime, timedelta
 
 import models as _models_mod
 
-STATUSES = ("queued", "sending", "sent", "partial", "unchanged", "failed", "refused", "held_local")
+# "unknown": the POS did not answer in time after the body may have left
+# (audit #23 A1-19) — whether it took the week is not known, so it is never
+# retried on its own; the owner checks the POS and pushes again.
+STATUSES = ("queued", "sending", "sent", "partial", "unchanged", "failed", "refused", "held_local", "unknown")
 SHIFT_STATUSES = ("sent", "would_send", "skipped", "problem", "started", "salaried", "unchanged",
-                  "failed", "removed_unconfirmed")
+                  "failed", "removed_unconfirmed", "unknown")
 RETRY_MINUTES = (10, 30, 120)
 RUN_MAX_SECONDS = 4 * 60
 # A push still `sending` this long after its claim belongs to a process that
@@ -470,6 +473,12 @@ def run_push(push_id, now_local=None, db_path=None) -> dict:
         res = mod.push_labor_schedule(rid, [dict(s) for s in sendable]) or {}
     except Exception as e:
         res = {"ok": False, "error": f"Couldn't reach the POS: {e}"}
+    if res.get("unknown"):
+        _finish(push_id, "unknown", [dict(s, status="unknown", reason=res.get("error"))
+                                     if s["status"] == "would_send" else s for s in shifts],
+                error=res.get("error"), db_path=db_path)
+        _tell_failure(rid, row, res.get("error"), db_path)
+        return {"status": "unknown", "sent": 0, "error": res.get("error")}
     if res.get("external"):
         _finish(push_id, "refused", [dict(s, status="failed", reason=res.get("error")) if s["status"] == "would_send"
                                      else s for s in shifts], error=res.get("error"), db_path=db_path)
