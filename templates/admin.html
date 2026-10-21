@@ -3320,6 +3320,8 @@ function rpStrip(f){
     + stripCell('#operations/rpower', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''))
     + stripCell('#operations/rpower', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
     + stripCell('#operations/rpower', 'plug', 'neu', 'Backfill slots', used, 'in use')
+    + stripCell('#operations/rpower', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
+    + stripCell('#operations/rpower', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured')
     + '</section>';
 }
 function rpRow(r){

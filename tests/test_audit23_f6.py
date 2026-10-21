@@ -613,3 +613,20 @@ def test_every_source_the_rollup_reads_is_readable(db_path, caplog):
         rh.page(q="Read", data_type="archive", anomaly=True, coverage_lt=0.5, partner=3, db_path=db_path)
     bad = [r.getMessage() for r in caplog.records if "unreadable" in r.getMessage()]
     assert not bad, bad
+
+
+def test_recipe_coverage_is_refreshed_once_a_day_within_a_budget(db_path, monkeypatch):
+    """A6-21: the owner's own coverage figure, rolled up — never per request."""
+    import inventory_ledger
+    calls = []
+    monkeypatch.setattr(inventory_ledger, "recipe_coverage",
+                        lambda rid, *a, **k: calls.append(rid) or {"coverage_pct": 62.5})
+    monkeypatch.setattr(rh, "RECIPE_COVERAGE_PER_PASS", 2)
+    ids = [_store(db_path, f"Rc{i}", token=f"rc{i}", mid=f"R{i}") for i in range(3)]
+    rh.run_rollup(db_path=db_path)
+    assert len(calls) == 2
+    rh.run_rollup(db_path=db_path)
+    assert len(calls) == 3, "the third store is reached next pass; the first two are not re-read within a day"
+    rows = rh.store_rows(db_path=db_path)
+    assert all(rows[i]["recipe_coverage_pct"] == 62.5 for i in ids)
+    assert rh.fleet(db_path=db_path)["recipe_coverage_p50"] == 62.5

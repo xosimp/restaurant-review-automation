@@ -166,6 +166,8 @@ _TABLE_SQL = (
         store_key_mismatch   INTEGER NOT NULL DEFAULT 0,
         simulated_not_demo   INTEGER NOT NULL DEFAULT 0,
         has_anomaly          INTEGER NOT NULL DEFAULT 0,
+        recipe_coverage_pct  REAL,
+        recipe_coverage_at   TEXT,
         health               TEXT NOT NULL DEFAULT 'ok',
         health_since         TEXT,
         severity_rank        INTEGER NOT NULL DEFAULT 0,
@@ -791,6 +793,7 @@ _ROW_COLS = ("restaurant_id", "name", "is_demo", "in_service", "billing_status",
              "recon_nights_7d", "unknown_sales_7d", "net_sales_7d", "suspect_nights_7d", "pay_gap_nights_7d",
              "first_read_suspect_7d", "open_punches_7d", "zero_labor_days_7d", "dsr_mismatch_7d",
              "data_issues_7d", "duplicate_binding", "store_key_mismatch", "simulated_not_demo", "has_anomaly",
+             "recipe_coverage_pct", "recipe_coverage_at",
              "health", "health_since", "severity_rank", "reasons", "updated_at")
 _UPSERT = (f"INSERT INTO rpower_store_health ({', '.join(_ROW_COLS)}) VALUES ({', '.join('?' for _ in _ROW_COLS)}) "
            "ON CONFLICT(restaurant_id) DO UPDATE SET "
@@ -803,11 +806,40 @@ def _write_rows(conn, rows):
         conn.commit()
 
 
+# Recipe coverage (A6-21) is the owner's own figure (inventory_ledger.
+# recipe_coverage: Back Office recipes and the bar's drink categories count),
+# a few queries a store — so it is refreshed once a day per store, at most
+# RECIPE_COVERAGE_PER_PASS stores a pass, and carried between refreshes.
+RECIPE_COVERAGE_PER_PASS = 25
+RECIPE_COVERAGE_HOURS = 24
+
+
+def _recipe_coverage(row, previous, now, budget):
+    """Carry the store's recipe coverage forward, refreshing it when a day
+    old and the pass's budget allows. Returns the budget left."""
+    previous = previous or {}
+    row["recipe_coverage_pct"] = previous.get("recipe_coverage_pct")
+    row["recipe_coverage_at"] = previous.get("recipe_coverage_at")
+    age = _hours_since(row["recipe_coverage_at"], now)
+    if budget <= 0 or row.get("is_demo") or not row.get("in_service") or (
+            age is not None and age < RECIPE_COVERAGE_HOURS):
+        return budget
+    try:
+        import inventory_ledger
+        cov = inventory_ledger.recipe_coverage(int(row["restaurant_id"])) or {}
+        row["recipe_coverage_pct"] = cov.get("coverage_pct")
+        row["recipe_coverage_at"] = _stamp(now)
+    except Exception as e:
+        log.warning("rpower_health: recipe coverage unreadable for %s: %s", row["restaurant_id"], e)
+    return budget - 1
+
+
 def _previous(conn, ids):
     if not ids:
         return {}
     return {int(r["restaurant_id"]): r for r in _safe_rows(
-        conn, "rpower_store_health", "SELECT restaurant_id, health, health_since, auth_failed_at FROM "
+        conn, "rpower_store_health", "SELECT restaurant_id, health, health_since, auth_failed_at, "
+        "recipe_coverage_pct, recipe_coverage_at FROM "
         f"rpower_store_health WHERE restaurant_id IN ({_ids_sql(ids)})", ids)}
 
 
@@ -831,6 +863,7 @@ def run_rollup(db_path=None, max_seconds=None, now=None, restaurant_ids=None) ->
             stores = [s for s in stores if int(s["id"]) in want]
         by_id = {int(s["id"]): s for s in stores}
         order = sorted(by_id)
+        budget = RECIPE_COVERAGE_PER_PASS
         last = _cursor(conn) if restaurant_ids is None else None
         if last is not None and order:
             cut = next((i for i, x in enumerate(order) if x > last), len(order))
@@ -850,6 +883,7 @@ def run_rollup(db_path=None, max_seconds=None, now=None, restaurant_ids=None) ->
                 for rid in ids:
                     try:
                         row = compute_row(by_id[rid], src, fleet, now=now, previous=prev.get(rid))
+                        budget = _recipe_coverage(row, prev.get(rid), now, budget)
                         rows.append(row)
                         if row["auth_failed_at"] and not (prev.get(rid) or {}).get("auth_failed_at"):
                             transitions.append(row)
@@ -1113,7 +1147,8 @@ def fleet(db_path=None) -> dict:
     try:
         rows = _live_rows(conn, "health, token_bucket, auth_failed_at, stale_types, gaps_14d, recon_nights_7d, "
                                 "pay_gap_nights_7d, req_24h, s429_24h, skipped_24h, err_24h, queue_failed_24h, "
-                                "queue_expired_24h, backfill_state, coverage_90d, updated_at")
+                                "queue_expired_24h, backfill_state, coverage_90d, unknown_sales_7d, net_sales_7d, "
+                                "recipe_coverage_pct, updated_at")
         day = _today_row(conn)
     finally:
         conn.close()
@@ -1143,6 +1178,14 @@ def fleet(db_path=None) -> dict:
         "coverage_p50": _pctl([r.get("coverage_90d") for r in rows], 50),
         "coverage_p10": _pctl([r.get("coverage_90d") for r in rows], 10),
         "stores_with_gaps": sum(1 for r in rows if int(r.get("gaps_14d") or 0) > 0),
+        # A6-21: what the fleet sells on unnamed sales types, and how much of
+        # what it sells a recipe accounts for (each store's own figure).
+        "unknown_sales_7d": round(sum(float(r.get("unknown_sales_7d") or 0) for r in rows), 2),
+        "unknown_sales_share_7d": (round(sum(float(r.get("unknown_sales_7d") or 0) for r in rows)
+                                         / sum(float(r.get("net_sales_7d") or 0) for r in rows), 4)
+                                   if sum(float(r.get("net_sales_7d") or 0) for r in rows) > 0 else None),
+        "recipe_coverage_p50": _pctl([r.get("recipe_coverage_pct") for r in rows], 50),
+        "recipe_coverage_stores": sum(1 for r in rows if r.get("recipe_coverage_pct") is not None),
         "recon_nights_7d": sum(int(r.get("recon_nights_7d") or 0) for r in rows),
         "pay_gap_nights_7d": sum(int(r.get("pay_gap_nights_7d") or 0) for r in rows),
         "requests_24h": req, "errors_24h": sum(int(r.get("err_24h") or 0) for r in rows),
