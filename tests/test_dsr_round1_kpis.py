@@ -105,7 +105,12 @@ def _rows(day):
         {"payout_id": "o1", "business_date": iso, "category": "Misc. Payout", "is_payin": 0, "amount": 18.5,
          "manager_id": "m1", "manager_name": "Andrew Marola", "paid_at": f"{iso}T14:05:00", "reference": "ice run"},
     ]
-    return {"tickets": _tickets(day), "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
+    tickets = _tickets(day)
+    # Every ticket carries the item it sold: a check is a ticket with a sale
+    # line on it (pos_checks, Audit #23 A2-04).
+    lines += [{"line_id": f"s-{t['ticket_id']}", "ticket_id": t["ticket_id"], "business_date": iso, "kind": "sale",
+               "sales": t["net_sales"], "loss_amount": None, "reason": None, "approver_id": None} for t in tickets]
+    return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
             "max_stamp": f"{iso}T23:59:00"}
 
 
@@ -235,7 +240,9 @@ def test_servers_are_people_past_the_floor_never_a_station(world, db):
     assert names == ["Maria Lopez", "Tom Reed"]          # the To Go terminal and Jo (3 checks) are not shown
     assert blk["detail"]["servers_below_floor"] == 1
     maria = blk["detail"]["servers"][0]
-    assert maria["per_guest"] == 30.0 and maria["drinks_per_guest"] == 1.5 and maria["tip_pct"] == 20.0
+    # Tips are the PAYMENT records' (Audit #23 A2-06): $24 + $16 on two $60
+    # checks — never the ticket's own tip field beside them.
+    assert maria["per_guest"] == 30.0 and maria["drinks_per_guest"] == 1.5 and maria["tip_pct"] == 33.3
     assert maria["hours"] == 6.0 and maria["net_per_hour"] == 120.0
 
 

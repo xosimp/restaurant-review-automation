@@ -42,6 +42,7 @@ Statuses:
   ready          the figures
 """
 import dsr
+import pos_checks
 from dsr import common
 
 NIGHT_MIN_CHECKS = 8          # a server's rates are shown past this many checks on the night
@@ -103,13 +104,17 @@ def late_night_daypart(late_hour):
 
 
 def _split(tickets, key, total):
+    """Net by group over every ticket the POS did not cancel; checks and
+    guests over the CHECKS only (pos_checks — Audit #23 A2-04), so a fully
+    comped table adds no check and no guest to a daypart's spend."""
     out = {}
     for t in tickets:
         name = (key(t) if callable(key) else t.get(key)) or "Other"
         g = out.setdefault(name, {"name": name, "net": 0.0, "guests": 0, "checks": 0})
         g["net"] += float(t.get("net_sales") or 0)
-        g["guests"] += int(t.get("guest_count") or 0)
-        g["checks"] += 1
+        if pos_checks.is_check(t):
+            g["guests"] += int(t.get("guest_count") or 0)
+            g["checks"] += 1
     rows = []
     for g in sorted(out.values(), key=lambda x: -x["net"]):
         g["net"] = round(g["net"], 2)
@@ -123,7 +128,12 @@ def _hours(punch):
     return float(punch.get("reg_hours") or 0) + float(punch.get("ot_hours") or 0) + float(punch.get("dt_hours") or 0)
 
 
-def _servers(tickets, punches, is_station_name):
+def _servers(tickets, punches, is_station_name, tips=None):
+    """Each server's night: checks and guests over the CHECKS (pos_checks),
+    net over every ticket they carried, tip % from the PAYMENT records'
+    tips over the net of the checks that carried one (`tips`: {ticket id:
+    tip}, pos_checks.tips_by_ticket — Audit #23 A2-06)."""
+    tips = tips or {}
     stations = {p["employee_id"] for p in punches if p.get("is_station") and p.get("employee_id")}
     hours = {}
     for p in punches:
@@ -139,12 +149,14 @@ def _servers(tickets, punches, is_station_name):
             continue
         s = by.setdefault(sid, {"name": name, "checks": 0, "guests": 0, "net": 0.0, "drinks": 0,
                                 "tipped_net": 0.0, "tips": 0.0})
-        s["checks"] += 1
-        s["guests"] += int(t.get("guest_count") or 0)
         s["net"] += float(t.get("net_sales") or 0)
-        s["drinks"] += int(t.get("bev_count") or 0)
-        if float(t.get("tip") or 0) > 0:
-            s["tips"] += float(t["tip"])
+        if pos_checks.is_check(t):
+            s["checks"] += 1
+            s["guests"] += int(t.get("guest_count") or 0)
+            s["drinks"] += int(t.get("bev_count") or 0)
+        tip = tips.get(str(t.get("ticket_id")), 0.0)
+        if tip > 0 and float(t.get("net_sales") or 0) > 0:
+            s["tips"] += tip
             s["tipped_net"] += float(t.get("net_sales") or 0)
     shown, below = [], 0
     for sid, s in by.items():
@@ -225,11 +237,17 @@ def comp_void(facts, target=None):
     gross = sales.get("gross_items")
     if not isinstance(gross, (int, float)) or gross <= 0 or not loss:
         return None
+    # Comps AND voids from the Sales block where it measured them: one
+    # block, one basis (rpower.loss_value — Audit #23 A2-03); the service
+    # block's check lines only where it did not.
     comps = sales.get("comps")
     if not isinstance(comps, (int, float)):
         comps = sum(float(r.get("amount") or 0) for r in (loss.get("given") or {}).get("by_reason") or []
                     if r.get("kind") == "comp")
-    voids = float((loss.get("voids") or {}).get("total") or 0)
+    voids = sales.get("voids")
+    if not isinstance(voids, (int, float)):
+        voids = float((loss.get("voids") or {}).get("total") or 0)
+    voids = float(voids)
     total = round(abs(float(comps)) + voids, 2)
     pct = round(total / float(gross) * 100.0, 1)
     try:
@@ -313,16 +331,22 @@ def collect(ctx):
         return dsr.block(dsr.UNAVAILABLE, source=provider, reason=REASON_FAILED, block_name="service",
                          detail={"why": arc["reason"]})
     args = (ctx.restaurant_id, provider, ctx.day)
-    tickets = _rows(ctx, "SELECT * FROM pos_tickets WHERE restaurant_id=? AND provider=? AND business_date=? "
-                         "AND cancelled=0", args)
+    # Each ticket says whether it is a CHECK (pos_checks: not cancelled, an
+    # item sold on it — Audit #23 A2-04): the report's own definition, so the
+    # service block's checks, guests and spend per guest match the Sales
+    # block's transactions and covers.
+    tickets = _rows(ctx, f"SELECT t.*, {pos_checks.IS_CHECK_SQL} AS is_check FROM pos_tickets t "
+                         "WHERE t.restaurant_id=? AND t.provider=? AND t.business_date=? AND t.cancelled=0", args)
     if not tickets:
         return dsr.block(dsr.UNAVAILABLE, source=provider, reason=REASON_EMPTY, block_name="service")
     lines = _rows(ctx, "SELECT kind, sales, loss_amount, reason, approver_id, item_name FROM pos_ticket_lines "
                        "WHERE restaurant_id=? AND provider=? AND business_date=? AND kind IN "
                        "('comp','discount','refund','void')", args)
     punches = _rows(ctx, "SELECT * FROM pos_punches WHERE restaurant_id=? AND provider=? AND business_date=?", args)
-    payments = _rows(ctx, "SELECT method, is_cash, is_card, amount, tip, tip_fee FROM pos_payments "
-                          "WHERE restaurant_id=? AND provider=? AND business_date=?", args)
+    # A payment on a cancelled ticket is not money the night took (A2-11).
+    payments = _rows(ctx, "SELECT p.ticket_id, p.method, p.is_cash, p.is_card, p.amount, p.tip, p.tip_fee "
+                          "FROM pos_payments p WHERE p.restaurant_id=? AND p.provider=? AND p.business_date=? "
+                          f"AND {pos_checks.PAYMENT_LIVE_SQL}", args)
     payouts = _rows(ctx, "SELECT category, is_payin, amount, manager_name, paid_at, reference FROM pos_payouts "
                          "WHERE restaurant_id=? AND provider=? AND business_date=?", args)
 
@@ -335,18 +359,19 @@ def collect(ctx):
     station_fn = getattr(mod, "is_station_name", None) if mod else None
 
     total = round(sum(float(t.get("net_sales") or 0) for t in tickets), 2)
-    guests = sum(int(t.get("guest_count") or 0) for t in tickets)
-    drinks = sum(int(t.get("bev_count") or 0) for t in tickets)
+    checks = [t for t in tickets if pos_checks.is_check(t)]
+    guests = sum(int(t.get("guest_count") or 0) for t in checks)
+    drinks = sum(int(t.get("bev_count") or 0) for t in checks)
     late_hour = getattr(ctx.restaurant, "dsr_late_night_hour", None) if getattr(ctx, "restaurant", None) else None
     dayparts = _split(tickets, late_night_daypart(late_hour), total)
     rooms = _split(tickets, "profit_center", total)
-    servers, below, floor = _servers(tickets, punches, station_fn)
+    servers, below, floor = _servers(tickets, punches, station_fn, tips=pos_checks.tips_by_ticket(payments))
     sales_m = ((ctx.blocks.get("sales") or {}).get("metrics") or {})
     loss = _loss(lines, names, sales_m)
     edits = _edits(punches, names)
     register = _register(payments, payouts) if payments or payouts else None
 
-    metrics = {"checks": len(tickets), "check_guests": guests, "check_net": total,
+    metrics = {"checks": len(checks), "check_guests": guests, "check_net": total,
                "drinks_per_guest": round(drinks / guests, 2) if guests else None,
                "servers_measured": len(servers), "server_floor_per_guest": floor,
                "loss_given": loss["given"]["total"], "loss_given_pct": loss["given"]["pct_of_gross"],
@@ -369,8 +394,10 @@ def collect(ctx):
         "rooms_basis": "the profit centre the POS tagged on each check",
         "servers": servers, "servers_below_floor": below, "servers_min_checks": NIGHT_MIN_CHECKS,
         "servers_basis": (f"people who carried at least {NIGHT_MIN_CHECKS} checks; spend per guest is net over "
-                          "the guests on their checks; tip % reads only checks that recorded a card tip; "
-                          "station logins aren't people and are left out"),
+                          "the guests on their checks; tip % is the card tips on the payments over the net of the "
+                          "checks they paid (before tax), only checks with a card tip; station logins aren't people "
+                          "and are left out"),
+        "checks_basis": f"{pos_checks.CHECK_BASIS}; {pos_checks.GUEST_BASIS}",
         "loss": loss,
         "register": register,
         "register_basis": "payments and drawer payouts as the POS recorded them for the night",

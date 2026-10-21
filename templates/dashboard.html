@@ -9717,7 +9717,14 @@ svg:hover .hb-xh{opacity:1}
       for(var i=0;i<L.length;i++)if(isNum(m[L[i][0]]))loss+=tile(L[i][1],esc(money(m[L[i][0]])));
       // Under "everything on the POS" the tax IS in gross (block_sales.GROSS_BASES).
       if(isNum(m.tax))loss+=tile('Tax collected',esc(money(m.tax)),def.gross_basis==='all'?'in gross, not net':'not in gross or net');
+      // The POS's own tax adjustment: shown, never taken off tax (Audit #23 A2-20).
+      if(isNum(m.tax_adjust_amount))loss+=tile('Tax adjustments',esc(money(m.tax_adjust_amount)),'shown, not taken off tax');
       if(loss)h+='<div class="hb-stats" style="margin-top:20px">'+loss+'</div>';
+      // The night's own sentences (Audit #23): a clock change inside it, net
+      // after refunds, comps that don't reconcile (loss_notes reach only a
+      // login that may see comps and voids).
+      var nts=(d.notes||[]).concat(d.loss_notes||[]);
+      for(var ni=0;ni<nts.length;ni++)h+=note(prose(nts[ni]));
       // Net said as the server defines it for this basis; the POS's own
       // deduction list only when an older report has no definition.
       if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+(def.net?' <b>Net</b> is '+esc(def.net)+'.':((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':'')));
