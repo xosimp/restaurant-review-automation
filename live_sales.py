@@ -69,6 +69,22 @@ def _apply(lines, rows, day, types, counts, key_of, biz_date) -> str:
     return newest
 
 
+def _types_for(rpower, restaurant_id, rows, types) -> dict:
+    """The sales-type list these rows are classified against: re-read when a
+    line names a type the kept list does not hold (rpower._types_for, the
+    archive's throttle — Audit #23 A2-08), so a type added during service
+    counts from its first line, not after the next full re-read."""
+    if not any(isinstance(r, dict) and r.get("slstype_mid") not in (None, "")
+               and str(r.get("slstype_mid")) not in types for r in rows):
+        return types
+    try:
+        return rpower._types_for(restaurant_id, rows)
+    except Exception as e:
+        if isinstance(e, getattr(rpower, "RPowerAuthError", ())):
+            raise
+        return types
+
+
 def fetch_today(restaurant_id, business_date, now=None) -> dict:
     """{"net": net sales so far or None (nothing counted yet), "mode":
     "full" | "delta", "rows": rows downloaded, "lines": counted lines kept}
@@ -96,6 +112,7 @@ def fetch_today(restaurant_id, business_date, now=None) -> dict:
                                        {**base, "startdate": rpower._d(cs), "enddate": rpower._d(ce),
                                         "sortorder": "date"})]
         lines = {}
+        types = _types_for(rpower, restaurant_id, rows, types)
         newest = _apply(lines, rows, day, types, rpower._counts_as_revenue, rpower._row_key, rpower._biz_date)
         state = {"lines": lines, "stamp": newest or since, "full_at": now_ts}
         mode = "full"
@@ -105,6 +122,7 @@ def fetch_today(restaurant_id, business_date, now=None) -> dict:
         rows = rpower._paged(token, "ticketsales/getbytimestamp", {
             **base, "startdate": lo.strftime("%Y-%m-%dT%H:%M:%S"), "enddate": hi.strftime("%Y-%m-%dT%H:%M:%S"),
             "sortorder": "time_stamp"})
+        types = _types_for(rpower, restaurant_id, rows, types)
         newest = _apply(lines, rows, day, types, rpower._counts_as_revenue, rpower._row_key, rpower._biz_date)
         state = {"lines": lines, "stamp": max(since, newest), "full_at": full_at}
         mode = "delta"

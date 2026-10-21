@@ -120,11 +120,18 @@ def rederive(restaurant_id, provider, iso) -> dict:
         res = pipeline.recheck_final(r, iso)
         return {"action": (res or {}).get("action")}
 
+    def _report_labor():
+        # The report's Labor block, when the night's labor cost or hours
+        # moved past the tolerance (dsr.block_labor.restate — A3-05).
+        from dsr import block_labor
+        return {"restated": block_labor.restate(rid, [iso]).get("restated") or []}
+
     step("bar", _bar)
     step("labor", lambda: _labor_day(rid, iso))
     step("items", _items)
     step("report", _report)
-    if failed and len(failed) == 4:
+    step("report_labor", _report_labor)
+    if failed and len(failed) == 5:
         raise RuntimeError(f"pos_rederive {rid} {iso}: every step failed")
     out["failed"] = failed
     return out
