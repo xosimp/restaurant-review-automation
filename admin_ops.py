@@ -963,6 +963,27 @@ def _load_with(conn):
     jf_extra = "".join(f", {c}" for c in ("kind", "restaurant_id") if c in jf_cols)
     job_failures = _rows_dict(conn, f"SELECT id, job, error, context, created_at{jf_extra} FROM job_failures "
                                     "WHERE created_at >= ? ORDER BY id DESC", (w["week"],), label="job_failures")
+    # Data findings per store (Audit #23 A6-04): kind 'data_quality' is a
+    # check of the data that found something, listed on the store as a data
+    # issue — never a "Job X failed". Grouped once here, never per store.
+    data_findings = {}
+    for f in job_failures:
+        if (f.get("kind") or "") == "data_quality" and f.get("restaurant_id"):
+            per = data_findings.setdefault(int(f["restaurant_id"]), {})
+            g = per.setdefault(f["job"], {"job": f["job"], "n": 0, "last_at": None, "first_at": None, "sample": None})
+            g["n"] += 1
+            if g["last_at"] is None:
+                g["last_at"], g["sample"] = f["created_at"], f.get("error")
+            g["first_at"] = f["created_at"]
+    # Each RPOWER store's precomputed health row (rpower_health, A6-01): one
+    # read of the rollup, never a per-store query.
+    rpower_rows = {}
+    try:
+        import rpower_health as _rh_load
+        for row in _rows_dict(conn, "SELECT * FROM rpower_store_health", label="rpower_store_health", optional=True):
+            rpower_rows[int(row["restaurant_id"])] = _rh_load._shape(row)
+    except Exception as e:
+        _note_failure("rpower_store_health", e, optional=True)
     res_cols = _columns(conn, "admin_issue_resolutions")
     occ_col = ", occurrence_at" if "occurrence_at" in res_cols else ""
     resolved = {r["key"]: r for r in _rows_dict(conn, f"SELECT key, resolved_at, note, actor{occ_col} "
@@ -1062,6 +1083,7 @@ def _load_with(conn):
              owner_logins=owner_logins, owner_sessions=owner_sessions, team_seen=team_seen,
              sessions=sessions, guests=guests, job_failures=job_failures,
              job_failures_has_kind="kind" in jf_cols, job_failures_has_rid="restaurant_id" in jf_cols,
+             data_findings=data_findings, rpower=rpower_rows,
              resolved=resolved, data_health_daily=data_health_daily, source_health=source_health,
              onboarding_facts=onboarding_facts,
              mirror=mirror, mirror_available=bool(mirror_cols), mirror_cols=mirror_cols,
@@ -1367,14 +1389,22 @@ def _pos_integration(r, name, label, configured, auth):
     err = r.get(f"{name}_sync_error") or None
     if not err and configured and st.get("state") == "stale":
         err = f"No successful sync in {int(st.get('age_days') or 0)} days"
+    # The RPOWER auth latch (Audit #23 A6-09): any 401/403 sets
+    # rpower_auth_failed_at, and every RPOWER call for the store waits for a
+    # reconnect — the console says so at once, not at the next 3am pull.
+    auth_failed = r.get("rpower_auth_failed_at") if name == "rpower" and configured else None
+    if auth_failed:
+        err = (f"RPOWER refused this store's token on {_mdy(auth_failed)} — its RPOWER reads are paused until "
+               "the owner reconnects (the owner was told).")
     # *_last_synced is an instant with an offset, except rpower_last_synced
     # (naive UTC with a T) — read all four as UTC.
     return {"key": name, "label": label,
-            "connected": bool(configured) and st.get("state") in ("current", "aging"),
+            "connected": bool(configured) and st.get("state") in ("current", "aging") and not auth_failed,
             "configured": bool(configured),
             "last_success": _iso_z(r.get(f"{name}_last_synced"), "UTC"), "error": err,
             "sync_state": st.get("state"), "age_days": st.get("age_days"),
-            "auth": auth}
+            "auth": auth, "auth_failed": bool(auth_failed),
+            **({"error_since": _iso_z(auth_failed, "UTC")} if auth_failed else {})}
 
 
 def review_source(r):
@@ -1473,7 +1503,12 @@ def _integrations_for(r, hooks, d=None):
               if s.get("source") == "pos"}
     for i in out[1:5]:
         s = pos_sh.get(i["key"]) or {}
-        if i["error"] and int(s.get("consecutive_failures") or 0) > 0:
+        # Where the retries stand (A6-22): an auth failure is never retried;
+        # any other failure is retried +1h / +3h / +6h, then no more.
+        i["auth_failed"] = bool(i.get("auth_failed") or (s.get("error_class") == "auth"
+                                                          and int(s.get("consecutive_failures") or 0) > 0))
+        i["next_retry_at"] = _iso_z(s.get("next_retry_at"), "UTC") if i["error"] and s.get("next_retry_at") else None
+        if i["error"] and int(s.get("consecutive_failures") or 0) > 0 and not i.get("error_since"):
             i["error_since"] = _iso_z(s.get("first_failed_at"), "UTC")
         else:
             i.setdefault("error_since", None)
@@ -2054,6 +2089,12 @@ SIGNED_UNPAID_WARN_DAYS = int(os.getenv("ADMIN_SIGNED_UNPAID_WARN_DAYS", "7"))
 SIGNED_UNPAID_CRIT_DAYS = int(os.getenv("ADMIN_SIGNED_UNPAID_CRIT_DAYS", "30"))
 # Consecutive failures of a data source before it is an issue (#46).
 SOURCE_FAIL_ISSUE = int(os.getenv("ADMIN_SOURCE_FAIL_ISSUE", "3"))
+# A job failing for stores is critical past this share of the customer stores
+# (and at least JOB_FAIL_MIN_STORES of them); its failures with no store at
+# JOB_FAIL_CRITICAL (Audit #23 A6-04).
+JOB_FAIL_STORE_SHARE = 0.05
+JOB_FAIL_MIN_STORES = 2
+JOB_FAIL_CRITICAL = 5
 # Sources whose failure is an issue sooner. The invoice feed's failure is
 # recorded once a day, and only after two business days with no file
 # (email_intake.watch_feeds) — it is already late when it is first recorded
@@ -2280,10 +2321,38 @@ def _issues_for(r, d, owner, integrations, modules, onboarding, last_active, bil
     for i in integrations:
         if i["state"] == "error":
             sev = "critical" if i["key"] in ("toast", "square", "clover", "rpower", "google_business") else "warning"
+            detail = i["error"]
+            if i["key"] in ("toast", "square", "clover", "rpower") and not i.get("auth_failed") and i.get("next_retry_at"):
+                # A POS failure is critical only for auth or once its retries
+                # are spent (Audit #23 A6-22): a 3am blip the +1h retry clears
+                # was a critical row every morning at 1,500 stores.
+                sev = "warning"
+                detail = f"{i['error']} · retrying {_mdy(i['next_retry_at'])}" if i["error"] else None
             label, route, kind, href = _integration_action(rid, i)
             add(f"int:{i['key']}", f"{i['label']} needs attention", sev, i.get("error_since") or i.get("last_success"),
-                label, route, i["error"], zone="UTC", occurrence=i.get("error_since") or i.get("last_success"),
+                label, route, detail, zone="UTC", occurrence=i.get("error_since") or i.get("last_success"),
                 occurrence_zone="UTC", action_kind=kind, action_href=href)
+    # The rest of an RPOWER store's health from its rollup row (A6-01, A6-03,
+    # A6-19, A6-23): the archive, the integrity checks, the data checks.
+    rrow = (d.get("rpower") or {}).get(rid)
+    if rrow:
+        try:
+            import rpower_health as _rh_iss
+            for x in _rh_iss.store_issues(rrow):
+                add(x["key"], x["title"], x["severity"], x.get("since"), "Open RPOWER", None, x.get("detail"),
+                    zone="UTC", occurrence=x.get("since") if x["severity"] == "critical" else None,
+                    occurrence_zone="UTC", action_kind="link", action_href="#operations/rpower")
+        except Exception as e:
+            _note_failure("rpower_store_issues", e)
+    # Data findings (kind 'data_quality', A6-04): one issue per check on the
+    # store, never a platform job failure. A RPOWER store's POS checks are in
+    # its rollup row's data issue above.
+    for f in sorted(((d.get("data_findings") or {}).get(rid) or {}).values(), key=lambda g: g["job"]):
+        if rrow and (f["job"].startswith("pos_") or f["job"] in ("dsr_pos_consistency",)):
+            continue
+        add(f"data:{f['job']}", f"Data check `{f['job']}` found {f['n']} issue{'s' if f['n'] != 1 else ''} this week",
+            "warning", f.get("first_at"), "Open data", None, (f.get("sample") or "")[:200] or None, zone="UTC",
+            occurrence=f.get("last_at"), occurrence_zone="UTC", action_kind="link", action_href=data_tab)
     for m in modules:
         if m["state"] == "stale":
             add(f"stale:{m['key']}", f"{m['label']} data is stale", "warning", m["last_data"],
@@ -2696,7 +2765,7 @@ def _platform_issues(recs, d):
     # Failed jobs — kind='job' only: AI-quality findings and console request
     # errors are counted apart and never become "Job X failed" (#58).
     has_kind = d.get("job_failures_has_kind")
-    by_job, kinds = {}, {"job": 0, "request": 0, "ai_quality": 0, "audit": 0}
+    by_job, kinds = {}, {"job": 0, "request": 0, "ai_quality": 0, "audit": 0, "data_quality": 0}
     for f in d.get("job_failures") or []:
         age = _age_hours(f["created_at"], "UTC")
         if age is None or age > 24:
@@ -2708,11 +2777,34 @@ def _platform_issues(recs, d):
     facts["failures_24h"] = kinds
     facts["jobs_failing"] = len(by_job)
     facts["job_kind_basis"] = "job_failures.kind" if has_kind else "inferred from the job name and error text"
+    # A job's failures are critical on the SHARE of stores they hit (Audit #23
+    # A6-04): "≥5 in 24h" was permanently critical at 1,500 stores, where a
+    # few revoked tokens fail a per-store job every night. Failures with no
+    # store (the job itself) stay critical at JOB_FAIL_CRITICAL.
+    fleet_n = max(1, sum(1 for r in recs if r.get("segment") == "customer"))
     for job, fs in by_job.items():
-        add(f"job:{job}", f"Job `{job}` failed {len(fs)}× in 24h", "critical" if len(fs) >= 5 else "warning",
+        rids = {int(f["restaurant_id"]) for f in fs if f.get("restaurant_id")}
+        bare = sum(1 for f in fs if not f.get("restaurant_id"))
+        crit = bare >= JOB_FAIL_CRITICAL or (len(rids) >= JOB_FAIL_MIN_STORES
+                                             and len(rids) > JOB_FAIL_STORE_SHARE * fleet_n)
+        where = f" at {len(rids)} store{'s' if len(rids) != 1 else ''}" if rids else ""
+        add(f"job:{job}", f"Job `{job}` failed {len(fs)}× in 24h{where}", "critical" if crit else "warning",
             since=fs[-1]["created_at"], zone="UTC", occurrence=fs[0]["created_at"], occurrence_zone="UTC",
             detail=(fs[0]["error"] or "")[:160], action="Open jobs", action_kind="link",
             action_href="#operations/jobs")
+    # The RPOWER fleet rules from the rollup (Audit #23, A6 section 3.6): each
+    # one platform issue; the stores it stands for have their own RPOWER rows
+    # folded into it (_all_issues), so a partner-token wave (A4-16) is one
+    # row, not one reconnect per store.
+    facts["rpower_fold"] = set()
+    try:
+        import rpower_health as _rh_pl
+        for rule in _rh_pl.fleet_rules(db_path=_current_db_path()):
+            add(f"fleet:{rule['key']}", rule["title"], rule["severity"], detail=rule["detail"], resolvable=True,
+                occurrence=None, action="Open RPOWER", action_kind="link", action_href="#operations/rpower")
+            facts["rpower_fold"].update(int(x) for x in rule.get("fold") or [])
+    except Exception as e:
+        _note_failure("rpower_fleet_rules", e)
     # FLEET COVERAGE, on the fetch schedule's own Chicago clock (#129): a
     # restaurant is behind when two or more scheduled slots have passed
     # since its last fetch. Reading a Chicago stamp as UTC raised a false
@@ -2938,8 +3030,19 @@ def _all_issues(recs, d):
     platform, facts = _platform_issues(recs, d)
     # A POS outage across the fleet is one platform issue (OPS-6): the
     # stores' own rows for that provider are folded into it, not listed N times.
+    # A store's issue key is "<rid>:int:<provider>" — the fold compares the
+    # part after the id (it compared the whole key, so nothing folded).
     folded = {f"int:{p}" for p in (facts.get("pos_fleet") or {})}
-    return _sort_issues([i for r in recs for i in r["issues"] if i.get("key") not in folded] + platform), facts
+    # The RPOWER fleet rules name the stores they stand for (rpower_health).
+    fold_rids = facts.get("rpower_fold") or set()
+
+    def kept(rec, i):
+        k = i.get("key") or ""
+        suffix = k.split(":", 1)[1] if _RID_KEY.match(k) else k
+        if k in folded or suffix in folded:
+            return False
+        return not (rec.get("id") in fold_rids and (suffix == "int:rpower" or suffix.startswith("rpower:")))
+    return _sort_issues([i for r in recs for i in r["issues"] if kept(r, i)] + platform), facts
 
 
 ISSUES_IN_OVERVIEW = 60
