@@ -151,7 +151,7 @@ def encrypt(value):
     if value is None or value == "" or not isinstance(value, str) or value.startswith(PREFIX):
         return value
     state = key_state()
-    f = _fernet() if state == "ok" else None
+    f = _fernet() if state in ("ok", "missing") else None   # missing: None, and said once
     if f is None:
         refused = saves_refused()
         if refused or state == "invalid":

@@ -712,6 +712,8 @@ def _scrub_rows(conn):
 # tests/test_fix_d_backup.py fails until it is.
 KEEP_COLUMNS = {
     ("rpower_rate_bucket", "tokens"): "a request-budget count (a token bucket), no credential; its key is a hash",
+    ("restaurants", "rpower_credential_id"): "the id of a pos_credentials row (Audit #23 A7-01), not a secret; "
+                                              "the token it names is sealed in that row",
     ("users", "password_hash"): "a salted hash; dropping it locks every user out of a restored copy",
     ("users", "password_changed_at"): "a date",
     ("users", "password_strength"): "a label",

@@ -164,10 +164,14 @@ def test_s2_every_disconnect_route_clears_the_sync_stamp():
     import rpower_routes
     # Both routes (admin and client, web and mobile) share one body since the
     # parity round (#80): rpower_routes.do_disconnect.
-    assert '"rpower_last_synced": None' in inspect.getsource(rpower_routes.do_disconnect)
+    # Since Audit #23 (F7) the fields every disconnect clears are one list,
+    # rpower_routes._DISCONNECT_FIELDS, written by _clear_fields.
+    assert "_clear_fields()" in inspect.getsource(rpower_routes.do_disconnect)
+    assert "rpower_last_synced" in rpower_routes._DISCONNECT_FIELDS
+    assert rpower_routes._clear_fields()["rpower_last_synced"] is None
     for fn in (rpower_routes.disconnect_rpower, rpower_routes.rpower_disconnect_client):
         src = inspect.getsource(fn)
-        assert '"rpower_last_synced": None' in src or "do_disconnect(" in src
+        assert "_clear_fields()" in src or "do_disconnect(" in src
     assert '"toast_last_synced": None' in inspect.getsource(mobile_api.mobile_disconnect_toast)
 
 

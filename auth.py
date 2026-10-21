@@ -6026,6 +6026,9 @@ _UNGATED_PREFIXES = (
     # Integrations. Credential writes are principal_only in the handler.
     "/api/webhook", "/api/toast/", "/api/square/", "/api/clover/", "/api/rpower/",
     "/mobile/api/connections/", "/api/instagram-",
+    # A bulk-onboarded store's owner check (Audit #23 A7-02): the one page a
+    # held store reaches; its POST is principal-only in the handler.
+    "/api/pos/store-check", "/mobile/api/pos/store-check",
     # Website analytics' connection (web_analytics, 10/2/26): the property ID
     # and site URL, principal_only to change; its figures are under
     # /api/marketing/website, gated by Marketing.

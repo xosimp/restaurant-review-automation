@@ -1402,8 +1402,9 @@ def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
               _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
-              _scope_cache):
+              _scope_cache, _customer_cache):
         c.clear()
+    _io_ctx.cred = _io_ctx.tok = None
     try:
         import pos_io
         pos_io.reset_for_tests()
