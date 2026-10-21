@@ -1457,7 +1457,7 @@ def run_pos_retry():
             result = pos.sync_restaurant(rid)
             with lock:
                 counts["attempted"] += 1
-                counts["ok" if result.get("ok") else "failed"] += 1
+                counts["ok" if result.get("ok") else "skipped" if result.get("busy") else "failed"] += 1
             return
         attempt = next((n for n in range(1, len(pos.RETRY_DELAYS_HOURS) + 1)
                         if _ops.claim_period(f"pos_retry_attempt:{rid}", f"{local.date().isoformat()}#{n}")), None)
@@ -1468,7 +1468,9 @@ def run_pos_retry():
         result = pos.sync_restaurant(rid, trigger="retry", attempt=attempt)
         with lock:
             counts["attempted"] += 1
-            counts["ok" if result.get("ok") else "failed"] += 1
+            # Another process already syncing this store (pos.sync_restaurant
+            # says `busy`) is not a failure (Audit #23 A4-20).
+            counts["ok" if result.get("ok") else "skipped" if result.get("busy") else "failed"] += 1
 
     late_ids = set(late)
     _done, hit_bound = resumable_sweep("pos_retry_cursor", list(due) + late, _one, POS_RETRY_MAX_SECONDS,
