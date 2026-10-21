@@ -1078,7 +1078,9 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path, key=None) -> dict:
                 # labor would count it twice.
                 moved.update(_drop_neighbour_punches(conn, restaurant_id, name, iso,
                                                      [r["punch_id"] for r in want if r.get("punch_id")]))
-        restated = bool(prev and prev["max_stamp"] and rows.get("max_stamp")
+        # A suspect first read read again is still the night's first whole
+        # read, not a restatement of it.
+        restated = bool(prev and not first_time and prev["max_stamp"] and rows.get("max_stamp")
                         and rows["max_stamp"] != prev["max_stamp"])
         first_json = (json.dumps(verdict, sort_keys=True) if verdict is not None
                       else (prev["first_read"] if prev is not None else None))
