@@ -1698,7 +1698,11 @@ def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
                     job="alert_storm_cap", context=f"restaurant_id={restaurant_id}",
                     db_path=db_path if db_path != DB_PATH else None)
         import scheduler as _sched
-        if _sched.scheduling_allowed():
+        # Paged only past a share of the fleet (Audit #23 A6-26): at 1,500
+        # stores one storm somewhere most hours was up to 24 pages a day. Below
+        # 1/STORM_PAGE_SHARE restaurants in service (today's fleet) any one
+        # still pages; otherwise it stays on the console (the capture above).
+        if _sched.scheduling_allowed() and _storm_pages(db_path):
             # One fleet page, not one per restaurant (scale re-audit 10/20/26
             # R8-14): a POS or Google incident that floods many restaurants'
             # owners at once sent one text, email, pager event and push per
@@ -1721,6 +1725,30 @@ def _tell_operator_storm(restaurant_id, n, until, db_path: str = DB_PATH):
                               lines, cooldown_minutes=60)
     except Exception as e:
         print(f"[notify] storm alert to the operator failed: {e}")
+
+
+# More than this share of the restaurants in service capped in the last hour
+# is a fleet incident worth a page (Audit #23 A6-26).
+STORM_PAGE_SHARE = 0.02
+
+
+def _storm_pages(db_path: str = DB_PATH) -> bool:
+    """Whether the storms of the last hour are a fleet incident: more than
+    STORM_PAGE_SHARE of the non-demo restaurants in service capped. An
+    unreadable count pages (fail loud)."""
+    conn = models.get_conn(db_path)
+    try:
+        capped = int(conn.execute("SELECT COUNT(DISTINCT restaurant_id) AS n FROM alert_storm_caps "
+                                  "WHERE started_at >= datetime('now', '-1 hour')").fetchone()["n"] or 0)
+        fleet = int(conn.execute("SELECT COUNT(*) AS n FROM restaurants WHERE id > 0 AND COALESCE(is_demo,0)=0 AND "
+                                 + models.in_service_sql()).fetchone()["n"] or 0)
+    except Exception as e:
+        import logging
+        logging.getLogger("notify").warning("storm fleet count unreadable: %s", e)
+        return True
+    finally:
+        conn.close()
+    return capped > STORM_PAGE_SHARE * fleet
 
 
 def _storm_caps_last_day(db_path: str = DB_PATH) -> list:

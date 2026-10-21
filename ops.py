@@ -3092,19 +3092,23 @@ def failures_last_24h():
         return []
 
 
-def failures_since(since):
+def failures_since(since, data_checks=None):
     """[{job, cnt, last_at, sample_error}] since `since` (UTC stamp), the
     sample being each job's NEWEST error — MAX(error) was the alphabetically
-    last one."""
+    last one. `data_checks`: None every kind; True only the data findings
+    (kind 'data_quality'); False everything else (Audit #23 A6-04 — the
+    digest lists the data checks apart from the failures)."""
     try:
         from models import get_conn
         conn = get_conn()
         try:
-            rows = conn.execute("""
+            cond = "" if data_checks is None else (
+                " AND COALESCE({t}.kind,'job') {op} 'data_quality'".replace("{op}", "=" if data_checks else "<>"))
+            rows = conn.execute(f"""
                 SELECT f.job, COUNT(*) AS cnt, MAX(f.created_at) AS last_at,
-                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?
+                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?{cond.format(t='g')}
                         ORDER BY g.id DESC LIMIT 1) AS sample_error
-                FROM job_failures f WHERE f.created_at >= ? GROUP BY f.job ORDER BY cnt DESC
+                FROM job_failures f WHERE f.created_at >= ?{cond.format(t='f')} GROUP BY f.job ORDER BY cnt DESC
             """, (since, since)).fetchall()
             return [dict(r) for r in rows]
         finally:
@@ -5062,7 +5066,10 @@ def send_failure_digest():
     returning False into an ok=1 run nobody saw."""
     started = _now_utc_stamp()
     since = _digest_since()
-    failures = failures_since(since)
+    # The data checks' findings apart from the failures (Audit #23 A6-04): a
+    # reconcile gap is the data's news, not a job that broke.
+    failures = failures_since(since, data_checks=False)
+    checks = failures_since(since, data_checks=True)
     stuck = stuck_jobs()
     overdue = jobs_overdue()
     backup = backup_status()
@@ -5078,7 +5085,7 @@ def send_failure_digest():
     # A job that died without raising leaves no failure row, so "no failures"
     # was never the same thing as "nothing went wrong".
     # (tests/test_security.py pins the first three conjuncts in this order.)
-    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed:
+    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed and not checks:
         _mark_digest_sent(started)
         ping_healthcheck()
         return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False, "sent": False}
@@ -5098,6 +5105,8 @@ def send_failure_digest():
 
     fail_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in failures]
+    check_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
+                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in checks]
     stuck_items = [f'<b>{_html.escape(j["job"])}</b> running {int(j.get("minutes") or 0)} min '
                    f'(bound {int(j.get("bound_minutes") or 0)} min) — '
                    f'{_html.escape((j.get("context") or "")[:100])}' for j in stuck]
@@ -5112,6 +5121,8 @@ def send_failure_digest():
         + _section("Overdue", overdue_items, "No successful run inside the job's SLA.")
         + _section("Backup", backup_items)
         + _section("Failures", fail_items)
+        + _section("Data checks", check_items, "The data disagreed with itself; each store's findings are on "
+                   "its console page. Nothing failed.")
         + _section("Running past their bound", stuck_items,
                    "Still running past the job's own bound; a run a deploy killed is closed at boot.")
         + _section("Windows missed", missed_items, "Due in a restaurant's local window, which closed first.")
@@ -5129,6 +5140,8 @@ def send_failure_digest():
         parts.append(f"{len(stuck)} started and never finished")
     if missed:
         parts.append("windows missed")
+    if checks:
+        parts.append("data checks")
     if sec_lines and not parts:
         parts.append("security")
     subject = "⚠ Background jobs: " + " · ".join(parts)
