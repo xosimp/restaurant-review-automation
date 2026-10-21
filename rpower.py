@@ -1165,8 +1165,9 @@ def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
               _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
-              _scope_cache):
+              _scope_cache, _feed_nights):
         c.clear()
+    _change_datetime_refused.update(at=None, why=None)
     try:
         import pos_io
         pos_io.reset_for_tests()
@@ -2887,6 +2888,26 @@ def line_kind(row: dict, types: dict) -> str:
     return "other" if kind in ("unknown", "excluded") else kind
 
 
+def store_key(restaurant_id: int):
+    """The RPOWER store a restaurant's archive is read from, "<cg>:<store_mid>"
+    — the binding as stored, no request (Audit #23 A4-05 / A6-18): every
+    archived night carries it (pos_archive_days.store_key), so a restaurant
+    rebound to another store never serves the first store's nights. None
+    while the restaurant is not bound to a store."""
+    try:
+        c = _creds(restaurant_id)
+    except RPowerError:
+        return None
+    cg, mid = str(c.get("cg") or "").strip(), str(c.get("store_mid") or "").strip()
+    return f"{cg}:{mid}" if cg and mid else None
+
+
+# A night built from the change read's own rows (Audit #23 A1-04) is checked
+# against RPOWER's per-ticket type totals like any read; past this gap, or
+# with a line of an unknown type, the night is read by business date instead.
+FEED_NIGHT_TOLERANCE = 1.00
+
+
 def archive_rows(restaurant_id: int, business_date) -> dict:
     """One business date's tickets, sale lines and punches, every field the
     archive keeps, names resolved from RPOWER's own lists:
@@ -2896,7 +2917,14 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     payout/getbydaterange and timeclock/getbydaterange (the day and the next,
     kept to the business day: punch_business_date's 4am to 4am), and the lists: sales types,
     menu, void reasons, people, tables and rooms (table/room getbystore),
-    meal times, profit centers, payment methods and payout categories."""
+    meal times, profit centers, payment methods and payout categories.
+
+    Audit #23 A1-04: when the change read that just ran covered the whole
+    night (_feed_night), its own ticketsales and ticket rows ARE the night's
+    lines and tickets — the same records, the same fields — and the two
+    business-date reads are not made again; the night is read by business
+    date after all when those rows do not reconcile with RPOWER's own ticket
+    totals. `source` says which ("feed" | "business_date")."""
     day = business_date if hasattr(business_date, "toordinal") else date.fromisoformat(_d(business_date))
     token, base = _ctx(restaurant_id)
     iso = _d(day)
@@ -2904,24 +2932,53 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
     # for the group (_list, A3-07) that does not name an id the night
     # carries — a sales type, item, employee, table, payment method added
     # since it was read — is read afresh once, so nothing is filed unknown.
-    raw_lines = _paged(token, "ticketsales/getbybusinessdate",
-                       {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    raw_tickets = _paged(token, "ticket/getbybusinessdate",
-                         {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+    feed = _feed_night(restaurant_id, iso)
+    if feed is not None:
+        raw_lines, raw_tickets = feed["lines"], feed["tickets"]
+    else:
+        raw_lines, raw_tickets = _night_by_date(token, base, iso)
     start, end = _punch_window(day)            # the schedule's boundary (R3-10)
     raw_punches = [e for e in fetch_time_entries(restaurant_id, day, day + timedelta(days=1)) or []
                    if (lambda t: t is not None and start <= t < end)(_punch_dt(e.get("in_dttm")))]
     raw_payments = _paged(token, "ticketpayment/getbybusinessdate",
                           {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
-    # RPOWER's own example spells this one `startDate` (and `enddate`), a
-    # single day asked as start == end. UNPROVEN (bar audit 10/14/26 RPW-17
-    # / R26): that payout's enddate is inclusive — timeclock/getbydaterange
-    # treats its enddate as exclusive, and EJ's has one payout in 94 days (a
-    # $0.01 test, 8/29) to judge by. To probe once on a live store (the lead,
-    # read-only): ask a day with a known payout as start == end and as end =
-    # day + 1, and compare the rows.
+    # RPOWER's own example spells this one `startDate` (and `enddate`). Asked
+    # for the day AND the next (Audit #23 A1-16): timeclock/getbydaterange
+    # reads its enddate as exclusive (checked live 9/28/26) and payout's is
+    # unproven either way (EJ's has one payout in 94 days) — asked as start ==
+    # end, an exclusive enddate would answer every night empty. The rows are
+    # kept to the night by their own `date` below, so the extra day costs
+    # nothing.
     raw_payouts = _paged(token, "payout/getbydaterange",
-                         {**base, "startDate": iso, "enddate": iso, "sortorder": "date"})
+                         {**base, "startDate": iso, "enddate": _d(day + timedelta(days=1)), "sortorder": "date"})
+    out = _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw_punches, raw_payments,
+                          raw_payouts)
+    out["source"] = "business_date"
+    if feed is not None:
+        chk = out.get("checks") or {}
+        if abs(float(chk.get("gap") or 0)) > FEED_NIGHT_TOLERANCE or int(chk.get("unknown_type_lines") or 0):
+            log.warning("[rpower] %s %s: the change read's rows did not reconcile (gap %s); read by business date",
+                        restaurant_id, iso, chk.get("gap"))
+            raw_lines, raw_tickets = _night_by_date(token, base, iso)
+            out = _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw_punches,
+                                  raw_payments, raw_payouts)
+            out["source"] = "business_date"
+        else:
+            out["source"] = "feed"
+    return out
+
+
+def _night_by_date(token, base, iso) -> tuple:
+    """(lines, tickets) of one business date, read by business date."""
+    return (_paged(token, "ticketsales/getbybusinessdate",
+                   {**base, "startdate": iso, "enddate": iso, "sortorder": "date"}),
+            _paged(token, "ticket/getbybusinessdate",
+                   {**base, "startdate": iso, "enddate": iso, "sortorder": "date"}))
+
+
+def _assemble_night(restaurant_id, token, base, iso, raw_lines, raw_tickets, raw_punches, raw_payments,
+                    raw_payouts) -> dict:
+    """archive_rows' records of one night from RPOWER's raw rows."""
     lists = _archive_lists(restaurant_id)
     missed = _archive_misses(lists, raw_lines, raw_tickets, raw_punches, raw_payments, raw_payouts)
     if missed:
@@ -2948,7 +3005,11 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
         return (cat_id, ((cat.get("name") or "").strip() or None),
                 ((dep.get("name") or "").strip() or (UNASSIGNED_DEPARTMENT if item_mid else None)))
 
-    stamps = []
+    # The newest write the night was read with, from the records the change
+    # feeds watch (lines, tickets, payments) — never a punch's (Audit #23
+    # A4-03(c)): a manager's punch edit stamped later than an unseen re-post
+    # masked it, since a date is re-read only for a write past max_stamp.
+    stamps, punch_stamps = [], []
     lines, net_by_ticket = [], {}
     # Our line totals beside RPOWER's own per-ticket type totals (POS-11):
     # pos_archive.archive_day reconciles them and raises a discrepancy.
@@ -3040,12 +3101,13 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
             "source_stamp": str(t.get("time_stamp") or "")[:19] or None,
             **{k: round(_num(t.get(k)), 2) for k in ("type_sale", "type_discnt", "type_promo", "type_comp")}})
     punches = _punch_records(raw_punches, iso, people)
-    stamps.extend(str(e.get("time_stamp") or "") for e in raw_punches if e.get("rid"))
+    punch_stamps.extend(str(e.get("time_stamp") or "") for e in raw_punches if e.get("rid"))
     methods = lists["methods"]
     payments = []
     for p in raw_payments:
         if _biz_date(p.get("date")) != iso or not p.get("rid"):
             continue
+        stamps.append(str(p.get("time_stamp") or ""))
         m = methods.get(_id(p.get("paymeth_mid")) or "") or {}
         payments.append({
             "payment_id": str(p["rid"]), "ticket_id": _id(p.get("ticket_rid")), "business_date": iso,
@@ -3092,7 +3154,12 @@ def archive_rows(restaurant_id: int, business_date) -> dict:
                   gap=round(sum(by_flag.values()) - sum(theirs.values()) - explained, 2), tickets=len(live),
                   cash_discount_unreflected=explained)
     return {"tickets": tickets, "lines": lines, "punches": punches, "payments": payments, "payouts": payouts,
+            # The night's net as fetch_business_days counts it: every sale and
+            # discount line, a line whose ticket the ticket read did not
+            # return included (Audit #23 A2-22).
+            "net_sales": round(checks["lines_sale"] + checks["lines_discount"], 2),
             "max_stamp": (max(s for s in stamps if s)[:19] if any(stamps) else None),
+            "punch_max_stamp": (max(s for s in punch_stamps if s)[:19] if any(punch_stamps) else None),
             "links_ok": links_ok, "checks": checks}
 
 
@@ -3263,30 +3330,75 @@ def _link_modifiers(token: str, base: dict, iso: str, lines: list) -> int:
 # The change feeds a restatement is watched through (food & bar audit
 # 10/16/26 POS-19): a sale line rewritten, and a ticket rewritten with no
 # sale line touched — a cancellation, a guest-count or room change, a tip
-# adjusted on the check. Both are RPOWER's documented getbytimestamp reads
-# (docs/integrations/rpower_core_api.postman.json: GetTicketSalesByTimeStamp,
-# GetTicketByTimeStamp), asked in the same week-sized chunks.
-CHANGE_FEEDS = ("ticketsales/getbytimestamp", "ticket/getbytimestamp")
+# adjusted on the check — and (Audit #23 A4-18) a payment rewritten with no
+# ticket touched: a card tip adjusted the next morning changed only
+# pos_payments and was never re-read. All three are RPOWER's documented
+# getbytimestamp reads (docs/integrations/rpower_core_api.postman.json:
+# GetTicketSalesByTimeStamp, GetTicketByTimeStamp,
+# GetTicketPaymentByTimeStamp), asked in the same week-sized chunks.
+CHANGE_FEEDS = ("ticketsales/getbytimestamp", "ticket/getbytimestamp", "ticketpayment/getbytimestamp")
+# The feeds whose rows can stand in for the night's business-date reads
+# (A1-04): {feed: what archive_rows calls them}.
+_FEED_NIGHT_KINDS = {"ticketsales/getbytimestamp": "lines", "ticket/getbytimestamp": "tickets"}
 
 
 # Change reads ask with a time, not only a date (blind re-audit 10/20/26
 # R3-03): `startdate` / `enddate` as YYYY-MM-DDTHH:MM:SS — RPOWER's own
 # collection asks ticketitem/getbytimestamp that way. A date-only window was
 # whole UTC days (2–4 of them, about 7 pages) for a question about the last
-# half hour. Two allowances while RPOWER has not said how it reads the time
-# (Q5: UTC, or the store's local time):
+# half hour. Two allowances:
 #   * the local filter keeps a write only when it is later than `since`
-#     less CHANGE_OVERLAP (clock skew between us and RPOWER);
-#   * the window asked for starts RPOWER_CHANGE_MARGIN_HOURS earlier still,
-#     so a server reading the time as US local (up to 10 hours behind UTC)
-#     still returns every write after `since`. Set it to 0 once RPOWER
-#     confirms the filter is UTC.
-# RPOWER_CHANGE_DATETIME=0 (or a datetime window answered with an error,
-# remembered for the process) goes back to date-only windows.
+#     less CHANGE_OVERLAP (clock skew between us and RPOWER, and a write
+#     reaching RPOWER's cloud a little after its stamp — RPOWER_CHANGE_
+#     OVERLAP_MINUTES; widen it to the measured lag once RPOWER says it, Q1);
+#   * RPOWER_CHANGE_MARGIN_HOURS starts the window that much earlier still,
+#     for a server reading the time as US local. 0 by default since 10/21/26
+#     (Audit #23 A1-03): the collection says the filter is UTC, and
+#     production's newest `time_stamp` sits ~15 minutes before archived_at
+#     (UTC) — the 10-hour margin downloaded the previous night's dinner on
+#     every read and threw it away. Kept as an override.
+# RPOWER_CHANGE_DATETIME=0 goes back to date-only windows; so does a
+# datetime window RPOWER refuses (_datetime_refused, below) — for
+# CHANGE_DATETIME_REFUSAL_SECONDS, then the time is asked again.
 CHANGE_DATETIME = os.getenv("RPOWER_CHANGE_DATETIME", "1").strip().lower() not in ("0", "false", "off", "no")
-CHANGE_MARGIN = timedelta(hours=max(0.0, float(os.getenv("RPOWER_CHANGE_MARGIN_HOURS", "10") or 0)))
-CHANGE_OVERLAP = timedelta(minutes=15)
-_change_datetime_refused = {"at": None}
+CHANGE_MARGIN = timedelta(hours=max(0.0, float(os.getenv("RPOWER_CHANGE_MARGIN_HOURS", "0") or 0)))
+CHANGE_OVERLAP = timedelta(minutes=max(0.0, float(os.getenv("RPOWER_CHANGE_OVERLAP_MINUTES", "15") or 15)))
+CHANGE_DATETIME_REFUSAL_SECONDS = 3600
+_change_datetime_refused = {"at": None, "why": None}
+# A refusal is a 400/422 whose body speaks of the date or time it was asked
+# (Audit #23 A1-15): any 4xx used to flip every store in the process to
+# date-only windows until it restarted — a 404, or a 400 for a range over a
+# month after an outage, included.
+_REFUSAL_STATUSES = (400, 422)
+_REFUSAL_BODY = re.compile(r"date|time|format", re.I)
+
+
+def _datetime_refused(e) -> bool:
+    """Whether an RPowerError is RPOWER refusing a time in the window."""
+    msg = str(e)
+    status = getattr(e, "status", None)
+    if status is None:
+        m = re.search(r"HTTP (\d{3})", msg)
+        status = int(m.group(1)) if m else None
+    if status not in _REFUSAL_STATUSES:
+        return False
+    body = getattr(e, "body", None)
+    if body is None:
+        # "HTTP 400 from <path>: <body>" — the path itself says "timestamp".
+        body = msg.split(": ", 1)[1] if ": " in msg else ""
+    return bool(_REFUSAL_BODY.search(str(body)))
+
+
+def _datetime_refusal_active() -> bool:
+    at = _change_datetime_refused.get("at")
+    if at is None:
+        return False
+    if time.time() - float(at) >= CHANGE_DATETIME_REFUSAL_SECONDS:
+        _change_datetime_refused.update(at=None, why=None)
+        log.info("[rpower] change reads ask with a time again (the refusal is %s s old)",
+                 CHANGE_DATETIME_REFUSAL_SECONDS)
+        return False
+    return True
 
 
 def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> set:
@@ -3296,8 +3408,8 @@ def changed_business_dates(restaurant_id: int, since_utc: datetime, until_utc: d
 
 
 def changed_business_stamps(restaurant_id: int, since_utc: datetime, until_utc: datetime) -> dict:
-    """{business date: its newest write stamp} for the sale lines and
-    tickets written or rewritten in RPOWER's database between two UTC
+    """{business date: its newest write stamp} for the sale lines, tickets
+    and payments written or rewritten in RPOWER's database between two UTC
     moments — CHANGE_FEEDS, which RPOWER documents as "when a record was
     last inserted or updated" (UTC). A store re-posting a closed day moves
     its time_stamp, so a date already archived shows up here; the archive
@@ -3311,26 +3423,38 @@ def changed_business_stamps(restaurant_id: int, since_utc: datetime, until_utc: 
     start, so nothing falls between two requests. With a time in the window
     (CHANGE_DATETIME, above) it runs from `since` less the margin to
     `until`; date-only, from since's date to the day after until's (enddate
-    possibly exclusive)."""
+    possibly exclusive).
+
+    The ticketsales and ticket rows of a night the window covered whole are
+    kept a few minutes for archive_rows (A1-04, _keep_feed_nights)."""
     token, base = _ctx(restaurant_id)
     lo = (since_utc - CHANGE_OVERLAP).strftime("%Y-%m-%d %H:%M:%S")
-    if CHANGE_DATETIME and _change_datetime_refused["at"] is None:
+    collect = {}
+    if CHANGE_DATETIME and not _datetime_refusal_active():
+        start = since_utc - CHANGE_OVERLAP - CHANGE_MARGIN
         try:
-            return _change_read(token, base, lo, since_utc - CHANGE_OVERLAP - CHANGE_MARGIN,
-                                until_utc + timedelta(minutes=1), True)
+            out = _change_read(token, base, lo, start, until_utc + timedelta(minutes=1), True, collect)
+            _keep_feed_nights(restaurant_id, start, collect)
+            return out
         except (RPowerAuthError, RPowerTryLater):
             raise
         except RPowerError as e:
-            if "HTTP 4" not in str(e):
+            if not _datetime_refused(e):
                 raise
-            # RPOWER refused a time in the window: date-only from here on in
-            # this process (said once in the log).
-            _change_datetime_refused["at"] = time.time()
-            log.warning("[rpower] change read refused a datetime window (%s); date-only windows from now on", e)
-    return _change_read(token, base, lo, since_utc, until_utc + timedelta(days=1), False)
+            # RPOWER refused a time in the window: date-only for the next
+            # CHANGE_DATETIME_REFUSAL_SECONDS in this process, said once with
+            # what RPOWER answered.
+            _change_datetime_refused.update(at=time.time(), why=str(e)[:300])
+            log.warning("[rpower] change read refused a datetime window (%s); date-only windows for %ss",
+                        e, CHANGE_DATETIME_REFUSAL_SECONDS)
+            collect = {}
+    out = _change_read(token, base, lo, since_utc, until_utc + timedelta(days=1), False, collect)
+    _keep_feed_nights(restaurant_id, datetime.combine(since_utc.date(), datetime.min.time(),
+                                                      tzinfo=since_utc.tzinfo), collect)
+    return out
 
 
-def _change_read(token, base, lo, start, stop, with_time) -> dict:
+def _change_read(token, base, lo, start, stop, with_time, collect=None) -> dict:
     fmt = (lambda v: v.strftime("%Y-%m-%dT%H:%M:%S")) if with_time else _d
     if not with_time:
         start = date.fromisoformat(_d(start))
@@ -3342,15 +3466,122 @@ def _change_read(token, base, lo, start, stop, with_time) -> dict:
         for feed in CHANGE_FEEDS:
             rows = _paged(token, feed, {
                 **base, "startdate": fmt(cursor), "enddate": fmt(end), "sortorder": "time_stamp"})
+            kind = _FEED_NIGHT_KINDS.get(feed)
             for r in rows:
+                if not isinstance(r, dict):
+                    continue
                 stamp = str(r.get("time_stamp") or "").replace("T", " ")[:19]
                 day = _biz_date(r.get("date"))
                 if day and stamp and stamp > lo:
                     out[day] = max(out.get(day) or "", stamp)
+                if collect is not None and kind and day and r.get("rid"):
+                    # Keyed: two chunks share their boundary moment.
+                    collect.setdefault(day, {}).setdefault(kind, {})[_row_key(r)] = r
         if end >= stop:
             break
         cursor = end
     return out
+
+
+# ── a night from the change read's own rows (Audit #23 A1-04) ───────────────
+#
+# The nightly run reads the change feeds from the last run's cursor, then
+# archive_rows read the same night's ticketsales and ticket rows again by
+# business date — the night downloaded twice. A night the change window
+# covered from before its first possible write (the restaurant's local
+# midnight starting the business date, less FEED_NIGHT_LEAD) is kept here
+# for FEED_NIGHT_KEEP_SECONDS and archive_rows takes it instead, once:
+# every record RPOWER wrote for the night in that window is in it, at its
+# latest version, as the business-date read would return it. Not taken
+# (the business-date read runs) when either feed had no row for the night
+# (a store or simulator that does not serve one), when a line names a
+# ticket the ticket feed did not return, when the night's earliest write
+# sits within FEED_NIGHT_LEAD of the window's start (writes before it may
+# exist), or when the night does not reconcile (archive_rows).
+# ASSUMPTION until RPOWER answers Q2/Q10: no record of a business date is
+# written before the local midnight that starts it (a store that closes its
+# day early and rings a ticket that evening would date it the next day); the
+# weekly verification (pos_archive, A4-03) re-archives a night whose ticket
+# count or sales then disagree.
+FEED_NIGHT_KEEP_SECONDS = 900
+FEED_NIGHT_LEAD = timedelta(hours=1)
+ARCHIVE_FROM_FEED = os.getenv("RPOWER_ARCHIVE_FROM_FEED", "1").strip().lower() not in ("0", "false", "off", "no")
+_feed_nights = _LRU(CACHE_MAX_RESTAURANTS)
+
+
+def _night_start_utc(restaurant_id: int, iso: str):
+    """The UTC moment of the restaurant's local midnight starting `iso`, or
+    None when its zone cannot be read."""
+    try:
+        from models import get_restaurant
+        from time_utils import restaurant_tz
+        from datetime import timezone as _tz
+        tz = restaurant_tz(get_restaurant(restaurant_id))
+        local = datetime.combine(date.fromisoformat(iso), datetime.min.time()).replace(tzinfo=tz)
+        return local.astimezone(_tz.utc)
+    except Exception:
+        return None
+
+
+def _keep_feed_nights(restaurant_id: int, window_start, collect: dict) -> None:
+    """Keep each night `collect` holds whole (see above) for archive_rows."""
+    if not ARCHIVE_FROM_FEED or not collect:
+        return
+    try:
+        from datetime import timezone as _tz
+        ws = window_start if window_start.tzinfo else window_start.replace(tzinfo=_tz.utc)
+        for iso, kinds in collect.items():
+            begins = _night_start_utc(restaurant_id, iso)
+            if begins is None or ws > begins - FEED_NIGHT_LEAD:
+                continue
+            lines, tickets = list((kinds.get("lines") or {}).values()), list((kinds.get("tickets") or {}).values())
+            if not lines or not tickets:
+                continue
+            first = min(str(r.get("time_stamp") or "9999").replace("T", " ")[:19] for r in lines + tickets)
+            if first < (ws + FEED_NIGHT_LEAD).astimezone(_tz.utc).strftime("%Y-%m-%d %H:%M:%S"):
+                continue                      # writes may precede the window: not provably whole
+            _feed_nights[(int(restaurant_id), iso)] = (time.monotonic(), {"lines": lines, "tickets": tickets})
+    except Exception as e:                    # an optimisation: the business-date read stands
+        log.warning("[rpower] change-read nights not kept for %s: %s", restaurant_id, e)
+
+
+def _feed_night(restaurant_id: int, iso: str):
+    """{"lines", "tickets"} of `iso` from the change read just made, taken
+    once, or None (archive_rows reads the night by business date)."""
+    if not ARCHIVE_FROM_FEED:
+        return None
+    key = (int(restaurant_id), iso)
+    hit = _feed_nights.get(key)
+    if hit is None:
+        return None
+    _feed_nights.pop(key, None)
+    at, night = hit
+    if time.monotonic() - at > FEED_NIGHT_KEEP_SECONDS:
+        return None
+    lines = [r for r in night["lines"] if _biz_date(r.get("date")) == iso]
+    tickets = [r for r in night["tickets"] if _biz_date(r.get("date")) == iso]
+    known = {str(t.get("rid")) for t in tickets}
+    if not lines or not tickets or any(_id(r.get("ticket_rid")) and str(_id(r.get("ticket_rid"))) not in known
+                                       for r in lines):
+        return None
+    return {"lines": lines, "tickets": tickets}
+
+
+# ── re-verifying stored nights (Audit #23 A4-03) ────────────────────────────
+
+def verify_day_totals(restaurant_id: int, business_date) -> dict:
+    """RPOWER's own count of a business date's tickets and their type_sale
+    total (non-cancelled), from ticket/getbybusinessdate — about one page a
+    night: {"tickets", "type_sale"}. pos_archive's weekly verification
+    compares it with the stored night and re-archives a night that moved
+    without the change feed naming it."""
+    token, base = _ctx(restaurant_id)
+    iso = _d(business_date)
+    rows = [t for t in _paged(token, "ticket/getbybusinessdate",
+                              {**base, "startdate": iso, "enddate": iso, "sortorder": "date"})
+            if _biz_date(t.get("date")) == iso and t.get("rid")]
+    return {"tickets": len(rows),
+            "type_sale": round(sum(_num(t.get("type_sale")) for t in rows if not t.get("is_cancelled")), 2)}
 
 
 def fetch_employee_jobs(restaurant_id: int) -> list:

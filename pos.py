@@ -291,6 +291,32 @@ def sync_restaurant(restaurant_id, trigger="nightly", attempt=0):
     name, mod = connected_provider(restaurant_id)
     if not mod:
         return {"ok": False, "provider": None, "error": "No POS connected"}
+    # One sync of a restaurant at a time across processes (Audit #23 A4-20):
+    # the per-tenant lock below is a thread lock, so the onboarding sync in
+    # the queue worker and the 3am or "Sync now" sync in the web process
+    # could interleave two 60-day reads, the older writing last. The claim
+    # is renewed while the sync runs and lapses SYNC_CLAIM_MINUTES after a
+    # killed process's last beat. A sync that finds one running records
+    # nothing (it is not a failure) and says `busy`.
+    import ops
+    claim = f"pos_sync:{restaurant_id}"
+    if not ops.claim_cooldown(claim, SYNC_CLAIM_MINUTES):
+        return {"ok": False, "provider": name, "busy": True,
+                "error": "a sync of this restaurant is already running"}
+    try:
+        import pos_archive
+        with pos_archive._ClaimKeeper(claim):
+            return _sync_restaurant(restaurant_id, name, mod, attempt)
+    finally:
+        ops.release_period("cooldown", claim)
+
+
+SYNC_CLAIM_MINUTES = 10
+
+
+def _sync_restaurant(restaurant_id, name, mod, attempt):
+    import time as _time
+    from datetime import datetime, timedelta, timezone
     t0 = _time.monotonic()
     try:
         result = mod.sync_to_db(restaurant_id) or {}
@@ -437,6 +463,12 @@ def sync_all(stats=None):
         began = time.monotonic()
         result = sync_restaurant(rid)
         took = int((time.monotonic() - began) * 1000)
+        if result.get("busy"):
+            # Another process is syncing it right now (its onboarding sync):
+            # that sync is tonight's (A4-20).
+            with lock:
+                counts["skipped"] += 1
+            return
         with lock:
             by_rid[rid] = {"restaurant": r.name, **result}
             counts["attempted"] += 1
@@ -600,16 +632,22 @@ def open_sync_rows(due_by, db_path=None) -> int:
 # hour comes, once a night.
 POS_SYNC_LOCAL_HOUR = int(__import__("os").getenv("POS_SYNC_LOCAL_HOUR", "3"))
 DEFERRED_KEY = "pos_sync_deferred"
+# The nightly sync's local window closes this many hours after the
+# business-day boundary (Audit #23 A4-15): "due" was `hour >= 3`, so at
+# 3am Chicago a Hawaii store (10pm) was synced mid-service.
+POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS = 6
 
 
 def sync_due_locally(restaurant, now_local=None) -> bool:
-    """Whether the restaurant's own clock has reached POS_SYNC_LOCAL_HOUR
-    (an hour before the business-day boundary counts; a restaurant whose
-    clock cannot be read is due — the sync runs as it always did)."""
+    """Whether the restaurant's own clock is inside the nightly sync's
+    window: from POS_SYNC_LOCAL_HOUR (two hours before the 5am business-day
+    boundary) to POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS after the boundary
+    (A4-15) — never during the evening's service. A restaurant whose clock
+    cannot be read is due — the sync runs as it always did."""
     try:
-        from time_utils import restaurant_now
+        from time_utils import restaurant_now, BUSINESS_DAY_START_HOUR
         local = now_local or restaurant_now(restaurant, naive=True)
-        return local.hour >= POS_SYNC_LOCAL_HOUR
+        return POS_SYNC_LOCAL_HOUR <= local.hour < BUSINESS_DAY_START_HOUR + POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS
     except Exception:
         return True
 

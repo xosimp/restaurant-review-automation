@@ -73,7 +73,7 @@ def _routes(day_iso, lines=None, tickets=None, **over):
         "mealtime/getbycg": [], "profitcenter/getbycg": [], "paymentmethod/getbycg": [], "payoutcategory/getbycg": [],
         "ticketpayment/getbybusinessdate": [], "payout/getbydaterange": [], "timeclock/getbydaterange": [],
         "ticketitem/getbybusinessdate": [], "closeday/getbybusinessdate": [],
-        "ticketsales/getbytimestamp": [], "ticket/getbytimestamp": [],
+        "ticketsales/getbytimestamp": [], "ticket/getbytimestamp": [], "ticketpayment/getbytimestamp": [],
         "ticketsales/getbybusinessdate": lines if lines is not None else [
             {"rid": "L1", "atom": 11, "ticket_rid": "T1", "date": d, "menuitem_mid": "M1", "slstype_mid": "S",
              "qty": 3, "sales": 45.0, "time_stamp": f"{day_iso}T23:00:00"}],

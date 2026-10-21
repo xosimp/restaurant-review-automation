@@ -121,9 +121,39 @@ def init_onboarding(db_path=None):
 
 # ── storage: the database's size and the room left (ONB-1) ──────────────────
 
-# What one archived store-day costs, lines and tickets and their indexes
-# (scale audit A8: ~613 KB measured from the archive's own tables).
-BACKFILL_BYTES_PER_STORE_DAY = int(os.getenv("POS_BACKFILL_BYTES_PER_STORE_DAY", str(650 * 1000)))
+# What one archived store-day costs when the store's own nights cannot say
+# yet: lines, tickets, punches, payments, the item rollup (pos_item_daily)
+# and their indexes. Audit #23 A5-08 (10/21/26): ~1.15 MB measured at
+# Simple EJ's — the 650 KB of the 10/19 audit left out pos_item_daily and
+# under-sized EJ's lines, so a 200-store wave reserved 0.9 GB a night and
+# wrote ~1.6 GB. Once a store has BACKFILL_MEASURE_MIN_DAYS archived nights
+# its own average lines x BACKFILL_BYTES_PER_LINE is used instead
+# (bytes_per_store_day).
+BACKFILL_BYTES_PER_STORE_DAY = int(os.getenv("POS_BACKFILL_BYTES_PER_STORE_DAY", str(1250 * 1000)))
+BACKFILL_BYTES_PER_LINE = int(os.getenv("POS_BACKFILL_BYTES_PER_LINE", "1000") or 1000)
+BACKFILL_MEASURE_MIN_DAYS = 7
+BACKFILL_BYTES_FLOOR = 100 * 1000
+
+
+def bytes_per_store_day(restaurant_id, provider, db_path=None) -> int:
+    """What one more archived night of this store will cost on disk: its
+    last 28 archived nights' average lines x BACKFILL_BYTES_PER_LINE (at
+    least BACKFILL_BYTES_FLOOR), or BACKFILL_BYTES_PER_STORE_DAY while it has
+    fewer than BACKFILL_MEASURE_MIN_DAYS nights with lines. Never raises."""
+    try:
+        conn = get_conn(db_path)
+        try:
+            rows = conn.execute("SELECT lines FROM pos_archive_days WHERE restaurant_id=? AND provider=? "
+                                "AND lines > 0 ORDER BY business_date DESC LIMIT 28",
+                                (int(restaurant_id), provider)).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return BACKFILL_BYTES_PER_STORE_DAY
+    if len(rows) < BACKFILL_MEASURE_MIN_DAYS:
+        return BACKFILL_BYTES_PER_STORE_DAY
+    avg = sum(int(r[0] or 0) for r in rows) / len(rows)
+    return int(max(BACKFILL_BYTES_FLOOR, avg * BACKFILL_BYTES_PER_LINE))
 # How many stores may backfill history at once (ONB-1). A wave of new stores
 # queues behind it, newest-admitted last. An operator's POS_BACKFILL_MAX_STORES
 # is kept as given; unset, the cap is sized from the RPOWER fleet budget
@@ -348,7 +378,8 @@ def backfill_admission(restaurant_id, provider, missing_days, days_tonight, db_p
                              "held_at=NULL WHERE restaurant_id=? AND provider=?", (_now(), rid, provider))
             used += 1
         conn.commit()
-        room = storage_room(max(0, int(days_tonight)) * BACKFILL_BYTES_PER_STORE_DAY, db_path=db_path)
+        room = storage_room(max(0, int(days_tonight)) * bytes_per_store_day(rid, provider, db_path=db_path),
+                            db_path=db_path)
         if not room.get("ok"):
             conn.execute("UPDATE pos_backfill_slots SET held_reason=?, held_at=? WHERE restaurant_id=? AND provider=?",
                          (str(room.get("reason") or "no room")[:300], _now(), rid, provider))

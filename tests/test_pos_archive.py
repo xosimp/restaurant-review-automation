@@ -165,7 +165,9 @@ def test_rpower_archive_rows_names_everything_and_drops_the_null_date(db_path, m
                      "L3": ("comp", "Brisket", "Error Made", 6.5)}
     (p,) = out["punches"]
     assert (p["employee_name"], p["role"], p["pay"], p["tips"], p["edited_by"]) == ("Dana Reyes", "Server PM", 14.91, 88.0, None)
-    assert out["max_stamp"] == "2026-09-29T04:00:00"
+    # The newest write of the records the change feeds watch — the ticket's,
+    # never the later punch's (Audit #23 A4-03(c)); the punch's kept apart.
+    assert out["max_stamp"] == "2026-09-29T00:05:00" and out["punch_max_stamp"] == "2026-09-29T04:00:00"
     assert [(y["method"], y["is_card"], y["amount"], y["tip"]) for y in out["payments"]] == [
         ("Visa", 1, 20.0, 5.0), ("Cash", 0, 5.0, 0.0)]
     (po,) = out["payouts"]

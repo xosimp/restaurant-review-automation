@@ -72,8 +72,11 @@ def _routes(day_iso):
             {"rid": "T1", "date": d, "open_dttm": f"{day_iso}T18:00:00", "close_dttm": f"{day_iso}T19:00:00",
              "kvs_dttm": NULL, "bump_dttm": NULL, "guest_count": 2, "tax": 3.1, "type_sale": 40.0, "type_discnt": -5.0,
              "type_promo": 0, "type_comp": 9.5, "is_cancelled": 0},
+            # Its only sale line was voided, so RPOWER's own type_sale is 0 and
+            # the night reconciles (a first read that does not is held
+            # suspect and not served, Audit #23 A4-04).
             {"rid": "T2", "date": d, "open_dttm": NULL, "close_dttm": NULL, "guest_count": 1, "tax": 0.0,
-             "type_sale": 20.0, "is_cancelled": 0}],
+             "type_sale": 0.0, "is_cancelled": 0}],
     }
 
 
