@@ -1392,7 +1392,14 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     typed or Back Office price makes — so outcomes knows a price moved inside
     a tracked window, and every repricing is on file to learn from. Only
     levels rung in the last PRICE_LEVEL_LOOKBACK_DAYS of archived sales are
-    tracked. The first read is the baseline and logs nothing."""
+    tracked. The first read is the baseline and logs nothing.
+
+    Audit #23 A3-21: a change is dated by the first sold line rung at the new
+    price since the list was last read (the list is read weekly, so a Monday
+    reprice was logged the next Sunday and outcomes windows misattributed
+    it), and a price the POS no longer lists is dropped (a discontinued drink
+    kept its last price in the bar's margins for good) — never on a read that
+    lists under half of what is kept (a short read empties nothing)."""
     name, mod = provider_for(restaurant_id)
     fn = getattr(mod, "fetch_menu_prices", None) if mod else None
     if not callable(fn):
@@ -1406,10 +1413,14 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     # The main level is read over the same window as the levels in use (scale
     # audit 10/19/26 DB-10): it scanned every line the store ever sold, nightly.
     since = (today - timedelta(days=PRICE_LEVEL_LOOKBACK_DAYS)).isoformat()
-    rows = [r for r in fn(restaurant_id) if r["level_id"] in used]
+    listed = fn(restaurant_id)
+    rows = [r for r in listed if r["level_id"] in used]
     main = None
+    first_sold = {}
+    dropped = 0
     conn = get_conn(db_path)
     try:
+        last_read = _prices_read_at(conn, restaurant_id, name)
         main = conn.execute(
             "SELECT price_level_id FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? AND kind='sale' "
             "AND business_date>=? AND price_level_id IS NOT NULL GROUP BY price_level_id "
@@ -1427,6 +1438,25 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
         # read; when the list was read is kept on pos_archive_state.
         put = [r for r in rows if not ((r["item_id"], r["level_id"]) in stored and _same_row(
             stored[(r["item_id"], r["level_id"])], (r["price"], r["item_name"], r["level"])))]
+        # Prices the POS no longer lists (A3-21), on a read that lists at least
+        # half of what is kept.
+        keys = {(r["item_id"], r["level_id"]) for r in listed}
+        gone = [k for k in stored if k not in keys]
+        if gone and keys and len(keys) >= len(stored) / 2:
+            conn.executemany("DELETE FROM pos_menu_prices WHERE restaurant_id=? AND provider=? AND item_id=? "
+                             "AND level_id=?", [(restaurant_id, name, k[0], k[1]) for k in gone])
+            dropped = len(gone)
+        # The first night a moved price was rung (A3-21), since the list was
+        # last read (a day's slack for the business date).
+        since = ((_utc(last_read).date() - timedelta(days=1)).isoformat() if last_read and _utc(last_read)
+                 else (today - timedelta(days=PRICE_LEVEL_LOOKBACK_DAYS)).isoformat())
+        for r, _before in changes[:MAX_PRICE_CHANGES_LOGGED]:
+            hit = conn.execute(
+                "SELECT MIN(business_date) FROM pos_ticket_lines WHERE restaurant_id=? AND provider=? AND item_id=? "
+                "AND price_level_id=? AND kind='sale' AND business_date>=? AND ABS(price - ?) < 0.01",
+                (restaurant_id, name, r["item_id"], r["level_id"], since, float(r["price"]))).fetchone()
+            if hit and hit[0]:
+                first_sold[(r["item_id"], r["level_id"])] = str(hit[0])[:10]
         if put:
             conn.executemany(
                 "INSERT INTO pos_menu_prices (restaurant_id, provider, item_id, level_id, item_name, level, price, "
@@ -1442,7 +1472,7 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
     finally:
         conn.close()
     if baseline:
-        return {"ok": True, "baseline": True, "tracked": len(rows), "changes": 0}
+        return {"ok": True, "baseline": True, "tracked": len(rows), "changes": 0, "dropped": dropped}
     if len(changes) > MAX_PRICE_CHANGES_LOGGED:
         try:
             import ops
@@ -1459,12 +1489,28 @@ def sync_prices(restaurant_id, db_path=DB_PATH, today=None) -> dict:
         if r["level_id"] != main and r["level"]:
             subject = f"{subject} ({r['level']})"
         try:
-            change_log.record(restaurant_id, "price", "sell_price", before, r["price"], subject=subject,
-                              source="sync", db_path=db_path, via="pos_archive.sync_prices")
+            cid = change_log.record(restaurant_id, "price", "sell_price", before, r["price"], subject=subject,
+                                    source="sync", db_path=db_path, via="pos_archive.sync_prices")
             logged += 1
+            when = first_sold.get((r["item_id"], r["level_id"]))
+            if cid and when:
+                _date_change(cid, restaurant_id, when, db_path)
         except Exception as e:
             log.warning("pos_archive: price change not logged rid=%s: %s", restaurant_id, e)
-    return {"ok": True, "tracked": len(rows), "changes": len(changes), "logged": logged}
+    return {"ok": True, "tracked": len(rows), "changes": len(changes), "logged": logged, "dropped": dropped,
+            "dated_by_sale": len(first_sold)}
+
+
+def _date_change(change_id, restaurant_id, business_date, db_path):
+    """A logged price change dated by the first night it was rung (A3-21):
+    that business date, never later than when it was logged."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("UPDATE change_log SET changed_at=? WHERE id=? AND restaurant_id=? AND changed_at > ?",
+                     (f"{business_date} 00:00:00", int(change_id), restaurant_id, f"{business_date} 00:00:00"))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ── the archive as the readers' source (9/29/26) ────────────────────────────

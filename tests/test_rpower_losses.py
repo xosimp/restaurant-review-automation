@@ -74,8 +74,13 @@ def test_a_comp_is_worth_its_sales_when_rpower_leaves_the_prices_at_zero(db_path
     _stub(monkeypatch, [_line("2026-09-28", "C", 5.75, reason="R1")])
     (ln,) = rpower.fetch_loss_lines(rid, date(2026, 9, 28), date(2026, 9, 28))
     assert (ln["kind"], ln["amount"], ln["reason"], ln["approver_name"]) == ("comp", 5.75, "Error Made", "Erik Stone")
-    # A real regular price still wins (what the item would have sold for).
+    # One value everywhere (rpower.loss_value, Audit #23 A2-03): what the line
+    # carried on the check — the same basis gross counts a comp at — and the
+    # regular price x qty only when the line carries nothing.
     _stub(monkeypatch, [_line("2026-09-28", "C", 2.0, reason="R1", regular_price=8.0, qty=2)])
+    rpower._void_reason_cache.clear()
+    assert rpower.fetch_loss_lines(rid, date(2026, 9, 28), date(2026, 9, 28))[0]["amount"] == 2.0
+    _stub(monkeypatch, [_line("2026-09-28", "C", 0.0, reason="R1", regular_price=8.0, qty=2)])
     rpower._void_reason_cache.clear()
     assert rpower.fetch_loss_lines(rid, date(2026, 9, 28), date(2026, 9, 28))[0]["amount"] == 16.0
 

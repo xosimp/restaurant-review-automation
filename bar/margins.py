@@ -91,24 +91,76 @@ def set_drink_map(restaurant_id, provider, item_id, key, pour_oz=None, user_id=N
     return {"ok": True, "provider": provider, "item_id": item_id, "product_key": key or None, "pour_oz": oz}
 
 
-def _menu(restaurant_id, db_path=None) -> dict:
-    """(provider, item_id) -> {name, price}: the regular price level when
-    one is named so, else the highest (a happy-hour level is lower)."""
+# The window the price level a drink is mostly rung at is read over — the
+# same window pos_archive.sync_prices tracks levels over.
+MAIN_LEVEL_DAYS = 28
+
+
+def _rung_levels(conn, restaurant_id, since):
+    """({(provider, item_id): level_id rung most}, {provider: level_id rung
+    most store-wide}) from the archive's sale lines since `since`."""
+    per_item, store = {}, {}
+    try:
+        rows = conn.execute(
+            "SELECT provider, item_id, price_level_id, COUNT(*) AS n FROM pos_ticket_lines WHERE restaurant_id=? "
+            "AND kind='sale' AND business_date>=? AND price_level_id IS NOT NULL AND item_id IS NOT NULL "
+            "GROUP BY provider, item_id, price_level_id", (int(restaurant_id), since)).fetchall()
+    except Exception:
+        return {}, {}
+    best, totals = {}, {}
+    for r in rows:
+        k = (r["provider"], str(r["item_id"]))
+        n = int(r["n"] or 0)
+        if n > best.get(k, (None, -1))[1]:
+            best[k] = (str(r["price_level_id"]), n)
+        t = totals.setdefault(r["provider"], {})
+        t[str(r["price_level_id"])] = t.get(str(r["price_level_id"]), 0) + n
+    per_item = {k: v[0] for k, v in best.items()}
+    store = {p: max(t.items(), key=lambda kv: kv[1])[0] for p, t in totals.items() if t}
+    return per_item, store
+
+
+def _menu(restaurant_id, db_path=None, today=None) -> dict:
+    """(provider, item_id) -> {name, price, level, level_basis}: the price
+    of the level the drink is MOSTLY RUNG AT (Audit #23 A3-13) — its own most
+    rung level over MAIN_LEVEL_DAYS of archived sales, else the store's main
+    level (the one sync_prices names), else a level named regular/default,
+    else the highest. EJ's levels are "Level 1..9", so the highest won: a $9
+    bottle with a $12 event level was costed at $12, its cost % a quarter
+    low, and "restore price" wrong."""
+    from datetime import date as _date, timedelta as _td
+    if today is None:
+        try:
+            import pos
+            today = pos.local_complete_through(restaurant_id) + _td(days=1)
+        except Exception:
+            today = _date.today()
+    since = (today - _td(days=MAIN_LEVEL_DAYS)).isoformat()
     conn = get_conn(db_path)
     try:
-        rows = conn.execute("SELECT provider, item_id, item_name, level, price FROM pos_menu_prices "
+        rows = conn.execute("SELECT provider, item_id, item_name, level_id, level, price FROM pos_menu_prices "
                             "WHERE restaurant_id=?", (int(restaurant_id),)).fetchall()
+        per_item, store = _rung_levels(conn, restaurant_id, since)
     except Exception:
-        rows = []
+        rows, per_item, store = [], {}, {}
     finally:
         conn.close()
     by = {}
     for r in rows:
         k = (r["provider"], str(r["item_id"]))
-        reg = bool(re.search(r"reg|default|base|standard", str(r["level"] or ""), re.I))
+        lvl = str(r["level_id"]) if r["level_id"] is not None else None
+        if lvl is not None and lvl == per_item.get(k):
+            rank, basis = 3, "the level it was rung at most"
+        elif lvl is not None and k not in per_item and lvl == store.get(r["provider"]):
+            rank, basis = 2, "the store's main price level"
+        elif re.search(r"reg|default|base|standard", str(r["level"] or ""), re.I):
+            rank, basis = 1, "the regular price level"
+        else:
+            rank, basis = 0, "the highest price level"
         cur = by.get(k)
-        if cur is None or (reg and not cur["reg"]) or (reg == cur["reg"] and float(r["price"]) > cur["price"]):
-            by[k] = {"name": r["item_name"], "price": float(r["price"]), "reg": reg, "level": r["level"]}
+        if cur is None or rank > cur["rank"] or (rank == cur["rank"] and float(r["price"]) > cur["price"]):
+            by[k] = {"name": r["item_name"], "price": float(r["price"]), "rank": rank, "reg": rank == 1,
+                     "level": r["level"], "level_basis": basis}
     return by
 
 
@@ -171,6 +223,7 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
             before, changed = (b.get("per_each") if mode == "each" else b.get("per_pour")), ch["since"]
         mm = drink_margin(cost_now, item["price"], before)
         rows.append(dict(mm, provider=k[0], item_id=k[1], item=item["name"], level=item["level"],
+                         level_basis=item.get("level_basis"),
                          product_key=m["product_key"], product=display_name(l["description"]),
                          pour_label=label, confidence=now["confidence"],
                          assumes=now["assumes"] + ([assume] if assume else []),
