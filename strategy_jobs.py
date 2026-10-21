@@ -477,12 +477,23 @@ def _archive_night(restaurant, today=None):
     local = aware.replace(tzinfo=None)
     night = pos.complete_through(restaurant, local)
     trading = business_date(restaurant, local)
-    if local.hour < BUSINESS_DAY_START_HOUR and night < trading:
-        # The night still trading ends at the boundary: wait for it, then
-        # archive it (run_for computes the same night at run time).
-        boundary = aware.replace(hour=BUSINESS_DAY_START_HOUR, minute=0, second=30, microsecond=0)
-        return trading.isoformat(), boundary.timestamp()
+    if night < trading:
+        # The night still trading ends at the next boundary: when that is
+        # within ARCHIVE_WAIT_FOR_NIGHT_HOURS, wait for it, then archive it
+        # (run_for computes the same night at run time). Any zone (Audit #23
+        # A4-15): at the 4am Chicago fan-out a Hawaii store is at 11pm, and
+        # its night was archived 18 hours late, the next night.
+        day = aware if local.hour < BUSINESS_DAY_START_HOUR else aware + _td(days=1)
+        boundary = day.replace(hour=BUSINESS_DAY_START_HOUR, minute=0, second=30, microsecond=0)
+        if boundary - aware <= _td(hours=ARCHIVE_WAIT_FOR_NIGHT_HOURS):
+            return trading.isoformat(), boundary.timestamp()
     return night.isoformat(), 0
+
+
+# The archive row waits for a night still trading when it ends within this
+# many hours of the fan-out (A4-15); a store whose night ended already is
+# archived at once.
+ARCHIVE_WAIT_FOR_NIGHT_HOURS = 8
 
 
 def run_queued_pos_archive(job):
@@ -497,7 +508,8 @@ def run_queued_pos_archive(job):
         return {"skipped": "no POS that can archive"}
     out = pos_archive.run_for(rid)
     if not out.get("ok"):
-        err = RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        err = RuntimeError(f"pos_archive: another run of restaurant {rid}'s archive is in progress"
+                           if out.get("busy") else f"pos_archive: days not archived {out.get('failed')}")
         # The POS asked us to wait (an open breaker, a long Retry-After):
         # the row is tried again then, not on the fixed backoff (A3-10).
         if out.get("retry_after"):

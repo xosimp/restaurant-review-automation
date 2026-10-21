@@ -296,7 +296,9 @@ def collect(ctx):
     # the next pass's re-check rather than going out FINAL on part of it.
     try:
         import pos_archive
-        settled, why = pos_archive.night_settled(ctx.restaurant_id, provider, ctx.business_date,
+        # night_trusted (Audit #23 A4-04): settled AND not a first read held
+        # suspect (empty, short or unreconciled), nor another store's night.
+        settled, why = pos_archive.night_trusted(ctx.restaurant_id, ctx.business_date, provider=provider,
                                                  db_path=ctx.db_path or pos_archive.DB_PATH)
     except Exception:
         settled, why = True, None
