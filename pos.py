@@ -558,6 +558,13 @@ def note_sync_failure(restaurant_id, now=None):
     st = pos_health.pos_sync_state(r, now=now)
     if st["state"] != "error":
         return False
+    # A wave of refused RPOWER tokens (audit #23 A4-16) is RPOWER's auth or a
+    # partner token — the operator is paged once (pos_io.auth_wave); the
+    # owners are not each told to reconnect a token they don't own.
+    if st.get("provider") == "rpower":
+        import pos_io
+        if pos_io.auth_wave_active("rpower"):
+            return False
     now = now or datetime.now(timezone.utc)
     last_ok = pos_health.parse_stamp(st.get("last_synced"))
     if last_ok is not None and (now - last_ok) < timedelta(days=SYNC_FAILURE_NOTICE_DAYS):
