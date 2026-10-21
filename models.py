@@ -552,6 +552,10 @@ class Restaurant:
     # between "a token was pasted in" and "the token works and we know which
     # store it points at".
     rpower_verified_at: Optional[str]    = None
+    # When RPOWER last refused this store's token (401/403, UTC; Audit #23
+    # A1-13/A6-09): set by any RPowerAuthError, cleared by a successful read
+    # or a reconnect. While set, the store's calls are short-circuited.
+    rpower_auth_failed_at: Optional[str] = None
     # Back Office (Buyers Edge) — the inventory system inventory_sync reads
     # (backoffice.py). Entered by Cavnar, never by the owner.
     backoffice_api_key: Optional[str]    = None
@@ -1946,6 +1950,20 @@ def ensure_columns(db_path: str = DB_PATH):
         # short read never replaces a stored night; NULL = none).
         ("pos_archive_days", "checked_at", "TEXT"),
         ("pos_archive_days", "suspect", "TEXT"),
+        # Audit #23 (10/21/26) shared contract — written by pos_archive,
+        # read by the RPOWER health rollup: punches still open when the night
+        # was read (A3-01), payments minus ticket totals (A6-06), the RPOWER
+        # store the night came from ("<cg>:<store_mid>", A4-05), failed
+        # attempts and the last error for a night that will not archive
+        # (A4-06), and the first-read plausibility verdict (A4-04; JSON
+        # {verdict, reasons, at}, NULL = never judged).
+        ("pos_archive_days", "open_punches", "INTEGER"),
+        ("pos_archive_days", "pay_gap", "REAL"),
+        ("pos_archive_days", "store_key", "TEXT"),
+        ("pos_archive_days", "attempts", "INTEGER"),
+        ("pos_archive_days", "last_error", "TEXT"),
+        ("pos_archive_days", "first_read", "TEXT"),
+        ("pos_archive_state", "store_key", "TEXT"),
         # When the POS's price list was last read (UTC; R3-11): unchanged
         # prices are no longer rewritten, so MAX(seen_at) no longer says it.
         ("pos_archive_state", "prices_read_at", "TEXT"),
@@ -2875,6 +2893,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN rpower_last_synced TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_sync_error TEXT",
         "ALTER TABLE restaurants ADD COLUMN rpower_verified_at TEXT",
+        "ALTER TABLE restaurants ADD COLUMN rpower_auth_failed_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
         "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
@@ -5659,7 +5678,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH,
         "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "rpower_token","rpower_cg","rpower_store_mid","rpower_store_name",
-        "rpower_last_synced","rpower_sync_error","rpower_verified_at",
+        "rpower_last_synced","rpower_sync_error","rpower_verified_at","rpower_auth_failed_at",
         "backoffice_api_key","backoffice_account_id",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -6809,6 +6828,7 @@ def _restaurant_from_row(row) -> Restaurant:
         rpower_last_synced=row["rpower_last_synced"] if "rpower_last_synced" in row.keys() else None,
         rpower_sync_error=row["rpower_sync_error"] if "rpower_sync_error" in row.keys() else None,
         rpower_verified_at=row["rpower_verified_at"] if "rpower_verified_at" in row.keys() else None,
+        rpower_auth_failed_at=row["rpower_auth_failed_at"] if "rpower_auth_failed_at" in row.keys() else None,
         toast_restaurant_guid=row["toast_restaurant_guid"] if "toast_restaurant_guid" in row.keys() else None,
         toast_access_token=row["toast_access_token"] if "toast_access_token" in row.keys() else None,
         toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,
@@ -9195,7 +9215,7 @@ _INPUTS_VOLATILE = frozenset({
     "web_analytics_synced_at", "gmb_access_token", "gmb_refresh_token", "gmb_token_expires", "gmb_revoked_at",
     "toast_access_token", "toast_token_expires", "toast_last_synced", "square_access_token", "square_last_synced",
     "clover_api_token", "clover_last_synced", "rpower_token", "rpower_last_synced", "rpower_verified_at",
-    "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
+    "rpower_auth_failed_at", "two_fa_device_token", "last_active_tab", "changelog_seen_at", "notifications_seen_at", "last_activity",
     "gbp_review_count", "gbp_rating_updated_at", "optin_invites_ack_at", "demo_cleared_at",
 })
 
