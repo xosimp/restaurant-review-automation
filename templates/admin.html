@@ -3320,9 +3320,18 @@ function rpStrip(f){
     + stripCell('#operations/rpower', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''))
     + stripCell('#operations/rpower', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
     + stripCell('#operations/rpower', 'plug', 'neu', 'Backfill slots', used, 'in use')
+    + rpBudgetCell(f.capacity || {})
     + stripCell('#operations/rpower', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
     + stripCell('#operations/rpower', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured')
     + '</section>';
+}
+// The request budget by lane (pos_capacity): the nightly lane's use of its
+// share over 24 hours and whether bulk work is held; "—" where not deployed.
+function rpBudgetCell(c){
+  var u = (c.utilisation || {}).lanes || {}, n = u.nightly || {}, st = c.state || {};
+  var tone = st.shed_bulk ? 'bad' : (n.pct != null && n.pct > 85 ? 'warn' : (n.pct == null ? 'neu' : 'good'));
+  var sub = st.shed_bulk ? 'bulk held tonight' : (n.peak_hour_pct ? 'peak hour ' + n.peak_hour_pct + '%' : 'of the nightly share, 24h');
+  return stripCell('#operations/rpower', 'gauge', tone, 'Nightly budget', n.pct == null ? '—' : n.pct + '%', sub);
 }
 function rpRow(r){
   var t = r.type_states || {}, open = _rp.open === r.restaurant_id;
@@ -3362,8 +3371,8 @@ function rpDrawer(x){
     + '<div class="lbl" style="padding-top:12px">Findings</div>' + fd;
 }
 function rpQueueKinds(f){
-  var k = f.queue_kinds || {}, rows = Object.keys(k).sort().map(function(n){ var v = k[n]; return {kind: n, queued: v.queued || 0, running: v.running || 0, rows_24h: v.rows_24h || 0, failed_24h: v.failed_24h || 0, expired_24h: v.expired_24h || 0}; });
-  return table([{h:'Kind', key:'kind'}, {h:'Queued', key:'queued', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.queued) + '</span>'; }}, {h:'Running', key:'running', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.running) + '</span>'; }}, {h:'Rows 24h', key:'rows_24h', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.rows_24h) + '</span>'; }}, {h:'Failed', key:'failed_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.failed_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.failed_24h) + '</span>'; }}, {h:'Expired', key:'expired_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.expired_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.expired_24h) + '</span>'; }}], rows, {id:'rp-qk', limit:12, empty:'No queue rows in 24 hours.'});
+  var k = f.queue_kinds || {}, rows = Object.keys(k).sort().map(function(n){ var v = k[n]; return {kind: n, grp: v.grp || '', queued: v.queued || 0, running: v.running || 0, rows_24h: v.rows_24h || 0, failed_24h: v.failed_24h || 0, expired_24h: v.expired_24h || 0}; });
+  return table([{h:'Kind', key:'kind'}, {h:'Group', key:'grp', cell:function(z){ return '<span class="dim">' + esc(z.grp) + '</span>'; }},{h:'Queued', key:'queued', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.queued) + '</span>'; }}, {h:'Running', key:'running', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.running) + '</span>'; }}, {h:'Rows 24h', key:'rows_24h', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.rows_24h) + '</span>'; }}, {h:'Failed', key:'failed_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.failed_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.failed_24h) + '</span>'; }}, {h:'Expired', key:'expired_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.expired_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.expired_24h) + '</span>'; }}], rows, {id:'rp-qk', limit:12, empty:'No queue rows in 24 hours.'});
 }
 function opsRpower(){
   V().innerHTML = '<div class="sk blk"></div>';

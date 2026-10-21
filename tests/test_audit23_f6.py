@@ -154,11 +154,11 @@ def test_the_rollup_is_bounded_and_resumes_from_its_cursor(db_path, monkeypatch)
     monkeypatch.setattr(rh, "BATCH", 2)
     ids = [_store(db_path, f"S{i}", token=f"t{i}", mid=f"M{i}") for i in range(5)]
     clock = iter([0.0] + [100.0] * 50)
-    monkeypatch.setattr(rh.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(rh, "_clock", lambda: next(clock))
     out = rh.run_rollup(db_path=db_path, max_seconds=50)
     assert out["hit_bound"] is True and out["attempted"] == 2
     assert set(rh.store_rows(db_path=db_path)) == set(ids[:2])
-    monkeypatch.setattr(rh.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(rh, "_clock", lambda: 0.0)
     out = rh.run_rollup(db_path=db_path)
     assert out["hit_bound"] is False and out["attempted"] == 5
     assert set(rh.store_rows(db_path=db_path)) == set(ids)
@@ -630,3 +630,63 @@ def test_recipe_coverage_is_refreshed_once_a_day_within_a_budget(db_path, monkey
     rows = rh.store_rows(db_path=db_path)
     assert all(rows[i]["recipe_coverage_pct"] == 62.5 for i in ids)
     assert rh.fleet(db_path=db_path)["recipe_coverage_p50"] == 62.5
+
+
+# ── F5's surfaces, read defensively (missed runs, lanes, budget check) ─────
+
+def test_a_missed_pos_run_is_on_the_store(db_path):
+    """An expired pos_archive row is recorded as a missed window (F5's
+    EXPIRE_HOOKS); the store's row counts it and the console raises it."""
+    rid = _store(db_path, "Missed")
+    _nights(db_path, rid, _local_days(20, back_from=1))
+    conn = models.get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO missed_windows (job, restaurant_id, local_date, detail) VALUES "
+                     "('pos_archive', ?, '2026-10-20', 'expired')", (rid,))
+        conn.commit()
+    finally:
+        conn.close()
+    rh.run_rollup(db_path=db_path)
+    r = _row(db_path, rid)
+    assert r["missed_runs_7d"] == 1 and r["health"] == "watch"
+    assert "rpower:missed" in {i["key"] for i in rh.store_issues(r)}
+
+
+def test_the_capacity_reading_is_absent_without_pos_capacity(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def no_capacity(name, *a, **k):
+        if name == "pos_capacity":
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_capacity)
+    assert rh._capacity() == {}
+
+
+def test_a_shed_budget_and_the_budget_checks_findings_are_one_rule(db_path, monkeypatch):
+    _put(db_path, 1)
+    _fleet_day(db_path, {"capacity": {"state": {"shed_bulk": True, "ratio": 1.4}},
+                         "budget_findings": [{"error": "RPOWER budget: tonight needs ~9000 requests", "at": "x"}]})
+    rule = _keys(db_path)["rpower_capacity"]
+    assert rule["page"] == "warn" and "held tonight" in rule["detail"] and "9000" in rule["detail"]
+    keys, _facts = _platform(db_path, _f("pos_budget_check", n=6))
+    assert "job:pos_budget_check" not in keys, "the rule says it — no second 'Job failed' row"
+
+
+def test_the_queue_is_read_by_kind_and_group(db_path):
+    import time as _t
+    conn = models.get_conn(db_path)
+    try:
+        for kind, grp, state in (("pos_onboard", "pos_bulk", "expired"), ("live_labor", "live", "queued"),
+                                 ("pos_archive", "pos_io", "failed")):
+            conn.execute("INSERT INTO jobs (kind, grp, restaurant_id, priority_class, state, enqueued_at, finished_at) "
+                         "VALUES (?,?,?,?,?,?,?)", (kind, grp, 1, "bulk", state, _t.time(), _t.time()))
+        conn.commit()
+    finally:
+        conn.close()
+    _store(db_path, "Q")
+    rh.run_rollup(db_path=db_path)
+    f = rh.fleet(db_path=db_path)
+    assert f["queue_kinds"]["pos_onboard"]["grp"] == "pos_bulk" and f["queue_kinds"]["pos_onboard"]["expired_24h"] == 1
+    assert f["queue_groups"]["live"]["queued"] == 1 and f["queue_groups"]["pos_io"]["failed_24h"] == 1

@@ -2783,6 +2783,8 @@ def _platform_issues(recs, d):
     # store (the job itself) stay critical at JOB_FAIL_CRITICAL.
     fleet_n = max(1, sum(1 for r in recs if r.get("segment") == "customer"))
     for job, fs in by_job.items():
+        if job == "pos_budget_check":
+            continue    # the RPOWER fleet rule `rpower_capacity` says it, with the budget's verdict
         rids = {int(f["restaurant_id"]) for f in fs if f.get("restaurant_id")}
         bare = sum(1 for f in fs if not f.get("restaurant_id"))
         crit = bare >= JOB_FAIL_CRITICAL or (len(rids) >= JOB_FAIL_MIN_STORES

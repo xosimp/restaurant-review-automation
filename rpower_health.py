@@ -59,7 +59,11 @@ ROLLUP_BOUND_SECONDS = 120
 WINDOW_DAYS = 90
 GAP_DAYS = 14
 ANOMALY_DAYS = 7
-QUEUE_KINDS = ("pos_archive", "pos_onboard", "pos_schedule_push")
+# A store's queue kinds (pos_sync and live_labor are queue rows from F5 of
+# this round; counting a kind that never appears costs nothing).
+QUEUE_KINDS = ("pos_archive", "pos_onboard", "pos_sync", "pos_schedule_push", "live_labor")
+# The kinds whose expired rows are recorded as missed windows (F5).
+MISSED_JOBS = ("pos_archive", "pos_onboard", "pos_sync")
 DATA_TYPES = ("labor", "archive", "change", "catalog", "prices", "live", "intraday", "loss", "dsr")
 SOURCE_OF = {"pos_intraday": "intraday", "loss": "loss", "dsr": "dsr"}
 
@@ -167,6 +171,7 @@ _TABLE_SQL = (
         simulated_not_demo   INTEGER NOT NULL DEFAULT 0,
         has_anomaly          INTEGER NOT NULL DEFAULT 0,
         recipe_coverage_pct  REAL,
+        missed_runs_7d       INTEGER,
         recipe_coverage_at   TEXT,
         health               TEXT NOT NULL DEFAULT 'ok',
         health_since         TEXT,
@@ -436,17 +441,60 @@ def _fleet_reads(conn, now):
         out["partners"][int(r["restaurant_id"])] = r["partner_id"]
     since_q = _stamp(now - timedelta(hours=24))
     cutoff = time.time() - 86400
-    for r in _safe_rows(conn, "jobs", "SELECT kind, COUNT(*) AS n, "
+    # Every kind and its group (the queue groups pos_io, pos_bulk, live, ...).
+    for r in _safe_rows(conn, "jobs", "SELECT kind, grp, COUNT(*) AS n, "
                         "SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END) AS failed, "
                         "SUM(CASE WHEN state='expired' THEN 1 ELSE 0 END) AS expired "
-                        "FROM jobs WHERE created_at >= ? GROUP BY kind", (since_q,)):
-        out["queue_kinds"][r["kind"]] = {"rows_24h": int(r["n"] or 0), "failed_24h": int(r["failed"] or 0),
-                                         "expired_24h": int(r["expired"] or 0)}
-    for r in _safe_rows(conn, "jobs", "SELECT kind, state, COUNT(*) AS n FROM jobs "
-                        "WHERE state IN ('queued','running') GROUP BY kind, state"):
-        k = out["queue_kinds"].setdefault(r["kind"], {"rows_24h": 0, "failed_24h": 0, "expired_24h": 0})
-        k[r["state"]] = int(r["n"] or 0)
+                        "FROM jobs WHERE created_at >= ? GROUP BY kind, grp", (since_q,)):
+        k = out["queue_kinds"].setdefault(r["kind"], {"grp": r["grp"], "rows_24h": 0, "failed_24h": 0,
+                                                      "expired_24h": 0})
+        k["rows_24h"] += int(r["n"] or 0)
+        k["failed_24h"] += int(r["failed"] or 0)
+        k["expired_24h"] += int(r["expired"] or 0)
+    for r in _safe_rows(conn, "jobs", "SELECT kind, grp, state, COUNT(*) AS n FROM jobs "
+                        "WHERE state IN ('queued','running') GROUP BY kind, grp, state"):
+        k = out["queue_kinds"].setdefault(r["kind"], {"grp": r["grp"], "rows_24h": 0, "failed_24h": 0,
+                                                      "expired_24h": 0})
+        k[r["state"]] = k.get(r["state"], 0) + int(r["n"] or 0)
+    groups = {}
+    for kind, k in out["queue_kinds"].items():
+        g = groups.setdefault(k.get("grp") or "?", {"queued": 0, "running": 0, "rows_24h": 0, "failed_24h": 0,
+                                                    "expired_24h": 0})
+        for c in g:
+            g[c] += int(k.get(c) or 0)
+    out["queue_groups"] = groups
     out["queue_cutoff"] = cutoff
+    # The request budget's lanes and its backpressure verdict (pos_capacity,
+    # F5 of this round — read only where the module exists), and the nightly
+    # budget check's findings (its ops captures, job "pos_budget_check").
+    out["capacity"] = _capacity()
+    out["budget_findings"] = [{"error": r["error"], "at": r["created_at"]} for r in _safe_rows(
+        conn, "job_failures", "SELECT error, created_at FROM job_failures WHERE job=? AND created_at >= ? "
+        "ORDER BY id DESC LIMIT 3", (BUDGET_CHECK_JOB, since_q))]
+    return out
+
+
+BUDGET_CHECK_JOB = "pos_budget_check"
+
+
+def _capacity():
+    """{utilisation, state} from pos_capacity when it is deployed, else {}.
+    Never raises."""
+    try:
+        import pos_capacity
+    except ImportError:
+        return {}
+    out = {}
+    try:
+        out["utilisation"] = pos_capacity.utilisation(24)
+    except Exception as e:
+        log.warning("rpower_health: lane utilisation unreadable: %s", e)
+    try:
+        st = pos_capacity.state() or {}
+        out["state"] = {k: st.get(k) for k in ("shed_bulk", "stretch_live", "demand", "budget", "ratio", "at",
+                                              "over_nights")}
+    except Exception as e:
+        log.warning("rpower_health: budget state unreadable: %s", e)
     return out
 
 
@@ -499,6 +547,14 @@ def _batch_reads(conn, ids, now):
                         f"WHERE restaurant_id IN ({ph}) AND created_at >= ? GROUP BY restaurant_id, job, kind",
                         list(ids) + [week]):
         out["failures"].setdefault(int(r["restaurant_id"]), []).append(r)
+    # Missed POS runs: a night's or an onboarding's queue row that expired
+    # unstarted is recorded as a missed window (F5's EXPIRE_HOOKS of this
+    # round, strategy_jobs.on_pos_row_expired); none before it is deployed.
+    jobs = ",".join(f"'{j}'" for j in MISSED_JOBS)
+    out["missed"] = {int(r["restaurant_id"]): r for r in _safe_rows(
+        conn, "missed_windows", "SELECT restaurant_id, COUNT(*) AS n, MAX(local_date) AS last_date FROM missed_windows "
+        f"WHERE restaurant_id IN ({ph}) AND job IN ({jobs}) AND created_at >= ? GROUP BY restaurant_id",
+        list(ids) + [week])}
     return out
 
 
@@ -695,6 +751,11 @@ def compute_row(store, src, fleet, now=None, previous=None):
         anomalies.append(f"{zero_labor} trading night{'s' if zero_labor != 1 else ''} with sales and no punches")
     if dsr_mm:
         anomalies.append("The nightly report's net and the archive disagree")
+    missed = (src.get("missed") or {}).get(rid) or {}
+    missed_n = int(missed.get("n") or 0)
+    if missed_n:
+        anomalies.append(f"{missed_n} POS run{'s' if missed_n != 1 else ''} missed — queue rows expired unstarted "
+                         f"(last for {missed.get('last_date')})")
     if median and req > VOLUME_STORE_X * median:
         anomalies.append(f"{req:,} RPOWER requests in 24 hours, {req / median:.0f}x this store's median")
 
@@ -775,7 +836,7 @@ def compute_row(store, src, fleet, now=None, previous=None):
         "recon_nights_7d": recon_n, "unknown_sales_7d": unknown, "net_sales_7d": net7,
         "suspect_nights_7d": suspect_n, "pay_gap_nights_7d": pay_n, "first_read_suspect_7d": first_read_n,
         "open_punches_7d": open_p, "zero_labor_days_7d": zero_labor, "dsr_mismatch_7d": dsr_mm,
-        "data_issues_7d": data_n, "duplicate_binding": dup, "store_key_mismatch": key_mm,
+        "data_issues_7d": data_n, "missed_runs_7d": missed_n, "duplicate_binding": dup, "store_key_mismatch": key_mm,
         "simulated_not_demo": sim, "has_anomaly": int(bool(anomalies)),
         "health": health, "health_since": since or _stamp(now), "severity_rank": rank,
         "reasons": json.dumps(reasons[:12]), "updated_at": _stamp(now),
@@ -793,7 +854,7 @@ _ROW_COLS = ("restaurant_id", "name", "is_demo", "in_service", "billing_status",
              "recon_nights_7d", "unknown_sales_7d", "net_sales_7d", "suspect_nights_7d", "pay_gap_nights_7d",
              "first_read_suspect_7d", "open_punches_7d", "zero_labor_days_7d", "dsr_mismatch_7d",
              "data_issues_7d", "duplicate_binding", "store_key_mismatch", "simulated_not_demo", "has_anomaly",
-             "recipe_coverage_pct", "recipe_coverage_at",
+             "recipe_coverage_pct", "recipe_coverage_at", "missed_runs_7d",
              "health", "health_since", "severity_rank", "reasons", "updated_at")
 _UPSERT = (f"INSERT INTO rpower_store_health ({', '.join(_ROW_COLS)}) VALUES ({', '.join('?' for _ in _ROW_COLS)}) "
            "ON CONFLICT(restaurant_id) DO UPDATE SET "
@@ -849,7 +910,7 @@ def run_rollup(db_path=None, max_seconds=None, now=None, restaurant_ids=None) ->
     the stores no longer bound are dropped (on a pass that covered them all),
     today's fleet row is rewritten from the table, and the owners whose token
     just failed are told (`_notify_auth`). Returns the standard counts."""
-    t0 = time.monotonic()
+    t0 = _clock()
     bound = float(max_seconds if max_seconds is not None else ROLLUP_BOUND_SECONDS)
     now = now or _utcnow()
     conn = _conn(db_path)
@@ -871,7 +932,7 @@ def run_rollup(db_path=None, max_seconds=None, now=None, restaurant_ids=None) ->
         fleet = _fleet_reads(conn, now)
         done = 0
         for i in range(0, len(order), BATCH):
-            if i and time.monotonic() - t0 > bound:
+            if i and _clock() - t0 > bound:
                 hit_bound = True
                 break
             ids = order[i:i + BATCH]
@@ -913,6 +974,12 @@ def run_rollup(db_path=None, max_seconds=None, now=None, restaurant_ids=None) ->
     notified = _notify_auth(transitions, db_path=db_path) if transitions else 0
     return {"attempted": attempted, "ok": ok, "failed": failed, "skipped": 0, "hit_bound": hit_bound,
             "eligible": len(order), "auth_notified": notified}
+
+
+def _clock():
+    """The rollup's own clock (its bound), apart from time.monotonic so a
+    test can drive it without stopping every other timer."""
+    return time.monotonic()
 
 
 def refresh_store(restaurant_id, db_path=None) -> dict:
@@ -962,7 +1029,8 @@ def _write_fleet_day(conn, fleet, now):
             days[d] = days.get(d, 0) + int(n or 0)
     qk = fleet.get("queue_kinds") or {}
     detail = {"ledger_1h": fleet.get("ledger_1h") or {}, "requests_by_day": dict(sorted(days.items())),
-              "queue_kinds": qk}
+              "queue_kinds": qk, "queue_groups": fleet.get("queue_groups") or {},
+              "capacity": fleet.get("capacity") or {}, "budget_findings": fleet.get("budget_findings") or []}
     vals = (now.date().isoformat(), len(rows), json.dumps(by_health, sort_keys=True), json.dumps(failing, sort_keys=True),
             json.dumps(stale, sort_keys=True), _pctl([r.get("coverage_90d") for r in rows], 10),
             _pctl([r.get("coverage_90d") for r in rows], 50),
@@ -1195,6 +1263,11 @@ def fleet(db_path=None) -> dict:
         "queue_failed_24h": sum(int(r.get("queue_failed_24h") or 0) for r in rows),
         "queue_expired_24h": sum(int(r.get("queue_expired_24h") or 0) for r in rows),
         "queue_kinds": (day.get("detail_json") or {}).get("queue_kinds") or {},
+        "queue_groups": (day.get("detail_json") or {}).get("queue_groups") or {},
+        # The request budget by lane and its backpressure verdict (pos_capacity;
+        # {} where it is not deployed) and the nightly budget check's findings.
+        "capacity": (day.get("detail_json") or {}).get("capacity") or {},
+        "budget_findings": (day.get("detail_json") or {}).get("budget_findings") or [],
         "backfill_used": sum(1 for r in rows if r.get("backfill_state") in ("admitted", "held")),
         "backfill_cap": cap, "as_of": at, "fresh": age is not None and age * 60 <= FRESH_ROLLUP_MINUTES,
     }
@@ -1311,6 +1384,21 @@ def fleet_rules(db_path=None, now=None) -> list:
             out.append(_rule("rpower_budget_429", f"RPOWER answered 429 to {s4 * 100:.1f}% of requests (1h)",
                              "warning", f"{one.get('s429')} of {req1} requests were refused as too many.",
                              page="warn"))
+    # 6b. The budget's backpressure and the nightly budget check (pos_capacity,
+    # job pos_budget_check): one rule naming what was held and why.
+    cap = detail.get("capacity") or {}
+    st = cap.get("state") or {}
+    findings = detail.get("budget_findings") or []
+    if st.get("shed_bulk") or findings:
+        bits = []
+        if st.get("shed_bulk"):
+            bits.append("onboarding and backfill are held tonight"
+                        + (f" (demand {st['ratio']:.1f}x the budget)" if isinstance(st.get("ratio"), (int, float)) else ""))
+        if st.get("stretch_live"):
+            bits.append("live labor reads are stretched")
+        bits += [str(f.get("error") or "")[:200] for f in findings[:2]]
+        out.append(_rule("rpower_capacity", "The RPOWER request budget is short of the fleet's nightly need",
+                         "warning", "; ".join(b for b in bits if b) + ".", page="warn"))
     # 7. Request volume against the 7-day median (A6-17).
     by_day = detail.get("requests_by_day") or {}
     today = now.strftime("%Y-%m-%d")
@@ -1529,6 +1617,12 @@ def store_issues(row, now=None) -> list:
         if int(row.get(col) or 0):
             out.append({"key": f"rpower:integrity:{col}", "title": title, "severity": "critical", "since": None,
                         "detail": f"Store {row.get('cg') or '?'}:{row.get('store_mid') or '?'}."})
+    if int(row.get("missed_runs_7d") or 0):
+        n = int(row["missed_runs_7d"])
+        out.append({"key": "rpower:missed", "title": f"{n} RPOWER run{'s' if n != 1 else ''} missed this week",
+                    "severity": "warning", "since": None,
+                    "detail": "Its queue rows expired unstarted — the POS queue or the request budget was behind. "
+                              "The next night's row reads what is still missing."})
     checks = []
     if int(row.get("recon_nights_7d") or 0) >= 2:
         checks.append(f"lines vs ticket totals on {row['recon_nights_7d']} nights")
