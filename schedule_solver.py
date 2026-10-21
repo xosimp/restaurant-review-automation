@@ -551,6 +551,14 @@ class Problem:
         self.person_rates = {" ".join(str(k).lower().split()): float(v) for k, v in (ot.get("person_rates") or {}).items()
                              if _num(v)}
         self.role_typical = {str(k).strip().lower(): float(v) for k, v in (ot.get("role_typical") or {}).items() if _num(v)}
+        # The forward chain's maps (schedule_objective.rate_maps, audit #23
+        # A3-02): the owner's rates for people and each person's latest pay
+        # per job. Absent (an old payload) = the old order, person first.
+        import schedule_objective as _objr
+        self.person_rates, self.owner_rates, self.job_rates = _objr.forward_maps(
+            self.person_rates, ot.get("owner_person_rates"), ot.get("person_job_rates"))
+        self._forward_rate = _objr.forward_rate
+        self._ot_rates = {}
         # Overtime pay starts past this line in a payroll week (labor.
         # OVERTIME_THRESHOLD_HOURS, the scorer's week_overtime line) — an
         # owner's higher maximum allows a person the hours, it does not make
@@ -667,10 +675,43 @@ class Problem:
         return c.manages(name, date) and c.can_work(name, date)[0]
 
     def rate(self, p, role) -> float:
+        """An hour of p as `role` (schedule_objective.forward_rate_source —
+        priced_cost's chain): the owner's rate for the person, the owner's
+        for the role, their latest pay in the job, in any job, the role's
+        typical, the blended."""
         if self.salaried[p]:
             return 0.0
-        return (self.person_rates.get(" ".join(self.names[p].lower().split())) or self.rates.get(role)
-                or self.role_typical.get(role) or self.blended or 0.0)
+        return self._forward_rate(self.names[p], role, role_rates=self.rates, people=self.person_rates,
+                                  owner=self.owner_rates, jobs=self.job_rates, role_typical=self.role_typical,
+                                  fallback=self.blended or 0.0)
+
+    def ot_rate(self, p) -> float:
+        """An overtime hour of p where the model has no role for it (CP-SAT's
+        per-person overtime): rate() in the role p is drafted most hours in,
+        else the chain with no role (the owner's rate for them, their latest
+        pay, the blended); 15 with nothing on file."""
+        if p in self._ot_rates:
+            return self._ot_rates[p]
+        if self.owner_rates is None and self.job_rates is None:
+            # An old payload: the old person-level rate.
+            self._ot_rates[p] = float(self.person_rates.get(" ".join(self.names[p].lower().split()))
+                                      or self.blended or 15.0)
+            return self._ot_rates[p]
+        hours = {}
+        for u in self.units:
+            if u.draft == p and u.primary:
+                role = u.role_at.get(u.primary[0], "")
+                hours[role] = hours.get(role, 0.0) + float(u.hours or 0.0)
+        if hours:
+            role = max(sorted(hours), key=lambda r: hours[r])
+            rate = self._forward_rate(self.names[p], role, role_rates=self.rates, people=self.person_rates,
+                                      owner=self.owner_rates, jobs=self.job_rates,
+                                      role_typical=self.role_typical, fallback=self.blended or 0.0)
+        else:
+            rate = self._forward_rate(self.names[p], None, people=self.person_rates, owner=self.owner_rates,
+                                      jobs=self.job_rates, fallback=self.blended or 0.0)
+        self._ot_rates[p] = float(rate or self.blended or 15.0)
+        return self._ot_rates[p]
 
     # ── units ─────────────────────────────────────────────────────────────
     def _build_units(self, only_dates):
@@ -1982,7 +2023,12 @@ class Problem:
             have = st.hours[p].get(u.bucket, 0.0)
             ot = max(0.0, have + u.hours - line) - max(0.0, have - line)
             if ot > 0:
-                rate = self.person_rates.get(" ".join(self.names[p].lower().split())) or self.blended or 15.0
+                # The hour that crosses the line is this unit's: priced as
+                # priced_cost prices it, in the unit's role (A3-02).
+                if self.owner_rates is None and self.job_rates is None:
+                    rate = self.ot_rate(p)          # an old payload: the person-level rate
+                else:
+                    rate = self.rate(p, u.role_at.get(u.primary[0], "") if u.primary else "") or self.blended or 15.0
                 premium = ot * rate * sq.OVERTIME_PREMIUM
                 pay = self.week_dollars or 1.0
                 c += premium * (self.per_dollar + self.week_unit("overtime") * sq.OVERTIME_POINTS * 100.0 / pay)

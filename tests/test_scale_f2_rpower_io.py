@@ -141,16 +141,18 @@ def test_the_breaker_opens_after_failures_from_two_stores_and_refuses_at_once(mo
     assert got.value.retry_after > 0
 
 
-def test_one_store_alone_needs_a_longer_run_to_open_it(monkeypatch):
+def test_one_store_alone_never_opens_the_fleet_breaker_it_parks_itself(monkeypatch):
+    # Audit #23 A1-07 / A4-01 (it used to open the fleet row on 12 attempts):
+    # one store's failures quarantine that store; the fleet row stays closed.
     monkeypatch.setattr("requests.get", lambda *a, **k: _Resp(500))
     rpower._note_store(1)
-    with pytest.raises(rpower.RPowerError):
-        rpower._request("tok", "x", {})                 # 3 failures
-    assert pos_io.breaker_state("rpower")["state"] == "closed"
-    for _ in range(3):
-        with pytest.raises(rpower.RPowerError):
+    for _ in range(pos_io.STORE_QUARANTINE_FAILURES):
+        with pytest.raises(rpower.RPowerServerError):
             rpower._request("tok", "x", {})
-    assert pos_io.breaker_state("rpower")["state"] == "open"
+    assert pos_io.breaker_state("rpower")["state"] == "closed"
+    with pytest.raises(rpower.RPowerStoreQuarantined):
+        rpower._request("tok", "x", {})
+    assert [q["restaurant_id"] for q in pos_io.quarantined("rpower")] == [1]
 
 
 def test_a_lapsed_breaker_lets_one_probe_through_and_its_answer_closes_it(monkeypatch):
@@ -354,7 +356,7 @@ def test_requests_take_a_slot_in_the_token_bucket_and_the_fleet_bucket(monkeypat
     monkeypatch.setattr(rpower, "FLEET_RPS", 1000.0)
     taken = []
     real = rpower._take_shared_slot
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: (taken.append(key), real(t, s, key=key))[1])
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: (taken.append(key), real(t, s, key=key))[1])
     rpower._sleep_for_spacing("tok-a")
     assert taken[0] == rpower._bucket_key("tok-a") and taken[-1] == rpower.FLEET_BUCKET
 
@@ -364,7 +366,7 @@ def test_per_store_buckets_when_rpower_says_the_limit_is_per_store(monkeypatch):
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 0.001)
     monkeypatch.setattr(rpower, "FLEET_RPS", 0)
     taken = []
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: (taken.append(key), 0.0)[1])
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: (taken.append(key), 0.0)[1])
     rpower._note_store(1, "a")
     rpower._sleep_for_spacing("tok")
     rpower._note_store(2, "b")
@@ -376,7 +378,7 @@ def test_over_budget_is_refused_not_sent_anyway(monkeypatch):
     monkeypatch.setattr(rpower, "REQUEST_SPACING_SECONDS", 1.0)
     monkeypatch.setattr(rpower, "FLEET_RPS", 0)
     monkeypatch.setattr(rpower, "RATE_MAX_WAIT_SECONDS", 0.0)
-    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None: 30.0)
+    monkeypatch.setattr(rpower, "_take_shared_slot", lambda t, s, key=None, **k: 30.0)
     sent = []
     monkeypatch.setattr("requests.get", lambda *a, **k: sent.append(1))
     with pytest.raises(rpower.RPowerBudgetExceeded) as got:

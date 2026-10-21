@@ -48,6 +48,7 @@ run_live_labor()  the 15-minute job: the read kept for the screens, the
 """
 import json
 import math
+import re
 from datetime import date, datetime, timedelta
 
 import models as _models_mod
@@ -404,6 +405,19 @@ def _labor(restaurant, day, now_local, rows, live=True, rates_t=None) -> dict:
             z = _local(p.get("clocked_out_at"), tz)
             end = min(z or now_local, now_local)
             hrs = max(0.0, (end - a).total_seconds() / 3600.0)
+            # Payroll's own hours once the punch is closed, else the clock
+            # less the unpaid break and meal minutes the POS has recorded —
+            # the night's final figure never costs a break, so live labor
+            # must not either (audit #23 A3-15).
+            try:
+                paid = float(p.get("paid_hours") or 0)
+                brk = float(p.get("break_minutes") or 0)
+            except (TypeError, ValueError):
+                paid, brk = 0.0, 0.0
+            if z is not None and z <= now_local and paid > 0:
+                hrs = paid
+            elif brk > 0:
+                hrs = max(0.0, hrs - brk / 60.0)
             mine = by_person.get(_key(name)) or []
             role = (mine[0].get("role") if mine else None) or p.get("role") or ""
             rate, _src = _rate(rates_t, name, role, p.get("hourly_wage"))
@@ -889,6 +903,74 @@ def _adds(restaurant, day, now_local, rows, week, crew, factor, first, rates_t, 
 
 # ── the ledger, earned autonomy and acting on a move ───────────────────────
 
+# ── what a login that does not see pay may see of a move (Audit #23 A7-04) ──
+#
+# A move's dollars are that ONE person's hours x their own POS or role rate:
+# "Let Maria go … saves 2h (~$36)" is Maria's wage, $18/h, on a teammate's
+# Live screen and on a lock screen. R7-24's pay view (strategy_routes.
+# _sees_pay: the principal, or whoever sends the schedule) now decides the
+# moves too: every dollar field is dropped and the sentence loses its money.
+MOVE_PAY_FIELDS = ("dollars", "net", "premium")
+_PAY_TEXT = (
+    re.compile(r"\s*\(~\$[\d,]+(?:\.\d+)?\)"),                           # " (~$36)"
+    re.compile(r",\s*about \$[\d,]+(?:\.\d+)?"),                         # ", about $36"
+    re.compile(r",\s*less \$[\d,]+(?:\.\d+)? predictability pay under [^.—]+"),
+)
+
+
+def strip_pay_text(text) -> str:
+    """A move's sentence with its dollar figures taken out. A sentence that
+    still carries a $ after that (a wording this does not know) is replaced
+    by one with no figure at all."""
+    t = str(text or "")
+    for rx in _PAY_TEXT:
+        t = rx.sub("", t)
+    if "$" in t:
+        t = "A change to tonight's schedule is suggested. Open Live labor to see it."
+    return t
+
+
+def redact_move(m) -> dict:
+    """A copy of a move (suggested or from the ledger) with no pay in it."""
+    out = dict(m or {})
+    for k in MOVE_PAY_FIELDS:
+        if k in out:
+            out[k] = None
+    if "text" in out:
+        out["text"] = strip_pay_text(out.get("text"))
+    out["pay_hidden"] = True
+    return out
+
+
+def redact_read(rd) -> dict:
+    """A live read whose moves carry no pay (the read's own labor totals
+    stay: an aggregate, as every labor view shows)."""
+    if not isinstance(rd, dict):
+        return rd
+    out = dict(rd)
+    if isinstance(out.get("moves"), list):
+        out["moves"] = [redact_move(m) for m in out["moves"]]
+    return out
+
+
+def _audience_sees_pay(users, user_ids) -> bool:
+    """Whether EVERY recipient of a push may see pay (A7-04): a lock screen
+    is read by whoever holds the phone. `users` are the brief's recipient
+    dicts (role and grants at this restaurant); a recipient not among them
+    counts as no."""
+    try:
+        import permissions
+        by_id = {int(u["id"]): u for u in users or ()}
+        for uid in user_ids or ():
+            u = by_id.get(int(uid))
+            if not u or not (permissions.is_principal(u)
+                             or permissions.has_permission(u, permissions.SCHEDULE_PUBLISH)):
+                return False
+        return bool(user_ids)
+    except Exception:
+        return False
+
+
 def _store_move(restaurant_id, m, db_path=None):
     """The move's ledger row (one per key, ever). Returns (id, is_new)."""
     conn = get_conn(db_path)
@@ -1220,14 +1302,18 @@ def _offer_to_managers(restaurant, move_id, m, db_path=None) -> bool:
         return False
     if not notify.briefing_allowed(restaurant.id, "intraday_pulse", dbp):
         return False
+    recips = morning_brief.recipients(restaurant.id, dbp)
     audience = strategy_jobs.deliverable_audience(
-        restaurant.id, {u["id"] for u in morning_brief.recipients(restaurant.id, dbp)}, dbp,
+        restaurant.id, {u["id"] for u in recips}, dbp,
         alert_type="intraday_pulse")
     if not audience:
         return False
     title = {"cut": "Tonight's running slow", "extend": "Tonight's running ahead",
              "call_in": "Tonight's running ahead"}[m["kind"]]
-    queued = push.fire_push(restaurant.id, "intraday_pulse", title, m["text"],
+    # A lock screen carries no one's pay unless every phone it goes to may
+    # see pay (Audit #23 A7-04).
+    body = m["text"] if _audience_sees_pay(recips, audience) else strip_pay_text(m["text"])
+    queued = push.fire_push(restaurant.id, "intraday_pulse", title, body,
                             data={"live_move_id": move_id, "live_move_kind": m["kind"], "surface": "alert_push",
                                   "answerable": False},
                             db_path=dbp, user_ids=audience)
@@ -1288,42 +1374,177 @@ def run_for(restaurant, now_local=None, db_path=None) -> dict:
     return out
 
 
-def run_live_labor(db_path=None, restaurants=None) -> dict:
-    """The `live_labor` job, every 15 minutes: every open restaurant with
-    labor on, bounded and resumable (strategy_jobs._slot_iter's cursor and
-    wall-clock bound). Standard counts."""
-    import threading
+# ── adaptive cadence (RPOWER audit #23 A1-02, F5) ──────────────────────────
+#
+# A store was read every 15 minutes all service, whatever it could decide.
+# Now: every CADENCE_MINUTES only inside a DECISION WINDOW (within
+# DECISION_MARGIN_MINUTES of a published shift's start or end, when a cut, an
+# extension or a call-in can be offered, or CUT_MARGIN_MINUTES of the night's
+# cut time, cut_minute) and every OFF_WINDOW_MINUTES otherwise
+# (STRETCHED_MINUTES while the budget check stretched live reads:
+# pos_capacity.live_stretched). A store with no published schedule today has
+# nothing to decide and its read makes no POS request (read() stops first):
+# every STRETCHED_MINUTES. Labor off: never.
+OFF_WINDOW_MINUTES = int(__import__("os").getenv("LIVE_LABOR_OFF_WINDOW_MINUTES", "30") or 30)
+STRETCHED_MINUTES = 60
+DECISION_MARGIN_MINUTES = 45
+CUT_MARGIN_MINUTES = 60
+
+
+def _decision_window(restaurant, local, rows) -> bool:
+    """Whether `local` is inside one of today's decision windows (above)."""
+    margin = timedelta(minutes=DECISION_MARGIN_MINUTES)
+    for r in rows:
+        for edge in (r.get("_a"), r.get("_z")):
+            if isinstance(edge, datetime) and abs(local - edge) <= margin:
+                return True
+    try:
+        import time_utils as _tu
+        day = _tu.business_date(restaurant, local)
+        minute, _basis = cut_minute(restaurant, day, rows=rows)
+        cut = datetime.combine(day, datetime.min.time()) + timedelta(minutes=int(minute))
+        if abs(local - cut) <= timedelta(minutes=CUT_MARGIN_MINUTES):
+            return True
+    except Exception as e:
+        import logging
+        logging.getLogger("labor_live").debug("cut time unreadable for %s: %s", restaurant.id, e)
+    return False
+
+
+def cadence_minutes(restaurant, local, db_path=None):
+    """Minutes between this store's live labor reads now (above), or None
+    when labor is off."""
+    if not getattr(restaurant, "module_labor", 0):
+        return None
+    try:
+        import pos_capacity
+        stretched = pos_capacity.live_stretched()
+    except Exception:
+        stretched = False
+    try:
+        import time_utils as _tu
+        rows = _today_rows(restaurant.id, _tu.business_date(restaurant, local), db_path)
+    except Exception:
+        rows = None
+    if rows is None:
+        return CADENCE_MINUTES               # unreadable: as before
+    if not rows:
+        return STRETCHED_MINUTES
+    if _decision_window(restaurant, local, rows):
+        return CADENCE_MINUTES
+    return STRETCHED_MINUTES if stretched else max(CADENCE_MINUTES, OFF_WINDOW_MINUTES)
+
+
+def _slot_period(local, cadence) -> str:
+    return f"{local.date().isoformat()}-{local.hour}-{local.minute // cadence}/{cadence}"
+
+
+# Live labor's quarter hours as queue rows (RPOWER audit #23 A5-03): the
+# fan-out claims each due store's slot and queues one `live_labor` row (the
+# `live` group, budget-sized slots, run by the queue worker), its deadline the
+# end of the slot; a row no slot reached is simply the next slot's read.
+# LIVE_LABOR_QUEUE=0 runs the stores on the lane thread's pool as before.
+LIVE_QUEUE = (__import__("os").getenv("LIVE_LABOR_QUEUE", "1") or "1").strip().lower() not in (
+    "0", "false", "off", "no")
+
+
+def _due_store(r, st, lock, db_path=None):
+    """(local, period, cadence) when store `r` is due a read now and its slot
+    was claimed, else None."""
     import ops
     import strategy_jobs
     import time_utils as _tu
+    if not getattr(r, "module_labor", 0):
+        return None
+    local = _tu.restaurant_now(r, naive=True)
+    if not strategy_jobs._open_now(r, local):
+        return None
+    cadence = cadence_minutes(r, local, db_path)
+    if not cadence:
+        return None
+    period = _slot_period(local, cadence)
+    if not ops.claim_period(f"live_labor:{r.id}", period):
+        return None
+    with lock:
+        st["cadence"][str(cadence)] = st["cadence"].get(str(cadence), 0) + 1
+    return local, period, cadence
+
+
+def _run_store(r, local, st, lock, db_path=None):
+    import ops
+    with lock:
+        st["attempted"] += 1
+    try:
+        out = run_for(r, now_local=local, db_path=db_path)
+        with lock:
+            st["offered"] += 1 if out.get("offered") else 0
+            st["acted"] += 1 if out.get("acted") else 0
+        return out
+    except Exception as e:
+        with lock:
+            st["failed"] += 1
+        ops.capture(e, job="live_labor", context=f"restaurant_id={r.id}")
+        return None
+
+
+def run_live_labor(db_path=None, restaurants=None) -> dict:
+    """The `live_labor` job, every 15 minutes: every open restaurant with
+    labor on whose adaptive cadence (cadence_minutes) is due, bounded and
+    resumable (strategy_jobs._slot_iter's cursor and wall-clock bound). Each
+    due store is one `live_labor` queue row (LIVE_QUEUE; run_queued_live),
+    or, with LIVE_LABOR_QUEUE=0, read here on the slot pool. Standard
+    counts, plus `queued` and the stores by cadence."""
+    import threading
+    import time as _time
+    import strategy_jobs
     dbp = db_path or _models_mod.DB_PATH
-    st = {"attempted": 0, "failed": 0, "offered": 0, "acted": 0}
+    st = {"attempted": 0, "failed": 0, "offered": 0, "acted": 0, "cadence": {}}
     lock = threading.Lock()
+    if LIVE_QUEUE:
+        import job_queue
+        items, walk = [], {}
+        for r in strategy_jobs._slot_iter("live_labor", restaurants, dbp, state=walk):
+            due = _due_store(r, st, lock, db_path)
+            if not due:
+                continue
+            _local, period, cadence = due
+            items.append({"payload": {"restaurant_id": r.id, "period": period}, "restaurant_id": r.id,
+                          "deadline": _time.time() + cadence * 60,
+                          "idempotency_key": f"live_labor:{r.id}:{period}"})
+        queued = job_queue.enqueue_many("live_labor", items, wake=False,
+                                        db_path=None if dbp == _models_mod.DB_PATH else dbp) if items else 0
+        st["attempted"] = queued
+        st["hit_bound"] = bool(walk.get("hit_bound"))
+        return strategy_jobs._slot_counts(st, queued=queued, by_cadence=st["cadence"])
 
     def _one(r):
-        if not getattr(r, "module_labor", 0):
-            return
-        local = _tu.restaurant_now(r, naive=True)
-        if not strategy_jobs._open_now(r, local):
-            return
-        if not ops.claim_period(f"live_labor:{r.id}", f"{local.date().isoformat()}-{local.hour}-"
-                                                      f"{local.minute // CADENCE_MINUTES}"):
-            return
-        with lock:
-            st["attempted"] += 1
-        try:
-            out = run_for(r, now_local=local, db_path=db_path)
-            with lock:
-                st["offered"] += 1 if out.get("offered") else 0
-                st["acted"] += 1 if out.get("acted") else 0
-        except Exception as e:
-            with lock:
-                st["failed"] += 1
-            ops.capture(e, job="live_labor", context=f"restaurant_id={r.id}")
+        due = _due_store(r, st, lock, db_path)
+        if due:
+            _run_store(r, due[0], st, lock, db_path)
 
     # A small pool, not a serial walk (scale audit 10/19/26 INF-14 / A3-03):
     # the serial 4-minute walk reached ~96 stores a run, so at 500 open
     # stores each was read every ~78 minutes, not every 15.
     st["hit_bound"] = strategy_jobs._slot_sweep("live_labor", restaurants, _one, dbp,
-                                                workers=strategy_jobs.SLOT_WORKERS)
-    return strategy_jobs._slot_counts(st, offered=st["offered"], acted=st["acted"])
+                                                workers=strategy_jobs.slot_workers())
+    return strategy_jobs._slot_counts(st, offered=st["offered"], acted=st["acted"], by_cadence=st["cadence"])
+
+
+def run_queued_live(job):
+    """job_queue's handler for `live_labor` (A5-03): one store's read, if
+    the store is still open. Never raises for the store's own failure
+    (captured; its next slot is the retry)."""
+    import threading
+    import strategy_jobs
+    import time_utils as _tu
+    from models import get_restaurant
+    rid = (job.payload or {}).get("restaurant_id")
+    r = get_restaurant(int(rid)) if rid is not None else None
+    if r is None or not getattr(r, "module_labor", 0):
+        return {"skipped": "no restaurant with labor on"}
+    local = _tu.restaurant_now(r, naive=True)
+    if not strategy_jobs._open_now(r, local):
+        return {"skipped": "closed"}
+    st = {"attempted": 0, "failed": 0, "offered": 0, "acted": 0}
+    _run_store(r, local, st, threading.Lock())
+    return {k: st[k] for k in ("attempted", "failed", "offered", "acted")}

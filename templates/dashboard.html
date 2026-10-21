@@ -6713,6 +6713,7 @@ svg:hover .hb-xh{opacity:1}
         h+=dhRow(s.label||s.key,dhTone(s.tone),s.pct==null?'':(+s.pct)+'%',s.line||'',det.join(' · '));}
     }
     h+=dhDistrustHtml(d.distrusted);
+    h+=dhLaborNotesHtml(d.labor_notes);
     var nc=d.not_connected||[];
     if(nc.length){
       h+='<div class="cf-p-k">Not connected</div>';
@@ -6737,6 +6738,30 @@ svg:hover .hb-xh{opacity:1}
         +(x.text?'<div class="b">'+num(x.text)+'</div>':'')
         +'<div class="dh-verify"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-verify="'+esc(x.source)+'" data-dh-verify-route="'+esc((x.verify&&x.verify.web)||'/api/data-health/verify')+'">Re-verified</button><span class="dh-verify-msg" aria-live="polite"></span></div></div>';}
     return h?'<div class="cf-p-k">Data you said you don’t trust</div>'+h:'';
+  }
+  // What the nightly labor read found the figures can't carry (audit #23:
+  // labor.data_health_notes): punches still open, a record that behaves
+  // like a station login (the owner's two answers, POST
+  // /api/data-health/station), a job the POS renamed.
+  function dhLaborNotesHtml(list){
+    var h='',i;list=list||[];
+    for(i=0;i<list.length;i++){var x=list[i]||{},a=x.action||null;if(!x.text)continue;
+      h+='<div class="cf-p-row '+(x.tone==='warn'?'warn':'mid')+'"><div class="cf-p-h"><span class="t"><i class="dh-dot" aria-hidden="true"></i>'+esc(x.label||'Labor')+'</span></div>'
+        +'<div class="b">'+num(x.text)+'</div>'
+        +(a&&a.kind==='station'?'<div class="dh-verify"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-station="1" data-emp="'+esc(a.employee_id||'')+'" data-name="'+esc(a.name||'')+'" data-route="'+esc(a.web||'/api/data-health/station')+'">It\u2019s a station</button><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-dh-station="0" data-emp="'+esc(a.employee_id||'')+'" data-name="'+esc(a.name||'')+'" data-route="'+esc(a.web||'/api/data-health/station')+'">It\u2019s a person</button><span class="dh-verify-msg" aria-live="polite"></span></div>':'')
+        +'</div>';}
+    return h?'<div class="cf-p-k">Labor data to check</div>'+h:'';
+  }
+  function dhStation(btn){
+    var box=btn.parentNode,msg=box&&box.querySelector('.dh-verify-msg'),bs=box?box.querySelectorAll('button'):[],i;
+    for(i=0;i<bs.length;i++)bs[i].disabled=true;
+    fetch(btn.getAttribute('data-route')||'/api/data-health/station',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({employee_id:btn.getAttribute('data-emp'),name:btn.getAttribute('data-name'),station:btn.getAttribute('data-dh-station')==='1'})})
+      .then(apiJson).then(function(r){
+        if(!r||!r.ok){for(i=0;i<bs.length;i++)bs[i].disabled=false;if(msg){msg.className='dh-verify-msg err';msg.textContent=(r&&r.error)||'That couldn\u2019t be saved.';}return;}
+        if(msg){msg.className='dh-verify-msg';msg.textContent=r.message||'Saved';}
+        if(typeof toast==='function')toast(r.message||'Saved','success');
+      }).catch(function(){for(i=0;i<bs.length;i++)bs[i].disabled=false;});
   }
   function dhVerify(btn){
     var src=btn.getAttribute('data-dh-verify'),box=btn.parentNode,msg=box&&box.querySelector('.dh-verify-msg');
@@ -6810,9 +6835,10 @@ svg:hover .hb-xh{opacity:1}
     }
   }
   document.addEventListener('click',function(e){
-    var t=e.target&&e.target.closest?e.target.closest('[data-dh-open],[data-dh-sync],[data-dh-verify]'):null;if(!t)return;
+    var t=e.target&&e.target.closest?e.target.closest('[data-dh-open],[data-dh-sync],[data-dh-verify],[data-dh-station]'):null;if(!t)return;
     e.preventDefault();
     if(t.hasAttribute('data-dh-verify')){if(!t.disabled)dhVerify(t);return;}
+    if(t.hasAttribute('data-dh-station')){if(!t.disabled)dhStation(t);return;}
     if(t.hasAttribute('data-dh-sync')){if(!t.disabled)dhSync(t);return;}
     dhOpen();
   });
@@ -9417,9 +9443,17 @@ svg:hover .hb-xh{opacity:1}
   }
   function laborHtml(lab,p){
     if(!lab||lab.status!=='ready')return '';
-    var ds=(lab.detail&&lab.detail.departments)||[],m=lab.metrics||{};
-    if(!ds.length)return '';
-    var withCost=false,i,tot=0;for(i=0;i<ds.length;i++)if(isNum(ds[i].cost)){withCost=true;tot+=ds[i].cost;}
+    // Punches still open on the night and a later sync's restatement
+    // (audit #23 A3-01 / A3-05: block_labor detail.open_punches / restated).
+    var ld=lab.detail||{},notes='';
+    if(ld.open_punches&&ld.open_punches.line)notes+='<div class="dr-note">'+prose(ld.open_punches.line)+'</div>';
+    if(ld.restated&&ld.restated.line)notes+='<div class="dr-note">'+prose(ld.restated.line)+'</div>';
+    var ds=ld.departments||[],m=lab.metrics||{};
+    if(!ds.length)return notes?'<section class="hb-card dr-dep" aria-label="Labor"><div class="hb-kicker">Labor</div>'+notes+'</section>':'';
+    var withCost=false,i,tot=0,payHidden=false;for(i=0;i<ds.length;i++){if(ds[i].pay_hidden)payHidden=true;if(isNum(ds[i].cost)){withCost=true;tot+=ds[i].cost;}}
+    // A one-person department's cost is that person's pay (Audit #23
+    // A7-05): withheld outside the pay view, so the bar is drawn by hours.
+    if(payHidden)withCost=false;
     var sal=isNum(m.salaried_cost)?m.salaried_cost:null,all=tot+(sal||0),bar='',rows='';
     var tones=['c0','c1','c2','c3'];
     var parts=ds.slice();if(sal!==null&&withCost)parts.push({department:'Salaried',cost:sal,hours:null,pct_of_sales:null,roles:[],salaried:true});
@@ -9436,7 +9470,8 @@ svg:hover .hb-xh{opacity:1}
     // 10/17/26).
     return '<section class="hb-card dr-dep" aria-label="Where the labor went"><div class="hb-kicker">Where the labor went'+itip('How labor is priced by department',said((lab.detail||{}).departments_basis))+'</div>'
       +'<div class="dr-dep-bar" role="img" aria-label="Labor by department">'+bar+'</div><div class="dr-dep-rows">'+rows+'</div>'
-      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, with salaries.</div>':'')+'</section>';
+      +(withCost&&sal!==null?'<div class="dr-note">'+hn(money(all))+' all in, with salaries.</div>':'')
+      +(payHidden?'<div class="dr-note">A department one person worked shows no cost: it would be their pay.</div>':'')+notes+'</section>';
   }
   function serversHtml(svc){
     if(!svc||svc.status!=='ready')return '';
@@ -9717,7 +9752,14 @@ svg:hover .hb-xh{opacity:1}
       for(var i=0;i<L.length;i++)if(isNum(m[L[i][0]]))loss+=tile(L[i][1],esc(money(m[L[i][0]])));
       // Under "everything on the POS" the tax IS in gross (block_sales.GROSS_BASES).
       if(isNum(m.tax))loss+=tile('Tax collected',esc(money(m.tax)),def.gross_basis==='all'?'in gross, not net':'not in gross or net');
+      // The POS's own tax adjustment: shown, never taken off tax (Audit #23 A2-20).
+      if(isNum(m.tax_adjust_amount))loss+=tile('Tax adjustments',esc(money(m.tax_adjust_amount)),'shown, not taken off tax');
       if(loss)h+='<div class="hb-stats" style="margin-top:20px">'+loss+'</div>';
+      // The night's own sentences (Audit #23): a clock change inside it, net
+      // after refunds, comps that don't reconcile (loss_notes reach only a
+      // login that may see comps and voids).
+      var nts=(d.notes||[]).concat(d.loss_notes||[]);
+      for(var ni=0;ni<nts.length;ni++)h+=note(prose(nts[ni]));
       // Net said as the server defines it for this basis; the POS's own
       // deduction list only when an older report has no definition.
       if(def.gross)h+=note('<b>Gross</b> is '+esc(def.gross)+'.'+(def.net?' <b>Net</b> is '+esc(def.net)+'.':((def.net_deductions||[]).length?' <b>Net</b> takes off '+esc(def.net_deductions.join(' and '))+'.':'')));
@@ -12956,7 +12998,7 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
          computed these for a while and no surface showed them, so a
          percentage covering four of fourteen days looked exactly like one
          covering all fourteen. #}
-      {% if labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.duplicate_rows_ignored or labor.period_too_short_to_project) %}
+      {% if labor.is_live and (labor.hours_are_estimated or labor.days_missing_sales or labor.days_with_conflicting_sales or labor.duplicate_rows_ignored or labor.period_too_short_to_project or (labor.open_punches and labor.open_punches.count)) %}
       {# One line, the detail behind it (density round #45). #}
       <details class="how-this" style="margin-top:6px;color:var(--amber)">
         <summary>Heads up: what this figure leaves out</summary><div>
@@ -12965,6 +13007,8 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         {% if labor.days_with_conflicting_sales %} {{ labor.days_with_conflicting_sales|length }} day(s) had two different sales figures on different rows and were left out of the percentage.{% endif %}
         {% if labor.duplicate_rows_ignored %} {{ labor.duplicate_rows_ignored }} duplicate row(s) ignored.{% endif %}
         {% if labor.period_too_short_to_project %} The period is under a week, so there's no monthly figure.{% endif %}
+        {# Punches the POS still shows open (audit #23 A3-01, labor.open_punch_summary). #}
+        {% if labor.open_punches and labor.open_punches.count %} {{ labor.open_punches.line }}{% endif %}
       </div></details>
       {% endif %}
       <span id="labor-gap-banner" hidden></span>
@@ -15794,6 +15838,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
         <div class="gx-sms" id="gx-f-prev" aria-label="What guests get"></div>
         <div class="gx-acts"><button type="button" class="cbtn cbtn-primary" id="gx-f-save" onclick="gxFollowSave()">Save</button><span class="gx-msg" id="gx-f-msg-s" role="status" aria-live="polite"></span></div>
         <p class="gx-sub" id="gx-texting"></p>
+        <div id="gx-posm" hidden>
+          <div class="gx-sh"><div class="k">Match RPOWER checks</div><label class="ac-switch"><input type="checkbox" id="gx-posm-on" aria-label="Match RPOWER checks to guests" onchange="gxPosMatchSave()"><span class="ac-sw-track"></span><span class="ac-sw-thumb"></span></label></div>
+          <p class="gx-sub">Each night, a check your staff tagged with a customer adds that guest's visit and usual order. Off by default. Matched guests are never texted without their own Y.</p>
+          <span class="gx-msg" id="gx-posm-msg" role="status" aria-live="polite"></span>
+        </div>
       </div>
       <div class="cp-card gx-side" id="gx-inbox">
         <div class="gx-sh"><div class="k">Replies</div><span class="cp-chip warn" id="gx-unread" hidden></span></div>
@@ -20076,6 +20125,7 @@ function gxLoad() {
     var c = d.counts || {};
     gxNum('gx-k-yday', c.yesterday); gxNum('gx-k-joined', c.joined); gxNum('gx-k-waiting', c.waiting); gxNum('gx-k-total', c.total);
     gxList(d); gxFollowFill(d.followup || {}, d.can_publish); gxTexting(d.texting || {}, d.tock || {});
+    gxPosMatchFill(d.pos_match || {});
     if (!_gx.setLoaded) { _gx.setLoaded = true; gxSetLoad(); }
     var un = document.getElementById('gx-unread');
     if (un) { un.hidden = !c.unread; un.textContent = c.unread + ' new'; }
@@ -20134,6 +20184,23 @@ function gxFollowFill(f, canPublish) {
   var lock = !canPublish;
   on.disabled = lock; msg.disabled = lock; rev.disabled = lock; document.getElementById('gx-f-save').hidden = lock;
   gxFollowPreview();
+}
+// The RPOWER guest match is the owner's to switch on (Audit #23 A7-07).
+function gxPosMatchFill(p) {
+  var box = document.getElementById('gx-posm'), on = document.getElementById('gx-posm-on');
+  if (!box || !on) return;
+  box.hidden = !p.available;
+  on.checked = !!p.enabled;
+  on.disabled = !p.can_change;
+  if (!p.can_change) gxMsg('gx-posm-msg', 'Only the account owner can change this.', '');
+}
+function gxPosMatchSave() {
+  var on = document.getElementById('gx-posm-on'); on.disabled = true;
+  gxPost('/api/guests/pos-match', {enabled: on.checked}).then(function (d) {
+    on.disabled = false;
+    if (!d || !d.ok) { on.checked = !on.checked; gxMsg('gx-posm-msg', (d && d.error) || 'Not saved. Try again.', 'bad'); return; }
+    gxMsg('gx-posm-msg', d.enabled ? 'On. Tonight’s checks are matched after close.' : 'Off. Nothing more is read from RPOWER.', 'good');
+  }).catch(function () { on.disabled = false; on.checked = !on.checked; gxMsg('gx-posm-msg', 'Not saved. Check your connection.', 'bad'); });
 }
 function gxFollowPreview() {
   var el = document.getElementById('gx-f-prev'); if (!el || !_gx.data) return;
@@ -38309,12 +38376,15 @@ window._cuRole=window.CAV_BOOT.role;
           // The phone is the whole owner-side control for self-signup: a
           // number you don't recognise next to a name you do is the signal.
           if(s.self_signup)bits.push('signed up '+ago(s.claimed_at)+' · '+esc(_phone(s.claimed_by_phone)));
+          // A self-claimed name sees no POS hours or tips until you confirm it (Audit #23 A7-10).
+          if(s.active&&s.pos_pay_held)bits.push('POS hours and tips held until you confirm it’s them');
           var meta=bits.length?' <span style="color:var(--ink3)">· '+bits.join(' · ')+'</span>':'';
           var acts='<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" data-person-open="'+esc(s.name||'')+'">Details</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cur="'+esc(s.name||'')+'" onclick="renameStaff('+s.membership_id+',this)">Rename</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" data-cur="'+esc(s.job_role||'')+'" onclick="retitleStaff('+s.membership_id+',this)">Job</button>'
                  + '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="resetStaffPin('+s.membership_id+',this)">New PIN</button>';
           if(s.locked)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlockStaff('+s.membership_id+',this)">Unlock</button>';
+          if(s.active&&s.pos_pay_held)acts+='<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="approveStaffPos('+s.membership_id+',this)">It’s them</button>';
           if(s.active){
             acts+= s.self_signup
               ? '<button class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="unlinkStaff('+s.membership_id+',this)">Not them</button>'
@@ -38434,6 +38504,14 @@ window._cuRole=window.CAV_BOOT.role;
       done();
       if(d.ok){toast('Name is available again','success');loadStaff();}
       else toast(d.error||'Could not unlink','error');
+    });
+  };
+  window.approveStaffPos=function(id,btn){
+    var done=busy(btn,'…');
+    jsend('/api/account/staff/'+id+'/approve-pos',{},function(d){
+      done();
+      if(d.ok){toast('Confirmed. They see their POS hours and tips now','success');loadStaff();}
+      else toast(d.error||'Could not confirm','error');
     });
   };
   window.unlockStaff=function(id,btn){
@@ -40010,8 +40088,8 @@ window._cuRole=window.CAV_BOOT.role;
           for(i=0;i<sh.length;i++){h+='<div class="shr-row"><div class="who"><b>'+esc(sh[i].employee||'')+'</b> '+(sh[i].start?_flWhen(sh[i].start):'')+(sh[i].role?' · '+esc(sh[i].role):'')+'<span class="sub">'+esc(_flStatus[sh[i].status]||sh[i].status)+(sh[i].reason?': '+esc(sh[i].reason):'')+'</span></div></div>';}
           var lp=pv.last_push;
           if(lp)h+='<div class="lb2-intro">Last push: '+esc(lp.status)+(lp.sent_on?' on <span class="hb-num">'+esc(lp.sent_on)+'</span>':'')+(lp.error?' · '+esc(lp.error):'')+'</div>';
-          if(S.can_edit&&pv.supported&&!st.pos_push&&!pv.external)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorSet({pos_push:true,previewed:true},this)">Send published weeks to '+esc(pos.label||'the POS')+'</button></div>';
-          if(S.can_edit&&st.pos_push)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPush('+(+pv.history_id)+',this)">Send this week now</button><button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({pos_push:false},this)">Stop sending to the POS</button></div>';
+          if(S.can_switch_pos_push&&pv.supported&&!st.pos_push&&!pv.external)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-primary cbtn-sm" onclick="floorSet({pos_push:true,previewed:true},this)">Send published weeks to '+esc(pos.label||'the POS')+'</button></div>';
+          if(S.can_edit&&st.pos_push)h+='<div class="sr-actions" style="margin-top:6px"><button type="button" class="cbtn cbtn-secondary cbtn-sm" onclick="floorPush('+(+pv.history_id)+',this)">Send this week now</button>'+(S.can_switch_pos_push?'<button type="button" class="cbtn cbtn-text cbtn-inline cbtn-sm" onclick="floorSet({pos_push:false},this)">Stop sending to the POS</button>':'')+'</div>';
         }
       }
     }

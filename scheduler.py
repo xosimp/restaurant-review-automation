@@ -1351,10 +1351,17 @@ def run_toast_sync():
     try:
         import pos
         stats = {}
-        results = pos.sync_all(stats=stats)
-        if results:
-            ok = sum(1 for r in results if r.get("ok"))
-            log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
+        if pos.POS_SYNC_QUEUE:
+            # One `pos_sync` queue row per store at its own local hour (RPOWER
+            # audit #23 A5-02): the queue worker runs them; the jobs that read
+            # the night's sync wait for them (_pos_sync_settled).
+            n = pos.queue_nightly_syncs(stats=stats)
+            log.info(f"POS nightly sync: {n} store rows queued")
+        else:
+            results = pos.sync_all(stats=stats)
+            if results:
+                ok = sum(1 for r in results if r.get("ok"))
+                log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
         run_inventory_sync()
         # The counts reach job_runs (ops.run_outcome): a night on which every
         # POS failed is a failed run, some failing a partial one (DH2-1).
@@ -1450,7 +1457,7 @@ def run_pos_retry():
             result = pos.sync_restaurant(rid)
             with lock:
                 counts["attempted"] += 1
-                counts["ok" if result.get("ok") else "failed"] += 1
+                counts["ok" if result.get("ok") else "skipped" if result.get("busy") else "failed"] += 1
             return
         attempt = next((n for n in range(1, len(pos.RETRY_DELAYS_HOURS) + 1)
                         if _ops.claim_period(f"pos_retry_attempt:{rid}", f"{local.date().isoformat()}#{n}")), None)
@@ -1461,7 +1468,9 @@ def run_pos_retry():
         result = pos.sync_restaurant(rid, trigger="retry", attempt=attempt)
         with lock:
             counts["attempted"] += 1
-            counts["ok" if result.get("ok") else "failed"] += 1
+            # Another process already syncing this store (pos.sync_restaurant
+            # says `busy`) is not a failure (Audit #23 A4-20).
+            counts["ok" if result.get("ok") else "skipped" if result.get("busy") else "failed"] += 1
 
     late_ids = set(late)
     _done, hit_bound = resumable_sweep("pos_retry_cursor", list(due) + late, _one, POS_RETRY_MAX_SECONDS,
@@ -1665,7 +1674,10 @@ def run_daily_depletion_sync():
                     counts["skipped"] += 1
                     return
                 counts["total"] += 1
-                end = _chi_now().date()
+                # The restaurant's own last complete business date (audit
+                # #23 A2-18 / A3-14), never Chicago's calendar date: at 5am
+                # Central a Pacific store's night was still trading.
+                end = pos.complete_through(r) or _chi_now().date()
                 # Since the last depleted business date, capped (DH2-4) —
                 # idempotent, so the overlap re-syncs late edits for free.
                 start = _depletion_start(r.id, end)
@@ -2045,6 +2057,36 @@ def note_missed_window(job, restaurant_id, local_date, window_open_hour=None):
 def _due(now, hour, until=24):
     """True from `hour` (inclusive) until `until` (exclusive), local time."""
     return hour <= now.hour < until
+
+
+# The jobs that read the night's POS sync (the Labor pre-warm, loss sync,
+# the DSR backfill) wait for its queue rows (RPOWER audit #23 A5-02) — the
+# rows due by tonight's 3am Chicago plus the spread, so Central and Eastern
+# stores are synced first; a store whose own hour is later (the West) does
+# not hold them, as the deferred stores never did — but never past this hour.
+POS_SYNC_FOLLOWERS_LATEST_HOUR = int(os.getenv("POS_SYNC_FOLLOWERS_LATEST_HOUR", "6"))
+
+
+def _pos_sync_settled(ops_, now, today) -> bool:
+    """Whether the night's POS sync has settled for the jobs that read it:
+    the fan-out ran (ops_.settled) and its rows due by 3am Chicago plus
+    pos.POS_SYNC_SPREAD_MINUTES are done — or it is POS_SYNC_FOLLOWERS_
+    LATEST_HOUR. An unreadable queue reads as settled (the jobs ran
+    straight after the sweep before)."""
+    if not ops_.settled("pos_sync", str(today)):
+        return False
+    if _due(now, POS_SYNC_FOLLOWERS_LATEST_HOUR):
+        return True
+    try:
+        import pos
+        if not pos.POS_SYNC_QUEUE:
+            return True
+        due_by = datetime.combine(now.date(), datetime.min.time()).replace(hour=3) + \
+            timedelta(minutes=pos.POS_SYNC_SPREAD_MINUTES)
+        return pos.open_sync_rows(due_by.replace(tzinfo=_ZI_sch("America/Chicago")).timestamp()) == 0
+    except Exception as e:
+        log.warning(f"POS sync rows unreadable ({e}); its followers go on")
+        return True
 
 
 def _latest_slot(now, slots):
@@ -5056,8 +5098,8 @@ def _drill_offsite(backup_dir):
         sealed = offsite_backup.sealed_count(plain)
         opened = offsite_backup.unseal_file(plain)
         _lap("unseal")
-        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE rpower_token IS NOT NULL "
-                                          "AND rpower_token != ''")
+        rpower_kept = _drill_count(plain, "SELECT COUNT(*) FROM restaurants WHERE (rpower_token IS NOT NULL "
+                                          "AND rpower_token != '') OR rpower_credential_id IS NOT NULL")
         seals_ok = not opened.get("failed")
         ok = integrity == "ok" and restaurants > 0 and seals_ok
         return {"checked": True, "ok": ok, "stages": stages, "sealed": sealed,
@@ -6535,6 +6577,15 @@ def scheduler_loop():
             # inline they held it (and the DSR sweep, live labor, the staff
             # reminders) for up to two hours at scale. A busy lane gives the
             # claim back, so a later tick starts it.
+            # 2am — the RPOWER budget check (RPOWER audit #23 A4-12 / A5-01):
+            # tonight's demand against the nightly window's budget; over it,
+            # bulk (onboarding) waits for 7am and live labor reads less often
+            # outside each store's decision windows. Close and the nightly
+            # archive are never shed.
+            if _due(now, 2) and _ops.claim_period("pos_budget_check", str(today)):
+                from pos_capacity import budget_check as _budget_check
+                _ops.run_job("pos_budget_check", _budget_check)
+
             if _due(now, 3) and _ops.claim_period("pos_sync", str(today)):
                 log.info("Running nightly Toast POS sync...")
                 if not _ops.run_in_lane("pos", "pos_sync", run_toast_sync):
@@ -6542,7 +6593,7 @@ def scheduler_loop():
 
             # After the POS sync, on the AI lane — the Labor read written
             # ahead of the morning open for owners who open it (#100).
-            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+            if _due(now, 3) and _pos_sync_settled(_ops, now, today) and \
                     _ops.claim_period("labor_prewarm", str(today)):
                 if not _ops.run_in_lane("ai", "labor_prewarm", run_labor_prewarm, now=now):
                     _ops.release_period("labor_prewarm", str(today))
@@ -6554,7 +6605,7 @@ def scheduler_loop():
 
             # 3am+ — comps/voids/refunds from POSes that report them. After
             # pos_sync so the same night's data is settled first.
-            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+            if _due(now, 3) and _pos_sync_settled(_ops, now, today) and \
                     _ops.claim_period("loss_sync", str(today)):
                 from strategy_jobs import run_loss_sync
                 if not _ops.run_in_lane("pos", "loss_sync", run_loss_sync):
@@ -6563,7 +6614,7 @@ def scheduler_loop():
             # 3am+, once the POS sync has settled — the Daily Sales Report's
             # figures for the nights before it started (dsr.backfill), its
             # own job so a failure has a job_runs row (bar audit R11).
-            if _due(now, 3) and _ops.settled("pos_sync", str(today)) and \
+            if _due(now, 3) and _pos_sync_settled(_ops, now, today) and \
                     _ops.claim_period("dsr_backfill", str(today)):
                 from strategy_jobs import run_dsr_backfill
                 if not _ops.run_in_lane("pos", "dsr_backfill", run_dsr_backfill):
@@ -6966,6 +7017,14 @@ def scheduler_loop():
             if _ops.claim_period("provider_probes", f"{today}-{now.hour}"):
                 import provider_health as _provider_health
                 _ops.run_job("provider_probes", _provider_health.run_probes)
+
+            # Every 15 minutes — each RPOWER store's health row and the
+            # fleet's (rpower_health, Audit #23 A6-01): grouped reads, bounded
+            # and resumable; the console, the fleet alert rules and the status
+            # page read it, never every restaurant row.
+            if _ops.claim_period("rpower_health_rollup", f"{today}-{now.hour}-{now.minute // 15}"):
+                import rpower_health as _rpower_health
+                _ops.run_job("rpower_health_rollup", _rpower_health.run_rollup)
 
             # Hourly — received intake mail still queued after an hour with
             # no live job is queued again, or marked failed after three

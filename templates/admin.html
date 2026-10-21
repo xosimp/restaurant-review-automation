@@ -391,6 +391,9 @@ body.role-support .w{display:none!important}
     <div class="dim">Issued by RPOWER to Cavnar AI (integrations@rpower.com). The store resolves once the token verifies.</div>
     <div id="rp-stores" style="display:none;margin-top:8px"><label>Which store is this restaurant?</label><select id="rp-store"></select><button class="btn p w" style="margin-top:8px" onclick="rpowerBind()">Bind store</button></div>
     <div style="display:flex;gap:8px;margin-top:6px"><button class="btn p w" onclick="rpowerSave()">Verify &amp; save</button><button class="btn w" onclick="rpowerSync()">Sync now</button><button class="btn d w" onclick="rpowerDisconnect()">Disconnect</button></div>
+    <!-- Audit #23 F7: the partner credential held once (rotate in one step),
+         a demo's live-store override, a bulk store's owner hold. -->
+    <div id="rp-extra" class="dim" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
   </div>
 </div></div>
 <!-- Branding & peer profile (#23): filled from the client's own stored values
@@ -797,7 +800,7 @@ function applyBadges(d){
 // ── ⌘K: jump anywhere, or search the fleet ─────────────────────────────────
 const PAGES = [
   ['Overview','#overview','Page'], ['Needs you','#overview','Page'],
-  ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · Event calendar','#operations/events','Page'],
+  ['Operations · Jobs','#operations/jobs','Page'], ['Operations · Email & SMS','#operations/email','Page'], ['Operations · Push & alerts','#operations/push','Page'], ['Operations · AI','#operations/ai','Page'], ['Operations · Integrations','#operations/integrations','Page'], ['Operations · RPOWER','#operations/rpower','Page'], ['Operations · Event calendar','#operations/events','Page'],
   ['Customers · Restaurants','#customers/restaurants','Page'], ['Customers · Billing','#customers/billing','Page'], ['Customers · Onboarding','#customers/onboarding','Page'], ['Customers · Support queue','#customers/support','Page'],
   ['Customers · Bug reports','#customers/support?view=bugs','Page'], ['Customers · Deletion requests','#customers/support?view=deletions','Page'], ['Customers · Resolved issues','#customers/support?view=resolved','Page'],
   ['Engineering','#engineering','Page'], ['Engineering · Status page','#engineering/status','Page'], ['Engineering · Audit trail','#engineering/audit','Page'], ['Engineering · Team & access','#engineering/access','Page'], ['Engineering · Experiments','#engineering/experiments','Page'], ['Engineering · AI routes','#engineering/ai-routes','Page'], ['Engineering · AI costs','#engineering/ai-costs','Page'],
@@ -1444,14 +1447,15 @@ async function bulkPartners(){
     (d.partners||[]).forEach(p=>{ const o = document.createElement('option'); o.value = p.id; o.textContent = p.name + (p.billing_mode==='partner'?' (billed by partner)':''); sel.appendChild(o); }); }catch(e){}
 }
 function bulkRows(rows){
-  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="tw"><table><thead><tr><th>Line</th><th>Restaurant</th><th>Owner</th><th>Store</th><th>Result</th></tr></thead><tbody>${(rows||[]).map(r=>`<tr><td class="n">${r.line}</td><td>${r.restaurant_id?`<a href="#client/${r.restaurant_id}">${esc(r.restaurant_name)}</a>`:esc(r.restaurant_name)}</td><td>${esc(r.owner_email)}</td><td>${esc(r.rpower_store_mid||'')}</td><td>${r.action==='error'?`<span style="color:var(--red-t)">${esc(r.error)}</span>`:esc(r.action)}${r.joins_owner?` <span class="dim">· joins ${esc(r.joins_owner.group||r.joins_owner.name||'')} (same owner login)</span>`:''}${r.owner_check==='held'?' <span class="dim">· POS data held for the owner\'s store check</span>':''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 async function bulkDry(){
   const d = await post('/admin/api/onboarding/provision/dry-run', {csv: $('bulk-csv').value});
   if(!d.ok){ $('bulk-out').innerHTML = `<div class="warnline">${esc(d.error||'The list could not be read')}</div>`; $('bulk-apply').disabled = true; return; }
   const c = d.counts || {}, bl = d.billing || {};
   $('bulk-out').innerHTML = `<div class="sub"><span class="n">${c.create||0}</span> to create · <span class="n">${c.exists||0}</span> already here · <span class="n">${c.error||0}</span> to fix${d.joins_owner?` · <span class="n">${d.joins_owner}</span> join an existing owner's group`:''}</div>`
-    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '') + bulkRows(d.rows);
+    + (bl.note ? `<div class="${bl.ok===false?'warnline':'dim'}" style="margin:6px 0">${esc(bl.note)}</div>` : '')
+    + (d.owner_check && (d.owner_check.held || d.owner_check.manifest) ? `<div class="dim" style="margin:6px 0">${esc(d.owner_check.note||'')}</div>` : '') + bulkRows(d.rows);
   $('bulk-apply').disabled = !(c.create > 0) || bl.ok === false;
 }
 async function bulkApply(){
@@ -2404,6 +2408,7 @@ async function offboardHtml(c){
   const body = `${rq ? `<span class="ink2" style="font-size:13px">The owner asked to close the account on ${esc(rq.requested_on)}. Finish the checklist and delete it by ${esc(rq.due_on)}, or withdraw the request with them.</span>` : '<span class="muted" style="font-size:13px">No deletion request is open. The checklist is here for a client you are closing yourself.</span>'}
     <div class="lst">${(d.steps||[]).map(s=>`<div class="li" style="padding:12px 0"><span style="width:92px;flex-shrink:0">${pill(STEP_TONE[s.status]||'neu', esc((s.status||'').replace('_',' ')), false)}</span><div class="tt"><b>${esc(s.label)}</b><span>${esc(s.note || s.hint || '')}${s.actor?' · '+esc(s.actor)+' '+fmtD(s.updated_at):''}${s.step==='integrations'&&conn.length&&s.status==='pending'?' · connected now: '+esc(conn.join(', ')):''}</span></div>
       ${s.status==='pending' ? `<button class="btn s w" onclick="offStep(${c.id},'${jsq(s.step)}','done','${jsq(s.label)}','${n}')">Mark done</button><button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','skipped','${jsq(s.label)}','${n}')">Skip…</button>` : (s.status==='not_needed' ? '' : `<button class="btn s g w" onclick="offStep(${c.id},'${jsq(s.step)}','pending','${jsq(s.label)}','${n}')">Undo</button>`)}</div>`).join('')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn s w" onclick="posExport(${c.id})">POS archive (CSV zip)…</button><span class="dim" id="posx-${c.id}"></span></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${rq?`<button class="btn s w" onclick="withdrawDeletion(${c.id},'${n}')">Withdraw the request…</button>`:''}<button class="btn s d w" ${d.ready_to_delete?'':'disabled'} title="${d.ready_to_delete?'Permanently delete this restaurant':esc('Finish the checklist first: ' + (d.outstanding||[]).join(', '))}" onclick="deleteRestaurant(${c.id},'${n}')">Delete permanently…</button><span class="dim">${d.ready_to_delete ? 'The checklist is finished. The audit trail and this checklist are kept after the delete.' : open + ' step' + (open===1?'':'s') + ' left before it can be deleted.'}</span></div>`;
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>${rq ? 'Close this account' : 'Offboarding'}</h2>${rq ? pill(rq.overdue ? 'bad' : 'warn', rq.overdue ? 'overdue' : 'due ' + esc(rq.due_on), false) : ''}</div>` + (rq ? body : `<details class="more-d" style="margin:0 -18px -18px"><summary>The checklist, withdraw and delete</summary><div style="padding:0 18px 16px;display:flex;flex-direction:column;gap:12px">${body}</div></details>`);
 }
@@ -2420,6 +2425,22 @@ async function offStep(id, step, status, label, name){
   else if(!confirm((status === 'done' ? 'Mark “' + label + '” done for ' : 'Set “' + label + '” back to pending for ') + name + '?')) return;
   const d = await post('/admin/api/client/' + id + '/offboarding/' + encodeURIComponent(step), {status, note});
   if(say(d, status === 'done' ? label + ' — done' : (status === 'skipped' ? label + ' — skipped' : label + ' — back to pending'))) lazy('off-card', () => offboardHtml({id:id, name:name}));
+}
+// The POS archive for the export step (Audit #23 A7-13): built on the admin
+// pool, then downloaded once (the server deletes it as it sends it).
+async function posExport(id){
+  const el = $('posx-'+id); const d = await post('/admin/api/client/'+id+'/pos-export', {});
+  if(!okRes(d)){ if(el) el.textContent = errText(d); return; }
+  if(el) el.textContent = 'Building…';
+  let st = {status:'pending'};
+  for(let i = 0; i < 120 && st.status === 'pending'; i++){ await new Promise(r => setTimeout(r, 2000)); st = await api('/admin/api/client/'+id+'/pos-export/'+d.job_id); }
+  if(!st || st.ok === false || st.status !== 'done'){ if(el) el.textContent = errText(st, 'The export failed'); return; }
+  const go = async () => { const r = await fetch('/admin/api/client/'+id+'/pos-export/'+d.job_id+'/download', {method:'POST'});
+    if(r.status === 403){ const j = await r.json().catch(() => ({})); if(j.reauth_required && await reauth()) return go(); if(el) el.textContent = j.error || 'Refused'; return; }
+    if(!r.ok){ if(el) el.textContent = 'The file is gone; build it again.'; return; }
+    const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = st.file || 'pos-export.zip'; document.body.appendChild(a); a.click(); a.remove();
+    if(el) el.textContent = 'Downloaded ' + Math.round((st.bytes||0)/1024) + ' KB. Send it to the owner and note where in the export step.'; };
+  await go();
 }
 async function withdrawDeletion(id, name){
   const note = prompt('Withdraw ' + name + "'s request to close their account? The account carries on as before. A note for the record (optional):");
@@ -2517,7 +2538,10 @@ async function auditLink(aid, rid, auditName, name, pageId){
 // green (#128, #158). Then six subsystems as cards (state, figure, trend);
 // each opens its tab. The reads are shared across the tabs for a minute.
 let _ops = null, _opsAt = 0, _opsFresh = false, _opsTab = 'jobs', _aid = 30, _ef = 'all', _nf = 'all', _if = 'all', _jobsAll = false;
-const OPS_TABS = {jobs:'jobs', email:'email', messages:'email', emails:'email', sms:'email', push:'push', alerts:'push', ai:'ai', integrations:'integrations', events:'events', calendar:'events'};
+// The server pages the Integrations list and the data sources (Audit #23
+// A6-15): the page each is on; a filter change goes back to page 1.
+var _ip = 1, _dsp = 1;
+const OPS_TABS = {jobs:'jobs', email:'email', messages:'email', emails:'email', sms:'email', push:'push', alerts:'push', ai:'ai', integrations:'integrations', rpower:'rpower', events:'events', calendar:'events'};
 function dayKeys(n){ const out = []; const d = new Date(); d.setHours(0,0,0,0); for(let i=n-1;i>=0;i--){ const x = new Date(d); x.setDate(d.getDate()-i); out.push(x); } return out; }
 function perDay(rows, key, n, pred){ const days = dayKeys(n); return days.map(ds => { const de = new Date(ds); de.setDate(ds.getDate()+1); return rows.filter(r => { const t = parseTs(r[key]); return t && t >= ds && t < de && (!pred || pred(r)); }).length; }); }
 
@@ -2692,7 +2716,7 @@ async function operations(tab){
       ${subCard('integrations', 'plug', 'Integrations', st.integrations.tone, ovE ? unknownV(ovE) : fmtN(k.integrations_active), 'live', st.integrations.sub, null)}
       ${subCard('api', 'gauge', 'API', st.api.tone, ovE ? unknownV(ovE) : (k.p95_ms == null ? '—' : fmtN(Math.round(k.p95_ms))), k.p95_ms == null ? '' : 'ms p95', st.api.sub, null, null, '#engineering')}
     </section>`
-    + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad'], ['events', 'Event calendar', '', 'warn']], _opsTab)
+    + tabsNav('operations', [['jobs', 'Jobs', st.jobs.bad || '', 'bad'], ['email', 'Email &amp; SMS', k.email_failures_today || '', emT === 'bad' ? 'bad' : 'warn'], ['push', 'Push &amp; alerts', k.push_failures_today || '', 'warn'], ['ai', 'AI', k.ai_failures_24h || '', st.ai.tone === 'bad' ? 'bad' : 'warn'], ['integrations', 'Integrations', k.integrations_failing || '', 'bad'], ['rpower', 'RPOWER', '', 'bad'], ['events', 'Event calendar', '', 'warn']], _opsTab)
     + '<div class="area-body" id="area-body"></div>';
   _tgt = $('area-body');
   await opsRender();
@@ -2701,6 +2725,7 @@ function opsRender(){
   const t = _opsTab, d = _ops;
   if(t === 'email') opsEmail(d.em, d.mh); else if(t === 'push') opsPush(d.nt, d.mh); else if(t === 'ai') opsAI(d.ai);
   else if(t === 'integrations') return opsIntegrations().catch(e => { if(!(e && e.message === STALE)) V().innerHTML = `<div class="err">Couldn't load this tab — ${esc(e.message || e)}. Refresh to try again.</div>`; });
+  else if(t === 'rpower') return opsRpower().catch(function(e){ if(!(e && e.message === STALE)) V().innerHTML = '<div class="err">Couldn\'t load the RPOWER health — ' + esc(e.message || e) + '. Refresh to try again.</div>'; });
   else if(t === 'events') return opsEvents().catch(e => { if(!(e && e.message === STALE)) V().innerHTML = `<div class="err">Couldn't load the event calendar — ${esc(e.message || e)}. Refresh to try again.</div>`; });
   else opsJobs(d.jb);
   return Promise.resolve();
@@ -3240,17 +3265,21 @@ function integrationAction(r){
     : r.integration === 'rpower' ? `<button class="btn s w" onclick="event.stopPropagation();rpowerOpen(${r.restaurant_id},'${jsq(r.restaurant)}')">Token &amp; sync</button>`
     : `<a class="btn s g w" href="/admin/client-settings/${r.restaurant_id}" onclick="event.stopPropagation()">Settings</a>`;
 }
+function opsIntegrationsPage(p){ _ip = p; opsRender(); }
+function opsDataSourcesPage(p){ _dsp = p; opsRender(); }
 async function opsIntegrations(){
-  if(!_ops.ig || _ops.igAt !== _opsAt){
+  const key = _if + '|' + _ip;
+  if(!_ops.ig || _ops.igAt !== _opsAt || _ops.igKey !== key){
     V().innerHTML = '<div class="sk blk"></div>';
-    const [x] = await apiAll(['/admin/api/integrations' + (_ops.fresh ? '?fresh=1' : '')], 1);
-    _ops.ig = x; _ops.igAt = _opsAt;
+    const [x] = await apiAll(['/admin/api/integrations?f=' + encodeURIComponent(_if) + '&page=' + _ip + (_ops.fresh ? '&fresh=1' : '')], 1);
+    _ops.ig = x; _ops.igAt = _opsAt; _ops.igKey = key;
   }
   const d = _ops.ig, err = readErr(d);
   if(err){ V().innerHTML = `<div class="err">Couldn't load the integrations — ${esc(err)}. Refresh to try again.</div>`; return; }
-  const F = [['all', 'All', r => true], ['error', 'Failing', r => r.state === 'error'], ['revoked', 'Revoked', r => !!r.revoked_at], ['off', 'Disconnected', r => r.state === 'off'], ['stale', 'Stale', r => r.freshness === 'stale'], ['never', 'Never synced', r => r.freshness === 'never'], ['connected', 'Connected', r => r.state === 'connected']];
-  const f = F.find(x => x[0] === _if) || F[0], rank = {error:0, connected:1, off:2};
-  const rows = d.rows.filter(f[2]).sort((a, b) => (rank[a.state] != null ? rank[a.state] : 3) - (rank[b.state] != null ? rank[b.state] : 3) || String(a.restaurant).localeCompare(String(b.restaurant)));
+  // The server filters, orders (failing first) and pages; the counts are the full set's.
+  const F = [['all', 'All'], ['error', 'Failing'], ['revoked', 'Revoked'], ['off', 'Disconnected'], ['stale', 'Stale'], ['never', 'Never synced'], ['connected', 'Connected']];
+  const counts = d.counts || {};
+  const rows = d.rows || [];
   const wh = ((d.webhooks_inbound || {}).providers) || [];
   V().innerHTML = `
     ${errBanner(d)}
@@ -3259,18 +3288,136 @@ async function opsIntegrations(){
     <div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2>Inbound webhooks</h2><span class="muted" style="font-size:12px" title="${esc((d.webhooks_inbound || {}).basis || '')}">${esc((d.webhooks_inbound || {}).ledger ? 'from the providers’ ledger' : 'derived from what each webhook writes')}</span></div>
       <div class="grid g4" style="gap:10px">${wh.map(p => `<div style="padding:12px 14px;border-radius:12px;background:var(--strip);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px"><span style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>${esc(p.label)}</b>${p.problem ? pill('bad', 'failing') : p.stale ? pill('warn', 'quiet') : (p.configured ? pill('good', 'OK') : pill('warn', 'no secret'))}</span>
         <span class="muted" style="font-size:12px">${p.last_verified_at ? 'last verified ' + agoWord(p.last_verified_at) : 'no verified event on record'}${p.failures_24h ? ` · <span style="color:var(--red-t)">${fmtN(p.failures_24h)} signature failures · 24h</span>` : ''}</span>${p.problem ? `<span class="dim" style="font-size:12px">Check ${esc(p.secret_env)} against the provider's dashboard.</span>` : ''}</div>`).join('') || '<span class="muted">No webhook recorded.</span>'}</div></div>
-    <div class="seg">${F.map(x => `<button class="${_if === x[0] ? 'on' : ''}" onclick="_if='${x[0]}';opsRender()">${x[1]} <b>${d.rows.filter(x[2]).length}</b></button>`).join('')}</div>
+    <div class="seg">${F.map(x => `<button class="${_if === x[0] ? 'on' : ''}" onclick="_if='${x[0]}';_ip=1;opsRender()">${x[1]} <b>${fmtN(counts[x[0]] || 0)}</b></button>`).join('')}</div>
     <section class="card" style="overflow:hidden"><div class="lst">${rows.map(r => `<div class="li"><span class="ico ${r.state === 'connected' ? 'good' : r.state === 'error' ? 'bad' : 'neu'}">${ico('plug')}</span>
       <div class="tt"><b>${esc(r.label)} <span class="muted" style="font-weight:400">· ${clientLink(r.restaurant_id, r.restaurant)}${r.segment && r.segment !== 'customer' ? ' <span class="chip">' + esc(r.segment) + '</span>' : ''}</span></b>${r.error ? `<span style="color:var(--red-t);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(r.error)}">${esc(r.error)}</span>` : ''}${r.revoked_at || r.error_since ? `<span class="muted">${r.revoked_at ? 'access revoked ' + fmtD(r.revoked_at) : ''}${r.revoked_at && r.error_since ? ' · ' : ''}${r.error_since ? 'failing since ' + fmtD(r.error_since) : ''}</span>` : ''}</div>
-      ${r.freshness && r.freshness !== '—' && r.freshness !== 'fresh' ? `<span class="chip warn">${esc(r.freshness)}</span>` : ''}${intb(r.state, r.state === 'connected' ? 'Connected' : r.state === 'error' ? (r.revoked_at ? 'Revoked' : 'Error') : 'Off')}<span class="n muted" style="width:40px;text-align:right;font-size:12.5px" title="last success">${r.last_success ? ago(r.last_success) : '—'}</span><span style="display:flex;gap:6px">${integrationAction(r)}</span></div>`).join('') || '<div class="empty">No integrations match.</div>'}</div></section>
+      ${r.freshness && r.freshness !== '—' && r.freshness !== 'fresh' ? `<span class="chip warn">${esc(r.freshness)}</span>` : ''}${intb(r.state, r.state === 'connected' ? 'Connected' : r.state === 'error' ? (r.revoked_at ? 'Revoked' : 'Error') : 'Off')}<span class="n muted" style="width:40px;text-align:right;font-size:12.5px" title="last success">${r.last_success ? ago(r.last_success) : '—'}</span><span style="display:flex;gap:6px">${integrationAction(r)}</span></div>`).join('') || '<div class="empty">No integrations match.</div>'}</div>${pager(d.page, d.pages, d.total, 'opsIntegrationsPage', 'connections')}</section>
     <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>RPOWER traffic</h2><span class="muted" style="font-size:12.5px">requests in the last 24 hours, from the request ledger</span></div></div><div id="ops-pt" style="border-top:1px solid var(--line)"></div></div>
     <div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>Data sources</h2><span class="muted" style="font-size:12.5px">each client's syncs — failing first</span></div></div><div id="ops-ds" style="border-top:1px solid var(--line)"></div></div>`;
   lazyRead('ops-pt', '/admin/api/pos-traffic', x => { const t = x.total || {}, br = x.breaker || {}, ms = v => v == null ? '—' : (v >= 10000 ? '>10 s' : '≤' + (v >= 1000 ? (v / 1000) + ' s' : v + ' ms'));
     return `${errBanner(x)}<div style="display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px;font-size:12.5px"><span>Breaker ${br.state === 'closed' ? pill('good', 'closed') : pill('bad', esc(br.state || 'unknown'))}${br.state !== 'closed' && br.reason ? ` <span class="dim">${esc(br.reason)}</span>` : ''}</span><span>Requests <span class="n">${fmtN(t.n || 0)}</span></span><span>Errors <span class="n" style="${t.errors ? 'color:var(--red-t)' : ''}">${fmtN(t.errors || 0)}</span></span><span>Paused <span class="n">${fmtN(t.skipped || 0)}</span></span><span>p50 <span class="n">${ms(t.p50_ms)}</span> · p95 <span class="n">${ms(t.p95_ms)}</span></span>${x.ledger_on === false ? '<span style="color:var(--amber-t)">ledger off (POS_REQUEST_LEDGER=0)</span>' : ''}</div>
     ${table([{h:'Endpoint', key:'endpoint', cell:r => esc(r.endpoint)}, {h:'Requests', key:'n', r:true, cell:r => `<span class="num">${fmtN(r.n)}</span>`}, {h:'Rows', key:'rows_out', r:true, cell:r => `<span class="num">${fmtN(r.rows_out)}</span>`}, {h:'Errors', key:'errors', r:true, cell:r => `<span class="num" style="${r.errors ? 'color:var(--red-t)' : ''}">${fmtN(r.errors)}</span>`}, {h:'p95', key:'p95_ms', r:true, cell:r => `<span class="num">${ms(r.p95_ms)}</span>`}], x.by_endpoint || [], {id:'pt-e', limit:12, empty:'No RPOWER request recorded in this window.'})}
     ${table([{h:'Store', key:'restaurant', cell:r => r.restaurant_id ? clientLink(r.restaurant_id, r.restaurant) : esc(r.restaurant)}, {h:'Requests', key:'n', r:true, cell:r => `<span class="num">${fmtN(r.n)}</span>`}, {h:'Errors', key:'errors', r:true, cell:r => `<span class="num" style="${r.errors ? 'color:var(--red-t)' : ''}">${fmtN(r.errors)}</span>`}, {h:'Paused', key:'skipped', r:true, cell:r => `<span class="num">${fmtN(r.skipped)}</span>`}, {h:'p95', key:'p95_ms', r:true, cell:r => `<span class="num">${ms(r.p95_ms)}</span>`}], x.by_store || [], {id:'pt-s', limit:10, empty:'No store has made a request in this window.'})}`; });
-  lazyRead('ops-ds', '/admin/api/data-sources', x => `${errBanner(x)}<div style="display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px;font-size:12.5px"><span>Data Health median <span class="n">${x.data_health_median == null ? '—' : x.data_health_median}</span></span>${x.stale_snapshots ? `<span style="color:var(--amber-t)"><span class="n">${fmtN(x.stale_snapshots)}</span> clients' Data Health snapshot is over 2 days old</span>` : ''}${(x.summary || []).map(s => `<span>${esc(s.label)} <span class="n" style="${s.failing ? 'color:var(--red-t)' : ''}">${fmtN(s.failing)}/${fmtN(s.restaurants)}</span> failing</span>`).join('')}</div>
-    ${table([{h:'Client', key:'restaurant', cell:r => clientLink(r.restaurant_id, r.restaurant || '#' + r.restaurant_id)}, {h:'Source', key:'label', cell:r => `${esc(r.label)}${r.provider ? ' <span class="dim">' + esc(r.provider) + '</span>' : ''}`}, {h:'In a row', key:'failures', r:true, cell:r => `<span class="num" style="${r.failures >= (x.issue_threshold || 3) ? 'color:var(--red-t)' : ''}">${fmtN(r.failures)}</span>`}, {h:'Since', key:'since', cell:r => `<span class="num">${r.since ? fmtD(r.since) : '—'}</span>`}, {h:'Last error', key:'last_error', wrap:true, cell:r => r.last_error ? `<span style="color:var(--red-t)">${esc(r.last_error)}</span>` : ''}, {h:'Next retry', key:'next_retry_at', cell:r => `<span class="num">${r.next_retry_at ? fmtDT(r.next_retry_at) : '—'}</span>`}, {h:'Last good', key:'last_ok_at', cell:r => `<span class="num">${r.last_ok_at ? ago(r.last_ok_at) : 'never'}</span>`}], x.rows || [], {id:'ds-t', limit:15, empty:'No data source is recorded yet.'})}`);
+  lazyRead('ops-ds', '/admin/api/data-sources?page=' + _dsp, x => `${errBanner(x)}<div style="display:flex;gap:18px;flex-wrap:wrap;padding:12px 18px;font-size:12.5px"><span>Data Health median <span class="n">${x.data_health_median == null ? '—' : x.data_health_median}</span></span>${x.stale_snapshots ? `<span style="color:var(--amber-t)"><span class="n">${fmtN(x.stale_snapshots)}</span> clients' Data Health snapshot is over 2 days old</span>` : ''}${(x.summary || []).map(s => `<span>${esc(s.label)} <span class="n" style="${s.failing ? 'color:var(--red-t)' : ''}">${fmtN(s.failing)}/${fmtN(s.restaurants)}</span> failing</span>`).join('')}</div>
+    ${table([{h:'Client', key:'restaurant', cell:r => clientLink(r.restaurant_id, r.restaurant || '#' + r.restaurant_id)}, {h:'Source', key:'label', cell:r => `${esc(r.label)}${r.provider ? ' <span class="dim">' + esc(r.provider) + '</span>' : ''}`}, {h:'In a row', key:'failures', r:true, cell:r => `<span class="num" style="${r.failures >= (x.issue_threshold || 3) ? 'color:var(--red-t)' : ''}">${fmtN(r.failures)}</span>`}, {h:'Since', key:'since', cell:r => `<span class="num">${r.since ? fmtD(r.since) : '—'}</span>`}, {h:'Last error', key:'last_error', wrap:true, cell:r => r.last_error ? `<span style="color:var(--red-t)">${esc(r.last_error)}</span>` : ''}, {h:'Next retry', key:'next_retry_at', cell:r => `<span class="num">${r.next_retry_at ? fmtDT(r.next_retry_at) : '—'}</span>`}, {h:'Last good', key:'last_ok_at', cell:r => `<span class="num">${r.last_ok_at ? ago(r.last_ok_at) : 'never'}</span>`}], x.rows || [], {id:'ds-t', limit:50, empty:'No data source is recorded yet.'})}${pager(x.page, x.pages, x.total, 'opsDataSourcesPage', 'sources')}`);
+}
+
+// Operations → RPOWER (Audit #23 A6-01, A6 section 3.3): every RPOWER store's
+// health per data type, from the precomputed rollup (rpower_health) — the
+// fleet strip, the fleet rules the server pages on, the queue by kind
+// (A6-02), then the stores, filtered and keyset-paged by the server, each
+// row opening its drawer (a 90-day archive calendar, each data type's last
+// good read, its queue rows, 7 days of requests, punch issues, data findings
+// and the binding). ES5 on purpose.
+var _rp = {health: '', type: '', anomaly: false, q: '', after: [], open: null};
+var RP_TONE = {auth: 'bad', failing: 'bad', stale: 'warn', watch: 'warn', onboarding: 'neu', ok: 'good'};
+var RP_WORD = {auth: 'Token refused', failing: 'Failing', stale: 'Stale', watch: 'Watch', onboarding: 'Onboarding', ok: 'OK'};
+var RP_CAL = {archived: 'var(--green)', restated: 'var(--green-t)', missing: 'var(--red)', failed: 'var(--red)', suspect: 'var(--amber)', recon_gap: 'var(--amber)', pay_gap: 'var(--amber)', none: 'var(--line)'};
+function rpPct(v){ return v == null ? '—' : (Math.round(v * 1000) / 10) + '%'; }
+function rpQuery(){
+  var p = ['limit=50'];
+  if(_rp.health) p.push('health=' + encodeURIComponent(_rp.health));
+  if(_rp.type) p.push('type=' + encodeURIComponent(_rp.type));
+  if(_rp.anomaly) p.push('anomaly=1');
+  if(_rp.q) p.push('q=' + encodeURIComponent(_rp.q));
+  if(_rp.after.length) p.push('after=' + encodeURIComponent(_rp.after[_rp.after.length - 1]));
+  return '/admin/api/rpower-health?' + p.join('&');
+}
+function rpFilter(k, v){ _rp[k] = v; _rp.after = []; _rp.open = null; opsRender(); }
+function rpNext(c){ _rp.after.push(c); opsRender(); }
+function rpPrev(){ _rp.after.pop(); opsRender(); }
+function rpSearch(ev){ if(ev && ev.key !== 'Enter') return; var el = $('rp-q'); rpFilter('q', el ? el.value : ''); }
+function rpStrip(f){
+  var b = f.breaker || {}, used = f.backfill_cap ? fmtN(f.backfill_used) + ' / ' + fmtN(f.backfill_cap) : fmtN(f.backfill_used || 0);
+  return '<section class="card strip">'
+    + stripCell('#operations/rpower', 'plug', 'neu', 'Connected', fmtN(f.connected || 0), 'live stores')
+    + stripCell('#operations/rpower', 'alert', f.failing ? 'bad' : 'good', 'Failing', rpPct(f.failing_share), fmtN(f.failing || 0) + ' stores')
+    + stripCell('#operations/rpower', 'key',f.auth_failed ? 'bad' : 'good', 'Token refused', fmtN(f.auth_failed || 0), fmtN(f.auth_buckets || 0) + ' tokens')
+    + stripCell('#operations/rpower', 'clock', f.stale_48h ? 'warn' : 'good', 'Stale 48h+', fmtN(f.stale_48h || 0), 'archive or labor')
+    + stripCell('#operations/rpower', 'gauge', 'neu', 'Coverage p50', rpPct(f.coverage_p50), '90 days, p10 ' + rpPct(f.coverage_p10))
+    + stripCell('#operations/rpower', 'alert', f.stores_with_gaps ? 'warn' : 'good', 'Archive gaps', fmtN(f.stores_with_gaps || 0), 'stores, 14 days')
+    + stripCell('#operations/rpower', 'alert', (f.recon_nights_7d || f.pay_gap_nights_7d) ? 'warn' : 'good', 'Recon / pay gaps', fmtN(f.recon_nights_7d || 0) + ' / ' + fmtN(f.pay_gap_nights_7d || 0), 'nights, 7 days')
+    + stripCell('#operations/rpower', 'gauge', (f.s429_share > 0.01 || f.skipped_share > 0.05) ? 'warn' : 'good', 'Requests 24h', fmtN(f.requests_24h || 0), '429 ' + rpPct(f.s429_share) + ' · paused ' + rpPct(f.skipped_share))
+    + stripCell('#operations/rpower', 'refresh', b.state === 'closed' ? 'good' : 'bad', 'Breaker', esc(b.state || 'unknown'), b.state === 'closed' ? 'requests flowing' : esc(b.reason || ''))
+    + stripCell('#operations/rpower', 'clock', (f.queue_failed_24h || f.queue_expired_24h) ? 'warn' : 'good', 'Queue failed / expired', fmtN(f.queue_failed_24h || 0) + ' / ' + fmtN(f.queue_expired_24h || 0), 'RPOWER rows, 24h')
+    + stripCell('#operations/rpower', 'plug', 'neu', 'Backfill slots', used, 'in use')
+    + rpBudgetCell(f.capacity || {})
+    + stripCell('#operations/rpower', 'card', 'neu', 'Unnamed sales types', rpPct(f.unknown_sales_share_7d), '$' + fmtN(Math.round(f.unknown_sales_7d || 0)) + ', 7 days')
+    + stripCell('#operations/rpower', 'check', 'neu', 'Recipe coverage p50', f.recipe_coverage_p50 == null ? '—' : (Math.round(f.recipe_coverage_p50 * 10) / 10) + '%', fmtN(f.recipe_coverage_stores || 0) + ' stores measured')
+    + '</section>';
+}
+// The request budget by lane (pos_capacity): the nightly lane's use of its
+// share over 24 hours and whether bulk work is held; "—" where not deployed.
+function rpBudgetCell(c){
+  var u = (c.utilisation || {}).lanes || {}, n = u.nightly || {}, st = c.state || {};
+  var tone = st.shed_bulk ? 'bad' : (n.pct != null && n.pct > 85 ? 'warn' : (n.pct == null ? 'neu' : 'good'));
+  var sub = st.shed_bulk ? 'bulk held tonight' : (n.peak_hour_pct ? 'peak hour ' + n.peak_hour_pct + '%' : 'of the nightly share, 24h');
+  return stripCell('#operations/rpower', 'gauge', tone, 'Nightly budget', n.pct == null ? '—' : n.pct + '%', sub);
+}
+function rpRow(r){
+  var t = r.type_states || {}, open = _rp.open === r.restaurant_id;
+  var bad = (r.failing_types || []).concat(r.stale_types || []);
+  return '<div class="li' + (open ? ' open' : '') + '" style="cursor:pointer" onclick="rpOpen(' + r.restaurant_id + ')">'
+    + '<span style="width:120px;flex-shrink:0">' + pill(RP_TONE[r.health] || 'neu', RP_WORD[r.health] || esc(r.health), false) + '</span>'
+    + '<div class="tt"><b>' + clientLink(r.restaurant_id, r.name || ('#' + r.restaurant_id)) + (r.is_demo ? ' <span class="chip">demo</span>' : '') + '</b>'
+    + '<span>' + (bad.length ? 'Behind: ' + esc(bad.join(', ')) + ' · ' : '') + esc((r.reasons || [])[0] || 'Every data type current') + '</span></div>'
+    + '<span class="n muted" style="width:90px;text-align:right;font-size:12.5px" title="last labor pull · last archived night">' + (r.last_labor_ok ? ago(r.last_labor_ok) : '—') + ' · ' + (r.last_archive_night ? esc(mdy(new Date(r.last_archive_night + 'T12:00:00'))) : '—') + '</span>'
+    + '<span class="n" style="width:64px;text-align:right" title="settled coverage, 90 days">' + rpPct(r.coverage_90d) + '</span>'
+    + '<span class="n" style="width:44px;text-align:right;' + (r.gaps_14d ? 'color:var(--red-t)' : '') + '" title="nights missing, 14 days">' + fmtN(r.gaps_14d || 0) + '</span>'
+    + '<span class="n muted" style="width:80px;text-align:right;font-size:12.5px" title="requests · errors, 24h">' + fmtN(r.req_24h || 0) + ' · ' + fmtN(r.err_24h || 0) + '</span>'
+    + '<span style="display:flex;gap:6px"><button class="cbtn btn s w" onclick="event.stopPropagation();rpowerOpen(' + r.restaurant_id + ',\'' + jsq(r.name || '') + '\')">Token &amp; sync</button></span>'
+    + '</div>' + (open ? '<div id="rp-drawer" style="padding:0 18px 16px;border-bottom:1px solid var(--line)">' + skel(3) + '</div>' : '');
+}
+function rpOpen(rid){
+  _rp.open = _rp.open === rid ? null : rid; opsRender();
+}
+function rpDrawer(x){
+  var r = x.row || {}, cal = x.calendar || [];
+  var cells = cal.map(function(c){ var tip = mdy(new Date(c.date + 'T12:00:00')) + ' · ' + c.state.replace('_', ' ') + (c.tickets != null ? ' · ' + c.tickets + ' tickets · $' + fmtN(Math.round(c.net_sales || 0)) : '') + (c.weekday_median != null ? ' (weekday median $' + fmtN(Math.round(c.weekday_median)) + ')' : '') + (c.last_error ? ' · ' + c.last_error : '');
+    return '<i title="' + esc(tip) + '" style="display:inline-block;width:10px;height:10px;margin:1px;border-radius:2px;background:' + (RP_CAL[c.state] || 'var(--line)') + '"></i>'; }).join('');
+  var tl = (x.timeline || []).map(function(t){ return '<span style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px"><span>' + esc(t.type) + '</span><span>' + pill(t.state === 'ok' ? 'good' : (t.state === 'failing' ? 'bad' : (t.state === 'none' ? 'neu' : 'warn')), esc(t.state), false) + ' <span class="muted">' + (t.last_ok ? ago(t.last_ok) : '—') + '</span></span></span>'; }).join('');
+  var q = table([{h:'Kind', key:'kind'}, {h:'State', key:'state'}, {h:'Tries', key:'attempts', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.attempts || 0) + '/' + fmtN(z.max_attempts || 0) + '</span>'; }}, {h:'Error', key:'error', wrap:true, cell:function(z){ return z.error ? '<span style="color:var(--red-t)">' + esc(String(z.error).slice(0, 160)) + '</span>' : ''; }}, {h:'Queued', key:'enqueued_at', cell:function(z){ return '<span class="num">' + fmtDT(z.enqueued_at) + '</span>'; }}], x.queue || [], {id:'rp-q-t', limit:8, empty:'No queue rows for this store.'});
+  var lg = table([{h:'Endpoint', key:'endpoint'}, {h:'Requests', key:'n', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.n) + '</span>'; }}, {h:'Errors', key:'errors', r:true, cell:function(z){ return '<span class="num" style="' + (z.errors ? 'color:var(--red-t)' : '') + '">' + fmtN(z.errors) + '</span>'; }}, {h:'Paused', key:'skipped', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.skipped) + '</span>'; }}], x.ledger_7d || [], {id:'rp-l-t', limit:8, empty:'No RPOWER request in 7 days.'});
+  var fd = (x.findings || []).slice(0, 6).map(function(f){ return '<div style="font-size:12.5px">' + esc(f.job) + ' <span class="chip' + (f.kind === 'data_quality' ? '' : ' warn') + '">' + esc(f.kind || 'job') + '</span> ' + fmtDT(f.created_at) + ' <span class="dim">' + esc(String(f.error || '').slice(0, 160)) + '</span></div>'; }).join('') || '<span class="muted">No findings in 7 days.</span>';
+  var bd = x.binding || {}, keys = (bd.store_keys || []).map(function(k){ return esc(k.store_key) + ' (' + fmtN(k.nights) + ' nights)'; }).join(', ');
+  var pu = x.punches || {};
+  return '<div class="lbl" style="padding-top:12px">90 nights</div><div style="line-height:0">' + cells + '</div>'
+    + '<div class="grid g3" style="gap:16px;margin-top:12px"><div><div class="lbl">Data types</div><div style="display:flex;flex-direction:column;gap:4px">' + tl + '</div></div>'
+    + '<div><div class="lbl">Binding</div><div style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span>Store <span class="n">' + esc(bd.cg || '—') + ':' + esc(bd.store_mid || '—') + '</span></span><span class="dim">Token bucket ' + esc(String(bd.token_bucket || '—').slice(0, 18)) + '</span><span>Nights archived from ' + (keys || '—') + '</span>'
+    + (bd.duplicate_binding ? '<span style="color:var(--red-t)">Bound to another restaurant too</span>' : '') + (bd.store_key_mismatch ? '<span style="color:var(--red-t)">Nights from a different store</span>' : '') + (bd.simulated_not_demo ? '<span style="color:var(--red-t)">Simulated token, not marked demo</span>' : '') + '</div></div>'
+    + '<div><div class="lbl">Punches</div><div style="font-size:12.5px;display:flex;flex-direction:column;gap:4px"><span>Open past close (7 days) <span class="n">' + fmtN(pu.open_7d || 0) + '</span></span><span>Trading nights with no punches <span class="n">' + fmtN(pu.zero_labor_days_7d || 0) + '</span></span></div></div></div>'
+    + '<div class="lbl" style="padding-top:12px">Why</div><div style="font-size:12.5px">' + ((r.reasons || []).map(function(z){ return '• ' + esc(z); }).join('<br>') || 'Nothing to say.') + '</div>'
+    + '<div class="lbl" style="padding-top:12px">Queue rows</div>' + q
+    + '<div class="lbl" style="padding-top:12px">Requests, 7 days</div>' + lg
+    + '<div class="lbl" style="padding-top:12px">Findings</div>' + fd;
+}
+function rpQueueKinds(f){
+  var k = f.queue_kinds || {}, rows = Object.keys(k).sort().map(function(n){ var v = k[n]; return {kind: n, grp: v.grp || '', queued: v.queued || 0, running: v.running || 0, rows_24h: v.rows_24h || 0, failed_24h: v.failed_24h || 0, expired_24h: v.expired_24h || 0}; });
+  return table([{h:'Kind', key:'kind'}, {h:'Group', key:'grp', cell:function(z){ return '<span class="dim">' + esc(z.grp) + '</span>'; }},{h:'Queued', key:'queued', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.queued) + '</span>'; }}, {h:'Running', key:'running', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.running) + '</span>'; }}, {h:'Rows 24h', key:'rows_24h', r:true, cell:function(z){ return '<span class="num">' + fmtN(z.rows_24h) + '</span>'; }}, {h:'Failed', key:'failed_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.failed_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.failed_24h) + '</span>'; }}, {h:'Expired', key:'expired_24h', r:true, cell:function(z){ return '<span class="num" style="' + (z.expired_24h ? 'color:var(--red-t)' : '') + '">' + fmtN(z.expired_24h) + '</span>'; }}], rows, {id:'rp-qk', limit:12, empty:'No queue rows in 24 hours.'});
+}
+function opsRpower(){
+  V().innerHTML = '<div class="sk blk"></div>';
+  return apiAll([rpQuery() + (_ops.fresh ? '&fresh=1' : '')], 1).then(function(xs){
+    var d = xs[0], err = readErr(d);
+    if(err){ V().innerHTML = '<div class="err">Couldn\'t load the RPOWER health — ' + esc(err) + '. Refresh to try again.</div>'; return; }
+    var f = d.fleet || {}, counts = d.counts || {}, rules = d.rules || [];
+    var seg = [['', 'All']].concat((d.health_states || []).map(function(h){ return [h, RP_WORD[h] || h]; }));
+    var types = [['', 'Any data type']].concat((d.data_types || []).map(function(t){ return [t, t]; }));
+    var total = 0; Object.keys(counts).forEach(function(k){ total += counts[k]; });
+    var html = errBanner(d)
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="muted" style="font-size:12.5px">' + (f.fresh ? 'From the 15-minute rollup' : '<span style="color:var(--amber-t)">The rollup is over an hour old — the rpower_health_rollup job is behind</span>') + (f.as_of ? ' · ' + fmtDT(f.as_of) : '') + '</span>' + asOf(d) + '</div>'
+      + rpStrip(f)
+      + (rules.length ? '<div class="warnbox" style="display:flex;flex-direction:column;gap:6px"><b>' + rules.length + ' fleet rule' + (rules.length === 1 ? '' : 's') + ' firing</b>' + rules.map(function(r){ return '<span>' + pill(r.severity === 'critical' ? 'bad' : 'warn', r.page ? 'pages' : 'console', false) + ' <b>' + esc(r.title) + '</b> <span class="dim">' + esc(r.detail || '') + '</span></span>'; }).join('') + '</div>' : '')
+      + '<div class="seg">' + seg.map(function(s){ var n = s[0] ? (counts[s[0]] || 0) : total; return '<button class="' + (_rp.health === s[0] ? 'on' : '') + '" onclick="rpFilter(\'health\',\'' + s[0] + '\')">' + esc(s[1]) + ' <b>' + fmtN(n) + '</b></button>'; }).join('') + '</div>'
+      + '<div class="filters" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select onchange="rpFilter(\'type\',this.value)">' + types.map(function(t){ return '<option value="' + esc(t[0]) + '"' + (_rp.type === t[0] ? ' selected' : '') + '>' + esc(t[1]) + '</option>'; }).join('') + '</select>'
+      + '<label style="font-size:12.5px;display:flex;gap:6px;align-items:center"><input type="checkbox"' + (_rp.anomaly ? ' checked' : '') + ' onchange="rpFilter(\'anomaly\',this.checked)"> Has an anomaly</label>'
+      + '<input id="rp-q" placeholder="Store, id or RPOWER store number" value="' + esc(_rp.q) + '" onkeydown="rpSearch(event)" style="min-width:220px"><button class="cbtn btn s" onclick="rpSearch()">Search</button></div>'
+      + '<section class="card" style="overflow:hidden"><div class="lst">' + ((d.rows || []).map(rpRow).join('') || '<div class="empty">No RPOWER store matches.</div>') + '</div>'
+      + '<div class="pager"><span><span class="n">' + fmtN(d.total || 0) + '</span> stores' + (_rp.after.length ? ' · page ' + (_rp.after.length + 1) : '') + '</span><span>' + (_rp.after.length ? '<button class="cbtn btn s" onclick="rpPrev()">Previous</button>' : '') + (d.next ? '<button class="cbtn btn s" onclick="rpNext(\'' + jsq(d.next) + '\')">Next</button>' : '') + '</span></div></section>'
+      + '<div class="card" style="overflow:hidden"><div class="ch" style="padding-bottom:12px"><div style="display:flex;align-items:baseline;gap:12px"><h2>Queue by kind</h2><span class="muted" style="font-size:12.5px">every kind, 24 hours — failed and expired rows alert past 2%</span></div></div><div style="border-top:1px solid var(--line)">' + rpQueueKinds(f) + '</div></div>';
+    V().innerHTML = html;
+    if(_rp.open) lazyRead('rp-drawer', '/admin/api/rpower-health/' + _rp.open, rpDrawer);
+  });
 }
 
 // ── Engineering ─────────────────────────────────────────────────────────────
@@ -4680,7 +4827,20 @@ async function toastDisconnect(){ if(!confirm('Disconnect Toast for ' + (_tName 
 let _rpRid=null, _rpName='';
 function rpowerOpen(rid, name){ _rpRid=rid; _rpName=name||''; $('m-rpower-title').textContent='RPOWER POS — '+name; $('m-rpower-status').textContent=''; $('rp-token').value=''; $('rp-stores').style.display='none'; openModal('m-rpower'); rpowerStatus(); }
 async function rpowerStatus(){ let d; try{ d = await api('/admin/rpower/status/'+_rpRid, {method:'GET'}); }catch(e){ d = {ok:false, error:String(e.message||e)}; }
-  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected'); }
+  $('m-rpower-status').textContent = d.connected ? ('✓ Connected to '+(d.store_name||'RPOWER')+(d.last_synced?(' — last synced '+fmtDT(d.last_synced)):'')) : (d.message||d.error||'Not connected');
+  const cr = d.credential, x = [];
+  if(cr) x.push(`<span>Partner credential #${cr.id} · v${cr.version} · ${cr.stores} live store${cr.stores===1?'':'s'}${cr.rotated_at?' · rotated '+fmtDT(cr.rotated_at):''} <button class="btn s w" onclick="rpowerRotate(${cr.id})">Rotate token…</button></span>`);
+  if(d.is_demo) x.push(`<span>Demo: ${d.live_mirror?'may read this live store (override on)':'simulated stores only'} <button class="btn s w" onclick="rpowerLiveMirror(${d.live_mirror?'false':'true'})">${d.live_mirror?'Turn the override off':'Allow a live store…'}</button></span>`);
+  if(d.owner_hold) x.push(`<span>Held for the owner's store check since ${fmtDT(d.owner_hold)} <button class="btn s w" onclick="rpowerReleaseHold()">Owner confirmed another way…</button></span>`);
+  $('rp-extra').innerHTML = x.join(''); }
+async function rpowerRotate(id){ const t = prompt('Paste the NEW RPOWER token for credential #'+id+'. Every store on it reads with the new token from its next request.'); if(!t) return;
+  let d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim()});
+  if(d && d._status===409 && d.unseen && confirm(errText(d)+'\n\n'+d.unseen.map(u=>u.name).join(', ')+'\n\nRotate anyway?')) d = await post('/admin/rpower/credentials/'+id+'/rotate', {token:t.trim(), force:true});
+  $('m-rpower-status').textContent = okRes(d) ? ('✓ '+(d.message||'Rotated')) : ('✕ '+errText(d)); rpowerStatus(); }
+async function rpowerLiveMirror(on){ let reason = ''; if(on){ reason = prompt('Why should this DEMO read a live store? Every login on the demo sees that store\'s sales, wages and staff.'); if(!reason) return; }
+  const d = await post('/admin/rpower/live-mirror/'+_rpRid, {on, reason}); $('m-rpower-status').textContent = okRes(d) ? '✓ Saved' : ('✕ '+errText(d)); rpowerStatus(); }
+async function rpowerReleaseHold(){ const how = prompt('How did you confirm the owner (a call to the store, RPOWER)? This opens the store\'s numbers to its logins.'); if(!how) return;
+  const d = await post('/admin/rpower/owner-check/'+_rpRid, {how}); $('m-rpower-status').textContent = okRes(d) ? '✓ Released' : ('✕ '+errText(d)); rpowerStatus(); }
 async function rpowerSave(){ const t=$('rp-token').value.trim(); if(!t){ $('m-rpower-status').textContent='✕ Paste the token first'; return; }
   $('m-rpower-status').textContent='Verifying…';
   const d = await post('/admin/rpower/save/'+_rpRid, {token:t});

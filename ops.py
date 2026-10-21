@@ -47,7 +47,12 @@ CREATE TABLE IF NOT EXISTS job_failures (
 # 'restaurant_id=N' and matched rid 50-59 when asked for rid 5 — and what
 # kind of failure it is.
 _FAILURE_COLUMNS = (("restaurant_id", "INTEGER"), ("kind", "TEXT NOT NULL DEFAULT 'job'"))
-CAPTURE_KINDS = ("job", "request", "ai_quality", "audit")
+# "data_quality" (Audit #23, 10/21/26, A6-04): a check of the data itself
+# found something — a reconcile gap, a payments gap, a DSR/POS mismatch, a
+# short first read. The run that found it worked: the console lists it per
+# store as a data issue (admin_ops) and never as "Job X failed", which at
+# 1,500 stores was a permanent critical.
+CAPTURE_KINDS = ("job", "request", "ai_quality", "audit", "data_quality")
 
 # "restaurant_id=5" or "rid=5" in a capture's context, as a whole number:
 # "rid=5" never matches "rid=50", and "grid=5" is not a rid.
@@ -2453,6 +2458,7 @@ def _has_urgent(out, state, write_ok=True) -> bool:
                 or disk.get("state") == "critical"
                 or (out.get("pg_volume") or {}).get("state") == "critical"
                 or (out.get("requests") or {}).get("error_rate_over")
+                or any(r.get("page") == "urgent" for r in out.get("rpower_rules") or [])
                 or not write_ok)
 
 
@@ -2679,13 +2685,35 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
     # outage and one page (a warning: once a day for the set), never one
     # console issue per store; a breaker held open past its page threshold
     # pages once per opening (pos_io.page_if_long_open).
+    # The RPOWER fleet rules (Audit #23, A6 section 3.6), evaluated here from
+    # the rollup only (rpower_health.fleet_rules): a data type failing or
+    # stale across the fleet, an auth wave (urgent: a partner token revoked
+    # is one problem, not N reconnects — A4-16), archive gaps, the queue's
+    # failed and expired rows per kind (A6-02), the request budget and volume
+    # (A6-17). A rule without a page is the console's alone.
+    out["rpower_rules"] = []
+    if send:
+        try:
+            import rpower_health as _rh_sla
+            out["rpower_rules"] = [r for r in _rh_sla.fleet_rules(db_path=db_path) if r.get("page")]
+        except Exception as e:
+            log.warning(f"the RPOWER fleet rules unavailable to the platform check: {e}")
+    for rule in out["rpower_rules"]:
+        if rule["page"] != "urgent":
+            warn_kinds.add(rule["key"])
+        problems.append(f"{rule['title']} — {rule['detail']}")
+    rpower_fleet_said = any(r["key"].startswith(("rpower_failing:", "rpower_stale", "rpower_auth_wave"))
+                            for r in out["rpower_rules"])
     try:
         import pos_health as _ph_sla
-        # Read only when paging: /health's read-only call stays lean.
-        fleet = _ph_sla.fleet_state() if send else {}
+        # Read only when paging: /health's read-only call stays lean. The
+        # restaurants' sync columns narrowly, RPOWER from its rollup (A6-16).
+        fleet = (_ph_sla.fleet_state(db_path=db_path) if db_path else _ph_sla.fleet_state()) if send else {}
         out["pos_fleet"] = {p: {"connected": f["connected"], "failing": len(f["failing"]), "share": f["share"]}
                             for p, f in fleet.items()}
         for prov, f in fleet.items():
+            if prov == "rpower" and rpower_fleet_said:
+                continue        # the rollup's own rule says it, by data type
             if f["outage"]:
                 warn_kinds.add(f"pos_fleet_{prov}")
                 problems.append(f"{prov.upper()} sync failing for {len(f['failing'])} of {f['connected']} connected "
@@ -3064,19 +3092,23 @@ def failures_last_24h():
         return []
 
 
-def failures_since(since):
+def failures_since(since, data_checks=None):
     """[{job, cnt, last_at, sample_error}] since `since` (UTC stamp), the
     sample being each job's NEWEST error — MAX(error) was the alphabetically
-    last one."""
+    last one. `data_checks`: None every kind; True only the data findings
+    (kind 'data_quality'); False everything else (Audit #23 A6-04 — the
+    digest lists the data checks apart from the failures)."""
     try:
         from models import get_conn
         conn = get_conn()
         try:
-            rows = conn.execute("""
+            cond = "" if data_checks is None else (
+                " AND COALESCE({t}.kind,'job') {op} 'data_quality'".replace("{op}", "=" if data_checks else "<>"))
+            rows = conn.execute(f"""
                 SELECT f.job, COUNT(*) AS cnt, MAX(f.created_at) AS last_at,
-                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?
+                       (SELECT g.error FROM job_failures g WHERE g.job=f.job AND g.created_at >= ?{cond.format(t='g')}
                         ORDER BY g.id DESC LIMIT 1) AS sample_error
-                FROM job_failures f WHERE f.created_at >= ? GROUP BY f.job ORDER BY cnt DESC
+                FROM job_failures f WHERE f.created_at >= ?{cond.format(t='f')} GROUP BY f.job ORDER BY cnt DESC
             """, (since, since)).fetchall()
             return [dict(r) for r in rows]
         finally:
@@ -3347,6 +3379,9 @@ _RETENTION_DAYS = {
     # One row per restaurant per day; the trend reads months, a year covers
     # the same month last year.
     "data_health_daily":  int(os.getenv("RETAIN_DATA_HEALTH_DAILY_DAYS", "400")),
+    # The RPOWER fleet's daily health row (rpower_health, Audit #23 A6-01):
+    # one row a day, a year and a bit of trend.
+    "rpower_fleet_health_daily": 400,
     # Webhook idempotency: Stripe retries an event for three days.
     "stripe_events_seen": int(os.getenv("RETAIN_STRIPE_EVENTS_SEEN_DAYS", "90")),
     # A session row a day past its own expiry can never authenticate again.
@@ -3412,6 +3447,11 @@ _RETENTION_DAYS = {
     # discounts (bar.sales.derive_nights, 10/15/26): kept as long as the
     # archive it is derived from.
     "bar_sales_nights":   int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    # Audit #23 F7 (A7-13 / A7-07): the night's comps and voids by approver
+    # (names) kept as long as the archive they come from; the RPOWER checks
+    # matched to guests two years (the guest's usual order reads them).
+    "pos_loss_daily":     int(os.getenv("RETAIN_POS_ARCHIVE_DAYS", "1095")),
+    "guest_pos_visits":   int(os.getenv("RETAIN_GUEST_POS_VISITS_DAYS", "730")),
     # The lines by item and day (pos_archive.roll_item_days, DB-11 / DB-02):
     # about a tenth of the lines' rows, kept at least as long as the archive
     # so it outlives a shortened line window.
@@ -3420,6 +3460,21 @@ _RETENTION_DAYS = {
     # counts per endpoint and store; the console reads a day, a quarter
     # keeps the trend RPOWER's limits will be argued from.
     "pos_request_ledger": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
+    # RPOWER audit #23 (A5-09 / A5-13, F5): the growing per-store tables that
+    # had no entry. The nightly report's versions and its figures are kept
+    # three years, as long as the archive they are built from (an owner's
+    # report history older than that is the stated rule's to drop); the hourly
+    # sales captures 400 days (their readers compare the last same weekdays);
+    # the shared closeday answers 400 days (the close lag reads 14 nights).
+    "dsr_reports":        int(os.getenv("RETAIN_DSR_REPORTS_DAYS", "1095")),
+    "pos_intraday":       int(os.getenv("RETAIN_POS_INTRADAY_DAYS", "400")),
+    "pos_closed_days":    int(os.getenv("RETAIN_POS_CLOSED_DAYS", "400")),
+    # Requests per hour per lane (pos_capacity's budget utilisation): the
+    # request ledger's quarter.
+    "pos_lane_ledger":    int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
+    # ...and its reads per business night (audit #23 A6-24), by when the
+    # night was last read: a backfilled old night is kept as long as a new one.
+    "pos_request_nights": int(os.getenv("RETAIN_POS_REQUEST_LEDGER_DAYS", "90")),
     # Task sheets (task_sheets.py): two years of who did which duty; proof
     # photos 90 days (the day view shows a photo only while it is kept).
     "task_assignments":      int(os.getenv("RETAIN_TASK_SHEET_DAYS", "730")),
@@ -3598,6 +3653,7 @@ _RETENTION_COLUMN = {
     "marketing_link_taps": "tapped_at",
     "live_activity_runs": "created_at", "live_activity_tokens": "updated_at",
     "admin_events": "created_at", "data_health_daily": "created_at", "stripe_events_seen": "seen_at",
+    "rpower_fleet_health_daily": "date",
     "sessions": "expires_at", "rec_events": "at",
     "operator_alerts": "created_at", "backup_runs": "started_at", "job_run_requests": "requested_at",
     "missed_windows": "created_at",
@@ -3610,8 +3666,11 @@ _RETENTION_COLUMN = {
     "shift_facts": "business_date", "attendance_events": "business_date", "person_signals": "signal_date",
     "pos_tickets": "business_date", "pos_ticket_lines": "business_date", "pos_punches": "business_date",
     "pos_request_ledger": "hour",
+    "dsr_reports": "business_date", "pos_intraday": "business_date",
+    "pos_closed_days": "business_date", "pos_lane_ledger": "hour", "pos_request_nights": "last_at",
     "pos_archive_days": "business_date", "pos_payments": "business_date", "pos_payouts": "business_date",
     "bar_sales_nights": "business_date", "pos_item_daily": "business_date",
+    "pos_loss_daily": "business_date", "guest_pos_visits": "business_date",
     "task_assignments": "task_date", "task_line_completions": "completed_at", "task_signoffs": "task_date",
     "task_proof_media": "created_at",
     "ai_reads": "created_at", "ai_claims": "created_at",
@@ -3723,6 +3782,7 @@ _RETENTION_FLOOR_DAYS = {
     "places_details_cache": 1,
     "admin_issue_resolution_history": 90, "sms_log": 30, "push_outbox": 7, "webhook_outbox": 7,
     "tock_events": 30,
+    "rpower_fleet_health_daily": 30,
     # A sent week's delivery list (schedule_publish.notice_status) is read
     # while the week is current — a few weeks, never more than two months.
     "schedule_notices": 60,
@@ -3742,8 +3802,13 @@ _RETENTION_FLOOR_DAYS = {
     "pos_payments": 400, "pos_payouts": 400,
     # The console reads a day of the request ledger (pos_io.summary).
     "pos_request_ledger": 30,
+    # The DSR's history and figures (canonical facts, trends, the seasonal
+    # reads) reach a year and a month; the intraday baselines the same;
+    # the close lag 14 nights.
+    "dsr_reports": 400, "pos_intraday": 400, "pos_closed_days": 30, "pos_lane_ledger": 30,
+    "pos_request_nights": 30,
     # The Bar's months table and trend (bar.pour_cost) read a year back.
-    "bar_sales_nights": 400, "pos_item_daily": 400,
+    "bar_sales_nights": 400, "pos_item_daily": 400, "pos_loss_daily": 400, "guest_pos_visits": 365,
     # The consistency report reads up to 90 days (task_sheets.REPORT_MAX_DAYS).
     "task_assignments": 90, "task_line_completions": 90, "task_signoffs": 90, "task_proof_media": 30,
     # M6: the drafter's edit note reads 90 days of turned-down reply drafts
@@ -3825,6 +3890,9 @@ _RETENTION_ROLLUP = {
     # the day goes (scale audit 10/19/26 DB-02); raises while a day past the
     # line window is not rolled yet.
     "pos_ticket_lines": "pos_archive:roll_item_days",
+    # The request ledger's hourly rows become one row a day after a week
+    # (pos_capacity.roll_ledger_daily; RPOWER audit #23 A5-13).
+    "pos_request_ledger": "pos_capacity:roll_ledger_daily",
 }
 # (reader, window, what a lifetime reader reads instead). A window is days,
 # or "module.CONSTANT" (the reader's own constant, read by the test), or
@@ -3839,6 +3907,8 @@ _RETENTION_READERS = {
     "pos_punches": (("service_performance.pay_and_tips", "service_performance.MAX_DAYS", None),),
     "pos_payments": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
     "pos_payouts": (("service_performance.payments", "service_performance.MAX_DAYS", None),),
+    "pos_intraday": (("intraday.pulse", "intraday.PROFILE_MAX_DAYS", None), ("labor_live._sales", 56, None)),
+    "pos_closed_days": (("pos_closed.close_lag_minutes", "pos_closed.LAG_SAMPLE_NIGHTS", None),),
     "task_assignments": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
     "task_line_completions": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
     "task_signoffs": (("task_sheets.report", "task_sheets.REPORT_MAX_DAYS", None),),
@@ -3868,6 +3938,7 @@ _RETENTION_READERS = {
     "notification_opens": (("notify.engagement_report", "notify.ENGAGEMENT_WINDOW_DAYS", None),),
     "admin_events": (("admin_ops._load_with", 400, None),),
     "data_health_daily": (("admin_ops._load_with", 14, None),),
+    "rpower_fleet_health_daily": (("rpower_health.fleet_trend", 30, None),),
     "rec_events": (("admin_ops.confidence_calibration", 730, None),
                    ("rec_learning.effectiveness", "rec_learning.EFFECT_WINDOW_DAYS", None)),
     "backup_runs": (("ops.storage_trend", 60, None),),
@@ -4014,6 +4085,14 @@ FINTECH_FILE_CONTENT_DAYS = int(os.getenv("RETAIN_FINTECH_FILE_CONTENT_DAYS", "3
 # price trends and food cost % bucket inventory by ISO week; the seasonal
 # baseline reads 392 days back (food_cost_intelligence.seasonal_baseline)
 # and the seasonal re-check further, from the weekly summary.
+def _pos_cold_days():
+    try:
+        import pos_cold
+        return int(pos_cold.HOT_DAYS)
+    except Exception:
+        return 0
+
+
 def _special_retention():
     return {
         "inventory_history": (INVENTORY_HISTORY_DAYS, 395),
@@ -4034,6 +4113,11 @@ def _special_retention():
         "fintech_file_content": (FINTECH_FILE_CONTENT_DAYS, 90),
         # The sub-daily claims (DB-14, above), floor 1 day.
         "subdaily_claims": (SUBDAILY_CLAIMS_KEEP_DAYS, 1),
+        # The sale lines' cold tier (pos_cold; RPOWER audit #23 A5-09):
+        # months past RETAIN_POS_LINES_HOT_DAYS exported to object storage
+        # before their lines go; floor 400 (service_performance.MAX_DAYS
+        # and a year-over-year month). 0 turns the tier off.
+        "pos_lines_cold": (_pos_cold_days(), 400),
     }
 
 
@@ -4116,6 +4200,13 @@ def _ensure_retention_indexes(conn):
         ("ask_feedback", "CREATE INDEX IF NOT EXISTS idx_ask_feedback_created ON ask_feedback(created_at)"),
         # A received file's text past its year (ops "fintech_file_content").
         ("fintech_files", "CREATE INDEX IF NOT EXISTS idx_fintech_files_created ON fintech_files(created_at)"),
+        # RPOWER audit #23 (A5-09, F5): the business-date retention deletes.
+        ("dsr_reports", "CREATE INDEX IF NOT EXISTS idx_dsr_reports_bdate ON dsr_reports(business_date)"),
+        ("pos_intraday", "CREATE INDEX IF NOT EXISTS idx_pos_intraday_bdate ON pos_intraday(business_date)"),
+        # Audit #23 F7: the loss lines by approver and the guests' matched
+        # checks, now pruned at their age.
+        ("pos_loss_daily", "CREATE INDEX IF NOT EXISTS idx_pos_loss_daily_date ON pos_loss_daily(business_date)"),
+        ("guest_pos_visits", "CREATE INDEX IF NOT EXISTS idx_guest_pos_visits_date ON guest_pos_visits(business_date)"),
     ):
         if table in have:
             try:
@@ -4887,6 +4978,23 @@ def prune_ledgers(db_path=None):
                 pass
             log.warning(f"prune_ledgers skipped the sub-daily claims: {e}")
         try:
+            st_cold = retention_state("pos_lines_cold")
+            if st_cold["state"] == "below_floor":
+                refused.append(st_cold)
+            elif st_cold["state"] == "ok" and rolled.get("pos_archive:roll_item_days", True):
+                import pos_cold
+                cold = pos_cold.tier(deadline=deadline, db_path=db_path)
+                if cold.get("deleted") or cold.get("exported"):
+                    deleted["pos_lines_cold"] = int(cold.get("deleted") or 0)
+                if cold.get("failed"):
+                    counts["attempted"] += 1
+                    counts["failed"] += 1
+                if cold.get("hit_bound"):
+                    counts["hit_bound"] = True
+        except Exception as e:
+            log.error(f"prune_ledgers: the sale lines' cold tier failed (their lines are kept): {e}")
+            capture(e, job="prune_ledgers", context="pos_lines_cold", db_path=db_path)
+        try:
             deleted.update(_prune_intake(conn, deadline, refused=refused))
         except Exception as e:
             try:
@@ -4900,6 +5008,28 @@ def prune_ledgers(db_path=None):
                 counts["failed"] += 1
                 log.error(f"prune_ledgers could not prune the intake: {e}")
                 capture(e, job="prune_ledgers", context="intake", db_path=db_path)
+        # POS data after a disconnect or cancel (Audit #23 F7, A7-13), and
+        # the RPOWER lists no bound store reads any more (A7-03) — each on
+        # its own connection, inside this pass's wall-clock bound.
+        try:
+            import offboarding
+            res = offboarding.purge_disconnected_pos(deadline=deadline, db_path=db_path)
+            if res.get("purged"):
+                deleted["pos_after_disconnect"] = sum(res["purged"].values())
+            if res.get("unfinished"):
+                counts["hit_bound"] = True
+        except Exception as e:
+            counts["attempted"] += 1
+            counts["failed"] += 1
+            log.error(f"prune_ledgers could not purge disconnected POS data: {e}")
+            capture(e, job="prune_ledgers", context="pos_after_disconnect", db_path=db_path)
+        try:
+            import rpower
+            n = rpower.purge_catalogs(db_path)
+            if n:
+                deleted["pos_catalogs"] = n
+        except Exception as e:
+            log.warning(f"prune_ledgers skipped the RPOWER list purge: {e}")
         _optimize(conn)
     finally:
         conn.close()
@@ -5028,7 +5158,10 @@ def send_failure_digest():
     returning False into an ok=1 run nobody saw."""
     started = _now_utc_stamp()
     since = _digest_since()
-    failures = failures_since(since)
+    # The data checks' findings apart from the failures (Audit #23 A6-04): a
+    # reconcile gap is the data's news, not a job that broke.
+    failures = failures_since(since, data_checks=False)
+    checks = failures_since(since, data_checks=True)
     stuck = stuck_jobs()
     overdue = jobs_overdue()
     backup = backup_status()
@@ -5044,7 +5177,7 @@ def send_failure_digest():
     # A job that died without raising leaves no failure row, so "no failures"
     # was never the same thing as "nothing went wrong".
     # (tests/test_security.py pins the first three conjuncts in this order.)
-    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed:
+    if not failures and not stuck and not sec_lines and not overdue and not backup_bad and not missed and not checks:
         _mark_digest_sent(started)
         ping_healthcheck()
         return {"attempted": 0, "ok": 0, "failed": 0, "skipped": 1, "hit_bound": False, "sent": False}
@@ -5064,6 +5197,8 @@ def send_failure_digest():
 
     fail_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in failures]
+    check_items = [f'<b>{_html.escape(f["job"])}</b> ×{int(f["cnt"])} — '
+                   f'{_html.escape((f.get("sample_error") or "")[:160])}' for f in checks]
     stuck_items = [f'<b>{_html.escape(j["job"])}</b> running {int(j.get("minutes") or 0)} min '
                    f'(bound {int(j.get("bound_minutes") or 0)} min) — '
                    f'{_html.escape((j.get("context") or "")[:100])}' for j in stuck]
@@ -5078,6 +5213,8 @@ def send_failure_digest():
         + _section("Overdue", overdue_items, "No successful run inside the job's SLA.")
         + _section("Backup", backup_items)
         + _section("Failures", fail_items)
+        + _section("Data checks", check_items, "The data disagreed with itself; each store's findings are on "
+                   "its console page. Nothing failed.")
         + _section("Running past their bound", stuck_items,
                    "Still running past the job's own bound; a run a deploy killed is closed at boot.")
         + _section("Windows missed", missed_items, "Due in a restaurant's local window, which closed first.")
@@ -5095,6 +5232,8 @@ def send_failure_digest():
         parts.append(f"{len(stuck)} started and never finished")
     if missed:
         parts.append("windows missed")
+    if checks:
+        parts.append("data checks")
     if sec_lines and not parts:
         parts.append("security")
     subject = "⚠ Background jobs: " + " · ".join(parts)

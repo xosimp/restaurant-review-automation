@@ -498,12 +498,20 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     # carry 'toast' whatever the provider, so they are matched too.
     src = str(_provider or "toast")
 
-    sold_by_guid = {}
+    # Two counts per item (Audit #23 A2-12 / A3-12): `quantity` is what left
+    # the kitchen (sold, comped, made in error) and drives depletion; `sold`
+    # (a provider that says it — RPOWER) is what guests paid for, and is
+    # menu_item_sales.qty_sold, what menu engineering, popularity and dish
+    # lift read. A provider without `sold` (Toast) sold what it made.
+    sold_by_guid, units_by_guid = {}, {}
     for sel in selections:
         guid = (sel.get("item") or {}).get("guid")
         if not guid:
             continue
-        sold_by_guid[guid] = sold_by_guid.get(guid, 0) + float(sel.get("quantity", 0) or 0)
+        made = float(sel.get("quantity", 0) or 0)
+        units_by_guid[guid] = units_by_guid.get(guid, 0) + made
+        sold = sel.get("sold")
+        sold_by_guid[guid] = sold_by_guid.get(guid, 0) + float(made if sold is None else (sold or 0))
 
     ingredients_updated = set()
     unmapped = []
@@ -520,8 +528,9 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
         # inventory quietly reading as zero depletion. Say it out loud.
         conn.execute("BEGIN IMMEDIATE")
         qty_by_ingredient = {}
+        written = []
 
-        for guid, qty_sold in sold_by_guid.items():
+        for guid, qty_sold in units_by_guid.items():
             menu_item = conn.execute(
                 "SELECT id, name FROM menu_items WHERE restaurant_id=? AND toast_guid=? AND is_active=1",
                 (restaurant_id, guid)
@@ -535,11 +544,12 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
             # Toast and thrown away. Same idempotency as the depletion rows —
             # re-running a business date replaces rather than accumulates.
             conn.execute(
-                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
-                "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) "
-                "DO UPDATE SET qty_sold=excluded.qty_sold",
-                (restaurant_id, menu_item["id"], business_date_str, qty_sold)
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold, qty_made) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) "
+                "DO UPDATE SET qty_sold=excluded.qty_sold, qty_made=excluded.qty_made",
+                (restaurant_id, menu_item["id"], business_date_str, round(sold_by_guid.get(guid, 0.0), 4), qty_sold)
             )
+            written.append(menu_item["id"])
 
             recipe_rows = conn.execute(
                 "SELECT ingredient_id, qty_per_unit FROM recipe_ingredients WHERE menu_item_id=?",
@@ -553,6 +563,17 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
             for r in recipe_rows:
                 qty_by_ingredient[r["ingredient_id"]] = (qty_by_ingredient.get(r["ingredient_id"], 0.0)
                                                          + r["qty_per_unit"] * qty_sold)
+
+        # The date's rows for dishes the new read no longer has (a last burger
+        # voided after the 5am run, a re-post that moved a sale off the date)
+        # go, in this transaction (Audit #23 A2-17 / A3-18): the upsert only
+        # touched dishes still sold, so the old figure stayed. Only on a read
+        # that returned items — an empty read deletes nothing.
+        if written:
+            ids = sorted(set(written))
+            conn.execute(f"DELETE FROM menu_item_sales WHERE restaurant_id=? AND business_date=? "
+                         f"AND menu_item_id NOT IN ({','.join('?' for _ in ids)})",
+                         (restaurant_id, business_date_str, *ids))
 
         # One row per ingredient per business date, UPDATED in place so it
         # keeps its id. Stock counts events with id > the latest recount, and
@@ -606,7 +627,7 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
         log.warning(f"[inventory_ledger] restaurant {restaurant_id} on {business_date_str}: "
                     f"{len(unmapped)} unmapped selection(s) — {unmapped}")
 
-    sold_total = sum(sold_by_guid.values())
+    sold_total = sum(units_by_guid.values())          # what the kitchen made: depletion's coverage
     covered = sold_total - sum(float(u.get("qty_sold") or 0) for u in unmapped)
     return {
         "ingredients_updated": len(ingredients_updated),
@@ -792,10 +813,12 @@ def inferred_variance(restaurant_id: int, days: int = _TREND_WINDOW_DAYS, as_of=
             e["draft_only"] = bool(n and drafts >= n)
         if material_ids:
             marks = ",".join("?" for _ in material_ids)
+            # Theoretical usage is every plate MADE — sold, comped, remade
+            # (qty_made; a row from before 10/21/26 holds it in qty_sold).
             for d in conn.execute(
                 f"""SELECT ri.ingredient_id AS iid, m.id AS mid, m.name AS dish,
                            ri.qty_per_unit,
-                           COALESCE(SUM(s.qty_sold),0) AS units_sold
+                           COALESCE(SUM(COALESCE(s.qty_made, s.qty_sold)),0) AS units_sold
                       FROM recipe_ingredients ri
                       JOIN menu_items m ON m.id = ri.menu_item_id AND m.restaurant_id=?
                       LEFT JOIN menu_item_sales s
@@ -1091,7 +1114,10 @@ def backfill_item_sales(restaurant_id: int, days: int = 60, max_days: int = BACK
             g = (sel.get("item") or {}).get("guid")
             if not g:
                 continue
-            qty[g] = qty.get(g, 0.0) + float(sel.get("quantity", 0) or 0)
+            made = float(sel.get("quantity", 0) or 0)
+            sold = sel.get("sold")
+            m0, s0 = qty.get(g, (0.0, 0.0))
+            qty[g] = (m0 + made, s0 + float(made if sold is None else (sold or 0)))   # (made, sold): A2-12
             seen.setdefault(g, sel.get("displayName") or g)
         per_day[d] = qty
     if seen:
@@ -1101,18 +1127,60 @@ def backfill_item_sales(restaurant_id: int, days: int = 60, max_days: int = BACK
         ids = {r["toast_guid"]: r["id"] for r in conn.execute(
             "SELECT id, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 AND toast_guid IS NOT NULL",
             (restaurant_id,)).fetchall()}
-        want = [(restaurant_id, ids[g], d, q) for d, qty in per_day.items() for g, q in qty.items()
-                if ids.get(g) is not None and q > 0]
+        want = [(restaurant_id, ids[g], d, round(q[1], 4), q[0]) for d, qty in per_day.items()
+                for g, q in qty.items() if ids.get(g) is not None and q[0] > 0]
         # Never over a row the nightly job wrote: it is the record. One
         # executemany (scale audit 10/19/26 DB-05: a savepoint a row on
         # Postgres, a backfill's days x items of them).
         if want:
             conn.executemany(
-                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold) "
-                "VALUES (?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) DO NOTHING", want)
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold, qty_made) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) DO NOTHING", want)
         rows += len(want)
         conn.commit()
     return {"days": len(per_day), "rows": rows, "remaining": len(missing) - len(todo), "failed": failed}
+
+
+def refresh_item_sales_day(restaurant_id: int, business_date) -> dict:
+    """One business date's units per dish read again and REPLACED — sold and
+    made (A2-12), the date's rows for dishes no longer sold removed (A2-17) —
+    for a night the POS restated after the nightly depletion ran
+    (pos_rederive, Audit #23 A2-07: menu_item_sales was never re-read past
+    the depletion overlap). Units only: never ingredient depletion, which
+    replaying an old day would re-deplete against a count already taken.
+    Only active, discovered dishes (as the nightly job). {rows, removed}."""
+    import pos as _pos
+    from models import db_conn
+    day = business_date if hasattr(business_date, "isoformat") else date.fromisoformat(str(business_date)[:10])
+    sels, _ = _pos.fetch_order_selections(restaurant_id, day)
+    qty = {}
+    for sel in sels:
+        g = (sel.get("item") or {}).get("guid")
+        if not g:
+            continue
+        made = float(sel.get("quantity", 0) or 0)
+        sold = sel.get("sold")
+        m0, s0 = qty.get(g, (0.0, 0.0))
+        qty[g] = (m0 + made, s0 + float(made if sold is None else (sold or 0)))
+    iso = day.isoformat()
+    with db_conn() as conn:
+        ids = {r["toast_guid"]: r["id"] for r in conn.execute(
+            "SELECT id, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 AND toast_guid IS NOT NULL",
+            (restaurant_id,)).fetchall()}
+        want = [(restaurant_id, ids[g], iso, round(q[1], 4), q[0]) for g, q in qty.items()
+                if ids.get(g) is not None and q[0] > 0]
+        removed = 0
+        if want:
+            conn.executemany(
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold, qty_made) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) "
+                "DO UPDATE SET qty_sold=excluded.qty_sold, qty_made=excluded.qty_made", want)
+            keep = sorted({w[1] for w in want})
+            removed = conn.execute(
+                f"DELETE FROM menu_item_sales WHERE restaurant_id=? AND business_date=? "
+                f"AND menu_item_id NOT IN ({','.join('?' for _ in keep)})", (restaurant_id, iso, *keep)).rowcount
+        conn.commit()
+    return {"rows": len(want), "removed": int(removed or 0)}
 
 
 def import_csv_to_ingredients(restaurant_id: int) -> dict:

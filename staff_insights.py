@@ -256,12 +256,33 @@ def _my_pos_ids(restaurant_id, name, provider, db_path=None) -> set:
         return set(), set()
 
 
+def _one_per_punch(rows) -> list:
+    """One row per POS punch (audit #23 A3-17 / A2-16): on Postgres the
+    archive's partitioned key carries the business date, so a punch filed
+    under two dates (a re-archive across the 10/20/26 boundary change) was
+    two rows — a person's hours and tips counted twice. The newest filing
+    (rows come newest date first) is kept."""
+    out, seen = [], set()
+    for r in rows or []:
+        d = dict(r)
+        pid = d.pop("punch_id", None)
+        if pid is not None and pid in seen:
+            continue
+        if pid is not None:
+            seen.add(pid)
+        out.append(d)
+    return out
+
+
 def my_punch_rows(restaurant_id, name, start, end, provider=None, db_path=None):
     """(rows, reason): the caller's own punches on [start, end] — by their
     POS id when the identity layer knows it, else by exact name when every
     punch under that name carries one id nobody else holds. Two people with
     one name in the POS is never guessed ("ambiguous"). Station logins (a
-    shared bar login) are never anyone's."""
+    shared bar login) are never anyone's. A staff login whose claim the
+    owner has not approved gets none ("pending_approval", A7-10)."""
+    if _pos_held():
+        return [], "pending_approval"
     provider = provider or _provider(restaurant_id, db_path)
     conn = get_conn(db_path)
     try:
@@ -273,14 +294,14 @@ def my_punch_rows(restaurant_id, name, start, end, provider=None, db_path=None):
             provider = row["provider"]
         mine, everyones = _my_pos_ids(restaurant_id, name, provider, db_path)
         cols = ("business_date, employee_id, employee_name, role, clock_in, clock_out, reg_hours, ot_hours, "
-                "dt_hours, tips, tips_net, grats")
+                "dt_hours, tips, tips_net, grats, punch_id")
         if mine:
             marks = ",".join("?" * len(mine))
             rows = conn.execute(f"SELECT {cols} FROM pos_punches WHERE restaurant_id=? AND provider=? AND "
                                 f"is_station=0 AND employee_id IN ({marks}) AND business_date>=? AND business_date<=? "
                                 "ORDER BY business_date DESC, clock_in DESC",
                                 (restaurant_id, provider, *sorted(mine), _iso(start), _iso(end))).fetchall()
-            return [dict(r) for r in rows], None
+            return _one_per_punch(rows), None
         key = _nk(name)
         named = [r for r in conn.execute("SELECT DISTINCT employee_id, employee_name FROM pos_punches WHERE "
                                          "restaurant_id=? AND provider=? AND is_station=0",
@@ -302,7 +323,7 @@ def my_punch_rows(restaurant_id, name, start, end, provider=None, db_path=None):
         else:
             rows = conn.execute(q + "employee_id=? ORDER BY business_date DESC, clock_in DESC",
                                 args + [eid]).fetchall()
-        return [dict(r) for r in rows], None
+        return _one_per_punch(rows), None
     except Exception:
         return [], "pos_not_connected"
     finally:
@@ -339,7 +360,18 @@ _EARNINGS_REASONS = {
                  "link it to you.",
     "ambiguous": "More than one person in the POS has your name, so Cavnar AI won't guess which punches are yours. "
                  "Ask your manager to link your POS id to you.",
+    "pending_approval": "Your POS hours and tips show once your manager confirms this login is yours.",
 }
+
+
+def _pos_held() -> bool:
+    """This staff request's login is a self-claimed name its owner has not
+    approved (auth.staff_login_required sets it — Audit #23 A7-10)."""
+    try:
+        from flask import g, has_request_context
+        return bool(has_request_context() and getattr(g, "staff_pos_held", False))
+    except Exception:
+        return False
 
 
 def my_earnings(restaurant_id, name, days=EARNINGS_DEFAULT_DAYS, today=None, db_path=None) -> dict:

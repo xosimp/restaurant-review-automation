@@ -851,13 +851,31 @@ def snapshot(restaurant_id, restaurant=None, ctx=None, db_path=None, now=None, u
                # the data" answer on a card): open until re-verified here —
                # every card resting on one is held to low evidence meanwhile
                # (memory audit 9/29/26, "reasons").
-               "distrusted": distrusted_items(restaurant_id, db_path=db_path)}
+               "distrusted": distrusted_items(restaurant_id, db_path=db_path),
+               # What the nightly labor read found the figures can't carry:
+               # punches still open, records that behave like a station
+               # login, jobs the POS renamed (labor.data_health_notes,
+               # audit #23 A3-01 / A3-03 / A3-19). Labor restaurants only.
+               "labor_notes": _labor_notes(restaurant, db_path=db_path)}
     except Exception as e:
         print(f"[data_health] snapshot failed for {restaurant_id}: {e}")
         return {"ok": False, "error": "Data health could not be read right now."}
     if use_cache and ctx is None and now is None:
         _cache_put(key, out)
     return out
+
+
+def _labor_notes(restaurant, db_path=None) -> list:
+    if not getattr(restaurant, "module_labor", 0):
+        return []
+    try:
+        import labor
+        return labor.data_health_notes(restaurant.id, db_path=db_path)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("[data_health] labor notes unreadable for %s: %s",
+                                            getattr(restaurant, "id", None), e)
+        return []
 
 
 def distrusted_items(restaurant_id, db_path=None) -> list:

@@ -296,7 +296,9 @@ def collect(ctx):
     # the next pass's re-check rather than going out FINAL on part of it.
     try:
         import pos_archive
-        settled, why = pos_archive.night_settled(ctx.restaurant_id, provider, ctx.business_date,
+        # night_trusted (Audit #23 A4-04): settled AND not a first read held
+        # suspect (empty, short or unreconciled), nor another store's night.
+        settled, why = pos_archive.night_trusted(ctx.restaurant_id, ctx.business_date, provider=provider,
                                                  db_path=ctx.db_path or pos_archive.DB_PATH)
     except Exception:
         settled, why = True, None
@@ -351,6 +353,11 @@ def _ready(ctx, data, provider, closed_by):
         "discounts": data["discounts"], "comps": data["comps"], "voids": data["voids"],
         "refunds": data["refunds"], "tax": data["tax"],
     }
+    if isinstance(data.get("tax_adjust"), (int, float)) and abs(data["tax_adjust"]) >= 0.01:
+        # RPOWER's own tax adjustment (a tax-exempt check), kept beside tax
+        # and never added to it until RPOWER says how the two relate (Audit
+        # #23 A2-20, RPOWER question 5).
+        metrics["tax_adjust_amount"] = round(float(data["tax_adjust"]), 2)
     baselines = {}
     for key, other in (("yesterday", day - timedelta(days=1)), ("last_week", day - timedelta(days=7)),
                        ("last_year", store.last_year_day(ctx.restaurant, day))):
@@ -439,6 +446,11 @@ def _ready(ctx, data, provider, closed_by):
     # these rather than waiting for the 5am item sync (D1-8).
     sold = [{"guid": it.get("guid"), "name": it.get("name"), "qty": it.get("qty")}
             for it in data["items"] if (it.get("qty") or 0) > 0]
+    # What the kitchen made — sold and comped plates (Audit #23 A2-12): the
+    # Food block costs these, and prices what was sold.
+    made = [{"guid": it.get("guid"), "name": it.get("name"), "qty": it.get("made_qty")}
+            for it in data.get("items_made") or [] if (it.get("made_qty") or 0) > 0]
+    notes, loss_notes = _night_notes(data, net)
 
     detail = {
         "provider": provider,
@@ -460,6 +472,54 @@ def _ready(ctx, data, provider, closed_by):
         "top_items": top,
         "bottom_items": bottom,
         "items_sold": sold,
+        "items_made": made,
         "source_checks": data.get("source_checks") or {},
+        # Plain sentences the report shows under the night (Audit #23):
+        # a clock change inside it, the POS's tax adjustment. `loss_notes`
+        # (named loss*: dsr.access withholds it without the comps-and-voids
+        # permission) — net after refunds, comps that do not reconcile.
+        "notes": notes,
+        "loss_notes": loss_notes,
+        "dst": data.get("dst"),
     }
+    refunds = data.get("refunds")
+    if isinstance(refunds, (int, float)) and refunds > 0 and isinstance(net, (int, float)):
+        detail["loss_refunds"] = {"refunds": round(float(refunds), 2),
+                                  "net_after_refunds": round(float(net) - float(refunds), 2)}
     return dsr.block(dsr.READY, source=provider, metrics=metrics, detail=detail, block_name="sales")
+
+
+# Refunds (Audit #23 A2-05): the owner has not decided whether a refund
+# comes off the night it is rung (DSR_ENGINE_PLAN §11 Q2; pos.NET_DEDUCTIONS
+# leaves it beside net). Until then a night with refunds says what net would
+# be after them, labelled, and net itself does not move.
+REFUNDS_NOTE = ("Net after refunds: {after} ({refunds} refunded tonight). Refunds are shown beside net and not "
+                "taken off it — one can be for an earlier night.")
+COMPS_NOTE = ("Comps on the check lines ({lines}) and the POS's own comp totals ({pos}) don't match tonight, so "
+              "gross and the comps share of it may be off by {gap}.")
+TAX_ADJUST_NOTE = "The POS recorded {amount} of tax adjustments (exempt checks). They're shown here, not taken off tax."
+
+
+def _money_text(v):
+    return f"-${abs(v):,.2f}" if v < 0 else f"${v:,.2f}"
+
+
+def _night_notes(data, net):
+    """(notes, loss_notes) — the sentences a night carries (see _ready)."""
+    notes, loss = [], []
+    dst = data.get("dst")
+    if isinstance(dst, dict) and dst.get("note"):
+        notes.append(str(dst["note"]))
+    adj = data.get("tax_adjust")
+    if isinstance(adj, (int, float)) and abs(adj) >= 0.01:
+        notes.append(TAX_ADJUST_NOTE.format(amount=_money_text(round(float(adj), 2))))
+    refunds = data.get("refunds")
+    if isinstance(refunds, (int, float)) and refunds > 0 and isinstance(net, (int, float)):
+        loss.append(REFUNDS_NOTE.format(after=_money_text(round(float(net) - float(refunds), 2)),
+                                        refunds=_money_text(round(float(refunds), 2))))
+    sc = data.get("source_checks") or {}
+    if sc.get("comps_reconciled") is False:
+        loss.append(COMPS_NOTE.format(lines=_money_text(float(sc.get("lines_comp_value") or 0)),
+                                      pos=_money_text(abs(float(sc.get("ticket_type_comp") or 0))),
+                                      gap=_money_text(abs(float(sc.get("comp_gap") or 0)))))
+    return notes, loss

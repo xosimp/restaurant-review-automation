@@ -162,6 +162,8 @@ def init_guest_hub(db_path=DB_PATH):
             PRIMARY KEY (restaurant_id, ticket_id)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_guest_pos_visits_contact ON guest_pos_visits(restaurant_id, contact_id)")
+        # Pruned at its age since Audit #23 (A7-07, ops._RETENTION_DAYS).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_guest_pos_visits_date ON guest_pos_visits(business_date)")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(guest_contacts)").fetchall()}
         for col, decl in (("tock_guest_id", "TEXT"), ("last_party_size", "INTEGER"),
                           ("tock_marketing_optin", "INTEGER"), ("first_seen_at", "TEXT")):
@@ -1182,8 +1184,10 @@ def match_pos_visits(rid, day, customers=None, db_path=DB_PATH) -> dict:
     if not tickets:
         return {"tickets": 0, "matched": 0}
     if customers is None:
+        # Only the customers on these checks, one record each (Audit #23
+        # A1-06 / A7-07) — never the group's whole customer file.
         import rpower
-        customers = rpower.fetch_customers(rid)
+        customers = rpower.fetch_customers_by_mid(rid, {str(t["customer_id"]).strip() for t in tickets})
     matched = 0
     for t in tickets:
         c = customers.get(str(t["customer_id"])) or {}
@@ -1205,17 +1209,77 @@ def match_pos_visits(rid, day, customers=None, db_path=DB_PATH) -> dict:
     return {"tickets": len(tickets), "matched": matched}
 
 
-def run_pos_guest_match(db_path=DB_PATH, day=None) -> dict:
-    """Nightly, after the POS archive: yesterday's checks at every RPOWER
-    restaurant. A restaurant whose checks carry no customer costs one read."""
-    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+def pos_match_settings(rid, db_path=DB_PATH) -> dict:
+    """{enabled, available}: whether the nightly RPOWER guest match runs for
+    this restaurant (its own opt-in, A7-07), and whether it could (an RPOWER
+    store is connected)."""
+    r = _restaurant(rid, db_path)
+    available = bool(r is not None and (getattr(r, "rpower_store_mid", None) or "").strip()
+                     and ((getattr(r, "rpower_token", None) or "").strip() or getattr(r, "rpower_credential_id", None)))
+    return {"enabled": bool(int(getattr(r, "pos_guest_match", 0) or 0)) if r is not None else False,
+            "available": available}
+
+
+def set_pos_match(rid, enabled, db_path=DB_PATH) -> dict:
+    """The owner's switch for the RPOWER guest match. Off stops the nightly
+    read; guests and visits already matched stay (they are the restaurant's
+    own guest list, deleted with it or by retention)."""
+    import models
+    models.update_restaurant(rid, {"pos_guest_match": 1 if enabled else 0},
+                             **({"db_path": db_path} if db_path and db_path != DB_PATH else {}))
+    return dict(pos_match_settings(rid, db_path), ok=True)
+
+
+GUEST_MATCH_CURSOR = "guest_pos_match_cursor"
+GUEST_MATCH_MAX_SECONDS = float(os.getenv("GUEST_POS_MATCH_MAX_SECONDS", "600"))
+
+
+def _match_cursor(db_path=DB_PATH, value=None):
+    """The last restaurant id the guest match finished (job_cursors), read —
+    or written when `value` is given (0 = the pass reached the end)."""
     conn = get_conn(db_path)
     try:
-        rids = [r[0] for r in conn.execute("SELECT id FROM restaurants WHERE COALESCE(rpower_token,'') <> '' "
-                                           "AND COALESCE(billing_status,'') NOT IN ('cancelled','internal')").fetchall()]
+        if value is None:
+            row = conn.execute("SELECT value FROM job_cursors WHERE key=?", (GUEST_MATCH_CURSOR,)).fetchone()
+            try:
+                return int((row["value"] if row else 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+        conn.execute("INSERT INTO job_cursors (key, value, updated_at) VALUES (?,?,datetime('now')) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                     (GUEST_MATCH_CURSOR, str(int(value))))
+        conn.commit()
+        return int(value)
     finally:
         conn.close()
-    for rid in rids:
+
+
+def run_pos_guest_match(db_path=DB_PATH, day=None, max_seconds=None) -> dict:
+    """Nightly, after the POS archive: yesterday's checks at every RPOWER
+    restaurant that OPTED IN (restaurants.pos_guest_match, Audit #23 A7-07 —
+    off by default; every restaurant it already ran for was kept on once,
+    models.grandfather_pos_guest_match). A restaurant whose checks carry no
+    customer costs no RPOWER read; one that does reads only those customers.
+    Bounded and resumable (CLAUDE.md): a wall-clock bound
+    (GUEST_POS_MATCH_MAX_SECONDS) and a cursor in job_cursors, so a pass cut
+    short starts the next night where it stopped."""
+    out = {"attempted": 0, "ok": 0, "failed": 0, "skipped": 0, "hit_bound": False}
+    deadline = time.monotonic() + float(GUEST_MATCH_MAX_SECONDS if max_seconds is None else max_seconds)
+    conn = get_conn(db_path)
+    try:
+        rids = [int(r[0]) for r in conn.execute(
+            "SELECT id FROM restaurants WHERE COALESCE(pos_guest_match,0)=1 "
+            "AND (COALESCE(rpower_token,'') <> '' OR rpower_credential_id IS NOT NULL) "
+            "AND COALESCE(rpower_store_mid,'') <> '' "
+            "AND COALESCE(billing_status,'') NOT IN ('cancelled','internal') ORDER BY id").fetchall()]
+    finally:
+        conn.close()
+    start = _match_cursor(db_path)
+    order = [r for r in rids if r > start] + [r for r in rids if r <= start]
+    for rid in order:
+        if time.monotonic() > deadline:
+            out["hit_bound"] = True
+            break
         target = day or (_local_now(rid).date() - timedelta(days=1))
         try:
             res = match_pos_visits(rid, target, db_path=db_path)
@@ -1223,10 +1287,14 @@ def run_pos_guest_match(db_path=DB_PATH, day=None) -> dict:
             import ops
             ops.capture(e, job="guest_pos_match", context=f"restaurant_id={rid}")
             out["failed"] += 1
+            _match_cursor(db_path, rid)
             continue
         if res["tickets"]:
             out["attempted"] += 1
             out["ok"] += 1
         else:
             out["skipped"] += 1
+        _match_cursor(db_path, rid)
+    if not out["hit_bound"]:
+        _match_cursor(db_path, 0)
     return out

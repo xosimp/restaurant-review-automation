@@ -6079,9 +6079,35 @@ def mobile_guests(current_user):
     out = guest_hub.guest_list(rid, view=(request.args.get("view") or "all").strip().lower(),
                                q=request.args.get("q") or "")
     from marketing_drafts import may_publish
+    from permissions import is_principal
     out.update(followup=guest_hub.followup_settings(rid), texting=guest_hub.texting_status(rid),
-               tock=guest_hub.tock_status(rid), can_publish=may_publish(current_user))
+               tock=guest_hub.tock_status(rid), can_publish=may_publish(current_user),
+               pos_match=dict(guest_hub.pos_match_settings(rid), can_change=is_principal(current_user)))
     return jsonify(out)
+
+
+@mobile_bp.route("/guests/pos-match", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guests_pos_match(current_user):
+    """The RPOWER guest match's opt-in (Audit #23 A7-07): GET {enabled,
+    available}; POST {enabled} — the account holder's call, logged. Off by
+    default: diners' names and numbers come in from RPOWER only for a
+    restaurant that chose it."""
+    import guest_hub
+    from permissions import is_principal
+    rid, refused = _guests_gate(current_user)
+    if refused:
+        return refused
+    if request.method == "GET":
+        return jsonify(ok=True, can_change=is_principal(current_user), **guest_hub.pos_match_settings(rid))
+    if not is_principal(current_user):
+        return jsonify(ok=False, owner_only=True,
+                       error="Only the account owner can turn RPOWER guest matching on or off."), 403
+    d = request.get_json(silent=True) or {}
+    on = bool(d.get("enabled"))
+    res = guest_hub.set_pos_match(rid, on)
+    _log_account_event(rid, "guest_pos_match_changed", current_user, detail="on" if on else "off")
+    return jsonify(res)
 
 
 @mobile_bp.route("/guests/host-add", methods=["POST"])
@@ -7738,10 +7764,15 @@ def _do_mobile_account(current_user):
 
     def _pos_row(name, id_attr):
         st = _ph.provider_state(restaurant, name)
+        err = getattr(restaurant, f"{name}_sync_error", None)
+        if name == "rpower" and err:
+            # A fixed sentence per class, never RPOWER's raw text (A7-14).
+            import rpower as _rp_err
+            err = _rp_err.owner_error_sentence(err)
         return {"connected": bool(getattr(restaurant, id_attr, None))
                              and not getattr(restaurant, f"{name}_sync_error", None),
                 "last_synced": getattr(restaurant, f"{name}_last_synced", None),
-                "error": getattr(restaurant, f"{name}_sync_error", None),
+                "error": err,
                 "sync_state": st["state"], "age_days": st["age_days"], "sync_pct": st.get("pct")}
 
     connections = {
@@ -8246,15 +8277,24 @@ def mobile_pos_sync(current_user, provider):
 @mobile_bp.route("/connections/rpower", methods=["DELETE"])
 @mobile_login_required
 def mobile_disconnect_rpower(current_user):
-    """Twin of /api/rpower/disconnect: principal only, as on the web. Connecting
-    again goes back through Cavnar AI — the token is Cavnar AI's."""
-    from permissions import principal_only
-    denied = principal_only(current_user, "the RPower connection")
-    if denied:
-        return denied
+    """Twin of /api/rpower/disconnect: principal only with the password
+    step-up, as on the web (Audit #23 A7-12); the account event is written
+    by the shared body. Connecting again goes back through Cavnar AI — the
+    token is Cavnar AI's."""
     import rpower_routes
-    payload, status = rpower_routes.do_disconnect(current_user)
-    _log_account_event(current_user["restaurant_id"], "pos_disconnected", current_user, detail="RPOWER")
+    payload, status = rpower_routes.disconnect_refusal(current_user) or rpower_routes.do_disconnect(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/pos/store-check", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_pos_store_check(current_user):
+    """Twin of /api/pos/store-check (Audit #23 A7-02): a bulk-onboarded
+    store's owner confirms it (its RPOWER name and serial) — one body,
+    rpower_routes.store_check_get / store_check_post."""
+    import rpower_routes
+    fn = rpower_routes.store_check_get if request.method == "GET" else rpower_routes.store_check_post
+    payload, status = fn(current_user)
     return jsonify(**payload), status
 
 
@@ -8771,6 +8811,9 @@ def mobile_list_staff(current_user):
             "unlinked_at": m.get("unlinked_at"),
             "deleted_at": m.get("deleted_at"),
             "ended": ("unlinked" if m.get("unlinked_at") else "deleted" if m.get("deleted_at") else None),
+            # A self-claimed name whose POS hours and tips wait for the
+            # owner's approval (Audit #23 A7-10).
+            "pos_pay_held": bool(m.get("claimed_by_phone")) and not m.get("pos_pay_ok_at"),
         })
     # Names nobody has claimed yet, so an owner can see at a glance who on
     # their roster still has no account — the question they will actually ask.
@@ -8992,6 +9035,23 @@ def mobile_unlink_staff(current_user, membership_id):
     _log_account_event(current_user["restaurant_id"], "staff_account_unlinked",
                        current_user, detail=str(membership_id))
     return jsonify(ok=True, join_code=rotate_join_code(current_user["restaurant_id"]), join_code_rotated=True)
+
+
+@mobile_bp.route("/account/staff/<int:membership_id>/approve-pos", methods=["POST"])
+@mobile_login_required
+def mobile_approve_staff_pos(current_user, membership_id):
+    """The owner confirms a self-claimed name is the person: the POS's hours
+    and tips under it are shown to that login (Audit #23 A7-10)."""
+    denied = _require_team_admin(current_user) or _staff_target_refusal(current_user, membership_id)
+    if denied:
+        return denied
+    from auth import approve_staff_pos_pay
+    if not approve_staff_pos_pay(membership_id, current_user["restaurant_id"],
+                                 current_user.get("username") or current_user.get("email") or "owner"):
+        return jsonify(ok=False, error="Not found"), 404
+    _log_account_event(current_user["restaurant_id"], "staff_pos_pay_approved", current_user,
+                       detail=str(membership_id))
+    return jsonify(ok=True)
 
 
 @mobile_bp.route("/account/staff/portal-link/rotate", methods=["POST"])

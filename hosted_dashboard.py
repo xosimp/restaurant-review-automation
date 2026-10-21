@@ -1392,6 +1392,30 @@ def _post_boot():
             _boot_log.warning("credential key rotation at boot: %s", rot)
     except Exception as e:
         _boot_log.exception("credential encryption pass failed: %s", e)
+    # Audit #23 F7 (10/21/26): a missing or invalid CREDENTIAL_KEY on Railway
+    # pages (credential saves are refused while it is — A7-08); the RPOWER
+    # partner token is held once (A7-01): plaintext credentials sealed, every
+    # restaurant still on its own copy bound to the credential that holds it,
+    # copies past the rollback window cleared; the kept RPOWER lists moved to
+    # their per-credential scopes with employee contact details dropped, and
+    # lists no store reads purged (A7-03 / A3-07).
+    try:
+        import credentials as _cred_f7
+        _cred_f7.key_problem_page()
+        _cred_f7.encrypt_pos_credentials()
+        bound = _cred_f7.bind_legacy_pos_tokens()
+        if bound.get("bound") or bound.get("unreadable") or bound.get("refused"):
+            _boot_log.warning("RPOWER partner credentials at boot: %s", bound)
+        cleared = _cred_f7.clear_legacy_pos_tokens()
+        if cleared:
+            _boot_log.info("legacy per-restaurant RPOWER tokens cleared: %s", cleared)
+        import rpower as _rp_f7
+        moved = _rp_f7.migrate_catalog_scopes()
+        purged = _rp_f7.purge_catalogs()
+        if moved.get("moved") or moved.get("deleted") or purged:
+            _boot_log.info("RPOWER kept lists: %s, purged %s", moved, purged)
+    except Exception as e:
+        _boot_log.exception("RPOWER credential / list pass failed: %s", e)
     # Now that this database is known good, say on the volume that it holds
     # client data, so an emptied one is refused from here on (#108).
     _sm_boot.record_volume_marker()

@@ -4333,8 +4333,39 @@ def admin_api_client(restaurant_id, current_user):
 @admin_bp.route("/admin/api/integrations")
 @admin_required
 def admin_api_integrations(current_user):
+    """Every connection, filtered, ordered and paged by the server (Audit #23
+    A6-15): ?f=all|error|revoked|off|stale|never|connected &q= &page= &per_page=."""
     import admin_ops
-    return jsonify(**admin_ops.integrations())
+    f = request.args.get("f", "all")
+    return jsonify(**admin_ops.integrations(f=f if f in admin_ops.INTEGRATION_FILTERS else "all",
+                                            q=request.args.get("q"), page=request.args.get("page", 1, type=int),
+                                            per_page=request.args.get("per_page", 50, type=int)))
+
+
+@admin_bp.route("/admin/api/rpower-health")
+@admin_required
+def admin_api_rpower_health(current_user):
+    """Operations → RPOWER (Audit #23 A6-01): the fleet strip, the fleet
+    rules and one keyset page of stores from the precomputed rollup.
+    ?health=failing,auth &type=archive &q= &bucket= &partner= &anomaly=1
+    &coverage_lt=0.9 &after=<rank>:<id> &limit=50 &demo=1. Read-only."""
+    import admin_ops
+    a = request.args
+    return jsonify(**admin_ops.rpower_health_view(
+        health=a.get("health"), q=a.get("q"), data_type=a.get("type"), bucket=a.get("bucket"),
+        partner=a.get("partner"), anomaly=a.get("anomaly") == "1", coverage_lt=a.get("coverage_lt"),
+        after=a.get("after"), limit=a.get("limit", 50, type=int), include_demo=a.get("demo") == "1"))
+
+
+@admin_bp.route("/admin/api/rpower-health/<int:restaurant_id>")
+@admin_required
+def admin_api_rpower_store(restaurant_id, current_user):
+    """One RPOWER store's drill-down: the 90-day archive calendar, each data
+    type's last good read, its queue rows, 7 days of requests, punch issues,
+    data findings and binding facts. Read-only."""
+    import admin_ops
+    out = admin_ops.rpower_store_view(restaurant_id)
+    return jsonify(**out), (200 if out.get("ok") else 404)
 
 
 @admin_bp.route("/admin/api/ai")
@@ -4491,7 +4522,22 @@ def admin_api_set_demo(restaurant_id, current_user):
         if (data.get("confirm_name") or "").strip() != (current.name or "").strip():
             return jsonify(ok=False, confirm_required=True,
                            error="Type the restaurant's exact name to mark it as a demo."), 400
+    if not on and was:
+        # A demo made real must not be bound to a POS store another live
+        # restaurant holds (Audit #23 A7-06): two live tenants on one store
+        # each show its sales and wages, and both look normal. Its demo
+        # live-store override ends with the demo (A7-15).
+        from models import demo_binding_refusal
+        clash = demo_binding_refusal(restaurant_id)
+        if clash:
+            import admin_events
+            admin_events.record_admin_action(current_user, "demo_flag.set", restaurant_id=restaurant_id,
+                                             target=f"restaurant:{restaurant_id}", before=before,
+                                             after={"is_demo": on, "refused": [clash]}, result="refused")
+            return jsonify(ok=False, error=clash), 409
     fields = {"is_demo": on}
+    if not on and was:
+        fields["pos_live_mirror"] = 0
     if not on and int(getattr(current, "is_demo", 0) or 0) == 1:
         # Turning demo OFF leaves the seeded rows (rr_% reviews, seeded
         # shifts, ingredients, labor history — stamped source 'seed') in
@@ -5952,6 +5998,71 @@ def admin_api_offboarding_step(restaurant_id, step, current_user):
     return jsonify(**payload), code
 
 
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/pos-export", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_pos_export(restaurant_id, current_user):
+    """The restaurant's POS archive as CSV files in one zip, for the
+    offboarding export step (Audit #23 A7-13): built on the admin job pool;
+    poll GET .../pos-export/<job_id>, then download it once. Typed audit."""
+    import uuid
+    import offboarding
+    from models import get_restaurant
+    if not get_restaurant(restaurant_id):
+        return jsonify(ok=False, error="Not found"), 404
+    job_id = str(uuid.uuid4())
+    _ops.start_async_job(job_id, "pos_export", restaurant_id)
+    actor = current_user.get("username") or "admin"
+
+    def _run():
+        out = offboarding.pos_export_to_file(restaurant_id)
+        _admin_events_c.record_admin_action(current_user, "offboarding.pos_export_built", restaurant_id=restaurant_id,
+                                          target=f"restaurant:{restaurant_id}",
+                                          after={"tables": out.get("tables"), "bytes": out.get("bytes")},
+                                          summary=f"{actor} built the POS archive export")
+        _ops.finish_async_job(job_id, "done", {"ok": True, "file": out["file"], "bytes": out["bytes"],
+                                               "tables": out["tables"]})
+    why = _submit_admin_job(job_id, _run)
+    if why:
+        _ops.finish_async_job(job_id, "error", {"ok": False, "error": why})
+        return jsonify(ok=False, error=why), 503
+    return jsonify(ok=True, job_id=job_id)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/pos-export/<job_id>")
+@admin_required
+def admin_api_pos_export_status(restaurant_id, job_id, current_user):
+    return _admin_job_status(job_id)
+
+
+@admin_bp.route("/admin/api/client/<int:restaurant_id>/pos-export/<job_id>/download", methods=["POST"])
+@admin_required
+@recent_auth_required()
+def admin_api_pos_export_download(restaurant_id, job_id, current_user):
+    """The finished zip, once: it is deleted from the server as it is sent
+    (and any left behind after a day). Typed audit."""
+    import offboarding
+    job = _ops.read_async_job(job_id)
+    res = dict((job or {}).get("result") or {})
+    name = res.get("file")
+    path = offboarding.export_path(name) if name and str(name).startswith(f"pos-export-{int(restaurant_id)}-") else None
+    if not path:
+        return jsonify(ok=False, error="That export isn't ready, or was already downloaded."), 404
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    _admin_events_c.record_admin_action(current_user, "offboarding.pos_export_downloaded", restaurant_id=restaurant_id,
+                                      target=f"restaurant:{restaurant_id}", after={"file": name, "bytes": len(data)})
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "application/zip"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/deletion/withdraw", methods=["POST"])
 @admin_required
 def admin_api_withdraw_deletion(restaurant_id, current_user):
@@ -6595,8 +6706,14 @@ def admin_api_pos_traffic(current_user):
 @admin_bp.route("/admin/api/data-sources")
 @admin_required
 def admin_api_data_sources(current_user):
-    """Every data source's sync state per restaurant, failing first (#46). ?segment=customer|internal|all"""
-    return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer")))
+    """Every data source's sync state per restaurant, failing first (#46),
+    paged by the server (Audit #23 A6-15). ?segment=customer|internal|all
+    &page= &per_page= &failing=1 &source="""
+    return jsonify(**_admin_ops_c.data_sources(segment=request.args.get("segment", "customer"),
+                                               page=request.args.get("page", 1, type=int),
+                                               per_page=request.args.get("per_page", 50, type=int),
+                                               failing=request.args.get("failing") == "1",
+                                               source=request.args.get("source") or None))
 
 
 @admin_bp.route("/admin/api/client/<int:restaurant_id>/timeline")

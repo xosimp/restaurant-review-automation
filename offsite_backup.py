@@ -567,6 +567,11 @@ def seal_plan(conn):
     if "restaurants" in tables:
         have = {r[1] for r in conn.execute('PRAGMA table_info("restaurants")')}
         out += [("restaurants", f, "credential") for f in credentials.FIELDS if f in have]
+    # Credentials sealed at rest outside restaurants (the RPOWER partner
+    # token, Audit #23 A7-01): carried as they are, like FIELDS.
+    for (t, c) in credentials.AT_REST_SEALED:
+        if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
+            out.append((t, c, "credential"))
     for (t, c) in sorted(SEAL_COLUMNS):
         if t in tables and c in {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}:
             out.append((t, c, "sealed"))
@@ -706,7 +711,12 @@ def _scrub_rows(conn):
 # that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
 # tests/test_fix_d_backup.py fails until it is.
 KEEP_COLUMNS = {
+    ("rpower_store_health", "token_bucket"): "the request bucket a store's token counts against — a hash of the "
+                                             "credential, never the token (Audit #23 A6-01)",
+    ("rpower_store_health", "token_state"): "a label: ok / auth_failed / unverified (Audit #23 A6-01)",
     ("rpower_rate_bucket", "tokens"): "a request-budget count (a token bucket), no credential; its key is a hash",
+    ("restaurants", "rpower_credential_id"): "the id of a pos_credentials row (Audit #23 A7-01), not a secret; "
+                                              "the token it names is sealed in that row",
     ("users", "password_hash"): "a salted hash; dropping it locks every user out of a restored copy",
     ("users", "password_changed_at"): "a date",
     ("users", "password_strength"): "a label",
@@ -796,7 +806,8 @@ def scrub_plan(conn, sealed=()):
     sealed_tables = {t for t in SEAL_TABLES if (t, SEAL_TABLES[t][0]) in sealed}
     # A sealable table this run cannot seal (no key) is emptied, as before.
     wipe = sorted(t for t in set(SCRUB_TABLES) | (set(SEAL_TABLES) - sealed_tables) if t in tables)
-    named = set(SCRUB_COLUMNS) | set(SEAL_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS}
+    named = set(SCRUB_COLUMNS) | set(SEAL_COLUMNS) | {("restaurants", f) for f in credentials.FIELDS} \
+        | set(credentials.AT_REST_SEALED)
     registry = set(credentials.credential_columns(conn))
     unclassified = []
     for t, c in sorted(set(credential_columns(conn)) | registry):

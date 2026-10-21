@@ -472,17 +472,29 @@ def _archive_night(restaurant, today=None):
     if today is not None:
         return (_date.fromisoformat(str(today)[:10]) - _td(days=1)).isoformat(), 0
     import pos
-    from time_utils import restaurant_now, business_date, BUSINESS_DAY_START_HOUR
+    from time_utils import restaurant_now, business_date, day_start_minutes
     aware = restaurant_now(restaurant)
     local = aware.replace(tzinfo=None)
     night = pos.complete_through(restaurant, local)
     trading = business_date(restaurant, local)
-    if local.hour < BUSINESS_DAY_START_HOUR and night < trading:
-        # The night still trading ends at the boundary: wait for it, then
-        # archive it (run_for computes the same night at run time).
-        boundary = aware.replace(hour=BUSINESS_DAY_START_HOUR, minute=0, second=30, microsecond=0)
-        return trading.isoformat(), boundary.timestamp()
+    turn = day_start_minutes(restaurant)          # the one business-date boundary (audit #23 A3-14)
+    if night < trading:
+        # The night still trading ends at the next boundary: when that is
+        # within ARCHIVE_WAIT_FOR_NIGHT_HOURS, wait for it, then archive it
+        # (run_for computes the same night at run time). Any zone (Audit #23
+        # A4-15): at the 4am Chicago fan-out a Hawaii store is at 11pm, and
+        # its night was archived 18 hours late, the next night.
+        day = aware if local.hour * 60 + local.minute < turn else aware + _td(days=1)
+        boundary = day.replace(hour=turn // 60, minute=turn % 60, second=30, microsecond=0)
+        if boundary - aware <= _td(hours=ARCHIVE_WAIT_FOR_NIGHT_HOURS):
+            return trading.isoformat(), boundary.timestamp()
     return night.isoformat(), 0
+
+
+# The archive row waits for a night still trading when it ends within this
+# many hours of the fan-out (A4-15); a store whose night ended already is
+# archived at once.
+ARCHIVE_WAIT_FOR_NIGHT_HOURS = 8
 
 
 def run_queued_pos_archive(job):
@@ -497,7 +509,8 @@ def run_queued_pos_archive(job):
         return {"skipped": "no POS that can archive"}
     out = pos_archive.run_for(rid)
     if not out.get("ok"):
-        err = RuntimeError(f"pos_archive: days not archived {out.get('failed')}")
+        err = RuntimeError(f"pos_archive: another run of restaurant {rid}'s archive is in progress"
+                           if out.get("busy") else f"pos_archive: days not archived {out.get('failed')}")
         # The POS asked us to wait (an open breaker, a long Retry-After):
         # the row is tried again then, not on the fixed backoff (A3-10).
         if out.get("retry_after"):
@@ -519,6 +532,22 @@ def run_queued_pos_onboard(job):
     rid = (job.payload or {}).get("restaurant_id")
     if rid is None or pos_archive.provider_for(rid)[1] is None:
         return {"skipped": "no POS that can archive"}
+    try:
+        import pos_capacity
+        import time as _t
+        if pos_capacity.bulk_shed():
+            # The night does not fit the budget (pos_capacity.budget_check):
+            # onboarding waits for the nightly window to end (RPOWER audit
+            # #23 A4-12 / A5-01 backpressure: bulk is shed first).
+            until = float(pos_capacity.state().get("until") or 0)
+            if until > _t.time():
+                err = RuntimeError("pos_onboard: held while the night's POS work does not fit the budget")
+                err.retry_after = until - _t.time()
+                raise err
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log.warning("pos_onboard: budget state unreadable for %s: %s", rid, e)
     arch = pos_archive.onboard(rid)
     if arch.get("retry_after"):
         err = RuntimeError(f"pos_onboard: the POS asked us to wait ({len(arch.get('archived') or [])} nights in)")
@@ -535,18 +564,59 @@ def enqueue_pos_onboard(restaurant_id, store_key="") -> bool:
     try:
         import job_queue
         from datetime import date as _date
+        # Admitted by the budget (RPOWER audit #23 A4-11 / A5-11): each
+        # onboarding starts 3600 / pos_capacity.onboard_per_hour() seconds
+        # after the last one queued (~35 stores an hour at 10 req/s), so a
+        # bulk rollout of 1,500 stores is fed in over days, never enqueued
+        # to start at once.
+        try:
+            import pos_capacity
+            not_before = pos_capacity.onboard_not_before()
+        except Exception as e:
+            log.warning("pos_onboard admission unreadable for %s: %s", restaurant_id, e)
+            not_before = 0
         _qid, created = job_queue.enqueue(
             "pos_onboard", {"restaurant_id": int(restaurant_id)}, restaurant_id=int(restaurant_id),
             priority_class="bulk", wake=False,             # the queue worker's poll takes it, not this request
+            not_before=not_before,
             # A deadline, so a provider's "wait" (an outage, a Retry-After)
             # reschedules the row without using up its tries (job_queue.fail,
             # blind re-audit 10/20/26 R3-13) and the deadline bounds it.
-            deadline=_bulk_deadline(),
+            deadline=_bulk_deadline(not_before),
             idempotency_key=f"pos_onboard:{int(restaurant_id)}:{store_key}:{_date.today().isoformat()}")
         return bool(created)
     except Exception as e:
         log.warning("pos_onboard not queued for %s: %s", restaurant_id, e)
         return False
+
+
+def run_queued_pos_sync(job):
+    """job_queue's handler for `pos_sync` (RPOWER audit #23 A5-02): one
+    store's nightly POS sync (pos.sync_restaurant — sales and labor into
+    client_data, the Data Health ledger), run at its own local hour by the
+    queue worker. Its failure is the sync's own (recorded, retried by the
+    hourly POS retry pass); a provider asking us to wait reschedules the
+    row."""
+    import pos
+    rid = (job.payload or {}).get("restaurant_id")
+    if rid is None:
+        return {"skipped": "no restaurant"}
+    return pos.run_queued_sync(int(rid), night=(job.payload or {}).get("night"))
+
+
+def on_pos_row_expired(job):
+    """A night's `pos_archive` / `pos_sync` row, or a store's `pos_onboard`
+    row, that never started before its deadline (RPOWER audit #23 A4-11 /
+    A5-11): recorded as that store's missed run (ops.record_missed_window —
+    the console's missed-window count, F6), never a silent skip. The next
+    night's row reads what is still missing."""
+    import ops
+    p = job.payload or {}
+    kind = job.get("kind") or "pos"
+    from datetime import date as _date
+    ops.record_missed_window(kind, p.get("restaurant_id") or job.get("restaurant_id"),
+                             str(p.get("day") or p.get("night") or _date.today().isoformat())[:10],
+                             detail="its queue row expired unstarted (the POS queue or budget was behind)")
 
 
 # The DSR backfill's pass (bar audit 10/14/26 RPW-13 / R11): bounded and
@@ -2848,6 +2918,21 @@ SLOT_JOB_MAX_SECONDS = 4 * 60
 SLOT_WORKERS = max(1, int(os.getenv("SLOT_JOB_WORKERS", "4")))
 
 
+def slot_workers() -> int:
+    """The POS-reading slot jobs' pool (the coverage check, the hourly
+    capture): SLOT_JOB_WORKERS when set, else sized from the live lane's
+    budget like the live queue group (pos_capacity.live_concurrency; RPOWER
+    audit #23 A5-03), never under 4 — a fixed 4 x 240 s covered ~640-800
+    stores a slot whatever the budget allowed."""
+    if (os.getenv("SLOT_JOB_WORKERS") or "").strip():
+        return SLOT_WORKERS
+    try:
+        import pos_capacity
+        return max(4, int(pos_capacity.live_concurrency()))
+    except Exception:
+        return SLOT_WORKERS
+
+
 def slot_restaurants(db_path=DB_PATH) -> list:
     """Every live restaurant, read once per slot for all six jobs."""
     return list(_restaurants(db_path))
@@ -2984,7 +3069,7 @@ def run_intraday_capture(db_path=DB_PATH, restaurants=None):
         # (iOS parity audit 10/7/26 #94); started here at open.
         live_activities.service_tick(r, local, db_path=db_path)
 
-    hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=INTRADAY_WORKERS,
+    hit = _slot_sweep("intraday_capture", restaurants, _one, db_path, workers=max(INTRADAY_WORKERS, slot_workers()),
                       max_seconds=INTRADAY_CAPTURE_MAX_SECONDS)
     return _counts(c["attempted"], c["attempted"] - c["failed"], c["failed"], c["closed"] + c["not_yet"], hit,
                    captured=c["captured"], closed=c["closed"], not_yet=c["not_yet"])
@@ -3424,8 +3509,8 @@ def run_coverage_check(db_path=DB_PATH, restaurants=None):
                 st["failed"] += 1
             ops.capture(e, job="coverage_check", context=f"restaurant_id={r.id}")
 
-    # On SLOT_WORKERS, not a serial walk (INF-14 / A3-03).
-    st["hit_bound"] = _slot_sweep("coverage_check", restaurants, _one, db_path, workers=SLOT_WORKERS)
+    # On slot_workers(), not a serial walk (INF-14 / A3-03; sized from the budget, A5-03).
+    st["hit_bound"] = _slot_sweep("coverage_check", restaurants, _one, db_path, workers=slot_workers())
     return _slot_counts(st, opened=st["opened"])
 
 

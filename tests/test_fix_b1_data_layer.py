@@ -264,7 +264,8 @@ def test_a_new_rpower_token_clears_the_old_binding(db_path, admin_client, monkey
     r = _post(admin_client, f"/admin/rpower/save/{rid}", {"token": "new"})
     assert r.get_json()["needs_choice"] is True
     row = get_restaurant(rid)
-    assert row.rpower_token == "new"
+    # The token is the partner credential's now, never the row's (Audit #23 A7-01).
+    assert row.rpower_token is None and rpower._creds(rid)["token"] == "new"
     assert (row.rpower_cg, row.rpower_store_mid, row.rpower_store_name, row.rpower_verified_at) == (None,) * 4
     assert row.rpower_last_synced is None, "the old store's sync stamp is not this connection's"
 

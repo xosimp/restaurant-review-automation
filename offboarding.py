@@ -91,8 +91,8 @@ INTEGRATION_FIELDS = {
               "toast_token_expires", "toast_last_synced", "toast_sync_error"),
     "square": ("square_access_token", "square_location_id", "square_last_synced", "square_sync_error"),
     "clover": ("clover_merchant_id", "clover_api_token", "clover_last_synced", "clover_sync_error"),
-    "rpower": ("rpower_token", "rpower_cg", "rpower_store_mid", "rpower_store_name", "rpower_verified_at",
-               "rpower_sync_error", "rpower_last_synced"),
+    "rpower": ("rpower_token", "rpower_credential_id", "rpower_cg", "rpower_store_mid", "rpower_store_name",
+               "rpower_verified_at", "rpower_sync_error", "rpower_last_synced"),
     "backoffice": ("backoffice_api_key",),
     "reservations": ("reservation_api_key",),
     "website": ("ga4_property_id", "gsc_site_url", "web_analytics_synced_at", "web_analytics_error"),
@@ -104,7 +104,7 @@ _CREDENTIAL_OF = {
     "toast": ("toast_client_secret", "toast_access_token", "toast_client_id"),
     "square": ("square_access_token",),
     "clover": ("clover_api_token",),
-    "rpower": ("rpower_token",),
+    "rpower": ("rpower_token", "rpower_credential_id"),
     "backoffice": ("backoffice_api_key",),
     "reservations": ("reservation_api_key",),
     "website": ("ga4_property_id", "gsc_site_url"),
@@ -402,6 +402,10 @@ def revoke_integrations(restaurant_id, actor, db_path=None):
                 updates[f] = None
     import models
     if updates:
+        if any(n in cleared for n in POS_INTEGRATIONS):
+            # The POS purge clock starts (Audit #23 A7-13).
+            from time_utils import utc_stamp
+            updates["pos_disconnected_at"] = utc_stamp()
         # Through update_restaurant: the encrypted fields, the per-request
         # cache and row_version all follow the one write path.
         models.update_restaurant(int(restaurant_id), updates, db_path=db_path or models.DB_PATH)
@@ -516,3 +520,215 @@ def delete_restaurant_now(restaurant_id, actor, confirm_name, db_path=None):
                                      summary=f"{_actor_name(actor)} deleted {row.get('name')} (#{int(restaurant_id)}), "
                                              f"{rows} rows", db_path=db_path)
     return {"ok": True, "restaurant_id": int(restaurant_id), "rows": rows, "tables": deleted}, 200
+
+
+# ── POS data on the way out (Audit #23 F7, A7-13) ───────────────────────────
+#
+# A disconnected or cancelled restaurant kept its POS archive for three years
+# (the platform-wide window) and its employees' wages until the whole account
+# was deleted; it could not get the archive back either. Now:
+#   * pos_export_to_file — every POS table of one restaurant as CSV files in
+#     one zip, for the checklist's export step (admin_routes' pos-export
+#     routes run it on the admin job pool and hand the file over once).
+#   * purge_disconnected_pos — nightly (ops.prune_ledgers): a restaurant with
+#     no POS connected, or cancelled, has its RAW POS data deleted
+#     POS_PURGE_AFTER_DISCONNECT_DAYS (default 90; 0 = never) after the
+#     disconnect (restaurants.pos_disconnected_at, stamped by every RPOWER
+#     disconnect and the integrations step, and by this pass the first night
+#     it finds one unstamped). A connect clears the stamp. The aggregates with
+#     no person in them (pos_item_daily, pos_intraday) stay with the account.
+POS_INTEGRATIONS = ("toast", "square", "clover", "rpower")
+POS_EXPORT_TABLES = ("pos_archive_days", "pos_tickets", "pos_ticket_lines", "pos_punches", "pos_payments",
+                     "pos_payouts", "pos_loss_daily", "pos_item_daily", "pos_intraday", "guest_pos_visits")
+POS_PURGE_TABLES = ("pos_ticket_lines", "pos_tickets", "pos_punches", "pos_payments", "pos_payouts",
+                    "pos_loss_daily", "pos_live_snapshot", "guest_pos_visits", "pos_archive_days",
+                    "pos_archive_state")
+POS_EXPORT_DIR_NAME = "cavnar_pos_exports"
+POS_EXPORT_KEEP_HOURS = 24
+
+
+def purge_after_days() -> int:
+    import os
+    try:
+        return max(0, int(os.getenv("POS_PURGE_AFTER_DISCONNECT_DAYS", "90") or 0))
+    except ValueError:
+        return 90
+
+
+def export_dir():
+    import os
+    import tempfile
+    d = os.path.join(tempfile.gettempdir(), POS_EXPORT_DIR_NAME)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _sweep_exports():
+    import os
+    import time as _t
+    d = export_dir()
+    for name in os.listdir(d):
+        p = os.path.join(d, name)
+        try:
+            if _t.time() - os.path.getmtime(p) > POS_EXPORT_KEEP_HOURS * 3600:
+                os.remove(p)
+        except OSError:
+            pass
+
+
+def pos_export_to_file(restaurant_id, db_path=None) -> dict:
+    """Write every POS table of one restaurant, a CSV each, into one zip in
+    export_dir(). {ok, file, path, bytes, tables: {table: rows}}. Read in
+    pages, so a store's years of lines never sit in memory at once."""
+    import csv
+    import io
+    import os
+    import secrets
+    import zipfile
+    _sweep_exports()
+    name = (f"pos-export-{int(restaurant_id)}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-"
+            f"{secrets.token_hex(4)}.zip")
+    path = os.path.join(export_dir(), name)
+    counts = {}
+    conn = _conn(db_path)
+    try:
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for table in POS_EXPORT_TABLES:
+                try:
+                    cur = conn.execute(f"SELECT * FROM {table} WHERE restaurant_id=? ORDER BY 1",
+                                       (int(restaurant_id),))
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    continue                    # a table this database does not have
+                cols = [d[0] for d in (cur.description or [])]
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(cols)
+                n = 0
+                with zf.open(f"{table}.csv", "w") as out:
+                    while True:
+                        rows = cur.fetchmany(5000)
+                        if not rows:
+                            break
+                        for r in rows:
+                            w.writerow([r[i] for i in range(len(cols))])
+                        n += len(rows)
+                        out.write(buf.getvalue().encode("utf-8"))
+                        buf.seek(0)
+                        buf.truncate()
+                    out.write(buf.getvalue().encode("utf-8"))
+                counts[table] = n
+    finally:
+        conn.close()
+    return {"ok": True, "file": name, "path": path, "bytes": os.path.getsize(path), "tables": counts}
+
+
+def export_path(name):
+    """The path of a finished export by its file name, or None (the name is
+    checked: no directory parts, our own prefix)."""
+    import os
+    base = os.path.basename(str(name or ""))
+    if base != name or not base.startswith("pos-export-") or not base.endswith(".zip"):
+        return None
+    p = os.path.join(export_dir(), base)
+    return p if os.path.isfile(p) else None
+
+
+def _connected_any(row) -> bool:
+    return any(str(row.get(c) or "").strip() for c in ("rpower_store_mid", "toast_restaurant_guid",
+                                                      "square_location_id", "clover_merchant_id"))
+
+
+def _rows_left(conn, table, rid) -> bool:
+    try:
+        return bool(conn.execute(f"SELECT 1 FROM {table} WHERE restaurant_id=? LIMIT 1", (int(rid),)).fetchone())
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def purge_disconnected_pos(deadline=None, db_path=None) -> dict:
+    """The nightly POS purge (see the note above). Bounded by `deadline`
+    (time.monotonic()); a restaurant not finished keeps its stamp and is
+    finished the next night. {stamped, cleared, purged: {rid: rows},
+    unfinished}."""
+    import time as _t
+    import ops
+    import models
+    from time_utils import utc_stamp
+    dbp = {"db_path": db_path} if db_path else {}
+    out = {"stamped": 0, "cleared": 0, "purged": {}, "unfinished": []}
+    days = purge_after_days()
+    deadline = deadline if deadline is not None else _t.monotonic() + 300
+    conn = _conn(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, COALESCE(billing_status,'') AS bs, pos_disconnected_at, rpower_store_mid, "
+            "toast_restaurant_guid, square_location_id, clover_merchant_id FROM restaurants").fetchall()]
+    finally:
+        conn.close()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    for r in rows:
+        rid = int(r["id"])
+        gone = (not _connected_any(r)) or r["bs"] == "cancelled"
+        stamp = r.get("pos_disconnected_at")
+        if not gone:
+            if stamp:
+                models.update_restaurant(rid, {"pos_disconnected_at": None}, **dbp)
+                out["cleared"] += 1
+            continue
+        if not stamp:
+            conn = _conn(db_path)
+            try:
+                has = any(_rows_left(conn, t, rid) for t in ("pos_archive_days", "pos_punches", "pos_tickets"))
+            finally:
+                conn.close()
+            if has:
+                models.update_restaurant(rid, {"pos_disconnected_at": utc_stamp()}, **dbp)
+                out["stamped"] += 1
+            continue
+        if days <= 0 or str(stamp)[:19].replace("T", " ") > cutoff:
+            continue
+        if _t.monotonic() > deadline:
+            out["unfinished"].append(rid)
+            continue
+        n, done = 0, True
+        conn = _conn(db_path)
+        try:
+            for table in POS_PURGE_TABLES:
+                try:
+                    n += ops._chunked_delete(conn, table, "restaurant_id=?", (rid,), deadline)
+                except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    if "no such table" not in str(e).lower() and "does not exist" not in str(e).lower():
+                        ops.capture(e, job="pos_purge", context=f"restaurant_id={rid} table={table}",
+                                    restaurant_id=rid)
+                        done = False
+                if _t.monotonic() > deadline:
+                    done = False
+                    break
+            if done:
+                done = not any(_rows_left(conn, t, rid) for t in POS_PURGE_TABLES)
+        finally:
+            conn.close()
+        out["purged"][rid] = n
+        if not done:
+            out["unfinished"].append(rid)
+            continue
+        models.update_restaurant(rid, {"pos_disconnected_at": None}, **dbp)
+        import admin_events
+        admin_events.record_admin_action("system", "pos_data.purged", restaurant_id=rid, target=f"restaurant:{rid}",
+                                         before={"pos_disconnected_at": stamp},
+                                         after={"rows": n, "after_days": days},
+                                         summary=f"POS data purged {days} days after disconnect ({n} rows)",
+                                         db_path=db_path)
+    return out

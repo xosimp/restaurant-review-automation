@@ -1165,6 +1165,9 @@ struct DSRBlockBody: View {
                 .map { DSRStatTile(label: $0.0, value: DSRFormat.money(m($0.1))) }
                 + (m("tax").map { [DSRStatTile(label: "Tax collected", value: DSRFormat.money($0),
                                                detail: block.taxCaption)] } ?? [])
+                // The POS's own tax adjustment: shown, never taken off tax (Audit #23).
+                + (m("tax_adjust_amount").map { [DSRStatTile(label: "Tax adjustments", value: DSRFormat.money($0),
+                                                             detail: "shown, not taken off tax")] } ?? [])
             if !loss.isEmpty { DSRTileRow(tiles: loss) }
 
             if let note = block.definitionNote {

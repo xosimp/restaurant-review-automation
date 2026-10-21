@@ -52,7 +52,7 @@ DATA_API = ("fetch_business_days", "fetch_order_selections", "fetch_loss_lines",
 #                 Clover restaurant, there is none today
 #   * by BUSINESS DATE in the restaurant's timezone: an order or a shift
 #     is filed under the service it belongs to (time_utils.business_date —
-#     before BUSINESS_DAY_START_HOUR it is still last night), never the UTC
+#     before the restaurant's day_start_minutes it is still last night), never the UTC
 #     calendar date. Shift start/end times are local.
 #   * dollars to the cent, and blank — never 0 — for a day with no figure.
 #   * a page that fails mid-range fails the sync (nothing is saved), so a
@@ -230,15 +230,18 @@ def http_call(fn, url, *, timeout, tries=HTTP_TRIES, **kwargs):
 def complete_through(restaurant, now_local=None):
     """The last business date that had ENDED at `now_local` (the
     restaurant's naive local time): its close from the restaurant's hours
-    when it has them, else the BUSINESS_DAY_START_HOUR boundary. A pull at
-    3am Chicago is 1am in Los Angeles — the night before is still trading,
-    and a day read before it closed must not be stored or dated as whole."""
+    when it has them, else the restaurant's business-day boundary
+    (time_utils.day_start_minutes — the one its punches are filed on, audit
+    #23 A3-14). A pull at 3am Chicago is 1am in Los Angeles — the night
+    before is still trading, and a day read before it closed must not be
+    stored or dated as whole."""
     from datetime import timedelta
     from time_utils import restaurant_now, business_date, open_service_day, service_window, \
-        BUSINESS_DAY_START_HOUR
+        day_start_minutes
     local = now_local or restaurant_now(restaurant, naive=True)
     day = business_date(restaurant, local)
-    if open_service_day(restaurant, local) is None and local.hour < BUSINESS_DAY_START_HOUR:
+    if open_service_day(restaurant, local) is None and \
+            local.hour * 60 + local.minute < day_start_minutes(restaurant):
         try:
             window = service_window(restaurant, day)
         except Exception:
@@ -262,7 +265,7 @@ def local_complete_through(restaurant_id):
     default "through" of every POS window in the food and bar readers
     (food & bar audit 10/16/26 POS-17/18): never the server's date, which is
     tomorrow after 7pm Central on a UTC host, and never the night still
-    trading between midnight and the 5am boundary. Falls back to the
+    trading between midnight and the business-day boundary. Falls back to the
     restaurant's calendar yesterday when the row cannot be read."""
     from datetime import timedelta
     ct = _complete_through_for(restaurant_id)
@@ -291,6 +294,32 @@ def sync_restaurant(restaurant_id, trigger="nightly", attempt=0):
     name, mod = connected_provider(restaurant_id)
     if not mod:
         return {"ok": False, "provider": None, "error": "No POS connected"}
+    # One sync of a restaurant at a time across processes (Audit #23 A4-20):
+    # the per-tenant lock below is a thread lock, so the onboarding sync in
+    # the queue worker and the 3am or "Sync now" sync in the web process
+    # could interleave two 60-day reads, the older writing last. The claim
+    # is renewed while the sync runs and lapses SYNC_CLAIM_MINUTES after a
+    # killed process's last beat. A sync that finds one running records
+    # nothing (it is not a failure) and says `busy`.
+    import ops
+    claim = f"pos_sync:{restaurant_id}"
+    if not ops.claim_cooldown(claim, SYNC_CLAIM_MINUTES):
+        return {"ok": False, "provider": name, "busy": True,
+                "error": "a sync of this restaurant is already running"}
+    try:
+        import pos_archive
+        with pos_archive._ClaimKeeper(claim):
+            return _sync_restaurant(restaurant_id, name, mod, attempt)
+    finally:
+        ops.release_period("cooldown", claim)
+
+
+SYNC_CLAIM_MINUTES = 10
+
+
+def _sync_restaurant(restaurant_id, name, mod, attempt):
+    import time as _time
+    from datetime import datetime, timedelta, timezone
     t0 = _time.monotonic()
     try:
         result = mod.sync_to_db(restaurant_id) or {}
@@ -328,11 +357,7 @@ def _recheck_sales_consistency(restaurant_id):
         import data_freshness
         chk = data_freshness.sales_consistency(restaurant_id)
         if chk.get("mismatches"):
-            import ops
-            m = chk["mismatches"][0]
-            ops.capture(RuntimeError(f"Daily report net ${m['dsr']:,.2f} vs POS ${m['pos']:,.2f} on {m['date']} "
-                                     f"({len(chk['mismatches'])} night(s) apart)"),
-                        job="dsr_pos_consistency", context=f"restaurant_id={restaurant_id}")
+            data_freshness.report_sales_mismatches(restaurant_id, chk["mismatches"])
             _reopen_moved_nights(restaurant_id, chk["mismatches"])
     except Exception as e:
         log.warning(f"sales consistency re-check skipped for {restaurant_id}: {e}")
@@ -437,6 +462,12 @@ def sync_all(stats=None):
         began = time.monotonic()
         result = sync_restaurant(rid)
         took = int((time.monotonic() - began) * 1000)
+        if result.get("busy"):
+            # Another process is syncing it right now (its onboarding sync):
+            # that sync is tonight's (A4-20).
+            with lock:
+                counts["skipped"] += 1
+            return
         with lock:
             by_rid[rid] = {"restaurant": r.name, **result}
             counts["attempted"] += 1
@@ -475,6 +506,122 @@ def sync_all(stats=None):
     return [by_rid[rid] for rid in order if rid in by_rid]
 
 
+# ── the nightly sync as queue rows (RPOWER audit #23 A5-02, F5) ────────────
+#
+# sync_all above is one sweep in the scheduler process: four threads and a
+# 45-minute bound, 18-64 s a store. It reached 170-600 stores a night, and
+# the stores it did not reach were not retried (only failures are). The
+# nightly job now queues ONE `pos_sync` row per store (the pos_io group, like
+# the archive), due at the store's own POS_SYNC_LOCAL_HOUR plus a fixed
+# offset inside POS_SYNC_SPREAD_MINUTES (a region's stores do not all start
+# in one minute), with a deadline. The queue worker runs them, as many at
+# once as the pos_io group's budget-sized slots allow, and a row that never
+# started is a recorded missed run (strategy_jobs.on_pos_row_expired).
+# POS_SYNC_QUEUE=0 runs the old sweep (sync_all) instead: the rollback.
+POS_SYNC_SPREAD_MINUTES = max(0, int(__import__("os").getenv("POS_SYNC_SPREAD_MINUTES", "120") or 0))
+POS_SYNC_QUEUE = (__import__("os").getenv("POS_SYNC_QUEUE", "1") or "1").strip().lower() not in (
+    "0", "false", "off", "no")
+
+
+def _sync_slot(restaurant, now=None):
+    """(night, not_before epoch) for the store's nightly sync row: its next
+    POS_SYNC_LOCAL_HOUR (this morning's while its clock is before noon,
+    tomorrow's while it is still the afternoon or evening there), plus its
+    fixed offset (from its id) inside POS_SYNC_SPREAD_MINUTES. `night` is
+    the business date that morning closes. `now` is the store's naive local
+    time (a test's)."""
+    from datetime import datetime as _dt, timedelta as _td
+    from time_utils import restaurant_now, restaurant_tz
+    local = restaurant_now(restaurant, naive=True) if now is None else now
+    day = local.date() if local.hour < 12 else local.date() + _td(days=1)
+    offset = (int(restaurant.id) * 37) % POS_SYNC_SPREAD_MINUTES if POS_SYNC_SPREAD_MINUTES else 0
+    target = _dt.combine(day, _dt.min.time()).replace(hour=POS_SYNC_LOCAL_HOUR) + _td(minutes=offset)
+    aware = target.replace(tzinfo=restaurant_tz(restaurant))
+    return (day - _td(days=1)).isoformat(), aware.timestamp()
+
+
+def queue_nightly_syncs(stats=None, now=None):
+    """The nightly `pos_sync` job (A5-02): one `pos_sync` queue row per
+    restaurant in service with a POS connected, keyed on the store and the
+    night (a pass run twice queues nothing new), due at its own local hour
+    (_sync_slot). Fills `stats` with the standard counts: `attempted`/`ok`
+    the rows queued now, `skipped` the stores with no POS (and rows already
+    queued). Returns the number queued."""
+    import job_queue
+    import strategy_jobs
+    from models import get_all_restaurants, in_service
+    items, skipped = [], 0
+    for r in get_all_restaurants():
+        if not in_service(r):
+            continue
+        _name, mod = connected_provider(r.id)
+        if not mod:
+            skipped += 1
+            continue
+        try:
+            night, nb = _sync_slot(r, now)
+        except Exception as e:
+            log.warning(f"POS sync slot unreadable for {r.id} ({e}); due now")
+            from datetime import date as _date, timedelta as _td
+            night, nb = (_date.today() - _td(days=1)).isoformat(), 0
+        items.append({"payload": {"restaurant_id": r.id, "night": night}, "restaurant_id": r.id,
+                      "not_before": nb, "deadline": strategy_jobs._bulk_deadline(nb),
+                      "idempotency_key": f"pos_sync:{r.id}:{night}"})
+    created = job_queue.enqueue_many("pos_sync", items, wake=False) if items else 0
+    # The 3am pass no longer leaves stores for the hourly pass (each row
+    # waits for its own hour): an old list would sync them twice.
+    _remember_deferred([])
+    counts = {"attempted": created, "ok": created, "failed": 0, "skipped": skipped + (len(items) - created),
+              "hit_bound": False, "queued": created}
+    if isinstance(stats, dict):
+        stats.update(counts)
+    return created
+
+
+def run_queued_sync(restaurant_id, night=None) -> dict:
+    """One store's nightly sync from its queue row (strategy_jobs.
+    run_queued_pos_sync): pos.sync_restaurant, its failure captured and noted
+    for the owner as the sweep did. Never raises on a failed sync: the Data
+    Health ledger has it and the hourly POS retry pass retries it (+1h, +3h,
+    +6h), so the row is not tried a second time on top."""
+    import ops
+    from models import get_restaurant, in_service
+    r = get_restaurant(restaurant_id)
+    if r is None or not in_service(r):
+        return {"skipped": "not in service"}
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        return {"skipped": "no POS connected"}
+    began = time.monotonic()
+    result = sync_restaurant(restaurant_id) or {}
+    took = int((time.monotonic() - began) * 1000)
+    if result.get("ok"):
+        log.info(f"POS sync OK [{name}] {r.name} — {result.get('rows', '?')} rows")
+    else:
+        log.warning(f"POS sync failed [{name}] {r.name}: {result.get('error')}")
+        ops.capture(Exception(result.get("error", "unknown")),
+                    job="pos_sync", context=f"restaurant_id={restaurant_id} {name} {r.name}")
+    try:
+        note_sync_failure(restaurant_id)
+    except Exception as e:
+        log.warning(f"POS sync-failure note skipped for {restaurant_id}: {e}")
+    return {"ok": bool(result.get("ok")), "provider": name, "night": night, "store_ms": took,
+            "error": None if result.get("ok") else str(result.get("error") or "")[:300]}
+
+
+def open_sync_rows(due_by, db_path=None) -> int:
+    """`pos_sync` rows due by `due_by` (epoch) still queued or running:
+    what the jobs that read the night's sync wait on (scheduler)."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM jobs WHERE kind='pos_sync' AND state IN ('queued', 'running') "
+                           "AND not_before <= ?", (float(due_by),)).fetchone()
+        return int(row[0] or 0)
+    finally:
+        conn.close()
+
+
 # The nightly sync runs at each store's own POS_SYNC_LOCAL_HOUR, not at 3am
 # Chicago for every store (blind re-audit 10/20/26 R3-12): a store west of
 # Chicago was synced while its night still traded, and every job of the 3am
@@ -484,16 +631,22 @@ def sync_all(stats=None):
 # hour comes, once a night.
 POS_SYNC_LOCAL_HOUR = int(__import__("os").getenv("POS_SYNC_LOCAL_HOUR", "3"))
 DEFERRED_KEY = "pos_sync_deferred"
+# The nightly sync's local window closes this many hours after the
+# business-day boundary (Audit #23 A4-15): "due" was `hour >= 3`, so at
+# 3am Chicago a Hawaii store (10pm) was synced mid-service.
+POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS = 6
 
 
 def sync_due_locally(restaurant, now_local=None) -> bool:
-    """Whether the restaurant's own clock has reached POS_SYNC_LOCAL_HOUR
-    (an hour before the business-day boundary counts; a restaurant whose
-    clock cannot be read is due — the sync runs as it always did)."""
+    """Whether the restaurant's own clock is inside the nightly sync's
+    window: from POS_SYNC_LOCAL_HOUR (two hours before the 5am business-day
+    boundary) to POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS after the boundary
+    (A4-15) — never during the evening's service. A restaurant whose clock
+    cannot be read is due — the sync runs as it always did."""
     try:
-        from time_utils import restaurant_now
+        from time_utils import restaurant_now, BUSINESS_DAY_START_HOUR
         local = now_local or restaurant_now(restaurant, naive=True)
-        return local.hour >= POS_SYNC_LOCAL_HOUR
+        return POS_SYNC_LOCAL_HOUR <= local.hour < BUSINESS_DAY_START_HOUR + POS_SYNC_WINDOW_AFTER_BOUNDARY_HOURS
     except Exception:
         return True
 
@@ -558,6 +711,13 @@ def note_sync_failure(restaurant_id, now=None):
     st = pos_health.pos_sync_state(r, now=now)
     if st["state"] != "error":
         return False
+    # A wave of refused RPOWER tokens (audit #23 A4-16) is RPOWER's auth or a
+    # partner token — the operator is paged once (pos_io.auth_wave); the
+    # owners are not each told to reconnect a token they don't own.
+    if st.get("provider") == "rpower":
+        import pos_io
+        if pos_io.auth_wave_active("rpower"):
+            return False
     now = now or datetime.now(timezone.utc)
     last_ok = pos_health.parse_stamp(st.get("last_synced"))
     if last_ok is not None and (now - last_ok) < timedelta(days=SYNC_FAILURE_NOTICE_DAYS):
@@ -619,7 +779,7 @@ def _serialized_write(fn):
 
 
 @_serialized_write
-def save_synced_shifts(restaurant_id, csv_str, source):
+def save_synced_shifts(restaurant_id, csv_str, source, held_dates=None):
     """Store a provider's synced window and archive its per-day history.
 
     Two things every provider did differently or not at all:
@@ -630,7 +790,13 @@ def save_synced_shifts(restaurant_id, csv_str, source):
     - Only Toast archived labor_daily_history (what YoY and trends read), so
       Square and Clover restaurants never accumulated history (MOD-LAB-8).
     Returns the number of shift rows the synced window carried. Serialized
-    by _write_lock_for (the sweep's fetches run four at a time)."""
+    by _write_lock_for (the sweep's fetches run four at a time).
+
+    `held_dates`: business dates the pull saw a punch still open on (audit
+    #23 A3-01) — stored provisional (final=0) however long ago they ended,
+    until a pull finds the punch closed. After the history is written, a
+    reported night whose labor moved is restated (dsr.block_labor.restate,
+    A3-05)."""
     from datetime import datetime, timezone
     from labor import load_shifts
     import shift_facts
@@ -666,12 +832,22 @@ def save_synced_shifts(restaurant_id, csv_str, source):
         prov = {"source": source, "provider": source,
                 "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                 "window": (dates[0], dates[-1]) if dates else None,
-                "complete_through": ct.isoformat() if ct else None}
+                "complete_through": ct.isoformat() if ct else None,
+                "held_dates": sorted(held_dates or ())}
         save_labor_daily_history(restaurant_id, _history_to_save(restaurant_id, full_history_by_day(restaurant_id),
                                                                  dates), provenance=prov)
         refresh_labor_periods(restaurant_id)
     except Exception as e:
         log.warning(f"[{source} sync] daily history archive error: {e}")
+    if dates:
+        try:
+            # A reported night whose labor the pull moved past the tolerance
+            # (a late clock-out, a punch edit, the overtime premium) has its
+            # labor figures restated and the report marked updated (A3-05).
+            from dsr.block_labor import restate as _restate_labor
+            _restate_labor(restaurant_id, dates)
+        except Exception as e:
+            log.warning(f"[{source} sync] reported labor not restated: {e}")
     # The synced figures just changed: the cached Labor read (and Home and
     # Ask, which invalidate_insight_cache clears with it) must not narrate
     # the pre-sync numbers for the rest of its window (DH4-21, #46).
@@ -764,7 +940,9 @@ def fetch_business_days(restaurant_id, start_date, end_date):
 
 
 def fetch_order_selections(restaurant_id, business_date):
-    """One business date's sold items as [{"item": {"guid": ...}, "quantity": n}].
+    """One business date's sold items as [{"item": {"guid": ...}, "quantity": n}]
+    — `quantity` what the kitchen made (depletion); a provider that can tell
+    them apart adds `sold`, what guests paid for (RPOWER; Audit #23 A2-12).
 
     Returns (rows, provider_name). Item-level detail is what recipe depletion
     and menu discovery are built on; a provider without it raises rather than
@@ -1088,6 +1266,12 @@ def _net_day(raw):
         "voids": _money(raw.get("voids")),
         "refunds": _money(raw.get("refunds")),
         "tax": _money(raw.get("tax")),
+        # Audit #23 (F3): the POS's own tax adjustment, shown beside tax and
+        # never added (A2-20); the units the kitchen made per item, sold and
+        # comped (A2-12); a daylight-saving change inside the night (A2-23).
+        "tax_adjust": _money(raw.get("tax_adjust")),
+        "items_made": list(raw.get("items_made") or []),
+        "dst": raw.get("dst"),
         "by_department": {k: net_of(v) for k, v in (raw.get("by_department") or {}).items()},
         # The POS's item categories inside each department, where it has
         # that level (RPOWER): {department: {category: net}}.

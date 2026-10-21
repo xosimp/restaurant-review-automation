@@ -399,6 +399,12 @@ class ObjectiveContext:
         self.crit_cache = {}
         self.rates = {}
         self.person_rates = {}
+        # The forward chain's maps (forward_rate_source): None = the old
+        # order (the person map, then the role).
+        self.owner_person_rates = None
+        self.person_job_rates = None
+        self.owner_role_rates = {}
+        self.role_typical = {}
         self.blended = 15.0
         self.ot_line = 40.0
         self.salaried = set()
@@ -415,14 +421,20 @@ class ObjectiveContext:
     def build(cls, restaurant_id, week_dates, *, budget=None, last_week_rows=None, usual=None,
               requirements=None, demand_curve=None, history_rows=None, criticality=None, rates=None,
               person_rates=None, blended_rate=None, ot_line=None, salaried=None, families=None,
-              constraints=None, value_per_hour=None, key=None, need=None, budget_held=False):
+              constraints=None, value_per_hour=None, key=None, need=None, budget_held=False,
+              owner_person_rates=None, person_job_rates=None, role_typical=None):
         """The week's pricing context. `requirements` (schedule_requirements
         rows, their `half_need` and `factor`) give the need and — with
         `demand_curve` ({weekday: {hour: share}}) when there is one — the
         demand weights; `history_rows` the usual patterns (or `usual`, a
         history_profile already read); `criticality` the owner's role weights
         ({role or family: weight}); `constraints` fills what is not passed
-        (families, key, salaried, the owner's weights)."""
+        (families, key, salaried, the owner's weights). `rates` are the
+        owner's role rates and `role_typical` what each role's people make
+        (merged into `rates` underneath them, as before); with
+        `owner_person_rates` / `person_job_rates` (rate_maps) a drafted
+        hour is priced by the forward chain (forward_rate_source) — audit
+        #23 A3-02."""
         x = cls()
         c = constraints
         x.restaurant_id = restaurant_id
@@ -436,8 +448,13 @@ class ObjectiveContext:
         x.families = families if families is not None else (getattr(c, "role_families", None) if c is not None else None)
         x.key = key or (c.key if c is not None and hasattr(c, "key") else _low)
         x.salaried = set(salaried if salaried is not None else (getattr(c, "salaried", None) or ()))
-        x.rates = {_low(k): float(v) for k, v in (rates or {}).items() if k and k != "_default" and _num(v)}
-        x.person_rates = {_low(k): float(v) for k, v in (person_rates or {}).items() if _num(v)}
+        x.owner_role_rates = {_low(k): float(v) for k, v in (rates or {}).items()
+                              if k and k != "_default" and _num(v)}
+        x.role_typical = {_low(k): float(v) for k, v in (role_typical or {}).items() if k and _num(v)}
+        x.rates = dict(x.role_typical)
+        x.rates.update(x.owner_role_rates)
+        x.person_rates, x.owner_person_rates, x.person_job_rates = forward_maps(
+            person_rates, owner_person_rates, person_job_rates)
         if _num(blended_rate) and float(blended_rate) > 0:
             x.blended = float(blended_rate)
         elif x.rates:
@@ -518,11 +535,18 @@ class ObjectiveContext:
     def rate(self, person=None, role=None) -> float:
         if person and self.key(person) in self.salaried:
             return 0.0
+        r = _low(role)
+        if person and (self.owner_person_rates is not None or self.person_job_rates is not None):
+            fam = self.fam(role)
+            return forward_rate(person, role, people=self.person_rates, owner=self.owner_person_rates,
+                                jobs=self.person_job_rates,
+                                role_rate=self.owner_role_rates.get(r) or self.owner_role_rates.get(fam) or 0.0,
+                                typical_rate=self.role_typical.get(r) or self.role_typical.get(fam) or 0.0,
+                                fallback=self.blended)
         if person:
             v = self.person_rates.get(_low(person))
             if v:
                 return v
-        r = _low(role)
         return self.rates.get(r) or self.rates.get(self.fam(role)) or self.blended
 
     def usual_minutes(self, role) -> int:
@@ -1021,6 +1045,46 @@ def _punch_pay(shift) -> float:
     return paid if 0 < paid <= 500 else 0.0
 
 
+class RateBook(dict):
+    """rate_book's people: {name key: rate} as before — the owner's own rate
+    for a person, else their latest paid punch in any job (what pricing a
+    drafted week reads) — carrying what the costing chain needs to price a
+    worked hour in the right order (audit #23 A3-02):
+
+    * `owner`: the owner's own rates for people (models.person_rates) — the
+      only person rate that outranks the owner's rate for the role;
+    * `paid`: {name key: {role key: [(date, rate), ...]}} every paid punch,
+      oldest first, so an hour is priced at the rate in force on its own
+      date in its own job (no retroactive raise)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.owner = {}
+        self.paid = {}
+
+    @staticmethod
+    def _at(history, day):
+        """The rate in force on `day` from [(date, rate)] oldest first: the
+        latest on or before it, else the earliest after (a punch before the
+        first paid one is priced at the first)."""
+        if not history:
+            return None
+        day = str(day or "")[:10]
+        if not day:
+            return history[-1][1]
+        before = [r for d, r in history if d <= day]
+        return before[-1] if before else history[0][1]
+
+    def in_job(self, name_key, role_key, day):
+        """This person's pay in this job in force on `day`, or None."""
+        return self._at((self.paid.get(name_key) or {}).get(role_key) or [], day)
+
+    def any_job(self, name_key, day):
+        """This person's pay in any job in force on `day`, or None."""
+        merged = sorted(x for hist in (self.paid.get(name_key) or {}).values() for x in hist)
+        return self._at(merged, day)
+
+
 def rate_book(shifts: list, person_rates: dict = None) -> tuple:
     """(people, roles): what each person and each role is paid an hour,
     read from the punches themselves, for the punches that carry no pay.
@@ -1028,21 +1092,35 @@ def rate_book(shifts: list, person_rates: dict = None) -> tuple:
     RPOWER puts a person's rate on some punches and $0 on others - at Simple
     EJ's every Host PM, Barback PM and most bartender job rows are $0 while
     the same people's AM punches carry $15-17 (9/30/26) - and those hours
-    were costed at the $26 blended default. A person's rate is their latest
-    paid punch; the owner's own rate for them (models.person_rates) wins over
-    it. A role's typical rate is the median of the rates of the people who
-    worked it - what a host costs when one host has no rate anywhere."""
-    people = {}
+    were costed at the $26 blended default. `people` (a RateBook) is each
+    person's latest paid punch, the owner's own rate for them
+    (models.person_rates) winning over it; it also carries every paid punch
+    by job and date, so the costing chain (_shift_rate_source) prices a $0
+    hour at the owner's role rate before another job's pay and at the rate
+    in force on its own date (audit #23 A3-02). A role's typical rate is the
+    median, over the people who worked it, of what each was paid IN that job
+    (else their own rate) - what a host costs when one host has no rate
+    anywhere."""
+    people = RateBook()
     for s in sorted(shifts or (), key=lambda x: str(x.get("date") or "")):
         paid = _punch_pay(s)
         if paid:
-            people[_name_key(s.get("employee"))] = round(paid, 2)
-    people.update(person_rates or {})
+            nk = _name_key(s.get("employee"))
+            people[nk] = round(paid, 2)
+            people.paid.setdefault(nk, {}).setdefault((s.get("role") or "").strip().lower(), []).append(
+                (str(s.get("date") or "")[:10], round(paid, 2)))
+    src = person_rates.owner if isinstance(person_rates, RateBook) else person_rates
+    owner = {k: v for k, v in (src or {}).items() if v}
+    people.update(owner)
+    people.owner = dict(owner)
     worked = {}
     for s in shifts or ():
-        rate = people.get(_name_key(s.get("employee")))
+        nk = _name_key(s.get("employee"))
+        role = (s.get("role") or "").strip().lower()
+        hist = (people.paid.get(nk) or {}).get(role)
+        rate = hist[-1][1] if hist else people.get(nk)
         if rate:
-            worked.setdefault((s.get("role") or "").strip().lower(), {})[_name_key(s.get("employee"))] = rate
+            worked.setdefault(role, {})[nk] = rate
     roles = {}
     for role, by_person in worked.items():
         vals = sorted(by_person.values())
@@ -1067,16 +1145,34 @@ def _shift_rate(shift: dict, role_rates: dict, fallback: float, person_rates: di
 
 # Where an hour's wage came from (_shift_rate_source): the POS's pay on the
 # punch, the person's own rate (the owner's for them, or their pay on their
-# other punches), the owner's rate for the role, what the role's people
-# make, or the flat fallback nothing on file backs.
-RATE_SOURCES = ("punch", "person", "role_rate", "role_typical", "fallback")
+# other punches), the owner's rate for the role, the POS's own rate for the
+# job (RPOWER job reg_rate), what the role's people make, or the flat
+# fallback nothing on file backs.
+RATE_SOURCES = ("punch", "person", "role_rate", "job_rate", "role_typical", "fallback")
+
+
+def _job_rate(shift) -> float:
+    try:
+        rate = float(shift.get("job_rate") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return rate if 0 < rate <= 500 else 0.0
 
 
 def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_rates: dict = None,
                        role_typical: dict = None) -> tuple:
     """(rate, source) for one shift — _shift_rate's one chain, saying which
     link priced the hour (RATE_SOURCES), so the budget's divisor can say how
-    much of it rests on a wage nobody entered."""
+    much of it rests on a wage nobody entered.
+
+    The order (audit #23 A3-02, 10/21/26): the punch's own pay → the owner's
+    rate for the person → the owner's rate for the role → the person's pay
+    in the SAME job in force on the shift's date → the POS's own rate for
+    the job → the person's pay in another job → what the role's people make
+    → the fallback. A $0 Bartender PM hour was priced at the person's $11
+    Barback AM pay ahead of the owner's $9 role rate, and a raise re-priced
+    three years of $0 punches. A plain dict for `person_rates` (no RateBook)
+    is the owner's own rates."""
     # What the POS's payroll pays this person (rpower.normalise_entries'
     # pay_rate) is what the hour cost - it beats any rate set for the role.
     # Simple EJ's was costed at the $26 default while RPOWER sent cooks at
@@ -1084,13 +1180,12 @@ def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_ra
     paid = _punch_pay(shift)
     if paid:
         return paid, "punch"
-    # This person's own rate: the owner's for them (models.person_rates),
-    # else their pay on their other punches (rate_book) - a host's $0 PM
-    # punch costs what her AM punches pay.
-    if person_rates:
-        own = person_rates.get(_name_key(shift.get("employee")))
-        if own:
-            return own, "person"
+    nk = _name_key(shift.get("employee"))
+    book = person_rates if isinstance(person_rates, RateBook) else None
+    owner = (book.owner if book is not None else person_rates) or {}
+    own = owner.get(nk)
+    if own:
+        return own, "person"
     role_rates = role_rates or {}
     default = role_rates.get("_default", fallback)
     raw = shift.get("role", "") or ""
@@ -1100,7 +1195,135 @@ def _shift_rate_source(shift: dict, role_rates: dict, fallback: float, person_ra
     for name, rate in role_rates.items():
         if name != "_default" and (name or "").strip().lower() == key:
             return rate, "role_rate"
+    day = str(shift.get("date") or "")[:10]
+    if book is not None:
+        same = book.in_job(nk, key, day)
+        if same:
+            return same, "person"
+    job = _job_rate(shift)
+    if job:
+        return job, "job_rate"
+    if book is not None:
+        other = book.any_job(nk, day)
+        if other:
+            return other, "person"
     # Nobody's rate and no rate set for the role: what the role's people make.
     if role_typical and role_typical.get(key):
         return role_typical[key], "role_typical"
     return default, "fallback"
+
+
+# ── pricing a drafted week (forward) ──────────────────────────────────────
+#
+# A drafted shift has no punch, no date in force and no RPOWER job rate, so
+# its chain is the costing chain's above with those links dropped (audit #23
+# A3-02 residual, F8 10/21/26): the owner's rate for the person → the
+# owner's rate for the role → the person's latest pay in the SAME job → the
+# person's latest pay in any job → what the role's people make → the
+# blended/fallback rate. Pricing used to read `person_rates.get(name) or
+# role_rate`, where the person map's value is the person's latest pay in ANY
+# job — so Amy, $11 as a Barback AM and $0 as a Bartender PM (EJ's $0-tipped
+# PM jobs), was priced at $11 on a drafted Bartender PM shift ahead of the
+# owner's $9 role rate.
+#
+# The payloads the solver, the optimizer and CP-SAT read are plain dicts
+# (signals["overtime"], week_pricing) that may be rebuilt or JSON-serialized,
+# so the two extra maps travel as explicit keys beside `person_rates`
+# (rate_maps): `owner_person_rates` {name key: rate} and `person_job_rates`
+# {name key: {role key: latest rate}}. A payload without them (an old
+# checkpoint, a caller that passes a plain person map) keeps the old order:
+# the person map first, then the role.
+
+def _role_key(role) -> str:
+    return " ".join(str(role or "").lower().split())
+
+
+def rate_maps(book) -> dict:
+    """{"owner_person_rates", "person_job_rates"} of a RateBook as plain,
+    JSON-safe dicts (name and role keys lowercased, whitespace collapsed) —
+    the keys a forward-pricing payload carries beside `person_rates`. {} for
+    anything that is not a RateBook (the old order then applies)."""
+    if not isinstance(book, RateBook):
+        return {}
+    jobs = {}
+    for nk, by_role in (book.paid or {}).items():
+        for role, hist in (by_role or {}).items():
+            if hist:
+                # Paid lists are oldest first: the last is the latest pay.
+                jobs.setdefault(_name_key(nk), {})[_role_key(role)] = float(hist[-1][1])
+    return {"owner_person_rates": {_name_key(k): float(v) for k, v in (book.owner or {}).items() if _num(v) and float(v) > 0},
+            "person_job_rates": jobs}
+
+
+def forward_maps(person_rates=None, owner_rates=None, job_rates=None) -> tuple:
+    """(people, owner, jobs) normalised once for forward_rate: `people` the
+    person map ({name key: rate}), `owner` / `jobs` the owner's person rates
+    and each person's latest pay per job — both None when neither was given
+    and `person_rates` is no RateBook (the old order: the person map first).
+    A RateBook passed as `person_rates` supplies its own maps."""
+    if owner_rates is None and job_rates is None and isinstance(person_rates, RateBook):
+        m = rate_maps(person_rates)
+        owner_rates, job_rates = m["owner_person_rates"], m["person_job_rates"]
+    people = {_name_key(k): float(v) for k, v in (person_rates or {}).items() if _num(v) and float(v) > 0}
+    if owner_rates is None and job_rates is None:
+        return people, None, None
+    owner = {_name_key(k): float(v) for k, v in (owner_rates or {}).items() if _num(v) and float(v) > 0}
+    jobs = {_name_key(k): {_role_key(r): float(x) for r, x in (v or {}).items() if _num(x) and float(x) > 0}
+            for k, v in (job_rates or {}).items() if isinstance(v, dict)}
+    return people, owner, jobs
+
+
+def forward_rate_source(name, role, *, role_rates=None, people=None, owner=None, jobs=None,
+                        role_typical=None, fallback=0.0, role_rate=None, typical_rate=None) -> tuple:
+    """(rate, source) for an hour of `name` drafted as `role` — the forward
+    chain (see above; sources as RATE_SOURCES). `people` / `owner` / `jobs`
+    are forward_maps' three (owner and jobs None = the old order: the person
+    map, then the role). `role_rates` / `role_typical` are keyed by lowered
+    role; `role_rate` is the owner's rate for the role already resolved by a
+    caller that also looks the role's family up (it wins over role_rates;
+    0 = none), `typical_rate` the same for role_typical.
+    `name` None or empty prices the role alone."""
+    nk = _name_key(name) if name else ""
+    rk = _role_key(role)
+    people = people or {}
+    legacy = owner is None and jobs is None
+    if nk:
+        own = people.get(nk) if legacy else (owner or {}).get(nk)
+        if own:
+            return float(own), "person"
+    if role_rate is None and rk:
+        rr = role_rates or {}
+        role_rate = rr.get(rk) or rr.get(str(role or "").strip().lower())
+    if role_rate:
+        return float(role_rate), "role_rate"
+    if nk and not legacy:
+        same = ((jobs or {}).get(nk) or {}).get(rk) if rk else None
+        if same:
+            return float(same), "person"
+        other = people.get(nk)
+        if other:
+            return float(other), "person"
+    t = typical_rate
+    if t is None:
+        typ = role_typical or {}
+        t = (typ.get(rk) or typ.get(str(role or "").strip().lower())) if rk else None
+    if t:
+        return float(t), "role_typical"
+    return float(fallback or 0.0), "fallback"
+
+
+def forward_rate(name, role, **kw) -> float:
+    """forward_rate_source's rate."""
+    return forward_rate_source(name, role, **kw)[0]
+
+
+def forward_rate_of(name, role, role_rates, fallback, person_rates=None, role_typical=None) -> float:
+    """forward_rate from a restaurant's raw inputs (models.get_role_rates —
+    any case, `_default` ignored — and labor.person_rate_book's RateBook and
+    typical rates), for a one-off price outside a week's pricing payload."""
+    people, owner, jobs = forward_maps(person_rates)
+    rates = {_role_key(k): float(v) for k, v in (role_rates or {}).items()
+             if k and k != "_default" and _num(v) and float(v) > 0}
+    typ = {_role_key(k): float(v) for k, v in (role_typical or {}).items() if _num(v) and float(v) > 0}
+    return forward_rate(name, role, role_rates=rates, people=people, owner=owner, jobs=jobs,
+                        role_typical=typ, fallback=fallback)

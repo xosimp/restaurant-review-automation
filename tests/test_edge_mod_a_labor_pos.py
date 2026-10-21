@@ -337,6 +337,9 @@ def _fake_pos(monkeypatch, provider):
     import pos
     monkeypatch.setattr(pos, "connected_provider", lambda rid: ("toast", provider))
     monkeypatch.setattr("ops.capture", lambda *a, **k: None)
+    # The loop, not the local sync window (pos.sync_due_locally, A4-15): due
+    # whatever hour the suite runs at.
+    monkeypatch.setattr(pos, "sync_due_locally", lambda r, now_local=None: True)
     return pos
 
 

@@ -262,7 +262,7 @@ def legacy_org_key(row) -> str:
 # roles only (a manager or employee who works two jobs does not merge two
 # independent restaurants), never a Cavnar admin.
 _OWNER_ROLES = ("owner", "client")
-_ORG_COLS = "id, organization_id, location_group, owner_email, stripe_customer_id"
+_ORG_COLS = "id, organization_id, location_group, owner_email, stripe_customer_id, rpower_cg, is_demo"
 
 
 def _union_rows(rows, links) -> dict:
@@ -288,8 +288,14 @@ def _union_rows(rows, links) -> dict:
         rid = int(_field(r, "id"))
         parent[rid] = rid
         keys[rid] = org_key(r)
+        # The RPOWER consolidation group (Audit #23 A7-09): one operator's
+        # stores, bulk-onboarded with a GM's email each and no group, were
+        # as many "organisations" — enough to clear the cohort floors with
+        # its own sites. A demo's cg is the store it mirrors, never a link.
+        cg = None if int(_field(r, "is_demo") or 0) else _field(r, "rpower_cg")
         for tag, v in (("o", _field(r, "organization_id")), ("e", _email(_field(r, "owner_email"))),
-                       ("s", str(_field(r, "stripe_customer_id") or "").strip())):
+                       ("s", str(_field(r, "stripe_customer_id") or "").strip()),
+                       ("c", str(cg).strip() if cg not in (None, "") else "")):
             if v:
                 by.setdefault((tag, str(v)), []).append(rid)
     for ids in by.values():
@@ -334,6 +340,29 @@ def _login_links(conn, ids=None) -> list:
     return links
 
 
+def _partner_links(conn, ids=None) -> list:
+    """(restaurant, restaurant) pairs onboarded under one partner
+    (onboarding.partner_stores, Audit #23 A7-09). A partner may be a
+    reseller over many operators; counting its stores as one organisation
+    errs toward privacy (fewer organisations, bands harder to clear), never
+    toward a peer's figure being solvable. No table → no links."""
+    try:
+        rows = conn.execute("SELECT partner_id AS p, restaurant_id AS r FROM partner_stores").fetchall()
+    except Exception:
+        return []
+    per = {}
+    for r in rows:
+        if r["r"] is not None:
+            per.setdefault(r["p"], set()).add(int(r["r"]))
+    links = []
+    for rs in per.values():
+        rs = sorted(rs)
+        if len(rs) < 2 or (ids is not None and not (set(rs) & set(ids))):
+            continue
+        links.extend((rs[0], x) for x in rs[1:])
+    return links
+
+
 def _conn(db_path):
     """models.get_conn resolved at call time (CLAUDE.md, bound imports)."""
     import models as _m
@@ -353,7 +382,7 @@ def org_map(db_path=None) -> dict:
     conn = _conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(f"SELECT {_ORG_COLS} FROM restaurants").fetchall()]
-        links = _login_links(conn)
+        links = _login_links(conn) + _partner_links(conn)
     finally:
         conn.close()
     return _union_rows(rows, links)
@@ -382,16 +411,18 @@ def org_members(restaurant_id, db_path=None) -> tuple:
             for col, vals in (("organization_id", {r["organization_id"] for r in rows if r.get("organization_id")}),
                               ("LOWER(TRIM(owner_email))", {_email(r.get("owner_email")) for r in rows} - {""}),
                               ("TRIM(stripe_customer_id)", {str(r.get("stripe_customer_id") or "").strip()
-                                                            for r in rows} - {""})):
+                                                            for r in rows} - {""}),
+                              ("rpower_cg", {r.get("rpower_cg") for r in rows
+                                             if r.get("rpower_cg") not in (None, "") and not int(r.get("is_demo") or 0)})):
                 if vals:
                     vals = sorted(vals, key=str)
                     found |= {int(x[0]) for x in conn.execute(
                         f"SELECT id FROM restaurants WHERE {col} IN ({','.join('?' * len(vals))})",
                         tuple(vals)).fetchall()}
-            for a, b in _login_links(conn, ids=set(have)):
+            for a, b in _login_links(conn, ids=set(have)) + _partner_links(conn, ids=set(have)):
                 found |= {a, b}
             frontier = found - set(have)
-        links = _login_links(conn, ids=set(have))
+        links = _login_links(conn, ids=set(have)) + _partner_links(conn, ids=set(have))
     finally:
         conn.close()
     if rid not in have:

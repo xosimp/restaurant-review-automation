@@ -397,3 +397,25 @@ def test_a_partial_push_sends_its_failed_shifts_again_on_the_next_push(db, monke
     assert "Bo" in {s["employee"] for s in fake.pushed[1]}
     # Now the POS holds the whole week: the next push is unchanged.
     assert pos_schedule_push.run_push(pos_schedule_push.enqueue(rid, hid), now_local=NOW)["status"] == "unchanged"
+
+
+def test_a_push_whose_answer_timed_out_is_unknown_and_never_retried_on_its_own(db, monkeypatch):
+    """Audit #23 A1-19: a POST RPOWER may have taken but whose answer timed
+    out is `unknown` — told to the owner, no next try (a duplicate push is
+    not known to be harmless)."""
+    class _Slow(_FakePOS):
+        def push_labor_schedule(self, rid, shifts, job_codes=None):
+            self.pushed.append([dict(s) for s in shifts])
+            return {"ok": False, "unknown": True, "error": "RPOWER didn't answer in time"}
+    fake = _Slow()
+    rid, hid, told = _push_week(db, monkeypatch, fake)
+    floor_settings.save(rid, {"pos_push": True})
+    pid = pos_schedule_push.enqueue(rid, hid)
+    out = pos_schedule_push.run_push(pid, now_local=NOW)
+    assert out["status"] == "unknown" and told
+    conn = models.get_conn()
+    row = conn.execute("SELECT status, next_try_at FROM pos_schedule_pushes WHERE id=?", (pid,)).fetchone()
+    conn.close()
+    assert row["status"] == "unknown" and row["next_try_at"] is None
+    assert pos_schedule_push.run_push(pid, now_local=NOW)["error"] == "already being sent", "not claimed again"
+    assert len(fake.pushed) == 1

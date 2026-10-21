@@ -23,11 +23,28 @@ _JOIN_SECRET = "join_links"
 
 
 def _legacy_secret():
-    return (os.getenv("SECRET_KEY") or os.getenv("CREDENTIAL_KEY") or "cavnar-dev-only").encode()
+    """The key the older `<rid>-<sig>` links verify against: SECRET_KEY only.
+    It used to fall back to CREDENTIAL_KEY — the encryption key doubling as
+    a link-signing key — and then to a constant in this file (Audit #23
+    A7-18). The constant is a laptop's only; on Railway no SECRET_KEY means
+    no legacy link verifies (None)."""
+    key = (os.getenv("SECRET_KEY") or "").strip()
+    if key:
+        return key.encode()
+    try:
+        import config
+        if config.on_railway():
+            return None
+    except Exception:
+        return None
+    return b"cavnar-dev-only"
 
 
-def _legacy_sig(restaurant_id) -> str:
-    return hmac.new(_legacy_secret(), f"join:{int(restaurant_id)}".encode(), hashlib.sha256).hexdigest()[:16]
+def _legacy_sig(restaurant_id):
+    secret = _legacy_secret()
+    if secret is None:
+        return None
+    return hmac.new(secret, f"join:{int(restaurant_id)}".encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def _sig(restaurant_id, version):
@@ -62,4 +79,5 @@ def verify_join(token):
             return None
         expected = _sig(rid, int(ver))
         return int(rid) if expected and hmac.compare_digest(mac, expected) else None
-    return int(rid) if hmac.compare_digest(sig, _legacy_sig(rid)) else None
+    legacy = _legacy_sig(rid)
+    return int(rid) if legacy and hmac.compare_digest(sig, legacy) else None

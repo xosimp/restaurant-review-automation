@@ -38,8 +38,10 @@ def _redirect(db_path, monkeypatch):
 def _rid(db_path, rid=1, **cols):
     conn = models.get_conn(db_path)
     conn.execute("INSERT INTO restaurants (id, name, owner_email, rpower_token, rpower_cg, rpower_store_mid, timezone) "
-                 "VALUES (?,?,?,?,?,?,?)", (rid, f"D Co {rid}", f"d{rid}@x.test", "tok", 1280, "1123",
-                                            "America/Chicago"))
+                 "VALUES (?,?,?,?,?,?,?)", (rid, f"D Co {rid}", f"d{rid}@x.test", "tok", 1280,
+                                            # One store per live restaurant (the database
+                                            # holds it since Audit #23 A7-06).
+                                            "1123" if rid == 1 else f"1123-{rid}", "America/Chicago"))
     for k, v in cols.items():
         conn.execute(f"UPDATE restaurants SET {k}=? WHERE id=?", (v, rid))
     conn.commit()
@@ -73,7 +75,7 @@ def _routes(day_iso, lines=None, tickets=None, **over):
         "mealtime/getbycg": [], "profitcenter/getbycg": [], "paymentmethod/getbycg": [], "payoutcategory/getbycg": [],
         "ticketpayment/getbybusinessdate": [], "payout/getbydaterange": [], "timeclock/getbydaterange": [],
         "ticketitem/getbybusinessdate": [], "closeday/getbybusinessdate": [],
-        "ticketsales/getbytimestamp": [], "ticket/getbytimestamp": [],
+        "ticketsales/getbytimestamp": [], "ticket/getbytimestamp": [], "ticketpayment/getbytimestamp": [],
         "ticketsales/getbybusinessdate": lines if lines is not None else [
             {"rid": "L1", "atom": 11, "ticket_rid": "T1", "date": d, "menuitem_mid": "M1", "slstype_mid": "S",
              "qty": 3, "sales": 45.0, "time_stamp": f"{day_iso}T23:00:00"}],
@@ -130,7 +132,8 @@ def test_pos_07_an_error_correct_line_is_not_depleted_unless_the_food_was_made(d
               "sales": 15.0, "voidrsn_mid": "R1"}]                        # error made: it left the kitchen
     _stub(monkeypatch, _routes(ISO, lines=lines))
     monkeypatch.setenv("POS_ARCHIVE_READS", "0")
-    assert rpower.fetch_order_selections(rid, DAY) == [{"item": {"guid": "M1"}, "quantity": 4.0}]
+    # 3 sold + 1 made in error = 4 made; `sold` beside it (Audit #23 A2-12).
+    assert rpower.fetch_order_selections(rid, DAY) == [{"item": {"guid": "M1"}, "quantity": 4.0, "sold": 3.0}]
 
 
 # ── POS-08: the nightly archive archives last night ─────────────────────────
@@ -160,11 +163,13 @@ def test_pos_08_a_4_30am_fan_out_waits_for_the_boundary_and_archives_last_night(
     import strategy_jobs
     rid = _rid(db_path)
     r = models.get_restaurant(rid)
-    _freeze(monkeypatch, datetime(2026, 10, 16, 4, 30))
+    # The boundary is the restaurant's business-day turnover, 4am unless it
+    # trades later (audit #23 A3-14: the punches' own boundary, not 5am).
+    _freeze(monkeypatch, datetime(2026, 10, 16, 3, 30))
     night, not_before = strategy_jobs._archive_night(r)
     assert night == "2026-10-15"
-    assert not_before == datetime(2026, 10, 16, 5, 0, 30, tzinfo=CHI).timestamp()
-    _freeze(monkeypatch, datetime(2026, 10, 16, 5, 30))
+    assert not_before == datetime(2026, 10, 16, 4, 0, 30, tzinfo=CHI).timestamp()
+    _freeze(monkeypatch, datetime(2026, 10, 16, 4, 30))
     assert strategy_jobs._archive_night(r) == ("2026-10-15", 0)
     # ...and the row, when it runs at the boundary, stores that night.
     fake = _Fake()

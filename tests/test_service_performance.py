@@ -36,6 +36,15 @@ def _ticket(rid, n, server, day, net, room="Dining Room", opened="18:00", closed
         "mealtime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (rid, "rpower", f"t{n}", day, f"{day}T{opened}:00", f"{day}T{closed}:00", fired, bumped, server[0],
          server[1], room, is_bar, guests, entrees, drinks, net, tip, "Dinner"))
+    # The item sold (a check is a ticket with a sale line, pos_checks) and the
+    # card payment that carried the tip (the one tip source) — Audit #23.
+    if net:
+        conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, ticket_id, business_date, kind, "
+                     "qty, sales) VALUES (?,?,?,?,?,?,?,?)", (rid, "rpower", f"l{n}", f"t{n}", day, "sale", 1, net))
+    if tip:
+        conn.execute("INSERT INTO pos_payments (restaurant_id, provider, payment_id, ticket_id, business_date, method, "
+                     "is_card, amount, tip) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (rid, "rpower", f"p{n}", f"t{n}", day, "Visa", 1, net, tip))
     conn.execute("INSERT OR IGNORE INTO pos_archive_days (restaurant_id, provider, business_date) VALUES (?,?,?)",
                  (rid, "rpower", day))
     conn.commit()
@@ -100,7 +109,11 @@ def test_the_ask_tool_is_the_account_holders_only(db_path):
         assert not tools.tool_allowed("read_service_performance", tools.viewer_restaurant(get_restaurant(rid), manager))
     finally:
         permissions.is_principal = orig
-    _ticket(rid, 1, DANA, "2026-09-20", 50.0)
+    # A night inside the window whatever today is: the window ends on the
+    # restaurant's last complete night (Audit #23 A2-19), never a fixed date.
+    import pos
+    _ticket(rid, 1, DANA, (pos.local_complete_through(rid) - __import__("datetime").timedelta(days=2)).isoformat(),
+            50.0)
     out = json.loads(tools.run_read_tool("read_service_performance", rid, {"days": 30},
                                          restaurant=get_restaurant(rid)))
     assert out["available"] and "/" in out["window"][0] and "-" not in out["window"][0]
@@ -135,11 +148,15 @@ def test_payments_give_tender_mix_and_card_tips_and_say_when_no_payouts(db_path)
     rid = _rid()
     conn = models.get_conn()
     for i, (m, cash, card, amt, tip) in enumerate([("Visa", 0, 1, 80.0, 16.0), ("Cash", 1, 0, 20.0, 0.0)]):
-        conn.execute("INSERT INTO pos_payments (restaurant_id, provider, payment_id, business_date, method, is_cash, "
-                     "is_card, amount, tip) VALUES (?,?,?,?,?,?,?,?,?)", (rid, "rpower", f"y{i}", "2026-09-20", m, cash,
-                                                                         card, amt, tip))
+        conn.execute("INSERT INTO pos_payments (restaurant_id, provider, payment_id, ticket_id, business_date, method, "
+                     "is_cash, is_card, amount, tip) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (rid, "rpower", f"y{i}", f"k{i}", "2026-09-20", m, cash, card, amt, tip))
+    # The card payment's check: $74 net before tax (Audit #23 A2-06: the tip
+    # rate is over the check's net, never the paid amount with tax in it).
+    conn.execute("INSERT INTO pos_tickets (restaurant_id, provider, ticket_id, business_date, net_sales) "
+                 "VALUES (?,?,?,?,?)", (rid, "rpower", "k0", "2026-09-20", 74.0))
     conn.commit()
     conn.close()
     out = sp.payments(rid, days=30, today=TODAY)
-    assert (out["total_paid"], out["card_share_pct"], out["card_tips"], out["card_tip_rate_pct"]) == (100.0, 80.0, 16.0, 20.0)
+    assert (out["total_paid"], out["card_share_pct"], out["card_tips"], out["card_tip_rate_pct"]) == (100.0, 80.0, 16.0, 21.6)
     assert out["payouts"]["recorded"] == 0 and "no cash payouts" in out["payouts"]["note"]

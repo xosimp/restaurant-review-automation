@@ -113,7 +113,9 @@ _K = {
                 "fiscal_year_start", "fiscal_years_json", "dsr_gross_basis", "dsr_late_night_hour", "data_retention_months",
                 "inventory_frequency", "delivery_days", "inventory_notes", "menu_notes", "menu_url",
                 "pos_system", "external_scheduling_tool", "reservation_provider", "custom_competitors",
-                "google_place_id", "yelp_business_id", "exclude_from_learning", "learning_override", "is_demo"),
+                "google_place_id", "yelp_business_id", "exclude_from_learning", "learning_override", "is_demo",
+                # The owner's RPOWER guest-match opt-in (Audit #23 A7-07).
+                "pos_guest_match"),
 }
 RESTAURANT_FIELD_KINDS = {f: k for k, fields in _K.items() for f in fields}
 
@@ -133,6 +135,16 @@ RESTAURANT_UNTRACKED = frozenset({
     "ig_token_expires", "fb_token_expires", "toast_token_expires", "clover_last_synced", "clover_sync_error",
     "rpower_last_synced", "rpower_sync_error", "square_last_synced", "square_sync_error", "toast_last_synced",
     "toast_sync_error", "inventory_updated_at",
+    # Audit #23 F7: the partner credential a store binds, the bulk owner
+    # hold, the POS disconnect stamp — plumbing a connect, a check or a job
+    # sets; and a demo's live-store override, whose history is its
+    # admin_events row (rpower.live_mirror_set, before/after).
+    "rpower_credential_id", "pos_owner_hold", "pos_disconnected_at", "pos_live_mirror",
+    # (The base contract column F1 writes when RPOWER refuses a token.)
+    "rpower_auth_failed_at",
+    # The store's sales-classification overrides (Audit #23 A2-10 / A2-14):
+    # set by Cavnar AI, no owner screen — not an owner-facing setting.
+    "pos_sales_rules",
     # The account's own security: the security trail is activity_log's
     # (password, 2FA, device events), not a setting history.
     "two_fa_code", "two_fa_device_token", "two_fa_enabled", "two_fa_expires", "two_fa_method", "two_fa_pending",

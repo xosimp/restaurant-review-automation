@@ -233,7 +233,15 @@ silent edit — the owner sees "Updated 7:10am: sales now final".
    after discounts and comps, no tax or voids); his gross adds tax and voided
    lines back: `dsr_gross_basis = "all"`. **Verify on the first live RPower
    night** against RPower's own totals (`detail.source_checks`) — and whether
-   "etc." also means service charges or gift cards.
+   "etc." also means service charges or gift cards. **Refunds stay open**
+   (Audit #23 A2-05, 10/21/26): a refund is reported beside net and never
+   taken off it (`pos.NET_DEDUCTIONS`); a night with refunds now says "Net
+   after refunds: $X ($Y refunded tonight)" under the Sales block, to a login
+   that may see refunds (`detail.loss_notes`) — net itself does not move until
+   the owner decides whether a refund comes off the night it is rung (it can
+   be for an earlier night: RPOWER question 11). Gift cards, house-account
+   payments and gratuities rung as Sale-type items are out of net since
+   10/21/26 (A2-14; `restaurants.pos_sales_rules` overrides per store).
 3. The six categories: how do his RPower departments map (draft beer under
    Beer? "Retail/Rental" = merch + room rental?). Waits on the RPower token.
 4. ~~Budget~~ **Answered:** "I want to set budget daily" — the grid's budget

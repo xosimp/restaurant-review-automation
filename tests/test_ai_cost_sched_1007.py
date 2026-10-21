@@ -177,7 +177,12 @@ def test_each_sweep_job_waits_for_what_it_reads():
     fd = gate("food_cost_diagnoses")
     assert '_ops.settled("food_cost_snapshots"' in fd and '_ops.settled("food_cost_diagnoses_batch"' in fd
     assert '_ops.settled("outcome_rechecks"' in gate("learning_memory")
-    assert '_ops.settled("pos_sync"' in gate("labor_prewarm")
+    # The pre-warm waits for the night's sync through _pos_sync_settled since
+    # the sync became per-store queue rows (Audit #23 A5-02), which itself
+    # starts from ops.settled("pos_sync").
+    assert '_pos_sync_settled(_ops' in gate("labor_prewarm")
+    import inspect
+    assert 'ops_.settled("pos_sync"' in inspect.getsource(scheduler._pos_sync_settled)
 
 
 def test_settled_means_claimed_and_not_running_anywhere(monkeypatch):

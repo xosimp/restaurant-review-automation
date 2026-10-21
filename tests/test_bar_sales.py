@@ -561,7 +561,8 @@ def test_rpower_rate_limiter_is_shared_across_threads(db, monkeypatch):
     wait = rpower._take_shared_slot("tok-2", 10.0)
     assert wait is not None and wait > 9.0
     c = _conn(db)
-    keys = [r[0] for r in c.execute("SELECT bucket FROM rpower_rate_bucket")]
+    # The slots are reserved in rpower_rate_slots since audit #23 A5-07.
+    keys = [r[0] for r in c.execute("SELECT bucket FROM rpower_rate_slots")]
     c.close()
     assert keys and all("tok" not in k for k in keys), "the token itself is never stored"
 

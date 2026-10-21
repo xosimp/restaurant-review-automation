@@ -220,7 +220,14 @@ def test_a_partner_token_binds_each_store_it_sees_and_refuses_one_it_does_not(db
     assert by["Wave One"]["action"] == "created" and by["Wave Two"]["action"] == "error", {k: v.get("error") for k, v in by.items()}
     assert "cannot see" in by["Wave Two"]["error"]
     one = models.get_restaurant(by["Wave One"]["restaurant_id"])
-    assert one.rpower_token == "partner-tok" and one.rpower_store_name == "Wave One POS"
+    # The token is held once, as the partner credential the store binds
+    # (Audit #23 A7-01) — never a copy on the row.
+    import credentials
+    assert one.rpower_token is None and one.rpower_credential_id == out["credential_id"]
+    assert credentials.credential_token(one.rpower_credential_id) == "partner-tok"
+    assert rpower._creds(one.id)["token"] == "partner-tok" and one.rpower_store_name == "Wave One POS"
+    # ...and its POS data waits for the owner's store check (A7-02).
+    assert one.pos_owner_hold
     assert one.week_start_day == 0, "the payroll week is suggested, never applied (ONB-11)"
     assert onboarding.confirmations(one.id)["week_start"]["suggested"]["week_start_day"] == 2
 
@@ -345,6 +352,7 @@ def test_a_new_client_and_a_provisioned_store_open_their_setup_checklist(db_path
     rows, _ = bp.parse_csv(CSV)
     out = bp.apply(rows, "will")
     rid = next(r["restaurant_id"] for r in out["rows"] if r["action"] == "created")
-    assert set(onboarding.confirmations(rid)) == set(onboarding.SETUP_STEP_KEYS)
+    # An RPOWER row also opens the owner's store check (Audit #23 A7-02).
+    assert set(onboarding.confirmations(rid)) - {bp.OWNER_CHECK_STEP} == set(onboarding.SETUP_STEP_KEYS)
     import inspect
     assert "start_setup(rid)" in inspect.getsource(admin_routes.create_client)

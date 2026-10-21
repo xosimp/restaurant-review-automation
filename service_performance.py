@@ -16,8 +16,14 @@ Rules that keep a figure honest:
   * a turn time counts only for a dine-in room and only between TURN_MIN and
     TURN_MAX minutes (a ticket left open overnight, or a pick-up rung and
     closed in one go, is not a table turn);
-  * a tip rate reads only tickets that recorded a tip (cash tips never reach
-    the POS), and says how many did;
+  * a check is pos_checks' — a ticket the POS did not cancel with an item
+    sold on it — so the average check and covers here are the nightly
+    report's (Audit #23 A2-04); net still counts every ticket;
+  * a tip rate reads the PAYMENT records' tips (pos_checks, A2-06) over the
+    net of the checks that carried one (cash tips never reach the POS), and
+    says how many did;
+  * the window ends on the restaurant's last complete night
+    (pos.local_complete_through), never the server's date (A2-19);
   * kitchen minutes need the POS's fire and bump times; a POS that records
     none (Simple EJ's, 9/29/26: no kitchen screens) says so and shows none.
 """
@@ -57,20 +63,44 @@ def _turn(t):
     return m if m is not None and TURN_MIN <= m <= TURN_MAX else None
 
 
-def _window(days, today=None):
+def _window(days, today=None, restaurant_id=None):
+    """(start, end): the `days` complete nights to the restaurant's last
+    complete one (pos.local_complete_through — Audit #23 A2-19: on a UTC host
+    after 7pm Central, date.today() ended the window on tonight, still
+    trading and not archived, so "28 days" read 27). `today` (tests, a
+    caller that knows it) ends it on the day before."""
     days = max(1, min(int(days or 28), MAX_DAYS))
-    end = (today or date.today()) - timedelta(days=1)
+    if today is not None:
+        end = today - timedelta(days=1)
+    elif restaurant_id is not None:
+        import pos
+        end = pos.local_complete_through(restaurant_id)
+    else:
+        end = date.today() - timedelta(days=1)
     return end - timedelta(days=days - 1), end
 
 
 def _tickets(restaurant_id, start, end, db_path):
+    """(tickets, comps by ticket, days archived). Each ticket carries
+    `is_check` (pos_checks) and `pay_tip`, the tips its payments recorded —
+    the one tip source (A2-06)."""
+    import pos_checks
     conn = get_conn(db_path)
     try:
         tickets = [dict(r) for r in conn.execute(
-            "SELECT ticket_id, business_date, opened_at, closed_at, fired_at, bumped_at, server_id, server_name, "
-            "room_name, is_bar, guest_count, entree_count, bev_count, net_sales, tip, mealtime FROM pos_tickets "
-            "WHERE restaurant_id=? AND business_date>=? AND business_date<=? AND cancelled=0",
+            "SELECT t.ticket_id, t.business_date, t.opened_at, t.closed_at, t.fired_at, t.bumped_at, t.server_id, "
+            "t.server_name, t.room_name, t.is_bar, t.guest_count, t.entree_count, t.bev_count, t.net_sales, t.tip, "
+            f"t.mealtime, {pos_checks.IS_CHECK_SQL} AS is_check FROM pos_tickets t "
+            "WHERE t.restaurant_id=? AND t.business_date>=? AND t.business_date<=? AND t.cancelled=0",
             (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+        tips = {}
+        for r in conn.execute(
+                "SELECT business_date, ticket_id, SUM(tip) FROM pos_payments WHERE restaurant_id=? AND "
+                "business_date>=? AND business_date<=? AND tip > 0 GROUP BY business_date, ticket_id",
+                (restaurant_id, start.isoformat(), end.isoformat())).fetchall():
+            tips[(str(r[0])[:10], str(r[1]))] = float(r[2] or 0)
+        for t in tickets:
+            t["pay_tip"] = tips.get((str(t["business_date"])[:10], str(t["ticket_id"])), 0.0)
         comps = {r[0]: float(r[1] or 0) for r in conn.execute(
             "SELECT ticket_id, SUM(COALESCE(loss_amount, 0)) FROM pos_ticket_lines WHERE restaurant_id=? AND "
             "business_date>=? AND business_date<=? AND kind='comp' GROUP BY ticket_id",
@@ -83,20 +113,24 @@ def _tickets(restaurant_id, start, end, db_path):
 
 
 def _figures(ts, comps):
+    """One group's record: net over every ticket; checks, covers, average
+    check and drinks per entree over the CHECKS (pos_checks); tip % from the
+    payments' tips over the net of the checks that carried one."""
+    import pos_checks
+    checks = [t for t in ts if pos_checks.is_check(t)]
     net = sum(t["net_sales"] for t in ts)
-    covers = sum(t["guest_count"] for t in ts)
-    entrees = sum(t["entree_count"] for t in ts)
-    drinks = sum(t["bev_count"] for t in ts)
-    tipped = [t for t in ts if (t["tip"] or 0) > 0 and (t["net_sales"] or 0) > 0]
+    covers = sum(t["guest_count"] for t in checks)
+    entrees = sum(t["entree_count"] for t in checks)
+    drinks = sum(t["bev_count"] for t in checks)
+    tip_pct, tipped = pos_checks.tip_rate(ts, {str(t["ticket_id"]): t.get("pay_tip") or 0.0 for t in ts})
     turns = [m for m in (_turn(t) for t in ts) if m is not None]
     return {
-        "tickets": len(ts), "covers": covers, "net_sales": round(net, 2),
+        "tickets": len(ts), "checks": len(checks), "covers": covers, "net_sales": round(net, 2),
         "sales_per_cover": round(net / covers, 2) if covers else None,
-        "check_average": round(net / len(ts), 2) if ts else None,
+        "check_average": round(net / len(checks), 2) if checks else None,
         "drinks_per_entree": round(drinks / entrees, 2) if entrees else None,
-        "tip_rate_pct": (round(100.0 * sum(t["tip"] for t in tipped) / sum(t["net_sales"] for t in tipped), 1)
-                         if tipped else None),
-        "tickets_with_tip": len(tipped),
+        "tip_rate_pct": tip_pct,
+        "tickets_with_tip": tipped,
         "median_turn_minutes": round(statistics.median(turns), 0) if turns else None,
         "turns_measured": len(turns),
         "comps": round(sum(comps.get(t["ticket_id"], 0.0) for t in ts), 2),
@@ -105,7 +139,7 @@ def _figures(ts, comps):
 
 def servers(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Each server's measured record over the window, busiest first."""
-    start, end = _window(days, today)
+    start, end = _window(days, today, restaurant_id)
     tickets, comps, archived = _tickets(restaurant_id, start, end, db_path)
     if not tickets:
         return {"available": False, "window": [start.isoformat(), end.isoformat()],
@@ -130,7 +164,7 @@ def servers(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
 
 def rooms(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Tickets, covers, sales and turn time by room and by daypart."""
-    start, end = _window(days, today)
+    start, end = _window(days, today, restaurant_id)
     tickets, comps, archived = _tickets(restaurant_id, start, end, db_path)
     if not tickets:
         return {"available": False, "window": [start.isoformat(), end.isoformat()]}
@@ -150,7 +184,7 @@ def rooms(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
 def kitchen(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Median minutes from fire to bump, by hour — only where the POS
     records both times."""
-    start, end = _window(days, today)
+    start, end = _window(days, today, restaurant_id)
     tickets, _c, _a = _tickets(restaurant_id, start, end, db_path)
     timed = [(t, _minutes(t["fired_at"], t["bumped_at"])) for t in tickets if t["fired_at"] and t["bumped_at"]]
     timed = [(t, m) for t, m in timed if m is not None and 0 < m <= 120]
@@ -176,7 +210,7 @@ def pay_and_tips(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     overtime pay, tips, and pay and tips per hour worked. Breaks and punch
     edits are reported only where the POS records them — a POS that records
     none says so rather than showing a clean zero."""
-    start, end = _window(days, today)
+    start, end = _window(days, today, restaurant_id)
     conn = get_conn(db_path)
     try:
         punches = [dict(r) for r in conn.execute(
@@ -228,12 +262,19 @@ def payments(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     #10): tender mix by method, cash vs card, card tips and their rate; each
     payout and pay-in category with who approved it. No card-fee figure: the
     processor's rate is not on file, and a guessed rate would be a guess."""
-    start, end = _window(days, today)
+    start, end = _window(days, today, restaurant_id)
     conn = get_conn(db_path)
     try:
+        # A payment on a cancelled ticket is not money taken (A2-11); each
+        # carries its check's net, the tip rate's one denominator (A2-06).
+        import pos_checks
         pays = [dict(r) for r in conn.execute(
-            "SELECT method, is_cash, is_card, amount, tip FROM pos_payments WHERE restaurant_id=? AND "
-            "business_date>=? AND business_date<=?", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
+            "SELECT p.method, p.is_cash, p.is_card, p.amount, p.tip, p.business_date, p.ticket_id, "
+            "(SELECT t.net_sales FROM pos_tickets t WHERE t.restaurant_id=p.restaurant_id AND t.provider=p.provider "
+            "AND t.business_date=p.business_date AND t.ticket_id=p.ticket_id) AS check_net "
+            "FROM pos_payments p WHERE p.restaurant_id=? AND p.business_date>=? AND p.business_date<=? "
+            f"AND {pos_checks.PAYMENT_LIVE_SQL}",
+            (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
         outs = [dict(r) for r in conn.execute(
             "SELECT category, is_payin, amount, manager_name, manager_id FROM pos_payouts WHERE restaurant_id=? AND "
             "business_date>=? AND business_date<=?", (restaurant_id, start.isoformat(), end.isoformat())).fetchall()]
@@ -254,7 +295,8 @@ def payments(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
            "cash_paid": round(sum(p["amount"] for p in pays if p["is_cash"]), 2),
            "card_share_pct": round(100.0 * card_amt / total, 1) if total else None,
            "card_tips": round(sum(p["tip"] for p in card), 2),
-           "card_tip_rate_pct": round(100.0 * sum(p["tip"] for p in card) / card_amt, 1) if card_amt else None,
+           "card_tip_rate_pct": _card_tip_rate(card),
+           "card_tip_basis": "card tips over the net sales of the checks they were left on (before tax)",
            "by_method": sorted(({"method": k, "payments": v["payments"], "amount": round(v["amount"], 2),
                                  "share_pct": round(100.0 * v["amount"] / total, 1) if total else None}
                                 for k, v in by.items()), key=lambda r: -r["amount"])}
@@ -275,6 +317,19 @@ def payments(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     return out
 
 
+def _card_tip_rate(card):
+    """Card tips over the net of the checks they were left on, before tax
+    (A2-06: the house tip rate's denominator; it was the paid amount, tax
+    included, beside a tip rate on net). None without a tipped check."""
+    tips, nets = 0.0, {}
+    for p in card:
+        if (p.get("tip") or 0) > 0 and p.get("check_net") and float(p["check_net"]) > 0:
+            tips += float(p["tip"])
+            nets[(str(p.get("business_date"))[:10], str(p.get("ticket_id")))] = float(p["check_net"])
+    net = sum(nets.values())
+    return round(100.0 * tips / net, 1) if net > 0 else None
+
+
 def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
     """Servers, rooms and dayparts, and the kitchen, in one read."""
     s = servers(restaurant_id, days, db_path, today)
@@ -286,5 +341,6 @@ def summary(restaurant_id, days=28, db_path=DB_PATH, today=None) -> dict:
             "pay_and_tips": pay_and_tips(restaurant_id, days, db_path, today),
             "payments": payments(restaurant_id, days, db_path, today),
             "note": ("Measured from the POS's own tickets. A server's figures appear past "
-                     f"{MIN_TICKETS} tickets; tip rate counts only tickets with a recorded (card) tip; turn "
-                     "time counts dine-in tables only.")}
+                     f"{MIN_TICKETS} tickets; checks and covers count tickets with an item sold on them; tip rate "
+                     "is the card tips on the payments over the net of the checks that had one; turn time counts "
+                     "dine-in tables only.")}

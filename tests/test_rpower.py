@@ -260,8 +260,8 @@ def test_a_comped_plate_still_depletes_stock(db_path, monkeypatch):
         ],
     })
     out = rpower.fetch_order_selections(rid, "2026-09-10")
-    assert out == [{"item": {"guid": "burger"}, "quantity": 3.0}], \
-        "2 sold + 1 comped = 3 depleted; the refund is excluded"
+    assert out == [{"item": {"guid": "burger"}, "quantity": 3.0, "sold": 2.0}], \
+        "2 sold + 1 comped = 3 depleted; the refund is excluded; only the 2 sold are sold (Audit #23 A2-12)"
 
 
 def test_voided_lines_never_deplete(db_path, monkeypatch):
@@ -274,7 +274,7 @@ def test_voided_lines_never_deplete(db_path, monkeypatch):
         ],
     })
     assert rpower.fetch_order_selections(rid, "2026-09-10") == [
-        {"item": {"guid": "burger"}, "quantity": 2.0}]
+        {"item": {"guid": "burger"}, "quantity": 2.0, "sold": 2.0}]
 
 
 def test_selections_match_the_shape_the_ledger_already_reads(db_path, monkeypatch):
@@ -286,7 +286,9 @@ def test_selections_match_the_shape_the_ledger_already_reads(db_path, monkeypatc
         "ticketsales/getbybusinessdate": [_ticketsale("100", 20.0, qty=2, menuitem="g1")],
     })
     rows = rpower.fetch_order_selections(rid, "2026-09-10")
-    assert rows and set(rows[0]) == {"item", "quantity"}
+    # `sold` beside the depletion `quantity` (Audit #23 A2-12): the ledger
+    # reads quantity as before, and menu_item_sales keeps both.
+    assert rows and set(rows[0]) == {"item", "quantity", "sold"}
     assert set(rows[0]["item"]) == {"guid"}
 
 
@@ -469,7 +471,9 @@ def test_the_shifts_csv_matches_what_labor_already_parses(db_path, monkeypatch):
     # (attendance): RPOWER's never does.
     assert header == ("date,day,employee,role,shift_start,shift_end,"
                       "scheduled_hours,actual_hours,sales,notes,pay_rate,"
-                      "employee_ext_id,employee_payroll_id,employee_named,schedule_known")
+                      "employee_ext_id,employee_payroll_id,employee_named,schedule_known,"
+                      # audit #23: the job's RPOWER id and rate, RPOWER's own overtime
+                      "job_ext_id,job_rate,pos_ot_hours,pos_dt_hours,pos_ot_premium")
 
 
 def test_shifts_carry_the_stores_job_and_employee_names_not_its_codes(db_path, monkeypatch):
@@ -711,7 +715,7 @@ def test_a_non_json_body_is_an_error_not_a_guess(db_path, monkeypatch):
 
 def test_sync_records_an_auth_failure_against_the_restaurant(db_path, monkeypatch):
     rid = _connected(db_path)
-    monkeypatch.setattr(rpower, "build_shifts_csv",
+    monkeypatch.setattr(rpower, "_labor_read",
                         lambda r, days=60: (_ for _ in ()).throw(
                             rpower.RPowerAuthError("token rejected")))
     out = rpower.sync_to_db(rid)
@@ -754,7 +758,9 @@ def test_the_owner_card_syncs_and_disconnects_but_never_takes_a_token():
     src = open(rpower_routes.__file__).read()
     assert '"/api/rpower/sync", methods=["POST"]' in src
     assert '"/api/rpower/disconnect", methods=["POST"]' in src
-    assert 'principal_only(current_user, "the RPower connection")' in src
+    # Principal only, with the password step-up (Audit #23 A7-12).
+    assert "def disconnect_refusal(current_user)" in src and "account_step_up_refusal(current_user)" in src
+    assert "disconnect_refusal(current_user) or do_disconnect(current_user)" in src
     assert "/api/rpower/save" not in src and "/admin/rpower/save/" in src
 
 

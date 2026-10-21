@@ -189,9 +189,13 @@ def _describe_change(before, after) -> tuple:
 def _rate(restaurant_id, name, role):
     try:
         import labor
+        from models import get_role_rates
+        import schedule_objective as _obj
         people, roles = labor.person_rate_book(restaurant_id)
-        r = people.get(labor._name_key(name)) if name else None
-        r = r or roles.get((role or "").strip().lower())
+        # The forward chain (audit #23 A3-02): the owner's rate for the
+        # person, for the role, their pay in this job, in any job, the
+        # role's typical — not their other job's pay before the role's rate.
+        r = _obj.forward_rate_of(name, role, get_role_rates(restaurant_id) or {}, 0.0, people, roles)
         return float(r) if r else float(labor.get_hourly_rate(restaurant_id))
     except Exception:
         return None

@@ -1079,30 +1079,54 @@ def _check_labor_analytics():
     reading (pos_health.pos_sync_state). It checked Toast only, so a Square,
     Clover or RPOWER sync failing for days read operational (CA3 F6)."""
     import pos_health
+    # Only the POS columns of in-service restaurants with an active login
+    # (Audit #23 A6-14: it was SELECT DISTINCT r.* every tick), and RPOWER's
+    # stores from their health rollup while it is fresh.
     conn = _conn()
-    rows = conn.execute(
-        "SELECT DISTINCT r.* FROM restaurants r "
-        "JOIN users u ON u.restaurant_id=r.id "
-        "WHERE u.is_active=1"
-    ).fetchall()
-    conn.close()
+    try:
+        cols = ", ".join(f"r.{c}" for c in pos_health.SYNC_COLUMNS)
+        import models as _m_sa
+        rows = conn.execute(
+            f"SELECT DISTINCT {cols} FROM restaurants r JOIN users u ON u.restaurant_id=r.id "
+            f"WHERE u.is_active=1 AND COALESCE(r.is_demo,0)=0 AND {_m_sa.in_service_sql('r.billing_status')}"
+        ).fetchall()
+    finally:
+        conn.close()
+    roll = pos_health._rpower_rollup()
 
     # The status page is PUBLIC (status_routes, status.html): it says how
     # many locations are affected, never which — a restaurant's name next to
     # "POS sync error" is its private operating state (re-audit B6#6).
-    errored = stale = 0
+    connected = errored = stale = 0
     for r in rows:
         st = pos_health.pos_sync_state(dict(r))
+        if not st.get("connected") or (roll is not None and st["provider"] == "rpower"):
+            continue
+        connected += 1
         if st["state"] == "error":
             errored += 1
         elif st["state"] == "stale":
             stale += 1
-    if errored:
+    if roll is not None:
+        connected += int(roll["connected"])
+        errored += len(roll["failing"])
+        stale += len(roll["stale"])
+    # Degraded only past a share of the connected locations (A6-14): at 1,500
+    # stores one store's revoked token or closed week is that store's own
+    # issue (on the console), and the public row read "degraded" forever.
+    # Below 1/share locations (today's fleet) any one still degrades it.
+    if errored and errored > STATUS_POS_ERROR_SHARE * connected:
         update_service_status("labor_analytics", "degraded", f"POS sync error at {_locations(errored)}")
-    elif stale:
+    elif stale and stale > STATUS_POS_STALE_SHARE * connected:
         update_service_status("labor_analytics", "degraded", f"POS data behind at {_locations(stale)}")
     else:
         update_service_status("labor_analytics", "operational", None)
+
+
+# The share of connected locations whose POS must be erroring (or stale) before
+# the public status page calls POS data degraded (Audit #23 A6-14).
+STATUS_POS_ERROR_SHARE = 0.05
+STATUS_POS_STALE_SHARE = 0.10
 
 
 def _locations(n):

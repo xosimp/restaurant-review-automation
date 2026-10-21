@@ -90,7 +90,9 @@ def test_a_sweep_where_restaurants_failed_is_a_partial_or_failed_run(tmpdb):
 
 def test_the_pos_wrapper_no_longer_swallows_a_crash(tmpdb, monkeypatch):
     import pos, scheduler
-    monkeypatch.setattr(pos, "sync_all", lambda **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    # The nightly job queues the stores' rows (RPOWER audit #23 A5-02); a
+    # crash there still fails the run.
+    monkeypatch.setattr(pos, "queue_nightly_syncs", lambda **k: (_ for _ in ()).throw(RuntimeError("database is locked")))
     assert ops.run_job("pos_sync", scheduler.run_toast_sync) is None
     run = _q(tmpdb, "SELECT ok FROM job_runs WHERE job='pos_sync'")[0]
     assert run["ok"] == 0
@@ -214,13 +216,16 @@ def test_depletion_catches_up_since_the_last_depleted_day_capped_at_fourteen(tmp
     end = scheduler._chi_now().date()
     dh.record_attempt(rid, "depletion", True, data_through=(end - timedelta(days=9)).isoformat())
     out = scheduler.run_daily_depletion_sync()
-    assert windows[-1] == (end - timedelta(days=9), end)
+    # Through the restaurant's own last complete business date (audit #23
+    # A2-18), never Chicago's calendar date.
+    ct = pos.complete_through(__import__("models").get_restaurant(rid))
+    assert windows[-1] == (end - timedelta(days=9), ct)
     assert out["attempted"] == 1 and out["ok"] == 1
     row = dh.health_rows(rid)["depletion"]
     assert row["consecutive_failures"] == 0 and row["provider"] == "rpower" and row["data_through"]
     dh.record_attempt(rid, "depletion", True, data_through=(end - timedelta(days=40)).isoformat())
     scheduler.run_daily_depletion_sync()
-    assert windows[-1][0] == end - timedelta(days=scheduler.DEPLETION_CATCHUP_MAX_DAYS)
+    assert windows[-1][0] == ct - timedelta(days=scheduler.DEPLETION_CATCHUP_MAX_DAYS)
 
 
 def test_a_failed_depletion_night_is_recorded_per_restaurant(tmpdb, monkeypatch):
@@ -334,8 +339,10 @@ def test_a_day_pulled_while_trading_is_provisional_and_does_not_date_sales(db_pa
 
 def test_rpower_hitting_its_page_ceiling_raises(monkeypatch):
     import rpower
+    # Rows in ticketsales' contract (audit #23 A1-09: a row without them is refused first).
     monkeypatch.setattr(rpower, "_request", lambda token, path, params=None:
-                        [{"rid": f"{params['pagenumber']}-{n}"} for n in range(rpower.PAGE_SIZE)])
+                        [{"rid": f"{params['pagenumber']}-{n}", "date": "2026-10-10T00:00:00", "sales": 1, "qty": 1,
+                          "slstype_mid": "1"} for n in range(rpower.PAGE_SIZE)])
     with pytest.raises(rpower.RPowerError, match="truncated"):
         rpower._paged("tok", "ticketsales/getbybusinessdate", {}, max_pages=2)
 
@@ -691,6 +698,8 @@ def test_the_nightly_sync_uses_in_service(tmpdb, monkeypatch):
     monkeypatch.setattr(pos, "connected_provider", lambda r: ("toast", object()))
     monkeypatch.setattr(pos, "sync_restaurant", lambda r, **k: synced.append(r) or {"ok": True})
     monkeypatch.setattr(pos, "note_sync_failure", lambda r: None)
+    # Not about the local sync window (A4-15): due whatever the test's clock.
+    monkeypatch.setattr(pos, "sync_due_locally", lambda r, now_local=None: True)
     pos.sync_all()
     assert internal in synced
 

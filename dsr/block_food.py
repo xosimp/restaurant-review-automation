@@ -64,29 +64,45 @@ def _rows(ctx, sql, args):
 # ── the estimate ────────────────────────────────────────────────────────────
 
 def _tonight_items(ctx):
-    """([{"id", "name", "qty"}], waiting) — tonight's items from the Sales
-    block's own POS pull, matched to the menu by the POS's item id
-    (menu_items.toast_guid, as the nightly item sync matches them). An item
-    the menu list doesn't have is left out, as the item sync leaves it out.
+    """([{"id", "name", "qty", "made"}], waiting) — tonight's items from the
+    Sales block's own POS pull, matched to the menu by the POS's item id
+    (menu_items.toast_guid, as the nightly item sync matches them): `qty`
+    sold, `made` sold and comped (items_made, Audit #23 A2-12; a report from
+    before it carries sold only, and `made` is then sold). An item the menu
+    list doesn't have is left out, as the item sync leaves it out.
     `waiting` is True while the Sales block itself is still coming."""
     sales = (ctx.blocks or {}).get("sales") or {}
     if sales.get("status") == dsr.AWAITING:
         return [], True
     if sales.get("status") != dsr.READY:
         return [], False
-    by_guid = {}
-    for it in (sales.get("detail") or {}).get("items_sold") or []:
+    detail = sales.get("detail") or {}
+    by_guid, made = {}, {}
+    for it in detail.get("items_sold") or []:
         guid = it.get("guid")
         qty = float(it.get("qty") or 0)
         if guid and qty > 0:
             by_guid[str(guid)] = by_guid.get(str(guid), 0.0) + qty
-    if not by_guid:
+    has_made = "items_made" in detail
+    for it in detail.get("items_made") or []:
+        guid = it.get("guid")
+        qty = float(it.get("qty") or 0)
+        if guid and qty > 0:
+            made[str(guid)] = made.get(str(guid), 0.0) + qty
+    keys = set(by_guid) | set(made)
+    if not keys:
         return [], False
-    marks = ",".join("?" for _ in by_guid)
+    marks = ",".join("?" for _ in keys)
     menu = _rows(ctx, f"SELECT id, name, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 "
-                      f"AND toast_guid IN ({marks})", (ctx.restaurant_id, *by_guid))
-    return [{"id": m["id"], "name": m["name"], "qty": by_guid[str(m["toast_guid"])]} for m in menu
-            if str(m["toast_guid"]) in by_guid], False
+                      f"AND toast_guid IN ({marks})", (ctx.restaurant_id, *sorted(keys)))
+    out = []
+    for m in menu:
+        g = str(m["toast_guid"])
+        if g in keys:
+            sold = by_guid.get(g, 0.0)
+            out.append({"id": m["id"], "name": m["name"], "qty": sold,
+                        "made": max(made.get(g, 0.0), sold) if has_made else sold})
+    return out, False
 
 
 def _estimate(ctx):
@@ -111,10 +127,17 @@ def _estimate(ctx):
                "No recipes are set up, so food cost can't be estimated from what sold.")
         return empty, {"estimate": None, "note": why}, None
 
-    sold = _rows(ctx, "SELECT s.menu_item_id AS id, m.name, s.qty_sold AS qty FROM menu_item_sales s "
+    # Units MADE are costed (sold, comped and made-in-error plates all left
+    # the kitchen) and units SOLD are priced (Audit #23 A2-12 / A3-12): the
+    # item sync stored one figure, the made count, and the first version
+    # costed sold plates only — so the estimate moved between versions with
+    # no new data. A row from before 10/21/26 has no qty_made (its qty_sold
+    # was the made count).
+    sold = _rows(ctx, "SELECT s.menu_item_id AS id, m.name, s.qty_sold AS qty, "
+                      "COALESCE(s.qty_made, s.qty_sold) AS made FROM menu_item_sales s "
                       "JOIN menu_items m ON m.id=s.menu_item_id AND m.restaurant_id=s.restaurant_id "
                       "WHERE s.restaurant_id=? AND s.business_date=?", (ctx.restaurant_id, ctx.day))
-    sold = [s for s in sold if float(s["qty"] or 0) > 0]
+    sold = [s for s in sold if float(s["made"] or 0) > 0 or float(s["qty"] or 0) > 0]
     units_from = "the item sales synced for the night"
     if not sold:
         # The nightly item sync (menu_item_sales) runs at 5am Central, after
@@ -143,14 +166,20 @@ def _estimate(ctx):
                        "note": f"No item sales for {mdy(ctx.business_date)} were on file when this report was "
                                "built, so food cost wasn't estimated."}, None
 
-    units = sum(float(s["qty"]) for s in sold)
+    def _made(s):
+        return float(s.get("made") if s.get("made") is not None else s.get("qty") or 0)
+    units = sum(_made(s) for s in sold)
     costed = [s for s in sold if s["id"] in plate]
-    units_costed = sum(float(s["qty"]) for s in costed)
-    cost = sum(float(s["qty"]) * plate[s["id"]] for s in costed)
+    units_costed = sum(_made(s) for s in costed)
+    cost = sum(_made(s) * plate[s["id"]] for s in costed)
     priced = [s for s in costed if s["id"] in price]
-    revenue = sum(float(s["qty"]) * price[s["id"]] for s in priced)
-    priced_cost = sum(float(s["qty"]) * plate[s["id"]] for s in priced)
-    missing = sorted((s for s in sold if s["id"] not in plate), key=lambda s: -float(s["qty"]))
+    revenue = sum(float(s["qty"] or 0) * price[s["id"]] for s in priced)
+    priced_cost = sum(_made(s) * plate[s["id"]] for s in priced)
+    units_sold = sum(float(s["qty"] or 0) for s in sold)
+    units_basis = ("the cost counts every unit made (sold, comped and remade) and the menu price the units sold"
+                   if any(_made(s) > float(s["qty"] or 0) + 1e-9 for s in sold) else
+                   "the cost and the menu price both count the units sold (no comped or remade units on file)")
+    missing = sorted((s for s in sold if s["id"] not in plate), key=lambda s: -_made(s))
     coverage = round(units_costed / units * 100, 1) if units else 0.0
     # The estimate is a percentage of the night only when enough of what was
     # sold is costed: a percentage built on 30% of the units sold says
@@ -166,19 +195,23 @@ def _estimate(ctx):
         "estimated": True,
         # "units", not "dishes": the coverage and the estimate are counted in
         # units sold, and a dish sold twenty times is twenty of them.
-        "label": (f"Estimated — what the units sold on {mdy(ctx.business_date)} should have cost by their "
-                  "recipes, at current ingredient prices. Not a count of what was actually used."),
+        "label": (f"Estimated — what the units made on {mdy(ctx.business_date)} should have cost by their "
+                  f"recipes, at current ingredient prices; {units_basis}. Not a count of what was actually used."),
         "units_from": units_from,
-        "units_sold": round(units, 2),
+        # The two unit counts, said (A2-12): plates made (sold, comped and
+        # made in error) are costed; plates sold are what the price applies to.
+        "units_made": round(units, 2),
+        "units_sold": round(units_sold, 2),
+        "units_basis": units_basis,
         "units_with_recipe": round(units_costed, 2),
-        "coverage_basis": "share of units sold that had a fully costed recipe",
+        "coverage_basis": "share of the plates made that had a fully costed recipe",
         "coverage_floor_pct": ESTIMATE_MIN_COVERAGE_PCT,
         "coverage_note": (None if covered else
                           f"Only {coverage:g}% of units sold have a costed recipe — the food cost % is "
                           f"withheld until it reaches {ESTIMATE_MIN_COVERAGE_PCT}%."),
-        "pct_basis": ("theoretical cost over menu price, on the dishes sold that have both a recipe and a price"
-                      if revenue > 0 else None),
-        "without_recipe": [{"dish": s["name"], "units": round(float(s["qty"]), 2),
+        "pct_basis": ("theoretical cost of the plates made over the menu price of the plates sold, on the dishes "
+                      "that have both a recipe and a price" if revenue > 0 else None),
+        "without_recipe": [{"dish": s["name"], "units": round(_made(s), 2),
                             "why": ("recipe has an ingredient with no cost" if s["id"] in uncosted else
                                     "plate cost looks like a unit mismatch" if s["id"] in implausible else
                                     "no recipe")} for s in missing[:5]],
