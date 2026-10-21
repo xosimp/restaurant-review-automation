@@ -1099,7 +1099,7 @@ def clear_caches():
     """Every per-restaurant list this module caches (the test setup calls it)."""
     for c in (_sales_type_cache, _menu_cache, _people_cache, _void_reason_cache, _catalog_cache, _closed_cache,
               _job_cat_cache, _list_cache, _archive_refreshed, _live_seen, _live_marked, _people_refreshed,
-              _scope_cache):
+              _scope_cache, _kept_cache):
         c.clear()
     try:
         import pos_io
@@ -1319,17 +1319,30 @@ def _kept_types(restaurant_id, ids) -> dict:
     ids = sorted({str(i) for i in ids if i})
     if not ids:
         return {}
-    out = {}
+    out, todo = {}, []
+    now = time.monotonic()
+    for i in ids[:50]:
+        hit = _kept_cache.get((restaurant_id, i))
+        if hit and now - hit[0] < ARCHIVE_REFRESH_SECONDS:
+            if hit[1]:
+                out[i] = hit[1]
+        else:
+            todo.append(i)
+    if not todo:
+        return out
     try:
         from models import get_conn
         conn = get_conn()
         try:
-            for i in ids[:50]:
+            for i in todo:
                 row = conn.execute(
                     "SELECT sales_type_flags FROM pos_ticket_lines WHERE restaurant_id=? AND provider='rpower' "
                     "AND sales_type_id=? AND sales_type_flags IS NOT NULL ORDER BY business_date DESC LIMIT 1",
                     (restaurant_id, i)).fetchone()
                 flags = _thaw_flags(row[0]) if row else None
+                # A miss is remembered too: an id the archive never held is
+                # not looked for again on every live read (a scan).
+                _kept_cache[(restaurant_id, i)] = (now, flags)
                 if flags:
                     out[i] = flags
         finally:
@@ -1337,6 +1350,9 @@ def _kept_types(restaurant_id, ids) -> dict:
     except Exception as e:
         log.warning("[rpower] kept sales types not read for %s: %s", restaurant_id, e)
     return out
+
+
+_kept_cache = _LRU(CACHE_MAX_KEYED)
 
 
 def _quality_event(restaurant_id, key, sig, message, job="pos_sales_rules"):
@@ -1802,6 +1818,10 @@ CLOSEDAY_LOOKBACK_DAYS = 3
 #     discount -3.75, type_discnt -3.75).
 #   * whether a closeday row covering the date means every shift is closed
 #     (from_shift / thru_shift are read but not interpreted).
+# Since 10/21/26 (Audit #23 A2-09) comp lines are reconciled against
+# RPOWER's own per-ticket type_comp every night (source_checks.comp_gap,
+# a `pos_comp_reconcile` data_quality event, a note on the report): the
+# night a comp sits beside its sale line says so instead of passing quietly.
 DAY_SALES_UNVERIFIED = True
 
 

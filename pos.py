@@ -760,7 +760,9 @@ def fetch_business_days(restaurant_id, start_date, end_date):
 
 
 def fetch_order_selections(restaurant_id, business_date):
-    """One business date's sold items as [{"item": {"guid": ...}, "quantity": n}].
+    """One business date's sold items as [{"item": {"guid": ...}, "quantity": n}]
+    — `quantity` what the kitchen made (depletion); a provider that can tell
+    them apart adds `sold`, what guests paid for (RPOWER; Audit #23 A2-12).
 
     Returns (rows, provider_name). Item-level detail is what recipe depletion
     and menu discovery are built on; a provider without it raises rather than
