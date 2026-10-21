@@ -711,6 +711,9 @@ def _scrub_rows(conn):
 # that matches CREDENTIAL_NAME must be added to SCRUB_COLUMNS or here —
 # tests/test_fix_d_backup.py fails until it is.
 KEEP_COLUMNS = {
+    ("rpower_store_health", "token_bucket"): "the request bucket a store's token counts against — a hash of the "
+                                             "credential, never the token (Audit #23 A6-01)",
+    ("rpower_store_health", "token_state"): "a label: ok / auth_failed / unverified (Audit #23 A6-01)",
     ("rpower_rate_bucket", "tokens"): "a request-budget count (a token bucket), no credential; its key is a hash",
     ("restaurants", "rpower_credential_id"): "the id of a pos_credentials row (Audit #23 A7-01), not a secret; "
                                               "the token it names is sealed in that row",

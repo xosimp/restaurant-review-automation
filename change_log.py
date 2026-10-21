@@ -142,6 +142,9 @@ RESTAURANT_UNTRACKED = frozenset({
     "rpower_credential_id", "pos_owner_hold", "pos_disconnected_at", "pos_live_mirror",
     # (The base contract column F1 writes when RPOWER refuses a token.)
     "rpower_auth_failed_at",
+    # The store's sales-classification overrides (Audit #23 A2-10 / A2-14):
+    # set by Cavnar AI, no owner screen — not an owner-facing setting.
+    "pos_sales_rules",
     # The account's own security: the security trail is activity_log's
     # (password, 2FA, device events), not a setting history.
     "two_fa_code", "two_fa_device_token", "two_fa_enabled", "two_fa_expires", "two_fa_method", "two_fa_pending",

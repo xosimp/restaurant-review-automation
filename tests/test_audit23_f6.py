@@ -128,6 +128,15 @@ def test_anomalies_are_counted_from_the_nights_columns(db_path):
 
 
 def test_integrity_checks_duplicate_binding_store_key_and_simulated(db_path):
+    # Two live rows on one store can no longer be written (F7's unique index,
+    # A7-06); the rollup still counts any a database from before it holds.
+    from models import get_conn as _gc
+    _c = _gc(db_path)
+    for idx in [r[0] for r in _c.execute("SELECT name FROM sqlite_master WHERE type='index' "
+                                          "AND tbl_name='restaurants' AND sql LIKE '%rpower_store_mid%'").fetchall()]:
+        _c.execute(f"DROP INDEX {idx}")
+    _c.commit()
+    _c.close()
     a = _store(db_path, "Alpha", cg=7, mid="S1")
     b = _store(db_path, "Beta", token="tok-2", cg=7, mid="S1")
     c = _store(db_path, "Gamma", token="demo-store:halsted-rye", cg=8, mid="S9")
