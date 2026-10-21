@@ -954,7 +954,9 @@ def _auth_refused(bucket, store, rid, status, path, explicit):
         return RPowerTryLater(f"RPOWER answered 403 for {path} on a token that worked within the hour; asked again "
                               "in 5 minutes before it is taken as refused", retry_after=300)
     got = pos_io.auth_latch("rpower", bucket, store, rid, status)
-    if rid and (got.get("new") or not getattr(_io_ctx, "auth_failed", None)):
+    # An admin's check of a token being pasted (explicit) says nothing about
+    # the token the restaurant holds now: its column is left alone.
+    if rid and not explicit and (got.get("new") or not getattr(_io_ctx, "auth_failed", None)):
         when = datetime.utcnow().isoformat(timespec="seconds")
         _set_auth_failed(rid, when)
         if getattr(_io_ctx, "rid", None) == rid:
