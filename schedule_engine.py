@@ -8018,6 +8018,13 @@ def _people_signals(restaurant_id, result, signals: dict, stated: dict = None) -
         if signals["overtime"]:
             signals["overtime"]["person_rates"] = dict(book[0] or {})
             signals["overtime"]["role_typical"] = dict(book[1] or {})
+            # The forward chain's maps, as plain dicts beside person_rates
+            # (dict() above strips the RateBook's): the owner's rates for
+            # people and each person's latest pay per job, so a drafted
+            # $0-tipped PM shift is priced at the owner's role rate before
+            # the person's pay in another job (audit #23 A3-02).
+            import schedule_objective as _obj_rm
+            signals["overtime"].update(_obj_rm.rate_maps(book[0]))
     else:
         # No week's constraints (a bare re-score): who is salaried still
         # comes from the restaurant, so their hours never read as hourly.
@@ -9807,8 +9814,9 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
         import schedule_objective as _obj
         sig = signals or {}
         ot = sig.get("overtime") or {}
-        rates = dict(ot.get("role_typical") or {})
-        rates.update({k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"})
+        # The owner's role rates; the context merges the typical under them
+        # (role_typical) and keeps them apart for the forward chain (A3-02).
+        rates = {k: v for k, v in (ot.get("rates") or {}).items() if k != "_default"}
         if history_rows is None and restaurant_id is not None and week_dates:
             history_rows = []
             try:
@@ -9826,6 +9834,8 @@ def objective_context(restaurant_id, week_dates, c, signals, requirements, budge
             demand_curve=sig.get("demand_curve") or None,
             history_rows=list(history_rows or []) + list(sig.get("last_published_rows") or []),
             rates=rates, person_rates=ot.get("person_rates"),
+            owner_person_rates=ot.get("owner_person_rates"), person_job_rates=ot.get("person_job_rates"),
+            role_typical=ot.get("role_typical"),
             blended_rate=ot.get("default_rate") or (ot.get("rates") or {}).get("_default") or blended,
             ot_line=ot.get("line"), constraints=c, budget_held=budget_held)
         # The need, read as Stage 1 reads its demand — the requirement rows'

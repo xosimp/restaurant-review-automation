@@ -192,8 +192,13 @@ def set_policy(restaurant_id, pay_hours=None, flat_pay=None, note=None, by=None,
 def _rate(restaurant_id, name, role):
     try:
         import labor
+        from models import get_role_rates
+        import schedule_objective as _obj
         people, roles = labor.person_rate_book(restaurant_id)
-        r = people.get(labor._name_key(name)) or roles.get((role or "").strip().lower())
+        # The forward chain (audit #23 A3-02): the owner's rate for the
+        # person, for the role, their pay in this job, in any job, the
+        # role's typical.
+        r = _obj.forward_rate_of(name, role, get_role_rates(restaurant_id) or {}, 0.0, people, roles)
         return float(r) if r else float(labor.get_hourly_rate(restaurant_id))
     except Exception:
         return None
