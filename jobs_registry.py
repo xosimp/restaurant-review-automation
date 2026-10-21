@@ -129,9 +129,20 @@ JOBS = {
         target=("scheduler", "run_restore_drill"), max_minutes=60, queue="maintenance"),
     "pos_sync": dict(
         cadence="3am CT nightly (POS lane)", sla_minutes=_D, sends=False, runnable=True,
-        label="POS sync", description="Pull yesterday's sales and labor from every connected POS whose own clock has "
-                                     "reached 3am (the rest at their own hour, by the POS retry pass), then inventory systems",
+        label="POS sync", description="Queue one sync row per connected store (job_queue kind pos_sync), due at the "
+                                     "store's own 3-5am, run by the queue worker: yesterday's sales and labor; then "
+                                     "inventory systems",
         target=("scheduler", "run_toast_sync"), max_minutes=75, retry=True, lane="pos"),
+    # The RPOWER budget's nightly backpressure check (RPOWER audit #23 A4-12
+    # / A5-01): demand against the nightly window's budget, bulk shed and
+    # live labor stretched when the night does not fit (pos_capacity).
+    "pos_budget_check": dict(
+        cadence="2am CT nightly", sla_minutes=_D, sends=False, runnable=True,
+        label="RPOWER budget check",
+        description="Tonight's RPOWER demand (stores x requests a store-night) against the nightly window's budget: "
+                    "over it, onboarding waits for 7am and live labor reads less often outside decision windows; "
+                    "close and the nightly archive are never shed",
+        target=("pos_capacity", "budget_check"), max_minutes=5, retry=True),
     # The Labor read written ahead of the morning open (AI cost audit 10/7/26
     # #100), for restaurants whose owner opened it in the last week.
     "labor_prewarm": dict(

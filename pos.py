@@ -475,6 +475,122 @@ def sync_all(stats=None):
     return [by_rid[rid] for rid in order if rid in by_rid]
 
 
+# ── the nightly sync as queue rows (RPOWER audit #23 A5-02, F5) ────────────
+#
+# sync_all above is one sweep in the scheduler process: four threads and a
+# 45-minute bound, 18-64 s a store. It reached 170-600 stores a night, and
+# the stores it did not reach were not retried (only failures are). The
+# nightly job now queues ONE `pos_sync` row per store (the pos_io group, like
+# the archive), due at the store's own POS_SYNC_LOCAL_HOUR plus a fixed
+# offset inside POS_SYNC_SPREAD_MINUTES (a region's stores do not all start
+# in one minute), with a deadline. The queue worker runs them, as many at
+# once as the pos_io group's budget-sized slots allow, and a row that never
+# started is a recorded missed run (strategy_jobs.on_pos_row_expired).
+# POS_SYNC_QUEUE=0 runs the old sweep (sync_all) instead: the rollback.
+POS_SYNC_SPREAD_MINUTES = max(0, int(__import__("os").getenv("POS_SYNC_SPREAD_MINUTES", "120") or 0))
+POS_SYNC_QUEUE = (__import__("os").getenv("POS_SYNC_QUEUE", "1") or "1").strip().lower() not in (
+    "0", "false", "off", "no")
+
+
+def _sync_slot(restaurant, now=None):
+    """(night, not_before epoch) for the store's nightly sync row: its next
+    POS_SYNC_LOCAL_HOUR (this morning's while its clock is before noon,
+    tomorrow's while it is still the afternoon or evening there), plus its
+    fixed offset (from its id) inside POS_SYNC_SPREAD_MINUTES. `night` is
+    the business date that morning closes. `now` is the store's naive local
+    time (a test's)."""
+    from datetime import datetime as _dt, timedelta as _td
+    from time_utils import restaurant_now, restaurant_tz
+    local = restaurant_now(restaurant, naive=True) if now is None else now
+    day = local.date() if local.hour < 12 else local.date() + _td(days=1)
+    offset = (int(restaurant.id) * 37) % POS_SYNC_SPREAD_MINUTES if POS_SYNC_SPREAD_MINUTES else 0
+    target = _dt.combine(day, _dt.min.time()).replace(hour=POS_SYNC_LOCAL_HOUR) + _td(minutes=offset)
+    aware = target.replace(tzinfo=restaurant_tz(restaurant))
+    return (day - _td(days=1)).isoformat(), aware.timestamp()
+
+
+def queue_nightly_syncs(stats=None, now=None):
+    """The nightly `pos_sync` job (A5-02): one `pos_sync` queue row per
+    restaurant in service with a POS connected, keyed on the store and the
+    night (a pass run twice queues nothing new), due at its own local hour
+    (_sync_slot). Fills `stats` with the standard counts: `attempted`/`ok`
+    the rows queued now, `skipped` the stores with no POS (and rows already
+    queued). Returns the number queued."""
+    import job_queue
+    import strategy_jobs
+    from models import get_all_restaurants, in_service
+    items, skipped = [], 0
+    for r in get_all_restaurants():
+        if not in_service(r):
+            continue
+        _name, mod = connected_provider(r.id)
+        if not mod:
+            skipped += 1
+            continue
+        try:
+            night, nb = _sync_slot(r, now)
+        except Exception as e:
+            log.warning(f"POS sync slot unreadable for {r.id} ({e}); due now")
+            from datetime import date as _date, timedelta as _td
+            night, nb = (_date.today() - _td(days=1)).isoformat(), 0
+        items.append({"payload": {"restaurant_id": r.id, "night": night}, "restaurant_id": r.id,
+                      "not_before": nb, "deadline": strategy_jobs._bulk_deadline(nb),
+                      "idempotency_key": f"pos_sync:{r.id}:{night}"})
+    created = job_queue.enqueue_many("pos_sync", items, wake=False) if items else 0
+    # The 3am pass no longer leaves stores for the hourly pass (each row
+    # waits for its own hour): an old list would sync them twice.
+    _remember_deferred([])
+    counts = {"attempted": created, "ok": created, "failed": 0, "skipped": skipped + (len(items) - created),
+              "hit_bound": False, "queued": created}
+    if isinstance(stats, dict):
+        stats.update(counts)
+    return created
+
+
+def run_queued_sync(restaurant_id, night=None) -> dict:
+    """One store's nightly sync from its queue row (strategy_jobs.
+    run_queued_pos_sync): pos.sync_restaurant, its failure captured and noted
+    for the owner as the sweep did. Never raises on a failed sync: the Data
+    Health ledger has it and the hourly POS retry pass retries it (+1h, +3h,
+    +6h), so the row is not tried a second time on top."""
+    import ops
+    from models import get_restaurant, in_service
+    r = get_restaurant(restaurant_id)
+    if r is None or not in_service(r):
+        return {"skipped": "not in service"}
+    name, mod = connected_provider(restaurant_id)
+    if not mod:
+        return {"skipped": "no POS connected"}
+    began = time.monotonic()
+    result = sync_restaurant(restaurant_id) or {}
+    took = int((time.monotonic() - began) * 1000)
+    if result.get("ok"):
+        log.info(f"POS sync OK [{name}] {r.name} — {result.get('rows', '?')} rows")
+    else:
+        log.warning(f"POS sync failed [{name}] {r.name}: {result.get('error')}")
+        ops.capture(Exception(result.get("error", "unknown")),
+                    job="pos_sync", context=f"restaurant_id={restaurant_id} {name} {r.name}")
+    try:
+        note_sync_failure(restaurant_id)
+    except Exception as e:
+        log.warning(f"POS sync-failure note skipped for {restaurant_id}: {e}")
+    return {"ok": bool(result.get("ok")), "provider": name, "night": night, "store_ms": took,
+            "error": None if result.get("ok") else str(result.get("error") or "")[:300]}
+
+
+def open_sync_rows(due_by, db_path=None) -> int:
+    """`pos_sync` rows due by `due_by` (epoch) still queued or running:
+    what the jobs that read the night's sync wait on (scheduler)."""
+    from models import get_conn
+    conn = get_conn(db_path) if db_path else get_conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM jobs WHERE kind='pos_sync' AND state IN ('queued', 'running') "
+                           "AND not_before <= ?", (float(due_by),)).fetchone()
+        return int(row[0] or 0)
+    finally:
+        conn.close()
+
+
 # The nightly sync runs at each store's own POS_SYNC_LOCAL_HOUR, not at 3am
 # Chicago for every store (blind re-audit 10/20/26 R3-12): a store west of
 # Chicago was synced while its night still traded, and every job of the 3am

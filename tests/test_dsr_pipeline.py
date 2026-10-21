@@ -187,7 +187,9 @@ def test_a_closed_weekday_has_no_report(db, world):
     assert store.get_report(r.id, DAY, db_path=db) is None
 
 
-def test_the_pos_close_is_polled_every_ten_minutes(db, world):
+def test_the_pos_close_is_polled_on_widening_steps(db, world):
+    # RPOWER audit #23 A5-04: 10, then 20, then 30 minutes apart (it was a
+    # flat 10: 15-19 polls a store-night) — pos_closed.POLL_STEPS_MINUTES.
     r = _restaurant(db)
     world["closed"] = False
     out = _run(r, U(4, 5), db)
@@ -195,10 +197,10 @@ def test_the_pos_close_is_polled_every_ten_minutes(db, world):
     rep = store.get_report(r.id, DAY, db_path=db)
     assert rep["status"] == "awaiting_close" and rep["attempts"] == 0 and rep["facts"]["blocks"] == {}
     assert _run(r, U(4, 10), db)["action"] == "waiting"
-    assert _run(r, U(4, 15), db)["next_attempt_at"] == "2026-09-23 04:25:00"
+    assert _run(r, U(4, 15), db)["next_attempt_at"] == "2026-09-23 04:35:00"
     world["closed"] = True
     _labor_in(db, r.id)
-    assert _run(r, U(4, 25), db)["action"] == "final"
+    assert _run(r, U(4, 35), db)["action"] == "final"
     assert store.get_report(r.id, DAY, db_path=db)["stages"]["closed_by"] == "pos"
 
 

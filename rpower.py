@@ -498,23 +498,59 @@ def _mark_live(key):
     """Note, for every process, that live or close requests are being made
     on bucket `key` (its ":live" row; written at most every
     _LIVE_MARK_EVERY seconds by a process). Never raises."""
+    _mark_lane(key, "live")
+
+
+def _mark_lane(key, mark):
+    """Note, for every process, that requests of `mark` ("live" for the
+    priority lanes, "nightly") are being made on bucket `key` (its
+    ":<mark>" row). Never raises."""
+    key_m = key if mark == "live" else f"{key}|{mark}"
     now = time.monotonic()
-    if now - _live_marked.get(key, -1e9) < _LIVE_MARK_EVERY:
+    if now - _live_marked.get(key_m, -1e9) < _LIVE_MARK_EVERY:
         return
-    _live_marked[key] = now
-    _live_seen[key] = (now, True)
+    _live_marked[key_m] = now
+    _live_seen[key_m] = (now, True)
     import models
     try:
         conn = models.get_conn()
         try:
             conn.execute("INSERT INTO rpower_rate_bucket (bucket, tokens, updated_at) VALUES (?, 0, ?) "
                          "ON CONFLICT(bucket) DO UPDATE SET updated_at=excluded.updated_at",
-                         (key + ":live", time.time()))
+                         (f"{key}:{mark}", time.time()))
             conn.commit()
         finally:
             conn.close()
     except Exception:
         pass
+
+
+def _lane_active(key, mark) -> bool:
+    """Whether `mark` requests were made on bucket `key` in the last
+    LIVE_ACTIVE_SECONDS (any process); "live" is _live_active."""
+    if mark == "live":
+        return _live_active(key)
+    key_m = f"{key}|{mark}"
+    now = time.monotonic()
+    seen = _live_seen.get(key_m)
+    if seen and now - seen[0] < _LIVE_READ_EVERY:
+        return seen[1]
+    active = False
+    import models
+    try:
+        conn = models.get_conn()
+        try:
+            row = conn.execute("SELECT updated_at FROM rpower_rate_bucket WHERE bucket=?",
+                               (f"{key}:{mark}",)).fetchone()
+        finally:
+            conn.close()
+        active = bool(row) and time.time() - float(row[0]) < LIVE_ACTIVE_SECONDS
+    except Exception:
+        active = False
+    if len(_live_seen) > 4096:
+        _live_seen.clear()
+    _live_seen[key_m] = (now, active)
+    return active
 
 
 def _live_active(key) -> bool:
@@ -543,14 +579,37 @@ def _live_active(key) -> bool:
     return active
 
 
+def _lane_cap(key, lane):
+    """The fraction of bucket `key`'s rate a `lane` request's own sub-bucket
+    runs at, or None for no cap (RPOWER audit #23 A4-12 / A5-01, F5): the
+    lane shares by time of day and their borrowing are pos_capacity's
+    policy (live and close never capped; nightly held to its share while
+    live/close requests are being made on the bucket; bulk while any lane
+    above it is, and always while shed). RPOWER_BACKGROUND_SHARE is the
+    fallback when the policy cannot be read."""
+    import pos_io
+    if lane not in pos_io.BACKGROUND_LANES:
+        return None
+    priority = _live_active(key)
+    try:
+        import pos_capacity
+        nightly = lane == "bulk" and _lane_active(key, "nightly")
+        return pos_capacity.background_share(lane, priority_active=priority, nightly_active=nightly)
+    except Exception:
+        return BACKGROUND_SHARE if (lane == "bulk" or priority) else None
+
+
 def _take_slot(token, key, spacing, limit, lane, deadline):
     """One slot of bucket `key` for a request of `lane` (see Lanes above)."""
     import pos_io
-    if lane == "bulk" or (lane in pos_io.BACKGROUND_LANES and _live_active(key)):
-        _wait_for_bucket(token, key + ":bg", spacing / BACKGROUND_SHARE, limit, lane=lane, deadline=deadline)
+    cap = _lane_cap(key, lane)
+    if cap:
+        _wait_for_bucket(token, f"{key}:bg:{lane}", spacing / cap, limit, lane=lane, deadline=deadline)
     _wait_for_bucket(token, key, spacing, limit, lane=lane, deadline=deadline)
     if lane not in pos_io.BACKGROUND_LANES:
         _mark_live(key)
+    elif lane == "nightly":
+        _mark_lane(key, "nightly")
 
 
 def _sleep_for_spacing(token: str = ""):
@@ -570,6 +629,13 @@ def _sleep_for_spacing(token: str = ""):
     # per-token limit (spacing 0) never switches the fleet-wide one off.
     if FLEET_RPS and FLEET_RPS > 0:
         _take_slot(token, FLEET_BUCKET, 1.0 / float(FLEET_RPS), limit, lane, deadline)
+    # The lane ledger the console's budget utilisation % is read from
+    # (pos_capacity.utilisation, A5-01 F5): one in-memory count per request.
+    try:
+        import pos_capacity
+        pos_capacity.note_lane(lane)
+    except Exception:
+        pass
 
 
 def _backoff(attempt: int) -> float:
@@ -2112,8 +2178,12 @@ def fetch_sales_today(restaurant_id: int, business_date) -> float:
     agree. Raises when nothing has posted yet: "no sales yet" and "RPOWER
     has not answered" are not the same as $0 (pos.fetch_sales_today)."""
     day = _d(business_date)
-    # An open day by definition: straight from RPOWER, no archive question.
-    value = (_business_days(restaurant_id, business_date, business_date, use_archive=False) or {}).get(day)
+    # An open day by definition: straight from RPOWER, no archive question —
+    # read incrementally since the last read (live_sales: the day's line set
+    # kept per store, the change feed merged in, the whole day re-read
+    # hourly; RPOWER audit #23 A1-01 / A5-06).
+    import live_sales
+    value = live_sales.fetch_today(restaurant_id, business_date)["net"]
     if value is None:
         raise RPowerNoSalesYet(f"RPOWER has no sales posted for {day} yet")
     return float(value)
@@ -3424,7 +3494,12 @@ def day_closed_cached(restaurant_id: int, business_date) -> bool:
     hit = _closed_cache.get(key)
     if hit and (hit[1] or time.monotonic() - hit[0] < CLOSED_CACHE_SECONDS):
         return hit[1]
-    closed = bool(fetch_day_closed(restaurant_id, business_date))
+    # Through the one shared row every process and the DSR read (pos_closed;
+    # RPOWER audit #23 A1-24): a closed answer is never asked again anywhere.
+    import pos_closed
+    closed = pos_closed.day_closed(restaurant_id, _d(business_date),
+                                   lambda: bool(fetch_day_closed(restaurant_id, business_date)),
+                                   fresh_seconds=CLOSED_CACHE_SECONDS)
     _closed_cache[key] = (time.monotonic(), closed)
     return closed
 
