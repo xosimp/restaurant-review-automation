@@ -1141,6 +1141,48 @@ def backfill_item_sales(restaurant_id: int, days: int = 60, max_days: int = BACK
     return {"days": len(per_day), "rows": rows, "remaining": len(missing) - len(todo), "failed": failed}
 
 
+def refresh_item_sales_day(restaurant_id: int, business_date) -> dict:
+    """One business date's units per dish read again and REPLACED — sold and
+    made (A2-12), the date's rows for dishes no longer sold removed (A2-17) —
+    for a night the POS restated after the nightly depletion ran
+    (pos_rederive, Audit #23 A2-07: menu_item_sales was never re-read past
+    the depletion overlap). Units only: never ingredient depletion, which
+    replaying an old day would re-deplete against a count already taken.
+    Only active, discovered dishes (as the nightly job). {rows, removed}."""
+    import pos as _pos
+    from models import db_conn
+    day = business_date if hasattr(business_date, "isoformat") else date.fromisoformat(str(business_date)[:10])
+    sels, _ = _pos.fetch_order_selections(restaurant_id, day)
+    qty = {}
+    for sel in sels:
+        g = (sel.get("item") or {}).get("guid")
+        if not g:
+            continue
+        made = float(sel.get("quantity", 0) or 0)
+        sold = sel.get("sold")
+        m0, s0 = qty.get(g, (0.0, 0.0))
+        qty[g] = (m0 + made, s0 + float(made if sold is None else (sold or 0)))
+    iso = day.isoformat()
+    with db_conn() as conn:
+        ids = {r["toast_guid"]: r["id"] for r in conn.execute(
+            "SELECT id, toast_guid FROM menu_items WHERE restaurant_id=? AND is_active=1 AND toast_guid IS NOT NULL",
+            (restaurant_id,)).fetchall()}
+        want = [(restaurant_id, ids[g], iso, round(q[1], 4), q[0]) for g, q in qty.items()
+                if ids.get(g) is not None and q[0] > 0]
+        removed = 0
+        if want:
+            conn.executemany(
+                "INSERT INTO menu_item_sales (restaurant_id, menu_item_id, business_date, qty_sold, qty_made) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(restaurant_id, menu_item_id, business_date) "
+                "DO UPDATE SET qty_sold=excluded.qty_sold, qty_made=excluded.qty_made", want)
+            keep = sorted({w[1] for w in want})
+            removed = conn.execute(
+                f"DELETE FROM menu_item_sales WHERE restaurant_id=? AND business_date=? "
+                f"AND menu_item_id NOT IN ({','.join('?' for _ in keep)})", (restaurant_id, iso, *keep)).rowcount
+        conn.commit()
+    return {"rows": len(want), "removed": int(removed or 0)}
+
+
 def import_csv_to_ingredients(restaurant_id: int) -> dict:
     """One-time admin migration: parses client_data.inventory_csv via the
     existing load_inventory(), upserts one ingredients row per item keyed

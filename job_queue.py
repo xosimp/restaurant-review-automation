@@ -184,6 +184,10 @@ KINDS = {
     # R6-F4/F5): a cold open queues it interactive, a stale row's age refresh
     # and the precompute bulk.
     "home_snapshot": ("home", "bulk", 2),
+    # A restated POS night (or one a record moved away from) derived again
+    # from the archive: its bar night, labor day, item sales and nightly
+    # report (pos_rederive; Audit #23 A2-07). No POS call; bulk's slots.
+    "pos_rederive": ("bulk", "scheduled", 3),
 }
 
 # kind -> "module:function": what runs a claimed row (reached by name).
@@ -204,6 +208,7 @@ HANDLERS = {
     "scheduled_job": "scheduler:run_queued_scheduled_job",
     "studio_compute": "studio_offload:run_queued",
     "home_snapshot": "home_snapshots:run_queued",
+    "pos_rederive": "pos_rederive:run_queued",
 }
 # kind -> "module:function" told when a queued row expires unstarted (its
 # deadline passed): what it held is handed back.

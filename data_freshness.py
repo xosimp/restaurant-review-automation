@@ -598,6 +598,30 @@ def sales_consistency(restaurant_id, days=SALES_CONSISTENCY_DAYS, db_path=None, 
     return out
 
 
+def report_sales_mismatches(restaurant_id, mismatches) -> int:
+    """Raise each night the nightly report and the POS archive disagree on
+    ONCE per night and pair of figures (ops kind data_quality; Audit #23
+    A6-05): every successful pull re-ran sales_consistency and captured the
+    same finding again, so one late void became ~14 nights x (1 + retries)
+    rows feeding the job-failure count. A night whose figures move again is
+    a new finding. Returns the findings raised. Never raises."""
+    raised = 0
+    try:
+        import ops
+        for m in mismatches or ():
+            sig = f"{float(m['dsr']):.2f}|{float(m['pos']):.2f}"
+            if not ops.claim_period(f"dsr_pos:{restaurant_id}:{m['date']}", sig):
+                continue
+            ops.capture(RuntimeError(f"Daily report net ${float(m['dsr']):,.2f} vs POS ${float(m['pos']):,.2f} "
+                                     f"on {m['date']} ({len(mismatches)} night(s) apart)"),
+                        job="dsr_pos_consistency", context=f"restaurant_id={restaurant_id} date={m['date']}",
+                        restaurant_id=restaurant_id, kind="data_quality")
+            raised += 1
+    except Exception:
+        pass
+    return raised
+
+
 # Missing sales days are penalised ONCE (re-audit B3#10): in Evidence
 # Strength — the evidence input's coverage (days with sales ÷ shift days)
 # and its `days_missing_sales` partial flag (labor.diagnosis_evidence_input,

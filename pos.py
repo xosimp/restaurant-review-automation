@@ -328,11 +328,7 @@ def _recheck_sales_consistency(restaurant_id):
         import data_freshness
         chk = data_freshness.sales_consistency(restaurant_id)
         if chk.get("mismatches"):
-            import ops
-            m = chk["mismatches"][0]
-            ops.capture(RuntimeError(f"Daily report net ${m['dsr']:,.2f} vs POS ${m['pos']:,.2f} on {m['date']} "
-                                     f"({len(chk['mismatches'])} night(s) apart)"),
-                        job="dsr_pos_consistency", context=f"restaurant_id={restaurant_id}")
+            data_freshness.report_sales_mismatches(restaurant_id, chk["mismatches"])
             _reopen_moved_nights(restaurant_id, chk["mismatches"])
     except Exception as e:
         log.warning(f"sales consistency re-check skipped for {restaurant_id}: {e}")

@@ -642,6 +642,13 @@ def _archive_day(restaurant_id, day, iso, name, mod, db_path) -> dict:
         derive_nights(restaurant_id, [iso], db_path=db_path, provider=name)
     except Exception as e:                           # the archive stands; the Bar estimates the night
         log.warning("pos_archive: bar night %s not derived for %s: %s", iso, restaurant_id, e)
+    if restated or moved:
+        # Every figure derived from a restated night — and from a night a
+        # record moved away from — is derived again, once, off this path
+        # (pos_rederive; Audit #23 A2-07).
+        import pos_rederive
+        pos_rederive.enqueue(restaurant_id, name, ([iso] if restated else []) + sorted(moved),
+                             stamp=rows.get("max_stamp"))
     return {"date": iso, "tickets": len(rows["tickets"]), "lines": len(rows["lines"]),
             "punches": len(rows["punches"]), "net_sales": net, "restated": restated,
             "links_ok": links_ok, "recon_gap": gap, "unknown_sales": unknown}
