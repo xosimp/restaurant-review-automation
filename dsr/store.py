@@ -335,9 +335,10 @@ def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
 # block was collected, how the day was known closed, the narrative's outcome,
 # failure and crash counts, the version this one completes.
 # `restated`: a block a later sync restated in place ({block: {at, was}};
-# dsr.block_labor.restate, audit #23 A3-05).
+# dsr.block_labor.restate, audit #23 A3-05). `delivery`: a no-sales version's
+# email held for the hold hour (dsr.pipeline._conclude, 10/22/26).
 NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun", "narrative_batch",
-             "restated")
+             "restated", "delivery")
 
 
 def note(report_id, key, value, db_path=DB_PATH):

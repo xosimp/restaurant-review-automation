@@ -105,7 +105,16 @@ CLOSE_GRACE_MINUTES = 30           # a POS with no closeday record: closed this 
 DEFAULT_CLOSE = (23, 0)            # a restaurant that has set no hours at all
 DEFAULT_DEADLINE_HOUR = 4
 MIN_DEADLINE_AFTER_CLOSE_HOURS = 2 # a 3am close still gets two hours before the provisional deadline
-LATE_DATA_MINUTES = 60             # how often a provisional night is re-checked
+LATE_DATA_MINUTES = 15             # how often a provisional night is re-checked (10/22/26: was 60)
+# The deadline with no Close Day record on the POS (10/22/26 — Simple EJ's
+# Tue 10/20 went out with no sales): the night is built from the checks the
+# POS already holds, once they have stopped changing (pos_archive.
+# night_settled), and says so ("pos_checks"). Only a POS with NO checks for
+# the night goes out provisional — and its email waits until
+# NO_SALES_HOLD_HOUR local while the late check keeps looking.
+CLOSED_BY_CHECKS = "pos_checks"
+CLOSED_HOW = ("pos", "close_time", "manual", CLOSED_BY_CHECKS)
+NO_SALES_HOLD_HOUR = int(os.getenv("DSR_NO_SALES_HOLD_HOUR", "9"))
 LATE_DATA_HOURS = 48               # and for how long after its deadline
 STALE_RUN_MINUTES = 45             # a claim held this long with no progress is a dead run
 SWEEP_MAX_SECONDS = 20 * 60
@@ -676,7 +685,7 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
         # facts it was asked about — and the version goes on from writing.
         ctx.blocks = dict(facts.get("blocks") or {})
         closed = stages.get("closed_by")
-        ctx.day_closed = closed if closed in ("pos", "close_time", "manual") else False
+        ctx.day_closed = closed if closed in CLOSED_HOW else False
         awaiting = [n for n in dsr.BLOCKS if (ctx.blocks.get(n) or {}).get("status") == dsr.AWAITING]
         waiting = _write_stage(restaurant, report, ctx, trigger, now_utc, db)
         if waiting is not None:
@@ -705,9 +714,14 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
                       min(nxt, to_utc(restaurant, deadline_at(restaurant, day))))
             store.schedule_retry(report_id, nxt, db_path=db, count=False)
             return _result("awaiting_close", store.get_report_by_id(report_id, db_path=db), next_attempt_at=_stamp(nxt))
-        store.note(report_id, "closed_by", how or "deadline", db_path=db)
-        ctx.day_closed = how or False
-        closed_by = how or "deadline"
+        if how is None:
+            # Past the deadline and the POS never recorded its Close Day:
+            # the night is read from the checks it holds (the sales block
+            # still waits for them to settle, and for there being any).
+            how = CLOSED_BY_CHECKS
+        store.note(report_id, "closed_by", how, db_path=db)
+        ctx.day_closed = how
+        closed_by = how
     else:
         closed_by = stages.get("closed_by")
 
@@ -721,7 +735,7 @@ def _advance(restaurant, report, trigger, now_utc, db, probed=None, carried=None
     if ctx.day_closed is None and "sales" in todo and not (probed and "sales" in probed) \
             and not (carried and "sales" in carried):
         # A resumed night: re-read the close only when sales still needs it.
-        ctx.day_closed = closed_by if closed_by in ("pos", "close_time", "manual") else (
+        ctx.day_closed = closed_by if closed_by in CLOSED_HOW else (
             day_closed(restaurant, day, now_utc, trigger) or False)
     ctx.blocks = dict(blocks)
     crashes = dict(stages.get("crashes") or {})
@@ -787,7 +801,14 @@ def _conclude(restaurant, report_id, day, awaiting, now_utc, db):
     store.set_stage(report_id, terminal, db_path=db)
     nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES) if required_missing else None
     store.schedule_retry(report_id, nxt, db_path=db, count=False)
-    _deliver(restaurant, report_id, now_utc, db)
+    if "sales" in required_missing and local_time(restaurant, now_utc).hour < NO_SALES_HOLD_HOUR \
+            and local_time(restaurant, now_utc).date() > day:
+        # A report with no sales is not sent at the deadline: the late check
+        # (every LATE_DATA_MINUTES) sends the night once its sales are in,
+        # or this version at NO_SALES_HOLD_HOUR if they never come.
+        store.note(report_id, "delivery", "held_no_sales", db_path=db)
+    else:
+        _deliver(restaurant, report_id, now_utc, db)
     _remember(restaurant, day, db)
     return _result(terminal, store.get_report_by_id(report_id, db_path=db), awaiting=awaiting,
                    required_missing=required_missing)
@@ -1175,6 +1196,19 @@ def _can_write(facts):
         return True, None            # write() itself decides, and never raises
 
 
+def _release_held(restaurant, report, now_utc, db, force=False):
+    """A no-sales version whose email was held at the deadline (_conclude):
+    sent once it is NO_SALES_HOLD_HOUR local and the sales still have not
+    come (dsr.deliver claims each notice once, so a second call sends
+    nothing twice)."""
+    if (report.get("stages") or {}).get("delivery") != "held_no_sales":
+        return
+    if not force and local_time(restaurant, now_utc).hour < NO_SALES_HOLD_HOUR:
+        return
+    store.note(report["id"], "delivery", "released", db_path=db)
+    _deliver(restaurant, report["id"], now_utc, db)
+
+
 def _upgrade(restaurant, previous, trigger, now_utc, db):
     """A provisional night's late-data check. A night is provisional only
     because a REQUIRED block (sales) was missing at the deadline, so only
@@ -1195,8 +1229,10 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
     ctx.blocks = dict(blocks)
     closed_by = None
     if "sales" in awaiting:
-        closed_by = day_closed(restaurant, day, now_utc, trigger)
-        ctx.day_closed = closed_by or False
+        # Past the deadline by definition here: with still no Close Day
+        # record, the checks the POS holds are the night (10/22/26).
+        closed_by = day_closed(restaurant, day, now_utc, trigger) or CLOSED_BY_CHECKS
+        ctx.day_closed = closed_by
     recheck = awaiting + [n for n in NEVER_HOLDS if n not in awaiting
                           and (blocks.get(n) or {}).get("status") != dsr.READY]
     if "sales" in required and "labor" not in recheck and (blocks.get("labor") or {}).get("status") == dsr.READY:
@@ -1212,7 +1248,7 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
             ctx.blocks[name] = probed[name]
     if not all(probed[n]["status"] == dsr.READY for n in required):
         sales = probed.get("sales") or {}
-        if expired and (sales.get("detail") or {}).get("waiting_for") == "tickets":
+        if expired and closed_by != CLOSED_BY_CHECKS and (sales.get("detail") or {}).get("waiting_for") == "tickets":
             # The POS closed the day and, 48 hours on, still holds no ticket
             # for it (D1-20): the night had no sales. It goes FINAL saying
             # so — the figures stay unmeasured (None), never $0.
@@ -1221,9 +1257,11 @@ def _upgrade(restaurant, previous, trigger, now_utc, db):
                                         reason=f"No sales recorded for {mdy(day)}",
                                         detail={"no_sales": True, "closed_by": closed_by})
         elif expired:
+            _release_held(restaurant, previous, now_utc, db, force=True)
             store.schedule_retry(previous["id"], None, db_path=db, count=False)
             return _result("expired", previous)
         else:
+            _release_held(restaurant, previous, now_utc, db)
             nxt = now_utc + timedelta(minutes=LATE_DATA_MINUTES)
             store.schedule_retry(previous["id"], nxt, db_path=db, count=False)
             return _result("still_awaiting", previous, next_attempt_at=_stamp(nxt))
