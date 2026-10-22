@@ -165,9 +165,12 @@
 
 /* ── responsive & motion ──────────────────────────────────────────────────── */
 @media (max-width:640px){
-  .cbtn:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon){min-height:40px}
-  .cbtn-sm:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon){min-height:36px}
-  .cbtn-row>.cbtn:not(.cbtn-inline):not(.cbtn-icon){flex:1 1 auto}
+  /* The round "i" info button (.cav-ib) keeps its own circle: the 40px
+     minimum stretched it into an oval on phones (10/22/26). Its touch
+     target is widened invisibly in the dashboard's .cav-ib rule instead. */
+  .cbtn:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon):not(.cav-ib){min-height:40px}
+  .cbtn-sm:not(.cbtn-inline):not(.cbtn-close):not(.cbtn-icon):not(.cav-ib){min-height:36px}
+  .cbtn-row>.cbtn:not(.cbtn-inline):not(.cbtn-icon):not(.cav-ib){flex:1 1 auto}
 }
 @media (prefers-reduced-motion:reduce){
   .cbtn,.cbtn:hover,.cbtn:active{transform:none;transition:none}

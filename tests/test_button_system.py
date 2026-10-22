@@ -154,3 +154,19 @@ def test_standalone_pages_use_the_shared_sheet_and_own_no_button_rules(name):
     assert '<link rel="stylesheet" href="/static/css/cavnar-buttons.css">' in t
     assert 'class="cbtn cbtn-primary cbtn-lg cbtn-block"' in t
     assert not re.search(r"\n\s*\.btn[a-z-]*\s*[{:]|\.avail button\s*\{", t), name + " still defines its own button rules"
+
+
+def test_the_round_info_button_keeps_its_circle_on_phones():
+    """The phone-width 40px minimum height stretched the round "i" info
+    button (.cav-ib) into an oval wherever no stronger rule sized it (the
+    daily report's "priorities" heading, 10/22/26)."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parents[1]
+    css = (root / "static" / "css" / "cavnar-buttons.css").read_text()
+    phone = css[css.index("@media (max-width:640px)"):]
+    phone = phone[:phone.index("}\n") + 1]
+    for rule in re.findall(r"[^{}]*\{min-height:[^}]*\}", phone):
+        assert ":not(.cav-ib)" in rule, rule
+    html = (root / "templates" / "dashboard.html").read_text()
+    assert html.count(".cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;flex:none;aspect-ratio:1/1;") == 2

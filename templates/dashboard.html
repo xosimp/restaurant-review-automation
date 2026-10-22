@@ -4059,9 +4059,10 @@ body.dn-open #ai-strip,body.dn-open #ai-feed{display:none!important}
    (text reduction round, 10/17/26). Identical rules; either may go once the
    other is global. */
 .cav-it{position:relative;display:inline-flex;vertical-align:middle;margin-left:12px}
-.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
+.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;flex:none;aspect-ratio:1/1;box-sizing:border-box;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
 .cbtn.cav-ib:hover,.cbtn.cav-ib[aria-expanded="true"]{color:var(--ink);border-color:var(--ember2);background:color-mix(in srgb,var(--ember) 10%,transparent)}
 .cbtn.cav-ib:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
+.cbtn.cav-ib{position:relative}.cbtn.cav-ib::after{content:'';position:absolute;inset:-9px;border-radius:50%}
 .cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;word-spacing:normal;text-wrap:pretty;text-transform:none;white-space:normal;text-align:left}
 .cav-itp[hidden]{display:none}
 .cav-itp b{color:var(--ink);font-weight:600}
@@ -8314,7 +8315,7 @@ svg:hover .hb-xh{opacity:1}
   var SOURCE={rpower:'RPower',toast:'Toast',square:'Square',clover:'Clover',cavnar:'Cavnar AI',backoffice:'Back Office',google:'Google',yelp:'Yelp',instagram:'Instagram',facebook:'Facebook',manager:''};
   var MODULE={sales:'ops',labor:'labor',food:'food',reviews:'reviews',marketing:'marketing',intel:'intel',closeout:'ops'};
   var URGENCY={before_service:'Today',this_week:'This week',next_schedule:'Next schedule',next_order:'Next order'};
-  var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand'};
+  var CLOSED={pos:'Closed by the POS',close_time:'Closed at closing time',manual:'Closed by hand',pos_checks:'Built from the POS\u2019s checks \u2014 Close Day wasn\u2019t run by the deadline',deadline:'Sent at the deadline'};
   // A call-out's label sits over a model-written sentence, so it names the
   // kind of figure and never claims money was saved: the old
   // largest_money_saving slot is an opportunity slot (NS3 R13), read under
@@ -14136,9 +14137,10 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* Info tip (10/16/26): an "i" that opens a short explanation on a click — the hover card's surface; one open at a
    time; a click outside or Esc closes it. For a sentence an owner may want, never one they must read first. */
 .cav-it{position:relative;display:inline-flex;vertical-align:middle;margin-left:12px}
-.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
+.cbtn.cav-ib{width:26px;height:26px;min-height:26px;min-width:26px;flex:none;aspect-ratio:1/1;box-sizing:border-box;padding:0;border-radius:50%;border:1px solid color-mix(in srgb,var(--ink) 26%,transparent);background:transparent;box-shadow:none;color:var(--ink2);font:700 13.5px/1 'Space Grotesk',sans-serif;letter-spacing:0;text-transform:none}
 .cbtn.cav-ib:hover,.cbtn.cav-ib[aria-expanded="true"]{color:var(--ink);border-color:var(--ember2);background:color-mix(in srgb,var(--ember) 10%,transparent)}
 .cbtn.cav-ib:focus-visible{outline:2px solid var(--ember2);outline-offset:2px}
+.cbtn.cav-ib{position:relative}.cbtn.cav-ib::after{content:'';position:absolute;inset:-9px;border-radius:50%}
 .cav-itp{position:absolute;left:0;top:calc(100% + 10px);z-index:40;width:340px;max-width:calc(100vw - 40px);padding:14px 16px 15px;border-radius:16px;background:var(--hp-act-bg);box-shadow:0 0 0 1px var(--hp-ring),var(--hp-shadow);color:var(--ink2);font:400 14.5px/1.5 'Apfel Grotezk',sans-serif;letter-spacing:0;word-spacing:normal;text-wrap:pretty;text-transform:none;white-space:normal;text-align:left}
 /* A tip inside a heading takes none of its spacing or balanced lines (10/16/26: the words spread apart). */
 .cav-itp[hidden]{display:none}

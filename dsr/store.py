@@ -334,7 +334,8 @@ def schedule_retry(report_id, next_attempt_at, db_path=DB_PATH, count=True):
 # stages_json keys that are progress notes rather than stages: when each
 # block was collected, how the day was known closed, the narrative's outcome,
 # failure and crash counts, the version this one completes.
-NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun", "narrative_batch")
+NOTE_KEYS = ("blocks", "closed_by", "narrative", "failures", "crashes", "supersedes", "rerun", "narrative_batch",
+             "delivery")
 
 
 def note(report_id, key, value, db_path=DB_PATH):

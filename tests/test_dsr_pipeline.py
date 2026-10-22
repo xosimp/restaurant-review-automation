@@ -77,6 +77,13 @@ def world(db, monkeypatch):
 
     def sales(rid, day):
         state["sales_calls"] += 1
+        # The POS holds the night's checks once it closed the day, or when a
+        # test says it does without a close (`checks`: 10/22/26 — a POS
+        # whose Close Day never ran still has every check).
+        held = state.get("checks")
+        if held is False or (held is None and not state["closed"]):
+            return dict(_sales_day(), gross=0.0, net=0.0, transactions=0, guests=0, by_department={},
+                        by_hour={}), "fakepos"
         return _sales_day(), "fakepos"
     monkeypatch.setattr(pos, "fetch_day_sales", sales)
 
@@ -267,11 +274,13 @@ def test_a_night_whose_sales_are_missing_at_the_deadline_is_provisional(db, worl
     assert out["action"] == "provisional" and out["required_missing"] == ["sales"]
     rep = store.get_report(r.id, DAY, db_path=db)
     assert rep["status"] == "provisional" and rep["provisional"] is True
-    assert rep["stages"]["closed_by"] == "deadline"
-    assert rep["facts"]["missing"] == ["Awaiting the POS close for 9/22/26"]
-    assert rep["narrative"] is None and world["narratives"] == [] and world["sales_calls"] == 0
+    # No Close Day record by the deadline: the night is read from the POS's
+    # checks (10/22/26), and here the POS holds none — so still provisional.
+    assert rep["stages"]["closed_by"] == pipeline.CLOSED_BY_CHECKS
+    assert rep["facts"]["missing"] == ["The POS closed the day but its tickets haven't arrived yet"]
+    assert rep["narrative"] is None and world["narratives"] == [] and world["sales_calls"] == 1
     assert rep["stages"]["narrative"] == {"status": "skipped", "reason": pipeline.NO_SUMMARY_SALES_PENDING}
-    assert rep["next_attempt_at"] == "2026-09-23 10:05:00"
+    assert rep["next_attempt_at"] == "2026-09-23 09:20:00"          # LATE_DATA_MINUTES, 15 since 10/22/26
 
 
 def test_late_sales_make_a_new_version_and_the_old_one_is_never_edited(db, world):
@@ -301,7 +310,9 @@ def test_late_sales_make_a_new_version_and_the_old_one_is_never_edited(db, world
     assert (lab["metrics"]["pct"], lab["detail"]["pct_basis"]) == (22.0, "dsr_net")
     # Blocks that don't read the net are carried with their original times.
     assert new["stages"]["blocks"]["food"] == v1["stages"]["blocks"]["food"]
-    assert world["sales_calls"] == 1 and len(world["narratives"]) == 1
+    # The deadline and the 10:05 check each asked the POS for its checks
+    # (none yet, 10/22/26); the 11:05 check found them.
+    assert world["sales_calls"] == 3 and len(world["narratives"]) == 1
     assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 2000.0)]
     assert [v["version"] for v in store.versions(r.id, DAY, db_path=db)] == [1, 2]
 
@@ -697,8 +708,8 @@ def test_the_sweep_picks_up_retries_and_late_data_when_they_come_due(db, world):
     pipeline.run_sweep(now_utc=U(9, 5), db_path=db)           # deadline, no POS close: provisional
     assert store.get_report(r.id, DAY, db_path=db)["status"] == "provisional"
     world["closed"] = True
-    assert pipeline.run_sweep(now_utc=U(9, 30), db_path=db)["restaurants"] == 0   # not due yet
-    pipeline.run_sweep(now_utc=U(10, 5), db_path=db)
+    assert pipeline.run_sweep(now_utc=U(9, 15), db_path=db)["restaurants"] == 0   # not due yet
+    pipeline.run_sweep(now_utc=U(9, 25), db_path=db)
     assert store.get_report(r.id, DAY, db_path=db)["version"] == 2
 
 
@@ -808,3 +819,68 @@ def test_the_dsr_sweep_is_submitted_to_its_lane_by_the_tick_and_the_pulse(monkey
     for job in ("pos_sync", "loss_sync", "dsr_backfill"):
         assert jobs_registry.JOBS[job]["lane"] == "pos", job
     assert jobs_registry.JOBS["review_fetch"]["lane"] == "fetch"
+
+
+# ── 10/22/26: no report goes out without sales the POS already holds ───────
+# Simple EJ's Tue 10/20/26: RPOWER never recorded the Close Day, the report
+# went out at the deadline "Provisional, sales still syncing" though every
+# check was in the POS, and the hourly late check waited for the same record
+# all day.
+
+def _sent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "_deliver", lambda r, report_id, now_utc, db: calls.append(report_id))
+    return calls
+
+
+def test_a_night_with_checks_but_no_close_day_is_final_at_the_deadline(db, world, monkeypatch):
+    sent = _sent(monkeypatch)
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["closed"], world["checks"] = False, True          # never closed, every check there
+    assert _run(r, U(8, 0), db)["action"] == "awaiting_close"   # before the deadline it still waits
+    out = _run(r, U(9, 5), db)
+    assert out["action"] == "final"
+    rep = store.get_report(r.id, DAY, db_path=db)
+    assert rep["status"] == "final" and rep["stages"]["closed_by"] == pipeline.CLOSED_BY_CHECKS
+    assert rep["facts"]["blocks"]["sales"]["status"] == dsr.READY and rep["facts"]["missing"] == []
+    assert store.metric_series(r.id, "sales.net", DAY, DAY, db_path=db) == [(DAY.isoformat(), 2000.0)]
+    assert sent == [rep["id"]]
+
+
+def test_a_provisional_night_waiting_on_the_close_upgrades_from_the_checks(db, world, monkeypatch):
+    """A night already out provisional for the close (as Tue 10/20 was) is
+    upgraded by the next late check once the POS holds its checks — the
+    close record is not waited for again."""
+    sent = _sent(monkeypatch)
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["closed"], world["checks"] = False, False
+    assert _run(r, U(9, 5), db)["action"] == "provisional"
+    world["checks"] = True                                  # the checks reach the POS's cloud copy
+    out = _run(r, U(9, 25), db)
+    assert out["action"] == "final" and out["version"] == 2
+    new = store.get_report(r.id, DAY, db_path=db)
+    assert new["stages"]["closed_by"] == pipeline.CLOSED_BY_CHECKS and new["facts"]["missing"] == []
+    assert sent == [new["id"]]          # the provisional, sales-less version was never emailed
+
+
+def test_a_report_with_no_sales_is_held_until_the_hold_hour(db, world, monkeypatch):
+    sent = _sent(monkeypatch)
+    r = _restaurant(db)
+    _labor_in(db, r.id)
+    world["closed"], world["checks"] = False, False         # the POS holds nothing (an outage)
+    assert _run(r, U(9, 5), db)["action"] == "provisional"
+    v1 = store.get_report(r.id, DAY, db_path=db)
+    assert sent == [] and v1["stages"]["delivery"] == "held_no_sales"
+    assert _run(r, U(12, 5), db)["action"] == "still_awaiting" and sent == []          # 7:05am local
+    assert _run(r, U(14, 5), db)["action"] == "still_awaiting" and sent == [v1["id"]]  # 9:05am: sent
+    assert store.get_report(r.id, DAY, db_path=db)["stages"]["delivery"] == "released"
+    _run(r, U(14, 25), db)
+    assert sent == [v1["id"]]                                # once
+
+
+def test_the_report_page_names_a_night_built_from_the_checks():
+    import pathlib
+    html = (pathlib.Path(__file__).resolve().parents[1] / "templates" / "dashboard.html").read_text()
+    assert "pos_checks:'Built from the POS" in html
