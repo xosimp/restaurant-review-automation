@@ -3251,6 +3251,27 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 .hb-dna-slot .dn-home:not(.quiet) .dn-chips{flex-wrap:nowrap;overflow:hidden}
 .hb-dna-slot .dn-home .dn-chip{flex:0 0 auto}
 .hb-dna-slot .dn-home .go{gap:10px}
+/* The roomy card (10/22/26): hbDnaFit stretches the card to the greeting
+   column (often ~270px); its contents grow to fill it instead of sitting at
+   the 168px card's size in the middle. */
+.hb-dna-slot.fit .dn-home.roomy{grid-template-columns:112px minmax(0,1fr);gap:28px;padding:24px 30px;align-items:stretch}
+.hb-dna-slot.fit .dn-home.roomy .mini{align-self:center}
+.hb-dna-slot.fit .dn-home.roomy .mini .dn-radar{max-width:112px}
+.hb-dna-slot.fit .dn-home.roomy>div:nth-child(2){display:flex;flex-direction:column;min-width:0;padding-top:2px}
+.hb-dna-slot.fit .dn-home.roomy h3{font-size:20px;line-height:1.3;margin:8px 0 12px;-webkit-line-clamp:3}
+.hb-dna-slot.fit .dn-home.roomy .dn-chips{margin-top:auto;margin-right:150px}
+.hb-dna-slot.fit .dn-home.roomy:not(.tall) .dn-lg{display:none}
+.hb-dna-slot.fit .dn-home.roomy .dn-chip{height:30px;font-size:13px;padding:0 12px}
+.hb-dna-slot.fit .dn-home.roomy .go{position:absolute;right:30px;bottom:20px;flex-direction:row;align-items:center;gap:12px}
+.hb-dna-slot.fit .dn-home.roomy .go .dn-ring{width:52px;height:52px}
+.hb-dna-slot.fit .dn-home.roomy .go .cbtn{font-size:13px;min-height:34px;padding:0 14px}
+/* Taller still (a long greeting column): the radar, the read and the ring grow. */
+.hb-dna-slot.fit .dn-home.roomy.tall{grid-template-columns:136px minmax(0,1fr);padding:30px 34px}
+.hb-dna-slot.fit .dn-home.roomy.tall .mini .dn-radar{max-width:136px}
+.hb-dna-slot.fit .dn-home.roomy.tall h3{font-size:22px;-webkit-line-clamp:4}
+.hb-dna-slot.fit .dn-home.roomy.tall .go{right:34px;bottom:26px}
+.hb-dna-slot.fit .dn-home.roomy.tall .go .dn-ring{width:64px;height:64px}
+.hb-dna-slot.fit .dn-home.roomy.tall .dn-chips{margin-right:236px}
 @media (max-width:1000px){
   #hb-root>.hb-top{grid-template-columns:minmax(0,1fr);grid-template-areas:"lead" "side" "quick"}
   .hb-side .hb-pulse{justify-content:flex-start}
@@ -6276,7 +6297,7 @@ svg:hover .hb-xh{opacity:1}
   function hbDnaFit(){
     var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild,lead=document.querySelector('#hb-root>.hb-top>div:first-child'),qk=document.getElementById('hb-quick');
     if(!card||!lead)return;
-    card.style.height='';slot.classList.remove('fit');
+    card.style.height='';slot.classList.remove('fit');card.classList.remove('roomy','tall');
     if(window.innerWidth<=1000)return;
     var els=lead.querySelectorAll('*'),b=0,i,r;
     for(i=0;i<els.length;i++){if(els[i].children.length||!els[i].offsetHeight)continue;r=els[i].getBoundingClientRect();if(r.bottom>b)b=r.bottom;}
@@ -6284,6 +6305,12 @@ svg:hover .hb-xh{opacity:1}
     slot.classList.add('fit');
     var h=Math.round(b-card.getBoundingClientRect().top);
     if(h>168)card.style.height=h+'px';else slot.classList.remove('fit');
+    // Tall enough to fill (owner, 10/22/26: the 168px card's contents sat
+    // small in the middle of a ~270px card): the roomy layout, its traits
+    // fitted again at their new size.
+    if(h>=190&&!card.classList.contains('quiet'))card.classList.add('roomy');
+    if(h>=260&&!card.classList.contains('quiet'))card.classList.add('tall');
+    if(window.dnaFitChips)window.dnaFitChips(card);
   }
   window.hbDnaFit=hbDnaFit;
   var _hbFitT=null;
@@ -10786,6 +10813,14 @@ svg:hover .hb-xh{opacity:1}
    column it's in via margin-top:auto, so both captions land flush. */
 .rv2-sg{display:flex;flex-direction:column;padding:0 26px 0 0;margin-right:26px;border-right:1px solid var(--hb-line2);min-width:0}
 .rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
+/* At a glance (10/22/26): the three charts above the inbox. */
+.rv2-glance{margin-top:26px}
+.rv2-glance .rv2-sig{margin-top:0;padding:22px 0 24px;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
+@media (max-width:1000px){
+  .rv2-glance .rv2-sig{display:flex;grid-template-columns:none;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:18px 2px 20px;scrollbar-width:none}
+  .rv2-glance .rv2-sig::-webkit-scrollbar{display:none}
+  .rv2-glance .rv2-sg,.rv2-glance .rv2-sg:last-child{flex:0 0 86%;scroll-snap-align:start;margin:0;padding:16px 16px 14px;border:1px solid var(--hb-line2);border-radius:14px}
+}
 /* "Approval Method" wraps to 2 lines next to its 30d/90d/6mo buttons at
    this column width (the day picker eats width the plain-text "Reviews ·
    per week" heading, which has no picker, never has to share) — a taller
@@ -11099,6 +11134,19 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
      that opens Trends at the diagnosis. /api/reviews/why-line; counts and
      stored rows only, no model call. Hidden until it has something. #}
   <div class="rv2-why" id="rv-why" hidden></div>
+  {# At a glance (owner, 10/22/26: "these 3 charts ... make the owner
+     immediately gain knowledge" and Erik never found them at the foot of
+     Trends): reviews a week, approvals and what guests talk about sit at
+     the top, before the inbox. Three across on a wide screen; on a narrow
+     one a swipe row, so the inbox still starts near the top. Same ids, so
+     the loaders (switchTab 'reviews') fill them where they are. #}
+  <section class="rv2-glance" aria-label="Reviews at a glance">
+    <div class="rv2-sig">
+      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
+      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approvals</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap"></span></div></div>
+      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span></span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
+    </div>
+  </section>
   <div id="rv-inbox-header"></div>
   <div id="rv-inbox-reviews" class="rv2-inbox" data-nav="reviews/inbox">
     <div class="hb-sh"><div><div class="k rv2-kicks"><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/inbox">Inbox</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" data-nav-go="reviews/analytics">Analytics</button><span class="sep" aria-hidden="true"></span><button type="button" class="cbtn cbtn-text cbtn-inline rv2-kick-link" onclick="rvKwJump()">Search phrases</button></div><h2>All reviews<small><span class="count-lbl" style="margin-left:0">{{ reviews|length }} review{{ 's' if reviews|length != 1 }}</span></small></h2></div><div style="display:flex;gap:8px"><button class="cbtn cbtn-secondary" onclick="document.getElementById('rr-modal').style.display='flex'">+ Request a review</button><button class="cbtn cbtn-secondary" onclick="exportReviews()">Export CSV</button></div></div>
@@ -11169,7 +11217,7 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
   </section>
 
   <details id="rv-panel-analytics" class="rv2-analytics" data-nav="reviews/analytics" open>
-    <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating, AI read, approvals, topics</span></summary>
+    <summary class="rv2-analytics-sum"><span class="hb-kicker">Trends</span><span>Rating, AI read, how you compare</span></summary>
 
     <section class="rv2-hero" aria-label="Rating trend">
       <div class="hd"><div><div class="hb-kicker">{{ 'Google rating (all time)' if restaurant.gbp_rating else 'Average rating · all reviews' }}</div><div class="big"><span id="rv-hero-n" class="hb-num">{{ _rating }}</span><small>★ {{ 'on Google' if restaurant.gbp_rating else 'across ' ~ rstats.total ~ ' reviews' }}</small></div><div class="delta" id="rv-hero-delta"></div></div><div id="trend-summary" style="font-size:12px;color:var(--ink3)"></div></div>
@@ -11200,11 +11248,6 @@ details.rv2-analytics>summary .hb-kicker,details.hb-results>summary .hb-kicker{f
        reviews should see nothing here rather than a manufactured cause. #}
     <div id="review-diagnosis" hidden></div>
     <section class="hb-card bm-card" data-bm-module="reviews" hidden aria-label="How you compare"></section>
-    <div class="rv2-sig">
-      <div class="rv2-sg"><div class="k"><span>Reviews · per week</span></div><div class="v"><span id="rv-sent-n" class="hb-num">—</span><small>this week</small></div><div id="sentiment-trend-bars" style="color:var(--ink3)"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span><span id="sentiment-trend-labels"></span></div></div>
-      <div class="rv2-sg" id="perf-card"><div class="k"><span>Approvals</span><span class="rv2-days" id="perf-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadResponsePerf(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadResponsePerf(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadResponsePerf(180)">6mo</button></span></div><div class="v"><span id="rv-perf-n" class="hb-num">—</span><small>approved</small></div><div id="perf-body"><div class="hb-load" style="height:86px"><canvas class="hb-orb" data-orb-state="working" width="28" height="28"></canvas></div></div><div class="cap"><span id="rv-perf-cap"></span></div></div>
-      <div class="rv2-sg" id="topic-heatmap-card"><div class="k"><span>What guests talk about</span><span class="rv2-days" id="topic-days-btns"><button class="hm-days-btn" data-days="30" onclick="loadTopicHeatmap(30)">30d</button><button class="hm-days-btn on" data-days="90" onclick="loadTopicHeatmap(90)">90d</button><button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)">6mo</button></span></div><div id="heatmap-grid" class="rv2-topics"><div class="hb-load" style="height:110px"><canvas class="hb-orb" data-orb-state="searching" width="28" height="28"></canvas></div></div><div class="cap"><span></span><span><span style="color:var(--hb-good)">■</span> pos &nbsp; <span style="color:var(--hb-bad)">■</span> neg &nbsp; <span style="color:var(--ink3)">■</span> neu</span></div></div>
-    </div>
   </details>
 </div>
 </div><!-- /panel-reviews -->
@@ -47532,6 +47575,22 @@ function sfw2RuleCheck(chk) {
     else if (!at && OPEN) window.dnaClose({fromPop: true});
   };
   document.addEventListener('visibilitychange', function () { if (!document.hidden && HELIX) HELIX.wake(); });
+  // The hero column's traits fit the card as it is drawn: one line on the
+  // card as drawn — compact or roomy (hbDnaFit, 10/22/26); a trait that
+  // doesn't fit joins the "+N more" count, never clipped.
+  window.dnaFitChips = function (a) {
+    var box = a && a.querySelector('.dn-chips');
+    if (!box || a._dnChips == null) return;
+    box.innerHTML = a._dnChips;
+    var extra = Math.max(0, (a._dnTotal || 0) - box.querySelectorAll('.dn-chip.t').length), ts, mc;
+    var over = function () { return box.scrollWidth > box.clientWidth + 1; };
+    while (over() && (ts = box.querySelectorAll('.dn-chip.t')).length > 1) {
+      ts[ts.length - 1].parentNode.removeChild(ts[ts.length - 1]); extra++;
+      mc = box.querySelector('.dn-chip:not(.t)');
+      if (!mc) { mc = document.createElement('span'); mc.className = 'dn-chip'; box.appendChild(mc); }
+      mc.textContent = '+' + extra + ' more';
+    }
+  };
   // ── Home: the DNA card, under Before service ──
   window.dnaHomeCard = function (el) {
     if (!el) return;
@@ -47545,22 +47604,15 @@ function sfw2RuleCheck(chk) {
       tr.sort(function (a, b) { return (a.tone === 'watch') - (b.tone === 'watch'); });
       // In Home's hero column the card is the size of the forming one (owner, 10/17/26: "same dimensions as
       // EJ's"): two traits on one line, the rest counted; under Before service it keeps four.
-      var NCH = el.classList && el.classList.contains('hb-dna-slot') ? 2 : 4, slot = NCH === 2;
+      var slot = !!(el.classList && el.classList.contains('hb-dna-slot')), NCH = 4;
       for (i = 0; i < tr.length && i < NCH; i++) chips += chip(tr[i]);
       if (tr.length > NCH) chips += '<span class="dn-chip">+' + (tr.length - NCH) + ' more</span>';
       el.innerHTML = '<a class="dn-home dn-fadein" href="/dna" aria-label="Open your Restaurant DNA">'
         + '<div class="mini">' + radar(s.axes || [], 120, true) + '</div>'
         + '<div><div class="hb-kicker">Restaurant DNA</div><h3>' + figs(first) + '</h3><div class="dn-chips">' + chips + '</div></div>'
-        + '<div class="go">' + ring((o.coverage_pct || 0) / 100, slot ? 64 : 76, (o.measured || 0) + '/' + (o.of || 0), 'measured') + '<span class="cbtn cbtn-soft cbtn-sm">Explore your DNA →</span></div></a>';
+        + '<div class="go">' + ring((o.coverage_pct || 0) / 100, slot ? 64 : 76, (o.measured || 0) + '/' + (o.of || 0), 'measured') + '<span class="cbtn cbtn-soft cbtn-sm">Explore<span class="dn-lg"> your DNA</span> →</span></div></a>';
       var a = el.querySelector('.dn-home');
-      // One line of traits in the hero column: a trait that doesn't fit joins the "+N more" count, never clipped.
-      var box = slot && a ? a.querySelector('.dn-chips') : null, extra = Math.max(0, tr.length - NCH), ts, mc;
-      while (box && box.scrollWidth > box.clientWidth + 1 && (ts = box.querySelectorAll('.dn-chip.t')).length > 1) {
-        ts[ts.length - 1].parentNode.removeChild(ts[ts.length - 1]); extra++;
-        mc = box.querySelector('.dn-chip:not(.t)');
-        if (!mc) { mc = document.createElement('span'); mc.className = 'dn-chip'; box.appendChild(mc); }
-        mc.textContent = '+' + extra + ' more';
-      }
+      if (slot && a) { a._dnChips = chips; a._dnTotal = tr.length; window.dnaFitChips(a); }
       if (a) {
         a.addEventListener('click', function (e) { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return; e.preventDefault(); window.dnaOpen(); });
         var rg = a.querySelectorAll('[data-off]'); setTimeout(function () { for (var k = 0; k < rg.length; k++) rg[k].style.strokeDashoffset = rg[k].getAttribute('data-off'); }, 120);
