@@ -419,3 +419,23 @@ def test_a_rotated_pay_secret_keeps_older_links_working(db_path):
     models.rotate_kept_secret("pay_links", db_path=db_path)
     new = emails.pay_link(rid).split("/pay/", 1)[1].split("/", 1)[0]
     assert old != new and emails.read_pay_token(old) == rid and emails.read_pay_token(new) == rid
+
+
+def test_a_lone_old_refusal_stops_paging_but_a_fresh_one_still_fails(db_path):
+    """10/20/26: one deliberate wrong-token test against Tock's endpoint
+    (a provider that has never sent a real event) left failed_since_verified
+    at 1 forever, and the platform check paged Will every morning. A refusal
+    older than the window is not failing; a rotated secret keeps refusing
+    every delivery, so it still is."""
+    import models
+    conn = models.get_conn(db_path)
+    conn.execute("INSERT INTO inbound_webhook_health (provider, failed_count, failed_since_verified, "
+                 "last_failed_at, last_failure_reason) VALUES ('tock', 1, 1, datetime('now', '-3 days'), "
+                 "'X-Cavnar-Webhook-Token did not match')")
+    conn.execute("INSERT INTO inbound_webhook_health (provider, failed_count, failed_since_verified, "
+                 "last_failed_at, last_failure_reason) VALUES ('resend', 4, 4, datetime('now', '-10 minutes'), "
+                 "'bad signature')")
+    conn.commit()
+    conn.close()
+    h = models.inbound_webhook_health(db_path=db_path)
+    assert h["tock"]["failing"] is False and h["resend"]["failing"] is True

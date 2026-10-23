@@ -19024,7 +19024,12 @@ def record_inbound_webhook(provider: str, verified: bool, event_type: str = None
 def inbound_webhook_health(db_path: str = DB_PATH, stale_hours: int = 24) -> dict:
     """{provider: {...row, "stale", "failing"}} — `stale` when no verified
     event arrived in `stale_hours`; `failing` when requests are being
-    refused and none has verified since (the rotated-secret signature)."""
+    refused and none has verified since (the rotated-secret signature) and
+    the latest refusal is inside `stale_hours`. A rotated secret refuses
+    every delivery, so its refusals keep landing inside the window; a lone
+    old refusal is not failing. One deliberate wrong-token test against
+    Tock's endpoint (10/20/26), a provider that has never sent a real event,
+    paged Will every day for it."""
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     conn = get_conn(db_path)
     try:
@@ -19035,7 +19040,8 @@ def inbound_webhook_health(db_path: str = DB_PATH, stale_hours: int = 24) -> dic
     out = {}
     for r in rows:
         r["stale"] = not r.get("last_verified_at") or r["last_verified_at"] < cutoff
-        r["failing"] = bool(r.get("failed_since_verified"))
+        r["failing"] = bool(r.get("failed_since_verified")) and bool(r.get("last_failed_at")) \
+            and str(r["last_failed_at"]) >= cutoff
         out[r["provider"]] = r
     return out
 
