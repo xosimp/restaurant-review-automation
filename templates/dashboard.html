@@ -6292,17 +6292,25 @@ svg:hover .hb-xh{opacity:1}
     if(m!==null&&m>=0&&m<=80)slot.style.setProperty('--hb-dna-gap',m+'px');
     hbDnaFit();
   }
-  // The DNA card runs down to the last line of the greeting column - the
-  // night's net, or the One tap row when it shows - so the two columns end
-  // on one line (owner, 10/20/26). Never under 168px; stacked, left alone.
+  // The DNA card runs down to the last line of the greeting column (the
+  // night's net) so the two columns end on one line (owner, 10/20/26).
+  // Never under 168px; stacked, left alone. Never to the One tap row: that
+  // row sits under both columns, so stretching the card to it pushed it
+  // further down and Erik's card ran twice its height (owner, 10/24/26). Only
+  // text in the flow counts - a hidden or positioned tip never does.
   function hbDnaFit(){
-    var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild,lead=document.querySelector('#hb-root>.hb-top>div:first-child'),qk=document.getElementById('hb-quick');
+    var slot=document.getElementById('hb-dna-card'),card=slot&&slot.firstElementChild,lead=document.querySelector('#hb-root>.hb-top>div:first-child');
     if(!card||!lead)return;
     card.style.height='';slot.classList.remove('fit');card.classList.remove('roomy','tall');
     if(window.innerWidth<=1000)return;
-    var els=lead.querySelectorAll('*'),b=0,i,r;
-    for(i=0;i<els.length;i++){if(els[i].children.length||!els[i].offsetHeight)continue;r=els[i].getBoundingClientRect();if(r.bottom>b)b=r.bottom;}
-    if(qk&&!qk.hidden&&qk.offsetHeight){r=qk.getBoundingClientRect();if(r.bottom>b)b=r.bottom;}
+    var els=lead.querySelectorAll('*'),b=0,i,r,e,cs,skip;
+    for(i=0;i<els.length;i++){
+      if(els[i].children.length||!els[i].offsetHeight)continue;
+      skip=false;
+      for(e=els[i];e&&e!==lead;e=e.parentElement){cs=window.getComputedStyle(e);if(cs.position==='absolute'||cs.position==='fixed'||cs.visibility==='hidden'||cs.opacity==='0'){skip=true;break;}}
+      if(skip)continue;
+      r=els[i].getBoundingClientRect();if(r.bottom>b)b=r.bottom;
+    }
     slot.classList.add('fit');
     var h=Math.round(b-card.getBoundingClientRect().top);
     if(h>168)card.style.height=h+'px';else slot.classList.remove('fit');
@@ -10816,7 +10824,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-sg:last-child{border-right:none;margin-right:0;padding-right:0}
 /* At a glance (10/22/26): the three charts above the inbox. */
 .rv2-glance{margin-top:26px}
-.rv2-glance .rv2-sig{margin-top:0;padding:22px 0 24px;border-top:1px solid var(--hb-line);border-bottom:1px solid var(--hb-line)}
+.rv2-glance .rv2-sig{margin-top:0;padding:22px 0 24px;border-top:0;border-bottom:0}   /* no rules above or below (owner, 10/24/26): spacing separates it */
 @media (max-width:1000px){
   .rv2-glance .rv2-sig{display:flex;grid-template-columns:none;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:18px 2px 20px;scrollbar-width:none}
   .rv2-glance .rv2-sig::-webkit-scrollbar{display:none}
@@ -10850,7 +10858,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-perf{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 .rv2-perf .row{display:grid;grid-template-columns:124px 1fr 62px;gap:10px;align-items:center;font-size:13.5px;color:var(--ink2)}
 .rv2-perf .bar{height:13px;border-radius:6px;background:var(--hb-line2);overflow:hidden}
-.rv2-perf .bar i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 10px color-mix(in srgb,var(--ember) 40%,transparent);transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
+.rv2-perf .bar i{display:block;height:100%;border-radius:5px;transition:width .45s cubic-bezier(.4,0,.2,1);background:linear-gradient(90deg,var(--ember),#e8956a);box-shadow:0 0 10px color-mix(in srgb,var(--ember) 40%,transparent);transform-origin:left;animation:rv2Grow .7s cubic-bezier(.4,0,.2,1) both}
 .rv2-perf .bar i.g{background:linear-gradient(90deg,#1fa862,var(--hb-good));box-shadow:0 0 10px rgba(53,214,124,.45)}
 .rv2-perf .bar i.a{background:linear-gradient(90deg,#b7791f,#d4a030);box-shadow:0 0 10px rgba(183,121,31,.4)}
 .rv2-perf .n{font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--ink);text-align:right}
@@ -10869,6 +10877,7 @@ svg:hover .hb-xh{opacity:1}
 .rv2-topic:first-child{border-top:none}
 .rv2-topic:hover{background:var(--hb-tint)}
 .rv2-topic .bar{height:8px;border-radius:4px;overflow:hidden;display:flex;background:var(--hb-line2)}
+.rv2-topic .bar i{transition:width .45s cubic-bezier(.4,0,.2,1)}   /* a range change glides the bars (owner, 10/24/26) */
 /* The only one of the 3 charts in this row that didn't fill in on load —
    reuses the exact grow-in @keyframes the "Approval Method"
    bars next to it already use, instead of a separate one. */
@@ -14548,7 +14557,11 @@ body.ss-open .ss{top:var(--cav-chrome,93px);z-index:90}
 /* The tracker's columns are fixed-width and total ~360px; inside the card's
    own padding that overflows the panel at phone widths, and the responsive
    block below only restacks the order/tools grids. */
-.fc2-table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* Sideways only (owner, 10/24/26): overflow-x:auto alone makes overflow-y
+   auto too, and Safari latched a page scroll onto the Reports week table
+   once the pointer reached it, so the page stopped halfway. None of these
+   tables scrolls vertically. */
+.fc2-table-scroll{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
 .fc2-h1-basis{font-size:14px;color:var(--ink3);margin-top:6px}
 .fc2-fcp{margin-top:16px;padding:14px 18px;border-radius:12px;background:var(--surface);border:1px solid var(--hb-line2);max-width:420px}
 .fc2-fcp .k{font-size:12.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--ink3);font-weight:700}
@@ -20038,16 +20051,37 @@ function loadTopicHeatmap(days){
   var grid=document.getElementById('heatmap-grid');
   if(!grid)return;
   var C=window.CavnarCharts;var esc=C?C.esc:function(v){return String(v==null?'':v);};
-  grid.innerHTML=window.cavnarLoading?cavnarLoading('',28,'searching',110):'';
+  // A range change keeps the rows on screen and glides their bars; only a
+  // first load shows the spinner (owner, 10/24/26: the whole card blinked).
+  var had=grid.querySelectorAll('.rv2-topic');
+  if(!had.length)grid.innerHTML=window.cavnarLoading?cavnarLoading('',28,'searching',110):'';
   fetch('/api/topic-heatmap?days='+_hmDays).then(apiJson).then(function(d){
     if(!d.ok||!d.data){grid.innerHTML='<div class="hb-empty">Topics appear as reviews get analysed.</div>';return;}
     var items=d.data.filter(function(x){return (x.count||0)>0;}).sort(function(a,b){return (b.count||0)-(a.count||0);}).slice(0,6);
     if(!items.length){grid.innerHTML='<div class="hb-empty" style="height:110px;display:flex;align-items:center">No topics in this window.</div>';return;}
-    var h='';
-    for(var j=0;j<items.length;j++){var it=items[j];var pos=it.pct_positive||0,neg=it.pct_negative||0,mid=Math.max(0,100-pos-neg);
+    // Each topic keeps its row (keyed by category): a row whose topic is in
+    // both ranges is updated and moved into place, never redrawn, so its
+    // name never blinks; only a topic new to this range gets a fresh row.
+    var keep={},rows=grid.querySelectorAll('.rv2-topic'),j,frag=document.createDocumentFragment();
+    for(j=0;j<rows.length;j++)keep[rows[j].getAttribute('data-cat')]=rows[j];
+    if(!rows.length)grid.innerHTML='';
+    for(j=0;j<items.length;j++){var it=items[j],pos=it.pct_positive||0,neg=it.pct_negative||0,mid=Math.max(0,100-pos-neg);
       var tr=it.trend==='up'?'<span class="t up">↑</span>':(it.trend==='down'?'<span class="t down">↓</span>':'');
-      h+='<button type="button" class="rv2-topic" title="Show these reviews in the inbox" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i class="mid" style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';}
-    grid.innerHTML=h;
+      var row=keep[String(it.category)];
+      if(row){
+        delete keep[String(it.category)];
+        row.firstChild.innerHTML=esc(it.label)+tr;
+        var bars=row.querySelectorAll('.bar i');bars[0].style.width=pos+'%';bars[1].style.width=mid+'%';bars[2].style.width=neg+'%';
+        row.querySelector('.n').textContent=it.count||0;
+      }else{
+        var tmp=document.createElement('div');
+        tmp.innerHTML='<button type="button" class="rv2-topic" data-cat="'+esc(it.category)+'" title="Show these reviews in the inbox" onclick="filterByTopic(\''+esc(it.category)+'\')"><span>'+esc(it.label)+tr+'</span><span class="bar"><i class="p" style="width:'+pos+'%"></i><i class="mid" style="width:'+mid+'%"></i><i class="ng" style="width:'+neg+'%"></i></span><span class="n hb-num">'+(it.count||0)+'</span></button>';
+        row=tmp.firstChild;
+      }
+      frag.appendChild(row);}
+    for(var gone in keep)if(keep.hasOwnProperty(gone)&&keep[gone].parentNode)keep[gone].parentNode.removeChild(keep[gone]);
+    var stray=grid.querySelectorAll(':scope>:not(.rv2-topic)');for(j=0;j<stray.length;j++)grid.removeChild(stray[j]);
+    grid.appendChild(frag);
   }).catch(function(){grid.innerHTML='<div class="hb-empty">Unavailable.</div>';});
 }
 function loadResponsePerf(days){
@@ -20057,7 +20091,8 @@ function loadResponsePerf(days){
   for(var i=0;i<btns.length;i++){btns[i].classList.toggle('on',String(btns[i].getAttribute('data-days'))===String(days));}
   var body=document.getElementById('perf-body');
   if(!body)return;
-  body.innerHTML=window.cavnarLoading?cavnarLoading('',28,'working',86):'';
+  // Kept on screen through a range change, its bars gliding (owner, 10/24/26).
+  if(!body.querySelector('.rv2-perf'))body.innerHTML=window.cavnarLoading?cavnarLoading('',28,'working',86):'';
   fetch('/api/response-performance?days='+days).then(apiJson).then(function(d){
     if(!d.ok){body.innerHTML='<div class="hb-empty">Unavailable.</div>';return;}
     var data=d.data||{},total=data.total||0;
@@ -20066,6 +20101,13 @@ function loadResponsePerf(days){
     var cap=document.getElementById('rv-perf-cap');if(cap)cap.textContent='';
     if(!total){body.innerHTML='<div class="hb-empty" style="height:86px;display:flex;align-items:center">No approved replies in the last '+days+' days.</div>';return;}
     var items=[{key:'approved_as_is',label:'Approved as-is',cls:'g'},{key:'edited',label:'Edited first',cls:''},{key:'regenerated',label:'Regenerated',cls:'a'}];
+    var prow=body.querySelectorAll('.rv2-perf .row');
+    if(prow.length===items.length){
+      for(var q=0;q<items.length;q++){var qv=data[items[q].key]||0,qp=Math.round(qv/total*100);
+        prow[q].querySelector('.bar i').style.width=Math.max(qp,qv?3:0)+'%';
+        prow[q].querySelector('.n').innerHTML=qv+' <span>'+qp+'%</span>';}
+      return;
+    }
     var h='<div class="rv2-perf">';
     for(var j=0;j<items.length;j++){var it=items[j],v=data[it.key]||0,p=Math.round(v/total*100);
       h+='<div class="row"><span>'+it.label+'</span><span class="bar"><i class="'+it.cls+'" style="width:'+Math.max(p,v?3:0)+'%;animation-delay:'+(j*90)+'ms"></i></span><span class="n hb-num">'+v+' <span>'+p+'%</span></span></div>';}

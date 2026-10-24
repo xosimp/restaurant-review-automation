@@ -38,6 +38,12 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
+      # Before the refresh, not after it: the script reads each source with
+      # requests, and run without the lock it failed every source with "No
+      # module named 'requests'" from 10/8 to 10/24/26.
+      - name: Install the locked dependencies
+        run: pip install --no-deps -r requirements-dev.txt
+
       - name: Refresh the season files
         id: refresh
         # Writes every file it could read; exits 1 if any source could not
@@ -57,10 +63,6 @@ jobs:
             cat refresh.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install the locked dependencies
-        if: steps.refresh.outputs.changed == '1'
-        run: pip install --no-deps -r requirements-dev.txt
 
       - name: Check the refreshed files
         # What production will load: every file through the real loader, no

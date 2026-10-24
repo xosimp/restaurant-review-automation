@@ -53,8 +53,10 @@ def test_production_versions_are_the_ones_pinned():
     # the pins that were already exact are unchanged
     # werkzeug 3.1.9 on 10/19/26 for pip-audit PYSEC-2026-4312 (every other pin held)
     assert lock["werkzeug"] == "3.1.9" and lock["sentry-sdk"] == "2.8.0"
-    # 9/29/26: the three pip-audit findings, bumped on purpose (every other pin held)
-    assert lock["cryptography"] == "50.0.1" and lock["pillow"] == "12.3.0" and lock["pypdf"] == "6.19.0"
+    # 9/29/26: the three pip-audit findings, bumped on purpose (every other pin held);
+    # 10/24/26 pillow 13.0.0, pypdf 6.21.2 and certifi 2026.10.23 for the next round
+    assert lock["cryptography"] == "50.0.1" and lock["pillow"] == "13.0.0" and lock["pypdf"] == "6.21.2"
+    assert lock["certifi"] == "2026.10.23"
     assert lock["requests"] == "2.33.1" and lock["python-dotenv"] == "1.2.2" and lock["schedule"] == "1.2.2"
 
 

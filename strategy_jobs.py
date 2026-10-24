@@ -2952,8 +2952,11 @@ def _slot_iter(job, restaurants=None, db_path=DB_PATH, max_seconds=SLOT_JOB_MAX_
     bound, or abandoned — at the last restaurant whose turn completed.
     `state`, a dict, is told `hit_bound` so the job can report it (#39)."""
     import time as _time
-    order = _slot_order(job, restaurants, db_path)
+    # The bound runs from the start of the walk, reading the order included
+    # (on Postgres that read opens a pooled connection, which reads the clock
+    # too; 10/24/26).
     started, last = _time.monotonic(), None
+    order = _slot_order(job, restaurants, db_path)
     try:
         for r in order:
             if last is not None and _time.monotonic() - started > max_seconds:

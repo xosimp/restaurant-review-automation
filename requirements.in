@@ -28,10 +28,10 @@ resend==2.48.0
 reportlab==4.5.1
 pyjwt==2.15.1
 cryptography==50.0.1
-pypdf==6.19.0
+pypdf==6.21.2
 qrcode[pil]==8.2
 httpx[http2]==0.28.1
-pillow==12.3.0
+pillow==13.0.0
 # Passkeys (owner, 9/30/26): WebAuthn registration and sign-in verification
 # (webauthn_auth.py). Duo Labs' py_webauthn; attestation "none" only.
 webauthn==3.0.1

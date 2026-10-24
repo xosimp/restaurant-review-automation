@@ -38,7 +38,7 @@ blinker==1.9.0
     #   sentry-sdk
 cbor2==6.1.4
     # via webauthn
-certifi==2026.7.22
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -110,7 +110,7 @@ packaging==26.3
     # via gunicorn
 pandas==3.0.6
     # via ortools
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   -r requirements.in
     #   qrcode
@@ -137,7 +137,7 @@ pyjwt==2.15.1
     # via -r requirements.in
 pyopenssl==26.4.0
     # via webauthn
-pypdf==6.19.0
+pypdf==6.21.2
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via pandas

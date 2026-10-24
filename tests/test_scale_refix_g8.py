@@ -261,7 +261,11 @@ def test_the_postgres_volume_pages_critical_and_warns_low_or_unset(db, monkeypat
         monkeypatch.setattr(status_manager, "pg_volume_state", lambda *a, _pv=pv, **k: _pv)
         out = ops.check_platform_sla(send=False, db_path=db, write_ok=True)
         assert any("Postgres" in p for p in out["problems"]), (state, out["problems"])
-        assert ops._has_urgent(dict(out, jobs_overdue=[]), {}, write_ok=True) is urgent, state
+        # The volume's urgency alone: on CI's long Postgres run the shared
+        # database also held a 46-minute-old scheduler heartbeat, which is
+        # urgent on its own and read "low" as a page (10/24/26).
+        assert out.get("pg_volume", {}).get("state") == state
+        assert ops._has_urgent({"pg_volume": out["pg_volume"]}, {}, write_ok=True) is urgent, state
 
 
 def test_the_app_volume_is_judged_against_the_live_database_on_postgres(db):

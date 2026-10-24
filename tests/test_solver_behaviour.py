@@ -91,7 +91,15 @@ def test_the_unfilled_shifts_are_said_never_filled_illegally(drafts, case):
 @pytest.mark.parametrize("case", _CASES)
 def test_same_inputs_same_week_from_the_solver_first_draft(drafts, case):
     _s, got, again = drafts[case]
-    assert _sig(got["rows"]) == _sig(again["rows"])
+    # The promise holds when the deterministic work budget ended both solves.
+    # When the wall clock (the emergency cap) cut one short, as on a loaded
+    # CI runner, the draft says so in its stats; that is the contract, not a
+    # difference to fail on (CI 10/22-10/24/26 failed a different case each run).
+    cut = [k for k in ("wall_capped", "memory_capped")
+           if (got.get("stats") or {}).get(k) or (again.get("stats") or {}).get(k)]
+    if cut:
+        pytest.skip(f"a solve was cut by the {cut[0].split('_')[0]} cap, and says so in its stats")
+    assert _sig(got["rows"]) == _sig(again["rows"]), (got.get("stats"), again.get("stats"))
     assert [(u["date"], u["role"], u["shift_start"]) for u in got["unassigned"]] == \
         [(u["date"], u["role"], u["shift_start"]) for u in again["unassigned"]]
 

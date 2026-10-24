@@ -174,15 +174,20 @@ def _rpower_stores(n, monkeypatch):
 
 
 def test_the_budget_check_sheds_bulk_then_stretches_live_and_never_close_or_nightly(monkeypatch):
+    # Tomorrow's 2am in Chicago, never a fixed date: the verdict is read
+    # against the real clock (state()), so a check "at 2am on 10/22" expired
+    # at 7am that day and the test failed from then on (10/24/26).
+    two_am = (datetime.now(CHI) + timedelta(days=1)).replace(hour=2, minute=0, second=0, microsecond=0,
+                                                            tzinfo=None)
     _rpower_stores(3, monkeypatch)
     caught = []
     monkeypatch.setattr(ops, "capture", lambda e, **k: caught.append(str(e)))
     monkeypatch.setattr(pos_capacity, "effective_rps", lambda db_path=None: 10.0)
-    out = pos_capacity.budget_check(now=datetime(2026, 10, 22, 2, 0))
+    out = pos_capacity.budget_check(now=two_am)
     assert out["shed_bulk"] is False and out["stretch_live"] is False and not caught
     # 3 stores x 50,000 requests a night against 10 req/s x 4 h x 80 %.
     monkeypatch.setattr(pos_capacity, "NIGHTLY_REQUESTS_PER_STORE", 50000)
-    out = pos_capacity.budget_check(now=datetime(2026, 10, 22, 2, 0))
+    out = pos_capacity.budget_check(now=two_am)
     assert out["shed_bulk"] is True and out["stretch_live"] is True
     monkeypatch.setattr(pos_capacity, "window", lambda now=None: "nightly")
     assert pos_capacity.bulk_shed() and pos_capacity.live_stretched()

@@ -64,6 +64,12 @@ def _review(db_path, rid, rating=5, draft="Thanks so much!", status="drafted", o
 
 def _grant(db_path, rid, user_id, permission="reviews.voice"):
     c = _conn(db_path)
+    # The grant is to a real login: since the test template holds the auth
+    # tables (10/20/26), permission_grants.user_id references users, and
+    # Postgres enforces it.
+    if not c.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+        c.execute("INSERT INTO users (id, restaurant_id, username, email, password_hash) VALUES (?,?,?,?,?)",
+                  (user_id, rid, f"manager{user_id}", f"manager{user_id}@example.test", "x"))
     c.execute("CREATE TABLE IF NOT EXISTS permission_grants (user_id INTEGER NOT NULL, restaurant_id INTEGER NOT NULL, "
               "permission TEXT NOT NULL, granted_by INTEGER, granted_at TEXT, "
               "PRIMARY KEY (user_id, restaurant_id, permission))")
