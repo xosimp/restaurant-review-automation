@@ -4,7 +4,7 @@
   "https://www.chicagobears.com/schedule/",
   "https://www.nbcchicago.com/chicago-sports-bears-sox-cubs-bulls-blackhawks/heres-the-bears-preseason-schedule-and-when-they-open-the-2026-season/3970992/"
  ],
- "fetched": "2026-10-08",
+ "fetched": "2026-10-24",
  "series": {
   "slug": "nfl-chicago-bears",
   "name": "Chicago Bears",
@@ -127,7 +127,8 @@
    "opponent": "Green Bay Packers",
    "venue": "Lambeau Field",
    "broadcast": "FOX",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 7-31"
   },
   {
    "external_id": "2026-reg-06",
@@ -139,7 +140,8 @@
    "opponent": "Atlanta Falcons",
    "venue": "Mercedes-Benz Stadium",
    "broadcast": "FOX",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 31-23"
   },
   {
    "external_id": "2026-reg-07",
@@ -151,7 +153,8 @@
    "opponent": "New England Patriots",
    "venue": "Soldier Field",
    "broadcast": "Prime Video",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 30-24"
   },
   {
    "external_id": "2026-reg-08",

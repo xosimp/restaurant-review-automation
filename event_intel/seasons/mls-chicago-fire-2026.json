@@ -7,7 +7,7 @@
   "https://site.api.espn.com/apis/site/v2/sports/soccer/usa.open/teams/182/schedule?season=2026",
   "https://en.wikipedia.org/wiki/2026_Chicago_Fire_FC_season"
  ],
- "fetched": "2026-10-08",
+ "fetched": "2026-10-24",
  "series": {
   "slug": "mls-chicago-fire",
   "name": "Chicago Fire FC",
@@ -491,7 +491,8 @@
    "opponent": "New York City FC",
    "venue": "Soldier Field",
    "broadcast": "Apple TV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 2-1"
   },
   {
    "external_id": "761869",
@@ -503,7 +504,8 @@
    "opponent": "Philadelphia Union",
    "venue": "Soldier Field",
    "broadcast": "Apple TV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 1-3"
   },
   {
    "external_id": "761879",
@@ -515,7 +517,8 @@
    "opponent": "New England Revolution",
    "venue": "Gillette Stadium",
    "broadcast": "Apple TV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 0-1"
   },
   {
    "external_id": "761893",

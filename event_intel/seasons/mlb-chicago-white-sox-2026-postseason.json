@@ -5,7 +5,7 @@
   "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=145&season=2026&gameType=R&hydrate=broadcasts(all)",
   "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=145&season=2026&gameType=F,D,L,W"
  ],
- "fetched": "2026-10-08",
+ "fetched": "2026-10-24",
  "series": {
   "slug": "mlb-chicago-white-sox",
   "name": "Chicago White Sox",
@@ -2206,7 +2206,8 @@
    "opponent": "Cleveland Guardians",
    "venue": "Rate Field",
    "broadcast": "TBS",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 5-9"
   },
   {
    "external_id": "849831",
@@ -2218,10 +2219,11 @@
    "opponent": "Cleveland Guardians",
    "venue": "Progressive Field",
    "broadcast": "TBS",
-   "status": "scheduled",
+   "status": "completed",
    "attributes": {
     "if_necessary": true
-   }
+   },
+   "result": "L 0-2"
   }
  ]
 }

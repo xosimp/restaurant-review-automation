@@ -7,7 +7,7 @@
   "https://sports.yahoo.com/articles/chicago-bulls-receive-three-national-221504308.html",
   "https://www.sportsmediawatch.com/tv-schedules/nba-tv-schedule/chicago-bulls/"
  ],
- "fetched": "2026-10-08",
+ "fetched": "2026-10-24",
  "series": {
   "slug": "nba-chicago-bulls",
   "name": "Chicago Bulls",
@@ -50,7 +50,8 @@
    "opponent": "Memphis Grizzlies",
    "venue": "United Center",
    "broadcast": "CHSN, NBA TV",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 100-104"
   },
   {
    "external_id": "401908941",
@@ -62,7 +63,8 @@
    "opponent": "Denver Nuggets",
    "venue": "Ball Arena",
    "broadcast": "CHSN, ESPN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 128-133"
   },
   {
    "external_id": "401908942",
@@ -74,7 +76,8 @@
    "opponent": "Milwaukee Bucks",
    "venue": "Fiserv Forum",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 125-104"
   },
   {
    "external_id": "401908943",
@@ -86,7 +89,8 @@
    "opponent": "Minnesota Timberwolves",
    "venue": "United Center",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 133-116"
   },
   {
    "external_id": "401909837",
@@ -98,19 +102,21 @@
    "opponent": "Toronto Raptors",
    "venue": "Scotiabank Arena",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 92-135"
   },
   {
    "external_id": "401909848",
    "season_type": "regular",
    "week": null,
    "date": "2026-10-23",
-   "kickoff": "19:00",
+   "kickoff": "15:00",
    "home_away": "away",
    "opponent": "Milwaukee Bucks",
    "venue": "Fiserv Forum",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 132-125"
   },
   {
    "external_id": "401909857",

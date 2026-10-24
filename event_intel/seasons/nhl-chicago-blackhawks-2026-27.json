@@ -4,7 +4,7 @@
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
  ],
- "fetched": "2026-10-08",
+ "fetched": "2026-10-24",
  "series": {
   "slug": "nhl-chicago-blackhawks",
   "name": "Chicago Blackhawks",
@@ -138,7 +138,8 @@
    "opponent": "New York Islanders",
    "venue": "UBS Arena",
    "broadcast": "CHSN, MSGSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 1-4"
   },
   {
    "external_id": "2026020078",
@@ -150,7 +151,8 @@
    "opponent": "Carolina Hurricanes",
    "venue": "United Center",
    "broadcast": "CHSN, CARNHL, HHN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 2-5"
   },
   {
    "external_id": "2026020098",
@@ -162,7 +164,8 @@
    "opponent": "Pittsburgh Penguins",
    "venue": "United Center",
    "broadcast": "CHSN, SN-PIT",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 5-3"
   },
   {
    "external_id": "2026020114",
@@ -174,7 +177,8 @@
    "opponent": "Winnipeg Jets",
    "venue": "United Center",
    "broadcast": "CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "W 4-3"
   },
   {
    "external_id": "2026020130",
@@ -186,7 +190,8 @@
    "opponent": "Dallas Stars",
    "venue": "United Center",
    "broadcast": "CHSN, Prime Video",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 0-4"
   },
   {
    "external_id": "2026020166",
@@ -198,7 +203,8 @@
    "opponent": "Montréal Canadiens",
    "venue": "United Center",
    "broadcast": "NHLN, CHSN",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 1-4"
   },
   {
    "external_id": "2026020180",
