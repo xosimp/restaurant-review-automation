@@ -23,11 +23,18 @@ command -v npx >/dev/null && { npx --yes wrangler whoami 2>/dev/null | grep -qi 
 security find-generic-password -s "Cavnar AI Resend - Gmail send-as" >/dev/null 2>&1 && ok "Keychain: Resend Gmail send-as key" || bad "Keychain: Resend Gmail send-as key"
 
 echo "== tools"
-python3 -c "import flask, anthropic, resend, requests, pytest, xdist" 2>/dev/null && ok "python $(python3 --version 2>&1 | cut -d' ' -f2) with the app's and tests' packages" \
-  || bad "python packages (python3 -m pip install -r requirements.txt pytest pytest-xdist)"
-# Railway and CI install these from the lock; locally they only matter for a
-# few tests (the Postgres copy, the OR-Tools solver, Stripe calls).
-for m in psycopg ortools stripe; do python3 -c "import $m" 2>/dev/null || echo "  note  optional package $m not installed locally"; done
+# The app and the suite run on .venv: Python 3.12.7 (.python-version, what
+# Railway and CI run) with the lock installed. A migrated uv interpreter
+# crashes in ensurepip, so build it with uv itself (10/24/26).
+PY=.venv/bin/python
+[ -x "$PY" ] && [ "$($PY --version 2>&1 | cut -d' ' -f2)" = "$(cat .python-version)" ] \
+  && ok ".venv python $($PY --version 2>&1 | cut -d' ' -f2) (matches .python-version)" \
+  || bad ".venv on $(cat .python-version) (brew install uv && uv venv --python $(cat .python-version) .venv && VIRTUAL_ENV=.venv uv pip install -r requirements.txt -r requirements-dev.txt)"
+[ -x "$PY" ] && $PY -c "import flask, anthropic, resend, requests, stripe, psycopg, ortools, pytest, xdist" 2>/dev/null \
+  && ok ".venv has the lock and the test packages" || bad ".venv packages (VIRTUAL_ENV=.venv uv pip install -r requirements.txt -r requirements-dev.txt)"
+command -v gh >/dev/null && { gh auth status >/dev/null 2>&1 && ok "gh logged in" || echo "  note  gh installed, not logged in (gh auth login)"; } || echo "  note  gh not installed (brew install gh) — CI runs and PRs"
+curl -s -o /dev/null -w "%{http_code}" localhost:5050/health 2>/dev/null | grep -q 200 && ok "local backend on :5050" \
+  || echo "  note  local backend not running (nohup env PORT=5050 .venv/bin/python hosted_dashboard.py &)"
 command -v xcodebuild >/dev/null && ok "$(xcodebuild -version 2>/dev/null | head -1)" || bad "Xcode"
 security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development" && ok "Apple Development signing identity" || bad "Apple Development signing certificate (Xcode → Settings → Accounts)"
 [ -d ios/CavnarAI/CavnarAI.xcodeproj ] && ok "iOS project generated" || echo "  note  iOS project not generated yet — run ios/CavnarAI/generate.sh"
