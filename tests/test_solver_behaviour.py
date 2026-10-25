@@ -99,7 +99,19 @@ def test_same_inputs_same_week_from_the_solver_first_draft(drafts, case):
            if (got.get("stats") or {}).get(k) or (again.get("stats") or {}).get(k)]
     if cut:
         pytest.skip(f"a solve was cut by the {cut[0].split('_')[0]} cap, and says so in its stats")
-    assert _sig(got["rows"]) == _sig(again["rows"]), (got.get("stats"), again.get("stats"))
+    a, b = _sig(got["rows"]), _sig(again["rows"])
+    if a != b:
+        # What differed, compactly, so a CI failure names its cause: the rows
+        # each draft alone has, and every stage's status, budget and how it ran.
+        def _stages(st):
+            st = st or {}
+            return {k: (v.get("status"), v.get("budget"), (v.get("memory") or {}).get("isolated"),
+                        (v.get("memory") or {}).get("fallback"), v.get("wall_capped"))
+                    for k, v in st.items() if isinstance(v, dict) and "status" in v} | \
+                {"top": (st.get("status"), st.get("workers"), st.get("budget"))}
+        only_a, only_b = sorted(set(a) - set(b))[:4], sorted(set(b) - set(a))[:4]
+        pytest.fail(f"{len(set(a) ^ set(b))} rows differ; first only {only_a}; second only {only_b}; "
+                    f"stages {_stages(got.get('stats'))} vs {_stages(again.get('stats'))}")
     assert [(u["date"], u["role"], u["shift_start"]) for u in got["unassigned"]] == \
         [(u["date"], u["role"], u["shift_start"]) for u in again["unassigned"]]
 

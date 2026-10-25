@@ -649,8 +649,11 @@ def test_a_week_written_in_slices_carries_each_planned_row_once(monkeypatch):
     blocks = [p[p.index("MANAGER COVERAGE"):p.index("CONTEXT:")] for p in prompts]
     assert blocks[0] == blocks[1]
     assert "Mon 2026-10-05" in blocks[0] and "Sun 2026-10-11" in blocks[0] and "Planned manager hours" in blocks[0]
-    first_request = prompts[0][prompts[0].index("THIS REQUEST — write shifts for these dates only:"):]
-    assert "- Mon 2026-10-05" in first_request and "- Sun 2026-10-11" not in first_request
+    # The slices run in parallel, so the Monday slice is found by what it
+    # asks for, never by arriving first (CI 10/24/26 saw Friday's first).
+    requests = [p[p.index("THIS REQUEST — write shifts for these dates only:"):] for p in prompts]
+    first_request = next(r for r in requests if "- Mon 2026-10-05" in r)
+    assert "- Sun 2026-10-11" not in first_request
 
 
 def test_a_day_with_only_planned_rows_still_counts_as_missing():
