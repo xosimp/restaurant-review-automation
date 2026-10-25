@@ -15982,13 +15982,23 @@ def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = 
           AND approved_at >= datetime('now', '-' || ? || ' days')
         GROUP BY response_action
     """, (restaurant_id, str(days))).fetchall()
+    # The first approval ever counted (`first_date`, YYYY-MM-DD): when it is
+    # newer than the window's start, 30d, 90d and 6mo all count the same
+    # replies, and the screen says since when (owner, 10/24/26: at EJ's all
+    # 34 approvals were inside 30 days and the switcher looked broken).
+    first = conn.execute("""
+        SELECT MIN(approved_at) FROM reviews
+        WHERE restaurant_id=? AND deleted_at IS NULL
+          AND response_action IN ('approved_as_is', 'edited', 'regenerated') AND approved_at IS NOT NULL
+    """, (restaurant_id,)).fetchone()
     conn.close()
     counts = {"approved_as_is": 0, "edited": 0, "regenerated": 0}
     for r in rows:
         if r["response_action"] in counts:
             counts[r["response_action"]] = r["cnt"]
     total = sum(counts.values())
-    return {"total": total, "days": days, **counts}
+    first_date = str(first[0])[:10] if first and first[0] else None
+    return {"total": total, "days": days, "first_date": first_date, **counts}
 
 
 def get_changelog(since: str = None, db_path: str = DB_PATH) -> list:

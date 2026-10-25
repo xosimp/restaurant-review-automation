@@ -989,3 +989,22 @@ def test_h8_value_headline_is_monthly_by_module_and_filtered(db_path, monkeypatc
     assert "since you started</small>" not in dash and "a month, measured" in dash
     sw = _read("ios", "CavnarAI", "CavnarAI", "Features", "Home", "HomeValueBand.swift")
     assert "SINCE YOU JOINED" not in sw and "posts drafted" not in sw and "measuredOn" in sw
+
+
+def test_approvals_say_since_when_a_range_reaches_back_before_the_first_one(db_path):
+    """10/24/26: at Simple EJ's every approval was inside 30 days, so 30d,
+    90d and 6mo all read 34 and the switcher looked broken. The first
+    approval's date comes back so the screen can say since when."""
+    rid = _rid(db_path)
+    c = _conn(db_path)
+    for i, ago in enumerate((3, 10)):
+        c.execute("INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, review_date, "
+                  "fetched_at, response_status, response_action, approved_at) VALUES (?, 'google', ?, 'A', 5, 't', "
+                  "date('now'), datetime('now'), 'approved', 'approved_as_is', datetime('now', ?))",
+                  (rid, f"since{i}", f"-{ago} days"))
+    c.commit()
+    c.close()
+    a, b = models.get_response_performance(rid, days=30), models.get_response_performance(rid, days=180)
+    assert a["total"] == b["total"] == 2
+    assert a["first_date"] == (datetime.utcnow().date() - timedelta(days=10)).isoformat()
+    assert "first approval" in _read("templates", "dashboard.html")
