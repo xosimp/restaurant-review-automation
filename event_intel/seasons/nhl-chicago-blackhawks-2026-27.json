@@ -4,7 +4,7 @@
   "https://www.nhl.com/blackhawks/schedule",
   "https://api-web.nhle.com/v1/club-schedule-season/CHI/20262027"
  ],
- "fetched": "2026-10-24",
+ "fetched": "2026-10-26",
  "series": {
   "slug": "nhl-chicago-blackhawks",
   "name": "Chicago Blackhawks",
@@ -216,7 +216,8 @@
    "opponent": "Florida Panthers",
    "venue": "United Center",
    "broadcast": "CHSN, SCRIPPS",
-   "status": "scheduled"
+   "status": "completed",
+   "result": "L 2-3"
   },
   {
    "external_id": "2026020190",
