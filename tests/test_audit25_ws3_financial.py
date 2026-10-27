@@ -114,11 +114,22 @@ def test_a03_01_a_managers_prime_cost_is_hourly_and_names_no_salary(monkeypatch)
     assert "3900" not in blob and "salaries included" not in blob
 
 
-def test_a03_01_the_nightly_job_reads_the_owners_all_in_figure(monkeypatch):
-    # Off a request (the nightly forecast freeze, the morning brief's
-    # owner build): the owner's basis, as every other job's labor read.
+def test_a03_01_the_nightly_freeze_records_the_owners_all_in_figure(monkeypatch):
+    # Off a request a read is manager-safe now (blind re-audit 10/26/26 B3
+    # P0: it was the owner's, and a manager was texted the all-in labor %).
+    # The nightly forecast freeze reads the owner's basis explicitly, and
+    # keeps the basis with the row (forecast_log.SALARY_KINDS).
     rid = _prime_world(monkeypatch)
-    assert fci.profitability_projection(rid, withhold=False)["labor_cost_mtd"] == 3900.0
+    assert fci.profitability_projection(rid, withhold=False)["labor_cost_mtd"] == 3000.0
+    got = fci.record_profitability_forecast(rid, today=date(2026, 10, 15))
+    assert got["recorded"] and got["predicted"] == round((4500.0 + 3900.0) / 15000.0 * 100, 1)
+    c = get_conn()
+    try:
+        row = c.execute("SELECT pay_basis FROM forecast_log WHERE restaurant_id=? AND kind='profitability_month'",
+                        (rid,)).fetchone()
+    finally:
+        c.close()
+    assert row["pay_basis"] == "all_in"
 
 
 def test_a03_01_the_shared_food_diagnosis_reads_the_team_basis(monkeypatch):

@@ -514,9 +514,29 @@ def read(restaurant, now_local=None, live=True, db_path=None) -> dict:
     return out
 
 
+def redact_salaries(rd) -> dict:
+    """A live read for a login who may not see salaries (permissions.
+    sees_salaries — a manager, support acting through view-as): no day's
+    share of the salaries, no all-in projection and no points over the
+    target (hourly plus the points over IS the all-in figure). The hourly
+    figures stay. The floor read handed every Labor viewer the salaried
+    day's dollars and the all-in % (blind re-audit 10/26/26 B3)."""
+    if not isinstance(rd, dict):
+        return rd
+    out = dict(rd)
+    if isinstance(out.get("labor"), dict):
+        out["labor"] = {k: v for k, v in out["labor"].items() if not str(k).startswith("salaried")}
+    if isinstance(out.get("pct"), dict):
+        out["pct"] = dict(out["pct"], all_in_projected=None, over_by=None,
+                          basis="hourly staff only — salaried pay is not in these figures")
+    if out.get("available"):
+        out["sentence"] = _sentence(out)
+    return out
+
+
 def _sentence(rd) -> str:
     p, s = rd.get("pct") or {}, rd.get("sales") or {}
-    if p.get("hourly_so_far") is None and p.get("all_in_projected") is None:
+    if p.get("hourly_so_far") is None and p.get("all_in_projected") is None and p.get("hourly_projected") is None:
         return "Labor so far can't be set against sales yet — the POS hasn't reported today's sales."
     bits = []
     if p.get("hourly_so_far") is not None:
@@ -524,6 +544,10 @@ def _sentence(rd) -> str:
     if p.get("all_in_projected") is not None:
         bits.append(f"projected {p['all_in_projected']:g}% all-in at close"
                     + (f" against {p['target_label']} of {p['target']:g}%" if p.get("target") is not None else ""))
+    elif p.get("hourly_projected") is not None and "hourly staff only" in str(p.get("basis") or ""):
+        # The hourly view (redact_salaries): the hourly projection, never set
+        # against the target, which counts salaried pay.
+        bits.append(f"projected {p['hourly_projected']:g}% for hourly staff at close")
     line = ", ".join(bits) + "."
     if s.get("pace_pct") is not None:
         line += f" Sales are running {abs(s['pace_pct']):g}% {'behind' if s['pace_pct'] < 0 else 'ahead of'} a typical day."

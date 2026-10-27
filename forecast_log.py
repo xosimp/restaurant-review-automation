@@ -74,7 +74,8 @@ KINDS = {
     "waste_week": {"period": "week", "unit": "$",
                    "actual": "the ISO week's waste dollars (waste_trend's weekly series)"},
     "profitability_month": {"period": "month", "unit": "%",
-                            "actual": "food cost % + labor % over the closed month (metrics.measure)"},
+                            "actual": "COGS + labor as a share of net sales over the closed month "
+                                      "(metrics.prime_cost_pct), on the row's pay basis"},
     "revenue_week": {"period": "week", "unit": "$",
                      "actual": "net sales summed over the days the projection covered (labor_daily_history); "
                                "unscored unless every one of those days has sales on file"},
@@ -127,6 +128,34 @@ CALIBRATION_MIN_BIAS_PCT = 10.0
 # (memory audit 9/29/26, "forecasts"). Sales-driven kinds only.
 EVENT_EXPLAINS_PCT = 10.0
 EVENT_SENSITIVE_KINDS = ("revenue_week", "labor_week", "waste_week")
+# Kinds whose figure depends on whether the salaries are in (labor % is
+# all-in for the owner, hourly for anyone else — models.viewer_sees_salaries):
+# each row keeps the pay basis it was predicted on (`pay_basis`), its actual
+# is measured on that basis, and the record a reader is shown (accuracy,
+# calibration) is read only from rows of the reader's own basis. A row with
+# no basis (frozen before it was kept) is scored but never read back:
+# hourly-era predictions against all-in actuals were a lean the correction
+# then applied to an all-in projection (blind re-audit 10/26/26 B8, B4).
+SALARY_KINDS = ("profitability_month", "labor_week")
+ALL_IN, HOURLY = "all_in", "hourly"
+
+
+def current_pay_basis() -> str:
+    """The pay basis of the work running now: "all_in" for a reader who
+    sees salaries (models.viewer_sees_salaries), else "hourly"."""
+    try:
+        return ALL_IN if _models_mod.viewer_sees_salaries() else HOURLY
+    except Exception as e:
+        print(f"[forecast_log] salary view unreadable, read hourly: {e!r}")
+        return HOURLY
+
+
+def _basis_filter(kind, pay_basis):
+    """The pay basis a salary-sensitive kind's record is read on (the
+    current reader's unless given); None for every other kind."""
+    if kind not in SALARY_KINDS:
+        return None
+    return pay_basis or current_pay_basis()
 
 
 def _f(v, default=None):
@@ -183,13 +212,15 @@ def is_closed(kind: str, horizon_end, today=None) -> bool:
 # ── writing ─────────────────────────────────────────────────────────────────
 
 def record(restaurant_id: int, kind: str, predicted, period_of=None, basis=None,
-           db_path: str = DB_PATH) -> dict:
+           db_path: str = DB_PATH, pay_basis=None) -> dict:
     """Freeze a forecast for the period containing `period_of` (default:
     next week for a week kind, this month for a month kind). Insert-once:
     a second prediction for the same period is ignored and says so.
 
     `basis` is free text, or a dict (stored as JSON) — revenue_week keeps
-    the dates it covered there so the actual sums the same days."""
+    the dates it covered there so the actual sums the same days.
+    `pay_basis` ("all_in" | "hourly") for a SALARY_KINDS forecast: the
+    current reader's (current_pay_basis) unless given."""
     if kind not in KINDS:
         raise ValueError(f"unknown forecast kind {kind!r} — add it to forecast_log.KINDS")
     p = _f(predicted)
@@ -200,12 +231,13 @@ def record(restaurant_id: int, kind: str, predicted, period_of=None, basis=None,
     horizon = period_end(kind, period_of)
     if isinstance(basis, (dict, list)):
         basis = json.dumps(basis)
+    pay = _basis_filter(kind, pay_basis)
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, basis) VALUES (?,?,?,?,?) "
-            "ON CONFLICT(restaurant_id, kind, horizon_end) DO NOTHING",
-            (restaurant_id, kind, horizon, round(p, 2), basis))
+            "INSERT INTO forecast_log (restaurant_id, kind, horizon_end, predicted, basis, pay_basis) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(restaurant_id, kind, horizon_end) DO NOTHING",
+            (restaurant_id, kind, horizon, round(p, 2), basis, pay))
         conn.commit()
         written = (cur.rowcount or 0) > 0
     finally:
@@ -257,10 +289,14 @@ def _waste_actual(restaurant_id, start, end, row, db_path):
 
 
 def _prime_actual(restaurant_id, start, end, row, db_path):
+    """The closed month's prime cost as the projection states it: COGS and
+    labor as ONE share of net sales (metrics.prime_cost_pct). Food cost %
+    is over FOOD sales, and food % + labor % ran 12+ points over a bar's
+    prime cost (blind re-audit 10/26/26 B3). Labor on the row's pay basis
+    (actual_for)."""
     import metrics as _m
-    fc, _ = _m.measure(restaurant_id, "food_cost_pct", start.isoformat(), end.isoformat(), db_path)
-    lb, _ = _m.measure(restaurant_id, "labor_pct", start.isoformat(), end.isoformat(), db_path)
-    return (float(fc) + float(lb)) if fc is not None and lb is not None else None
+    v, _ = _m.prime_cost_pct(restaurant_id, start.isoformat(), end.isoformat(), db_path=db_path)
+    return _f(v)
 
 
 def _labor_actual(restaurant_id, start, end, row, db_path):
@@ -360,11 +396,17 @@ def register_resolver(kind: str, fn, period: str = "week", unit: str = None, act
 
 
 def actual_for(restaurant_id: int, kind: str, horizon_end, row=None, db_path: str = DB_PATH):
+    """The period's actual through the kind's resolver — a SALARY_KINDS
+    row's measured on the pay basis it was predicted on (`pay_basis`; a row
+    from before the basis was kept, as the job that froze it read: all-in)."""
     start, end = period_bounds(kind, horizon_end)
     fn = _RESOLVERS.get(kind)
     if fn is None:
         return None
     try:
+        if kind in SALARY_KINDS:
+            with _models_mod.salary_view((row or {}).get("pay_basis") != HOURLY):
+                return fn(restaurant_id, start, end, row or {}, db_path)
         return fn(restaurant_id, start, end, row or {}, db_path)
     except Exception:
         return None
@@ -453,11 +495,11 @@ def score_due(restaurant_id: int, today=None, db_path: str = DB_PATH) -> dict:
     conn = get_conn(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, kind, horizon_end, predicted, basis, created_at FROM forecast_log "
+            "SELECT id, kind, horizon_end, predicted, basis, pay_basis, created_at FROM forecast_log "
             "WHERE restaurant_id=? AND actual IS NULL AND unscorable_at IS NULL AND horizon_end < ?",
             (restaurant_id, today.isoformat())).fetchall()]
         backfill = [dict(r) for r in conn.execute(
-            "SELECT id, kind, horizon_end, predicted, basis, created_at FROM forecast_log "
+            "SELECT id, kind, horizon_end, predicted, basis, pay_basis, created_at FROM forecast_log "
             "WHERE restaurant_id=? AND actual IS NOT NULL AND naive_n IS NULL "
             "ORDER BY horizon_end DESC LIMIT ?", (restaurant_id, NAIVE_BACKFILL_PER_PASS)).fetchall()]
     finally:
@@ -565,14 +607,19 @@ def restaurants_due(today=None, db_path: str = DB_PATH) -> list:
 
 # ── reading the record ──────────────────────────────────────────────────────
 
-def _scored_periods(restaurant_id, kind, db_path, limit=ACCURACY_WINDOW):
+def _scored_periods(restaurant_id, kind, db_path, limit=ACCURACY_WINDOW, pay_basis=None):
     """One scored row per period, newest period first. Legacy rows written
     once a day for the same week collapse to the FIRST prediction made for
-    that week — the one that was a forecast rather than a later reading."""
+    that week — the one that was a forecast rather than a later reading.
+    A SALARY_KINDS record is read on one pay basis only (`pay_basis`, else
+    the current reader's — _basis_filter): a row of the other basis, or of
+    none, is not this record."""
+    want = _basis_filter(kind, pay_basis)
     conn = get_conn(db_path)
     try:
         rows = None
-        for cols in (", naive_last, naive_mean, explained_by", ", naive_last, naive_mean", ""):
+        for cols in (", naive_last, naive_mean, explained_by, pay_basis", ", naive_last, naive_mean, explained_by",
+                     ", naive_last, naive_mean", ""):
             try:
                 rows = [dict(r) for r in conn.execute(
                     "SELECT horizon_end, predicted, actual, error_pct, signed_error_pct, created_at" + cols +
@@ -586,6 +633,8 @@ def _scored_periods(restaurant_id, kind, db_path, limit=ACCURACY_WINDOW):
         rows = []
     finally:
         conn.close()
+    if want is not None:
+        rows = [r for r in rows if r.get("pay_basis") == want]
     by_period = {}
     for r in rows:
         try:
@@ -630,7 +679,7 @@ def skill(rows) -> dict:
     return out
 
 
-def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
+def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH, pay_basis=None) -> dict:
     """How this kind of forecast has held up here (contract K8).
 
     {"available", "kind", "scored", "n_periods", "n_weeks" | "n_months",
@@ -649,7 +698,7 @@ def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
     unit_key = "n_months" if KINDS.get(kind, {}).get("period") == "month" else "n_weeks"
     base[unit_key] = 0
     try:
-        rows = _scored_periods(restaurant_id, kind, db_path)
+        rows = _scored_periods(restaurant_id, kind, db_path, pay_basis=pay_basis)
     except Exception:
         rows = []
     errs = [_f(r["error_pct"]) for r in rows if _f(r["error_pct"]) is not None]
@@ -687,12 +736,13 @@ def accuracy(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
     return base
 
 
-def calibration(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
+def calibration(restaurant_id: int, kind: str, db_path: str = DB_PATH, pay_basis=None) -> dict:
     """The bias correction: with CALIBRATION_MIN_SCORED+ scored periods
     leaning one way by CALIBRATION_MIN_BIAS_PCT+, the factor that would have
-    made them land. Absent until the record exists. Never raises."""
+    made them land. Absent until the record exists. A SALARY_KINDS record
+    is the reader's own pay basis only (_scored_periods). Never raises."""
     try:
-        rows = _scored_periods(restaurant_id, kind, db_path)
+        rows = _scored_periods(restaurant_id, kind, db_path, pay_basis=pay_basis)
     except Exception:
         rows = []
     # A period a measured event explains is left out of the lean (explained_by)
@@ -719,10 +769,10 @@ def calibration(restaurant_id: int, kind: str, db_path: str = DB_PATH) -> dict:
                            if left_out else ""))}
 
 
-def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH):
+def calibrated(restaurant_id: int, kind: str, predicted, db_path: str = DB_PATH, pay_basis=None):
     """(corrected_value, calibration) — unchanged when there is no record to
     correct it with."""
-    cal = calibration(restaurant_id, kind, db_path=db_path)
+    cal = calibration(restaurant_id, kind, db_path=db_path, pay_basis=pay_basis)
     if not cal.get("available") or cal.get("factor", 1.0) == 1.0 or predicted is None:
         return predicted, cal
     return round(float(predicted) * cal["factor"], 2), cal

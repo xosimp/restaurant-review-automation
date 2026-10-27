@@ -515,7 +515,10 @@ def test_s16_admin_settings_post_the_stored_reviews_live(db, monkeypatch):
 # ── S17: small integrity items ─────────────────────────────────────────────
 
 def test_s17_reporter_labor_history_needs_sales():
-    assert "WHERE restaurant_id=? AND total_sales > 0" in _src("reporter.py")
+    # The digest's trend reads models.get_labor_history (blind re-audit
+    # 10/26/26 B3: on the headline's pay basis), which keeps the rule.
+    assert "get_labor_history" in _src("reporter.py")
+    assert "WHERE restaurant_id=? AND total_sales > 0" in _src("models.py")
 
 
 def test_s17_forecast_log_get_conn_resolves_at_call_time(monkeypatch):

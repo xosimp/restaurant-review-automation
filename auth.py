@@ -6152,6 +6152,29 @@ _UNGATED_PREFIXES = (
 )
 
 
+# The team's side of Labor (staff brief, house rules, staff docs, certs) was
+# put behind the Labor plan and role gates by the release-safety round with
+# no data on who it would take a screen from (blind re-audit 10/26/26 B3).
+# The gate is a cohort: on everywhere by default, and turned off for a
+# restaurant — or everyone — without a deploy (rollout feature
+# STAFF_KNOWLEDGE_GATE_FEATURE: the console's rollout flags, or the env
+# ROLLOUT_STAFF_DOCS_PLAN_GATE=off). Off, those paths are gated only by the
+# role checks inside their own routes, as before the round.
+STAFF_KNOWLEDGE_GATE_FEATURE = "staff_docs_plan_gate"
+STAFF_KNOWLEDGE_PREFIXES = ("/api/staff-brief", "/api/house-rules", "/api/staff-docs", "/api/staff-certs",
+                            "/mobile/api/staff-brief", "/mobile/api/house-rules", "/mobile/api/staff-docs",
+                            "/mobile/api/staff-certs")
+
+
+def _staff_knowledge_gate_off(user, path) -> bool:
+    """Whether the module gates stand down for this staff-knowledge path at
+    this login's restaurant (STAFF_KNOWLEDGE_GATE_FEATURE's cohort)."""
+    if not str(path or "").startswith(STAFF_KNOWLEDGE_PREFIXES):
+        return False
+    import rollout
+    return not rollout.enabled(STAFF_KNOWLEDGE_GATE_FEATURE, (user or {}).get("restaurant_id"), default=True)
+
+
 def _required_module(path: str):
     """The module this path belongs to, or None. Longest match wins."""
     best = None
@@ -6168,8 +6191,9 @@ def _module_blocked(user, path=None):
     try:
         if not user or user.get("is_admin"):
             return None
-        key = _required_module(path if path is not None else (request.path or ""))
-        if not key:
+        _p = path if path is not None else (request.path or "")
+        key = _required_module(_p)
+        if not key or _staff_knowledge_gate_off(user, _p):
             return None
         from models import module_label, restaurant_has_module
         if restaurant_has_module(user["restaurant_id"], key):
@@ -6203,7 +6227,7 @@ def _module_permission_denied(user, path=None):
             return None
         path = path if path is not None else (request.path or "")
         key = _required_module(path)
-        if not key:
+        if not key or _staff_knowledge_gate_off(user, path):
             return None
         from permissions import MODULE_VIEW_PERMISSIONS, has_permission, enter_path_allowed
         needed = MODULE_VIEW_PERMISSIONS.get(key)

@@ -1457,8 +1457,10 @@ def _build(current_user, present=True, reads=None):
     # still in the 5-minute cache — Home never triggers a model call itself.
     ai_insight = None
     try:
-        from client_api import _cache_get
-        cached = _cache_get("review-insight:" + str(rid))
+        from client_api import _cache_get, review_cache_key
+        # This login's own Reviews read (client_api.review_read_scope): the
+        # owner's carries all-in labor and the waste dollars (B3 10/26/26).
+        cached = _cache_get(review_cache_key(rid, current_user))
         if cached and isinstance(cached, str) and cached.strip():
             ai_insight = {"source": "reviews", "text": cached.strip()[:900]}
     except Exception:

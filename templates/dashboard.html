@@ -30940,7 +30940,11 @@ function fc2LoadCfo(){
       var pcHeld=!!(pcaObj&&pcaObj.withheld)||!!(p&&p.withheld);
       if(p&&p.available){
         more+='<div class="fc2-prof"><span class="n"><span class="hb-num">'+p.prime_cost_pct+'%</span>'+(window.cavConf?' '+cavConf.claimTag(pcHeld?'measured':(p.claim_kind||'forecast')):'')+'</span>'
-          +'<span class="l">prime cost month to date (food '+p.food_cost_pct+'% + labor '+p.labor_pct+'%).';
+          // Both parts over net sales, so they add up to the prime cost; the
+          // food cost % over food sales is a different denominator and is
+          // said apart, never added (blind re-audit 10/26/26 B3).
+          +'<span class="l">prime cost month to date'+(p.food_share_pct!=null&&p.labor_pct!=null?' (food '+p.food_share_pct+'% + labor '+p.labor_pct+'% of sales)':'')+'.'
+          +(p.food_cost_pct!=null?' Food cost on food sales alone: '+p.food_cost_pct+'%.':'');
         // Corrected by its own record when it has leaned one way (M4
         // forecasts: projection_correction) — the corrected figure, and the
         // note saying so, never the raw one silently.
@@ -40145,10 +40149,12 @@ window._cuRole=window.CAV_BOOT.role;
     var chip=document.getElementById('floor-chip');
     if(!r.available){h+='<div class="hb-empty">'+esc(r.reason||'Nothing to read yet today.')+'</div>';if(chip)chip.textContent='';}
     else{
-      if(chip)chip.textContent=p.all_in_projected!==null&&p.all_in_projected!==undefined?p.all_in_projected+'% projected':'';
+      var allIn=p.all_in_projected!==null&&p.all_in_projected!==undefined;
+      var hrProj=p.hourly_projected!==null&&p.hourly_projected!==undefined;
+      if(chip)chip.textContent=allIn?p.all_in_projected+'% projected':(hrProj?p.hourly_projected+'% hourly projected':'');
       h+='<div class="lb2-intro"><b>'+esc(r.sentence||'')+'</b></div>';
       h+='<div class="shr-row"><div class="who"><b>Sales</b><span class="sub">'+_flMoney(s.so_far)+' so far ('+esc(s.basis||'no reading yet')+') · '+_flMoney(s.projected)+' projected at close: '+esc(s.projected_basis||'not enough to project from yet')+(s.covers_booked?' · <span class="hb-num">'+esc(s.covers_booked)+'</span> covers booked':'')+'</span></div></div>';
-      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):'')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
+      h+='<div class="shr-row"><div class="who"><b>Labor</b><span class="sub">'+_flMoney(lab.to_date)+' so far ('+_flPct(p.hourly_so_far)+' of sales, hourly) · '+_flMoney(lab.rest)+' still scheduled · '+(allIn?_flPct(p.all_in_projected)+' projected all-in'+(p.target!==null&&p.target!==undefined?' against '+esc(p.target_label||'your target')+' of '+_flPct(p.target):''):_flPct(p.hourly_projected)+' projected for hourly staff')+(lab.basis==='schedule'?' · the POS has no live clock feed, so labor so far is the schedule’s':'')+'</span></div></div>';
       var ms=r.moves||[];
       if(ms.length)h+='<div class="sr-k" style="margin:14px 0 4px">Worth doing now</div>';
       for(i=0;i<ms.length;i++){h+='<div class="shr-row"><div class="who"><span class="shr-kind">'+esc(ms[i].kind.replace('_','-'))+'</span> <span class="sub">'+esc(ms[i].text)+'</span></div></div>';}

@@ -32,7 +32,7 @@ four threads carry, and every other request waits behind them.
 The row runs the route's own body in a bare Flask request context rebuilt
 from the request (method, query, JSON body, path arguments) with the login
 the route saw (credential-looking fields dropped — schedule_engine.
-_row_safe_user), its salary view (models.salary_view(is_principal)) and its
+_row_safe_user), its salary view (models.salary_view(permissions.sees_salaries)) and its
 AI attribution. A ticket is answered only to the login that started it, at
 the restaurant it was started at.
 """
@@ -216,7 +216,7 @@ def run_body(p) -> tuple:
     """(payload, status) of the route's own body for a row's payload `p`,
     in a request context rebuilt from it, under the login's salary view."""
     import models
-    from permissions import is_principal
+    from permissions import sees_salaries
     if p.get("endpoint") not in _REGISTRY:
         # The queue worker: the route modules register their bodies when
         # imported (strategy_routes' table, mobile_api's decorator).
@@ -236,7 +236,7 @@ def run_body(p) -> tuple:
     # the body reads exactly the request it was asked with.
     with _app().test_request_context(p.get("path") or "/", **kw):
         g.cavnar_current_user = user
-        with models.salary_view(bool(is_principal(user))):
+        with models.salary_view(bool(sees_salaries(user))):
             out = fn(user, **(p.get("path_args") or {}))
     return _normalise(out)
 

@@ -1976,10 +1976,19 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
     # The Labor and Food reads are kept per salary view (insight_store.
     # salary_kind, audit #25 F13): a login who may not see salaries reads
     # only its own view's, never the owner's all-in one.
+    # Whose view: the login Ask answers for (permissions.sees_salaries —
+    # never a manager, nor support through view-as), else the work's own
+    # (models.viewer_sees_salaries; a job is manager-safe).
     try:
-        from models import viewer_sees_salaries as _vss_rr
-        _sees_rr = bool(_vss_rr())
-    except Exception:
+        _user_rr = getattr(_viewer, "_ask_dsr_user", None) if _viewer is not None else None
+        if isinstance(_user_rr, dict):
+            from permissions import sees_salaries as _ss_rr
+            _sees_rr = bool(_ss_rr(_user_rr))
+        else:
+            from models import viewer_sees_salaries as _vss_rr
+            _sees_rr = bool(_vss_rr())
+    except Exception as e:
+        log.warning("read_recent_reads: salary view unreadable, read without salaries: %r", e)
         _sees_rr = False
     try:
         import ai_reads
@@ -2009,7 +2018,13 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
         import insight_store
         import ai_reads as _air_k
         for kind, perm_module, label in _READ_KINDS:
-            stored_kind = insight_store.salary_kind(kind)
+            # On the login's own salary view (_sees_rr), as the kept history above.
+            stored_kind = (kind if (_sees_rr or kind not in insight_store.SALARY_VIEW_KINDS)
+                           else kind + insight_store.HOURLY_SUFFIX)
+            if kind == "reviews":
+                # The Reviews read is kept per salary view and Food Cost view
+                # (insight_store.review_scope, blind re-audit 10/26/26 B3).
+                stored_kind = kind + insight_store.review_scope(_sees_rr, "inventory" not in denied)
             # The current stored read is already listed when its kept history is.
             if (perm_module in denied or _air_k.STORE_SURFACE.get(stored_kind, stored_kind) in seen
                     or (want and want not in (kind, perm_module))):
@@ -2077,7 +2092,7 @@ def _read_recent_reads(restaurant_id, module=None, days=30, _viewer=None):
 def _read_surface_allowed(surface, viewer, denied) -> bool:
     """Whether the login behind `viewer` may read a kept read of `surface`
     (ai_reads.SURFACE_MODULE): a module's read needs that module's view; an
-    OWNER_ONLY read is the account holder's (permissions.is_principal) — an
+    OWNER_ONLY read is the account holder's (permissions.sees_salaries) — an
     unrestricted caller (no login stamped) reads as the owner; a surface
     the map does not name is refused."""
     import ai_reads
@@ -2089,8 +2104,10 @@ def _read_surface_allowed(surface, viewer, denied) -> bool:
         if user is None:
             return True
         try:
-            from permissions import is_principal
-            return bool(is_principal(user))
+            # The account holder's — never support acting through view-as:
+            # an owner-level read carries the all-in labor (B3 10/26/26).
+            from permissions import sees_salaries
+            return bool(sees_salaries(user))
         except Exception:
             return False
     return m not in denied

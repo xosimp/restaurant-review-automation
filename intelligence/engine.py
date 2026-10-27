@@ -232,7 +232,9 @@ def outcome_words(standing_word, metric) -> str | None:
     if not base:
         return None
     m = reg.meta(metric)
-    label = (m.get("label") or "figure").lower()
+    # The noun inside a sentence ("hourly labor %"), where the label carries
+    # a qualifier in brackets ("Labor % (hourly staff)").
+    label = (m.get("noun") or m.get("label") or "figure").lower()
     higher = m.get("better", "higher") == "higher"
     if standing_word == "top quarter":
         return f"{base} ({'higher' if higher else 'lower'} {label} than 3 in 4)"

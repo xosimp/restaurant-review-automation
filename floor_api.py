@@ -191,6 +191,11 @@ def live_read(u):
     if not _sr()._sees_pay(u):
         rd = labor_live.redact_read(rd)
         today = [labor_live.redact_move(m) for m in today]
+    # The day's share of the salaries and the all-in projection are the
+    # owner's (permissions.sees_salaries; blind re-audit 10/26/26 B3).
+    from permissions import sees_salaries as _sees_salaries_fl
+    if not _sees_salaries_fl(u):
+        rd = labor_live.redact_salaries(rd)
     return {"ok": True, "read": rd, "moves_today": today,
             "can_act": _sr()._may_decide_requests(u)}, 200
 

@@ -4044,7 +4044,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
             # (memory audit 9/29/26, labor_periods) — the alert's period_start
             # is the calendar week Home's labor_over card is keyed on too.
             recent = c2.execute("""
-                SELECT labor_pct, period_start, period_end
+                SELECT period_start, period_end
                 FROM labor_history
                 WHERE restaurant_id=?
                   AND period_end >= date('now', ?)
@@ -4054,8 +4054,20 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 ORDER BY period_end DESC, saved_at DESC LIMIT 1
             """, (rid, f"-{_labor_alert_max_age_days()} days", LABOR_ALERT_MIN_PERIOD_DAYS)).fetchone()
             c2.close()
-            if recent and recent["labor_pct"] is not None:
-                actual = recent["labor_pct"]
+            # Like with like (blind re-audit 10/26/26 B3): the stored period
+            # is HOURLY (labor_daily_history keeps the shifts alone) and the
+            # owner's target judges labor WITH salaries (9/30/26), so this
+            # compared hourly with all-in and stayed silent on exactly the
+            # weeks the salaries pushed labor over. The period is read again
+            # through models.get_labor_history on the owner's basis for the
+            # judgement (_labor_alert_figure); what the alert SAYS is
+            # labor_alert_words' — it reaches alert contacts, the "Also
+            # email" addresses and every login that sees Labor, so with
+            # anyone salaried it names the hourly figure, never the all-in
+            # one or the gap that would give the salaries away.
+            fig = _labor_alert_figure(rid, recent, db_path) if recent else None
+            if fig is not None:
+                actual = fig["all_in_pct"]
                 target = labor_target_for(dict(r))
                 # One definition of "over target" (thresholds.py) shared with
                 # the labor issue and Home. Any overage at all used to fire
@@ -4065,21 +4077,66 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                 # a volatile restaurant is not texted about noise.
                 import restaurant_thresholds as _rthr_al
                 if actual - target >= _rthr_al.margin(rid, "labor_over_period", stated=LABOR_OVER_TARGET_PTS):
-                    from time_utils import mdy_range
-                    over_by = round(actual - target, 1)
                     _period_label = _short_period(recent["period_start"], recent["period_end"])
-                    sms  = (
-                        f"💸 {name}: Labor at {actual:.1f}% for {_period_label} — "
-                        f"{over_by}pts over your {target:.0f}% target.\n"
-                        f"dashboard.cavnar.ai"
-                    )
-                    _fire(sms, f"Labor over target — {name}", [
-                        f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
-                        f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
-                        # M/D/YY, never the stored ISO dates (#16).
-                        f"Period: {mdy_range(recent['period_start'], recent['period_end'])}",
-                    ], "labor_over", recs=[alert_rec("labor_over", subject=str(recent["period_start"])[:10],
-                                                     title=f"Labor {actual:.1f}% against a {target:.0f}% target")])
+                    words = labor_alert_words(name, fig, target, _period_label,
+                                              recent["period_start"], recent["period_end"])
+                    _fire(words["sms"], f"Labor over target — {name}", words["lines"], "labor_over",
+                          recs=[alert_rec("labor_over", subject=str(recent["period_start"])[:10],
+                                          title=words["title"])])
+
+
+def _labor_alert_figure(restaurant_id, period, db_path=DB_PATH):
+    """{all_in_pct, hourly_pct, hourly_only} for one stored labor period on
+    the owner's basis (the target judges all-in labor), or None when the
+    period cannot be read. Through models.get_labor_history in the owner's
+    salary view — the one read that adds the salaried day share to a stored
+    (hourly) period — never the stored labor_pct itself. `hourly_only`:
+    someone is salaried, so the shared words name the hourly figure
+    (labor_alert_words)."""
+    try:
+        with models.salary_view(True):
+            hist = models.get_labor_history(restaurant_id, limit=12, db_path=db_path)
+    except Exception as e:
+        print(f"[notify] labor history unreadable for rid={restaurant_id}: {e!r}")
+        return None
+    start = str(period["period_start"])[:10]
+    row = next((h for h in hist if str(h.get("period_start") or "")[:10] == start), None)
+    if row is None or row.get("labor_pct") is None:
+        return None
+    salaried = bool(row.get("includes_salaries"))
+    return {"all_in_pct": float(row["labor_pct"]),
+            "hourly_pct": row.get("hourly_labor_pct") if salaried else row.get("labor_pct"),
+            "hourly_only": salaried}
+
+
+def labor_alert_words(name, fig, target, period_label, period_start, period_end) -> dict:
+    """{sms, lines, title} for the labor-over alert. Its audience is mixed
+    (alert contacts — the people issues are routed to — the "Also email"
+    addresses, and every login that sees Labor), so with anyone salaried
+    the words name the HOURLY figure and say the target counts salaried
+    pay, never the all-in % or the points over (hourly % plus the points
+    over IS the all-in %). With nobody salaried the figure is the labor."""
+    from time_utils import mdy_range
+    period = mdy_range(period_start, period_end)
+    if fig.get("hourly_only") and fig.get("hourly_pct") is not None:
+        hourly = float(fig["hourly_pct"])
+        return {"sms": (f"💸 {name}: Labor over your {target:.0f}% target for {period_label} once salaried pay "
+                        f"is counted — hourly staff ran {hourly:.1f}% of sales.\ndashboard.cavnar.ai"),
+                "lines": [f"Labor ran over your {target:.0f}% target for the most recent labor period, counted "
+                          f"the way the target counts it — with salaried pay.",
+                          f"Hourly staff: <strong>{hourly:.1f}%</strong> of sales — the part next week's "
+                          f"schedule controls. Open Labor for the whole figure.",
+                          # M/D/YY, never the stored ISO dates (#16).
+                          f"Period: {period}"],
+                "title": f"Labor over the {target:.0f}% target — hourly staff {hourly:.1f}%"}
+    actual = float(fig["all_in_pct"])
+    over_by = round(actual - target, 1)
+    return {"sms": (f"💸 {name}: Labor at {actual:.1f}% for {period_label} — "
+                    f"{over_by}pts over your {target:.0f}% target.\ndashboard.cavnar.ai"),
+            "lines": [f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
+                      f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
+                      f"Period: {period}"],
+            "title": f"Labor {actual:.1f}% against a {target:.0f}% target"}
 
 
 def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:

@@ -1994,9 +1994,10 @@ def review_insight_answer(rid, viewer):
     # The stored read this login may be served: the cross-location one only
     # to a login shown its other locations (re-audit 10/8/26 #1).
     sees = bool(_review_sees_locations(rid, viewer))
+    scope = review_read_scope(viewer)
 
     def _stale(note):
-        body, at = review_stored_latest(rid, sees)
+        body, at = review_stored_latest(rid, sees, scope)
         if not (isinstance(body, dict) and body.get("insight")):
             return None
         from ai_guard import freshness as _fresh_sw
@@ -2013,7 +2014,7 @@ def review_insight_answer(rid, viewer):
         stale=_stale,
         pending=lambda job: ({"insight": insight_refresh.PENDING_MESSAGE, "recs": []}, 200),
         failed=lambda err, st: ({"insight": err or INSIGHT_UNAVAILABLE, "error": err or INSIGHT_UNAVAILABLE}, st),
-        key={"locations": sees},
+        key={"locations": sees, "scope": scope},
         refresh_job=insight_refresh.refresh_job_arg())
 
 
@@ -2353,10 +2354,41 @@ REVIEW_STORE_KIND = "reviews"
 REVIEW_LOCATIONS_STORE_KIND = "reviews:locations"
 
 
-def review_store_kind(sees_locations) -> str:
+def review_store_kind(sees_locations, scope="") -> str:
     """The insight_store kind of the Reviews read for a login that does
-    (or does not) see its other locations."""
-    return REVIEW_LOCATIONS_STORE_KIND if sees_locations else REVIEW_STORE_KIND
+    (or does not) see its other locations, in its review_read_scope."""
+    return (REVIEW_LOCATIONS_STORE_KIND if sees_locations else REVIEW_STORE_KIND) + (scope or "")
+
+
+def review_read_scope(viewer=None) -> str:
+    """What of the other modules a login's Reviews read may carry
+    (insight_store.review_scope): "" for one who sees the salaries (the
+    owner — all-in labor, waste dollars), ":hourly" for anyone else who
+    sees Food Cost, ":hourly:nofood" for one who does not (a manager). The
+    read's operational evidence — labor %, the week's waste $ — was built
+    in whoever opened Reviews first's view and kept per restaurant, so a
+    manager was served the owner's all-in labor and the margins their role
+    is built without (blind re-audit 10/26/26 B3). Salary view from the
+    request (models.viewer_sees_salaries); Food Cost from the login, or —
+    with no login named — only alongside the salaries."""
+    import insight_store as _ist_rs
+    try:
+        from models import viewer_sees_salaries
+        sees = bool(viewer_sees_salaries())
+    except Exception:
+        sees = False
+    if isinstance(viewer, dict):
+        from permissions import has_permission, FOOD_COST_VIEW
+        food = bool(viewer.get("is_admin")) or has_permission(viewer, FOOD_COST_VIEW)
+    else:
+        food = sees
+    return _ist_rs.review_scope(sees, food)
+
+
+def review_cache_key(rid, viewer=None) -> str:
+    """The process-cache key of the Reviews read this login is served."""
+    return ("review-insight:" + str(rid) + (":locations" if _review_sees_locations(rid, viewer) else "")
+            + review_read_scope(viewer))
 
 
 def review_body_shows_locations(body) -> bool:
@@ -2365,14 +2397,15 @@ def review_body_shows_locations(body) -> bool:
     return bool(isinstance(locs, dict) and locs.get("available"))
 
 
-def review_stored_latest(rid, sees_locations):
+def review_stored_latest(rid, sees_locations, scope=""):
     """(payload, created_at) of the last stored Reviews read this login may
-    be served, else (None, None). The kind matches the login; a row under
-    the plain kind that still carries location themes (written before the
-    kinds were split) is never served to a login that may not see them."""
+    be served, else (None, None). The kind matches the login (its locations
+    and its review_read_scope); a row under the plain kind that still
+    carries location themes (written before the kinds were split) is never
+    served to a login that may not see them."""
     try:
         import insight_store as _ist_rl
-        body, at = _ist_rl.latest(rid, review_store_kind(sees_locations))
+        body, at = _ist_rl.latest(rid, review_store_kind(sees_locations, scope))
     except Exception:
         return None, None
     if not sees_locations and review_body_shows_locations(body):
@@ -2465,9 +2498,13 @@ def _do_review_insight(rid, viewer=None):
     # its other locations' review themes, so a manager of one location never
     # reads a sibling aggregate generated for the owner (re-audit #42).
     _sees_ri = bool(_review_sees_locations(rid, viewer))
-    _ck = "review-insight:" + str(rid) + (":locations" if _sees_ri else "")
+    # And per what of the other modules this login may see (review_read_scope,
+    # blind re-audit 10/26/26 B3): the owner's all-in labor and the waste $
+    # are never in a manager's read.
+    _scope_ri = review_read_scope(viewer)
+    _ck = "review-insight:" + str(rid) + (":locations" if _sees_ri else "") + _scope_ri
     # Its stored row likewise (re-audit 10/8/26 #1): review_store_kind.
-    _sk_ri = review_store_kind(_sees_ri)
+    _sk_ri = review_store_kind(_sees_ri, _scope_ri)
     cached = _cache_get(_ck)
     if cached:
         return _review_insight_recs(rid, dict(cached) if isinstance(cached, dict) else {"insight": cached}), 200
@@ -2653,7 +2690,9 @@ def _do_review_insight(rid, viewer=None):
         # to exist at all.
         import review_intelligence as _ri
         _trend = _ri.rating_trend(rid)
-        _ops_ctx = _ri.operational_context(rid)
+        # In this login's salary view (the request's, or the one its refresh
+        # carried), with Food Cost only for a login that sees it.
+        _ops_ctx = _ri.operational_context(rid, include_food=not _scope_ri.endswith(":nofood"))
         _money = _ri.revenue_at_risk(rid)
         _bench = _ri.competitor_benchmark(rid)
         try:
@@ -2955,7 +2994,8 @@ def _do_review_insight(rid, viewer=None):
                 "severity": _sev,
                 "dayparts": _parts,
                 "locations": _locs,
-                "operational_context": _ops_ctx,
+                # operational_context is the prompt's evidence, never returned:
+                # no client reads it, and it carried labor % and waste $ (B3).
                 "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
                 "stale": False,
             }
@@ -3033,7 +3073,7 @@ def _do_review_insight(rid, viewer=None):
                 detail=_why_ri or "refused whole by the response validation layer")
             if _why_ri == "the reply was empty":
                 _ai_q.mark_outcome(msg, "unparseable", reason="empty reply")
-            _prev_ri, _prev_at = review_stored_latest(rid, _sees_ri)
+            _prev_ri, _prev_at = review_stored_latest(rid, _sees_ri, _scope_ri)
             if isinstance(_prev_ri, dict) and _prev_ri.get("insight"):
                 from ai_guard import freshness as _fresh_rf
                 held = dict(_prev_ri)
@@ -3081,7 +3121,7 @@ def _do_review_insight(rid, viewer=None):
         if not stale:
             # The stored read survives a deploy; the in-memory one does not.
             try:
-                _body_st, _at_st = review_stored_latest(rid, _sees_ri)
+                _body_st, _at_st = review_stored_latest(rid, _sees_ri, _scope_ri)
                 if isinstance(_body_st, dict) and _body_st.get("insight"):
                     stale = (datetime.strptime(str(_at_st)[:19], "%Y-%m-%d %H:%M:%S"), _body_st)
             except Exception:

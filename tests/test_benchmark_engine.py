@@ -425,10 +425,10 @@ def test_prompt_lines_carry_the_own_value_the_better_direction_and_outcome_words
     peers = out["comparisons"][0]
     assert peers["available"] and peers["standing"] == "bottom quarter"
     line = eng.prompt_lines([out])[0]
-    assert line.startswith("Labor %: this restaurant 34% (lower is better);")
-    assert "worse than 3 in 4 of the group (higher labor % than 3 in 4)" in line
+    assert line.startswith("Labor % (hourly staff): this restaurant 34% (lower is better);")
+    assert "worse than 3 in 4 of the group (higher hourly labor % than 3 in 4)" in line
     assert "bottom quarter" not in line and "top quarter" not in line
-    assert eng.outcome_words("top quarter", "labor_pct_28d").endswith("(lower labor % than 3 in 4)")
+    assert eng.outcome_words("top quarter", "labor_pct_28d").endswith("(lower hourly labor % than 3 in 4)")
     assert eng.outcome_words("top quarter", "avg_rating_30d").endswith("(higher average rating (30 days) than 3 in 4)")
     # The fact contract (engine.facts): every benchmark fact says which
     # metric, which way is better, the restaurant's own value and standing.

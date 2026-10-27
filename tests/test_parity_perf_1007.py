@@ -295,7 +295,8 @@ def test_web_labor_twin_answers_the_same_way(db, held, fake_labor_read, monkeypa
             failed=lambda err, st: ({"insight": err}, st))
     assert payload["pending"] is True and len(held.jobs) == 1
     held.run_all()
-    assert client_api.labor_cached_read(rid, None).startswith("Labor ran 31%")
+    with models.salary_view(True):          # the owner's kept read (off a request: manager-safe)
+        assert client_api.labor_cached_read(rid, None).startswith("Labor ran 31%")
 
 
 # ── #56: compression ────────────────────────────────────────────────────────

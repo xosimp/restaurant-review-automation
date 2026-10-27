@@ -151,6 +151,13 @@ def test_sample_data_still_gets_the_notice_and_no_model_call(monkeypatch):
 
 
 def test_a_stored_food_read_is_revalidated_from_the_model_text_without_a_model_call(db_path, monkeypatch):
+    # The owner's read, kept under the owner's kind ("food"; off a request a
+    # read is manager-safe and kept as "food:hourly" — insight_store.salary_kind).
+    with models.salary_view(True):
+        _the_stored_food_read_is_revalidated(db_path, monkeypatch)
+
+
+def _the_stored_food_read_is_revalidated(db_path, monkeypatch):
     rid = _rid(db_path)
     seen = {}
     _stub_food(monkeypatch, "Waste ran $160 this week.\n1. Trim the Salmon par — $96 a week, low effort", seen)

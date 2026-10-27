@@ -526,8 +526,8 @@ def index(current_user):
         # alone - it is two people's pay.
         labor_salaried = None
         try:
-            from permissions import is_principal as _is_principal
-            if _is_principal(current_user):
+            from permissions import sees_salaries as _sees_salaries_hd
+            if _sees_salaries_hd(current_user):
                 from labor import salaried_summary
                 labor_salaried = salaried_summary(restaurant, labor)
         except Exception:

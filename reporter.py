@@ -666,6 +666,20 @@ def on_digest_batch(item, message=None, error=None):
                  call_id=getattr(msg, "_cavnar_call_id", None) or (item or {}).get("call_id"), source="batch")
 
 
+def _reads_as_owner(fn):
+    """models.reads_as_owner: the digest goes to the owner's addresses
+    alone (jobs_registry salary_view "owner"), so its precomputed narrative
+    is written on the owner's all-in labor, as the 9am send builds it."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        import models
+        return models.reads_as_owner(fn)(*args, **kwargs)
+    return run
+
+
+@_reads_as_owner
 def run_digest_precompute(now=None):
     """Hourly: for each restaurant whose digest goes out today (its owner's
     digest day, the send's own selection), from DIGEST_PRECOMPUTE_FROM_HOUR
@@ -789,9 +803,12 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                 # last shift on file (re-audit B3#18).
                 _dr_lr = labor.get("date_range") or {}
                 _days_lr = int(_dr_lr.get("days") or labor.get("period_days") or 0)
+                # Which pay the figure counts, said to the model (B3 10/26/26):
+                # all-in for the owner, salaries included.
+                _lr_basis = " (salaries included)" if labor.get("includes_salaries") else ""
                 if _dr_lr.get("end") and _days_lr:
                     from time_utils import mdy as _mdy_lr
-                    labor_context = (f"Labor: {lp:.1f}% of revenue over the {_days_lr} days of shifts "
+                    labor_context = (f"Labor: {lp:.1f}% of revenue{_lr_basis} over the {_days_lr} days of shifts "
                                      f"through {_mdy_lr(_dr_lr['end'])}")
                     # The data's age (NS4 M3): June shifts read in September
                     # are not this week's labor, and the line says so.
@@ -810,12 +827,14 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                             _labor_state = {"as_of": _mdy_lr(_dr_lr["end"]), "age": _age_lr}
                         labor_context += ")"
                 else:
-                    labor_context = f"Labor: {lp:.1f}% of revenue over the shifts on file"
+                    labor_context = f"Labor: {lp:.1f}% of revenue{_lr_basis} over the shifts on file"
                     _labor_stale = True
                 if ot_risk:
                     labor_context += f", {len(ot_risk)} overtime risk"
                 _facts["labor"] = {"pct": float(lp), "direction": None,
                                    "from_pct": None, "weeks": 0,
+                                   # The pay basis pct and from_pct share (B3).
+                                   "includes_salaries": bool(labor.get("includes_salaries")),
                                    "overtime_risk": len(ot_risk),
                                    # The window the figure covers, for the
                                    # templated LABOR line (#82).
@@ -823,21 +842,21 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
                                    "through": (_mdy(_dr_lr["end"]) if _dr_lr.get("end") and _days_lr else None)}
                 # Pull labor trend from history
                 try:
-                    from models import get_conn as _gc_lr
-                    _conn_lr = _gc_lr()
-                    _lh = _conn_lr.execute(
-                        # A period with no sales has no labor % (its 0.0 is a
-                        # missing figure): "trending … from 0.0%" (B6 low) —
-                        # the filter notify.py and get_labor_history apply.
-                        # Never the legacy rolling windows (memory audit
-                        # 9/29/26, labor_periods).
-                        """SELECT labor_pct, period_start, basis FROM labor_history
-                           WHERE restaurant_id=? AND total_sales > 0
-                             AND COALESCE(kind, '') != 'rolling_window'
-                           ORDER BY period_start DESC LIMIT 3""",
-                        (report.restaurant_id,)
-                    ).fetchall()
-                    _conn_lr.close()
+                    # The periods through models.get_labor_history, on the
+                    # SAME basis as the headline above (blind re-audit
+                    # 10/26/26 B3): the stored labor_history rows are hourly,
+                    # and "Labor 14.9% — trending UP from 8.9%" set the
+                    # owner's all-in figure beside hourly history, an
+                    # invented six-point jump. get_labor_history adds the
+                    # salaries exactly when the headline does (the viewer's
+                    # salary view — the digest's is the owner's), drops
+                    # periods with no sales ("trending … from 0.0%", B6 low)
+                    # and the legacy rolling windows (memory audit 9/29/26).
+                    from models import get_labor_history as _glh_lr
+                    _lh = _glh_lr(report.restaurant_id, limit=3)
+                    _lh_basis = {bool(r.get("includes_salaries")) for r in _lh}
+                    if bool(labor.get("includes_salaries")) not in _lh_basis or len(_lh_basis) > 1:
+                        _lh = []        # never a trend across two pay bases
                     # A trend only across periods costed alike: a recost is
                     # not the labor moving.
                     if _lh and _lh[0]["basis"]:

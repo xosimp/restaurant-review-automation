@@ -36,7 +36,12 @@ METRICS = {
                               "comparability": BEHAVIOUR, "module": "reviews", "source": "reviews", "step": 0.05},
     "reply_rate_30d": {"label": "Reviews answered", "unit": "share", "better": "higher",
                        "comparability": BEHAVIOUR, "module": "reviews", "source": "reviews", "step": 0.05},
-    "labor_pct_28d": {"label": "Labor %", "unit": "%", "better": "lower", "comparability": ECONOMICS,
+    # Hourly staff only, by design (a cohort never carries one restaurant's
+    # salaries): labelled so wherever it is compared — the owner's own Labor
+    # screen is all-in, and an unlabelled peer or location figure read
+    # against it (blind re-audit 10/26/26 B3).
+    "labor_pct_28d": {"label": "Labor % (hourly staff)", "noun": "hourly labor %", "unit": "%", "better": "lower",
+                      "comparability": ECONOMICS,
                       "module": "labor", "source": "labor", "industry": "labor_pct", "step": 0.5},
     "labor_pct_sd_28d": {"label": "Day-to-day labor swing", "unit": "pts", "better": "lower",
                          "comparability": ECONOMICS, "module": "labor", "source": "labor", "step": 0.5},

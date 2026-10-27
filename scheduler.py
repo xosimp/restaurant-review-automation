@@ -1162,7 +1162,12 @@ def run_weekly_digests():
                     reached.add(key)
                 _send(key)
 
-        _done, hit_bound = resumable_sweep(WEEKLY_DIGEST_CURSOR_KEY, list(units), _unit, DIGEST_MAX_SECONDS,
+        # Each address's build and send in the owner's salary view (the
+        # digest goes to owner addresses alone — get_owner_emails): a pool
+        # worker carries no view of its own, and reads manager-safe.
+        import models as _models_wd
+        _done, hit_bound = resumable_sweep(WEEKLY_DIGEST_CURSOR_KEY, list(units),
+                                           _models_wd.in_salary_view(True, _unit), DIGEST_MAX_SECONDS,
                                            workers=DIGEST_WORKERS, job="weekly_digest")
         if hit_bound:
             counts["hit_bound"] = True
@@ -1586,7 +1591,12 @@ def run_labor_prewarm(now=None):
             log.error(f"labor prewarm failed for restaurant {rid}: {e}")
             _ops.capture(e, job="labor_prewarm", context=f"restaurant_id={rid}")
 
-    _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(), _one,
+    # The owner's read, written under the owner's key (insight_store.
+    # salary_kind): a pool worker would otherwise read manager-safe and
+    # warm the hourly read nobody opened.
+    import models as _models_lp
+    _done, ran_out = resumable_sweep(LABOR_PREWARM_CURSOR_KEY, labor_prewarm_restaurants(),
+                                     _models_lp.in_salary_view(True, _one),
                                      LABOR_PREWARM_MAX_SECONDS, workers=LABOR_PREWARM_WORKERS, job="labor_prewarm")
     c["hit_bound"] = bool(ran_out)
     return c
@@ -4419,6 +4429,20 @@ def _summary_outcome(job, rs, result, claim_key):
     return "failed"
 
 
+def _models_owner_view(fn):
+    """models.reads_as_owner, resolved when the job runs: the monthly and
+    quarterly summaries go to restaurants.owner_email alone, so they read
+    all-in labor (jobs_registry salary_view "owner")."""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        import models
+        return models.reads_as_owner(fn)(*args, **kwargs)
+    return run
+
+
+@_models_owner_view
 def run_monthly_summaries():
     """1st of the month, 9am — the monthly summary email to active clients.
 
@@ -4502,6 +4526,7 @@ def run_monthly_summaries():
             "sent": sent}
 
 
+@_models_owner_view
 def run_quarterly_summaries():
     """1st of Jan / Apr / Jul / Oct, 9am local — the quarter that just
     ended. Same audience and the same switch as the monthly; counted as sent

@@ -1947,6 +1947,21 @@ def _job_context(name, run_id):
                 correlation_id=None if outer.get("correlation_id") else f"job:{name}:{run_id}"))
         except Exception as e:
             log.debug(f"job AI context unavailable: {e}")
+        # Whose salary view the run reads in (blind re-audit 10/26/26 B3
+        # P0): manager-safe — hourly labor, no salaries — unless the job is
+        # one that reports to the owner alone (jobs_registry.owner_salary_view).
+        # Set here, not inherited: an admin's Run now or a pool thread that
+        # copied a request's context must not carry the owner's view into
+        # an issue a manager is texted. A recipient-by-recipient job sets
+        # each recipient's view inside (morning_brief.deliver).
+        import models as _models_jc
+        try:
+            import jobs_registry as _jr_jc
+            _owner_jc = bool(_jr_jc.owner_salary_view(name))
+        except Exception as e:
+            log.warning(f"job salary view unreadable for {name}, ran manager-safe: {e!r}")
+            _owner_jc = False
+        stack.enter_context(_models_jc.salary_view(_owner_jc))
         yield
 
 

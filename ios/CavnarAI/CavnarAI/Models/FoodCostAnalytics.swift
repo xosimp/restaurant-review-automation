@@ -695,9 +695,15 @@ struct FoodCostCFO: Decodable {
         /// nights by your nightly reports, …"). Nil on an older server.
         var projectionCorrection: ProjectionCorrection? = nil
         var laborBasisText: String? = nil
+        /// COGS over the month's NET sales (blind re-audit 10/26/26 B3): the
+        /// food part of the prime cost, so food + labor adds up to it.
+        /// `foodCostPct` is over FOOD sales and does not add. Nil on an
+        /// older server.
+        var foodSharePct: Double? = nil
         enum CodingKeys: String, CodingKey {
             case projectionCorrection = "projection_correction"
             case laborBasisText = "labor_basis_text"
+            case foodSharePct = "food_share_pct"
             case available, reason, direction, basis
             case primeCostPct = "prime_cost_pct"
             case foodCostPct = "food_cost_pct"
@@ -724,6 +730,7 @@ struct FoodCostCFO: Decodable {
             basis = try? c.decodeIfPresent(String.self, forKey: .basis)
             projectionCorrection = (try? c.decodeIfPresent(ProjectionCorrection.self, forKey: .projectionCorrection)) ?? nil
             laborBasisText = (try? c.decodeIfPresent(String.self, forKey: .laborBasisText)) ?? nil
+            foodSharePct = (try? c.decodeIfPresent(Double.self, forKey: .foodSharePct)) ?? nil
         }
     }
 

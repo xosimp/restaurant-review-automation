@@ -386,7 +386,9 @@ def test_a_failed_review_insight_serves_the_last_good_read_marked_stale(db_path,
     def boom(*a, **k):
         raise RuntimeError("provider exploded")
     monkeypatch.setattr(ai_utils, "create_with_retry", boom)
-    payload, status = client_api._do_review_insight(rid)
+    import models
+    with models.salary_view(True):          # the owner's read (the key "review-insight:<rid>")
+        payload, status = client_api._do_review_insight(rid)
     assert status == 200 and payload["stale"] is True and payload["insight"] == "Yesterday's read."
 
 

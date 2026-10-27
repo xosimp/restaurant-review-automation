@@ -99,7 +99,7 @@ BETTER = {"avg_rating_30d": "higher", "response_24h_rate_30d": "higher", "reply_
           "post_lift_median_28d": "higher", "post_engagement_rate_28d": "higher"}
 
 LABELS = {"avg_rating_30d": "Average rating (30d)", "response_24h_rate_30d": "Reviews answered within a day",
-          "reply_rate_30d": "Reviews answered", "labor_pct_28d": "Labor %", "labor_pct_sd_28d": "Day-to-day labor swing",
+          "reply_rate_30d": "Reviews answered", "labor_pct_28d": "Labor % (hourly staff)", "labor_pct_sd_28d": "Day-to-day labor swing",
           "labor_hours_per_1k_28d": "Labor hours per $1k of sales", "labor_hours_per_1k_day_28d": "Labor hours per $1k, lunch/day",
           "labor_hours_per_1k_night_28d": "Labor hours per $1k, dinner/night",
           "food_cost_pct_28d": "Food cost %", "waste_sales_pct_28d": "Waste as % of sales",
