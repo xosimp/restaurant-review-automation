@@ -90,7 +90,16 @@ def init_schedule_notices(db_path=None):
     transaction as the stamp, delivered after it, and keeps what happened —
     sent (on which channel), unreachable (nothing on file), failed (retried
     at next_attempt_at until NOTICE_MAX_ATTEMPTS) or cancelled (a newer
-    notice about the same week replaced it before it went)."""
+    notice about the same week replaced it before it went).
+
+    At most once to the provider: `send_started_at` is stamped, over the
+    deliverer's own claim, before the provider is called, and a notice whose
+    send started under a claim that died (a deploy's SIGTERM, a crash between
+    the provider's answer and the outcome's write) is never sent again on
+    its own — it is left failed, saying it may have reached them, for the
+    owner's Send again (release-safety audit 10/26/26 A02-11: it went out
+    a second time when its lease ran out). `provider_id` keeps the
+    provider's message id where it gives one (Resend's, for email)."""
     conn = get_conn(db_path)
     try:
         conn.execute("""CREATE TABLE IF NOT EXISTS schedule_notices (
@@ -114,8 +123,16 @@ def init_schedule_notices(db_path=None):
             requested_by     TEXT,
             created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             sent_at          TEXT,
+            send_started_at  TEXT,                  -- stamped before the provider is called (at most once)
+            provider_id      TEXT,                  -- the provider's message id, when it gives one (email)
             UNIQUE(batch, employee_name)
         )""")
+        # A database made before the send stamp (release-safety audit
+        # 10/26/26 A02-11).
+        have = {str(r[1]).lower() for r in conn.execute("PRAGMA table_info(schedule_notices)").fetchall()}
+        for col in ("send_started_at", "provider_id"):
+            if col not in have:
+                conn.execute(f"ALTER TABLE schedule_notices ADD COLUMN {col} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_notices_due ON schedule_notices(status, next_attempt_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_schedule_notices_week ON schedule_notices(restaurant_id, history_id)")
         # The retention prune's column (ops._RETENTION_COLUMN).
@@ -884,7 +901,8 @@ def _notice_outcome(notice_id, item, db_path=None):
                 if attempts < NOTICE_MAX_ATTEMPTS:
                     retry = _utc(_dt.utcnow() + _td(minutes=NOTICE_RETRY_MINUTES[min(attempts, len(NOTICE_RETRY_MINUTES)) - 1]))
                 conn.execute("UPDATE schedule_notices SET status='failed', delivery=NULL, sent_at=NULL, last_error=?, "
-                             "next_attempt_at=?, claimed_at=NULL WHERE id=? AND status IN ('sending', 'sent')",
+                             "next_attempt_at=?, claimed_at=NULL, send_started_at=NULL "
+                             "WHERE id=? AND status IN ('sending', 'sent')",
                              ((item.get("error") or "not sent")[:300], retry, notice_id))
             conn.commit()
         finally:
@@ -959,6 +977,7 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
             box.setdefault("email_error", getattr(res, "error", None) or "The email was not sent.")
             _drop_share(token, schedule_id)
             return False
+        box["provider_id"] = getattr(res, "message_id", None)
         return True
 
     lock = _threading.Lock()
@@ -1006,7 +1025,10 @@ def _deliver_one(rid, restaurant, schedule_id, csv_text, name, ch, week_label, k
         return "sent", {"employee_name": name, "sent_to": ch["sms"], "channel": "sms",
                         **({"delivery": "held_until_morning"} if how == "sms_held" else {}), "shifts": len(shifts)}
     if how == "email":
-        return "sent", {"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)}
+        item = {"employee_name": name, "sent_to": email, "channel": "email", "shifts": len(shifts)}
+        if box.get("provider_id"):
+            item["provider_id"] = box["provider_id"]        # kept on the outbox row, not in the response
+        return "sent", item
     if email:
         return "failed", {"employee_name": name, "error": box.get("email_error") or "The email was not sent."}
     return "unreachable", {"employee_name": name, "reason": "no app, text consent or email address on file"}
@@ -1031,6 +1053,7 @@ def _send_week_to_staff(rid, restaurant, schedule_id, csv_text, names, week_labe
     for name in names:
         status, item = _deliver_one(rid, restaurant, schedule_id, csv_text, name, reachable.get(name) or {},
                                     week_label, kind="changed" if updated else "posted")
+        item.pop("provider_id", None)
         out[status].append(item)
     return out["sent"], out["unreachable"], out["failed"]
 
@@ -1137,6 +1160,8 @@ def deliver_notices(restaurant_id=None, batch=None, history_id=None, budget_seco
                 chunk = chunk[:max(0, limit - out["attempted"])]
             last_id = chunk[-1]["id"]
             mine = _claim_notices(chunk, db_path)
+            for _nid, _name in getattr(mine, "interrupted", ()) or ():
+                out["failed"].append({"employee_name": _name, "error": INTERRUPTED_SEND_LINE})
             for pos, n in enumerate(chunk):
                 if n["id"] not in mine:
                     continue
@@ -1206,27 +1231,56 @@ def run_queued_notices(job):
             "pending": len(got["pending"])}
 
 
+# What a notice whose send started under a claim that died says: the
+# provider may have taken it, so it is not sent again on its own.
+INTERRUPTED_SEND_LINE = ("Cavnar AI restarted while sending this, so it may already have reached them — "
+                         "it isn't sent again on its own.")
+
+
+class _Claimed(dict):
+    """{id: claim token} of the notices to deliver; `interrupted` the
+    [(id, employee_name)] the claim found mid-send and left failed."""
+    interrupted = ()
+
+
 def _claim_notices(chunk, db_path=None) -> dict:
     """Claim the due notices of `chunk` in one write: {id: claim token} of
     the ones this pass took (each claim's token is its own, so two
-    deliverers in the same second never read each other's)."""
+    deliverers in the same second never read each other's).
+
+    A notice taken over from a claim whose send had already started
+    (`send_started_at` — the deliverer died after calling the provider, or
+    while) is not delivered again: in the same write it is left failed,
+    with no retry, saying it may have reached them (INTERRUPTED_SEND_LINE;
+    the owner's Send again is the way to tell them once more). Those are
+    the result's `interrupted`."""
     now = _dt.utcnow()
     token = f"{_utc(now)}.{_uuid.uuid4().hex[:8]}"
     ids = [int(n["id"]) for n in chunk]
     if not ids:
-        return {}
+        return _Claimed()
     marks = ",".join("?" * len(ids))
     conn = get_conn(db_path)
     try:
         conn.execute(f"UPDATE schedule_notices SET status='sending', claimed_at=?, attempts=attempts+1 "
                      f"WHERE id IN ({marks}) AND {_due_sql('schedule_notices')}",
                      [token] + ids + [_utc(now), _utc(now - _td(minutes=NOTICE_LEASE_MINUTES))])
-        got = conn.execute(f"SELECT id FROM schedule_notices WHERE id IN ({marks}) AND status='sending' "
-                           "AND claimed_at=?", ids + [token]).fetchall()
+        got = conn.execute(f"SELECT id, employee_name, send_started_at FROM schedule_notices "
+                           f"WHERE id IN ({marks}) AND status='sending' AND claimed_at=?", ids + [token]).fetchall()
+        started = [r for r in got if r["send_started_at"]]
+        if started:
+            conn.executemany("UPDATE schedule_notices SET status='failed', last_error=?, next_attempt_at=NULL, "
+                             "claimed_at=NULL WHERE id=? AND status='sending' AND claimed_at=?",
+                             [(INTERRUPTED_SEND_LINE, int(r["id"]), token) for r in started])
         conn.commit()
     finally:
         conn.close()
-    return {int(r["id"]): token for r in got}
+    out = _Claimed({int(r["id"]): token for r in got if not r["send_started_at"]})
+    out.interrupted = [(int(r["id"]), r["employee_name"]) for r in started]
+    if started:
+        log.warning("schedule notices %s were mid-send when their deliverer stopped; not sent again",
+                    [i for i, _n in out.interrupted])
+    return out
 
 
 def _unclaim(rows, mine, db_path=None) -> None:
@@ -1263,6 +1317,11 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None, token=None) -> None:
         except Exception as e:
             _ops.capture(e, job="schedule_publish_reach", context=f"restaurant_id={n['restaurant_id']}")
             c["reach"][n["employee_name"]] = {"push_user_id": None, "sms": None, "email": None}
+    if not _stamp_send_started(n["id"], token, db_path):
+        # Another deliverer holds the notice now (this claim's lease ran
+        # out): it is theirs to send, never a second copy from here.
+        out["attempted"] -= 1
+        return
     try:
         status, item = _deliver_one(n["restaurant_id"], c["restaurant"], n["history_id"], c["rows"],
                                     n["employee_name"], c["reach"].get(n["employee_name"]), c["week_label"],
@@ -1272,7 +1331,27 @@ def _deliver_claimed(n, ctx, out, base_url, db_path=None, token=None) -> None:
         status, item = "failed", {"employee_name": n["employee_name"], "error": str(e)[:200]}
     _finish_notice(n["id"], status, item=item, attempts=int(n["attempts"] or 0) + 1, db_path=db_path,
                    token=token)
+    item.pop("provider_id", None)
     out[status].append(item)
+
+
+def _stamp_send_started(notice_id, token, db_path=None) -> bool:
+    """Mark a claimed notice's send as started, over this deliverer's own
+    claim (`token`), before the provider is called: whatever happens to this
+    process after, the notice is never sent a second time by a pass that
+    takes it over (_claim_notices). False when the claim is no longer ours —
+    nothing may be sent then. Without a token (a caller with no claim) there
+    is nothing to stamp over."""
+    if token is None:
+        return True
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute("UPDATE schedule_notices SET send_started_at=? WHERE id=? AND status='sending' "
+                         "AND claimed_at=?", (_utc(), int(notice_id), token)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return n == 1
 
 
 def _notice_context(restaurant_id, history_id, db_path=None):
@@ -1313,15 +1392,20 @@ def _finish_notice(notice_id, status, item=None, attempts=1, error=None, db_path
             # Only over the claim: a push whose answer came back first
             # (_notice_outcome) already holds its final word.
             conn.execute("UPDATE schedule_notices SET status='sent', channel=?, sent_to=?, delivery=?, shifts=?, "
+                         "provider_id=COALESCE(?, provider_id), "
                          "sent_at=datetime('now'), last_error=NULL, next_attempt_at=NULL, claimed_at=NULL "
                          "WHERE id=? AND status='sending'" + mine,
                          (item.get("channel"), item.get("sent_to"), item.get("delivery"), item.get("shifts"),
+                          (str(item.get("provider_id"))[:120] if item.get("provider_id") else None),
                           notice_id) + mine_args)
         elif status == "failed":
             retry = None
             if attempts < NOTICE_MAX_ATTEMPTS:
                 retry = _utc(_dt.utcnow() + _td(minutes=NOTICE_RETRY_MINUTES[min(attempts, len(NOTICE_RETRY_MINUTES)) - 1]))
-            conn.execute("UPDATE schedule_notices SET status='failed', last_error=?, next_attempt_at=?, claimed_at=NULL "
+            # The provider said no (or nobody was reached): its retry is a
+            # fresh send, so the started stamp goes with this attempt.
+            conn.execute("UPDATE schedule_notices SET status='failed', last_error=?, next_attempt_at=?, claimed_at=NULL, "
+                         "send_started_at=NULL "
                          "WHERE id=?" + mine, ((item.get("error") or error or "not sent")[:300], retry, notice_id)
                          + mine_args)
         else:
