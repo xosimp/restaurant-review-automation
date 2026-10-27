@@ -136,6 +136,26 @@ The other direction. The server sent the schedule's `narrative` as a list; the p
 - `CAVNAR_WRITE_IOS_FIXTURES=1 python -m pytest -q tests/test_ios_schedule_payload_contract.py` re-captures `ios/CavnarAI/CavnarAITests/Fixtures/schedule_status_done.json`, `schedule_status_pending.json` and `schedule_history_detail.json` (volatile timestamps written as `<volatile>`). Review the diff.
 - `ScheduleStatusContractTests.swift` decodes each one whole and key by key and asserts `undecodedKeys` is empty: `GeneratedSchedule` decodes field by field, so an odd field costs that field (named in `undecodedKeys`), never the week.
 
+## Every screen's main read, and the builds that read it (`tests/test_ios_response_shapes.py`, release-safety audit #25)
+
+The schedule contract's pattern, for the top GET routes the app reads: `me`, `account`, `home` (it carries the brief), `reviews`, `notifications`, `labor`, `food_cost`, `food_cost_bar`, `marketing`, `intel`, `actions`, `staff_shifts`, `staff_me`, `dsr_preview` and `dsr_week` (the night and the week, as the owner and as a manager).
+
+- `tests/ios_shape_capture.py` builds Halsted & Rye — the fictional demo store (`demo_store`), its POS answering RPOWER's own API, so the archive, the DSR, Labor, Food Cost and the Bar come from the real pipelines — in the test's database (about 20 seconds; the restaurant's own today, so always fresh), signs in an owner, a manager and one employee, and calls each route. The only model answer is the night's DSR narrative, written from the prompt's own figures.
+- Each payload is compared with `ios/CavnarAI/CavnarAITests/Fixtures/<route>.json` by kind, all the way down (`shape_mismatches`). `<route>.v1.json` is what the builds installed today read: every schema key in it (snake_case; a data key such as a department is not schema) must still be sent where its object is, and keep its kind — `CONDITIONAL` lists the few keys sent only some nights, each with why. Remove a key from a v1 file only when `MOBILE_MIN_BUILD` retires the builds that read it, and replace v1 with a v2 copy in that commit.
+- `CAVNAR_WRITE_IOS_FIXTURES=1 python -m pytest -q tests/test_ios_response_shapes.py` re-captures every `<route>.json` (volatile stamps and tokens as `<volatile>`); a missing `<route>.v1.json` is written then too, an existing one only with `CAVNAR_WRITE_IOS_V1=1`. Every address in a fixture is reserved (`.example`, `.invalid`, `.test`) and the test fails on anything shaped like a credential.
+- `ResponseShapeContractTests.swift` decodes every fixture and its v1 copy with the app's real model. The hand-written DSR and Bar files the view tests read their content from are `dsr_preview_scenario.json`, `dsr_week_scenario.json` and `food_cost_bar_scenario.json`, held to the server's shape by the Python test.
+- `DynamicTypeRenderTests.swift` renders the six main screens' glance (Home's brief and KPI tiles, the inbox rows, Labor, Food Cost, the night, the staff app's days) from those fixtures at `.accessibility3` with `ImageRenderer` and checks every piece's size: never zero, never wider than the phone, and taller than at the default size (a piece that does not grow is a fixed frame clipping its text).
+- `ClientCompatibilityTests.swift`: the `X-Cavnar-App` / `X-Cavnar-Platform` headers on every transport, the 426 update sheet's state, and the decode-failure report (`MockURLProtocol`). The server's half is `tests/test_client_compat.py`.
+
+The iOS command (after `ios/CavnarAI/generate.sh`; the build number comes from the commit count, so a shallow clone must set `CAVNAR_BUILD_NUMBER`):
+
+```bash
+cd ios/CavnarAI && xcodebuild -project CavnarAI.xcodeproj -scheme CavnarAI \
+  -destination 'platform=iOS Simulator,name=iPhone 17' test \
+  -only-testing:CavnarAITests/ResponseShapeContractTests -only-testing:CavnarAITests/ClientCompatibilityTests \
+  -only-testing:CavnarAITests/DynamicTypeRenderTests -only-testing:CavnarAITests/StaffKnowledgePlanTests
+```
+
 ## The iPhone's schedule fix round wires (`tests/test_sf10_i2b_ios.py`, 10/10/26)
 
 The pre-publish review, Crew, locks, Stop, the quality delta, the closing stay, the full-time line, the lunch/dinner boundary, the staff app's consent and agreements, the labor-laws screen and On the floor: each test holds both sides of one wire — the keys the Swift type decodes against the keys the server module writes, and the path the phone calls against the route table — so a renamed key fails in the Python suite. The decode logic itself is `CavnarAITests/SchedFixI2bTests.swift` (compiled with `xcodebuild build-for-testing`).

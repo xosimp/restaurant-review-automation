@@ -20,6 +20,22 @@ gets the literal `${CAVNAR_DEV_API_BASE_URL}` placeholder instead, the app
 falls back to localhost, and every request fails with nothing on screen saying
 why. The script resolves the URL, then checks the substitution landed.
 
+## The build number
+
+`./generate.sh` stamps every target's `CURRENT_PROJECT_VERSION` with the
+commit count (`git rev-list --count HEAD`; `CAVNAR_BUILD_NUMBER` overrides,
+and a shallow clone must set it — the script refuses otherwise), and the
+Info.plists read `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` at
+build time. Every request names it — `X-Cavnar-App: 1.0 (4554)`,
+`X-Cavnar-Platform: ios` (`Core/ClientIdentity.swift`) — so the server keeps
+each login's build and can turn a build under `MOBILE_MIN_BUILD` away with a
+426: the app then shows its blocking "Update Cavnar AI" sheet
+(`Core/AppUpdateGate.swift`, `Core/AppUpdateRequiredView.swift`). An answer
+the app cannot decode is reported to `/mobile/api/client-errors` — route,
+status, coding path, never the body — once per route per hour
+(`Core/DecodeFailureReport.swift`). The server's half is `client_compat.py`
+(release-safety audit #25).
+
 ## Running against a local backend
 
 Debug builds fall back to `http://localhost:5050` — the port this project
@@ -72,3 +88,7 @@ The app refreshes the widgets in the background (`BackgroundRefresh.swift`: a `B
 xcodebuild -project CavnarAI.xcodeproj -scheme CavnarAI \
   -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
+
+The fixtures the contract tests decode are captured from the real server by
+`tests/test_ios_response_shapes.py` (`TESTING.md`); never edit one by hand —
+re-capture with `CAVNAR_WRITE_IOS_FIXTURES=1`.

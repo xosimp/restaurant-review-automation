@@ -35,6 +35,11 @@ final class PeopleRulesViewModel {
     private(set) var rulesError: String?
     private(set) var docsError: String?
     private(set) var certsError: String?
+    /// The plan's answer, when the restaurant has no Labor: these routes are
+    /// Labor's (403 module_locked, release-safety audit #25 — WS4's module
+    /// map), so the screen says so once, in the server's words, instead of
+    /// three failures with Try again.
+    private(set) var planMessage: String?
     var busy = false
     var message: String?
     var error: String?
@@ -55,6 +60,25 @@ final class PeopleRulesViewModel {
         _ = await (r, d, c)
     }
 
+    /// The server's sentence for a read refused because the plan has no
+    /// Labor (403 module_locked), or nil for any other failure.
+    nonisolated static func planRefusal(_ error: Error) -> String? {
+        guard let e = error as? APIClient.APIError, e.kind == .moduleLocked else { return nil }
+        return e.message.isEmpty ? "House rules, docs and certificates are part of Labor, which isn\u{2019}t on your plan."
+                                 : e.message
+    }
+
+    /// A failed read: the plan's answer when the plan has no Labor, else the
+    /// section's own error. Returns the section error to keep (nil for a
+    /// plan refusal).
+    private func failure(_ error: Error) -> String? {
+        if let plan = Self.planRefusal(error) {
+            planMessage = plan
+            return nil
+        }
+        return Self.loadFailure(error)
+    }
+
     /// The sentence a failed read shows: the server's own, else a plain
     /// "couldn't reach".
     nonisolated static func loadFailure(_ error: Error?, refused: String? = nil) -> String {
@@ -72,7 +96,7 @@ final class PeopleRulesViewModel {
             rulesLoaded = true
             rulesError = nil
         } catch {
-            rulesError = Self.loadFailure(error)
+            rulesError = failure(error)
         }
     }
 
@@ -86,7 +110,7 @@ final class PeopleRulesViewModel {
             docsLoaded = true
             docsError = nil
         } catch {
-            docsError = Self.loadFailure(error)
+            docsError = failure(error)
         }
     }
 
@@ -101,7 +125,7 @@ final class PeopleRulesViewModel {
             certsLoaded = true
             certsError = nil
         } catch {
-            certsError = Self.loadFailure(error)
+            certsError = failure(error)
         }
     }
 
@@ -190,9 +214,14 @@ struct AccountPeopleRulesView: View {
                         Text(e).cavnarText(.secondary, color: .cavnarRedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    // Certificates that need someone lead, and the list comes
-                    // first while they do (re-audit M17).
-                    if model.certsLoaded, let lead = Self.certLead(model.certs, remindDays: model.remindDays) {
+                    // No Labor on the plan: one sentence, the plan's, and
+                    // nothing that offers Try again (audit #25, WS4).
+                    if let plan = model.planMessage {
+                        AccountSection(kicker: "Part of Labor") {
+                            CavnarMixedText(plan, role: .body, color: .cavnarInk2)
+                                .padding(.vertical, 10)
+                        }
+                    } else if model.certsLoaded, let lead = Self.certLead(model.certs, remindDays: model.remindDays) {
                         HStack(alignment: .firstTextBaseline, spacing: CavnarSpace.xs) {
                             Image(systemName: "exclamationmark.circle.fill")
                                 .foregroundStyle(Color.cavnarAmber)

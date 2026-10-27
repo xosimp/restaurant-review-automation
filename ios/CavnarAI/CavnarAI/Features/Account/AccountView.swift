@@ -116,6 +116,15 @@ struct AccountView: View {
     /// The account owner's login (User.isOwner — permissions.TEAM_INVITE).
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
 
+    /// Whether Account offers "House rules, docs & certificates": they are
+    /// Labor's (the staff brief, house rules, docs and certifications routes
+    /// sit behind the Labor module on the server). Hidden only when the
+    /// plan's modules (account health's `features`) say Labor is off; before
+    /// they arrive the row shows, and a refusal reads as the plan message.
+    static func showsStaffKnowledge(_ features: [AccountHealth.Feature]?) -> Bool {
+        features?.first { $0.key == "labor" }?.on != false
+    }
+
     /// Delete my login is offered on the server's word (`can_delete_login`);
     /// an older server that doesn't say offers it to everyone but an owner.
     static func offersDeleteLogin(canDeleteLogin: Bool?, isOwner: Bool) -> Bool {
@@ -302,6 +311,64 @@ struct AccountView: View {
     }
     @State private var changelogBadge = ChangelogBadgeViewModel()
 
+    /// The Team card (owner rows, and the staff-knowledge row while the plan
+    /// has Labor) with its sheets — its own builder, so groupedSettings'
+    /// chain stays small enough to type-check quickly.
+    @ViewBuilder
+    private func teamGroup() -> some View {
+        let showsKnowledge = Self.showsStaffKnowledge(viewModel.health?.features)
+        Group {
+            if sessionStore.currentUser?.isOwner == true || showsKnowledge {
+                group("Team") {
+                    // Only the account's owner login can invite/remove other logins
+                    // on this restaurant — matches mobile_api.py's server-side
+                    // role=='owner' check on the invite/revoke routes, which is the
+                    // actual enforcement; hiding the row for a teammate just avoids
+                    // showing a control that would 403 anyway.
+                    if sessionStore.currentUser?.isOwner == true {
+                        settingsRow {
+                            row("Manage team", systemImage: "person.2")
+                        } action: {
+                            showingTeam = true
+                        }
+                        rowDivider
+                        // Employees, as distinct from teammates: PIN identities on
+                        // the staff portal, who mostly sign themselves up with the
+                        // join code. Same owner-only gate, enforced server-side by
+                        // permissions.TEAM_INVITE.
+                        settingsRow {
+                            row("Staff accounts", systemImage: "person.badge.key")
+                        } action: {
+                            showingStaff = true
+                        }
+                        if showsKnowledge { rowDivider }
+                    }
+                    // What staff can look up in the app — house rules, docs by job,
+                    // certifications with the expiry reminder — for every login the
+                    // server answers for (parity #62). Part of Labor: hidden when
+                    // the plan has no Labor (the routes answer 403 module_locked —
+                    // release-safety audit #25, WS4's module map).
+                    if showsKnowledge {
+                        settingsRow {
+                            row("House rules, docs & certificates", systemImage: "person.text.rectangle")
+                        } action: {
+                            showingPeople = true
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingTeam) {
+            AccountTeamDetailView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingStaff) {
+            AccountStaffDetailView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingPeople) {
+            AccountPeopleRulesView(accountViewModel: viewModel, isOwner: isOwner)
+        }
+    }
+
     /// Four groups (iOS readability round [70]): Restaurant · Notifications
     /// & security · Team · App & support, then the account's own data. A
     /// group of one row whose kicker repeated the row is gone; each card's
@@ -422,48 +489,7 @@ struct AccountView: View {
                 AccountSecurityDetailView(viewModel: viewModel, account: summary.account)
             }
 
-            group("Team") {
-                // Only the account's owner login can invite/remove other logins
-                // on this restaurant — matches mobile_api.py's server-side
-                // role=='owner' check on the invite/revoke routes, which is the
-                // actual enforcement; hiding the row for a teammate just avoids
-                // showing a control that would 403 anyway.
-                if sessionStore.currentUser?.isOwner == true {
-                    settingsRow {
-                        row("Manage team", systemImage: "person.2")
-                    } action: {
-                        showingTeam = true
-                    }
-                    rowDivider
-                    // Employees, as distinct from teammates: PIN identities on
-                    // the staff portal, who mostly sign themselves up with the
-                    // join code. Same owner-only gate, enforced server-side by
-                    // permissions.TEAM_INVITE.
-                    settingsRow {
-                        row("Staff accounts", systemImage: "person.badge.key")
-                    } action: {
-                        showingStaff = true
-                    }
-                    rowDivider
-                }
-                // What staff can look up in the app — house rules, docs by job,
-                // certifications with the expiry reminder — for every login the
-                // server answers for (parity #62).
-                settingsRow {
-                    row("House rules, docs & certificates", systemImage: "person.text.rectangle")
-                } action: {
-                    showingPeople = true
-                }
-            }
-            .sheet(isPresented: $showingTeam) {
-                AccountTeamDetailView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showingStaff) {
-                AccountStaffDetailView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $showingPeople) {
-                AccountPeopleRulesView(accountViewModel: viewModel, isOwner: isOwner)
-            }
+            teamGroup()
 
             group("App & support") {
                 // Haptics, the tab the app opens on and the home-screen icon
