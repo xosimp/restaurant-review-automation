@@ -91,6 +91,9 @@ def _guard_network(log_path):
     socket.getaddrinfo = getaddrinfo
 
 
+MANAGER_USERNAME = "smoke_manager"
+
+
 def _exit_with_parent(max_seconds):
     """A daemon thread: exit when the caller is gone (this process is
     re-parented) or the lifetime is spent, so a killed test run leaves no
@@ -129,6 +132,12 @@ def main(vol, info_path):
     import models
     rid = demo_seed._seed_simple_ejs()
     models.update_restaurant(rid, {"google_place_id": "ChIJ-smoke-test-not-a-place"})
+    # A manager of the same restaurant (blind re-audit 10/27/26 B6: the tour
+    # was the owner's only, so a manager-only branch of a module's init that
+    # threw left every manager's tab blank with the smoke green).
+    import auth
+    manager_id = auth.create_user(rid, MANAGER_USERNAME, "manager@smoke.test", os.environ["DEMO_PASSWORD"])
+    auth.upsert_membership(manager_id, rid, "manager")
 
     from werkzeug.serving import make_server
     server = make_server("127.0.0.1", 0, hosted_dashboard.app, threaded=True)
@@ -136,7 +145,7 @@ def main(vol, info_path):
     tmp = info_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump({"port": server.server_port, "username": demo_seed.SIMPLE_EJS_USERNAME,
-                   "restaurant_id": rid}, fh)
+                   "manager_username": MANAGER_USERNAME, "restaurant_id": rid}, fh)
     os.replace(tmp, info_path)
     server.serve_forever()
 

@@ -3,15 +3,26 @@
 -r requirements.txt
 execnet==2.1.2
     # via pytest-xdist
+greenlet==3.5.6
+    # via playwright
 iniconfig==2.3.0
     # via pytest
+playwright==1.64.1
+    # tests/browser (nightly's browser job runs `python -m playwright install
+    # --with-deps chromium` for the browser itself); one pin, here and in
+    # TESTING.md
 pluggy==1.6.0
     # via pytest
+pyee==14.0.0
+    # via playwright
 pyflakes==4.0.0
     # tests/test_undefined_names.py
 pygments==2.21.0
     # via pytest
 pytest==9.1.1
+pytest-timeout==2.4.0
+    # a ceiling on every test: PYTEST_TIMEOUT=600 by default (tests/conftest.py),
+    # --timeout=300 in CI — a deadlock names its test
 pyyaml==6.0.2
     # tests/test_ci_gate_config.py reads .github/workflows
 pytest-xdist==3.8.0

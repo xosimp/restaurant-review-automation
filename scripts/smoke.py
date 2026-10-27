@@ -14,6 +14,9 @@ deployment_status success) this checks, against the live site:
   4. with SMOKE_TOKEN (a session token of the smoke tenant's login — a
      GitHub secret, never a real restaurant's), one authenticated web read
      (/api/home/brief) and one mobile read (/mobile/api/me) answer 200 JSON.
+     A PRODUCTION deploy (--expect-env production) without the token FAILS:
+     a deploy whose every signed-in read 500s passed the unauthenticated
+     checks (blind re-audit 10/27/26 B1 F8, B5).
 
 Exit 0 when every check passed; 1 and the Railway rollback step otherwise.
 
@@ -135,6 +138,9 @@ def run(fetch, expect_sha=None, token=None, mobile_token=None, out=print, sleep=
         results.append(("static",) + check_assets(fetch, assets))
     if token:
         results.append(("reads",) + check_reads(fetch, token, mobile_token))
+    elif expect_env == "production":
+        results.append(("reads", False, "no SMOKE_TOKEN: a production deploy is checked signed in (set the "
+                                        "smoke tenant's session token as the SMOKE_TOKEN secret, RECOVERY.md)"))
     else:
         results.append(("reads", True, "skipped (no SMOKE_TOKEN)"))
     failed = [r for r in results if not r[1]]

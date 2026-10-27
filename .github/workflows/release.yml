@@ -3,9 +3,14 @@
 # 1. smoke — after every successful production deploy (Railway reports each
 #    deploy as a GitHub deployment): scripts/smoke.py against the live site —
 #    /health names the deployed SHA, /login renders, its static files resolve,
-#    and (with the SMOKE_TOKEN secret, the smoke tenant's session token) one
-#    web and one mobile read answer. A failure fails the run (GitHub emails
-#    the owner) and prints the Railway rollback step.
+#    and with the SMOKE_TOKEN secret (the smoke tenant's session token) one
+#    web and one mobile read answer; a production smoke WITHOUT the token
+#    fails. The script is main's (read-only), so a rollback to a SHA from
+#    before it existed is still smoked. A failure fails the run, prints the
+#    Railway rollback step, and posts to SMOKE_ALERT_URL (a secret: an ntfy
+#    topic or a webhook that pages) — GitHub's own failure email goes to the
+#    deployment's actor, which is Railway's bot (blind re-audit 10/27/26 B1
+#    F8, B5).
 # 2. lag — hourly: the build /health names against the head of the branch
 #    Railway deploys (vars.DEPLOY_BRANCH, default `production`; `main` while
 #    that branch does not exist). A head waiting over 60 minutes, or a build
@@ -45,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.deployment.sha }}
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -54,7 +59,22 @@ jobs:
       - name: Smoke the live site
         env:
           SMOKE_TOKEN: ${{ secrets.SMOKE_TOKEN }}
+          SMOKE_MOBILE_TOKEN: ${{ secrets.SMOKE_MOBILE_TOKEN }}
         run: python scripts/smoke.py "$PRODUCTION_URL" --expect-sha "${{ github.event.deployment.sha }}" --expect-env production
+      - name: Tell someone the smoke failed
+        if: failure()
+        env:
+          SMOKE_ALERT_URL: ${{ secrets.SMOKE_ALERT_URL }}
+          SHA: ${{ github.event.deployment.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          msg="Cavnar AI production smoke FAILED for ${SHA:0:12}. Roll back: Railway -> web -> Deployments -> previous -> Redeploy. $RUN_URL"
+          if [ -z "$SMOKE_ALERT_URL" ]; then
+            echo "::error::No SMOKE_ALERT_URL secret: nobody but this page hears that the smoke failed. $msg"
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 15 -H "Title: Cavnar AI smoke failed" -H "Priority: urgent" \
+            -d "$msg" "$SMOKE_ALERT_URL"
 
   lag:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

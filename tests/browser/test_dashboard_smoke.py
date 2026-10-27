@@ -9,8 +9,10 @@ Chromium against a real, keyless app (tests/browser/keyless_server.py: a
 throwaway volume, no provider keys, no .env, no network, no scheduler).
 
 At a phone width (390px) and a desktop width (1280px) the seeded demo owner
-signs in through the login form, as a person does, and opens each top-level
-place in turn — Home, Reviews, Labor, Food Cost, Marketing, Intel, Account,
+— and a manager of the same restaurant (blind re-audit 10/27/26 B6: a
+manager-only branch that threw left every manager's tab blank) — signs in
+through the login form, as a person does, and opens each top-level place in
+turn (the manager, each place the page offers a manager) — Home, Reviews, Labor, Food Cost, Marketing, Intel, Account,
 Ask, then Bar (its own address). For each: no uncaught page error, no
 console error, the place's root element visible, no same-origin request
 answered 4xx/5xx, and no "Cavnar AI was updated" bar. Each width signs in
@@ -143,7 +145,7 @@ def browser():
             b.close()
 
 
-def _new_page(browser, server, width):
+def _new_page(browser, server, width, role="owner"):
     """A fresh browser profile at `width`, every other origin answered
     empty in the browser."""
     w, h = WIDTHS[width]
@@ -157,7 +159,16 @@ def _new_page(browser, server, width):
         route.fulfill(status=200, body="", content_type=kind)
     ctx.route(lambda url: not url.startswith(base), offline)
     page = ctx.new_page()
-    return ctx, page, Watch(page, base)
+    return ctx, page, Watch(page, base, role)
+
+
+def _is_refusal(body):
+    """A deliberate JSON refusal: {"ok": false, "error": "…"}."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("ok") is False and bool(data.get("error"))
 
 
 class Watch:
@@ -171,9 +182,9 @@ class Watch:
 
     _RESOURCE = "Failed to load resource: the server responded with a status of"
 
-    def __init__(self, page, base):
-        self.base = base
-        self.page_errors, self.console_errors, self.failed = [], [], []
+    def __init__(self, page, base, role="owner"):
+        self.base, self.role = base, role
+        self.page_errors, self.console_errors, self.failed, self.refused = [], [], [], []
         self.inflight = set()
         page.on("pageerror", lambda e: self.page_errors.append(str(e)[:400]))
         page.on("console", self._console)
@@ -192,6 +203,12 @@ class Watch:
         except sync_api.Error as e:
             body = "<body unavailable: %s>" % str(e)[:100]
         if r.status == 503 and NOT_CONFIGURED in body:
+            return
+        if self.role != "owner" and r.status == 403 and _is_refusal(body):
+            # The permission system holding the line for this role (an
+            # owner-only setting, a module outside the login's access) —
+            # the truth for a manager, as the 503 above is for a keyless app.
+            self.refused.append("%s %s" % (r.request.method, r.url[len(self.base):]))
             return
         self.failed.append("HTTP %s %s %s %s" % (r.status, r.request.method, r.url[len(self.base):],
                                                  body[:200].replace("\n", " ")))
@@ -223,9 +240,12 @@ class Watch:
             quiet = 0 if self.inflight else quiet + 100
 
 
-def _sign_in(page, server):
+ROLES = ("owner", "manager")
+
+
+def _sign_in(page, server, role="owner"):
     page.goto(server["base"] + "/login", wait_until="load")
-    page.fill('input[name="username"]', server["username"])
+    page.fill('input[name="username"]', server["username"] if role == "owner" else server["manager_username"])
     page.fill('input[name="password"]', server["password"])
     with page.expect_navigation(wait_until="load"):
         # Enter submits the form, as a person does; the sign-in button's
@@ -233,13 +253,15 @@ def _sign_in(page, server):
         page.press('input[name="password"]', "Enter")
 
 
-def _tour(browser, server, width):
-    """{"login": problems, place: problems, …} for one width."""
-    ctx, page, watch = _new_page(browser, server, width)
+def _tour(browser, server, width, role="owner"):
+    """{"login": problems, place: problems, …} for one width and role. A
+    place the page does not offer the role (its tab absent or hidden) is
+    left out of a manager's tour, never failed; the owner is offered all."""
+    ctx, page, watch = _new_page(browser, server, width, role)
     out = {}
     try:
         mark = watch.mark()
-        _sign_in(page, server)
+        _sign_in(page, server, role)
         login = []
         if page.url.rstrip("/") != server["base"]:
             login.append("signing in landed on %s" % page.url)
@@ -249,9 +271,14 @@ def _tour(browser, server, width):
             login.append("Home is not on screen after signing in")
         watch.settle(page)
         out["login"] = login + watch.problems(mark)
+        out["_visited"] = []
         for place, (kind, target), root in PLACES:
             mark = watch.mark()
             found = []
+            if role != "owner" and kind == "click" and not page.locator(target).first.is_visible():
+                out[place] = []
+                continue
+            out["_visited"].append(place)
             try:
                 if kind == "goto":
                     page.goto(server["base"] + target, wait_until="load")
@@ -276,22 +303,33 @@ def _tour(browser, server, width):
 
 @pytest.fixture(scope="module")
 def tours(app_server, browser):
-    return {width: _tour(browser, app_server, width) for width in WIDTHS}
+    return {(role, width): _tour(browser, app_server, width, role) for role in ROLES for width in WIDTHS}
 
 
-def _report(tours, key):
-    return ["%s @%s: %s" % (key, width, p) for width in WIDTHS for p in tours[width][key]]
+def _report(tours, key, role):
+    return ["%s %s @%s: %s" % (role, key, width, p) for width in WIDTHS for p in tours[(role, width)][key]]
 
 
-def test_the_demo_owner_signs_in_and_lands_on_home(tours):
-    failures = _report(tours, "login")
+@pytest.mark.parametrize("role", ROLES)
+def test_the_demo_owner_and_a_manager_sign_in_and_land_on_home(tours, role):
+    failures = _report(tours, "login", role)
     assert not failures, "\n".join(failures)
 
 
+@pytest.mark.parametrize("role", ROLES)
 @pytest.mark.parametrize("place", [p[0] for p in PLACES])
-def test_each_place_opens_clean_at_phone_and_desktop_width(tours, place):
-    failures = _report(tours, place)
+def test_each_place_opens_clean_at_phone_and_desktop_width(tours, place, role):
+    failures = _report(tours, place, role)
     assert not failures, "\n".join(failures)
+
+
+def test_the_manager_tour_opened_the_places_a_manager_works_in(tours):
+    """Guards the guard: a manager's tour that skipped every place (a tab
+    the page does not offer is skipped) would pass by visiting nothing."""
+    for width in WIDTHS:
+        visited = set(tours[("manager", width)]["_visited"])
+        assert {"home", "reviews", "labor"} <= visited, (width, sorted(visited))
+    assert set(tours[("owner", "desktop")]["_visited"]) == {p[0] for p in PLACES}
 
 
 @pytest.mark.parametrize("width", list(WIDTHS))
