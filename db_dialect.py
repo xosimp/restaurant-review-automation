@@ -2162,8 +2162,9 @@ class PgConnection:
         finally:
             try:
                 self.execute_native("SELECT set_config('statement_timeout', %s, true)", (str(prev),))
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("db_dialect").warning("statement_timeout not restored after an index build: %s", e)
 
     def _has_column(self, table, column) -> bool:
         """Whether `table` (this schema's) has `column` — the catalog read,

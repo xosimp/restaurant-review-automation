@@ -1353,7 +1353,8 @@ def _marker_in_object_store(db_path=None):
     try:
         import marker_store
         return marker_store.backend() == "object"
-    except Exception:
+    except Exception as e:
+        log.warning("volume marker: backend unknown, using the volume path: %s", e)
         return False
 
 

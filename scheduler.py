@@ -2312,7 +2312,8 @@ def _no_volume_backups() -> bool:
     try:
         import marker_store
         return marker_store.backend() == "object"
-    except Exception:
+    except Exception as e:
+        log.warning(f"backup: marker backend unknown, using the volume path: {e}")
         return False
 
 

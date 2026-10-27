@@ -204,7 +204,9 @@ def restore_frozen() -> bool:
         try:
             import marker_store
             return marker_store.exists(".restore_freeze")
-        except Exception:
+        except Exception as e:     # a guard that cannot read never stops the platform (restore_guard)
+            import logging
+            logging.getLogger("config").warning("restore freeze unreadable in object storage: %s", e)
             return False
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")

@@ -91,7 +91,8 @@ def _object_backed():
     try:
         import marker_store
         return marker_store.backend() == "object"
-    except Exception:
+    except Exception as e:
+        log.warning("restore guard: marker backend unknown, using the volume path: %s", e)
         return False
 
 

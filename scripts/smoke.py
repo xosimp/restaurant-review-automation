@@ -52,7 +52,7 @@ def http_fetch(base_url):
 def _json(body):
     try:
         return json.loads(body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else body)
-    except Exception:
+    except (ValueError, TypeError, UnicodeDecodeError):
         return None
 
 
