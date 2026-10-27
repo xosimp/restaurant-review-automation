@@ -1,0 +1,1561 @@
+{
+ "can_edit": true,
+ "can_edit_owner_facts": true,
+ "choices": {
+  "certification_labels": {
+   "alcohol": "Alcohol",
+   "allergen": "Allergen",
+   "first_aid": "First aid",
+   "food_handler": "Food handler",
+   "food_protection_manager": "Food protection manager (food safety)",
+   "keyholder": "Keyholder",
+   "manager": "Floor manager (can run the shift)",
+   "trainer": "Trainer"
+  },
+  "certifications": [
+   "alcohol",
+   "food_handler",
+   "manager",
+   "keyholder",
+   "trainer",
+   "allergen",
+   "first_aid",
+   "food_protection_manager"
+  ],
+  "daypart": [
+   "any",
+   "morning",
+   "night",
+   "off"
+  ],
+  "days": [
+   "Monday",
+   "Tuesday",
+   "Wednesday",
+   "Thursday",
+   "Friday",
+   "Saturday",
+   "Sunday"
+  ],
+  "employment_type": [
+   "full",
+   "part"
+  ]
+ },
+ "ok": true,
+ "pairs": [],
+ "ratings_off_roster": [
+  "Priya Raman"
+ ],
+ "roster": [
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Aisha Mahmoud",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 27
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Ana Sepulveda",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook",
+    "Prep Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 34
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Andre Kimura",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Sous Chef"
+   ],
+   "reliability": null,
+   "role": "Sous Chef",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 41
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Brandon Szymanski",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 30
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Brianna Coleman",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 33
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Caleb Ostrowski",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 35
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Camille Dubois",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 27
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Chris Kowalczyk",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 36
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Danielle Wu",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 35
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Derek Lam",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 25
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Devon Marsh",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 2,
+   "settings": {},
+   "shifts": 29
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Edgar Fuentes",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Dishwasher"
+   ],
+   "reliability": null,
+   "role": "Dishwasher",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 47
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Elena Petrova",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 30
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Ella Harrington",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Host"
+   ],
+   "reliability": null,
+   "role": "Host",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 26
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Grace Adebayo",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Host"
+   ],
+   "reliability": null,
+   "role": "Host",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 27
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": "role",
+    "counts": true,
+    "set": null,
+    "why": "their role is Manager"
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Grant Holloway",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Manager",
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Manager",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 29
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-23",
+   "last_worked_label": "10/23/26",
+   "name": "Hannah Bergstrom",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender",
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 20
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Hector Galindo",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 41
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Isaiah Brooks",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Dishwasher"
+   ],
+   "reliability": null,
+   "role": "Dishwasher",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 34
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Jamal Pritchett",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 31
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Jasmine Thornton",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender",
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 32
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Javier Solis",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Busser"
+   ],
+   "reliability": null,
+   "role": "Busser",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 35
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Jordan Reyes",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 46
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Kayla Brennan",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 43
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Keisha Dunmore",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 35
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Kofi Asante",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Dishwasher"
+   ],
+   "reliability": null,
+   "role": "Dishwasher",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 36
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Lily Nakamura",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Host"
+   ],
+   "reliability": null,
+   "role": "Host",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 35
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Logan Pierce",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 32
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": "department",
+    "counts": false,
+    "set": null,
+    "why": "Kitchen Manager manages a department, not the floor — set them as a floor manager if they run shifts"
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Luis Ortega",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Kitchen Manager"
+   ],
+   "reliability": null,
+   "role": "Kitchen Manager",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 42
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-23",
+   "last_worked_label": "10/23/26",
+   "name": "Lupe Navarrete",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Prep Cook"
+   ],
+   "reliability": null,
+   "role": "Prep Cook",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 18
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Malik Greene",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Busser"
+   ],
+   "reliability": null,
+   "role": "Busser",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 28
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": "role",
+    "counts": true,
+    "set": null,
+    "why": "their role is Manager"
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Marcus Bell",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Manager"
+   ],
+   "reliability": null,
+   "role": "Manager",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 36
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Mateo Quintero",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Dishwasher"
+   ],
+   "reliability": null,
+   "role": "Dishwasher",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 19
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Mia Delgado",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 3,
+   "settings": {},
+   "shifts": 26
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Moises Cardenas",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Prep Cook"
+   ],
+   "reliability": null,
+   "role": "Prep Cook",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 31
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Nate Ferraro",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 38
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Nia Robinson",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Busser"
+   ],
+   "reliability": null,
+   "role": "Busser",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 19
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Omar Haddad",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Barback",
+    "Busser"
+   ],
+   "reliability": null,
+   "role": "Barback",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 29
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Owen Dvorak",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Busser",
+    "Barback"
+   ],
+   "reliability": null,
+   "role": "Busser",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 22
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Paige Sorensen",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 29
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Rafael Montoya",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 5,
+   "settings": {},
+   "shifts": 46
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Rosa Arellano",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Prep Cook"
+   ],
+   "reliability": null,
+   "role": "Prep Cook",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 22
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Ryan Mulcahy",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 37
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Sofia Lindqvist",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 37
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": true,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": "role",
+    "counts": true,
+    "set": null,
+    "why": "their role is Manager"
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-23",
+   "last_worked_label": "10/23/26",
+   "name": "Tessa Okonkwo",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Manager"
+   ],
+   "reliability": null,
+   "role": "Manager",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 28
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-26",
+   "last_worked_label": "10/26/26",
+   "name": "Tomas Villanueva",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Line Cook",
+    "Prep Cook"
+   ],
+   "reliability": null,
+   "role": "Line Cook",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 41
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Tre Simmons",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Barback"
+   ],
+   "reliability": null,
+   "role": "Barback",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 32
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-24",
+   "last_worked_label": "10/24/26",
+   "name": "Tyler Novak",
+   "rated_label": "10/27/26",
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Server"
+   ],
+   "reliability": null,
+   "role": "Server",
+   "role_scores": {},
+   "score": 4,
+   "settings": {},
+   "shifts": 39
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Victor Ruiz",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Bartender",
+    "Barback"
+   ],
+   "reliability": null,
+   "role": "Bartender",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 28
+  },
+  {
+   "active": true,
+   "added_at": null,
+   "can_close": false,
+   "can_close_pending": false,
+   "dormant": false,
+   "dormant_text": null,
+   "floor_manager": {
+    "basis": null,
+    "counts": false,
+    "set": null,
+    "why": ""
+   },
+   "is_manual": false,
+   "last_worked": "2026-10-25",
+   "last_worked_label": "10/25/26",
+   "name": "Zoe Halvorsen",
+   "rated_label": null,
+   "rating_due": false,
+   "rating_due_text": null,
+   "recent_roles": [
+    "Host"
+   ],
+   "reliability": null,
+   "role": "Host",
+   "role_scores": {},
+   "score": null,
+   "settings": {},
+   "shifts": 25
+  }
+ ],
+ "suggested_pairs": []
+}

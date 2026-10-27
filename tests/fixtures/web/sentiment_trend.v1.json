@@ -1,0 +1,76 @@
+{
+ "weeks": [
+  {
+   "avg_rating": 4.5,
+   "label": "9/7",
+   "negative": 1,
+   "neutral": 2,
+   "positive": 13,
+   "total": 16,
+   "week_key": "2026-36"
+  },
+  {
+   "avg_rating": 4.4,
+   "label": "9/14",
+   "negative": 1,
+   "neutral": 0,
+   "positive": 8,
+   "total": 9,
+   "week_key": "2026-37"
+  },
+  {
+   "avg_rating": 4.3,
+   "label": "9/22",
+   "negative": 0,
+   "neutral": 2,
+   "positive": 6,
+   "total": 8,
+   "week_key": "2026-38"
+  },
+  {
+   "avg_rating": 4.5,
+   "label": "9/28",
+   "negative": 1,
+   "neutral": 0,
+   "positive": 9,
+   "total": 10,
+   "week_key": "2026-39"
+  },
+  {
+   "avg_rating": 4.2,
+   "label": "10/5",
+   "negative": 1,
+   "neutral": 1,
+   "positive": 7,
+   "total": 9,
+   "week_key": "2026-40"
+  },
+  {
+   "avg_rating": 4.2,
+   "label": "10/12",
+   "negative": 2,
+   "neutral": 0,
+   "positive": 8,
+   "total": 10,
+   "week_key": "2026-41"
+  },
+  {
+   "avg_rating": 3.7,
+   "label": "10/19",
+   "negative": 1,
+   "neutral": 1,
+   "positive": 4,
+   "total": 6,
+   "week_key": "2026-42"
+  },
+  {
+   "avg_rating": 5.0,
+   "label": "10/26",
+   "negative": 0,
+   "neutral": 0,
+   "positive": 1,
+   "total": 1,
+   "week_key": "2026-43"
+  }
+ ]
+}

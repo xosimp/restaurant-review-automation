@@ -1,0 +1,41 @@
+{
+ "actual": {
+  "as_of": "<volatile>",
+  "as_of_label": "10/26/26",
+  "available": true,
+  "hours": 0.0,
+  "note": "Worked hours through 10/26/26. Hours and tips come from the POS once each business day closes, so last night usually shows up the next morning."
+ },
+ "attendance": {
+  "counts": {},
+  "days": 30,
+  "message": "Attendance isn't tracked here yet, so there's nothing to show.",
+  "recent": [],
+  "shifts_checked": 0,
+  "tracked": false
+ },
+ "certifications": {
+  "expiry_tracked": false,
+  "items": [],
+  "note": null
+ },
+ "ok": true,
+ "overtime": {
+  "applies": true,
+  "headroom_hours": 10.2,
+  "line_hours": 40.0,
+  "message": "A pickup longer than 10.2h takes you past 40 hours this week.",
+  "over": false,
+  "projected_hours": 29.75
+ },
+ "scheduled": {
+  "hours": 29.75,
+  "shifts": 5
+ },
+ "today": "2026-10-26",
+ "week": {
+  "end": "2026-11-01",
+  "label": "10/26/26 – 11/1/26",
+  "start": "2026-10-26"
+ }
+}

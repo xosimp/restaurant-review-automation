@@ -62,21 +62,55 @@ struct AppUpdateRequirement: Equatable, Sendable {
 }
 
 /// Holds the requirement once any response stated one, for RootView's
-/// blocking sheet. It is never cleared while the process runs: the build
-/// does not get newer until the person updates it.
+/// blocking sheet — until the server stops saying it. The build does not
+/// get newer while the process runs, but the server's minimum can come DOWN:
+/// a mistyped MOBILE_MIN_BUILD, fixed and redeployed, used to leave every
+/// phone on the sheet until the person force-quit the app (blind re-audit
+/// 10/27/26). So while the sheet is up it asks again — when the app comes
+/// back to the foreground, every `recheckInterval`, and on "Check again" —
+/// and opens the moment the answer is anything but 426.
 @Observable
 @MainActor
 final class AppUpdateGate {
     static let shared = AppUpdateGate()
+    /// How often the sheet asks again while it is on screen.
+    static let recheckInterval: TimeInterval = 300
 
     private(set) var requirement: AppUpdateRequirement?
+    /// A re-check is on its way (the sheet shows the pulse).
+    private(set) var isChecking = false
 
     func require(_ requirement: AppUpdateRequirement) {
         if self.requirement == nil { self.requirement = requirement }
     }
 
+    /// The server answered something other than 426: the build is served
+    /// again, and the sheet goes.
+    func clear() {
+        requirement = nil
+    }
+
+    /// Asks `probe` whether the server still turns this build away (true),
+    /// serves it (false — the gate clears) or could not be asked (nil — it
+    /// stays). One at a time; nothing to do while no requirement is held.
+    /// The production probe is APIClient.stillRequiresUpdate.
+    func recheck(_ probe: @Sendable () async -> Bool?) async {
+        guard requirement != nil, !isChecking else { return }
+        isChecking = true
+        defer { isChecking = false }
+        if await probe() == false {
+            clear()
+        }
+    }
+
+    /// The real re-check, against this app's server.
+    func recheck() async {
+        await recheck { await APIClient.shared.stillRequiresUpdate() }
+    }
+
     /// Tests only: a fresh gate between cases.
     func resetForTesting() {
         requirement = nil
+        isChecking = false
     }
 }

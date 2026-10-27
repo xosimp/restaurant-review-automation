@@ -1,0 +1,455 @@
+{
+ "ok": true,
+ "people": [
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "aisha-mahmoud",
+   "name": "Aisha Mahmoud",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "ana-sepulveda",
+   "name": "Ana Sepulveda",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "andre-kimura",
+   "name": "Andre Kimura",
+   "phone": "",
+   "role": "Sous Chef"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "brandon-szymanski",
+   "name": "Brandon Szymanski",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "brianna-coleman",
+   "name": "Brianna Coleman",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "caleb-ostrowski",
+   "name": "Caleb Ostrowski",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "camille-dubois",
+   "name": "Camille Dubois",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "chris-kowalczyk",
+   "name": "Chris Kowalczyk",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "danielle-wu",
+   "name": "Danielle Wu",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "derek-lam",
+   "name": "Derek Lam",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "devon-marsh",
+   "name": "Devon Marsh",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "edgar-fuentes",
+   "name": "Edgar Fuentes",
+   "phone": "",
+   "role": "Dishwasher"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "elena-petrova",
+   "name": "Elena Petrova",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "ella-harrington",
+   "name": "Ella Harrington",
+   "phone": "",
+   "role": "Host"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "grace-adebayo",
+   "name": "Grace Adebayo",
+   "phone": "",
+   "role": "Host"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "grant-holloway",
+   "name": "Grant Holloway",
+   "phone": "",
+   "role": "Manager"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "hannah-bergstrom",
+   "name": "Hannah Bergstrom",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "hector-galindo",
+   "name": "Hector Galindo",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "isaiah-brooks",
+   "name": "Isaiah Brooks",
+   "phone": "",
+   "role": "Dishwasher"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "jamal-pritchett",
+   "name": "Jamal Pritchett",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "jasmine-thornton",
+   "name": "Jasmine Thornton",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "javier-solis",
+   "name": "Javier Solis",
+   "phone": "",
+   "role": "Busser"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "jordan-reyes",
+   "name": "Jordan Reyes",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": true,
+   "key": "kayla-brennan",
+   "name": "Kayla Brennan",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "keisha-dunmore",
+   "name": "Keisha Dunmore",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "kofi-asante",
+   "name": "Kofi Asante",
+   "phone": "",
+   "role": "Dishwasher"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "lily-nakamura",
+   "name": "Lily Nakamura",
+   "phone": "",
+   "role": "Host"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "logan-pierce",
+   "name": "Logan Pierce",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "luis-ortega",
+   "name": "Luis Ortega",
+   "phone": "",
+   "role": "Kitchen Manager"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "lupe-navarrete",
+   "name": "Lupe Navarrete",
+   "phone": "",
+   "role": "Prep Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "malik-greene",
+   "name": "Malik Greene",
+   "phone": "",
+   "role": "Busser"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "marcus-bell",
+   "name": "Marcus Bell",
+   "phone": "",
+   "role": "Manager"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "mateo-quintero",
+   "name": "Mateo Quintero",
+   "phone": "",
+   "role": "Dishwasher"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "mia-delgado",
+   "name": "Mia Delgado",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "moises-cardenas",
+   "name": "Moises Cardenas",
+   "phone": "",
+   "role": "Prep Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "nate-ferraro",
+   "name": "Nate Ferraro",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "nia-robinson",
+   "name": "Nia Robinson",
+   "phone": "",
+   "role": "Busser"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "omar-haddad",
+   "name": "Omar Haddad",
+   "phone": "",
+   "role": "Barback"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "owen-dvorak",
+   "name": "Owen Dvorak",
+   "phone": "",
+   "role": "Busser"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "paige-sorensen",
+   "name": "Paige Sorensen",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "rafael-montoya",
+   "name": "Rafael Montoya",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "rosa-arellano",
+   "name": "Rosa Arellano",
+   "phone": "",
+   "role": "Prep Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "ryan-mulcahy",
+   "name": "Ryan Mulcahy",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "sofia-lindqvist",
+   "name": "Sofia Lindqvist",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "tessa-okonkwo",
+   "name": "Tessa Okonkwo",
+   "phone": "",
+   "role": "Manager"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "tomas-villanueva",
+   "name": "Tomas Villanueva",
+   "phone": "",
+   "role": "Line Cook"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "tre-simmons",
+   "name": "Tre Simmons",
+   "phone": "",
+   "role": "Barback"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "tyler-novak",
+   "name": "Tyler Novak",
+   "phone": "",
+   "role": "Server"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "victor-ruiz",
+   "name": "Victor Ruiz",
+   "phone": "",
+   "role": "Bartender"
+  },
+  {
+   "active": true,
+   "email": "",
+   "has_login": false,
+   "key": "zoe-halvorsen",
+   "name": "Zoe Halvorsen",
+   "phone": "",
+   "role": "Host"
+  }
+ ]
+}

@@ -650,7 +650,7 @@ def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send:
     # it holds (config.outbound_sends_allowed — release-safety audit
     # 10/26/26 A05-06). No email_log row: nothing happened.
     if not config.outbound_sends_allowed():
-        return SendResult(False, error=config.sends_refused_reason(), attempts=0, reason="env_refused")
+        return SendResult(False, error=config.refused_send("email"), attempts=0, reason="env_refused")
 
     if not key or not to_email:
         result = SendResult(False, error="RESEND_API_KEY or recipient missing", attempts=0,

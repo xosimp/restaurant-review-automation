@@ -1,0 +1,10 @@
+{
+ "complaint": null,
+ "ok": true,
+ "prior_avg": 4.4,
+ "prior_n": 43,
+ "rating_delta": -0.2,
+ "recent_avg": 4.2,
+ "recent_n": 34,
+ "window_days": 28
+}

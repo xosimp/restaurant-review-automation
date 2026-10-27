@@ -2711,7 +2711,8 @@ final class LaborViewModel {
         }
     }
 
-    private struct TimeOffListResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured labor/time-off).
+    struct TimeOffListResponse: Decodable {
         let ok: Bool
         let requests: [TimeOffRequest]
         var followUps: [TimeOffFollowUp] = []
@@ -4692,7 +4693,8 @@ final class LaborViewModel {
 
     // MARK: - Operational Score
 
-    private struct TeamResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured labor/team).
+    struct TeamResponse: Decodable {
         let ok: Bool
         let isLive: Bool?
         let team: [RatedEmployee]?

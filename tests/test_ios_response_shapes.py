@@ -1,5 +1,6 @@
 """The phone's top GET payloads, as the server really sends them (release-
-safety audit #25: A04-04, A06-03, A05-14).
+safety audit #25: A04-04, A06-03, A05-14; widened in the blind re-audit
+10/27/26 to every main screen's read, the manager's views and the staff app).
 
 About 580 of the app's Decodable structs are strict: a key renamed, a null
 where Swift holds a non-optional, a fraction where it holds an Int, and the
@@ -46,7 +47,8 @@ import re
 import pytest
 
 import ios_shape_capture as cap
-from test_ios_schedule_payload_contract import shape_mismatches
+import ios_swift_optionality as swift_opt
+from test_ios_schedule_payload_contract import _merged, shape_mismatches
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOS = os.path.join(ROOT, "ios", "CavnarAI")
@@ -76,6 +78,13 @@ CONDITIONAL = {
     "pace.week.last_year_pct": "only when every measured night has a last-year night",
 }
 
+# A null the server may send where a fixture holds a value, though a model
+# that decodes the route reads the key strictly (ios_swift_optionality says
+# "required") — route -> {key path: why it is safe}. Add one only after
+# checking every Swift model that decodes the route tolerates the null (a
+# custom init the parser misreads), never to make a real break pass.
+NULLABLE = {}
+
 # A list of objects says which keys every element carries only from this
 # many elements up; fewer is too little to tell a key from a coincidence.
 MIN_LIST = 3
@@ -99,9 +108,15 @@ def _load(name):
         return json.load(f)
 
 
+# A staff calendar feed's secret path segment (staff_calendar_link): a token
+# minted by the capture's own database, kept out of the files all the same.
+_FEED_TOKEN = re.compile(r"(/staff/cal/)[A-Za-z0-9_-]{16,}(\.ics)")
+
+
 def _write(name, payload):
     text = json.dumps(payload, indent=1, sort_keys=True, ensure_ascii=False)
     text = _VOLATILE.sub(r'\1"<volatile>"', text)
+    text = _FEED_TOKEN.sub(r"\1<volatile>\2", text)
     with open(_path(name), "w", encoding="utf-8") as f:
         f.write(text + "\n")
 
@@ -181,13 +196,70 @@ def removed_paths(v1, live):
     return out
 
 
+def null_paths(fixture, live, path="$"):
+    """Key paths (list elements merged under `[]`) where `live` is null and
+    `fixture` holds a value — the break shape_mismatches' "null matches
+    anything" never saw."""
+    if live is None:
+        return [path] if fixture is not None else []
+    if fixture is None:
+        return []
+    out = []
+    if isinstance(fixture, dict) and isinstance(live, dict):
+        for k in sorted(set(fixture) & set(live)):
+            out += null_paths(fixture[k], live[k], f"{path}.{k}")
+    elif isinstance(fixture, list) and isinstance(live, list):
+        values = [x for x in fixture if x is not None]
+        if values:
+            ref = _merged(values)
+            for item in live:
+                out += null_paths(ref, item, path + "[]")
+    return out
+
+
+def _views(name, payload):
+    """(label, payload) per view the phone decodes: the DSR captures hold an
+    owner's and a manager's, each one report."""
+    if name in cap.DSR_ROUTES:
+        return [(v, (payload or {}).get(v)) for v in ("owner", "manager")]
+    return [(None, payload)]
+
+
+def decode_problems(name, payload):
+    """What the Swift models that decode route `name` would refuse in
+    `payload`, simulated (ios_swift_optionality.decode_problem) — the
+    server-side mirror of ResponseShapeContractTests while it cannot run in
+    CI, and a check on the LIVE payload before any re-capture."""
+    out = []
+    for view, part in _views(name, payload):
+        out += [f"{p}{' [' + view + ']' if view else ''}" for p in swift_opt.route_decode_problems(name, part)]
+    return out
+
+
+def null_breaks(name, fixture, live):
+    """A null in `live` where `fixture` holds a value AND a Swift model that
+    decodes route `name` reads the key strictly — a decode failure on every
+    installed phone — less NULLABLE."""
+    allowed = NULLABLE.get(name, {})
+    out = []
+    for (view, fx), (_v, lv) in zip(_views(name, fixture), _views(name, live)):
+        for q in sorted(set(null_paths(fx, lv))):
+            if q in allowed:
+                continue
+            required, why = swift_opt.requirement(name, q)
+            if required:
+                out.append(f"{q}{' [' + view + ']' if view else ''}: the server sent null where {why}")
+    return out
+
+
 # ── the tests ───────────────────────────────────────────────────────────────
 
 def test_the_phone_payloads_match_the_fixtures_the_ios_tests_decode(live):
     problems = []
     for name in ROUTE_NAMES:
         assert os.path.exists(_path(name)), f"{name}.json is missing — capture it (CAVNAR_WRITE_IOS_FIXTURES=1)"
-        mm = shape_mismatches(_load(name), live[name])
+        mm = (shape_mismatches(_load(name), live[name]) + null_breaks(name, _load(name), live[name])
+              + decode_problems(name, live[name]))
         problems += [f"{name}: {m}" for m in mm[:8]]
     assert problems == [], (
         "the server's payload changed shape under the phone — re-capture (CAVNAR_WRITE_IOS_FIXTURES=1) and "
@@ -203,10 +275,37 @@ def test_no_key_a_supported_build_reads_was_removed(live):
         v1 = _load(name + ".v1")
         problems += [f"{name}: {q} is no longer sent" for q in removed_paths(v1, live[name])[:8]]
         problems += [f"{name}: {m}" for m in shape_mismatches(v1, live[name])[:8]]
+        problems += [f"{name}: {m}" for m in null_breaks(name, v1, live[name])[:8]]
     assert problems == [], (
         "a key the installed builds read was removed or changed kind. Keep sending it until MOBILE_MIN_BUILD "
         "retires those builds (then replace <route>.v1.json with a v2 copy in that commit). A key the server "
         "only sends some nights is CONDITIONAL here, with why:\n" + "\n".join(problems))
+
+
+def test_every_fixture_decodes_with_the_swift_models_simulated():
+    """Every committed fixture (current and v1) read the way the app's models
+    read it: a required key missing or null, a string where a number is held,
+    a fraction where an Int is (blind re-audit 10/27/26). No capture needed."""
+    problems = []
+    for name in ROUTE_NAMES:
+        for suffix in ("", ".v1"):
+            problems += [f"{name}{suffix}: {p}" for p in decode_problems(name, _load(name + suffix))]
+    assert problems == [], "\n".join(problems[:30])
+
+
+def test_the_decode_simulation_refuses_what_jsondecoder_refuses():
+    me = _load("me.v1")
+    broken = json.loads(json.dumps(me))
+    broken["user"].pop("username")
+    assert decode_problems("me", broken) == [
+        "SessionStore.MeResponse: $.user.username: missing — User.username is a non-optional String"]
+    broken = json.loads(json.dumps(me))
+    broken["user"]["id"] = 1.5
+    assert "1.5" in decode_problems("me", broken)[0]
+    broken = json.loads(json.dumps(me))
+    broken["ok"] = "yes"
+    assert "where Bool is held" in decode_problems("me", broken)[0]
+    assert decode_problems("me", me) == []
 
 
 def test_the_hand_written_scenarios_stay_shaped_like_the_server(live):
@@ -238,7 +337,8 @@ def test_the_fixtures_are_the_fictional_store_and_carry_no_credential():
             for m in emails.finditer(text):
                 domain = m.group(1).lower()
                 assert domain.endswith((".example", ".invalid", ".test", "cavnar.ai")), (name + suffix, m.group(0))
-            for secret in (r"demo-store:", r"Bearer\s", r"sk_live_", r"\bre_[A-Za-z0-9]{16,}", r"AKIA[0-9A-Z]{16}"):
+            for secret in (r"demo-store:", r"Bearer\s", r"sk_live_", r"\bre_[A-Za-z0-9]{16,}", r"AKIA[0-9A-Z]{16}",
+                           r"/staff/cal/[A-Za-z0-9_-]{16,}"):
                 assert not re.search(secret, text), (name + suffix, secret)
 
 
@@ -263,3 +363,58 @@ def test_the_removal_check_catches_the_break_it_exists_for():
     assert removed_paths(v1, dict(fine, rows=[], user=None)) == []
     # Too few elements to say what every element carries.
     assert required_paths({"a": [{"k": 1}, {"k": 2}]}) == {"$.a"}
+
+
+def test_the_null_check_catches_a_value_that_goes_null_under_a_non_optional():
+    """The third break class the guard names (blind re-audit 10/27/26): a
+    null where Swift holds a non-optional. `me.v1.json` with user.username,
+    ok or the whole user set to null passed every check before."""
+    v1 = _load("me.v1")
+    for mutate, want in (
+            (lambda d: d["user"].update(username=None), "$.user.username"),
+            (lambda d: d.update(ok=None), "$.ok"),
+            (lambda d: d.update(user=None), "$.user")):
+        live = json.loads(json.dumps(v1))
+        mutate(live)
+        assert removed_paths(v1, live) == [] and shape_mismatches(v1, live) == []     # the old checks
+        got = null_breaks("me", v1, live)
+        assert len(got) == 1 and got[0].startswith(want + ":") and "non-optional" in got[0], got
+    # An optional key going null is fine (MeResponse.timezone: String?).
+    live = json.loads(json.dumps(v1))
+    live["timezone"] = None
+    assert null_breaks("me", v1, live) == []
+    # A null element of a list the model holds as [T] breaks; a key no model reads never does.
+    home = _load("home.v1")
+    live = json.loads(json.dumps(home))
+    live["modules"] = [None] + live["modules"]
+    live["not_read_by_any_model"] = None
+    assert [m.split(":")[0] for m in null_breaks("home", dict(home, not_read_by_any_model=1), live)] == [
+        "$.modules[]"]
+    # Each DSR view is checked against the report model.
+    dsr = _load("dsr_preview.v1")
+    live = json.loads(json.dumps(dsr))
+    live["manager"]["business_date"] = None
+    assert [m.split(":")[0] for m in null_breaks("dsr_preview", dsr, live)] == ["$.business_date [manager]"]
+
+
+def test_the_optionality_is_read_from_the_swift_models():
+    req = swift_opt.requirement
+    assert req("me", "$.user.username")[0] and req("me", "$.user")[0] and req("me", "$.ok")[0]
+    assert not req("me", "$.timezone")[0]                               # String?
+    assert req("home", "$.restaurant_name")[0] and not req("home", "$.location_name")[0]
+    assert req("staff_me", "$.employee")[0], "guard let e = try? … else { throw }: required after all"
+    assert not req("labor", "$.data_caveat")[0] and req("labor", "$.role_summary[].role")[0]
+    assert not req("me", "$.no_model_reads_this")[0]
+    # Every route the capture holds is decoded by some model the parser finds.
+    roots = swift_opt.root_types()
+    for name in ROUTE_NAMES:
+        assert roots.get(name), f"no ResponseShapeContractTests decode names {name}"
+        for t in roots[name]:
+            assert swift_opt.props(swift_opt._find(t)), f"the parser read nothing of {t} ({name})"
+
+
+def test_every_nullable_entry_is_still_needed():
+    for name, paths in NULLABLE.items():
+        assert name in ROUTE_NAMES, name
+        for q, why in paths.items():
+            assert why and swift_opt.requirement(name, q)[0], f"{name} {q}: no model requires it any more"

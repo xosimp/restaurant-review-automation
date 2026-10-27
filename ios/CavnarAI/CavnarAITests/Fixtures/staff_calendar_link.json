@@ -1,0 +1,8 @@
+{
+ "created_at": "<volatile>",
+ "last_fetched_at": null,
+ "note": "Your published shifts, in your phone's calendar. Changes show up within a few hours. Anyone with this link can see your shifts — reset it if you shared it by mistake.",
+ "ok": true,
+ "url": "https://dashboard.cavnar.ai/staff/cal/<volatile>.ics",
+ "webcal_url": "webcal://dashboard.cavnar.ai/staff/cal/<volatile>.ics"
+}

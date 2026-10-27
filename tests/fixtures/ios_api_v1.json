@@ -1,0 +1,9122 @@
+{
+ "about": "What the supported iPhone builds call: tests/test_ios_api_v1.py. Replace only in the commit that raises MOBILE_MIN_BUILD.",
+ "generated_from": [
+  "abc4d51ff7da",
+  "8d22c2f5612e"
+ ],
+ "reads": [
+  {
+   "methods": [],
+   "path": "/mobile/api/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/backup-codes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/disable",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/send-test",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/2fa/trusted-devices",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/trusted-devices/revoke-all",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/trusted-devices/{*}/revoke",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/2fa/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/activity",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/alert-settings",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/auto-approve",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/billing",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/change-password",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/closures",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/data-retention",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/delete-login",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/email-history",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/export-data",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/health",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/hours",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/hours/google",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/login-history",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/login-notify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/marketing-opt-out",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/memory",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/memory/add",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/memory/audience",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/memory/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/memory/forget",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/memory/pin",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/memory/restore",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/memory/scope",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/monthly-review",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/not-me",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/pause",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/policy-notice/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/preferences",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/preferences/apply-to-all",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/preferences/mine",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/recovery-email",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/recovery-email/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/recovery-email/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/referral",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/report-bug",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/request-deletion",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/restaurant-profile",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/resume",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/security-summary",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/account/send-delay",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/send-test-digest",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/send-test-push",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/sessions",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/staff",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/staff-signin-notify",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/staff/portal-link/rotate",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/staff/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/staff/{*}/pin",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/staff/{*}/unlink",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/account/staff/{*}/unlock",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/account/targets",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/team",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/team/invite",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/team/{*}/access",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/team/{*}/revoke",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/team/{*}/role",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/account/trust",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/update-email",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/account/update-profile",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/actions",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/actions/pending",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/actions/snooze",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/actions/{*}/cancel",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/activity",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/admin/clients",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/admin/stop-viewing",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/admin/view-as/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/ai-jobs/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/apple-signin",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/ask-cavnar",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/ask-cavnar/action",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/ask-cavnar/conversations",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE",
+    "GET"
+   ],
+   "path": "/mobile/api/ask-cavnar/conversations/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/ask-cavnar/feedback",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/ask-cavnar/opening",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/ask-cavnar/proposals/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/ask-cavnar/stream",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/benchmarks/card",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/benchmarks/locations",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/changelog",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/changelog/unread-count",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/client-errors",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/closeout",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/command/propose",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/command/registry",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/command/search",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/clover",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/connections/google",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/connections/google/authorize",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/google/confirm",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/connections/instagram",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/connections/instagram/authorize",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/instagram/confirm",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/connections/rpower",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/square",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/toast",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/connections/{*}/sync",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/cross-module",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/data-health",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/data-health/sync/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/data-health/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/device-tokens",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/device-tokens/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dna",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/dsr/budget",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/budget/prefill",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/dsr/category",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/dsr/close",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/period",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/dsr/settings",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/week",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/week.xlsx",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/dsr/{*}/status",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/analytics",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/auto-order",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/bar",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/bar/counts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/cfo",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/count-sheet",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE",
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/custom-item",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/dish-scorecard",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/game-week",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/ingredient-supplier",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/ingredients",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/invoices",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/invoices/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/invoices/{*}/apply",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/menu-item-price",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/menu-profitability",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/order-draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/par-suggestions",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/par-suggestions/{*}/accept",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/food-cost/plates",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/purchase-orders",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/food-cost/purchase-orders/",
+   "prefix": true
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/food-cost/purchases",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/quickcount",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/recipe-drafts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/recipe-drafts/{*}/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/recipes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/recipes/scan",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/reprice",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/reprice/apply",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/send-order",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/tracker",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/food-cost/waste",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/food-cost/waste-trend",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/forgot-password",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/goals",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/goals/{*}/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/good-news",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/group-locations",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-campaign/draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-campaign/send",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-campaign/{*}/cancel",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-campaigns",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/guest-contacts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/guest-contacts/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-contacts/{*}/mark-visit",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-join-link",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/guest-newsletter",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-newsletter/draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-newsletter/preview",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/guest-newsletter/{*}/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-newsletters",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/guest-optin-invites",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-overview",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-segments",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guest-winback",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-winback/{*}/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guest-winback/{*}/send",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guests",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guests/followup",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/guests/host-add",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/guests/inbox",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/guests/texting-setup",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/home",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/home/assign",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/home/brief/group",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/home/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/home/modules",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/house-rules",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/intel/add-competitor",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/intel/ai-visibility",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel/ai-visibility/history",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel/ai-visibility/queries",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel/movement",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/intel/refresh-competitors",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel/refresh-status/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/intel/remove-competitor",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intel/search-places",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/intel/website",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/intraday/tonight",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/issues",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/issues/routing",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/issues/routing/contact",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/issues/{*}/ask-cover",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/issues/{*}/cover-answer",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/issues/{*}/reassign",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/issues/{*}/resolve",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/auto-draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/auto-publish",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/availability",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/availability-changes/{*}/decide",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/availability/delete",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/bench",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/capability-changes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/closers",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/compliance",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/compliance/estimates",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/compliance/estimates/draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/compliance/profile",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/compliance/requests/{*}/answer",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/covers",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/crew-matrix",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/daily",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/demand-signals",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/labor/demand-signals/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/event-dismissals",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/event-dismissals/{*}/restore",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/event-follows/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/floor-settings",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/floors/suggest",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/generate-schedule",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/generate-schedule/follow",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/generate-schedule/stop",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/inbox",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/inbox/announcements",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/inbox/announcements/{*}/withdraw",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/inbox/threads/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/inbox/threads/{*}/reply",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/insight",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/intel",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/labor-standards",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/learned-patterns",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/learned-patterns/adopt",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/live",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/live/moves/{*}/act",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/live/moves/{*}/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/live/moves/{*}/reverse",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/managers",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/note-rules",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/note-rules/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/note-rules/typed",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/note-rules/waiver",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/note-rules/{*}/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/open-shifts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/pos-schedule-push",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/publish-check",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/publish-review",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/publish-review/dismiss",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/publish-schedule",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/quality/calibration/apply",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/ratings/match",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/ratings/suggested",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/ratings/unmatched",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/reservations/sync",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/role-families",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/roster",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/rules",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-forecast",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-history",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE",
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-history/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-history/{*}/versions",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule-instruction/read",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule-memory",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-share-status",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/schedule-status/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/schedule-status/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/schedule/adopt-admin-saves",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/apply-fixes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/edit-why",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/optimize",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/recommendation",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/replacements",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/score",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/sections",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/schedule/violations",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/shift-requests",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/shift-requests/{*}/cancel",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/shift-requests/{*}/candidates",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/shift-requests/{*}/colleague-agreed",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/shift-requests/{*}/decide",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/shift-requests/{*}/offer",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-contacts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-note-holds",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-note-holds/{*}/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-notes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-notes/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-pairs",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/labor/staff-pairs/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/labor/staff-pulse",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/staff-settings",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/standby/ask",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/team",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/team/add",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/team/rating",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/team/ratings/adopt",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/team/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/team/thresholds",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/time-off",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/labor/time-off/{*}/decide",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/labor/trend",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/labor/weekly-plan",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE",
+    "POST"
+   ],
+   "path": "/mobile/api/live-activity-tokens",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/login",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/logout",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/loss-signals",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/attribution",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/calendar",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/calendar/seen",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/diagnosis",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/drafts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/marketing/drafts/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/drafts/{*}/approve",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/generate-content",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/marketing/google-post",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/header",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/marketing/insight",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/media",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/marketing/media/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/opportunities",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/performance",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/performance-window",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/marketing/post-to-facebook",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/marketing/post-to-instagram",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/preview",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/marketing/recent-topics",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/refresh-metrics",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/marketing/schedule",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/marketing/schedule/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/me",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/milestones",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/milestones/seen",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/monthly-review",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/morning-brief",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/morning-brief/settings",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/notifications",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/notifications/engagement",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/notifications/opened",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/notifications/unread-count",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/outcomes",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/outcomes/{*}/abandon",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/passkey/options",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/passkey/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/passkeys",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/passkeys/options",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/passkeys/{*}/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/people",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/people/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/people/identity",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/people/identity/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/people/mentions",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/people/mentions/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/people/merge",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/people/merges",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/people/merges/{*}/undo",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/recs/checkin",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/recs/conflict",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/recs/event",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/recs/link-open",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/recs/summary",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/recs/timeline",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/recs/what-worked",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/register",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/resend-2fa",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reset-password",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/review-request-stats",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/review-stats",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/reviews",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/approve-all",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/reviews/insight",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/reviews/topic-heatmap",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/reviews/why-line",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/reviews/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/approve",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/delete",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/mark-posted",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/regenerate-draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/replied-elsewhere",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/retag",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/retract",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/retry-post",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/save-draft",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/skip",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/reviews/{*}/undo",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/send-review-request",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/sessions/revoke-others",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-brief",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-brief/approve",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-certs",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-certs/{*}/remove",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-docs",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/staff-docs/{*}/remove",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/switch-location",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/task-sheets/day",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets/lines/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/task-sheets/photo/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/task-sheets/report",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets/{*}/lines",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets/{*}/order",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/task-sheets/{*}/starter",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/team/inbox",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/team/messages",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/mobile/api/team/messages/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/templates",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/mobile/api/templates/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/templates/{*}/use",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/mobile/api/value",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/verify-2fa",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/mobile/api/web-analytics",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/web-analytics/disconnect",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/mobile/api/web-analytics/sync",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/",
+   "prefix": true
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/account/delete",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/announcements/{*}/ack",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/ask",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/ask/turn/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/availability",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/calendar-link",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/calendar-link/reset",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/calendar-link/revoke",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/colleagues",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/compliance",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/consents/rest-standing",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/consents/{*}/answer",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/consents/{*}/revoke",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/device-tokens",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "DELETE"
+   ],
+   "path": "/staff/api/device-tokens/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/docs",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/earnings",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/earnings",
+   "prefix": true
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/estimate/request-change",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/estimate/{*}/acknowledge",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/inbox",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/language",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/logout",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/me",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/me/email",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/messages",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/notifications",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/offers/{*}/respond",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/open-shifts/{*}/claim",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/pin",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/pin/forgot/set",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/pin/forgot/start",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/pin/forgot/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/preferences",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/preshift",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/pulse",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/recognition",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/roster/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/running-late",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/shift-requests",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/shift-requests/{*}/respond",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/shift-requests/{*}/withdraw",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/shifts",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/signup/claim",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/signup/claimable/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/signup/start",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/signup/verify",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET"
+   ],
+   "path": "/staff/api/signup/where/{*}",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/stats",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/api/switch",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/tasks",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/tasks/complete",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/tasks/photo",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/tasks/signoff",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/time-off",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/time-off/{*}/cancel",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/time-off/{*}/withdraw",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "GET",
+    "POST"
+   ],
+   "path": "/staff/api/travel",
+   "prefix": false
+  },
+  {
+   "methods": [],
+   "path": "/staff/api/travel/offers/{*}/respond",
+   "prefix": false
+  },
+  {
+   "methods": [
+    "POST"
+   ],
+   "path": "/staff/r/{*}/login",
+   "prefix": false
+  }
+ ],
+ "writes": [
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/ask-cavnar/conversations/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/clover",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/google",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/instagram",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/rpower",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/square",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/connections/toast",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/device-tokens/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "name"
+   ],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/custom-item",
+   "read": [
+    "name"
+   ],
+   "server_read": [
+    "name"
+   ]
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/guest-contacts/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/labor/demand-signals/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule-history/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-pairs/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "activity_type",
+    "kind"
+   ],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/live-activity-tokens",
+   "read": [
+    "activity_type",
+    "kind"
+   ],
+   "server_read": [
+    "activity_type",
+    "kind"
+   ]
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/marketing/drafts/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/marketing/media/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/marketing/schedule/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/mobile/api/templates/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "DELETE",
+   "opaque": false,
+   "path": "/staff/api/device-tokens/{*}",
+   "read": [],
+   "server_read": [
+    "apns_token",
+    "token"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/backup-codes",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/disable",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "method"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/send-test",
+   "read": [
+    "method"
+   ],
+   "server_read": [
+    "method"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/trusted-devices/revoke-all",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/trusted-devices/{*}/revoke",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "code",
+    "method"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/2fa/verify",
+   "read": [
+    "code",
+    "method"
+   ],
+   "server_read": [
+    "code",
+    "method"
+   ]
+  },
+  {
+   "body": [
+    "al_1star_push",
+    "al_2star_push",
+    "al_5star_push",
+    "al_health_push",
+    "al_spike_push",
+    "al_unres_push",
+    "alert_1star",
+    "alert_2star",
+    "alert_5star",
+    "alert_ai_visibility_drop",
+    "alert_any_review",
+    "alert_competitor_move",
+    "alert_extra_emails",
+    "alert_food_waste",
+    "alert_health",
+    "alert_health_bypass_quiet",
+    "alert_labor_over",
+    "alert_neg_spike",
+    "alert_negative_trend",
+    "alert_no_response",
+    "alert_quiet_end",
+    "alert_quiet_start",
+    "alert_rating_floor",
+    "alert_rating_threshold",
+    "alert_resp_approved",
+    "contacts",
+    "digest_day",
+    "digest_enabled",
+    "push_sound",
+    "sms_consent",
+    "urgent_via_email",
+    "urgent_via_sms"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/alert-settings",
+   "read": [
+    "al_1star_push",
+    "al_2star_push",
+    "al_5star_push",
+    "al_health_push",
+    "al_spike_push",
+    "al_unres_push",
+    "alert_1star",
+    "alert_2star",
+    "alert_5star",
+    "alert_competitor_move",
+    "alert_extra_emails",
+    "alert_health",
+    "alert_labor_over",
+    "alert_neg_spike",
+    "alert_negative_trend",
+    "alert_no_response",
+    "alert_quiet_end",
+    "alert_quiet_start",
+    "alert_rating_floor",
+    "contacts",
+    "digest_day",
+    "digest_enabled",
+    "push_sound",
+    "sms_consent",
+    "urgent_via_email",
+    "urgent_via_sms"
+   ],
+   "server_read": [
+    "al_1star_push",
+    "al_2star_push",
+    "al_5star_push",
+    "al_health_push",
+    "al_spike_push",
+    "al_unres_push",
+    "alert_1star",
+    "alert_2star",
+    "alert_5star",
+    "alert_competitor_move",
+    "alert_extra_emails",
+    "alert_health",
+    "alert_labor_over",
+    "alert_max_per_day",
+    "alert_neg_spike",
+    "alert_negative_trend",
+    "alert_no_response",
+    "alert_quiet_end",
+    "alert_quiet_start",
+    "alert_rating_floor",
+    "contacts",
+    "digest_day",
+    "digest_enabled",
+    "expected_version",
+    "push_sound",
+    "sms_consent",
+    "urgent_via_email",
+    "urgent_via_sms"
+   ]
+  },
+  {
+   "body": [
+    "daily_cap",
+    "earned",
+    "enabled",
+    "include_4star",
+    "paused"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/auto-approve",
+   "read": [
+    "daily_cap",
+    "earned",
+    "enabled",
+    "include_4star",
+    "paused"
+   ],
+   "server_read": [
+    "daily_cap",
+    "earned",
+    "enabled",
+    "include_4star",
+    "paused"
+   ]
+  },
+  {
+   "body": [
+    "current",
+    "new_password"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/change-password",
+   "read": [
+    "current",
+    "new_password"
+   ],
+   "server_read": [
+    "current",
+    "new_password"
+   ]
+  },
+  {
+   "body": [
+    "add",
+    "remove"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/closures",
+   "read": [
+    "add",
+    "remove"
+   ],
+   "server_read": [
+    "add",
+    "remove"
+   ]
+  },
+  {
+   "body": [
+    "months"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/data-retention",
+   "read": [
+    "months"
+   ],
+   "server_read": [
+    "months"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/delete-login",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "scopes"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/export-data",
+   "read": [
+    "scopes"
+   ],
+   "server_read": [
+    "scopes"
+   ]
+  },
+  {
+   "body": [
+    "close",
+    "open"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/hours",
+   "read": [
+    "close",
+    "open"
+   ],
+   "server_read": [
+    "close",
+    "closures",
+    "closures_base",
+    "open"
+   ]
+  },
+  {
+   "body": [
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/login-notify",
+   "read": [
+    "enabled"
+   ],
+   "server_read": [
+    "enabled"
+   ]
+  },
+  {
+   "body": [
+    "opted_out"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/marketing-opt-out",
+   "read": [
+    "opted_out"
+   ],
+   "server_read": [
+    "opted_out"
+   ]
+  },
+  {
+   "body": [
+    "audience",
+    "due_on",
+    "fact",
+    "kind",
+    "modules",
+    "replaces",
+    "valid_until"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/add",
+   "read": [
+    "audience",
+    "due_on",
+    "fact",
+    "kind",
+    "modules",
+    "replaces",
+    "valid_until"
+   ],
+   "server_read": [
+    "audience",
+    "due_on",
+    "fact",
+    "kind",
+    "modules",
+    "replaces",
+    "scope",
+    "valid_until"
+   ]
+  },
+  {
+   "body": [
+    "audience",
+    "id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/audience",
+   "read": [
+    "audience",
+    "id"
+   ],
+   "server_read": [
+    "audience",
+    "id"
+   ]
+  },
+  {
+   "body": [
+    "id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/dismiss",
+   "read": [
+    "id"
+   ],
+   "server_read": [
+    "id"
+   ]
+  },
+  {
+   "body": [
+    "fact"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/forget",
+   "read": [
+    "fact"
+   ],
+   "server_read": [
+    "fact"
+   ]
+  },
+  {
+   "body": [
+    "id",
+    "pinned"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/pin",
+   "read": [
+    "id",
+    "pinned"
+   ],
+   "server_read": [
+    "id",
+    "pinned"
+   ]
+  },
+  {
+   "body": [
+    "id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/restore",
+   "read": [
+    "id"
+   ],
+   "server_read": [
+    "due_on",
+    "id",
+    "valid_until"
+   ]
+  },
+  {
+   "body": [
+    "id",
+    "scope"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/memory/scope",
+   "read": [
+    "id",
+    "scope"
+   ],
+   "server_read": [
+    "id",
+    "scope"
+   ]
+  },
+  {
+   "body": [
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/monthly-review",
+   "read": [
+    "enabled"
+   ],
+   "server_read": [
+    "enabled"
+   ]
+  },
+  {
+   "body": [
+    "login_user_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/not-me",
+   "read": [
+    "login_user_id"
+   ],
+   "server_read": [
+    "login_user_id"
+   ]
+  },
+  {
+   "body": [
+    "days"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/pause",
+   "read": [
+    "days"
+   ],
+   "server_read": [
+    "days"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/policy-notice/dismiss",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "keys"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/preferences/apply-to-all",
+   "read": [
+    "keys"
+   ],
+   "server_read": [
+    "keys"
+   ]
+  },
+  {
+   "body": [
+    "morning_brief",
+    "push_enabled",
+    "push_muted_types",
+    "quiet_end",
+    "quiet_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/preferences/mine",
+   "read": [
+    "morning_brief"
+   ],
+   "server_read": [
+    "morning_brief"
+   ]
+  },
+  {
+   "body": [
+    "email"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/recovery-email",
+   "read": [
+    "email"
+   ],
+   "server_read": [
+    "email"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/recovery-email/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "code"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/recovery-email/verify",
+   "read": [
+    "code"
+   ],
+   "server_read": [
+    "code"
+   ]
+  },
+  {
+   "body": [
+    "email",
+    "name",
+    "note"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/referral",
+   "read": [
+    "email",
+    "name",
+    "note"
+   ],
+   "server_read": [
+    "email",
+    "name",
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "app_version",
+    "build",
+    "device",
+    "ios_version",
+    "message",
+    "screen"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/report-bug",
+   "read": [
+    "app_version",
+    "build",
+    "device",
+    "ios_version",
+    "message",
+    "screen"
+   ],
+   "server_read": [
+    "app_version",
+    "build",
+    "device",
+    "ios_version",
+    "message",
+    "screen"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/request-deletion",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "bar_led",
+    "concept",
+    "opened_year",
+    "ownership",
+    "service_model"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/restaurant-profile",
+   "read": [
+    "bar_led",
+    "concept",
+    "opened_year",
+    "ownership",
+    "service_model"
+   ],
+   "server_read": [
+    "bar_led",
+    "concept",
+    "opened_year",
+    "ownership",
+    "service_model"
+   ]
+  },
+  {
+   "body": [
+    "days"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/resume",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "minutes"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/send-delay",
+   "read": [
+    "minutes"
+   ],
+   "server_read": [
+    "minutes"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/send-test-digest",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/send-test-push",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "employee_name",
+    "job_role",
+    "pin"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff",
+   "read": [
+    "employee_name",
+    "job_role",
+    "pin"
+   ],
+   "server_read": [
+    "employee_name",
+    "job_role",
+    "pin"
+   ]
+  },
+  {
+   "body": [
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff-signin-notify",
+   "read": [
+    "enabled"
+   ],
+   "server_read": [
+    "enabled"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff/portal-link/rotate",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "active",
+    "employee_name",
+    "job_role"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff/{*}",
+   "read": [
+    "active",
+    "employee_name",
+    "job_role"
+   ],
+   "server_read": [
+    "active",
+    "employee_name",
+    "job_role",
+    "role"
+   ]
+  },
+  {
+   "body": [
+    "pin"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff/{*}/pin",
+   "read": [
+    "pin"
+   ],
+   "server_read": [
+    "pin"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff/{*}/unlink",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/staff/{*}/unlock",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "labor_target_pct",
+    "person_rate",
+    "role_rates",
+    "salaried_add",
+    "salaried_remove",
+    "sched_notes",
+    "waste_target_pct",
+    "week_start_day"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/targets",
+   "read": [
+    "person_rate",
+    "role_rates",
+    "salaried_add",
+    "salaried_remove",
+    "sched_notes",
+    "week_start_day"
+   ],
+   "server_read": [
+    "person_rate",
+    "role_rates",
+    "salaried_add",
+    "salaried_remove",
+    "sched_notes",
+    "week_start_day"
+   ]
+  },
+  {
+   "body": [
+    "email",
+    "name",
+    "role"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/team/invite",
+   "read": [
+    "email",
+    "name",
+    "role"
+   ],
+   "server_read": [
+    "email",
+    "name",
+    "role"
+   ]
+  },
+  {
+   "body": [
+    "enabled",
+    "morning_brief",
+    "nightly_report",
+    "permission"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/team/{*}/access",
+   "read": [
+    "enabled",
+    "morning_brief",
+    "nightly_report",
+    "permission"
+   ],
+   "server_read": [
+    "enabled",
+    "morning_brief",
+    "nightly_report",
+    "permission"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/team/{*}/revoke",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "role"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/team/{*}/role",
+   "read": [
+    "role"
+   ],
+   "server_read": [
+    "role"
+   ]
+  },
+  {
+   "body": [
+    "code",
+    "current_password",
+    "new_email"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/update-email",
+   "read": [
+    "code",
+    "current_password",
+    "new_email"
+   ],
+   "server_read": [
+    "code",
+    "current_password",
+    "new_email"
+   ]
+  },
+  {
+   "body": [
+    "menu_notes",
+    "never_say",
+    "owner_name",
+    "owner_phone",
+    "response_language",
+    "sign_off_name",
+    "timezone",
+    "voice_notes"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/account/update-profile",
+   "read": [
+    "menu_notes",
+    "never_say",
+    "owner_name",
+    "owner_phone",
+    "response_language",
+    "sign_off_name",
+    "timezone",
+    "voice_notes"
+   ],
+   "server_read": [
+    "category",
+    "expected_version",
+    "menu_notes",
+    "never_say",
+    "owner_name",
+    "owner_phone",
+    "response_language",
+    "sign_off_name",
+    "timezone",
+    "voice_notes"
+   ]
+  },
+  {
+   "body": [
+    "key"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/actions/snooze",
+   "read": [
+    "key"
+   ],
+   "server_read": [
+    "days",
+    "key"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/actions/{*}/cancel",
+   "read": [],
+   "server_read": [
+    "reason",
+    "reason_code"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/admin/stop-viewing",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/admin/view-as/{*}",
+   "read": [],
+   "server_read": [
+    "reason"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "identity_token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/apple-signin",
+   "read": [
+    "device_id",
+    "identity_token"
+   ],
+   "server_read": [
+    "device_id",
+    "identity_token"
+   ]
+  },
+  {
+   "body": [
+    "conversation_id",
+    "history",
+    "new_conversation",
+    "question",
+    "screen"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/ask-cavnar",
+   "read": [
+    "conversation_id",
+    "history",
+    "new_conversation",
+    "question",
+    "screen"
+   ],
+   "server_read": [
+    "conversation_id",
+    "history",
+    "new_conversation",
+    "question",
+    "screen"
+   ]
+  },
+  {
+   "body": [
+    "action",
+    "body",
+    "conversation_id",
+    "outcome",
+    "proposal_id",
+    "reason",
+    "reason_code",
+    "summary"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/ask-cavnar/action",
+   "read": [
+    "action",
+    "body",
+    "conversation_id",
+    "outcome",
+    "proposal_id",
+    "reason",
+    "reason_code",
+    "summary"
+   ],
+   "server_read": [
+    "action",
+    "body",
+    "conversation_id",
+    "outcome",
+    "proposal_id",
+    "reason",
+    "reason_code",
+    "summary"
+   ]
+  },
+  {
+   "body": [
+    "helpful",
+    "message_id",
+    "note"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/ask-cavnar/feedback",
+   "read": [
+    "helpful",
+    "message_id",
+    "note"
+   ],
+   "server_read": [
+    "helpful",
+    "message_id",
+    "note",
+    "turn_id"
+   ]
+  },
+  {
+   "body": [
+    "conversation_id",
+    "new_conversation",
+    "question",
+    "screen"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/ask-cavnar/stream",
+   "read": [
+    "conversation_id",
+    "new_conversation",
+    "question",
+    "screen"
+   ],
+   "server_read": [
+    "conversation_id",
+    "new_conversation",
+    "poll",
+    "question",
+    "screen"
+   ]
+  },
+  {
+   "body": [
+    "coding_path",
+    "description",
+    "device_id",
+    "kind",
+    "method",
+    "route",
+    "status"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/client-errors",
+   "read": [
+    "coding_path",
+    "description",
+    "device_id",
+    "kind",
+    "method",
+    "route",
+    "status"
+   ],
+   "server_read": [
+    "coding_path",
+    "description",
+    "device_id",
+    "kind",
+    "method",
+    "route",
+    "status"
+   ]
+  },
+  {
+   "body": [
+    "callouts",
+    "eighty_sixed",
+    "equipment",
+    "general_notes",
+    "influence",
+    "maintenance",
+    "shift_notes",
+    "vip_guests",
+    "went_well",
+    "went_wrong"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/closeout",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "action",
+    "args"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/command/propose",
+   "read": [
+    "action",
+    "args"
+   ],
+   "server_read": [
+    "action",
+    "args"
+   ]
+  },
+  {
+   "body": [
+    "clover_api_token",
+    "clover_merchant_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/clover",
+   "read": [
+    "clover_api_token",
+    "clover_merchant_id"
+   ],
+   "server_read": [
+    "clover_api_token",
+    "clover_merchant_id"
+   ]
+  },
+  {
+   "body": [
+    "ticket"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/google/confirm",
+   "read": [
+    "ticket"
+   ],
+   "server_read": [
+    "ticket"
+   ]
+  },
+  {
+   "body": [
+    "ticket"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/instagram/confirm",
+   "read": [
+    "ticket"
+   ],
+   "server_read": [
+    "ticket"
+   ]
+  },
+  {
+   "body": [
+    "square_access_token",
+    "square_location_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/square",
+   "read": [
+    "square_access_token",
+    "square_location_id"
+   ],
+   "server_read": [
+    "square_access_token",
+    "square_location_id"
+   ]
+  },
+  {
+   "body": [
+    "toast_client_id",
+    "toast_client_secret",
+    "toast_restaurant_guid"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/toast",
+   "read": [
+    "toast_client_id",
+    "toast_client_secret",
+    "toast_restaurant_guid"
+   ],
+   "server_read": [
+    "toast_client_id",
+    "toast_client_secret",
+    "toast_restaurant_guid"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/connections/{*}/sync",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/data-health/sync/{*}",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "source"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/data-health/verify",
+   "read": [
+    "source"
+   ],
+   "server_read": [
+    "source"
+   ]
+  },
+  {
+   "body": [
+    "apns_token",
+    "environment"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/device-tokens",
+   "read": [
+    "apns_token",
+    "environment"
+   ],
+   "server_read": [
+    "apns_token",
+    "environment"
+   ]
+  },
+  {
+   "body": [
+    "days"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/dsr/budget",
+   "read": [
+    "days"
+   ],
+   "server_read": [
+    "days"
+   ]
+  },
+  {
+   "body": [
+    "category",
+    "pos_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/dsr/category",
+   "read": [
+    "category",
+    "pos_name"
+   ],
+   "server_read": [
+    "category",
+    "pos_name"
+   ]
+  },
+  {
+   "body": [
+    "date",
+    "early",
+    "rerun"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/dsr/close",
+   "read": [
+    "date",
+    "early",
+    "rerun"
+   ],
+   "server_read": [
+    "date",
+    "early",
+    "rerun"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": true,
+   "path": "/mobile/api/dsr/settings",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "enabled",
+    "weekday"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/auto-order",
+   "read": [
+    "enabled",
+    "weekday"
+   ],
+   "server_read": [
+    "enabled",
+    "weekday"
+   ]
+  },
+  {
+   "body": [
+    "count_date",
+    "note",
+    "values"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/bar/counts",
+   "read": [
+    "count_date",
+    "note",
+    "values"
+   ],
+   "server_read": [
+    "count_date",
+    "note",
+    "values"
+   ]
+  },
+  {
+   "body": [
+    "counted_at",
+    "date",
+    "deliveries",
+    "items",
+    "ledger_mark"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/count-sheet",
+   "read": [
+    "counted_at",
+    "date",
+    "deliveries",
+    "items",
+    "ledger_mark"
+   ],
+   "server_read": [
+    "counted_at",
+    "date",
+    "deliveries",
+    "items",
+    "ledger_mark"
+   ]
+  },
+  {
+   "body": [
+    "name",
+    "unit"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/custom-item",
+   "read": [
+    "name",
+    "unit"
+   ],
+   "server_read": [
+    "name",
+    "unit"
+   ]
+  },
+  {
+   "body": [
+    "name",
+    "supplier_email",
+    "supplier_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/ingredient-supplier",
+   "read": [
+    "name",
+    "supplier_email",
+    "supplier_name"
+   ],
+   "server_read": [
+    "name",
+    "supplier_email",
+    "supplier_name"
+   ]
+  },
+  {
+   "body": [
+    "name",
+    "unit",
+    "unit_cost"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/ingredients",
+   "read": [
+    "name",
+    "unit",
+    "unit_cost"
+   ],
+   "server_read": [
+    "name",
+    "unit",
+    "unit_cost"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/invoices",
+   "read": [],
+   "server_read": [
+    "async",
+    "idempotency_key"
+   ]
+  },
+  {
+   "body": [
+    "lines"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/invoices/{*}/apply",
+   "read": [
+    "lines"
+   ],
+   "server_read": [
+    "lines",
+    "use_checked"
+   ]
+  },
+  {
+   "body": [
+    "menu_item_id",
+    "sell_price"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/menu-item-price",
+   "read": [
+    "menu_item_id",
+    "sell_price"
+   ],
+   "server_read": [
+    "menu_item_id",
+    "sell_price"
+   ]
+  },
+  {
+   "body": [
+    "par"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/par-suggestions/{*}/accept",
+   "read": [
+    "par"
+   ],
+   "server_read": [
+    "par"
+   ]
+  },
+  {
+   "body": [
+    "idempotency_key",
+    "lines"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/purchase-orders/{*}/received",
+   "read": [
+    "idempotency_key",
+    "lines"
+   ],
+   "server_read": [
+    "idempotency_key",
+    "lines"
+   ]
+  },
+  {
+   "body": [
+    "items"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/quickcount",
+   "read": [
+    "items"
+   ],
+   "server_read": [
+    "items"
+   ]
+  },
+  {
+   "body": [
+    "yield"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/recipe-drafts/{*}/{*}",
+   "read": [
+    "yield"
+   ],
+   "server_read": [
+    "lines",
+    "yield"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/recipes/scan",
+   "read": [],
+   "server_read": [
+    "async",
+    "idempotency_key"
+   ]
+  },
+  {
+   "body": [
+    "dish",
+    "menu_item_id",
+    "price"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/reprice/apply",
+   "read": [
+    "dish",
+    "menu_item_id",
+    "price"
+   ],
+   "server_read": [
+    "dish",
+    "menu_item_id",
+    "price"
+   ]
+  },
+  {
+   "body": [
+    "draft_hash",
+    "lines",
+    "resend",
+    "supplier_email"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/send-order",
+   "read": [
+    "draft_hash",
+    "lines",
+    "resend",
+    "supplier_email"
+   ],
+   "server_read": [
+    "draft_hash",
+    "lines",
+    "resend",
+    "supplier_email"
+   ]
+  },
+  {
+   "body": [
+    "idempotency_key",
+    "ingredient_id",
+    "qty",
+    "reason"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/food-cost/waste",
+   "read": [
+    "idempotency_key",
+    "ingredient_id",
+    "qty",
+    "reason"
+   ],
+   "server_read": [
+    "idempotency_key",
+    "ingredient_id",
+    "qty",
+    "reason"
+   ]
+  },
+  {
+   "body": [
+    "email"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/forgot-password",
+   "read": [
+    "email"
+   ],
+   "server_read": [
+    "device_token",
+    "email"
+   ]
+  },
+  {
+   "body": [
+    "days"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/goals/{*}/{*}",
+   "read": [
+    "days"
+   ],
+   "server_read": [
+    "days"
+   ]
+  },
+  {
+   "body": [
+    "async",
+    "prompt",
+    "topic",
+    "type"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-campaign/draft",
+   "read": [
+    "async",
+    "prompt",
+    "topic",
+    "type"
+   ],
+   "server_read": [
+    "async",
+    "prompt",
+    "topic",
+    "type"
+   ]
+  },
+  {
+   "body": [
+    "draft_ref",
+    "hold",
+    "link_url",
+    "message",
+    "rec_key",
+    "segment",
+    "target_day",
+    "type"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-campaign/send",
+   "read": [
+    "draft_ref",
+    "hold",
+    "link_url",
+    "message",
+    "rec_key",
+    "segment",
+    "target_day",
+    "type"
+   ],
+   "server_read": [
+    "draft_ref",
+    "hold",
+    "link_url",
+    "message",
+    "rec_key",
+    "segment",
+    "target_day",
+    "type"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-campaign/{*}/cancel",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "name",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-contacts",
+   "read": [
+    "name",
+    "phone"
+   ],
+   "server_read": [
+    "name",
+    "phone"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-contacts/{*}/mark-visit",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "body",
+    "design",
+    "draft_ref",
+    "mailing_address",
+    "rec_key",
+    "segment",
+    "subject"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-newsletter",
+   "read": [
+    "body",
+    "design",
+    "draft_ref",
+    "mailing_address",
+    "rec_key",
+    "segment",
+    "subject"
+   ],
+   "server_read": [
+    "body",
+    "design",
+    "draft_ref",
+    "mailing_address",
+    "rec_key",
+    "segment",
+    "subject"
+   ]
+  },
+  {
+   "body": [
+    "async",
+    "prompt"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-newsletter/draft",
+   "read": [
+    "async",
+    "prompt"
+   ],
+   "server_read": [
+    "async",
+    "prompt",
+    "topic"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "design",
+    "subject"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-newsletter/preview",
+   "read": [
+    "body",
+    "design",
+    "subject"
+   ],
+   "server_read": [
+    "body",
+    "design",
+    "subject"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-newsletter/{*}/retry",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-newsletter/{*}/send-new",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "acknowledged",
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-optin-invites",
+   "read": [
+    "acknowledged",
+    "enabled"
+   ],
+   "server_read": [
+    "acknowledged",
+    "enabled"
+   ]
+  },
+  {
+   "body": [
+    "kind",
+    "reason_code"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-winback/{*}/dismiss",
+   "read": [
+    "kind",
+    "reason_code"
+   ],
+   "server_read": [
+    "kind",
+    "reason",
+    "reason_code"
+   ]
+  },
+  {
+   "body": [
+    "hold",
+    "message"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guest-winback/{*}/send",
+   "read": [
+    "hold",
+    "message"
+   ],
+   "server_read": [
+    "hold",
+    "message"
+   ]
+  },
+  {
+   "body": [
+    "enabled",
+    "message",
+    "review_link"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guests/followup",
+   "read": [
+    "enabled",
+    "message",
+    "review_link"
+   ],
+   "server_read": [
+    "enabled",
+    "message",
+    "review_link"
+   ]
+  },
+  {
+   "body": [
+    "asked",
+    "invite",
+    "name",
+    "party",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guests/host-add",
+   "read": [
+    "asked",
+    "invite",
+    "name",
+    "party",
+    "phone"
+   ],
+   "server_read": [
+    "asked",
+    "email",
+    "invite",
+    "name",
+    "party",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/guests/inbox",
+   "read": [
+    "body",
+    "phone"
+   ],
+   "server_read": [
+    "body",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "contact_id",
+    "detail",
+    "key",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/home/assign",
+   "read": [
+    "contact_id",
+    "detail",
+    "key",
+    "title"
+   ],
+   "server_read": [
+    "contact_id",
+    "detail",
+    "key",
+    "title"
+   ]
+  },
+  {
+   "body": [
+    "key",
+    "kind",
+    "metric",
+    "reason",
+    "reason_code",
+    "restore_kind",
+    "title",
+    "undo"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/home/dismiss",
+   "read": [
+    "key",
+    "kind",
+    "metric",
+    "reason",
+    "reason_code",
+    "restore_kind",
+    "title",
+    "undo"
+   ],
+   "server_read": [
+    "days",
+    "key",
+    "kind",
+    "metric",
+    "reason",
+    "reason_code",
+    "restore_kind",
+    "title",
+    "undo"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/house-rules",
+   "read": [
+    "body",
+    "title"
+   ],
+   "server_read": [
+    "body",
+    "title"
+   ]
+  },
+  {
+   "body": [
+    "place_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/intel/add-competitor",
+   "read": [
+    "place_id"
+   ],
+   "server_read": [
+    "place_id"
+   ]
+  },
+  {
+   "body": [
+    "async"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/intel/ai-visibility",
+   "read": [
+    "async"
+   ],
+   "server_read": [
+    "async"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/intel/refresh-competitors",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "place_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/intel/remove-competitor",
+   "read": [
+    "place_id"
+   ],
+   "server_read": [
+    "place_id"
+   ]
+  },
+  {
+   "body": [
+    "consent",
+    "name",
+    "phone",
+    "role"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/issues/routing/contact",
+   "read": [
+    "consent",
+    "name",
+    "phone",
+    "role"
+   ],
+   "server_read": [
+    "consent",
+    "name",
+    "phone",
+    "role"
+   ]
+  },
+  {
+   "body": [
+    "name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/issues/{*}/ask-cover",
+   "read": [
+    "name"
+   ],
+   "server_read": [
+    "name"
+   ]
+  },
+  {
+   "body": [
+    "accepted",
+    "name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/issues/{*}/cover-answer",
+   "read": [
+    "accepted",
+    "name"
+   ],
+   "server_read": [
+    "accepted",
+    "name"
+   ]
+  },
+  {
+   "body": [
+    "contact_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/issues/{*}/reassign",
+   "read": [
+    "contact_id"
+   ],
+   "server_read": [
+    "contact_id"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/issues/{*}/resolve",
+   "read": [],
+   "server_read": [
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "enabled",
+    "weekday"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/auto-draft",
+   "read": [
+    "enabled",
+    "weekday"
+   ],
+   "server_read": [
+    "enabled",
+    "external_tool",
+    "weekday"
+   ]
+  },
+  {
+   "body": [
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/auto-publish",
+   "read": [
+    "enabled"
+   ],
+   "server_read": [
+    "enabled"
+   ]
+  },
+  {
+   "body": [
+    "available_days",
+    "employee_name",
+    "notes",
+    "unavailable_days"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/availability",
+   "read": [
+    "available_days",
+    "employee_name",
+    "notes",
+    "unavailable_days"
+   ],
+   "server_read": [
+    "available_days",
+    "employee_name",
+    "notes",
+    "unavailable_days"
+   ]
+  },
+  {
+   "body": [
+    "decision"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/availability-changes/{*}/decide",
+   "read": [
+    "decision"
+   ],
+   "server_read": [
+    "decision",
+    "effective_from",
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "employee_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/availability/delete",
+   "read": [
+    "employee_name"
+   ],
+   "server_read": [
+    "employee_name"
+   ]
+  },
+  {
+   "body": [
+    "action",
+    "chance",
+    "date",
+    "employee",
+    "enabled",
+    "expected_cost",
+    "history_id",
+    "name",
+    "pay_hours",
+    "proposal_id",
+    "protect",
+    "role",
+    "shift_end",
+    "shift_start",
+    "slot_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/bench",
+   "read": [
+    "action",
+    "chance",
+    "date",
+    "employee",
+    "enabled",
+    "expected_cost",
+    "history_id",
+    "name",
+    "pay_hours",
+    "proposal_id",
+    "protect",
+    "role",
+    "shift_end",
+    "shift_start",
+    "slot_id"
+   ],
+   "server_read": [
+    "action",
+    "chance",
+    "date",
+    "employee",
+    "enabled",
+    "expected_cost",
+    "flat_pay",
+    "history_id",
+    "name",
+    "note",
+    "pay_hours",
+    "proposal_id",
+    "protect",
+    "role",
+    "shift_end",
+    "shift_start",
+    "slot_id"
+   ]
+  },
+  {
+   "body": [
+    "changes",
+    "closer_roles"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/closers",
+   "read": [
+    "changes",
+    "closer_roles"
+   ],
+   "server_read": [
+    "changes",
+    "closer_roles"
+   ]
+  },
+  {
+   "body": [
+    "estimate"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/compliance/estimates",
+   "read": [
+    "estimate"
+   ],
+   "server_read": [
+    "estimate"
+   ]
+  },
+  {
+   "body": [
+    "employee"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/compliance/estimates/draft",
+   "read": [
+    "employee"
+   ],
+   "server_read": [
+    "employee"
+   ]
+  },
+  {
+   "body": [
+    "city",
+    "employees",
+    "employees_here",
+    "franchise",
+    "kind",
+    "locations",
+    "state"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/compliance/profile",
+   "read": [
+    "city",
+    "employees",
+    "employees_here",
+    "franchise",
+    "kind",
+    "locations",
+    "state"
+   ],
+   "server_read": [
+    "city",
+    "employees",
+    "employees_here",
+    "franchise",
+    "kind",
+    "locations",
+    "state"
+   ]
+  },
+  {
+   "body": [
+    "answer",
+    "decision"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/compliance/requests/{*}/answer",
+   "read": [
+    "answer",
+    "decision"
+   ],
+   "server_read": [
+    "answer",
+    "decision"
+   ]
+  },
+  {
+   "body": [
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/covers",
+   "read": [
+    "rows"
+   ],
+   "server_read": [
+    "csv",
+    "from_pos",
+    "rows"
+   ]
+  },
+  {
+   "body": [
+    "answer",
+    "day",
+    "history_id",
+    "part",
+    "role",
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/crew-matrix",
+   "read": [
+    "answer",
+    "day",
+    "history_id",
+    "part",
+    "role",
+    "rows"
+   ],
+   "server_read": [
+    "answer",
+    "day",
+    "history_id",
+    "part",
+    "role",
+    "rows"
+   ]
+  },
+  {
+   "body": [
+    "csv",
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/demand-signals",
+   "read": [
+    "csv",
+    "rows"
+   ],
+   "server_read": [
+    "csv",
+    "rows",
+    "source"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/event-dismissals/{*}/restore",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "active"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/event-follows/{*}",
+   "read": [
+    "active"
+   ],
+   "server_read": [
+    "active"
+   ]
+  },
+  {
+   "body": [
+    "autopilot",
+    "from",
+    "live_moves",
+    "pos_push",
+    "previewed",
+    "target_role",
+    "trainer",
+    "until"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/floor-settings",
+   "read": [
+    "pos_push",
+    "previewed"
+   ],
+   "server_read": [
+    "pos_push",
+    "previewed"
+   ]
+  },
+  {
+   "body": [
+    "confirm_rules",
+    "dates",
+    "history_id",
+    "instruction",
+    "reason_chip",
+    "reason_text",
+    "week_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/generate-schedule",
+   "read": [
+    "confirm_rules",
+    "dates",
+    "history_id",
+    "instruction",
+    "reason_chip",
+    "reason_text",
+    "week_start"
+   ],
+   "server_read": [
+    "confirm_rules",
+    "dates",
+    "history_id",
+    "instruction",
+    "keep_locked",
+    "reason",
+    "reason_chip",
+    "reason_text",
+    "week_start",
+    "whats_wrong"
+   ]
+  },
+  {
+   "body": [
+    "job_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/generate-schedule/follow",
+   "read": [
+    "job_id"
+   ],
+   "server_read": [
+    "job_id"
+   ]
+  },
+  {
+   "body": [
+    "job_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/generate-schedule/stop",
+   "read": [
+    "job_id"
+   ],
+   "server_read": [
+    "job_id"
+   ]
+  },
+  {
+   "body": [
+    "audience",
+    "audience_value",
+    "body",
+    "expires_on",
+    "priority",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/inbox/announcements",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/inbox/announcements/{*}/withdraw",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "body"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/inbox/threads/{*}/reply",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "dinner",
+    "family",
+    "lunch",
+    "remove"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/labor-standards",
+   "read": [
+    "dinner",
+    "family",
+    "lunch",
+    "remove"
+   ],
+   "server_read": [
+    "all",
+    "dinner",
+    "family",
+    "lunch",
+    "remove"
+   ]
+  },
+  {
+   "body": [
+    "dismissed",
+    "keep",
+    "key",
+    "rule"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/learned-patterns",
+   "read": [
+    "dismissed",
+    "keep",
+    "key",
+    "rule"
+   ],
+   "server_read": [
+    "dismissed",
+    "keep",
+    "key",
+    "rule"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/learned-patterns/adopt",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/live/moves/{*}/act",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/live/moves/{*}/dismiss",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/live/moves/{*}/reverse",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "floor_manager",
+    "name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/managers",
+   "read": [
+    "floor_manager",
+    "name"
+   ],
+   "server_read": [
+    "employee_name",
+    "floor_manager",
+    "name"
+   ]
+  },
+  {
+   "body": [
+    "dayparts",
+    "days",
+    "min",
+    "role",
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/note-rules",
+   "read": [
+    "dayparts",
+    "days",
+    "min",
+    "role",
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "server_read": [
+    "dayparts",
+    "days",
+    "min",
+    "role",
+    "scope",
+    "source_text",
+    "week_start"
+   ]
+  },
+  {
+   "body": [
+    "dismissed",
+    "text"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/note-rules/dismiss",
+   "read": [
+    "dismissed",
+    "text"
+   ],
+   "server_read": [
+    "dismissed",
+    "text"
+   ]
+  },
+  {
+   "body": [
+    "rule",
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/note-rules/typed",
+   "read": [
+    "rule",
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "server_read": [
+    "rule",
+    "scope",
+    "source_text",
+    "week_start"
+   ]
+  },
+  {
+   "body": [
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/note-rules/waiver",
+   "read": [
+    "scope",
+    "source_text",
+    "week_start"
+   ],
+   "server_read": [
+    "scope",
+    "source_text",
+    "week_start"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/note-rules/{*}/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "date",
+    "employee",
+    "note",
+    "offer_to",
+    "role",
+    "shift_end",
+    "shift_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/open-shifts",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "schedule_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/pos-schedule-push",
+   "read": [
+    "schedule_id"
+   ],
+   "server_read": [
+    "schedule_id"
+   ]
+  },
+  {
+   "body": [
+    "answer",
+    "evidence",
+    "key",
+    "schedule_id",
+    "scope",
+    "undo",
+    "until"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/publish-review/dismiss",
+   "read": [
+    "answer",
+    "evidence",
+    "key",
+    "schedule_id",
+    "scope",
+    "undo",
+    "until"
+   ],
+   "server_read": [
+    "answer",
+    "evidence",
+    "key",
+    "schedule_id",
+    "scope",
+    "undo",
+    "until"
+   ]
+  },
+  {
+   "body": [
+    "acknowledge",
+    "one_tap",
+    "overrides",
+    "resend",
+    "schedule_id",
+    "version"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/publish-schedule",
+   "read": [
+    "acknowledge",
+    "one_tap",
+    "overrides",
+    "resend",
+    "schedule_id",
+    "version"
+   ],
+   "server_read": [
+    "acknowledge",
+    "one_tap",
+    "overrides",
+    "resend",
+    "schedule_id",
+    "version"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/quality/calibration/apply",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "rated",
+    "roster_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/ratings/match",
+   "read": [
+    "rated",
+    "roster_name"
+   ],
+   "server_read": [
+    "rated",
+    "roster_name"
+   ]
+  },
+  {
+   "body": [
+    "name",
+    "score"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/ratings/suggested",
+   "read": [
+    "name",
+    "score"
+   ],
+   "server_read": [
+    "name",
+    "score"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/reservations/sync",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "families"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/role-families",
+   "read": [
+    "families"
+   ],
+   "server_read": [
+    "families"
+   ]
+  },
+  {
+   "body": [
+    "closed_weekdays",
+    "cut_floor_default",
+    "daypart_boundary",
+    "foh_roles",
+    "jurisdiction",
+    "patio_roles",
+    "reservation_api_key",
+    "reservation_provider",
+    "role_arrivals",
+    "role_close_mins",
+    "role_criticality",
+    "role_cross_training",
+    "role_floors",
+    "role_requirements",
+    "rules",
+    "rules_default",
+    "salaried_cap",
+    "section_count",
+    "station_edit",
+    "trim_to_budget"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/rules",
+   "read": [
+    "closed_weekdays",
+    "cut_floor_default",
+    "daypart_boundary",
+    "jurisdiction",
+    "reservation_api_key",
+    "reservation_provider",
+    "role_arrivals",
+    "role_close_mins",
+    "role_criticality",
+    "role_cross_training",
+    "role_floors",
+    "role_requirements",
+    "rules",
+    "rules_default",
+    "salaried_cap",
+    "section_count",
+    "station_edit",
+    "trim_to_budget"
+   ],
+   "server_read": [
+    "closed_dates",
+    "closed_weekdays",
+    "closer_roles",
+    "cut_floor_default",
+    "daypart_boundary",
+    "jurisdiction",
+    "reservation_api_key",
+    "reservation_provider",
+    "role_arrivals",
+    "role_close_mins",
+    "role_close_stays",
+    "role_criticality",
+    "role_cross_training",
+    "role_floors",
+    "role_requirements",
+    "rules",
+    "rules_default",
+    "salaried_cap",
+    "section_count",
+    "station_edit",
+    "trim_to_budget"
+   ]
+  },
+  {
+   "body": [
+    "instruction",
+    "week_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule-instruction/read",
+   "read": [
+    "instruction",
+    "week_start"
+   ],
+   "server_read": [
+    "instruction",
+    "week_start"
+   ]
+  },
+  {
+   "body": [
+    "action",
+    "key"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule-memory",
+   "read": [
+    "action",
+    "key"
+   ],
+   "server_read": [
+    "action",
+    "key"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/adopt-admin-saves",
+   "read": [],
+   "server_read": [
+    "history_id"
+   ]
+  },
+  {
+   "body": [
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/apply-fixes",
+   "read": [
+    "rows"
+   ],
+   "server_read": [
+    "history_id",
+    "rows"
+   ]
+  },
+  {
+   "body": [
+    "answer",
+    "history_id",
+    "key"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/edit-why",
+   "read": [
+    "answer",
+    "history_id",
+    "key"
+   ],
+   "server_read": [
+    "answer",
+    "history_id",
+    "key"
+   ]
+  },
+  {
+   "body": [
+    "daily_target_hours",
+    "history_id",
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/optimize",
+   "read": [
+    "daily_target_hours",
+    "history_id",
+    "rows"
+   ],
+   "server_read": [
+    "daily_target_hours",
+    "history_id",
+    "hours_budget",
+    "rows"
+   ]
+  },
+  {
+   "body": [
+    "action",
+    "key",
+    "kind",
+    "reason_code"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/recommendation",
+   "read": [
+    "action",
+    "key",
+    "kind",
+    "reason_code"
+   ],
+   "server_read": [
+    "action",
+    "key",
+    "kind",
+    "reason",
+    "reason_code"
+   ]
+  },
+  {
+   "body": [
+    "index",
+    "rows",
+    "schedule_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/replacements",
+   "read": [
+    "index",
+    "rows",
+    "schedule_id"
+   ],
+   "server_read": [
+    "index",
+    "rows",
+    "schedule_id"
+   ]
+  },
+  {
+   "body": [
+    "cavnar_changes",
+    "daily_target_hours",
+    "delta",
+    "history_id",
+    "idempotency_key",
+    "keep_mine",
+    "override_staff",
+    "quality_etag",
+    "rows",
+    "save",
+    "version",
+    "what_if"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/score",
+   "read": [
+    "cavnar_changes",
+    "daily_target_hours",
+    "delta",
+    "history_id",
+    "keep_mine",
+    "override_staff",
+    "quality_etag",
+    "rows",
+    "save",
+    "version",
+    "what_if"
+   ],
+   "server_read": [
+    "cavnar_changes",
+    "daily_target_hours",
+    "delta",
+    "history_id",
+    "keep_mine",
+    "override_staff",
+    "quality_etag",
+    "rows",
+    "save",
+    "version",
+    "what_if"
+   ]
+  },
+  {
+   "body": [
+    "date",
+    "employee",
+    "section",
+    "sections",
+    "shift_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/sections",
+   "read": [
+    "date",
+    "employee",
+    "section",
+    "sections",
+    "shift_start"
+   ],
+   "server_read": [
+    "date",
+    "employee",
+    "section",
+    "sections",
+    "shift_start"
+   ]
+  },
+  {
+   "body": [
+    "baseline_rows",
+    "history_id",
+    "rows"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/schedule/violations",
+   "read": [
+    "baseline_rows",
+    "history_id",
+    "rows"
+   ],
+   "server_read": [
+    "baseline_rows",
+    "history_id",
+    "rows"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/shift-requests/{*}/cancel",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "names"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/shift-requests/{*}/candidates",
+   "read": [
+    "names"
+   ],
+   "server_read": [
+    "names"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/shift-requests/{*}/colleague-agreed",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "covered_by",
+    "decision",
+    "replacement"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/shift-requests/{*}/decide",
+   "read": [
+    "covered_by",
+    "decision",
+    "replacement"
+   ],
+   "server_read": [
+    "covered_by",
+    "decision",
+    "note",
+    "replacement"
+   ]
+  },
+  {
+   "body": [
+    "name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/shift-requests/{*}/offer",
+   "read": [
+    "name"
+   ],
+   "server_read": [
+    "name",
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "email",
+    "employee_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-contacts",
+   "read": [
+    "email",
+    "employee_name"
+   ],
+   "server_read": [
+    "email",
+    "employee_name",
+    "phone",
+    "pos_id"
+   ]
+  },
+  {
+   "body": [
+    "dayparts",
+    "days",
+    "employee_name",
+    "end",
+    "part_text",
+    "start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-note-holds",
+   "read": [
+    "dayparts",
+    "days",
+    "employee_name",
+    "end",
+    "part_text",
+    "start"
+   ],
+   "server_read": [
+    "dayparts",
+    "days",
+    "employee_name",
+    "end",
+    "part_text",
+    "start"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-note-holds/{*}/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "employee_name",
+    "expires_on",
+    "notes"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-notes",
+   "read": [
+    "employee_name",
+    "expires_on",
+    "notes"
+   ],
+   "server_read": [
+    "employee_name",
+    "expires_on",
+    "notes"
+   ]
+  },
+  {
+   "body": [
+    "action",
+    "expires_on",
+    "part"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-notes/{*}",
+   "read": [
+    "action",
+    "expires_on",
+    "part"
+   ],
+   "server_read": [
+    "action",
+    "expires_on",
+    "part"
+   ]
+  },
+  {
+   "body": [
+    "a",
+    "b",
+    "kind",
+    "note"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-pairs",
+   "read": [
+    "a",
+    "b",
+    "kind",
+    "note"
+   ],
+   "server_read": [
+    "a",
+    "b",
+    "kind",
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "acting_manager",
+    "active",
+    "certifications",
+    "closes_for",
+    "daypart_availability",
+    "doubles",
+    "employee_name",
+    "employment_type",
+    "experienced",
+    "floor_manager",
+    "is_minor",
+    "max_hours",
+    "min_hours",
+    "minor_age_band",
+    "paid_hourly",
+    "standing_shifts",
+    "time_windows",
+    "trainee"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/staff-settings",
+   "read": [
+    "acting_manager",
+    "active",
+    "certifications",
+    "closes_for",
+    "daypart_availability",
+    "doubles",
+    "employee_name",
+    "employment_type",
+    "experienced",
+    "floor_manager",
+    "is_minor",
+    "max_hours",
+    "min_hours",
+    "minor_age_band",
+    "paid_hourly",
+    "standing_shifts",
+    "time_windows",
+    "trainee"
+   ],
+   "server_read": [
+    "acting_manager",
+    "active",
+    "certifications",
+    "closes_for",
+    "daypart_availability",
+    "desired_hours",
+    "doubles",
+    "employee_name",
+    "employment_type",
+    "experienced",
+    "floor_manager",
+    "is_minor",
+    "max_hours",
+    "min_hours",
+    "minor_age_band",
+    "name",
+    "paid_hourly",
+    "preferred_dayparts",
+    "standing_shifts",
+    "time_windows",
+    "trainee",
+    "work_days"
+   ]
+  },
+  {
+   "body": [
+    "date",
+    "employee",
+    "shift_end",
+    "shift_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/standby/ask",
+   "read": [
+    "date",
+    "employee",
+    "shift_end",
+    "shift_start"
+   ],
+   "server_read": [
+    "date",
+    "employee",
+    "shift_end",
+    "shift_start"
+   ]
+  },
+  {
+   "body": [
+    "employee_name",
+    "role"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/team/add",
+   "read": [
+    "employee_name",
+    "role"
+   ],
+   "server_read": [
+    "employee_name",
+    "name",
+    "role",
+    "same_person"
+   ]
+  },
+  {
+   "body": [
+    "attribute",
+    "employee_name",
+    "flag",
+    "notes",
+    "role",
+    "score"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/team/rating",
+   "read": [
+    "attribute",
+    "employee_name",
+    "flag",
+    "notes",
+    "role",
+    "score"
+   ],
+   "server_read": [
+    "attribute",
+    "employee_name",
+    "flag",
+    "name",
+    "notes",
+    "role",
+    "score"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/team/ratings/adopt",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "employee_name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/team/remove",
+   "read": [
+    "employee_name"
+   ],
+   "server_read": [
+    "employee_name",
+    "name"
+   ]
+  },
+  {
+   "body": [
+    "leader_rules",
+    "thresholds"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/team/thresholds",
+   "read": [
+    "leader_rules",
+    "thresholds"
+   ],
+   "server_read": [
+    "leader_rules",
+    "thresholds"
+   ]
+  },
+  {
+   "body": [
+    "decision"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/time-off/{*}/decide",
+   "read": [
+    "decision"
+   ],
+   "server_read": [
+    "decision",
+    "note"
+   ]
+  },
+  {
+   "body": [
+    "enabled"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/labor/weekly-plan",
+   "read": [
+    "enabled"
+   ],
+   "server_read": [
+    "enabled"
+   ]
+  },
+  {
+   "body": [
+    "activity_key",
+    "activity_type",
+    "environment",
+    "kind",
+    "restaurant_id",
+    "token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/live-activity-tokens",
+   "read": [
+    "activity_key",
+    "activity_type",
+    "environment",
+    "kind",
+    "restaurant_id",
+    "token"
+   ],
+   "server_read": [
+    "activity_key",
+    "activity_type",
+    "environment",
+    "kind",
+    "restaurant_id",
+    "token"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "device_token",
+    "password",
+    "username"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/login",
+   "read": [
+    "device_id",
+    "device_token",
+    "password",
+    "username"
+   ],
+   "server_read": [
+    "device_id",
+    "device_token",
+    "password",
+    "username"
+   ]
+  },
+  {
+   "body": [
+    "apns_token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/logout",
+   "read": [
+    "apns_token"
+   ],
+   "server_read": [
+    "apns_token"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/calendar",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "rec_key"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/calendar/seen",
+   "read": [
+    "rec_key"
+   ],
+   "server_read": [
+    "rec_key"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "content_log_id",
+    "content_type",
+    "draft_ref",
+    "id",
+    "media_id",
+    "topic"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/drafts",
+   "read": [
+    "body",
+    "content_log_id",
+    "content_type",
+    "draft_ref",
+    "id",
+    "media_id",
+    "topic"
+   ],
+   "server_read": [
+    "body",
+    "content_log_id",
+    "content_type",
+    "draft_ref",
+    "id",
+    "media_id",
+    "topic"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/drafts/{*}/approve",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "async",
+    "from_calendar",
+    "topic",
+    "type"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/generate-content",
+   "read": [
+    "async",
+    "from_calendar",
+    "topic",
+    "type"
+   ],
+   "server_read": [
+    "async",
+    "from_calendar",
+    "topic",
+    "type"
+   ]
+  },
+  {
+   "body": [
+    "caption",
+    "content_log_id",
+    "cta_type",
+    "cta_url",
+    "draft_ref",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "summary",
+    "topic"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/google-post",
+   "read": [
+    "content_log_id",
+    "cta_type",
+    "cta_url",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "summary",
+    "topic"
+   ],
+   "server_read": [
+    "content_log_id",
+    "cta_type",
+    "cta_url",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "summary",
+    "topic"
+   ]
+  },
+  {
+   "body": [
+    "image_base64"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/media",
+   "read": [
+    "image_base64"
+   ],
+   "server_read": [
+    "image_base64"
+   ]
+  },
+  {
+   "body": [
+    "caption",
+    "content_log_id",
+    "cta_type",
+    "cta_url",
+    "draft_ref",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "summary",
+    "topic"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/post-to-facebook",
+   "read": [
+    "caption",
+    "content_log_id",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "topic"
+   ],
+   "server_read": [
+    "caption",
+    "content_log_id",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "topic"
+   ]
+  },
+  {
+   "body": [
+    "caption",
+    "content_log_id",
+    "cta_type",
+    "cta_url",
+    "draft_ref",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "summary",
+    "topic"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/post-to-instagram",
+   "read": [
+    "caption",
+    "content_log_id",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "topic"
+   ],
+   "server_read": [
+    "caption",
+    "content_log_id",
+    "image_url",
+    "media_id",
+    "rec_key",
+    "topic"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "cta_type",
+    "media_id",
+    "platform"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/preview",
+   "read": [
+    "body",
+    "cta_type",
+    "media_id",
+    "platform"
+   ],
+   "server_read": [
+    "body",
+    "cta_type",
+    "media_id",
+    "platform"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/refresh-metrics",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "body",
+    "content_type",
+    "cta_type",
+    "cta_url",
+    "media_id",
+    "platform",
+    "scheduled_for",
+    "topic"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/marketing/schedule",
+   "read": [
+    "body",
+    "content_type",
+    "cta_type",
+    "cta_url",
+    "media_id",
+    "platform",
+    "scheduled_for",
+    "topic"
+   ],
+   "server_read": [
+    "body",
+    "content_type",
+    "cta_type",
+    "cta_url",
+    "media_id",
+    "platform",
+    "scheduled_for",
+    "topic"
+   ]
+  },
+  {
+   "body": [
+    "key"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/milestones/seen",
+   "read": [
+    "key"
+   ],
+   "server_read": [
+    "key"
+   ]
+  },
+  {
+   "body": [
+    "briefing_level",
+    "enabled",
+    "hold_alerts",
+    "hour",
+    "preshift_nudge_hour"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/morning-brief/settings",
+   "read": [
+    "briefing_level",
+    "enabled",
+    "hold_alerts",
+    "hour",
+    "preshift_nudge_hour"
+   ],
+   "server_read": [
+    "briefing_level",
+    "enabled",
+    "hold_alerts",
+    "hour",
+    "preshift_nudge_hour"
+   ]
+  },
+  {
+   "body": [
+    "alert_id",
+    "rec_key",
+    "surface",
+    "type"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/notifications/opened",
+   "read": [
+    "alert_id",
+    "rec_key",
+    "surface",
+    "type"
+   ],
+   "server_read": [
+    "alert_id",
+    "rec_key",
+    "surface",
+    "type"
+   ]
+  },
+  {
+   "body": [
+    "metric",
+    "source",
+    "source_key",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/outcomes",
+   "read": [
+    "metric",
+    "source",
+    "source_key",
+    "title"
+   ],
+   "server_read": [
+    "metric",
+    "module",
+    "source",
+    "source_key",
+    "surface",
+    "title",
+    "window_days"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/outcomes/{*}/abandon",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/passkey/options",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "credential",
+    "device_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/passkey/verify",
+   "read": [
+    "credential",
+    "device_id"
+   ],
+   "server_read": [
+    "credential",
+    "device_id"
+   ]
+  },
+  {
+   "body": [
+    "credential",
+    "device"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/passkeys",
+   "read": [
+    "credential",
+    "device"
+   ],
+   "server_read": [
+    "credential",
+    "device"
+   ]
+  },
+  {
+   "body": [
+    "password"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/passkeys/options",
+   "read": [
+    "password"
+   ],
+   "server_read": [
+    "password"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/passkeys/{*}/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "same"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/identity/{*}",
+   "read": [
+    "same"
+   ],
+   "server_read": [
+    "keep",
+    "same"
+   ]
+  },
+  {
+   "body": [
+    "confirm"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/mentions/{*}",
+   "read": [
+    "confirm"
+   ],
+   "server_read": [
+    "confirm"
+   ]
+  },
+  {
+   "body": [
+    "from",
+    "into"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/merge",
+   "read": [
+    "from",
+    "into"
+   ],
+   "server_read": [
+    "from",
+    "into"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/merges/{*}/undo",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": true,
+   "path": "/mobile/api/people/{*}",
+   "read": [],
+   "server_read": [
+    "can_close",
+    "email",
+    "job_title",
+    "pay_rate",
+    "phone",
+    "pin",
+    "pos_id",
+    "rating",
+    "role"
+   ]
+  },
+  {
+   "body": [
+    "confirm"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/{*}/erase",
+   "read": [
+    "confirm"
+   ],
+   "server_read": [
+    "confirm"
+   ]
+  },
+  {
+   "body": [
+    "name"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/{*}/rename",
+   "read": [
+    "name"
+   ],
+   "server_read": [
+    "name"
+   ]
+  },
+  {
+   "body": [
+    "primary",
+    "remove",
+    "role",
+    "since"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/people/{*}/roles",
+   "read": [
+    "primary",
+    "remove",
+    "role",
+    "since"
+   ],
+   "server_read": [
+    "primary",
+    "remove",
+    "role",
+    "since"
+   ]
+  },
+  {
+   "body": [
+    "conditions_changed",
+    "did_it",
+    "key",
+    "surface",
+    "tracker_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/recs/checkin",
+   "read": [
+    "conditions_changed",
+    "did_it",
+    "key",
+    "surface",
+    "tracker_id"
+   ],
+   "server_read": [
+    "conditions_changed",
+    "did_it",
+    "key",
+    "note",
+    "surface",
+    "tracker_id"
+   ]
+  },
+  {
+   "body": [
+    "conflict",
+    "prefer"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/recs/conflict",
+   "read": [
+    "conflict",
+    "prefer"
+   ],
+   "server_read": [
+    "conflict",
+    "prefer"
+   ]
+  },
+  {
+   "body": [
+    "event",
+    "key",
+    "kind",
+    "module",
+    "reason_code",
+    "surface"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/recs/event",
+   "read": [
+    "event",
+    "key",
+    "kind",
+    "module",
+    "reason_code",
+    "surface"
+   ],
+   "server_read": [
+    "days",
+    "event",
+    "key",
+    "kind",
+    "metric",
+    "module",
+    "reason",
+    "reason_code",
+    "surface"
+   ]
+  },
+  {
+   "body": [
+    "rec",
+    "rid",
+    "src"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/recs/link-open",
+   "read": [
+    "rec",
+    "rid",
+    "src"
+   ],
+   "server_read": [
+    "rec",
+    "rid",
+    "src"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "email",
+    "owner_name",
+    "password",
+    "phone",
+    "restaurant_name",
+    "username"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/register",
+   "read": [
+    "device_id",
+    "email",
+    "owner_name",
+    "password",
+    "phone",
+    "restaurant_name",
+    "username"
+   ],
+   "server_read": [
+    "device_id",
+    "device_token",
+    "email",
+    "owner_name",
+    "password",
+    "phone",
+    "restaurant_name",
+    "username"
+   ]
+  },
+  {
+   "body": [
+    "pending_token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/resend-2fa",
+   "read": [
+    "pending_token"
+   ],
+   "server_read": [
+    "pending_token"
+   ]
+  },
+  {
+   "body": [
+    "code",
+    "email",
+    "new_password"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reset-password",
+   "read": [
+    "code",
+    "email",
+    "new_password"
+   ],
+   "server_read": [
+    "code",
+    "device_token",
+    "email",
+    "new_password"
+   ]
+  },
+  {
+   "body": [
+    "limit"
+   ],
+   "method": "POST",
+   "opaque": true,
+   "path": "/mobile/api/reviews/approve-all",
+   "read": [
+    "limit"
+   ],
+   "server_read": [
+    "limit",
+    "review_hashes",
+    "review_ids"
+   ]
+  },
+  {
+   "body": [
+    "approve_skipped",
+    "confirm_flagged",
+    "expected_draft",
+    "expected_draft_hash"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/approve",
+   "read": [
+    "approve_skipped",
+    "confirm_flagged",
+    "expected_draft",
+    "expected_draft_hash"
+   ],
+   "server_read": [
+    "approve_skipped",
+    "confirm_flagged",
+    "expected_draft",
+    "expected_draft_hash"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/delete",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/mark-posted",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/regenerate-draft",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/replied-elsewhere",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "categories",
+    "dishes",
+    "sentiment",
+    "severity"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/retag",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/retract",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/retry-post",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "draft"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/save-draft",
+   "read": [
+    "draft"
+   ],
+   "server_read": [
+    "draft"
+   ]
+  },
+  {
+   "body": [
+    "reason"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/skip",
+   "read": [
+    "reason"
+   ],
+   "server_read": [
+    "reason"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/reviews/{*}/undo",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "email",
+    "message",
+    "name",
+    "phone",
+    "sms_consent"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/send-review-request",
+   "read": [
+    "email",
+    "message",
+    "name",
+    "phone",
+    "sms_consent"
+   ],
+   "server_read": [
+    "consent",
+    "email",
+    "message",
+    "name",
+    "phone",
+    "sms_consent"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/sessions/revoke-others",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "day",
+    "expected_rev",
+    "text"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-brief/approve",
+   "read": [
+    "day",
+    "expected_rev",
+    "text"
+   ],
+   "server_read": [
+    "day",
+    "expected_rev",
+    "text"
+   ]
+  },
+  {
+   "body": [
+    "day"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-brief/draft",
+   "read": [
+    "day"
+   ],
+   "server_read": [
+    "day"
+   ]
+  },
+  {
+   "body": [
+    "day",
+    "item",
+    "line"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-brief/focus",
+   "read": [
+    "day",
+    "item",
+    "line"
+   ],
+   "server_read": [
+    "day",
+    "item",
+    "line"
+   ]
+  },
+  {
+   "body": [
+    "day"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-brief/withdraw",
+   "read": [
+    "day"
+   ],
+   "server_read": [
+    "day"
+   ]
+  },
+  {
+   "body": [
+    "cert",
+    "employee_name",
+    "expires_on",
+    "issued_on",
+    "note"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-certs",
+   "read": [
+    "cert",
+    "employee_name",
+    "expires_on",
+    "issued_on",
+    "note"
+   ],
+   "server_read": [
+    "cert",
+    "employee_name",
+    "expires_on",
+    "issued_on",
+    "note"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-certs/{*}/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "body",
+    "id",
+    "kind",
+    "roles",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-docs",
+   "read": [
+    "body",
+    "id",
+    "kind",
+    "roles",
+    "title"
+   ],
+   "server_read": [
+    "body",
+    "id",
+    "kind",
+    "roles",
+    "title"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/staff-docs/{*}/remove",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "restaurant_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/switch-location",
+   "read": [
+    "restaurant_id"
+   ],
+   "server_read": [
+    "restaurant_id"
+   ]
+  },
+  {
+   "body": [
+    "job_code",
+    "shift_kind"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/task-sheets",
+   "read": [
+    "job_code",
+    "shift_kind"
+   ],
+   "server_read": [
+    "days_of_week",
+    "job_code",
+    "requires_signoff",
+    "shift_kind",
+    "title"
+   ]
+  },
+  {
+   "body": [
+    "active"
+   ],
+   "method": "POST",
+   "opaque": true,
+   "path": "/mobile/api/task-sheets/lines/{*}",
+   "read": [
+    "active"
+   ],
+   "server_read": [
+    "active",
+    "critical",
+    "due_offset_min",
+    "label",
+    "max_value",
+    "min_value",
+    "proof",
+    "proof_label",
+    "section"
+   ]
+  },
+  {
+   "body": [
+    "active",
+    "days_of_week",
+    "job_code",
+    "requires_signoff",
+    "shift_kind"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/task-sheets/{*}",
+   "read": [
+    "active",
+    "days_of_week",
+    "job_code",
+    "requires_signoff",
+    "shift_kind"
+   ],
+   "server_read": [
+    "active",
+    "days_of_week",
+    "job_code",
+    "requires_signoff",
+    "shift_kind",
+    "title"
+   ]
+  },
+  {
+   "body": [
+    "critical",
+    "label",
+    "proof",
+    "proof_label",
+    "section"
+   ],
+   "method": "POST",
+   "opaque": true,
+   "path": "/mobile/api/task-sheets/{*}/lines",
+   "read": [
+    "critical",
+    "label",
+    "proof",
+    "proof_label",
+    "section"
+   ],
+   "server_read": [
+    "critical",
+    "due_offset_min",
+    "label",
+    "max_value",
+    "min_value",
+    "proof",
+    "proof_label",
+    "section"
+   ]
+  },
+  {
+   "body": [
+    "line_ids"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/task-sheets/{*}/order",
+   "read": [
+    "line_ids"
+   ],
+   "server_read": [
+    "line_ids"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/task-sheets/{*}/starter",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "body",
+    "recipient_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/team/messages",
+   "read": [
+    "body",
+    "recipient_id"
+   ],
+   "server_read": [
+    "body",
+    "recipient_id"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "title"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/templates",
+   "read": [
+    "body",
+    "title"
+   ],
+   "server_read": [
+    "body",
+    "category",
+    "title"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/templates/{*}/use",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "code",
+    "device_id",
+    "pending_token",
+    "remember_device"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/verify-2fa",
+   "read": [
+    "code",
+    "device_id",
+    "pending_token",
+    "remember_device"
+   ],
+   "server_read": [
+    "code",
+    "device_id",
+    "device_token",
+    "pending_token",
+    "remember_device"
+   ]
+  },
+  {
+   "body": [
+    "ga4_property_id",
+    "gsc_site_url"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/web-analytics",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/web-analytics/disconnect",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/mobile/api/web-analytics/sync",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "confirm"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/account/delete",
+   "read": [
+    "confirm"
+   ],
+   "server_read": [
+    "confirm"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/announcements/{*}/ack",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "async",
+    "question"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/ask",
+   "read": [
+    "async",
+    "question"
+   ],
+   "server_read": [
+    "async",
+    "question"
+   ]
+  },
+  {
+   "body": [
+    "notes",
+    "updated_at",
+    "week"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/availability",
+   "read": [
+    "notes",
+    "updated_at",
+    "week"
+   ],
+   "server_read": [
+    "notes",
+    "unavailable_days",
+    "updated_at",
+    "week"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/calendar-link/reset",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/calendar-link/revoke",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "agree"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/consents/rest-standing",
+   "read": [
+    "agree"
+   ],
+   "server_read": [
+    "agree"
+   ]
+  },
+  {
+   "body": [
+    "agree"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/consents/{*}/answer",
+   "read": [
+    "agree"
+   ],
+   "server_read": [
+    "agree"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/consents/{*}/revoke",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "apns_token",
+    "environment"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/device-tokens",
+   "read": [
+    "apns_token"
+   ],
+   "server_read": [
+    "apns_token",
+    "token"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "kind"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/estimate/request-change",
+   "read": [
+    "body",
+    "kind"
+   ],
+   "server_read": [
+    "body",
+    "kind"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/estimate/{*}/acknowledge",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "language"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/language",
+   "read": [
+    "language"
+   ],
+   "server_read": [
+    "language"
+   ]
+  },
+  {
+   "body": [
+    "apns_token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/logout",
+   "read": [
+    "apns_token"
+   ],
+   "server_read": [
+    "apns_token"
+   ]
+  },
+  {
+   "body": [
+    "email"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/me/email",
+   "read": [
+    "email"
+   ],
+   "server_read": [
+    "email"
+   ]
+  },
+  {
+   "body": [
+    "body",
+    "request_id",
+    "request_kind",
+    "shift_date"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/messages",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "reminders"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/notifications",
+   "read": [
+    "reminders"
+   ],
+   "server_read": [
+    "reminders"
+   ]
+  },
+  {
+   "body": [
+    "accept",
+    "consent_rest"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/offers/{*}/respond",
+   "read": [
+    "accept",
+    "consent_rest"
+   ],
+   "server_read": [
+    "accept",
+    "consent_rest"
+   ]
+  },
+  {
+   "body": [
+    "accept",
+    "consent_rest"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/open-shifts/{*}/claim",
+   "read": [
+    "consent_rest"
+   ],
+   "server_read": [
+    "consent_rest"
+   ]
+  },
+  {
+   "body": [
+    "current_pin",
+    "new_pin"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/pin",
+   "read": [
+    "current_pin",
+    "new_pin"
+   ],
+   "server_read": [
+    "current_pin",
+    "new_pin"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "pin",
+    "reset_token"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/pin/forgot/set",
+   "read": [
+    "device_id",
+    "pin",
+    "reset_token"
+   ],
+   "server_read": [
+    "device_id",
+    "pin",
+    "reset_token"
+   ]
+  },
+  {
+   "body": [
+    "join_code",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/pin/forgot/start",
+   "read": [
+    "join_code",
+    "phone"
+   ],
+   "server_read": [
+    "code",
+    "join_code",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "code",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/pin/forgot/verify",
+   "read": [
+    "code",
+    "phone"
+   ],
+   "server_read": [
+    "code",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "consent_version",
+    "desired_hours",
+    "preferred_dayparts",
+    "schedule_texts"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/preferences",
+   "read": [
+    "consent_version",
+    "desired_hours",
+    "preferred_dayparts",
+    "schedule_texts"
+   ],
+   "server_read": [
+    "consent_version",
+    "desired_hours",
+    "preferred_dayparts",
+    "schedule_texts"
+   ]
+  },
+  {
+   "body": [
+    "date",
+    "note",
+    "rating"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/pulse",
+   "read": [
+    "date",
+    "note",
+    "rating"
+   ],
+   "server_read": [
+    "date",
+    "note",
+    "rating"
+   ]
+  },
+  {
+   "body": [
+    "date",
+    "eta_minutes",
+    "note",
+    "shift_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/running-late",
+   "read": [],
+   "server_read": []
+  },
+  {
+   "body": [
+    "date",
+    "kind",
+    "reason",
+    "shift_start",
+    "target_date",
+    "target_name",
+    "target_start"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/shift-requests",
+   "read": [
+    "date",
+    "kind",
+    "reason",
+    "shift_start",
+    "target_date",
+    "target_name",
+    "target_start"
+   ],
+   "server_read": [
+    "date",
+    "kind",
+    "reason",
+    "shift_start",
+    "target_date",
+    "target_name",
+    "target_start"
+   ]
+  },
+  {
+   "body": [
+    "accept"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/shift-requests/{*}/respond",
+   "read": [
+    "accept"
+   ],
+   "server_read": [
+    "accept"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "employee_name",
+    "join_code",
+    "pin"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/signup/claim",
+   "read": [
+    "device_id",
+    "employee_name",
+    "join_code",
+    "pin"
+   ],
+   "server_read": [
+    "device_id",
+    "employee_name",
+    "join_code",
+    "pin",
+    "signup_token"
+   ]
+  },
+  {
+   "body": [
+    "join_code",
+    "optin",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/signup/start",
+   "read": [
+    "join_code",
+    "optin",
+    "phone"
+   ],
+   "server_read": [
+    "join_code",
+    "optin",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "code",
+    "phone"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/signup/verify",
+   "read": [
+    "code",
+    "phone"
+   ],
+   "server_read": [
+    "code",
+    "phone"
+   ]
+  },
+  {
+   "body": [
+    "restaurant_id"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/switch",
+   "read": [
+    "restaurant_id"
+   ],
+   "server_read": [
+    "restaurant_id"
+   ]
+  },
+  {
+   "body": [
+    "assignment_id",
+    "done",
+    "line_id",
+    "value"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/tasks/complete",
+   "read": [
+    "assignment_id",
+    "done",
+    "line_id",
+    "value"
+   ],
+   "server_read": [
+    "assignment_id",
+    "done",
+    "line_id",
+    "task_date",
+    "template_id",
+    "value"
+   ]
+  },
+  {
+   "body": [],
+   "method": "POST",
+   "opaque": true,
+   "path": "/staff/api/tasks/photo",
+   "read": [],
+   "server_read": [
+    "assignment_id",
+    "done",
+    "image_b64",
+    "line_id",
+    "mime",
+    "task_date",
+    "template_id",
+    "value"
+   ]
+  },
+  {
+   "body": [
+    "note",
+    "shift_kind"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/tasks/signoff",
+   "read": [
+    "note",
+    "shift_kind"
+   ],
+   "server_read": [
+    "note",
+    "shift_kind"
+   ]
+  },
+  {
+   "body": [
+    "daypart",
+    "end_date",
+    "end_time",
+    "reason",
+    "start_date",
+    "start_time"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/time-off",
+   "read": [
+    "daypart",
+    "end_date",
+    "end_time",
+    "reason",
+    "start_date",
+    "start_time"
+   ],
+   "server_read": [
+    "daypart",
+    "end_date",
+    "end_time",
+    "reason",
+    "start_date",
+    "start_time"
+   ]
+  },
+  {
+   "body": [
+    "travels"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/travel",
+   "read": [
+    "travels"
+   ],
+   "server_read": [
+    "travels"
+   ]
+  },
+  {
+   "body": [
+    "accept"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/api/travel/offers/{*}/respond",
+   "read": [
+    "accept"
+   ],
+   "server_read": [
+    "accept"
+   ]
+  },
+  {
+   "body": [
+    "device_id",
+    "membership_id",
+    "nonce",
+    "pin"
+   ],
+   "method": "POST",
+   "opaque": false,
+   "path": "/staff/r/{*}/login",
+   "read": [
+    "device_id",
+    "membership_id",
+    "nonce",
+    "pin"
+   ],
+   "server_read": [
+    "device_id",
+    "membership_id",
+    "nonce",
+    "pin"
+   ]
+  }
+ ]
+}

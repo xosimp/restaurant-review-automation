@@ -25,6 +25,12 @@ How:
   pages. Where that copy is unavailable the syntax check falls back to
   `vm.Script` and the ES5 check to the regex lint, and says so.
 
+The scripts in /static (blind re-audit 10/27/26): every `static/**/*.js` is
+parsed the same way, whole, and held to ES5 — each is loaded by a page an
+owner, an employee or a guest opens (login, the dashboard, the staff
+sign-in, the guest opt-in), and a `?.` in one breaks that page in an older
+browser just as an inline block would.
+
 The ES5 rule (CLAUDE.md "Inline JS is ES5 only") holds for every page an
 owner, an employee or a guest opens. The internal pages below — the admin
 console and the sales audit tool, opened by Will in a current browser — use
@@ -215,6 +221,50 @@ def _repo_check():
             blocks.extend(inline_blocks(name, fh.read()))
     mode, failures = check_blocks(blocks)
     return blocks, mode, failures
+
+
+STATIC = os.path.join(ROOT, "static")
+
+
+def static_blocks():
+    """One block per `static/**/*.js` file, held to ES5."""
+    blocks = []
+    for path in sorted(glob.glob(os.path.join(STATIC, "**", "*.js"), recursive=True)):
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        blocks.append({"name": os.path.relpath(path, ROOT), "line": 1, "branch": "first", "src": src,
+                       "es5": True, "module": False})
+    return blocks
+
+
+def test_every_static_script_parses_and_stays_es5():
+    blocks = static_blocks()
+    names = {b["name"] for b in blocks}
+    for must in ("static/cavnar-phone.js", "static/ember-core.js", "static/cavnar-field.js"):
+        assert must in names, must
+    mode, failures = check_blocks(blocks)
+    bad = [msg for _kind, msg, _b in failures]
+    assert not bad, ("a /static script does not parse, or is not ES5 (%s) — every page that loads it "
+                     "breaks:\n" % mode + "\n".join(bad[:20]))
+
+
+def test_the_static_scan_catches_a_broken_file(tmp_path, monkeypatch):
+    (tmp_path / "ok.js").write_text("var a = 1;\n")
+    (tmp_path / "es6.js").write_text("var a = {b: 1};\nvar c = a?.b;\n")
+    monkeypatch.setattr(__import__(__name__), "STATIC", str(tmp_path))
+    blocks = static_blocks()
+    mode, failures = check_blocks(blocks)
+    assert [os.path.basename(b["name"]) for _k, _m, b in failures] == ["es6.js"], failures
+
+
+def test_every_static_script_a_template_loads_exists():
+    missing = []
+    for name in _template_names():
+        with open(os.path.join(TEMPLATES, name), encoding="utf-8") as fh:
+            for m in re.finditer(r"""src=["'](?:\{\{[^}]*\}\})?/static/([\w./-]+\.js)""", fh.read()):
+                if not os.path.exists(os.path.join(STATIC, m.group(1))):
+                    missing.append(f"{name}: /static/{m.group(1)}")
+    assert not missing, missing
 
 
 def test_the_scan_finds_the_dashboard_and_every_include():

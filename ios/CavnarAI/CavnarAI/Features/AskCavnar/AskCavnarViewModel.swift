@@ -901,7 +901,8 @@ final class AskCavnarViewModel {
         let error: String?
     }
 
-    private struct ConversationsResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured conversations list).
+    struct ConversationsResponse: Decodable {
         let ok: Bool
         let conversations: [AskConversation]?
     }

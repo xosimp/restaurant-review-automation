@@ -296,7 +296,8 @@ final class NotificationsBadgeViewModel {
         self.client = client
     }
 
-    private struct CountResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (the captured unread count).
+    struct CountResponse: Decodable {
         let ok: Bool
         let count: Int
         let urgent: Int?

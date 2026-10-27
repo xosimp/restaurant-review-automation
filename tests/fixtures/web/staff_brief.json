@@ -1,0 +1,50 @@
+{
+ "brief": {
+  "approved_at": null,
+  "approved_by": null,
+  "approved_text": null,
+  "day": "2026-10-27",
+  "draft_items_changed": false,
+  "draft_reason": null,
+  "draft_status": "none",
+  "draft_text": null,
+  "edited": false,
+  "focus": null,
+  "items": [
+   {
+    "kind": "volume",
+    "text": "Expect a quieter Tuesday — typically about 27% under an average day."
+   },
+   {
+    "kind": "rush",
+    "text": "Busiest around 7–8pm on a usual Tuesday."
+   },
+   {
+    "kind": "stock",
+    "text": "Running low: Cheese American Yellow Sliced 160ct, Bun Brioche 4.5in Sliced, Fries 3/8 Skin-On Frozen, Eggs Large Grade A, Chicken Breast Boneless Skinless 6oz. Check with the kitchen before recommending dishes that use them."
+   }
+  ],
+  "model_used_today": false,
+  "suggestions": [
+   {
+    "item": "Game Day Wing Party Pack",
+    "why": "Earns well and could sell more (your dish scorecard)."
+   },
+   {
+    "item": "NY Strip Frites",
+    "why": "Earns well and could sell more (your dish scorecard)."
+   },
+   {
+    "item": "Grilled Salmon",
+    "why": "Earns well and could sell more (your dish scorecard)."
+   },
+   {
+    "item": "Braised Short Rib",
+    "why": "Earns well and could sell more (your dish scorecard)."
+   }
+  ],
+  "weekday": "Tuesday"
+ },
+ "can_edit": true,
+ "ok": true
+}

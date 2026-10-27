@@ -684,9 +684,10 @@ actor APIClient {
     static let clientErrorsPath = "/mobile/api/client-errors"
 
     /// Tells the server this client could not decode `path`'s answer, at
-    /// most once per route per hour on this device; nil when nothing is
-    /// sent (no reporter, throttled, or the report route itself). Fire and
-    /// forget: the caller throws its own error at once.
+    /// most once per route per hour on this device (an hour that starts when
+    /// a report is delivered); nil when nothing is sent (no reporter,
+    /// throttled, a report already in flight, or the report route itself).
+    /// Fire and forget: the caller throws its own error at once.
     @discardableResult
     func reportDecodeFailure(_ error: Error, route: String, verb: String, status: Int?,
                              bearer: String? = nil) -> Task<Void, Never>? {
@@ -701,12 +702,16 @@ actor APIClient {
     func reportDecodeFailure(described failure: (path: String, description: String), route: String, verb: String,
                              status: Int?, bearer: String? = nil) -> Task<Void, Never>? {
         guard let reporting = decodeReporting, !route.hasPrefix(Self.clientErrorsPath),
-              reporting.throttle.claim(route: route) else { return nil }
+              reporting.throttle.begin(route: route) else { return nil }
         let report = ClientErrorReport(route: route, verb: verb, status: status,
                                        codingPath: String(failure.path.prefix(ClientErrorReport.maxPath)),
                                        description: String(failure.description.prefix(ClientErrorReport.maxDescription)),
                                        kind: "decoding", deviceId: reporting.deviceId())
-        let task = Task { await self.postClientError(report, bearer: bearer) }
+        let throttle = reporting.throttle
+        let task = Task {
+            let delivered = await self.postClientError(report, bearer: bearer)
+            throttle.finish(route: route, delivered: delivered)
+        }
         lastDecodeReport = task
         return task
     }
@@ -714,16 +719,43 @@ actor APIClient {
     /// The report itself: the staff tier's bearer when the failed call was a
     /// staff one, else this client's own session (or none — a sign-in that
     /// cannot be decoded is reported too). Its answer is never decoded into
-    /// anything that could fail and report again.
-    private func postClientError(_ report: ClientErrorReport, bearer: String?) async {
-        if let bearer {
-            let _: EmptyResponse? = try? await sendWithBearer("/mobile/api/client-errors", method: .post,
-                                                              body: report, bearer: bearer)
-        } else {
-            let _: EmptyResponse? = try? await send("/mobile/api/client-errors", method: .post, body: report,
-                                                    hapticOnError: false, retryTransient: false)
+    /// anything that could fail and report again. True when the server has
+    /// it: a 2xx, or a refusal no retry would change (a 4xx but 408 and
+    /// 429) — false when it may not have heard (offline, a timeout, 429, a
+    /// 5xx), so the route's hour is not spent on a report nobody got.
+    private func postClientError(_ report: ClientErrorReport, bearer: String?) async -> Bool {
+        do {
+            if let bearer {
+                let _: EmptyResponse = try await sendWithBearer(Self.clientErrorsPath, method: .post,
+                                                                body: report, bearer: bearer)
+            } else {
+                let _: EmptyResponse = try await send(Self.clientErrorsPath, method: .post, body: report,
+                                                      hapticOnError: false, retryTransient: false)
+            }
+            return true
+        } catch let error as APIError {
+            guard let status = error.status else { return false }
+            return (400..<500).contains(status) && ![408, 429].contains(status)
+        } catch {
+            return false
         }
     }
+
+    /// The update sheet's re-check (AppUpdateGate, blind re-audit 10/27/26):
+    /// whether the server still turns this build away — true on a 426 or an
+    /// `update_required` answer, false on any other answer, nil when it
+    /// could not be asked (offline, a dropped connection). /mobile/api/me
+    /// with no session: the build gate answers before any route on both
+    /// tiers, and the 401 this read otherwise gets signs nobody out.
+    func stillRequiresUpdate() async -> Bool? {
+        guard let request = try? buildRequest(path: Self.updateProbePath, method: HTTPMethod.get.rawValue,
+                                              body: nil, query: [:], omitAuth: true),
+              let answer = try? await session.data(for: request),
+              let http = answer.1 as? HTTPURLResponse else { return nil }
+        return AppUpdateRequirement.from(status: http.statusCode, body: answer.0) != nil
+    }
+
+    static let updateProbePath = "/mobile/api/me"
 
     /// Replays a write from PendingWriteQueue. Bypasses `send`'s generic
     /// decode (the original caller is long gone and there is no one to hand a

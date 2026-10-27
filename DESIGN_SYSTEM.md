@@ -972,10 +972,16 @@ everything but the launch splash (`AppUpdateOverlay`): the Paper page at 96%,
 one `.cavnarCard(.floating)` card — the seal, "Update Cavnar AI" in the
 `headline` role, the server's own sentence in `body`, and ONE primary
 button, "Open the App Store" (the server's App Store or TestFlight link, never
-any other URL). No close, no Back, no swipe-away: nothing under it can read
-the server any more. A fade under 0.25s, none under Reduce Motion. Writes
-waiting in the offline queues are kept, not dropped, and replay after the
-update. Reuse it for nothing else — it is the one blocking surface.
+any other URL), with one secondary "Check again" under it
+(`CavnarSecondaryButtonStyle`) and the 3pt ember pulse (`CavnarSkeletonBar`)
+while it asks. No close, no Back, no swipe-away: nothing under it can read
+the server any more. While it is up it asks the server again on every
+return to the foreground and every five minutes (`AppUpdateGate.recheck`),
+and goes the moment the answer is not a 426 — a minimum lowered after a
+mistake lets every phone back in without a relaunch (blind re-audit
+10/27/26). A fade under 0.25s, none under Reduce Motion. Writes waiting in
+the offline queues are kept, not dropped, and replay after the update.
+Reuse it for nothing else — it is the one blocking surface.
 
 **A module the plan does not have** is never an error with Try again: a 403
 `module_locked` read is the server's plan sentence, once, under the

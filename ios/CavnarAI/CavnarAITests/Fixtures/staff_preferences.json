@@ -1,0 +1,11 @@
+{
+ "desired_hours": null,
+ "learned_avoids": [],
+ "ok": true,
+ "preferred_dayparts": [],
+ "schedule_texts": false,
+ "schedule_texts_consent": "Text me about my schedule and my requests: a posted or changed week, swaps, open shifts and time off. Msg frequency varies, usually 1–4 a week. Msg & data rates may apply. Reply HELP for help, STOP to stop.",
+ "schedule_texts_consent_version": 2,
+ "schedule_texts_scope": [],
+ "sms_available": false
+}

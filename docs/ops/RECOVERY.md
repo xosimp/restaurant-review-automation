@@ -213,8 +213,12 @@ no provider keys or test keys only, `CAVNAR_ENV=staging`). The code holds it:
 (`config.scheduling_allowed()`) and every send point refuses
 (`config.outbound_sends_allowed()`: `emails.deliver`, the Twilio send, APNs
 and Web Push, Stripe with a live key, DocuSign outside its demo account, Google
-review replies and posts, customer webhooks) — whatever keys a "duplicate
-environment" copied in. `ALLOW_NONPROD_SENDS=1` lifts the send gate for a
+review replies, their retraction, posts and listing edits, customer webhooks,
+the RPOWER and Toast schedule pushes, every Meta Graph write) — whatever keys a
+"duplicate environment" copied in. Each refusal is counted (`/health`'s
+`sends_refused`), and a Railway environment that is not named `production`
+with `CAVNAR_ENV` unset is `/health`'s `env_not_production` problem, so say
+`CAVNAR_ENV=staging` on staging (blind re-audit 10/27/26). `ALLOW_NONPROD_SENDS=1` lifts the send gate for a
 staging that holds only test keys and test addresses; `ALLOW_LOCAL_SCHEDULER=1`
 starts its scheduler. Production needs no new variable: Railway names its
 environment `production`.
@@ -1100,8 +1104,11 @@ record it — the Engineering system card shows the last of each and warns past
 2. A throwaway web deploy pointed at it: a new environment (or service) with
    `DATABASE_URL` = the restored service's URL, `CAVNAR_ENV=staging`, and NO
    provider keys (no `RESEND_API_KEY`, `TWILIO_*`, `STRIPE_*`, `DOCUSIGN_*`,
-   `ANTHROPIC_API_KEY`, `APNS_*`). The staging gate refuses every send even if
-   one is left behind; the scheduler does not start.
+   `ANTHROPIC_API_KEY`, `APNS_*`, `CREDENTIAL_KEY` — it opens every store's
+   POS credentials in the copy — nor the RPOWER partner credentials or a Meta
+   app secret). The staging gate refuses every send even if one is left behind,
+   the RPOWER/Toast schedule pushes and Meta posts the copy's queued rows would
+   make included; the scheduler does not start.
 3. Wait for `/health` = 200 (`"status"` may be degraded: no scheduler, no
    backups). Count restaurants, `MAX(created_at)` of `reviews`, `alert_log`,
    `job_runs` against production's (read-only `railway ssh` on production).

@@ -1,0 +1,1339 @@
+{
+ "ai_insight": null,
+ "alert_quiet_end": null,
+ "alerts": [
+  {
+   "fired_at": "<volatile>",
+   "label": "Daily report ready",
+   "module": "home",
+   "new": true,
+   "resolved": false,
+   "review_id": null,
+   "severity": "watch",
+   "type": "dsr"
+  },
+  {
+   "fired_at": "<volatile>",
+   "label": "Running out before delivery",
+   "module": "inventory",
+   "new": true,
+   "resolved": false,
+   "review_id": null,
+   "severity": "watch",
+   "type": "critical_low"
+  },
+  {
+   "fired_at": "<volatile>",
+   "label": "Labor % over target",
+   "module": "labor",
+   "new": true,
+   "resolved": false,
+   "review_id": null,
+   "severity": "important",
+   "type": "labor_over"
+  },
+  {
+   "fired_at": "<volatile>",
+   "label": "5★ review received",
+   "module": "reviews",
+   "new": true,
+   "resolved": true,
+   "review_id": 1,
+   "severity": "watch",
+   "type": "5star"
+  },
+  {
+   "fired_at": "<volatile>",
+   "label": "2★ review received",
+   "module": "reviews",
+   "new": true,
+   "resolved": true,
+   "review_id": 6,
+   "severity": "important",
+   "type": "2star"
+  }
+ ],
+ "ask_suggestions": [
+  "What should I focus on today?",
+  "What changed in my reviews this month?",
+  "What are guests saying about wait time?",
+  "Why is labor over target?",
+  "Where are my biggest food cost opportunities?"
+ ],
+ "assignees": [],
+ "attention": [
+  {
+   "action": {
+    "kind": "open_module",
+    "label": "Reply now",
+    "module": "reviews",
+    "nav": "reviews?filter=urgent"
+   },
+   "advice_signature": null,
+   "answerable": false,
+   "confidence": null,
+   "delegate_answer": null,
+   "detail": "Serious low-star reviews still waiting on a reply.",
+   "dismissable": false,
+   "evidence": "1 of 83 reviews flagged urgent",
+   "key": "urgent_reviews",
+   "location": null,
+   "module": "reviews",
+   "previous_answer": null,
+   "rec_key": "urgent_reviews",
+   "severity": "critical",
+   "severity_rank": 0,
+   "since": null,
+   "times_hidden": 0,
+   "title": "1 urgent review unanswered"
+  },
+  {
+   "action": {
+    "kind": "open_module",
+    "label": "See the list",
+    "module": "inventory",
+    "nav": "inventory/order"
+   },
+   "advice_signature": null,
+   "answerable": true,
+   "confidence": null,
+   "delegate_answer": null,
+   "detail": "Cheese American Yellow, Bun Brioche 4.5in Slic, Fries 3/8 Skin-On Froz, Eggs Large Grade A — likely to run out before the next delivery.",
+   "dismissable": true,
+   "evidence": "9 more to reorder soon",
+   "key": "critical_low",
+   "location": null,
+   "module": "inventory",
+   "previous_answer": null,
+   "rec_key": "stock_low:Cheese American Yellow Sliced 160ct",
+   "rec_keys": [
+    "stock_low:Cheese American Yellow Sliced 160ct",
+    "stock_low:Bun Brioche 4.5in Sliced",
+    "stock_low:Fries 3/8 Skin-On Frozen",
+    "stock_low:Eggs Large Grade A"
+   ],
+   "severity": "important",
+   "severity_rank": 1,
+   "since": null,
+   "times_hidden": 0,
+   "title": "10 items critically low"
+  },
+  {
+   "action": {
+    "count": 4,
+    "kind": "publish_replies",
+    "label": "Publish 4 replies",
+    "module": "reviews",
+    "nav": "reviews?filter=pending"
+   },
+   "advice_signature": null,
+   "answerable": true,
+   "confidence": null,
+   "delegate_answer": null,
+   "detail": "Written in your voice; Google-connected replies post on approval.",
+   "dismissable": true,
+   "evidence": "4 drafted",
+   "key": "awaiting_approval",
+   "location": null,
+   "module": "reviews",
+   "previous_answer": null,
+   "rec_key": "no_response",
+   "severity": "watch",
+   "severity_rank": 2,
+   "since": null,
+   "times_hidden": 0,
+   "title": "4 replies drafted, waiting for you"
+  },
+  {
+   "action": {
+    "kind": "open_module",
+    "label": "Connect Instagram",
+    "module": "account",
+    "nav": "account/integrations"
+   },
+   "advice_signature": null,
+   "answerable": false,
+   "confidence": null,
+   "delegate_answer": null,
+   "detail": "Publishing and post metrics need Instagram or Facebook.",
+   "dismissable": true,
+   "evidence": null,
+   "key": "social_not_connected",
+   "location": null,
+   "module": "account",
+   "previous_answer": null,
+   "rec_key": "social_not_connected",
+   "severity": "watch",
+   "severity_rank": 2,
+   "since": null,
+   "times_hidden": 0,
+   "title": "No social account connected"
+  }
+ ],
+ "brief": {
+  "counts": {
+   "critical": 1,
+   "important": 1,
+   "watch": 2,
+   "wins": 1
+  },
+  "data_as_of": "<volatile>",
+  "headline": "1 thing needs you now",
+  "lines": [
+   {
+    "module": "reviews",
+    "text": "1 urgent review unanswered — start there.",
+    "tone": "bad"
+   },
+   {
+    "module": "labor",
+    "text": "Labor 28.1% against a 28% target, +0.2 pts vs last period.",
+    "tone": "neutral"
+   },
+   {
+    "claim_kind": "opportunity",
+    "module": "inventory",
+    "text": "About $124/month of food waste above tolerance could be recovered (an opportunity projected from one week), led by Salmon Fillet Atlantic Skin-On 6oz.",
+    "tone": "warn"
+   }
+  ],
+  "overnight": {
+   "answered": 82,
+   "flagged": 5,
+   "window_hours": 24
+  },
+  "tone": "bad"
+ },
+ "changes": {
+  "items": [
+   {
+    "at": null,
+    "module": "reviews",
+    "text": "83 new reviews came in · avg 4.3★ · 9 low-stars",
+    "tone": "bad"
+   },
+   {
+    "at": "2026-10-28 14:40:00",
+    "module": "labor",
+    "text": "New schedule built for 11/2/26 · 51 hrs under budget",
+    "tone": "good"
+   },
+   {
+    "at": null,
+    "module": "alerts",
+    "text": "5 alerts fired",
+    "tone": "warn"
+   }
+  ],
+  "since": "2026-10-26T06:24:57Z",
+  "since_label": "since yesterday"
+ },
+ "charts": {
+  "labor": [
+   {
+    "label": "9/7/26",
+    "pct": 25.1
+   },
+   {
+    "label": "9/14/26",
+    "pct": 26.9
+   },
+   {
+    "label": "9/21/26",
+    "pct": 27.3
+   },
+   {
+    "label": "9/28/26",
+    "pct": 27.9
+   },
+   {
+    "label": "10/5/26",
+    "pct": 27.8
+   },
+   {
+    "label": "10/12/26",
+    "pct": 28.3
+   },
+   {
+    "label": "10/19/26",
+    "pct": 28.5
+   }
+  ],
+  "labor_days": [
+   {
+    "day": "Tue",
+    "pct": 33.9
+   },
+   {
+    "day": "Wed",
+    "pct": 31.8
+   },
+   {
+    "day": "Thu",
+    "pct": 29.0
+   },
+   {
+    "day": "Fri",
+    "pct": 27.3
+   },
+   {
+    "day": "Sat",
+    "pct": 27.6
+   },
+   {
+    "day": "Sun",
+    "pct": 23.5
+   },
+   {
+    "day": "Mon",
+    "pct": 29.7
+   }
+  ],
+  "labor_target": 28.0,
+  "labor_target_label": "your target",
+  "rating": [
+   {
+    "avg": 4.5,
+    "label": "9/7/26",
+    "neg": 1,
+    "pos": 13,
+    "total": 16
+   },
+   {
+    "avg": 4.4,
+    "label": "9/14/26",
+    "neg": 1,
+    "pos": 8,
+    "total": 9
+   },
+   {
+    "avg": 4.3,
+    "label": "9/22/26",
+    "neg": 0,
+    "pos": 6,
+    "total": 8
+   },
+   {
+    "avg": 4.5,
+    "label": "9/28/26",
+    "neg": 1,
+    "pos": 9,
+    "total": 10
+   },
+   {
+    "avg": 4.2,
+    "label": "10/5/26",
+    "neg": 1,
+    "pos": 7,
+    "total": 9
+   },
+   {
+    "avg": 4.2,
+    "label": "10/12/26",
+    "neg": 2,
+    "pos": 8,
+    "total": 10
+   },
+   {
+    "avg": 3.7,
+    "label": "10/19/26",
+    "neg": 1,
+    "pos": 4,
+    "total": 6
+   },
+   {
+    "avg": 5.0,
+    "label": "10/26/26",
+    "neg": 0,
+    "pos": 1,
+    "total": 1
+   }
+  ],
+  "waste": [
+   {
+    "cost": 26.01,
+    "item": "Salmon Fillet Atlantic Skin-On 6oz"
+   },
+   {
+    "cost": 22.42,
+    "item": "Fries 3/8 Skin-On Frozen"
+   },
+   {
+    "cost": 19.5,
+    "item": "Spring Mix"
+   },
+   {
+    "cost": 9.4,
+    "item": "Bun Brioche 4.5in Sliced"
+   }
+  ]
+ },
+ "context": {
+  "group_name": null,
+  "location_name": null,
+  "locations": [],
+  "portfolio": null,
+  "restaurant_name": "Halsted & Rye",
+  "timezone": "America/Chicago",
+  "view": "single"
+ },
+ "data_health": {
+  "overall": {
+   "caps_applied": [],
+   "label": "100% data health",
+   "pct": 100,
+   "reason": "Every connected source is current",
+   "state": "current"
+  },
+  "worst_line": null
+ },
+ "dismissed": [],
+ "empty_state": null,
+ "freshness": [
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-27",
+   "at": "2026-10-27",
+   "basis": "Reviews fetched 10/27/26 · Google reviews (sampled — Places returns 5 at a time)",
+   "error": null,
+   "key": "reviews",
+   "label": "Reviews",
+   "last_ok_at": null,
+   "module": "reviews",
+   "note": "Reviews fetched 10/27/26 · Google reviews (sampled — Places returns 5 at a time)",
+   "pct": 100,
+   "source": "reviews",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-26",
+   "at": "2026-10-26",
+   "basis": "Shifts through 10/26/26",
+   "error": null,
+   "key": "labor",
+   "label": "Labor",
+   "last_ok_at": null,
+   "module": "labor",
+   "note": "Shifts through 10/26/26",
+   "pct": 100,
+   "source": "labor",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-26",
+   "at": "2026-10-26",
+   "basis": "RPOWER sales through 10/26/26 · synced 10/27/26",
+   "error": null,
+   "key": "labor",
+   "label": "Labor",
+   "last_ok_at": "<volatile>",
+   "module": "labor",
+   "note": "RPOWER sales through 10/26/26 · synced 10/27/26",
+   "pct": 100,
+   "source": "pos",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-26",
+   "at": "2026-10-26",
+   "basis": "Sales through 10/26/26",
+   "error": null,
+   "key": "labor",
+   "label": "Labor",
+   "last_ok_at": null,
+   "module": "labor",
+   "note": "Sales through 10/26/26",
+   "pct": 100,
+   "source": "sales",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-25",
+   "at": "2026-10-25",
+   "basis": "Oldest count 10/25/26",
+   "error": null,
+   "key": "inventory",
+   "label": "Food cost",
+   "last_ok_at": null,
+   "module": "inventory",
+   "note": "Oldest count 10/25/26",
+   "pct": 100,
+   "source": "inventory",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-25",
+   "at": "2026-10-25",
+   "basis": "Last waste logged 10/25/26 · item figures recomputed 10/27/26",
+   "error": null,
+   "key": "inventory",
+   "label": "Food cost",
+   "last_ok_at": null,
+   "module": "inventory",
+   "note": "Last waste logged 10/25/26 · item figures recomputed 10/27/26",
+   "pct": 100,
+   "source": "waste",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-25",
+   "at": "2026-10-25",
+   "basis": "Depleted through 10/25/26",
+   "error": null,
+   "key": "inventory",
+   "label": "Food cost",
+   "last_ok_at": null,
+   "module": "inventory",
+   "note": "Depleted through 10/25/26",
+   "pct": 100,
+   "source": "depletion",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-26",
+   "at": "2026-10-26",
+   "basis": "RPOWER sales through 10/26/26 · synced 10/27/26",
+   "error": null,
+   "key": "inventory",
+   "label": "Food cost",
+   "last_ok_at": "<volatile>",
+   "module": "inventory",
+   "note": "RPOWER sales through 10/26/26 · synced 10/27/26",
+   "pct": 100,
+   "source": "pos",
+   "state": "current"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-26",
+   "at": "2026-10-26",
+   "basis": "Sales through 10/26/26",
+   "error": null,
+   "key": "inventory",
+   "label": "Food cost",
+   "last_ok_at": null,
+   "module": "inventory",
+   "note": "Sales through 10/26/26",
+   "pct": 100,
+   "source": "sales",
+   "state": "current"
+  },
+  {
+   "as_of": null,
+   "as_of_iso": null,
+   "at": null,
+   "basis": "No social account connected",
+   "error": null,
+   "key": "marketing",
+   "label": "Marketing",
+   "last_ok_at": null,
+   "module": "marketing",
+   "note": "No social account connected",
+   "pct": null,
+   "source": "marketing",
+   "state": "not_connected"
+  },
+  {
+   "as_of": "<volatile>",
+   "as_of_iso": "2026-10-27",
+   "at": "2026-10-27",
+   "basis": "Competitors read 10/27/26",
+   "error": null,
+   "key": "intel",
+   "label": "Intel",
+   "last_ok_at": null,
+   "module": "intel",
+   "note": "Competitors read 10/27/26",
+   "pct": 100,
+   "source": "competitor",
+   "state": "current"
+  }
+ ],
+ "generated_at": "<volatile>",
+ "greeting_name": "Will",
+ "kind_holds": [],
+ "local_now": "<volatile>",
+ "monitoring": {
+  "all_clear": false,
+  "count_live": 10,
+  "sources": 10,
+  "stale": 0,
+  "stalest_as_of": "10/25/26"
+ },
+ "ok": true,
+ "policy_notice": {
+  "dismiss": {
+   "mobile": "/mobile/api/account/policy-notice/dismiss",
+   "web": "/api/account/policy-notice/dismiss"
+  },
+  "key": "policy:2026-09-29",
+  "link_label": "Read what changed",
+  "shown_until": "2026-10-28",
+  "shown_until_label": "10/28/26",
+  "text": "We updated our Privacy Policy and Terms on 9/29/26: how Cavnar AI’s benchmarks use pooled, de-identified figures.",
+  "updated_label": "9/29/26",
+  "updated_on": "2026-09-29",
+  "url": "https://cavnar.ai/privacy"
+ },
+ "quick_actions": [
+  {
+   "count": 4,
+   "key": "publish",
+   "kind": "publish_replies",
+   "label": "Publish 4 replies",
+   "module": "reviews",
+   "nav": "reviews?filter=pending"
+  },
+  {
+   "count": 1,
+   "key": "urgent",
+   "kind": "open_module",
+   "label": "Answer urgent reviews",
+   "module": "reviews",
+   "nav": "reviews?filter=urgent"
+  },
+  {
+   "count": null,
+   "key": "ask",
+   "kind": "ask",
+   "label": "Ask Cavnar AI",
+   "module": null,
+   "nav": "ask"
+  },
+  {
+   "count": null,
+   "key": "schedule",
+   "kind": "open_module",
+   "label": "Build next week's schedule",
+   "module": "labor",
+   "nav": "labor/schedule"
+  },
+  {
+   "count": 19,
+   "key": "order",
+   "kind": "open_module",
+   "label": "Review the order draft",
+   "module": "inventory",
+   "nav": "inventory/order"
+  },
+  {
+   "count": 3,
+   "key": "alerts",
+   "kind": "alerts",
+   "label": "All alerts",
+   "module": null,
+   "nav": null
+  }
+ ],
+ "quiet_hours_active": false,
+ "quieter": [],
+ "readiness": {
+  "complete": false,
+  "connected": 3,
+  "measurable": [
+   "Labor %",
+   "Sales per day",
+   "Waste per week"
+  ],
+  "modules": [
+   {
+    "connected": false,
+    "key": "reviews",
+    "label": "Reviews",
+    "measurable": [],
+    "module": "account",
+    "next": "Connect Google in Account"
+   },
+   {
+    "connected": true,
+    "key": "labor",
+    "label": "Labor",
+    "measurable": [
+     "Labor %",
+     "Sales per day"
+    ],
+    "module": "labor",
+    "next": null
+   },
+   {
+    "connected": true,
+    "key": "inventory",
+    "label": "Food Cost",
+    "measurable": [
+     "Waste per week"
+    ],
+    "module": "inventory",
+    "next": null
+   },
+   {
+    "connected": true,
+    "key": "marketing",
+    "label": "Marketing",
+    "measurable": [],
+    "module": "marketing",
+    "next": null
+   }
+  ],
+  "total": 4
+ },
+ "receipts": [
+  {
+   "emphasis": "Next week's schedule",
+   "module": "labor",
+   "text": "built 51 hrs under budget"
+  },
+  {
+   "emphasis": "$26 of Salmon Fillet Atlantic Skin-On 6oz waste",
+   "module": "inventory",
+   "text": "flagged before your next order"
+  },
+  {
+   "emphasis": "5 alerts",
+   "module": "alerts",
+   "text": "sent to you this week"
+  }
+ ],
+ "recommendations": [
+  {
+   "action": null,
+   "action_label": "Rebuild the schedule",
+   "advice_signature": "labor:day:tuesday",
+   "alternative": null,
+   "answerable": true,
+   "calibration_n": 0,
+   "calibration_note": null,
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "You published a schedule on 10/29/26 — this reads data from before it.",
+    "changed_since": {
+     "as_of": "<volatile>",
+     "at": "2026-10-29",
+     "caution": "You published a schedule on 10/29/26 — this reads data from before it.",
+     "what": "published a schedule",
+     "who": "You"
+    },
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "4 Tuesdays with sales in your shift data — a change since the data window isn't reflected yet",
+      "corroborating": 0,
+      "kind": "weekdays",
+      "n": 4,
+      "n_full": 4,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-26",
+      "basis": "Shifts through 10/26/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "labor",
+      "stalest_basis": "Shifts through 10/26/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "delegate_answer": null,
+   "dollars_adjusted": null,
+   "dollars_basis": "Tuesdays only: their labor above your 28% target, averaged over 4 Tuesdays with sales, × 52 ÷ 12",
+   "dollars_monthly": 1944.74,
+   "effort": "medium",
+   "evidence": "Tuesday labor 33.9% vs 28.2% on your other days · target 28%",
+   "evidence_sources": [
+    "labor"
+   ],
+   "if_ignored": "Tuesdays keep running about 6 pts over your target",
+   "impact": "Labor · weekly cost",
+   "key": "trim_day:Tuesday",
+   "metric": "labor_pct",
+   "model_written": false,
+   "module": "labor",
+   "previous_answer": null,
+   "rank": {
+    "arm": "learned",
+    "base": 2053.65,
+    "prior_rung": {
+     "acceptance": null,
+     "cold": null,
+     "success": null
+    },
+    "rung": "none",
+    "score": 2053.65,
+    "version": 3,
+    "weight": 1.0,
+    "why": []
+   },
+   "rank_score": 2053.65,
+   "realised_mean": null,
+   "timeframe": "Next schedule",
+   "times_hidden": 0,
+   "title": "Trim Tuesday staffing on the next schedule",
+   "why": "Tuesday runs 6 pts above your other days without the sales to justify it."
+  },
+  {
+   "action": null,
+   "action_label": "See the numbers",
+   "advice_signature": null,
+   "alternative": null,
+   "answerable": true,
+   "calibration_n": 0,
+   "calibration_note": null,
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+    "changed_since": {
+     "as_of": "<volatile>",
+     "at": "2026-10-27",
+     "caution": "A sync added 138 dishes to the menu on 10/27/26 — this reads data from before it.",
+     "what": "added 138 dishes to the menu",
+     "who": "A sync"
+    },
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "7 of 7 recipe lines reviewed behind this plate cost — a change since the data window isn't reflected yet",
+      "corroborating": 0,
+      "kind": "recipe_lines",
+      "n": 7,
+      "n_full": 7,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-25",
+      "basis": "Oldest count 10/25/26 · Last waste logged 10/25/26 · item figures recomputed 10/27/26 · Depleted through 10/25/26 · RPOWER sales through 10/26/26 · synced 10/27/26 · Sales through 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "inventory",
+      "stalest_basis": "Oldest count 10/25/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "delegate_answer": null,
+   "dollars_adjusted": null,
+   "dollars_basis": null,
+   "dollars_monthly": 1354.47,
+   "effort": "high",
+   "evidence": "$1,354/month · high effort",
+   "evidence_sources": [
+    "inventory"
+   ],
+   "if_ignored": "The dish keeps selling at a thin margin",
+   "impact": "Food cost · margin",
+   "key": "food_cost_driver:Wing Platter 50 Pc runs at 38.4% food co",
+   "metric": "food_cost_pct",
+   "model_written": false,
+   "module": "inventory",
+   "previous_answer": null,
+   "rank": {
+    "arm": "learned",
+    "base": 1430.32,
+    "prior_rung": {
+     "acceptance": null,
+     "cold": null,
+     "success": null
+    },
+    "rung": "none",
+    "score": 1430.32,
+    "version": 3,
+    "weight": 1.0,
+    "why": []
+   },
+   "rank_score": 1430.32,
+   "realised_mean": null,
+   "timeframe": "This week",
+   "times_hidden": 0,
+   "title": "Re-cost or reprice Wing Platter 50 Pc — it runs at 38.4% food cost",
+   "why": "Wing Platter 50 Pc costs $27.64 on a $72.00 price against your 30% target, 207 sold in 28 days."
+  },
+  {
+   "action": null,
+   "action_label": "Open Intel",
+   "advice_signature": null,
+   "alternative": null,
+   "answerable": true,
+   "calibration_n": 0,
+   "calibration_note": null,
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "a model-written comparison of 6 public listings — an inference, not a measured cause",
+      "corroborating": 0,
+      "kind": "competitors",
+      "n": 6,
+      "n_full": 3,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-27",
+      "basis": "Competitors read 10/27/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "competitor",
+      "stalest_basis": "Competitors read 10/27/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "delegate_answer": null,
+   "dollars_adjusted": null,
+   "dollars_basis": null,
+   "dollars_monthly": null,
+   "effort": "medium",
+   "evidence": "6 competitors compared 0d ago",
+   "evidence_sources": [
+    "intel"
+   ],
+   "if_ignored": "the suggestions age out at the next weekly pass",
+   "impact": "Intel · positioning",
+   "key": "intel_recs",
+   "metric": null,
+   "model_written": true,
+   "module": "intel",
+   "previous_answer": null,
+   "rank": {
+    "arm": "learned",
+    "base": 70.4,
+    "prior_rung": {
+     "acceptance": null,
+     "cold": null,
+     "success": null
+    },
+    "rung": "none",
+    "score": 70.4,
+    "version": 3,
+    "weight": 1.0,
+    "why": []
+   },
+   "rank_score": 70.4,
+   "realised_mean": null,
+   "timeframe": "This week",
+   "times_hidden": 0,
+   "title": "Read the 3 suggestions from this week's competitor comparison",
+   "why": "Compared with 6 nearby competitors 0d ago."
+  }
+ ],
+ "setup_checklist": [],
+ "snapshot": [
+  {
+   "attention": true,
+   "delta": {
+    "good": false,
+    "label": "vs prior 30d",
+    "value": "-0.2"
+   },
+   "google_rating": 4.5,
+   "interpretation": "1 urgent review need a reply first.",
+   "key": "reviews",
+   "label": "Reviews",
+   "last_data": "2026-10-27T01:24:54",
+   "sample": false,
+   "secondary": [
+    {
+     "label": "Answered",
+     "value": "94%"
+    },
+    {
+     "label": "Urgent",
+     "value": "1"
+    },
+    {
+     "label": "Awaiting",
+     "value": "4"
+    }
+   ],
+   "spark": [
+    4.5,
+    4.4,
+    4.3,
+    4.5,
+    4.2,
+    4.2,
+    3.7,
+    5.0
+   ],
+   "spark_label": "avg rating · 8 weeks",
+   "state": "bad",
+   "status": "available",
+   "tip": {
+    "lines": [
+     "4.5★ is your all-time Google rating, across all 895 reviews on Google.",
+     "Last 30 days: 4.2★ across 37 reviews (-0.2 vs the 30 days before).",
+     "94% answered · 4 waiting to publish · 1 urgent."
+    ],
+    "title": "Google rating · all time"
+   },
+   "unit": "★ · 30 days",
+   "value": "4.2"
+  },
+  {
+   "attention": false,
+   "below_floor": false,
+   "coverage_note": null,
+   "delta": {
+    "good": false,
+    "label": "vs the week before",
+    "value": "+0.2 pts"
+   },
+   "interpretation": "0.1 pts over target. Tuesday is the heaviest day.",
+   "key": "labor",
+   "label": "Labor",
+   "last_data": "2026-10-26",
+   "sample": false,
+   "secondary": [
+    {
+     "label": "Target",
+     "value": "28%"
+    },
+    {
+     "label": "Over 40h",
+     "value": "0"
+    },
+    {
+     "label": "Recoverable",
+     "value": "$107/wk"
+    }
+   ],
+   "spark": [
+    25.1,
+    26.9,
+    27.3,
+    27.9,
+    27.8,
+    28.3,
+    28.5
+   ],
+   "spark_label": "labor % by week",
+   "stale": false,
+   "state": "warn",
+   "status": "available",
+   "tip": {
+    "lines": [
+     "28.1% all-in: hourly shifts plus salaried pay, as a share of sales (9/29/26–10/26/26).",
+     "Hourly staff only: 24.4%. Salaries add 3.7 pts.",
+     "Target: 28% (your target, salaries included).",
+     "Last full week 28.5%, +0.2 pts on the week before (28.3%)."
+    ],
+    "title": "Labor · % of sales"
+   },
+   "unit": "% of sales",
+   "value": "28.1"
+  },
+  {
+   "attention": true,
+   "delta": {
+    "good": true,
+    "label": "Under target",
+    "value": "2.8% waste"
+   },
+   "interpretation": "Wing Platter 50 Pc runs at 38.4% food cost is the largest driver ($1,354/month).",
+   "key": "inventory",
+   "kind": "opportunity",
+   "label": "Food Cost",
+   "last_data": "2026-10-25",
+   "sample": false,
+   "secondary": [
+    {
+     "kind": "opportunity",
+     "label": "At stake",
+     "value": "$1,759/mo"
+    },
+    {
+     "label": "Critical low",
+     "value": "10"
+    },
+    {
+     "label": "Reorder soon",
+     "value": "9"
+    },
+    {
+     "label": "Stock value",
+     "value": "$4,672"
+    }
+   ],
+   "spark": [],
+   "spark_label": null,
+   "state": "bad",
+   "status": "available",
+   "tip": {
+    "lines": [
+     "$124/mo is an estimate, not money saved: one week's waste above tolerance, projected to a month.",
+     "Waste: 2.8% of purchases this week.",
+     "10 critical low · 9 to reorder soon · $4,672 in stock."
+    ],
+    "title": "Food cost · estimate"
+   },
+   "unit": "est. recoverable / mo",
+   "value": "$124",
+   "why_confidence": null,
+   "why_confidence_detail": null
+  },
+  {
+   "attention": false,
+   "delta": {
+    "good": true,
+    "label": "",
+    "value": "2 this week"
+   },
+   "interpretation": "Connect Instagram to publish and track posts from here.",
+   "key": "marketing",
+   "label": "Marketing",
+   "last_data": "2026-10-23 17:45:00",
+   "sample": false,
+   "secondary": [
+    {
+     "label": "Scheduled",
+     "value": "0"
+    },
+    {
+     "label": "Last live",
+     "value": "3d ago"
+    },
+    {
+     "label": "Channels",
+     "value": "none"
+    }
+   ],
+   "spark": [],
+   "spark_label": null,
+   "state": "warn",
+   "status": "available",
+   "tip": {
+    "lines": [
+     "10 pieces of marketing written or published since the 1st (2 this week).",
+     "0 scheduled · last post went live 3 days ago.",
+     "Channels: none connected."
+    ],
+    "title": "Marketing · this month"
+   },
+   "unit": "pieces this month",
+   "value": "10"
+  },
+  {
+   "attention": false,
+   "delta": null,
+   "interpretation": "Weekly competitor read is ready.",
+   "key": "intel",
+   "label": "Intel",
+   "last_data": "2026-10-27T06:24:54+00:00",
+   "sample": false,
+   "secondary": [
+    {
+     "label": "Competitors",
+     "value": "6"
+    },
+    {
+     "label": "Updated",
+     "value": "0d ago"
+    }
+   ],
+   "spark": [],
+   "spark_label": null,
+   "state": "good",
+   "status": "available",
+   "tip": {
+    "lines": [
+     "3 open recommendations from the weekly competitor read.",
+     "Tracking 6 competitors, updated 0 days ago."
+    ],
+    "title": "Intel · competitor read"
+   },
+   "unit": "recommendations",
+   "value": "3"
+  }
+ ],
+ "upcoming": [
+  {
+   "kind": "fetch",
+   "label": "Next review pull",
+   "module": "reviews",
+   "when": "2026-10-27T08:00:00-05:00"
+  },
+  {
+   "kind": "digest",
+   "label": "Weekly digest email",
+   "module": "account",
+   "when": "2026-11-02T09:00:00-06:00"
+  },
+  {
+   "kind": "schedule",
+   "label": "Schedule through 2026-11-08",
+   "module": "labor",
+   "when": "2026-11-08"
+  }
+ ],
+ "value": {
+  "by_module": [],
+  "caveat": "Measured before and after, not proven cause: other changes in the same weeks move the same number.",
+  "cumulative": {
+   "basis": "summed over days actually measured, only while each change held, net of changes that got worse; related numbers over the same days count once; each change for up to 365 days from when it started; sales lifts are kept apart, and a cost share that fell only because sales rose is not counted as a saving",
+   "by_grade": {
+    "associated": 0.0,
+    "consistent_or_held": 0.0
+   },
+   "by_module": {},
+   "days": 0,
+   "gained": 0,
+   "lost": 0,
+   "measured_days": 0,
+   "sales_lift": null,
+   "since": null,
+   "total": null,
+   "until": null
+  },
+  "cumulative_scope": "measured_days_sum",
+  "history": [],
+  "label": "measured, per month",
+  "net_monthly": 0,
+  "per": "month",
+  "sales_lift": {
+   "basis": "gross revenue — sales through the till, not profit — measured before and after; kept apart from the savings and never added to them",
+   "monthly": 0,
+   "net_monthly": 0,
+   "wins": 0
+  },
+  "scope": "monthly_rate",
+  "total": 0,
+  "unpriced_wins": [],
+  "worsened": {
+   "count": 0,
+   "monthly": 0,
+   "priced_count": 0
+  }
+ },
+ "wins": [
+  {
+   "detail": "78 of 83 reviews have a reply.",
+   "key": "response_rate",
+   "module": "reviews",
+   "title": "94% of reviews answered"
+  }
+ ]
+}

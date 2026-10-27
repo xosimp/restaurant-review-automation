@@ -55,6 +55,10 @@ from demo_store import api as demo_api, build as demo_build
 STAFF_NAME = "Kayla Brennan"
 OWNER = ("halstedowner", "owner@halstedandrye.example")
 MANAGER = ("halstedmanager", "manager@halstedandrye.example")
+# A second manager, granted Food Cost (permissions.FOOD_COST_VIEW): the
+# manager's view of the margins — labor hourly, not all-in — that the first
+# manager (no grant) is refused.
+MANAGER_FOOD = ("halstedkitchenmgr", "kitchen@halstedandrye.example")
 STAFF = ("halstedstaff", "kayla@staff.invalid")
 PASSWORD = "Halsted-Rye-2026"
 
@@ -74,6 +78,52 @@ ROUTES = {
     "actions": ("owner", "/mobile/api/actions", {}),
     "staff_shifts": ("staff", "/staff/api/shifts", {}),
     "staff_me": ("staff", "/staff/api/me", {}),
+    # Blind re-audit 10/27/26 (B6 [P2] "15 of ~330 routes, mostly as the
+    # owner"): the rest of the main screens' reads, the manager's own views
+    # of Home, Labor, Food Cost and Reviews (WS3 made labor and prime cost
+    # per viewer), and the staff app's screens.
+    "home_modules": ("owner", "/mobile/api/home/modules", {}),
+    "review_stats": ("owner", "/mobile/api/review-stats", {}),
+    "notifications_unread": ("owner", "/mobile/api/notifications/unread-count", {}),
+    "labor_team": ("owner", "/mobile/api/labor/team", {}),
+    "labor_time_off": ("owner", "/mobile/api/labor/time-off", {}),
+    "labor_forecast": ("owner", "/mobile/api/labor/schedule-forecast", {}),
+    "food_cost_cfo": ("owner", "/mobile/api/food-cost/cfo", {}),
+    "food_cost_waste_trend": ("owner", "/mobile/api/food-cost/waste-trend", {"range": "8w"}),
+    "intel_movement": ("owner", "/mobile/api/intel/movement", {}),
+    "actions_pending": ("owner", "/mobile/api/actions/pending", {}),
+    "dsr_list": ("owner", "/mobile/api/dsr", {"limit": "1"}),
+    "data_health": ("owner", "/mobile/api/data-health", {}),
+    "task_sheets": ("owner", "/mobile/api/task-sheets", {}),
+    "outcomes": ("owner", "/mobile/api/outcomes", {}),
+    "value": ("owner", "/mobile/api/value", {}),
+    "goals": ("owner", "/mobile/api/goals", {}),
+    "dna": ("owner", "/mobile/api/dna", {}),
+    "guests": ("owner", "/mobile/api/guests", {"view": "all", "q": ""}),
+    "people": ("owner", "/mobile/api/people", {}),
+    "recs_summary": ("owner", "/mobile/api/recs/summary", {"days": "30"}),
+    "benchmarks_card": ("owner", "/mobile/api/benchmarks/card", {"module": "reviews"}),
+    "ask_conversations": ("owner", "/mobile/api/ask-cavnar/conversations", {}),
+    "home_manager": ("manager", "/mobile/api/home", {}),
+    "labor_manager": ("manager", "/mobile/api/labor", {}),
+    "reviews_manager": ("manager", "/mobile/api/reviews", {"filter": "all", "limit": "30", "offset": "0"}),
+    "food_cost_manager": ("manager_food", "/mobile/api/food-cost/analytics", {}),
+    "staff_inbox": ("staff", "/staff/api/inbox", {}),
+    "staff_requests": ("staff", "/staff/api/shift-requests", {}),
+    "staff_time_off": ("staff", "/staff/api/time-off", {}),
+    "staff_availability": ("staff", "/staff/api/availability", {}),
+    "staff_preferences": ("staff", "/staff/api/preferences", {}),
+    "staff_notifications": ("staff", "/staff/api/notifications", {}),
+    "staff_preshift": ("staff", "/staff/api/preshift", {}),
+    "staff_stats": ("staff", "/staff/api/stats", {}),
+    "staff_earnings": ("staff", "/staff/api/earnings", {"days": "14"}),
+    "staff_recognition": ("staff", "/staff/api/recognition", {}),
+    "staff_pulse": ("staff", "/staff/api/pulse", {}),
+    "staff_colleagues": ("staff", "/staff/api/colleagues", {}),
+    "staff_tasks": ("staff", "/staff/api/tasks", {}),
+    "staff_messages": ("staff", "/staff/api/messages", {}),
+    "staff_running_late": ("staff", "/staff/api/running-late", {}),
+    "staff_calendar_link": ("staff", "/staff/api/calendar-link", {}),
 }
 # Two views of one report each: the owner's and the manager's (dsr.access).
 DSR_ROUTES = ("dsr_preview", "dsr_week")
@@ -175,11 +225,15 @@ def build_world(monkeypatch, db_path):
     owner = auth.create_user(rid, OWNER[0], OWNER[1], PASSWORD)
     manager = auth.create_user(rid, MANAGER[0], MANAGER[1], PASSWORD)
     auth.set_user_role(manager, "manager")
+    manager_food = auth.create_user(rid, MANAGER_FOOD[0], MANAGER_FOOD[1], PASSWORD)
+    auth.set_user_role(manager_food, "manager")
+    auth.set_grant(rid, manager_food, permissions.FOOD_COST_VIEW, True, granted_by=owner)
     staff_uid = auth.create_user(rid, STAFF[0], STAFF[1], PASSWORD)
     membership = auth.upsert_membership(staff_uid, rid, "employee", employee_name=STAFF_NAME)
     auth.set_membership_pin(membership["id"], rid, "8317")
     tokens = {"owner": auth.create_session(owner, device_type="ios", restaurant_id=rid),
               "manager": auth.create_session(manager, device_type="ios", restaurant_id=rid),
+              "manager_food": auth.create_session(manager_food, device_type="ios", restaurant_id=rid),
               "staff": auth.create_staff_session(staff_uid, rid)}
     return rid, tokens
 

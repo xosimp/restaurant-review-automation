@@ -1,0 +1,213 @@
+{
+ "avoided": {
+  "basis": "work the product did, at stated rates — an estimate, not a measurement",
+  "dollars": 1890.0,
+  "hours": 13.8,
+  "items": [
+   {
+    "basis": "what a managed review-response service charges per reply",
+    "dollars": 390.0,
+    "hours": 7.8,
+    "key": "replies",
+    "label": "78 review replies written",
+    "rate": "$5.00 each"
+   },
+   {
+    "basis": "a part-time social media manager at $1,500 a month for about 12 posts — $125 a piece, counted only for pieces actually produced, never more than a month's fee in one month",
+    "dollars": 1500.0,
+    "hours": null,
+    "key": "content",
+    "label": "12 posts written across 2 months",
+    "pieces": 12,
+    "rate": "$125 a piece, up to $1,500 a month"
+   },
+   {
+    "basis": "building a week's schedule by hand",
+    "dollars": null,
+    "hours": 6.0,
+    "key": "schedules",
+    "label": "4 weeks of schedule built",
+    "rate": "90 min a week"
+   }
+  ]
+ },
+ "delivered": {
+  "annual": 0,
+  "annual_basis": "a projection — this month's measured figure × 12, if it holds — not a measurement",
+  "associated": 0,
+  "associated_monthly": 0,
+  "basis": "measured before and after each change, over the metric's own window",
+  "biggest": null,
+  "by_module": {},
+  "caveat": "Measured before and after, not proven cause: other changes in the same weeks move the same number.",
+  "consistent": 0,
+  "consistent_monthly": 0,
+  "cumulative": {
+   "basis": "summed over days actually measured, only while each change held, net of changes that got worse; related numbers over the same days count once; each change for up to 365 days from when it started; sales lifts are kept apart, and a cost share that fell only because sales rose is not counted as a saving",
+   "by_grade": {
+    "associated": 0.0,
+    "consistent_or_held": 0.0
+   },
+   "by_module": {},
+   "days": 0,
+   "gained": 0,
+   "lost": 0,
+   "measured_days": 0,
+   "sales_lift": null,
+   "since": null,
+   "total": null,
+   "until": null
+  },
+  "evaluated": 0,
+  "faded": 0,
+  "in_flight": 0,
+  "monthly": 0,
+  "net_by_module": {},
+  "net_monthly": 0,
+  "net_note": "Nothing measured got worse, so the net is the improvements.",
+  "no_clear_change": 0,
+  "rates": {
+   "accrual_horizon_days": 365,
+   "agency_basis": "a part-time social media manager at $1,500 a month for about 12 posts — $125 a piece, counted only for pieces actually produced, never more than a month's fee in one month",
+   "agency_monthly": 1500.0,
+   "agency_per_piece": 125.0,
+   "agency_pieces_per_month": 12,
+   "consistent_multiple": 2.0,
+   "days_per_month": 30.3333,
+   "invoice_minutes": 12,
+   "overtime_basis": "the overtime premium only: the extra half of time-and-a-half on each hour past 40, at the blended hourly wage",
+   "overtime_multiplier": 1.5,
+   "overtime_threshold_hours": 40.0,
+   "recheck_days": 90,
+   "reply_minutes": 6,
+   "reply_rate": 5.0,
+   "reply_rate_basis": "what a managed review-response service charges per reply",
+   "schedule_minutes": 90,
+   "weeks_per_month": 4.3333
+  },
+  "sales_lift": {
+   "basis": "gross revenue — sales through the till, not profit — measured before and after; kept apart from the savings and never added to them",
+   "by_module": {},
+   "monthly": 0,
+   "net_monthly": 0,
+   "wins": 0,
+   "worsened": {
+    "count": 0,
+    "monthly": 0
+   }
+  },
+  "sales_pricing": "separate",
+  "scope": "monthly_rate",
+  "unmeasurable": 0,
+  "unpriced_wins": [],
+  "validated": 0,
+  "validated_monthly": 0,
+  "wins": 0,
+  "wins_by_module": {},
+  "wins_measured": 0,
+  "worsened": {
+   "count": 0,
+   "monthly": 0,
+   "priced_count": 0
+  }
+ },
+ "ledger": {
+  "alerts_sent": 5,
+  "issues_resolved": 0,
+  "lines": [
+   "82 review replies drafted in your voice",
+   "78 replies posted to Google",
+   "5 alerts sent to you",
+   "4 weeks' schedules built"
+  ],
+  "milestones": 0,
+  "months_active": 1,
+  "outcomes_improved": 0,
+  "outcomes_measured": 0,
+  "replies_drafted": 82,
+  "replies_posted": 78,
+  "reviews_watched": 83,
+  "schedules_built": 4,
+  "started": "2026-10-27"
+ },
+ "ok": true,
+ "opportunity": {
+  "basis": "gaps against your own targets — available, not captured",
+  "items": [
+   {
+    "aged": false,
+    "as_of": "<volatile>",
+    "as_of_iso": "2026-10-26",
+    "key": "labor",
+    "label": "Scheduling against your target",
+    "module": "labor",
+    "monthly": 462.32,
+    "source": "labor",
+    "state": "current",
+    "target_label": "your target",
+    "target_source": "set"
+   },
+   {
+    "aged": false,
+    "as_of": "<volatile>",
+    "as_of_iso": "2026-10-25",
+    "key": "inventory",
+    "label": "Waste above tolerance",
+    "module": "inventory",
+    "monthly": 124.0,
+    "source": "inventory",
+    "state": "current"
+   }
+  ],
+  "monthly": 586.32,
+  "withheld": []
+ },
+ "promise": {
+  "available": false,
+  "reason": "no sales audit is linked to this account"
+ },
+ "rates": {
+  "accrual_horizon_days": 365,
+  "agency_basis": "a part-time social media manager at $1,500 a month for about 12 posts — $125 a piece, counted only for pieces actually produced, never more than a month's fee in one month",
+  "agency_monthly": 1500.0,
+  "agency_per_piece": 125.0,
+  "agency_pieces_per_month": 12,
+  "consistent_multiple": 2.0,
+  "days_per_month": 30.3333,
+  "invoice_minutes": 12,
+  "overtime_basis": "the overtime premium only: the extra half of time-and-a-half on each hour past 40, at the blended hourly wage",
+  "overtime_multiplier": 1.5,
+  "overtime_threshold_hours": 40.0,
+  "recheck_days": 90,
+  "reply_minutes": 6,
+  "reply_rate": 5.0,
+  "reply_rate_basis": "what a managed review-response service charges per reply",
+  "schedule_minutes": 90,
+  "weeks_per_month": 4.3333
+ },
+ "sections": [
+  {
+   "figures": [
+    "delivered"
+   ],
+   "heading": "What was measured",
+   "key": "measured"
+  },
+  {
+   "figures": [
+    "avoided",
+    "surfaced",
+    "opportunity"
+   ],
+   "heading": "What Cavnar AI surfaced / still available",
+   "key": "surfaced"
+  }
+ ],
+ "surfaced": {
+  "alerts": 0,
+  "basis": "alerts whose figure is dollars at stake",
+  "days": 30,
+  "dollars": 0,
+  "items": []
+ }
+}

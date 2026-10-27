@@ -109,6 +109,13 @@ def check_assets(fetch, paths, limit=4):
     return (not bad), (f"{min(len(paths), limit)} static file(s) 200" if not bad else "static: " + ", ".join(bad))
 
 
+# The mobile read names itself as an app build above any minimum
+# (client_compat: the "smoke" version is never kept as an installed build).
+# Without it, the day MOBILE_HEADERLESS_CUTOFF is set every deploy's smoke
+# reads 426 and says "roll back" (blind re-audit 10/27/26).
+SMOKE_APP_HEADERS = {"X-Cavnar-App": "smoke (999999999)", "X-Cavnar-Platform": "ios"}
+
+
 def check_reads(fetch, token, mobile_token=None):
     """One web read and one mobile read as the smoke tenant."""
     out = []
@@ -116,7 +123,8 @@ def check_reads(fetch, token, mobile_token=None):
     ctype = str({k.lower(): v for k, v in headers.items()}.get("content-type", ""))
     if status != 200 or "json" not in ctype:
         out.append(f"web read /api/home/brief {status}")
-    status, headers, body = fetch("/mobile/api/me", {"Authorization": f"Bearer {mobile_token or token}"})
+    status, headers, body = fetch("/mobile/api/me", {"Authorization": f"Bearer {mobile_token or token}",
+                                                     **SMOKE_APP_HEADERS})
     data = _json(body) or {}
     if status != 200 or not data.get("ok"):
         out.append(f"mobile read /mobile/api/me {status}")

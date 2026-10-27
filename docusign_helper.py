@@ -69,7 +69,7 @@ def _refuse_outside_production():
     laptop) — never from staging, which may hold production's keys."""
     import config
     if not is_demo() and not config.outbound_sends_allowed():
-        raise DocuSignRefused("DocuSign: the live account is refused here — " + config.sends_refused_reason())
+        raise DocuSignRefused("DocuSign: the live account is refused here — " + config.refused_send("docusign"))
 
 
 def get_access_token() -> str:

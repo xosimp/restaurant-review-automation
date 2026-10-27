@@ -22,7 +22,9 @@ final class ModulesGridViewModel {
     /// GET /mobile/api/home/modules — the grid alone. Asking for the whole
     /// Home to draw the tiles built Home's brief and recorded its
     /// recommendations as shown on a screen that never showed them.
-    private struct ModulesResponse: Decodable {
+    /// Internal, not private: ResponseShapeContractTests decodes the captured
+    /// /mobile/api/home/modules answer with it (blind re-audit 10/27/26).
+    struct ModulesResponse: Decodable {
         let ok: Bool
         let modules: [ModuleSummary]
     }

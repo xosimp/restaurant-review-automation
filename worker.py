@@ -117,6 +117,8 @@ def main():
     # touches it, and this process may well start first.
     models.boot_schema()
     log.info("schema ready")
+    import config as _config_boot
+    _config_boot.report_environment_at_boot(log)
 
     # The job queue's consumer, when this process is the worker
     # (QUEUE_WORKER=1): generations and learners run here, not in the web

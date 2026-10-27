@@ -1,0 +1,12 @@
+{
+ "current_pct": 28.1,
+ "kind": "opportunity",
+ "monthly_gap": 462.0,
+ "monthly_labor": 102800.0,
+ "monthly_sales": 365491.0,
+ "over_target": true,
+ "period_days": 28,
+ "projectable": true,
+ "target_labor": 102337.0,
+ "target_pct": 28.0
+}
