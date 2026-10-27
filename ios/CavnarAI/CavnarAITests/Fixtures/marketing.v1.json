@@ -1,0 +1,60 @@
+{
+ "calendar": [],
+ "channels": {
+  "facebook": false,
+  "google": false,
+  "instagram": false
+ },
+ "content_types": [
+  {
+   "channel": "social",
+   "description": "Caption and hashtags for a photo",
+   "icon": "camera",
+   "id": "instagram_post",
+   "label": "Instagram/FB post"
+  },
+  {
+   "channel": "email",
+   "description": "Opens in Campaigns",
+   "icon": "mail",
+   "id": "weekly_email",
+   "label": "Weekly email"
+  },
+  {
+   "channel": "social",
+   "description": "A short post for your Google listing",
+   "icon": "search",
+   "id": "google_promo",
+   "label": "Google post"
+  },
+  {
+   "channel": "text",
+   "description": "Opens in Campaigns",
+   "icon": "message",
+   "id": "loyalty_nudge",
+   "label": "Re-engagement text"
+  },
+  {
+   "channel": "social",
+   "description": "Your happy hour, for social",
+   "icon": "glass",
+   "id": "happy_hour",
+   "label": "Happy hour promo"
+  },
+  {
+   "channel": "social",
+   "description": "A special dinner, wine night or new menu",
+   "icon": "calendar",
+   "id": "event_announcement",
+   "label": "Event announcement"
+  }
+ ],
+ "guest_textable": 226,
+ "metrics_sync": null,
+ "ok": true,
+ "stats": {
+  "generated": 12,
+  "published": 8,
+  "this_month": 10
+ }
+}

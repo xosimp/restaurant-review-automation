@@ -460,7 +460,8 @@ final class HomeFollowThroughViewModel {
     /// at most two on Home; the rest wait in the recommendation record.
     var checkInsDue: [RecOutcome] { Array(outcomes.filter(RecCheckIn.isDue).prefix(2)) }
 
-    private struct ActionsResponse: Decodable { let ok: Bool; let items: [ActionItem] }
+    /// Internal for ResponseShapeContractTests (Fixtures/actions.json).
+    struct ActionsResponse: Decodable { let ok: Bool; let items: [ActionItem] }
     struct GoalsResponse: Decodable {
         let ok: Bool
         let goals: [GoalRow]

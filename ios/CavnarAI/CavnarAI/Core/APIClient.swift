@@ -45,6 +45,10 @@ actor APIClient {
             /// Cost's analytics). The server's message says so in words; a
             /// screen can also switch to what the login may do.
             case moduleForbidden
+            /// 426 update_required: this build is too old for the server
+            /// (client_compat, audit #25 A06-02). AppUpdateGate already holds
+            /// it, and RootView's blocking sheet says to update.
+            case updateRequired
         }
 
         let kind: Kind
@@ -130,9 +134,18 @@ actor APIClient {
     private let longCallSession: URLSession
     private var token: String?
     private var onSessionExpired: (@Sendable () -> Void)?
+    /// How this client reports an answer it could not decode (audit #25
+    /// A06-04): the real client always does; one on a test's mock session
+    /// only when the test passes `decodeReporting`.
+    private let decodeReporting: DecodeFailureReporting?
+    /// The latest decode report's send — fire and forget, kept so a test
+    /// can await it.
+    private(set) var lastDecodeReport: Task<Void, Never>?
 
-    init(baseURL: URL = AppEnvironment.baseURL, session: URLSession? = nil) {
+    init(baseURL: URL = AppEnvironment.baseURL, session: URLSession? = nil,
+         decodeReporting: DecodeFailureReporting? = nil) {
         self.baseURL = baseURL
+        self.decodeReporting = decodeReporting ?? (session == nil ? DecodeFailureReporting.standard : nil)
         if let session {
             self.session = session
             self.longCallSession = session
@@ -328,7 +341,7 @@ actor APIClient {
             }
         }
         let value: Response = try await finish(data: answered, response: response, sentToken: sentToken,
-                                               hapticOnError: hapticOnError)
+                                               hapticOnError: hapticOnError, path: path, method: method.rawValue)
         return (value, answered)
     }
 
@@ -456,7 +469,8 @@ actor APIClient {
             await Haptic.error()
             throw classified
         }
-        return try await finish(data: data, response: response, sentToken: sentToken, hapticOnError: true)
+        return try await finish(data: data, response: response, sentToken: sentToken, hapticOnError: true,
+                                path: path, method: HTTPMethod.post.rawValue)
     }
 
     /// "<path>:<sha256 of the file>" — stable across retries of the same
@@ -547,6 +561,8 @@ actor APIClient {
             do {
                 return try JSONDecoder.cavnar.decode(Response.self, from: polled.body)
             } catch {
+                reportDecodeFailure(error, route: "/mobile/api/ai-jobs/\(jobId)", verb: HTTPMethod.get.rawValue,
+                                    status: 200)
                 throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
             }
         }
@@ -612,14 +628,16 @@ actor APIClient {
         onSessionExpired?()
     }
 
-    /// Status handling and decoding shared by `send` and `upload`.
+    /// Status handling and decoding shared by `send` and `upload`. `path`
+    /// and `method` name the call for a decode-failure report.
     private func finish<Response: Decodable>(
-        data: Data, response: URLResponse, sentToken: String?, hapticOnError: Bool
+        data: Data, response: URLResponse, sentToken: String?, hapticOnError: Bool, path: String, method: String
     ) async throws -> Response {
         guard let http = response as? HTTPURLResponse else {
             if hapticOnError { await Haptic.error() }
             throw APIError(message: "No response from server")
         }
+        try await Self.raiseIfUpdateRequired(status: http.statusCode, body: data)
 
         if http.statusCode == 401 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
@@ -644,7 +662,66 @@ actor APIClient {
             return try JSONDecoder.cavnar.decode(Response.self, from: data)
         } catch {
             if hapticOnError { await Haptic.error() }
+            // Told to the server, fire and forget: the route, the status, the
+            // coding path — never the body (audit #25 A06-04).
+            reportDecodeFailure(error, route: path, verb: method, status: http.statusCode)
             throw APIError(kind: .decoding, message: "Couldn't understand the server's response.")
+        }
+    }
+
+    // MARK: - Builds too old, answers not understood (audit #25 A06-02, A06-04)
+
+    /// A 426 (or any `update_required` answer): the gate learns it, so the
+    /// blocking sheet opens, and the call fails as `.updateRequired` with
+    /// the server's sentence. Every transport runs this before reading a
+    /// refusal any other way.
+    nonisolated static func raiseIfUpdateRequired(status: Int, body: Data) async throws {
+        guard status >= 400, let need = AppUpdateRequirement.from(status: status, body: body) else { return }
+        await AppUpdateGate.shared.require(need)
+        throw APIError(kind: .updateRequired, message: need.message, status: status, body: body)
+    }
+
+    static let clientErrorsPath = "/mobile/api/client-errors"
+
+    /// Tells the server this client could not decode `path`'s answer, at
+    /// most once per route per hour on this device; nil when nothing is
+    /// sent (no reporter, throttled, or the report route itself). Fire and
+    /// forget: the caller throws its own error at once.
+    @discardableResult
+    func reportDecodeFailure(_ error: Error, route: String, verb: String, status: Int?,
+                             bearer: String? = nil) -> Task<Void, Never>? {
+        reportDecodeFailure(described: ClientErrorReport.describe(error), route: route, verb: verb,
+                            status: status, bearer: bearer)
+    }
+
+    /// The same, from a failure already described (its coding path and what
+    /// went wrong) — what a caller outside this actor passes, a DecodingError
+    /// not being Sendable (StaffTasksAPI).
+    @discardableResult
+    func reportDecodeFailure(described failure: (path: String, description: String), route: String, verb: String,
+                             status: Int?, bearer: String? = nil) -> Task<Void, Never>? {
+        guard let reporting = decodeReporting, !route.hasPrefix(Self.clientErrorsPath),
+              reporting.throttle.claim(route: route) else { return nil }
+        let report = ClientErrorReport(route: route, verb: verb, status: status,
+                                       codingPath: String(failure.path.prefix(ClientErrorReport.maxPath)),
+                                       description: String(failure.description.prefix(ClientErrorReport.maxDescription)),
+                                       kind: "decoding", deviceId: reporting.deviceId())
+        let task = Task { await self.postClientError(report, bearer: bearer) }
+        lastDecodeReport = task
+        return task
+    }
+
+    /// The report itself: the staff tier's bearer when the failed call was a
+    /// staff one, else this client's own session (or none — a sign-in that
+    /// cannot be decoded is reported too). Its answer is never decoded into
+    /// anything that could fail and report again.
+    private func postClientError(_ report: ClientErrorReport, bearer: String?) async {
+        if let bearer {
+            let _: EmptyResponse? = try? await sendWithBearer("/mobile/api/client-errors", method: .post,
+                                                              body: report, bearer: bearer)
+        } else {
+            let _: EmptyResponse? = try? await send("/mobile/api/client-errors", method: .post, body: report,
+                                                    hapticOnError: false, retryTransient: false)
         }
     }
 
@@ -661,6 +738,7 @@ actor APIClient {
         guard let http = response as? HTTPURLResponse else {
             throw APIError(message: "No response from server")
         }
+        try await Self.raiseIfUpdateRequired(status: http.statusCode, body: data)
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             throw APIError(kind: envelope?.kind ?? .server,
@@ -681,6 +759,9 @@ actor APIClient {
         guard let http = response as? HTTPURLResponse else {
             throw APIError(message: "No response from server")
         }
+        // A build too old to send it: kept in the queue (PendingWriteQueue
+        // .isRefusal), replayed once the app is updated.
+        try await Self.raiseIfUpdateRequired(status: http.statusCode, body: data)
         if http.statusCode == 401 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
             if envelope?.sessionExpired == true {
@@ -828,6 +909,12 @@ actor APIClient {
                         for try await byte in bytes {
                             raw.append(byte)
                             if raw.count >= 64 * 1024 { break }
+                        }
+                        if let need = AppUpdateRequirement.from(status: http.statusCode, body: raw) {
+                            await AppUpdateGate.shared.require(need)
+                            continuation.finish(throwing: APIError(kind: .updateRequired, message: need.message,
+                                                                   status: http.statusCode, body: raw))
+                            return
                         }
                         let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: raw)
                         if http.statusCode == 401, envelope?.sessionExpired == true {
@@ -985,6 +1072,9 @@ actor APIClient {
         // This client can wait for a Studio read run off the server's request
         // threads (studio_offload, R5-03): it polls the ticket a 202 carries.
         request.setValue("1", forHTTPHeaderField: Self.offloadHeader)
+        // Which build is asking (X-Cavnar-App / X-Cavnar-Platform, audit #25
+        // A06-02): kept per login, and a build under the minimum gets 426.
+        ClientIdentity.stamp(&request)
         return request
     }
 
@@ -1128,6 +1218,7 @@ actor APIClient {
         guard let http = response as? HTTPURLResponse else {
             throw APIError(kind: .server, message: "The server sent something unreadable.")
         }
+        try await Self.raiseIfUpdateRequired(status: http.statusCode, body: data)
         switch Self.classifyAuthRefusal(status: http.statusCode, body: data,
                                         authenticated: authenticated, expiresOn401: expiresOn401) {
         case .sessionEnded(let message)?:
@@ -1147,6 +1238,10 @@ actor APIClient {
         do {
             return try JSONDecoder.cavnar.decode(Response.self, from: data)
         } catch {
+            let bearer = request.value(forHTTPHeaderField: "Authorization")
+                .flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil }
+            reportDecodeFailure(error, route: path, verb: request.httpMethod ?? HTTPMethod.get.rawValue,
+                                status: http.statusCode, bearer: authenticated ? bearer : nil)
             throw APIError(kind: .decoding, message: "The server sent something unreadable.")
         }
     }

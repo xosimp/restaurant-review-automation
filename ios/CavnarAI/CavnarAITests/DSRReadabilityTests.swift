@@ -78,7 +78,7 @@ final class DSRReadabilityTests: XCTestCase {
     }
 
     func testTheWeekShowsFourColumnsByDefaultAndKeepsEveryRowWhole() throws {
-        let url = Bundle(for: Self.self).url(forResource: "dsr_week", withExtension: "json")!
+        let url = Bundle(for: Self.self).url(forResource: "dsr_week_scenario", withExtension: "json")!
         let all = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         let owner = try JSONDecoder.cavnar.decode(DSRWeekResponse.self,
                                                   from: JSONSerialization.data(withJSONObject: all["owner"]!)).week

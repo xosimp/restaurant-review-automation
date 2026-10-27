@@ -51,6 +51,12 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: Cavnar AI
+        # Resolved by Xcode at build time from the target settings, so the
+        # build number generate.sh stamps (git rev-list --count HEAD) is the
+        # one the binary reports in X-Cavnar-App (audit #25 A06-02). Literal
+        # values here froze every build at "1.0 (1)".
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen:
           UIColorName: Paper
           # A faint ghost of the ring only — RootView's LaunchSplashView
@@ -235,6 +241,8 @@ targets:
       path: Generated/CavnarWidgets-Info.plist
       properties:
         CFBundleDisplayName: Cavnar AI
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIAppFonts:
           - ApfelGrotezk-Regular.ttf
           - ApfelGrotezk-Fett.ttf
@@ -292,6 +300,8 @@ targets:
       path: Generated/CavnarNotificationContent-Info.plist
       properties:
         CFBundleDisplayName: Cavnar AI
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UIAppFonts:
           - ApfelGrotezk-Regular.ttf
           - ApfelGrotezk-Fett.ttf
@@ -348,12 +358,16 @@ targets:
       - path: CavnarAI/Core/AppPreferences.swift
       - path: CavnarAI/Core/AppTab.swift
       - path: CavnarAI/Core/PinnedSessionDelegate.swift
+      # The X-Cavnar-App / X-Cavnar-Platform headers (audit #25 A06-02).
+      - path: CavnarAI/Core/ClientIdentity.swift
       - path: CavnarAI/Assets.xcassets
       - path: CavnarAI/Fonts
     info:
       path: Generated/CavnarShare-Info.plist
       properties:
         CFBundleDisplayName: Send to Cavnar AI
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CavnarKeychainGroup: $(AppIdentifierPrefix)ai.cavnar.CavnarAI.shared
         UIAppFonts:
           - ApfelGrotezk-Regular.ttf

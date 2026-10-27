@@ -1,0 +1,32 @@
+{
+ "employee": {
+  "email": "",
+  "has_phone": false,
+  "has_pin": true,
+  "locations": [
+   {
+    "current": true,
+    "employee_name": "Kayla Brennan",
+    "join_code": "<volatile>",
+    "membership_id": 1,
+    "portal_token": "<volatile>",
+    "restaurant": "Halsted & Rye",
+    "restaurant_id": 1
+   }
+  ],
+  "membership_id": 1,
+  "name": "Kayla Brennan",
+  "notifications": {
+   "email": false,
+   "push": false,
+   "texts": false,
+   "texts_consent": false
+  },
+  "phone_masked": "",
+  "pin_set_at": "<volatile>",
+  "restaurant": "Halsted & Rye",
+  "restaurant_id": 1,
+  "role": "employee"
+ },
+ "ok": true
+}

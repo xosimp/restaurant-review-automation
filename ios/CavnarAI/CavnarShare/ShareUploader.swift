@@ -151,6 +151,8 @@ enum ShareUploader {
         r.httpMethod = "POST"
         r.timeoutInterval = 60
         r.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        // The build, as on every app request (ClientIdentity, audit #25 A06-02).
+        ClientIdentity.stamp(&r)
         let boundary = "cavnar-\(UUID().uuidString)"
         r.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let digest = SHA256.hash(data: item.data).map { String(format: "%02x", $0) }.joined()

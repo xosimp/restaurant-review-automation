@@ -285,7 +285,9 @@ actor PendingWriteQueue {
         guard let status else { return false }
         if (200..<300).contains(status) { return true }
         guard (400..<500).contains(status) else { return false }
-        return ![401, 402, 408, 425, 429].contains(status)
+        // 426: this build is too old to send it — kept, and replayed once
+        // the app is updated (AppUpdateGate, audit #25 A06-02).
+        return ![401, 402, 408, 425, 426, 429].contains(status)
     }
 
     /// Parks one of the app's queueable writes (QueuedWrite).
