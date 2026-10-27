@@ -30,7 +30,12 @@ again. This module is what that next try does differently:
     goes out as usual.
   * THE DETERMINISTIC STAGES (inputs, rules, repair, sweep, score) run
     again: they are the code's own work, seconds not dollars, and given the
-    same inputs and the same answers they reach the same draft. Their
+    same inputs and the same answers they reach the same draft — every
+    search runs on a deterministic work budget. A search an emergency cap
+    cut instead (the wall clock on a busy box, CP-SAT's memory bound) may
+    not: the draft names it (review.solve_capped, judged by the clock alone
+    — schedule_cpsat_runtime._wall_capped) and a resumed try's
+    `resumed_inputs.deterministic` is then False. Their
     boundaries are recorded as the job's stages (job_queue.checkpoint, from
     schedule_engine._StageClock) so the Jobs page and the resume can say
     how far a try got.

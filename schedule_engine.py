@@ -3897,7 +3897,7 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
     c = fallback.get("constraints")
     try:
         rows, dropped, unassigned, used, base = [], [], [], None, {}
-        solver_first = None
+        solver_first = cut_try = None
         has_reqs = any(int(e.get("required") or 0) > 0 for row in ((facts or {}).get("requirements") or [])
                        for e in (row.get("roles") or []) if isinstance(e, dict))
         order = _sfb.code_order(chosen, has_requirements=has_reqs)
@@ -3951,6 +3951,13 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
                 plan = [r for r in fallback["manager_plan"].get("rows") or [] if r.get("date") in set(dates)] + \
                     [dict(r) for r in (kept or [])]
                 fallback["plan_rows"] = list(fallback["manager_plan"].get("rows") or [])
+            # A solver-first try an emergency cap cut before it found a week:
+            # said on the draft's solver record below even though the v0 code
+            # draft stands in, so the review and ops.schedule_solve_capped
+            # count it (release-safety audit 10/26/26 A02-01).
+            cut_try = got if (got is not None and not got.get("rows")
+                              and ((got.get("stats") or {}).get("wall_capped")
+                                   or (got.get("stats") or {}).get("memory_capped"))) else None
             if got is None or not got.get("rows"):
                 # The v0 code draft (requirement counts on the usual shift
                 # templates, people by the backtracking solver): what runs
@@ -3995,6 +4002,8 @@ def _code_draft(dates, why, fallback, facts, shifts, chosen, kept=None):
             # The demand Stage 1 shaped to: the one objective's need for
             # these dates in every pass after the draft.
             out["objective_need"] = solver_first.get("need") or {}
+        elif used == "solver" and cut_try is not None:
+            out["solver"] = dict(solver_explain(cut_try), stood_in="v0 code draft")
         return out
     except Exception as e:
         _soft_fail("code draft", e, rid)

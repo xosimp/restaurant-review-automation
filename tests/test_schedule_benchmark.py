@@ -8,6 +8,14 @@ module, in its own process with its own throwaway database and no provider
 key (scripts/schedule_benchmark.run_batch). Each (archetype, arm, invariant)
 is its own test; the ones the code breaks today are strict xfails naming the
 finding whose fix makes them pass — a fix flips them and the gate ratchets.
+The same generation runs off Chicago time too (TZ_PLAN: a Pacific
+restaurant, and a 24-hour diner in New York on a week with a daylight-saving
+change — release-safety audit 10/26/26 A01-19).
+
+The deterministic invariant skips — naming the cut — only when the presses
+differ AND a solve was cut by an emergency cap (the review's solve_capped:
+the wall clock on a busy box); it is strict otherwise. The nightly serial
+run (scripts/run_determinism_check.py) fails on more than one skip.
 """
 import datetime as dt
 import importlib.util
@@ -213,9 +221,16 @@ def _cases():
     return out
 
 
+def _skip_if_cut(m, inv):
+    if inv == "deterministic" and m.get("deterministic") is False and m.get("cut_runs"):
+        pytest.skip(f"the presses differ and a solve was cut by an emergency cap ({m['cut_runs']}), "
+                    "as their review says")
+
+
 @pytest.mark.parametrize("key,arm,inv", _cases())
 def test_the_fast_subset_holds_every_invariant(fast, key, arm, inv):
     m = fast[key]["arms"][arm]
+    _skip_if_cut(m, inv)
     assert inv not in sb.failed_invariants(m), (inv, sb.INVARIANTS[inv], {
         k: m.get(k) for k in ("hard", "independent_examples", "unmanaged_open_minutes", "long_shifts",
                               "usual_days_kept_pct", "starved", "empty_role_day_examples", "identical_runs")})
@@ -253,3 +268,64 @@ def test_no_legal_rule_is_broken_on_any_fast_archetype(fast):
         for arm, m in r["arms"].items():
             assert not legal & set(m["hard"]), (key, arm, m["hard"])
             assert m["independent_total"] == 0, (key, arm, m["independent_examples"])
+
+
+# ── off Chicago time: another zone, and a daylight-saving week ─────────────
+
+def test_the_dst_week_is_found_on_the_calendar_and_never_goes_stale():
+    assert sb.dst_change("America/New_York", [f"2027-03-{d:02d}" for d in range(8, 15)]) == "2027-03-14"
+    assert sb.dst_change("America/Chicago", [f"2026-10-{d}" for d in range(26, 32)] + ["2026-11-01"]) == \
+        "2026-11-01"
+    assert sb.dst_change("Pacific/Honolulu", [f"2027-03-{d:02d}" for d in range(8, 15)]) is None
+    # the next week with a change after a date, on the restaurant's own week start
+    assert sb.next_dst_week_start("America/New_York", 0, dt.date(2026, 10, 26)) == "2027-03-08"
+    assert sb.next_dst_week_start("America/New_York", 0, dt.date(2026, 10, 20)) == "2026-10-26"
+    assert sb.next_dst_week_start("America/Chicago", 2, dt.date(2027, 2, 1)) == "2027-03-10"   # Wednesday weeks
+    with pytest.raises(ValueError):
+        sb.next_dst_week_start("Pacific/Honolulu", 0, dt.date(2026, 10, 26))
+
+
+def test_a_shift_across_the_clock_change_is_measured_in_real_hours():
+    """The DST night's measure trusts nothing in the engine: zoneinfo alone."""
+    grave = {"employee": "Cook", "role": "Line Cook", "shift_start": "10:00pm", "shift_end": "6:00am",
+             "scheduled_hours": "x"}
+    spring = sb.dst_rows([dict(grave, date="2027-03-13"), dict(grave, date="2027-03-12")], "America/New_York",
+                         "2027-03-14")
+    assert [(r["date"], r["real_hours"]) for r in spring] == [("2027-03-13", 7.0)]
+    fall = sb.dst_rows([dict(grave, date="2026-10-31")], "America/Chicago", "2026-11-01")
+    assert [r["real_hours"] for r in fall] == [9.0]
+    day = dict(grave, date="2027-03-14", shift_start="6:00am", shift_end="2:00pm")
+    assert sb.dst_rows([day], "America/New_York", "2027-03-14") == []      # after the change: nothing crosses
+
+
+@pytest.fixture(scope="module")
+def tz_runs():
+    if not cs.available():
+        pytest.skip("OR-Tools not installed")
+    plan = [[k, list(arms), runs, scale, dict(opts)] for k, arms, runs, scale, opts in sb.TZ_PLAN]
+    return _script().run_batch(plan, timeout=600)
+
+
+@pytest.mark.parametrize("i", range(len(sb.TZ_PLAN)), ids=[f"{p[0]}-{p[4]['timezone']}-{p[4]['week']}"
+                                                          for p in sb.TZ_PLAN])
+def test_a_week_off_chicago_time_holds_every_invariant(tz_runs, i):
+    key, arms, runs, _scale, opts = sb.TZ_PLAN[i]
+    r = tz_runs[i]
+    assert r["key"] == key and r["timezone"] == opts["timezone"]
+    for arm in arms:
+        m = r["arms"][arm]
+        assert m["status"] == "done" and m["runs"] == runs and m["rows"] > 0, (arm, m)
+        for inv in sb.INVARIANTS:
+            _skip_if_cut(m, inv)
+            assert inv not in sb.failed_invariants(m), (inv, sb.INVARIANTS[inv], {
+                k: m.get(k) for k in ("hard", "independent_examples", "unmanaged_open_minutes", "long_shifts",
+                                      "usual_days_kept_pct", "starved", "empty_role_day_examples", "identical_runs",
+                                      "cut_runs")})
+    if opts["week"] == "dst":
+        week = [(dt.date.fromisoformat(r["week_start"]) + dt.timedelta(days=d)).isoformat() for d in range(7)]
+        assert r["dst_date"] in week
+        crossing = r["arms"][arms[0]]["dst_rows"]
+        # the diner's overnight crew works through the change, each shift at its real length
+        assert crossing and all(float(x["scheduled_hours"]) == x["real_hours"] for x in crossing), crossing
+    else:
+        assert r["dst_date"] is None

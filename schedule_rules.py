@@ -1327,12 +1327,15 @@ def tz_of(c) -> str:
 _OVERNIGHT_LATEST_BEFORE = _stime.SMALL_HOURS_BEFORE
 
 
-def window_holds(window, day, week_dates=None, today=None) -> bool:
+def window_holds(window, day, week_dates=None, today=None, tz=None) -> bool:
     """Whether a time window ({earliest, latest, from?, until?}, one
     weekday's entry in staff_settings.time_windows) applies this week: one
     with dates ("not before 5pm on Tuesdays until 12/15/26" — employee
     audit M5) holds on this week's `day` inside them; with no week, while
-    it has not ended. A window with no dates always holds."""
+    it has not ended — by the restaurant's own date (`tz`, its IANA zone;
+    `today` to fix it), never the server's: on a UTC box a window ending
+    today read as ended from 7pm Chicago time (release-safety audit
+    10/26/26). A window with no dates always holds."""
     f, u = (window or {}).get("from"), (window or {}).get("until")
     if not (f or u):
         return True
@@ -1342,8 +1345,12 @@ def window_holds(window, day, week_dates=None, today=None) -> bool:
         return any(bounds_apply({"from": f, "until": u}, d) for d in dates)
     if week_dates:
         return False
-    from datetime import date as _date
-    return not u or u >= (today or _date.today()).isoformat()
+    if not u:
+        return True
+    if today is None:
+        from time_utils import restaurant_now
+        today = restaurant_now(tz).date()
+    return u >= today.isoformat()
 
 
 def hours_on_file(day, open_times=None, close_times=None) -> bool:
@@ -3495,7 +3502,7 @@ def _person_settings(c: "Constraints", e: dict, expired: dict, _ss, held=None, w
         win = {}
         for day, w in st["time_windows"].items():
             lo, hi = parse_minutes((w or {}).get("earliest") or ""), parse_minutes((w or {}).get("latest") or "")
-            if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates):
+            if (lo is not None or hi is not None) and window_holds(w, day, c.week_dates, tz=tz_of(c)):
                 win[day] = (lo, hi)
         if win:
             c.time_windows[key] = win
