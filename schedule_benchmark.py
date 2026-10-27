@@ -91,8 +91,19 @@ RUNS = 3
 # The fast subset tests/test_schedule_benchmark.py runs in one process
 # (about a minute): [archetype, arms, runs, scale]. Every archetype and both
 # arms at full size are the script's (scripts/run_schedule_benchmark.py).
+# diner_24h (open around the clock, a manager on every shift) and
+# multi_location_org (staff shared with a sibling location whose week is
+# published first) joined 10/26/26 at scale 0.5 — about 25 s together, both
+# arms, two presses each (release-safety audit 10/26/26 A01-19).
 FAST_PLAN = (("cafe_6", ARMS, 3, 1.0), ("daypart_limited", ARMS, 2, 0.5), ("qsr_teens", ARMS, 1, 0.5),
-             ("single_manager", ARMS, 1, 1.0))
+             ("single_manager", ARMS, 1, 1.0), ("diner_24h", ARMS, 2, 0.5), ("multi_location_org", ARMS, 2, 0.5))
+# The same generation off Chicago time (A01-19): [archetype, arms, runs,
+# scale, {"timezone", "week": "next" | "dst"}] — a Pacific restaurant's next
+# week, and a 24-hour diner in New York on the next week with a daylight-
+# saving change in it (its overnight shift that night is 7 or 9 real hours).
+TZ_PLAN = (("cafe_6", ("solver",), 2, 1.0, {"timezone": "America/Los_Angeles", "week": "next"}),
+           ("diner_24h", ("solver",), 2, 0.5, {"timezone": "America/New_York", "week": "dst"}))
+DEFAULT_TIMEZONE = "America/Chicago"
 # Opt-in in the script (--heavy): one generation needs gigabytes.
 HEAVY = ("mega_500",)
 # The gate's thresholds (INVARIANTS).
@@ -332,21 +343,28 @@ def diner_24h(scale=1.0):
     clock (12:00am to 12:00am), three 8-hour shifts a day with a manager, 4
     servers and 3 cooks on each; every person keeps one shift and works five
     days (two off in a row), two relief managers cover the others' days off.
-    (The auditor's own s04 put every server and cook on all seven days.)"""
+    (The auditor's own s04 put every server and cook on all seven days.)
+    `scale` shrinks each shift's crew (0.5: 2 servers and 2 cooks a shift —
+    the fast subset's size); the three shifts, the managers, the overnight
+    and the sales stay (the sales halved with the crew put the week's labor
+    budget below the five managers' fixed hours, and the trim starved the
+    crew — measured 10/26/26)."""
     o = {d: "12:00am" for d in DAYS}
     c = {d: "12:00am" for d in DAYS}
     sh = (("Day", "6:00am", "2:00pm", (5, 6)), ("Swing", "2:00pm", "10:00pm", (0, 1)),
           ("Grave", "10:00pm", "6:00am", (2, 3)))
+    n_srv, n_cook = max(1, int(round(4 * scale))), max(1, int(round(3 * scale)))
     pat, people = [], [("Mgr Relief", "Manager", {}), ("Mgr Relief Two", "Manager", {})]
     for k, (tag, s, e, off) in enumerate(sh):
         people.append((f"Mgr {tag}", "Manager", {}))
-        servers = [f"Srv {tag} {x}" for x in "ABCDEF"]
-        cooks = [f"Cook {tag} {x}" for x in "ABCDE"]
+        # two more than a shift needs: everybody gets two days off in a row
+        servers = [f"Srv {tag} {x}" for x in "ABCDEFGH"[:n_srv + 2]]
+        cooks = [f"Cook {tag} {x}" for x in "ABCDEFGH"[:n_cook + 2]]
         people += [(n, "Server", {}) for n in servers] + [(n, "Line Cook", {}) for n in cooks]
         for i, d in enumerate(DAYS):
             relief = "Mgr Relief Two" if tag == "Grave" else "Mgr Relief"
             pat.append((d, relief if i in off else f"Mgr {tag}", "Manager", s, e))
-            for group, need in ((servers, 4), (cooks, 3)):
+            for group, need in ((servers, n_srv), (cooks, n_cook)):
                 free = [n for p, n in enumerate(group) if (i + p) % 7 not in (5, 6)]
                 pat += [(d, n, "Server" if group is servers else "Line Cook", s, e) for n in free[:need]]
     return _spec("diner_24h", "24-hour diner", "STRESS s04 / STRESS-4: overnight clipped at midnight",
@@ -544,12 +562,41 @@ def next_week_start(week_start_day=0, today=None, avoid_holidays=True) -> str:
     return start.isoformat()
 
 
+def dst_change(tz, dates) -> str:
+    """The date in `dates` (ISO) on which `tz` changes its clocks (its UTC
+    offset at noon differs from the day before's), else None."""
+    from datetime import datetime as _dtm
+    from zoneinfo import ZoneInfo
+    z = ZoneInfo(tz)
+    for d in dates:
+        day = _date.fromisoformat(d)
+        before = day - _td(days=1)
+        if _dtm(day.year, day.month, day.day, 12, tzinfo=z).utcoffset() != \
+                _dtm(before.year, before.month, before.day, 12, tzinfo=z).utcoffset():
+            return d
+    return None
+
+
+def next_dst_week_start(tz, week_start_day=0, today=None) -> str:
+    """The first restaurant week after `today` (on its week-start weekday)
+    that holds a daylight-saving change in `tz` — found on the calendar, so
+    the benchmark never goes stale on a fixed week. ValueError for a zone
+    with no change in the next year."""
+    start = _date.fromisoformat(next_week_start(week_start_day, today, avoid_holidays=False))
+    for _ in range(54):
+        dates = [(start + _td(days=i)).isoformat() for i in range(7)]
+        if dst_change(tz, dates):
+            return start.isoformat()
+        start += _td(days=7)
+    raise ValueError(f"{tz} changes no clocks in the next year")
+
+
 def _write_restaurant(spec, owner_email) -> int:
     import models
     from models import Restaurant, create_restaurant
     rid = create_restaurant(Restaurant(name=spec["label"], owner_email=owner_email))
     cols = {"open_times_json": json.dumps(spec["open"]), "close_times_json": json.dumps(spec["close"]),
-            "role_rates_json": json.dumps(spec["rates"]), "timezone": "America/Chicago"}
+            "role_rates_json": json.dumps(spec["rates"]), "timezone": spec.get("timezone") or DEFAULT_TIMEZONE}
     if spec["salaried"]:
         cols["salaried_staff_json"] = json.dumps(spec["salaried"])
     if spec["floors"]:
@@ -619,16 +666,34 @@ def _write_people(rid, spec, week_dates) -> None:
         to.decide(rid, dict(got)["id"], True, decided_by="owner")
 
 
-def build(spec, today=None) -> dict:
+def build(spec, today=None, week="next") -> dict:
     """The archetype in the current (temporary) database: {rid, week_start,
-    week_dates, siblings: [rid]}. Siblings (another location of the same
-    owner) are built first under the same owner email."""
+    week_dates, siblings: [rid], timezone, dst_date}. Siblings (another
+    location of the same owner) are built first under the same owner email.
+    `today` is the restaurant's own date by default (its timezone's, never
+    the server's); `week` "next" is the week a Generate press drafts, "dst"
+    the next week holding a daylight-saving change (dst_date its day)."""
     _guard()
-    today = today or _date.today()
+    tz = spec.get("timezone") or DEFAULT_TIMEZONE
+    if today is None:
+        from time_utils import restaurant_now
+        today = restaurant_now(tz).date()
     email = f"bench-{spec['key']}-{random.Random(spec['key']).randint(1000, 9999)}@example.com"
     wsd = int(spec["cols"].get("week_start_day") or 0)
-    week_start = next_week_start(wsd, today)
+    if week == "dst":
+        week_start = next_dst_week_start(tz, wsd, today)
+    elif week and week != "next":
+        week_start = _date.fromisoformat(str(week)).isoformat()      # a stated week (a probe's)
+    else:
+        week_start = next_week_start(wsd, today)
     week_dates = [(_date.fromisoformat(week_start) + _td(days=i)).isoformat() for i in range(7)]
+    # A week further out than the next one is drafted as the press the day
+    # before it would draft it: its history runs up to then (with it ending
+    # months earlier, the engine rightly reads the restaurant as having no
+    # recent weeks — measured 10/26/26: a week 10+ weeks out drafted 84 of
+    # the diner's 106 shifts).
+    if _date.fromisoformat(week_start) - today > _td(days=7):
+        today = _date.fromisoformat(week_start) - _td(days=1)
     sib_ids = []
     for sib in spec["siblings"]:
         srid = _write_restaurant(sib, email)
@@ -638,7 +703,8 @@ def build(spec, today=None) -> dict:
     rid = _write_restaurant(spec, email)
     _write_history(rid, spec, today)
     _write_people(rid, spec, week_dates)
-    return {"rid": rid, "week_start": week_start, "week_dates": week_dates, "siblings": sib_ids}
+    return {"rid": rid, "week_start": week_start, "week_dates": week_dates, "siblings": sib_ids, "timezone": tz,
+            "dst_date": dst_change(tz, week_dates)}
 
 
 # ── one generation ─────────────────────────────────────────────────────
@@ -999,13 +1065,25 @@ def _signature(rows) -> list:
                    r.get("shift_start"), r.get("shift_end")) for r in rows)
 
 
-def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
+def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None, timezone=None, week="next") -> dict:
     """Build archetype `key` once, then generate its week `runs` times on each
-    arm: {key, label, why, people, week_start, arms: {arm: {metrics of the
-    first run, deterministic, identical_runs, seconds, seconds_max, status,
-    error}}, failed: {arm: [invariant]}}."""
+    arm: {key, label, why, people, week_start, timezone, dst_date, arms: {arm:
+    {metrics of the first run, deterministic, identical_runs, cut_runs,
+    seconds, seconds_max, status, error, dst_rows}}, failed: {arm:
+    [invariant]}}. `timezone` (IANA) puts the restaurant off Chicago time,
+    `week` "dst" drafts the next week with a daylight-saving change.
+
+    `cut_runs`: the presses whose review names a solve an emergency cap cut
+    (review.solve_capped — the wall clock on a busy box, CP-SAT's memory
+    bound). Two such presses may differ without the engine being
+    nondeterministic, so a difference then is not the deterministic
+    invariant's failure; the test skips on it, naming the cut."""
     spec = ARCHETYPES[key](scale)
-    built = build(spec, today=today)
+    if timezone:
+        spec["timezone"] = timezone
+        for sib in spec["siblings"]:
+            sib["timezone"] = timezone
+    built = build(spec, today=today, week=week)
     sibling_rows = []
     for srid in built["siblings"]:
         got = generate(srid, built["week_start"], ARMS[0])
@@ -1014,14 +1092,18 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
             _publish_directly(hid)
             sibling_rows += saved_rows(hid)
     out = {"key": key, "label": spec["label"], "why": spec["why"], "people": len(spec["people"]),
-           "scale": scale, "week_start": built["week_start"], "arms": {}, "failed": {}}
+           "scale": scale, "week_start": built["week_start"], "timezone": built["timezone"],
+           "dst_date": built["dst_date"], "arms": {}, "failed": {}}
     for arm in arms:
-        sigs, secs, cpus, first = [], [], [], None
+        sigs, secs, cpus, first, cut = [], [], [], None, []
         for i in range(runs):
             got = generate(built["rid"], built["week_start"], arm)
             res = got["result"] or {}
             secs.append(got["seconds"])
             cpus.append(got.get("cpu_seconds") or 0.0)
+            capped = ((res.get("review") or {}).get("solve_capped") or []) if isinstance(res, dict) else []
+            if capped:
+                cut.append(sorted(set(str(k) for k in capped)))
             if got["status"] != "done" or not res.get("history_id"):
                 first = first or {"status": got["status"], "error": str(res.get("error") or "")[:300]}
                 sigs.append(None)
@@ -1031,11 +1113,13 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
             if first is None:
                 first = measure(spec, built, rows, res, sibling_rows)
                 first["status"] = "done"
+                if built.get("dst_date"):
+                    first["dst_rows"] = dst_rows(rows, built["timezone"], built["dst_date"])
                 first["draft_source"] = ((res.get("draft_source") or {}).get("source")
                                          if isinstance(res.get("draft_source"), dict) else res.get("draft_source"))
         same = sum(1 for s in sigs[1:] if s is not None and s == sigs[0])
         first = dict(first or {})
-        first.update(runs=runs, identical_runs=same + 1 if sigs and sigs[0] is not None else 0,
+        first.update(runs=runs, identical_runs=same + 1 if sigs and sigs[0] is not None else 0, cut_runs=cut,
                      # one run proves nothing about the next press
                      deterministic=(None if runs < 2 else
                                     bool(sigs) and sigs[0] is not None and all(s == sigs[0] for s in sigs)),
@@ -1047,6 +1131,35 @@ def run_archetype(key, arms=ARMS, runs=RUNS, scale=1.0, today=None) -> dict:
                                if sigs and sigs[0] is not None else None))
         out["arms"][arm] = first
         out["failed"][arm] = failed_invariants(first)
+    return out
+
+
+def dst_rows(rows, tz, change_date) -> list:
+    """Each saved shift whose real span crosses the clock change on
+    `change_date` in `tz` (the night before's overnight shifts and that
+    day's small hours): [{date, employee, role, shift_start, shift_end,
+    scheduled_hours, real_hours}] — real_hours from zoneinfo alone, trusting
+    nothing in the engine (a 10pm-6am shift is 7 real hours the night the
+    clocks go forward, 9 the night they go back)."""
+    from datetime import datetime as _dtm, timezone as _tzu
+    from zoneinfo import ZoneInfo
+    z = ZoneInfo(tz)
+    out = []
+    for r in rows:
+        s_, e_ = _m(r.get("shift_start") or ""), _m(r.get("shift_end") or "")
+        d = str(r.get("date") or "")[:10]
+        if s_ is None or e_ is None or not d:
+            continue
+        day = _date.fromisoformat(d)
+        end_day = day + _td(days=1) if e_ <= s_ else day
+        a = _dtm(day.year, day.month, day.day, s_ // 60, s_ % 60, tzinfo=z)
+        b = _dtm(end_day.year, end_day.month, end_day.day, e_ // 60, e_ % 60, tzinfo=z)
+        if a.utcoffset() == b.utcoffset():
+            continue
+        real = (b.astimezone(_tzu.utc) - a.astimezone(_tzu.utc)).total_seconds() / 3600.0
+        out.append({"date": d, "employee": r.get("employee"), "role": r.get("role"),
+                    "shift_start": r.get("shift_start"), "shift_end": r.get("shift_end"),
+                    "scheduled_hours": r.get("scheduled_hours"), "real_hours": round(real, 2)})
     return out
 
 
@@ -1075,8 +1188,8 @@ def failed_invariants(m) -> list:
         out.append("legal")
     if m.get("unmanaged_open_minutes"):
         out.append("manager")
-    if m.get("deterministic") is False:
-        out.append("deterministic")
+    if m.get("deterministic") is False and not m.get("cut_runs"):
+        out.append("deterministic")                 # a press an emergency cap cut may differ: not this
     if m.get("long_shifts") and not m.get("usual_has_long_shifts"):
         out.append("no_long_shifts")
     if m.get("usual_days_kept_pct") is not None and m["usual_days_kept_pct"] < USUAL_DAYS_KEPT_MIN:
