@@ -126,3 +126,18 @@ def test_a_new_button_reads_the_price_list_that_morning_and_can_be_matched(db, m
     conn.close()
     assert pos_archive._prices_due(rid, "rpower", "2026-10-26", db) is True        # Peach Crown's first night
     assert pos_archive._prices_due(rid, "rpower", "2026-10-25", db) is False       # nothing new that night
+
+
+def test_a_bottomless_order_costs_its_refills_too(db):
+    import bar.margins as bm
+    rid = _rid(db)
+    conn = models.get_conn(db)
+    day = (date.today() - timedelta(days=3)).isoformat()
+    rows = [(f"b{i}", "Wycliff Bottomless", 1.0) for i in range(10)] + [(f"r{i}", "Wycliff Refill", 1.0) for i in range(27)]
+    for lid, name, q in rows:
+        conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, ticket_id, business_date, "
+                     "item_name, kind, qty) VALUES (?,?,?,?,?,?,?,?)", (rid, "rpower", lid, "t", day, name, "sale", q))
+    conn.commit()
+    conn.close()
+    assert bm.glasses_per_bottomless(rid, "Wycliff Bottomless", db_path=db) == 3.7
+    assert bm.glasses_per_bottomless(rid, "Sintesi Bottomless", db_path=db) is None

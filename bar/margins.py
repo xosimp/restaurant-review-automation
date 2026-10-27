@@ -180,6 +180,28 @@ def _series_for(analysis, key):
 # The least a bottle of each costs: below it the line was misread.
 _FLOOR = {"liquor": 5.0, "wine": 2.5}
 _BUCKET_RE = re.compile(r"\bbucket\b", re.I)
+_BOTTOMLESS_RE = re.compile(r"\bbottomless\b", re.I)
+
+
+def glasses_per_bottomless(restaurant_id, item_name, db_path=None, days=90):
+    """The glasses one bottomless order pours: 1 + its "<name> Refill"
+    lines over its own, in the last `days`; None when no refill button is
+    rung (the cost then stays one glass, said so by its label)."""
+    from datetime import date, timedelta
+    refill = _BOTTOMLESS_RE.sub("Refill", str(item_name or ""))
+    since = (date.today() - timedelta(days=days)).isoformat()
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT SUM(CASE WHEN item_name=? THEN qty ELSE 0 END), SUM(CASE WHEN item_name=? THEN qty ELSE 0 END) "
+            "FROM pos_ticket_lines WHERE restaurant_id=? AND business_date>=? AND kind='sale'",
+            (str(item_name), refill, int(restaurant_id), since)).fetchone()
+    finally:
+        conn.close()
+    orders, refills = (float(row[0] or 0), float(row[1] or 0)) if row else (0.0, 0.0)
+    if orders <= 0 or refills <= 0:
+        return None
+    return round(1 + refills / orders, 1)
 
 
 def bucket_size(restaurant_id, db_path=None, days=90):
@@ -261,6 +283,14 @@ def margins(restaurant_id, analysis, pour=None, db_path=None, limit_suggestions=
                 continue
             cost_now = cost_now * bucket_n
             label = f"{bucket_n:g} {now['each']}s (a bucket)"
+        # A bottomless glass is the first pour and every refill rung after it
+        # ("Wycliff Refill" at $0 - EJ's: 2.7 a guest), never one glass
+        # (owner, 10/27/26: the $24.99 Wycliff Bottomless read 3.6%).
+        elif _BOTTOMLESS_RE.search(item["name"] or ""):
+            glasses = glasses_per_bottomless(restaurant_id, item["name"], db_path)
+            if glasses:
+                cost_now = cost_now * glasses
+                label = f"{glasses:.1f} × {label} (refills rung)"
         before, changed = None, None
         ch = st.get("change")
         if ch:
