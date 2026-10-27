@@ -48,7 +48,7 @@ def _full_suite(job):
             if re.search(r"(^|\s)tests/?(\s|$)", args) and "-m contract" not in args \
                     and "-m quarantine" not in args:
                 return True
-            if "test_shards.py" in args:
+            if "shard_tests.py" in args:
                 return True
     return False
 
@@ -114,7 +114,7 @@ def test_the_full_suites_are_nightly():
     jobs = wf["jobs"]
     assert _full_suite(jobs["full-sqlite"]) and _full_suite(jobs["shifted-tz"])
     assert jobs["postgres"]["strategy"]["matrix"]["shard"] == [1, 2, 3, 4]
-    assert "test_shards.py" in _steps_text(jobs["postgres"])
+    assert "shard_tests.py" in _steps_text(jobs["postgres"])
     assert jobs["shifted-tz"]["env"]["TZ"] == "Pacific/Pago_Pago"
     assert "-p no:xdist" in _steps_text(jobs["solver-serial"])
     assert jobs["quarantine"].get("continue-on-error") is True

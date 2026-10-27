@@ -1,12 +1,12 @@
 """
-scripts/test_shards.py — split the test files into N shards, deterministically
+scripts/shard_tests.py — split the test files into N shards, deterministically
 (audit #25 A01-08: the nightly Postgres suite as a matrix, not one ~2-hour
 job). A file's shard is a hash of its name, so the split never depends on
 the order files were added in, a new file moves nothing else, and every shard
 of one run sees the same list.
 
-    python scripts/test_shards.py --shard 1 --of 4      # one file per line
-    pytest $(python scripts/test_shards.py --shard 2 --of 4) -n auto --dist loadfile
+    python scripts/shard_tests.py --shard 1 --of 4      # one file per line
+    pytest $(python scripts/shard_tests.py --shard 2 --of 4) -n auto --dist loadfile
 """
 import argparse
 import hashlib

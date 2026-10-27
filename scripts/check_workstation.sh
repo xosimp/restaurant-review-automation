@@ -35,6 +35,14 @@ PY=.venv/bin/python
 command -v gh >/dev/null && { gh auth status >/dev/null 2>&1 && ok "gh logged in" || echo "  note  gh installed, not logged in (gh auth login)"; } || echo "  note  gh not installed (brew install gh) — CI runs and PRs"
 curl -s -o /dev/null -w "%{http_code}" localhost:5050/health 2>/dev/null | grep -q 200 && ok "local backend on :5050" \
   || echo "  note  local backend not running (nohup env PORT=5050 .venv/bin/python hosted_dashboard.py &)"
+# The scratch Postgres the suite's Postgres mode and pg_sql_audit use
+# (TESTING.md, On Postgres): version 16, as production and CI — an older
+# server gives false failures ("subquery in FROM must have an alias").
+# Never production's; the suite refuses a non-local CAVNAR_TEST_PG_URL.
+PGV=$([ -x "$PY" ] && $PY -c "import psycopg; c = psycopg.connect('postgresql://postgres@127.0.0.1:55433/postgres', connect_timeout=3); print(c.info.server_version // 10000)" 2>/dev/null)
+if [ "$PGV" = "16" ]; then ok "scratch Postgres 16 on :55433 (CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55433/postgres)"
+elif [ -n "$PGV" ]; then bad "scratch Postgres on :55433 is version $PGV, not 16 (production and CI run 16)"
+else bad "scratch Postgres 16 on :55433 (brew install postgresql@16; initdb -U postgres --auth=trust ~/pg16; pg_ctl -D ~/pg16 -o '-p 55433' -l ~/pg16.log start)"; fi
 command -v xcodebuild >/dev/null && ok "$(xcodebuild -version 2>/dev/null | head -1)" || bad "Xcode"
 security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development" && ok "Apple Development signing identity" || bad "Apple Development signing certificate (Xcode → Settings → Accounts)"
 [ -d ios/CavnarAI/CavnarAI.xcodeproj ] && ok "iOS project generated" || echo "  note  iOS project not generated yet — run ios/CavnarAI/generate.sh"

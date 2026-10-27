@@ -118,7 +118,7 @@ jobs:
 
   postgres:
     # The Postgres path, every test file, in four shards by file hash
-    # (scripts/test_shards.py) instead of one ~2-hour job (A01-08). Each
+    # (scripts/shard_tests.py) instead of one ~2-hour job (A01-08). Each
     # test's database is copied from a template built the way production's
     # was (tests/conftest.py, CAVNAR_TEST_PG_URL).
     runs-on: ubuntu-latest
@@ -149,7 +149,7 @@ jobs:
       - run: pip install --no-deps -r requirements-dev.txt
       - name: Shard ${{ matrix.shard }} of 4 on Postgres
         run: >-
-          pytest $(python scripts/test_shards.py --shard ${{ matrix.shard }} --of 4)
+          pytest $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 4)
           -n auto --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
           -m "not quarantine and not browser" --junitxml=junit/postgres-${{ matrix.shard }}.xml
       - if: always()

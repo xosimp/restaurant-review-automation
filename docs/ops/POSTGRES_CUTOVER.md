@@ -167,7 +167,8 @@ b. **Blob bucket** (optional, 1b). A bucket of its own (not the backup
    in an INTEGER column becomes NULL, counted); `foreign_keys.refused` lists
    rows that point at nothing. Each is a decision, not a surprise.
 3. Run the app against it, locally, with NO provider keys in the environment
-   (CLAUDE.md: never a worktree with Flask's `.env`): `DATABASE_URL=$SCRATCH_PG_URL`
+   (CLAUDE.md: never a worktree with Flask's `.env`): `DATABASE_URL=$SCRATCH_PG_URL ALLOW_LOCAL_PG=1`
+   (off Railway `DATABASE_URL` is ignored without it — audit #25 A01-06)
    and open the dashboard, Labor, the Studio (generate is safe without keys —
    it refuses), Ask's stored reads, the admin console. Then run the suite's
    database-heavy files against it if time allows. Anything that fails is a

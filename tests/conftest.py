@@ -561,7 +561,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             terminalreporter.write_line(
                 f"This change touches {', '.join(hit)} and CAVNAR_TEST_PG_URL is unset, so none of these tests "
                 "ran on Postgres (production's database). Run the files that cover it again with "
-                "CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres (TESTING.md, On Postgres).")
+                "CAVNAR_TEST_PG_URL=postgresql://postgres@127.0.0.1:55433/postgres (Postgres 16, as production; TESTING.md, On Postgres).")
 
 
 def _changed_files():

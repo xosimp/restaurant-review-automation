@@ -82,6 +82,13 @@ def test_a_run_with_production_database_url_exported_still_never_routes_to_it():
 
 # ── the app's own guard: DATABASE_URL only on Railway ───────────────────────
 
+@pytest.fixture(autouse=True)
+def _no_suite_routes(monkeypatch, request):
+    """The suite's Postgres mode routes the default database itself
+    (models._PG_ROUTES); these tests are about DATABASE_URL alone."""
+    if request.node.name.startswith(("test_database_url", "test_on_railway", "test_allow_local_pg")):
+        monkeypatch.setattr(models, "_PG_ROUTES", {})
+
 def test_database_url_is_ignored_off_railway(monkeypatch):
     for v in config.RAILWAY_MARKERS:
         monkeypatch.delenv(v, raising=False)
