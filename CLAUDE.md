@@ -486,8 +486,9 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **Tenant isolation has a crawler.** `tests/test_cross_tenant_crawl.py` calls
   every rule as tenant A with tenant B's ids; any response carrying B's marker,
   any change to B's rows or any unhandled exception fails. The SQL ratchet
-  (`scripts/check_tenant_scope.py`) counts every `id=?` / `id IN (` without
-  `restaurant_id`; a new baseline entry carries its `why`. An Ask tool with
+  (`scripts/check_tenant_scope.py`) holds every `id=?` / `id IN (` without
+  `restaurant_id` by count and by statement fingerprint, so a swapped or
+  edited statement is reviewed too; a new baseline entry carries its `why`. An Ask tool with
   `module: None` is in a `tool_allowed` name set or
   `ask_cavnar_tools._MODULELESS_REVIEWED` with the reason. A permission test
   that depends on app hooks uses `tests/real_app.py`.

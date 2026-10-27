@@ -12,7 +12,7 @@ sys.path.append(os.path.join(ROOT, "scripts"))
 def test_no_new_unscoped_write_on_a_tenant_table():
     import check_tenant_scope as c
     baseline = json.load(open(c.BASELINE, encoding="utf-8"))
-    over = c.compare(c.scan(), baseline)
+    over = c.compare(c.scan(), baseline, c.fingerprints())
     assert not over, ("new unscoped writes (add AND restaurant_id=?, or raise "
                       f"scripts/tenant_scope_baseline.json naming the ownership check): {over}")
 
@@ -31,6 +31,32 @@ def test_the_scan_sees_an_unscoped_write_and_passes_a_scoped_one(tmp_path, monke
     assert c.compare({"x.py::reviews": 1}, {"x.py::reviews": 2}) == []
 
 
+def test_a_swapped_statement_fails_though_the_count_held(tmp_path, monkeypatch):
+    """Blind re-audit 10/27/26 B1 F14: the baseline holds each statement's
+    fingerprint, so removing one unscoped write and adding another in the
+    same file fails — a count alone passed it."""
+    import check_tenant_scope as c
+    src = tmp_path / "x.py"
+    monkeypatch.setattr(c, "ROOT", str(tmp_path))
+    monkeypatch.setattr(c, "_sources", lambda: ["x.py"])
+    src.write_text('conn.execute("UPDATE reviews SET text=? WHERE id=?", (t, i))\n')
+    baseline = {"x.py::reviews": {"n": 1, "stmts": c.fingerprints({"reviews"})["x.py::reviews"], "why": "w"}}
+    src.write_text('conn.execute("UPDATE  reviews SET text=?\\n WHERE id=?", (t, i))\n')   # reformatted only
+    assert c.compare(c.scan({"reviews"}), baseline, c.fingerprints({"reviews"})) == []
+    src.write_text('conn.execute("UPDATE reviews SET deleted=1 WHERE id=?", (i,))\n')         # swapped
+    assert c.scan({"reviews"}) == {"x.py::reviews": 1}
+    assert c.compare(c.scan({"reviews"}), baseline, c.fingerprints({"reviews"})) == [("x.py::reviews", 1, 1)]
+    assert c.compare(c.scan({"reviews"}), baseline) == []          # the count alone would have passed it
+
+
+def test_every_baseline_entry_holds_a_fingerprint_per_statement():
+    import check_tenant_scope as c
+    for path in (c.BASELINE, c.READS_BASELINE):
+        baseline = json.load(open(path, encoding="utf-8"))
+        bad = [k for k, v in baseline.items() if len(v.get("stmts") or []) != int(v.get("n") or 0)]
+        assert not bad, f"{os.path.basename(path)}: re-baseline (--update / --update-reads): {bad}"
+
+
 def test_the_tables_are_read_from_the_code():
     import check_tenant_scope as c
     t = c.tenant_tables()
@@ -42,7 +68,7 @@ def test_no_new_unscoped_read_on_a_tenant_table():
     `SELECT ... FROM <tenant table> ... WHERE id=?` without restaurant_id."""
     import check_tenant_scope as c
     baseline = json.load(open(c.READS_BASELINE, encoding="utf-8"))
-    over = c.compare(c.scan_reads(), baseline)
+    over = c.compare(c.scan_reads(), baseline, c.fingerprints(reads=True))
     assert not over, ("new unscoped reads (add AND restaurant_id=?, or raise "
                       f"scripts/tenant_scope_reads_baseline.json naming the ownership check): {over}")
 
@@ -167,6 +193,7 @@ def test_an_update_keeps_each_reason_and_marks_a_new_key_todo(tmp_path):
     path = tmp_path / "baseline.json"
     path.write_text(json.dumps({"a.py::t": {"n": 3, "why": "checked by _owned()"},
                                 "gone.py::t": {"n": 1, "why": "removed"}}))
-    out = c._write(str(path), {"a.py::t": 2, "new.py::t": 1})
-    assert out == {"a.py::t": {"n": 2, "why": "checked by _owned()"}, "new.py::t": {"n": 1, "why": "TODO"}}
+    out = c._write(str(path), {"a.py::t": 2, "new.py::t": 1}, {"a.py::t": ["f1", "f2"], "new.py::t": ["f3"]})
+    assert out == {"a.py::t": {"n": 2, "stmts": ["f1", "f2"], "why": "checked by _owned()"},
+                   "new.py::t": {"n": 1, "stmts": ["f3"], "why": "TODO"}}
     assert json.loads(path.read_text()) == out
