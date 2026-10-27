@@ -116,12 +116,22 @@ def pick(restaurant_id, keywords, rating, text, urgency=None, sentiment=None, db
     return order[0]
 
 
+# A phrase that ranks the restaurant ("best wings in St. Charles") said as
+# fact is a claim the reply guard holds; said as an aim or as the guest's
+# words it is the restaurant's voice (owner, 10/27/26).
+_RANKS_RE = re.compile(r"\b(?:best|top|famous|favou?rite|number\s+one)\b|#\s?1\b", re.I)
+
+
 def prompt_note(keyword) -> str:
     if not keyword:
         return ""
-    return (f"\nSEARCH PHRASE: if — and only if — it reads naturally, work the phrase \"{keyword}\" into the reply "
+    note = (f"\nSEARCH PHRASE: if — and only if — it reads naturally, work the phrase \"{keyword}\" into the reply "
             "once, in the restaurant's voice (for example while thanking them or inviting them back). Never force "
             "it, never quote it, never add any other search phrase. If it doesn't fit, leave it out.")
+    if _RANKS_RE.search(keyword):
+        note += (" It ranks the restaurant, so say it as what you aim for or what the guest felt (\"we aim for the "
+                 f"{keyword}\"), never as a fact (\"we have the {keyword}\").")
+    return note
 
 
 def check(draft, keywords, rating, urgency=None, sentiment=None) -> str:

@@ -349,12 +349,13 @@ def test_a03_09_each_punch_says_how_its_overtime_pay_was_read():
     assert rpower._ot_reading(_punch("E", "2026-09-14", reg_rate=0)) == (None, "no_rate", None)
     assert rpower._ot_reading(_punch("E", "2026-09-14", ot_rate=30.0)) == (20.0, "rate", None)
     assert rpower._ot_reading(_punch("E", "2026-09-14", ot_pay=60.0)) == (20.0, "whole_pay", 1.5)
-    assert rpower._ot_reading(_punch("E", "2026-09-14", ot_pay=20.0)) == (20.0, "premium_only", 0.5)
-    p, band, ratio = rpower._ot_reading(_punch("E", "2026-09-14", ot_pay=40.0))
-    assert (p, band, ratio) == (None, "unreadable", 1.0)
+    # The whole OT pay (RPOWER, 10/27/26); below straight time, unreadable.
+    p, band, ratio = rpower._ot_reading(_punch("E", "2026-09-14", ot_pay=20.0))
+    assert (p, band, ratio) == (None, "unreadable", 0.5)
+    assert rpower._ot_reading(_punch("E", "2026-09-14", ot_pay=40.0)) == (0.0, "whole_pay", 1.0)
     assert rpower._ot_reading(_punch("E", "2026-09-14"))[1] == "no_pay"
     # _ot_premium is the reading's premium, unchanged.
-    for e in (_punch("E", "2026-09-14", ot_pay=60.0), _punch("E", "2026-09-14", ot_pay=40.0)):
+    for e in (_punch("E", "2026-09-14", ot_pay=60.0), _punch("E", "2026-09-14", ot_pay=20.0)):
         assert rpower._ot_premium(e) == rpower._ot_reading(e)[0]
 
 
@@ -363,12 +364,12 @@ def test_a03_09_the_distribution_is_kept_and_an_unreadable_store_is_raised_once(
     import rpower
     rid = _rid("OT Bands Co")
     entries = [_punch(f"E{i}", "2026-09-14", ot_pay=60.0) for i in range(4)] + \
-              [_punch("U1", "2026-09-14", ot_pay=40.0), _punch("U2", "2026-09-15", ot_pay=44.0)] + \
+              [_punch("U1", "2026-09-14", ot_pay=30.0), _punch("U2", "2026-09-15", ot_pay=36.0)] + \
               [_punch("R", "2026-09-14", ot_rate=30.0), _punch("N", "2026-09-14", ot=0)]
     bands = rpower.ot_pay_bands(entries)
     assert bands["punches"] == 7 and bands["pay_read"] == 6
     assert bands["bands"] == {"rate": 1, "unreadable": 2, "whole_pay": 4}
-    assert bands["unreadable_share"] == round(2 / 6, 3) and bands["ratios"] == [1.0, 1.1, 1.5, 1.5, 1.5, 1.5]
+    assert bands["unreadable_share"] == round(2 / 6, 3) and bands["ratios"] == [0.75, 0.9, 1.5, 1.5, 1.5, 1.5]
     ops.init_ops()
     assert rpower.record_ot_pay_bands(rid, bands, date(2026, 9, 15)) is True
     assert rpower.record_ot_pay_bands(rid, bands, date(2026, 9, 15)) is False, "once a day"
@@ -389,15 +390,15 @@ def test_a03_09_the_distribution_is_kept_and_an_unreadable_store_is_raised_once(
 
 # A golden payroll fixture's SHAPE, with synthetic figures (the repo is
 # public: a real week's punches and Erik's payroll report never go in it).
-# A real check fills the same shape privately once RPOWER confirms what
-# ot_pay means (WILL-STEP, audit #25 F9).
+# RPOWER confirmed 10/27/26: ot_pay is the whole pay for the OT hours, and
+# pay = reg + ot + dt (audit #25 F9).
 PAYROLL_WEEK = {
     "store": "synthetic", "week": ["2026-09-14", "2026-09-20"],
     "people": {"employees": {"E1": "Ana Line", "E2": "Ben Grill", "E3": "Cal Prep"}, "jobs": {"J1": "Line Cook"}},
     "punches": [
         _punch("E1", "2026-09-18", reg=8, ot=2, reg_rate=18.0, ot_rate=27.0),      # the rates say it
         _punch("E2", "2026-09-18", reg=8, ot=2, reg_rate=20.0, ot_pay=60.0),       # ot_pay = the whole OT pay
-        _punch("E3", "2026-09-18", reg=8, ot=2, reg_rate=16.0, ot_pay=16.0),       # ot_pay = the premium only
+        _punch("E3", "2026-09-18", reg=8, ot=2, reg_rate=16.0, ot_pay=48.0),       # ot_pay = the whole OT pay
     ],
     # What payroll paid: straight time on every hour, 1.5x on the OT hours.
     "payroll": {"ot_premium": 2 * 9.0 + 2 * 10.0 + 2 * 8.0,

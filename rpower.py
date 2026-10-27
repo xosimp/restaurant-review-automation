@@ -4055,22 +4055,22 @@ def _require_resolved(entries: list, people: dict) -> None:
             "nothing was saved from this read")
 
 
-# The ratio of a punch's OT pay to its straight-time pay that says which it
-# is (audit #23 A3-04, unconfirmed with RPOWER): at or above this the
-# whole OT pay, at or below OT_PAY_PREMIUM_AT the premium alone, between
-# them unreadable.
-OT_PAY_WHOLE_AT = 1.2
-OT_PAY_PREMIUM_AT = 0.8
+# ot_pay is the WHOLE pay for a punch's overtime hours, never the premium
+# alone - RPOWER confirmed it 10/27/26 ("just the ot portion ... add reg, ot
+# and dt for sum") and Simple EJ's punches agree (pay = reg_hours x reg_rate
+# + ot_pay on every one; ot_pay ~ ot_hours x 1.5 x reg_rate). An OT pay
+# below the hours' straight time contradicts that, so it is unreadable
+# (its OT is then priced at half the hour's rate), never read as a premium.
+OT_PAY_WHOLE_AT = 1.0
 
 
 def _ot_premium(e) -> Optional[float]:
     """What RPOWER's payroll paid over straight time for this punch's
     overtime and doubletime (audit #23 A3-04): ot_hours x (ot_rate -
     reg_rate) (and the same for DT) where the rates are on the punch, else
-    read from ot_pay / dt_pay - which may be the whole OT pay or only the
-    premium (unconfirmed with RPOWER), so the ratio to the straight-time pay
-    decides: 1.2x or more is the whole pay (premium = pay - straight), 0.8x
-    or less is the premium itself, anything between is unreadable. 0.0 for
+    ot_pay / dt_pay less the hours' straight time - ot_pay is the whole pay
+    for the OT hours (RPOWER, 10/27/26); one below straight time is
+    unreadable. 0.0 for
     a punch with no OT or DT hours; None when the punch's pay cannot say (a
     $0 punch, no rates or pays) - labor.analyse_shifts then prices the POS's
     OT hours at the hour's own rate. An archived punch carries OT and DT
@@ -4083,8 +4083,9 @@ def _ot_reading(e) -> tuple:
     it was read (audit #25 F9: the heuristic is unconfirmed, so how often
     each band is used is recorded per store, ot_pay_bands): band is
     "no_ot", "no_rate" (no reg_rate), "rate" (the punch's own OT/DT rate),
-    "whole_pay" / "premium_only" (the pay ratio decided), "unreadable" (the
-    ratio fell between), "no_pay", or "mixed" (OT and DT read differently);
+    "whole_pay" (the pay read, less straight time), "unreadable" (a pay
+    below the hours' straight time), "no_pay", or "mixed" (OT and DT read
+    differently);
     ratio the pay over straight time when the pay was read, else None."""
     ot, dt = _num(e.get("ot_hours")), _num(e.get("dt_hours"))
     if ot <= 0 and dt <= 0:
@@ -4100,8 +4101,6 @@ def _ot_reading(e) -> tuple:
         ratio = pay / straight
         if ratio >= OT_PAY_WHOLE_AT:
             return pay - straight, "whole_pay", ratio
-        if ratio <= OT_PAY_PREMIUM_AT:
-            return pay, "premium_only", ratio
         return None, "unreadable", ratio
     if e.get("_ot_pay_combined"):
         rate = _num(e.get("ot_rate"))
@@ -4156,7 +4155,7 @@ def ot_pay_bands(entries) -> dict:
         if ratio is not None:
             ratios.append(round(float(ratio), 2))
     punches = sum(bands.values())
-    pay_read = sum(bands.get(b, 0) for b in ("whole_pay", "premium_only", "unreadable"))
+    pay_read = sum(bands.get(b, 0) for b in ("whole_pay", "unreadable"))
     return {"punches": punches, "bands": dict(sorted(bands.items())), "pay_read": pay_read,
             "unreadable_share": round(bands.get("unreadable", 0) / pay_read, 3) if pay_read else None,
             "ratios": sorted(ratios)[:_OT_RATIO_SAMPLE]}

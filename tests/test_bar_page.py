@@ -1056,3 +1056,16 @@ def test_the_page_says_sold_never_rung_and_rows_carry_no_confidence_word(full):
         assert first.count('class="br-dchip"') == 3 and "+4 more" in _text(sold)
     src = open(DASHBOARD, encoding="utf-8").read()
     assert ".dn-foot{margin-top:56px;font-size:14.5px" in src
+
+
+def test_a_match_says_on_its_row_what_happened():
+    """Owner, 10/27/26: Match looked dead - a missing pick was only a corner
+    toast, and a saved match changed nothing on screen until the payload's
+    re-read (seconds) repainted the list."""
+    js = _bar_script()
+    branch = js[js.index("a('data-br-vmap') != null"):js.index("a('data-br-unaside') != null")]
+    assert "rowSay(vrow, 'Pick what it pours from first.', 'err')" in branch and "br-need" in branch
+    assert "rowWrite('/api/food-cost/bar/drink-map'" in branch and "ownerWrite(" not in branch
+    assert "row.classList.add('br-busy')" in js and "rowSay(row, doneMsg, 'ok')" in js
+    css = _bar_css()
+    assert ".br-mrow .br-msg.err{" in css and ".br-mrow.br-busy::after{" in css

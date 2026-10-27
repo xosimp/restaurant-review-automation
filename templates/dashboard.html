@@ -48374,6 +48374,16 @@ function sfw2RuleCheck(chk) {
 .br-mrow .m .nos{color:var(--ink3)}
 .br-mrow .br-sug{font:700 11.5px/1 'Apfel Grotezk',sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--ember2)}
 .br-mrow .r .br-form{flex-wrap:nowrap}
+/* A match in flight, refused or done is said ON its row (owner, 10/27/26: a corner toast and a
+   three-second re-read made Match look dead). */
+.br-mrow.br-busy{overflow:hidden}
+.br-mrow.br-busy::after{content:"";position:absolute;bottom:0;left:-30%;width:30%;height:2px;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
+.br-mrow .br-msg{grid-column:1/-1;margin-top:-8px;font-size:13.5px;color:var(--ink2)}
+.br-mrow .br-msg:empty{display:none}
+.br-mrow .br-msg.err{color:var(--br-red-text)}
+.br-mrow .br-msg.ok{color:var(--green)}
+.br-mrow .br-sel.br-need{outline:2px solid var(--red);outline-offset:1px}
+.br-mrow.br-done .r{opacity:.5}
 .br-nml{display:flex;flex-direction:column;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
 .br-nm2{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1.2fr) auto;gap:16px;align-items:center;padding:16px 22px}
 .br-nm2+.br-nm2::before{content:"";position:absolute;left:22px;right:22px;top:0;height:1px;background:var(--br-hair2)}
@@ -48493,6 +48503,7 @@ function sfw2RuleCheck(chk) {
 /* Reduce Motion (V16): the entrances, sweeps and shimmer stop and show
    their end state. Sizing belongs to .br-chart .dot.sm above, never here. */
 @media (prefers-reduced-motion:reduce){
+  .br-mrow.br-busy::after{animation:none;left:35%}
 .br-rise,.br-fade,.br-bar i,.br-sk,.br-steps i{animation:none!important;opacity:1;transform:none}
 .br-chart .dot.hot::after{animation:none!important;opacity:1}
 .br-draw{animation:none!important;clip-path:none}
@@ -50293,6 +50304,29 @@ function sfw2RuleCheck(chk) {
       say(okMsg, 'success'); reread();
     });
   }
+  /* A line under one matching row: what its Match did, or why it didn't. */
+  function rowSay(row, msg, kind) {
+    if (!row) { if (msg) say(msg, kind === 'err' ? 'error' : 'success'); return; }
+    var m = row.querySelector('.br-msg');
+    if (!m) { m = document.createElement('div'); m.className = 'br-msg'; m.setAttribute('role', 'status'); row.appendChild(m); }
+    m.className = 'br-msg' + (kind ? ' ' + kind : '');
+    m.textContent = msg || '';
+  }
+  /* ownerWrite for one matching row: the row shows the save in flight and
+     its result at once; the payload re-read (seconds on a big store)
+     repaints the list behind it. */
+  function rowWrite(url, body, row, btn, doneMsg, okToast) {
+    if (btn) btn.disabled = true;
+    if (row) row.classList.add('br-busy');
+    rowSay(row, '', '');
+    send('POST', url, body, function (d) {
+      if (row) row.classList.remove('br-busy');
+      if (!d.ok) { if (btn) btn.disabled = !!d.lost; rowSay(row, refusal(d), 'err'); return; }
+      if (row) { row.classList.add('br-done'); var f = row.querySelector('.br-form'); if (f) f.setAttribute('inert', ''); }
+      rowSay(row, doneMsg, 'ok');
+      say(okToast, 'success'); reread();
+    });
+  }
   function valOf(sel) { var e = document.querySelector(sel); return e ? String(e.value || '').replace(/^\s+|\s+$/g, '') : ''; }
   function attrSel(a, v) { return '[' + a + '="' + String(v).replace(/["\\]/g, '\\$&') + '"]'; }
   function goTo(id) {
@@ -50376,6 +50410,10 @@ function sfw2RuleCheck(chk) {
         return;
       }
       if (t.id === 'br-cdate') { ST.cnt.date = t.value; return; }
+      if (t.getAttribute && t.getAttribute('data-br-vmapto') != null) {
+        t.classList.remove('br-need');
+        rowSay(t.closest ? t.closest('.br-mrow') : null, '', '');
+      }
       if (t.id === 'br-fcat') { ST.cat = t.value; ST.shown = 0; refreshList(); }
       else if (t.id === 'br-fdist') { ST.dist = t.value; ST.shown = 0; refreshList(); }
       else if (t.id === 'br-fsort') { ST.sort = t.value; refreshList(); }
@@ -50468,11 +50506,19 @@ function sfw2RuleCheck(chk) {
           say('Removed the waste entry', 'success'); reread();
         });
       } else if (a('data-br-vmap') != null) {
-        var vid = a('data-br-vmap'), vk = valOf(attrSel('data-br-vmapto', vid)), oz = +valOf(attrSel('data-br-vmapoz', vid)).replace(/[^\d.]/g, '');
-        if (!vk) { say('Pick what it pours from first.', 'error'); return; }
+        var vid = a('data-br-vmap'), vsel = document.querySelector(attrSel('data-br-vmapto', vid)), vk = valOf(attrSel('data-br-vmapto', vid)), oz = +valOf(attrSel('data-br-vmapoz', vid)).replace(/[^\d.]/g, '');
+        var vrow = t.closest ? t.closest('.br-mrow') : null;
+        if (!vk) {
+          rowSay(vrow, 'Pick what it pours from first.', 'err');
+          if (vsel) { vsel.classList.add('br-need'); try { vsel.focus(); } catch (e2) {} }
+          return;
+        }
         var vb = {provider: a('data-provider'), item_id: vid, product_key: vk}, skip = vk.indexOf('skip:') === 0;
         if (oz > 0 && !skip) vb.pour_oz = oz;
-        ownerWrite('/api/food-cost/bar/drink-map', vb, skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now', t);
+        var vname = vsel && vsel.selectedIndex >= 0 ? vsel.options[vsel.selectedIndex].text : '';
+        rowWrite('/api/food-cost/bar/drink-map', vb, vrow, t,
+                 skip ? 'Set aside — it moves to Set aside' : 'Matched to ' + vname + (oz > 0 ? ' at ' + oz + ' oz' : '') + ' — it counts in bought vs sold now',
+                 skip ? 'Set aside — it is listed under Set aside' : 'Matched — it counts in bought vs sold now');
       } else if (a('data-br-unaside') != null) {
         ownerWrite('/api/food-cost/bar/drink-map', {provider: a('data-provider'), item_id: a('data-br-unaside'), product_key: null}, 'Back in Drinks to match', t);
       } else if (a('data-br-entry') != null) {

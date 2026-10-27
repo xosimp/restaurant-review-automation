@@ -314,6 +314,9 @@ _REPLY_CAUSE = re.compile(
     r"|in\s+training|a\s+one[- ]time|one[- ]off|isolated\s+incident|not\s+the\s+norm|on\s+a\s+normal\s+night"
     r"|never\s+happens|always\s+(?:is|are|do|does|get|gets))\b", re.I)
 
+_WHY_FEELING = re.compile(r"\s+(?:we|i)\s+(?:\w+\s+)?(?:think|thinks|love|believe|feel|do\s+what\s+we\s+do|"
+                          r"keep\s+(?:coming|doing)|opened|started|got\s+into)\b", re.I)
+
 # How the restaurant sources or makes its food — true only if the owner
 # said it (voice or menu notes); a model inventing "fresh daily from local,
 # organic ingredients" is an advertising claim on a public listing (NS1 H6).
@@ -375,7 +378,10 @@ def public_reply_claims(draft: str, allowed_source: str = "") -> list:
             out.append(f"a claim about how the food is made or sourced ({m.group(0).strip()!r})")
             break
     for s in sentences(text):
-        m = _REPLY_CAUSE.search(s)
+        # "this is why we think ..." / "that's why we love it" gives a reason
+        # for a feeling, not a cause for what went wrong (owner, 10/27/26).
+        m = next((c for c in _REPLY_CAUSE.finditer(s)
+                  if not (c.group(0).lower().endswith("why") and _WHY_FEELING.match(s, c.end()))), None)
         if not m:
             continue
         # Theirs when the sentence's own content words are mostly in what

@@ -943,7 +943,11 @@ server's sentence in `.load-err` (`--red`) where "Loading…" was, never an
 empty box and never a placeholder left up. Errors are a `toast(…, 'error')`
 or an inline line, never `alert()` (a browser can suppress repeated
 dialogs); a failure that must outlive a toast sits inline under the control
-that started it (`#sched-notice`). When a side-effecting request loses its
+that started it (`#sched-notice`). An action on one row of a list (the Bar's
+Match) says what it did on that row: the sliding `--ember` bar along the row's
+foot while it saves, then a line under it (`.br-msg`, `--green` done, `--red`
+refused) — the toast only echoes it, and a missing pick outlines the control
+and focuses it (owner, 10/27/26: a corner toast read as nothing). When a side-effecting request loses its
 answer, say the outcome is unknown and leave the button off — never
 re-enable it for a blind second send. An ended session is the one sticky
 toast (`.toast.toast-sticky`, `#session-ended`, top of the page) with a Sign

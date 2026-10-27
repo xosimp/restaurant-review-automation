@@ -1204,7 +1204,8 @@ _P1 = [
         r"again|never\s+happen\s+again|make\s+(?:it|this|that|things)\s+right\s+(?:on|at|during|for)\s+your\s+next|"
         r"make\s+(?:it|this|that|things)\s+up\s+to\s+you|guarantee\w*)\b", re.I), False),
     ("award or ranking claim", re.compile(
-        r"(?:\bvoted\b|\baward[- ]winning\b|\bbest\s+(?:\w+\s+){0,2}in\s+(?:town|the\s+city|chicago|[A-Z]\w+)|"
+        r"(?:\bvoted\b|\baward[- ]winning\b|\bbest\s+(?:\w+\s+){0,2}in\s+(?:town|the\s+city|chicago|"
+        r"(?:St|Ft|Mt)\.\s+[A-Z]\w+|[A-Z]\w+)|"
         r"#\s?1\b|\bnumber\s+one\b|\bno\.\s?1\b|\bworld[- ]famous\b|\bfamous\b|\brated\s+\d(?:\.\d)?\s+stars?\s+by)",
         re.I), True),
     ("preparation or sourcing claim", re.compile(
@@ -1214,6 +1215,37 @@ _P1 = [
     ("private guest detail", re.compile(r"\b(?:table\s+\d+|your\s+usual\b|your\s+(?:\d{1,2}(?::\d{2})?\s?[ap]m\s+)?"
                                         r"(?:\w+\s+)?reservation)\b", re.I), False),
 ]
+
+# A superlative said as an aim, an opinion or someone else's words is the
+# restaurant's voice, not a statement of fact (owner, 10/27/26: "Simple EJ's
+# aims for the best wings in St. Charles" was held, and so were "we think
+# ... the best sports bar" and "some say it makes us the best"). Only the
+# soft forms - "best ... in <place>" and "famous" - can be framed: "voted",
+# "award-winning", "#1", "number one" and "rated 4.8 stars by" state a fact
+# someone could check, and stay held however they are said.
+_RANKING_SOFT_RE = re.compile(r"(?:best|famous)\b", re.I)
+_RANKING_FRAMED_RE = re.compile(
+    r"\b(?:aim(?:s|ed|ing)?|strive[sd]?|striving|work(?:s|ed|ing)?\s+(?:hard\s+)?(?:to|toward|towards)|"
+    r"(?:want|wants|hope|hopes|try|tries|trying)\s+to|going\s+for|goal|mission|set\s+out\s+to|"
+    r"(?:we|i)\s+(?:\w+\s+)?(?:think|believe|feel|say|like\s+to\s+think)|in\s+our\s+(?:book|opinion)|"
+    r"if\s+you\s+ask\s+us|(?:some|people|guests|folks|regulars|many|they)\s+(?:say|said|call|called|tell\s+us)|"
+    r"you\s+(?:called|call|named|think|thought|said|say|found)|your\s+words|calling|call(?:ed)?\s+(?:us|it|them))\b",
+    re.I)
+_CLAUSE_START_RE = re.compile(r"(?:[.!?;]|\s[-–—]\s)\s*(?=\S)")
+
+
+def _ranking_framed(body, m) -> bool:
+    """True when a soft ranking match (best ... in <place>, famous) is
+    framed in its own clause as an aim, an opinion or someone's words."""
+    if not _RANKING_SOFT_RE.match(m.group(0)):
+        return False
+    start = 0
+    for b in _CLAUSE_START_RE.finditer(body, 0, m.start()):
+        # "St. Charles" and "Dr. Pepper" do not end a clause.
+        if not re.search(r"\b(?:St|Ft|Mt|Dr|Mr|Mrs|Ms)\.$", body[max(0, b.start() - 3):b.start() + 1]):
+            start = b.end()
+    return bool(_RANKING_FRAMED_RE.search(body[start:m.start()]))
+
 
 # ── public copy: one guard set for every public surface ─────────────────────
 #
@@ -2512,6 +2544,8 @@ class _Run:
                 phrase = m.group(0)
                 if owner_may and phrase.lower() in src:
                     continue
+                if label == "award or ranking claim" and _ranking_framed(body, m):
+                    continue
                 if owner_may and guest and (
                         _g._echoes_named_thing(body, m, _g._flat_words(guest)) if label == "allergen or free-from claim"
                         else _flat(phrase) in guest):
@@ -2989,6 +3023,9 @@ class _Run:
             pos = end
             if needs_move and not _MOVE_PAST_RE.search(scan):
                 continue
+            if self.ctx.surface == "reply_public" and re.search(r"why\s*$", scan[start:end], re.I) \
+                    and _g._WHY_FEELING.match(scan, end):
+                continue          # "this is why we think ..." - a reason for a feeling (owner, 10/27/26)
             quoted = (scan[start:end] + scan[end:end + 30]).lower().strip()
             if len(quoted) > 12 and any(quoted[:len(quoted) - 5] in " ".join(a["text"].lower().split())
                                         for a in self.anchors):
