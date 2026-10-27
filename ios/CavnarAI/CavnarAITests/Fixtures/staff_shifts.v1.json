@@ -1,0 +1,446 @@
+{
+ "ok": true,
+ "published": true,
+ "timezone": "America/Chicago",
+ "today": null,
+ "upcoming": [
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-10-27",
+   "date_iso": "2026-10-27",
+   "day": "Tuesday",
+   "end": "10:00 PM",
+   "hours": 6.0,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_id": "cca69b2d707748498fc6d5bcb6a33884",
+   "shift_start": "4:00 PM",
+   "start": "4:00 PM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-10-28",
+   "date_iso": "2026-10-28",
+   "day": "Wednesday",
+   "end": "10:00 PM",
+   "hours": 6.0,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_id": "cb655833341b43b1923c3fc3d8494d27",
+   "shift_start": "4:00 PM",
+   "start": "4:00 PM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-10-30",
+   "date_iso": "2026-10-30",
+   "day": "Friday",
+   "end": "10:00 PM",
+   "hours": 6.0,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_id": "41a9915647334c4882e3c027e5b213e9",
+   "shift_start": "4:00 PM",
+   "start": "4:00 PM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-10-31",
+   "date_iso": "2026-10-31",
+   "day": "Saturday",
+   "end": "10:00 PM",
+   "hours": 6.0,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_id": "ca87113ed80f4620863d4bc31e672593",
+   "shift_start": "4:00 PM",
+   "start": "4:00 PM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-01",
+   "date_iso": "2026-11-01",
+   "day": "Sunday",
+   "end": "3:30 PM",
+   "hours": 5.75,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_id": "1256f2c5af8e4baa9b40deb2fc286ae1",
+   "shift_start": "9:45 AM",
+   "start": "9:45 AM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-03",
+   "date_iso": "2026-11-03",
+   "day": "Tuesday",
+   "end": "3:30 PM",
+   "hours": 4.75,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_id": "089635297deb405786560e6017417e98",
+   "shift_start": "10:45 AM",
+   "start": "10:45 AM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-04",
+   "date_iso": "2026-11-04",
+   "day": "Wednesday",
+   "end": "3:30 PM",
+   "hours": 4.75,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_id": "e013126b26dc48bebef25977feba5ab0",
+   "shift_start": "10:45 AM",
+   "start": "10:45 AM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-06",
+   "date_iso": "2026-11-06",
+   "day": "Friday",
+   "end": "10:00 PM",
+   "hours": 6.0,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "10:00 PM",
+   "shift_id": "42d60cc6c1cb4de2a4bb0efac951f8e3",
+   "shift_start": "4:00 PM",
+   "start": "4:00 PM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-07",
+   "date_iso": "2026-11-07",
+   "day": "Saturday",
+   "end": "3:30 PM",
+   "hours": 5.75,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_id": "1f7f90459d024420ac41ca1ea0f77793",
+   "shift_start": "9:45 AM",
+   "start": "9:45 AM"
+  },
+  {
+   "actions": [
+    "drop",
+    "swap"
+   ],
+   "break": "",
+   "date": "2026-11-08",
+   "date_iso": "2026-11-08",
+   "day": "Sunday",
+   "end": "3:30 PM",
+   "hours": 5.75,
+   "notes": "",
+   "request": null,
+   "role": "Server",
+   "shift_end": "3:30 PM",
+   "shift_id": "60c40328f754409f9e4dd704a79c5291",
+   "shift_start": "9:45 AM",
+   "start": "9:45 AM"
+  }
+ ],
+ "week": [
+  {
+   "date": "2026-10-26",
+   "is_today": true,
+   "off": true,
+   "posted": true,
+   "shift": null,
+   "shifts": [],
+   "weekday": "Monday"
+  },
+  {
+   "date": "2026-10-27",
+   "is_today": false,
+   "off": false,
+   "posted": true,
+   "shift": {
+    "actions": [
+     "drop",
+     "swap"
+    ],
+    "break": "",
+    "date": "2026-10-27",
+    "day": "Tuesday",
+    "end": "10:00 PM",
+    "hours": 6.0,
+    "notes": "",
+    "request": null,
+    "role": "Server",
+    "shift_end": "10:00 PM",
+    "shift_id": "cca69b2d707748498fc6d5bcb6a33884",
+    "shift_start": "4:00 PM",
+    "start": "4:00 PM"
+   },
+   "shifts": [
+    {
+     "actions": [
+      "drop",
+      "swap"
+     ],
+     "break": "",
+     "date": "2026-10-27",
+     "day": "Tuesday",
+     "end": "10:00 PM",
+     "hours": 6.0,
+     "notes": "",
+     "request": null,
+     "role": "Server",
+     "shift_end": "10:00 PM",
+     "shift_id": "cca69b2d707748498fc6d5bcb6a33884",
+     "shift_start": "4:00 PM",
+     "start": "4:00 PM"
+    }
+   ],
+   "weekday": "Tuesday"
+  },
+  {
+   "date": "2026-10-28",
+   "is_today": false,
+   "off": false,
+   "posted": true,
+   "shift": {
+    "actions": [
+     "drop",
+     "swap"
+    ],
+    "break": "",
+    "date": "2026-10-28",
+    "day": "Wednesday",
+    "end": "10:00 PM",
+    "hours": 6.0,
+    "notes": "",
+    "request": null,
+    "role": "Server",
+    "shift_end": "10:00 PM",
+    "shift_id": "cb655833341b43b1923c3fc3d8494d27",
+    "shift_start": "4:00 PM",
+    "start": "4:00 PM"
+   },
+   "shifts": [
+    {
+     "actions": [
+      "drop",
+      "swap"
+     ],
+     "break": "",
+     "date": "2026-10-28",
+     "day": "Wednesday",
+     "end": "10:00 PM",
+     "hours": 6.0,
+     "notes": "",
+     "request": null,
+     "role": "Server",
+     "shift_end": "10:00 PM",
+     "shift_id": "cb655833341b43b1923c3fc3d8494d27",
+     "shift_start": "4:00 PM",
+     "start": "4:00 PM"
+    }
+   ],
+   "weekday": "Wednesday"
+  },
+  {
+   "date": "2026-10-29",
+   "is_today": false,
+   "off": true,
+   "posted": true,
+   "shift": null,
+   "shifts": [],
+   "weekday": "Thursday"
+  },
+  {
+   "date": "2026-10-30",
+   "is_today": false,
+   "off": false,
+   "posted": true,
+   "shift": {
+    "actions": [
+     "drop",
+     "swap"
+    ],
+    "break": "",
+    "date": "2026-10-30",
+    "day": "Friday",
+    "end": "10:00 PM",
+    "hours": 6.0,
+    "notes": "",
+    "request": null,
+    "role": "Server",
+    "shift_end": "10:00 PM",
+    "shift_id": "41a9915647334c4882e3c027e5b213e9",
+    "shift_start": "4:00 PM",
+    "start": "4:00 PM"
+   },
+   "shifts": [
+    {
+     "actions": [
+      "drop",
+      "swap"
+     ],
+     "break": "",
+     "date": "2026-10-30",
+     "day": "Friday",
+     "end": "10:00 PM",
+     "hours": 6.0,
+     "notes": "",
+     "request": null,
+     "role": "Server",
+     "shift_end": "10:00 PM",
+     "shift_id": "41a9915647334c4882e3c027e5b213e9",
+     "shift_start": "4:00 PM",
+     "start": "4:00 PM"
+    }
+   ],
+   "weekday": "Friday"
+  },
+  {
+   "date": "2026-10-31",
+   "is_today": false,
+   "off": false,
+   "posted": true,
+   "shift": {
+    "actions": [
+     "drop",
+     "swap"
+    ],
+    "break": "",
+    "date": "2026-10-31",
+    "day": "Saturday",
+    "end": "10:00 PM",
+    "hours": 6.0,
+    "notes": "",
+    "request": null,
+    "role": "Server",
+    "shift_end": "10:00 PM",
+    "shift_id": "ca87113ed80f4620863d4bc31e672593",
+    "shift_start": "4:00 PM",
+    "start": "4:00 PM"
+   },
+   "shifts": [
+    {
+     "actions": [
+      "drop",
+      "swap"
+     ],
+     "break": "",
+     "date": "2026-10-31",
+     "day": "Saturday",
+     "end": "10:00 PM",
+     "hours": 6.0,
+     "notes": "",
+     "request": null,
+     "role": "Server",
+     "shift_end": "10:00 PM",
+     "shift_id": "ca87113ed80f4620863d4bc31e672593",
+     "shift_start": "4:00 PM",
+     "start": "4:00 PM"
+    }
+   ],
+   "weekday": "Saturday"
+  },
+  {
+   "date": "2026-11-01",
+   "is_today": false,
+   "off": false,
+   "posted": true,
+   "shift": {
+    "actions": [
+     "drop",
+     "swap"
+    ],
+    "break": "",
+    "date": "2026-11-01",
+    "day": "Sunday",
+    "end": "3:30 PM",
+    "hours": 5.75,
+    "notes": "",
+    "request": null,
+    "role": "Server",
+    "shift_end": "3:30 PM",
+    "shift_id": "1256f2c5af8e4baa9b40deb2fc286ae1",
+    "shift_start": "9:45 AM",
+    "start": "9:45 AM"
+   },
+   "shifts": [
+    {
+     "actions": [
+      "drop",
+      "swap"
+     ],
+     "break": "",
+     "date": "2026-11-01",
+     "day": "Sunday",
+     "end": "3:30 PM",
+     "hours": 5.75,
+     "notes": "",
+     "request": null,
+     "role": "Server",
+     "shift_end": "3:30 PM",
+     "shift_id": "1256f2c5af8e4baa9b40deb2fc286ae1",
+     "shift_start": "9:45 AM",
+     "start": "9:45 AM"
+    }
+   ],
+   "weekday": "Sunday"
+  }
+ ],
+ "week_hours": 29.75,
+ "week_of": "2026-10-26",
+ "week_start": "2026-10-26"
+}

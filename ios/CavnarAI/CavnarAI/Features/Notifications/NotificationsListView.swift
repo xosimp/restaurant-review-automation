@@ -20,7 +20,8 @@ final class NotificationsListViewModel {
         self.client = client
     }
 
-    private struct Response: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/notifications.json).
+    struct Response: Decodable {
         let ok: Bool
         let notifications: [NotificationItem]
         let error: String?

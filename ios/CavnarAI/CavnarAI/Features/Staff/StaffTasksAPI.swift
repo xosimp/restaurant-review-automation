@@ -24,11 +24,15 @@ struct StaffTasksAPI: Sendable {
     private let baseURL: URL
     private let session: URLSession
     private let uploadSession: URLSession
+    /// Where a decode failure is reported (APIClient.reportDecodeFailure):
+    /// the shared client for the real transport, none on a test's session.
+    private let reporter: APIClient?
 
     static let shared = StaffTasksAPI()
 
     init(baseURL: URL = AppEnvironment.baseURL, session: URLSession? = nil) {
         self.baseURL = baseURL
+        self.reporter = session == nil ? APIClient.shared : nil
         if let session {
             self.session = session
             self.uploadSession = session
@@ -124,6 +128,8 @@ struct StaffTasksAPI: Sendable {
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.setValue(Self.version, forHTTPHeaderField: Self.versionHeader)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // The build, as on every APIClient request (audit #25 A06-02).
+        ClientIdentity.stamp(&request)
         return request
     }
 
@@ -148,6 +154,9 @@ struct StaffTasksAPI: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIClient.APIError(kind: .server, message: "The server sent something unreadable.")
         }
+        // Too old a build: the update sheet, and the tick stays parked
+        // (StaffOfflineQueue keeps a 426) until the app is updated.
+        try await APIClient.raiseIfUpdateRequired(status: http.statusCode, body: data)
         let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
         // The staff transport's one rule (APIClient.classifyAuthRefusal):
         // any 401 on /staff/api is an ended session even with a sentence —
@@ -172,6 +181,14 @@ struct StaffTasksAPI: Sendable {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            // Told to the server through the shared client, with this staff
+            // session's bearer (audit #25 A06-04).
+            let bearer = request.value(forHTTPHeaderField: "Authorization")
+                .flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil }
+            _ = await reporter?.reportDecodeFailure(described: ClientErrorReport.describe(error),
+                                                    route: request.url?.path ?? Self.tasksPath,
+                                                    verb: request.httpMethod ?? "GET",
+                                                    status: http.statusCode, bearer: bearer)
             throw APIClient.APIError(kind: .decoding, message: "The server sent something unreadable.",
                                      status: http.statusCode)
         }

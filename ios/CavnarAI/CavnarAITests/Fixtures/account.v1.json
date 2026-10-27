@@ -1,0 +1,178 @@
+{
+ "account": {
+  "can_delete_login": false,
+  "email": "owner@halstedandrye.example",
+  "last_login": null,
+  "login_notify": false,
+  "marketing_emails_opt_out": false,
+  "monthly_review_enabled": true,
+  "password_changed_at": "<volatile>",
+  "password_strength": "strong",
+  "recovery_email": null,
+  "recovery_email_pending": null,
+  "staff_signin_notify": false,
+  "two_fa_contact_masked": "ma***@halstedandrye.example",
+  "two_fa_enabled": false,
+  "two_fa_method": "email",
+  "two_fa_sms_available": false,
+  "username": "halstedowner"
+ },
+ "alerts": {
+  "contacts": [],
+  "settings": {
+   "al_1star_push": true,
+   "al_2star_push": true,
+   "al_5star_push": true,
+   "al_health_push": true,
+   "al_spike_push": true,
+   "al_unres_push": true,
+   "alert_1star": true,
+   "alert_2star": false,
+   "alert_5star": false,
+   "alert_ai_visibility_drop": false,
+   "alert_any_review": false,
+   "alert_competitor_move": true,
+   "alert_extra_emails": "",
+   "alert_food_waste": false,
+   "alert_health": true,
+   "alert_health_bypass_quiet": false,
+   "alert_labor_over": false,
+   "alert_neg_spike": true,
+   "alert_negative_trend": true,
+   "alert_no_response": false,
+   "alert_quiet_end": null,
+   "alert_quiet_start": null,
+   "alert_rating_floor": 4.0,
+   "alert_rating_threshold": false,
+   "alert_resp_approved": false,
+   "digest_day": "monday",
+   "digest_enabled": true,
+   "push_sound": true,
+   "urgent_via_email": true,
+   "urgent_via_sms": false
+  }
+ },
+ "connections": {
+  "clover": {
+   "age_days": null,
+   "connected": false,
+   "error": null,
+   "last_synced": null,
+   "sync_pct": null,
+   "sync_state": "not_connected"
+  },
+  "google_business": {
+   "connected": false,
+   "fetch_line": {
+    "data_through": "10/26/26",
+    "error": null,
+    "last_sync": "7:46pm",
+    "line": "Checked 7:46pm · next check tonight 8pm",
+    "missed": 0,
+    "next": "tonight 8pm",
+    "pct": 100,
+    "state": "current",
+    "tone": "ok"
+   },
+   "label": "Google reviews (sampled — Places returns 5 at a time)",
+   "source": "places_sampled"
+  },
+  "instagram": {
+   "connected": false
+  },
+  "pos": {
+   "age_days": 0.0,
+   "connected": true,
+   "error": null,
+   "error_raw": null,
+   "future": false,
+   "last_synced": "2026-10-27T00:46:42+00:00",
+   "last_synced_iso": "2026-10-27",
+   "pct": 100,
+   "provider": "rpower",
+   "state": "current",
+   "unreadable": false
+  },
+  "pos_line": {
+   "data_through": "10/25/26",
+   "error": null,
+   "last_sync": "7:46pm",
+   "line": "Last sync 7:46pm · Sales through 10/25/26",
+   "next": "tonight 3am",
+   "pct": 100,
+   "provider": "rpower",
+   "state": "current",
+   "tone": "ok"
+  },
+  "rpower": {
+   "age_days": 0.0,
+   "connected": true,
+   "error": null,
+   "last_synced": "2026-10-27T00:46:42",
+   "sync_line": "Last sync 7:46pm · Sales through 10/25/26",
+   "sync_pct": 100,
+   "sync_state": "current",
+   "sync_tone": "ok"
+  },
+  "square": {
+   "age_days": null,
+   "connected": false,
+   "error": null,
+   "last_synced": null,
+   "sync_pct": null,
+   "sync_state": "not_connected"
+  },
+  "toast": {
+   "age_days": null,
+   "connected": false,
+   "error": null,
+   "last_synced": null,
+   "sync_pct": null,
+   "sync_state": "not_connected"
+  },
+  "web_analytics": {
+   "connected": false,
+   "last_synced": null
+  }
+ },
+ "data": {
+  "data_retention_months": 0,
+  "export_scopes": [
+   "reviews",
+   "labor",
+   "food_cost",
+   "settings"
+  ]
+ },
+ "ok": true,
+ "profile": {
+  "close_times_json": "{\"Monday\": \"12:00am\", \"Tuesday\": \"12:00am\", \"Wednesday\": \"12:00am\", \"Thursday\": \"12:00am\", \"Friday\": \"2:00am\", \"Saturday\": \"2:00am\", \"Sunday\": \"11:00pm\"}",
+  "closures": [],
+  "deletion_requested_at": null,
+  "hours_can_edit": true,
+  "known_for": "Smash burgers, Italian beef, wings, Old Style on draft, Bears Sundays",
+  "location_name": null,
+  "menu_notes": null,
+  "neighborhood": "Lakeview, Chicago",
+  "never_say": null,
+  "open_times_json": "{\"Monday\": \"11:00am\", \"Tuesday\": \"11:00am\", \"Wednesday\": \"11:00am\", \"Thursday\": \"11:00am\", \"Friday\": \"11:00am\", \"Saturday\": \"10:00am\", \"Sunday\": \"10:00am\"}",
+  "owner_email": "maya@halstedandrye.example",
+  "owner_name": "Will Demo",
+  "owner_phone": null,
+  "response_language": null,
+  "restaurant_name": "Halsted & Rye",
+  "sign_off_name": "Will & the Halsted & Rye team",
+  "skip_holidays": null,
+  "timezone": "America/Chicago",
+  "vibe": "Neighborhood sports bar three blocks from Wrigley Field: scratch kitchen, 10 drafts, every game on.",
+  "voice_notes": null
+ },
+ "reviews": {
+  "auto_approve_4star": false,
+  "auto_approve_5star": false,
+  "auto_approve_daily_cap": 5,
+  "auto_approve_earned": false,
+  "auto_approve_paused": false,
+  "auto_approved_today": 0
+ }
+}

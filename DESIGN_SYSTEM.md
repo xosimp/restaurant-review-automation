@@ -965,6 +965,24 @@ edge and `--elev-float`; `role="status"`, polite. Above the modals
 page, never without both builds (a local run has none; "unknown" is none),
 never over an ended session.
 
+**This build is too old (iOS, release-safety audit #25).** When any
+response is a 426 `update_required` (the server's `MOBILE_MIN_BUILD`),
+`AppUpdateGate` holds it and RootView lays `AppUpdateRequiredView` over
+everything but the launch splash (`AppUpdateOverlay`): the Paper page at 96%,
+one `.cavnarCard(.floating)` card — the seal, "Update Cavnar AI" in the
+`headline` role, the server's own sentence in `body`, and ONE primary
+button, "Open the App Store" (the server's App Store or TestFlight link, never
+any other URL). No close, no Back, no swipe-away: nothing under it can read
+the server any more. A fade under 0.25s, none under Reduce Motion. Writes
+waiting in the offline queues are kept, not dropped, and replay after the
+update. Reuse it for nothing else — it is the one blocking surface.
+
+**A module the plan does not have** is never an error with Try again: a 403
+`module_locked` read is the server's plan sentence, once, under the
+section's kicker ("Part of Labor"), and the entry point is hidden when the
+plan's modules (`AccountHealth.features`) already say the module is off —
+Account's "House rules, docs & certificates" row (Labor's, audit #25).
+
 **Unverified or partial data** carries `CavnarCaveat` (iOS) or the caveat
 line the module already uses — the reader must always be able to tell a
 measured figure from an estimate.

@@ -29,7 +29,8 @@ final class WidgetSnapshotService {
 
     init(client: APIClient = .shared) { self.client = client }
 
-    private struct ActionsResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/actions.json).
+    struct ActionsResponse: Decodable {
         struct Item: Decodable { let key: String; let count: Int? }
         let ok: Bool
         let items: [Item]?

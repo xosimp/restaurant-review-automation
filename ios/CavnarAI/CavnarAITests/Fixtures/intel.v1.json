@@ -1,0 +1,568 @@
+{
+ "age_days": 0,
+ "as_of": "<volatile>",
+ "claim_kinds": {
+  "competitor_ratings": "measured",
+  "market_rating": "measured",
+  "own_rating": "google_all_time",
+  "recommendations": "suggestion",
+  "sections": "inferred"
+ },
+ "competitors": [
+  {
+   "custom": false,
+   "distance_m": 940,
+   "match_basis": "same cuisine type and similar price level",
+   "name": "Seventh Inning Social",
+   "place_id": "hr-comp-seventh",
+   "price_level": 2,
+   "rating": 4.2,
+   "rating_is_provisional": false,
+   "review_count": 1841,
+   "reviews": [
+    {
+     "author": "Google reviewer 1",
+     "date": "2026-10-20",
+     "rating": 5,
+     "ref": "R1",
+     "text": "The rooftop patio is the best seat in the neighborhood on a warm Cubs afternoon. Got there early and it filled up fast.",
+     "time": "6 days ago",
+     "ts": 1792472400
+    },
+    {
+     "author": "Google reviewer 2",
+     "date": "2026-10-13",
+     "rating": 2,
+     "ref": "R2",
+     "text": "Great spot until the game let out — then it took forty minutes to get a second round and nobody checked on us.",
+     "time": "1 weeks ago",
+     "ts": 1791867600
+    },
+    {
+     "author": "Google reviewer 3",
+     "date": "2026-10-02",
+     "rating": 4,
+     "ref": "R3",
+     "text": "Solid nachos, big TVs, loud in the best way. Service is hit or miss on game days.",
+     "time": "3 weeks ago",
+     "ts": 1790917200
+    }
+   ],
+   "unrated": false,
+   "vicinity": "N Clark St, Lakeview"
+  },
+  {
+   "custom": false,
+   "distance_m": 580,
+   "match_basis": "same cuisine type and similar price level",
+   "name": "Northbound Alehouse",
+   "place_id": "hr-comp-northbound",
+   "price_level": 2,
+   "rating": 4.4,
+   "rating_is_provisional": false,
+   "review_count": 964,
+   "reviews": [
+    {
+     "author": "Google reviewer 4",
+     "date": "2026-10-22",
+     "rating": 5,
+     "ref": "R4",
+     "text": "The rotating local draft list is why we keep coming back. Bartenders know every beer on the board.",
+     "time": "4 days ago",
+     "ts": 1792645200
+    },
+    {
+     "author": "Google reviewer 5",
+     "date": "2026-10-09",
+     "rating": 4,
+     "ref": "R5",
+     "text": "Good food, great beer, a little pricey for a sports bar but worth it for the list.",
+     "time": "2 weeks ago",
+     "ts": 1791522000
+    },
+    {
+     "author": "Google reviewer 6",
+     "date": "2026-09-25",
+     "rating": 3,
+     "ref": "R6",
+     "text": "Nice place but the kitchen closes early, so no late-night food after a night game.",
+     "time": "4 weeks ago",
+     "ts": 1790312400
+    }
+   ],
+   "unrated": false,
+   "vicinity": "N Southport Ave, Lakeview"
+  },
+  {
+   "custom": false,
+   "distance_m": 1120,
+   "match_basis": "same cuisine type and similar price level",
+   "name": "Bleacher & Brine",
+   "place_id": "hr-comp-bleacher",
+   "price_level": 2,
+   "rating": 4.0,
+   "rating_is_provisional": false,
+   "review_count": 2311,
+   "reviews": [
+    {
+     "author": "Google reviewer 7",
+     "date": "2026-10-23",
+     "rating": 2,
+     "ref": "R7",
+     "text": "Waited over an hour on a Cubs Saturday with no call-ahead list. Wings came out lukewarm.",
+     "time": "3 days ago",
+     "ts": 1792731600
+    },
+    {
+     "author": "Google reviewer 8",
+     "date": "2026-10-17",
+     "rating": 2,
+     "ref": "R8",
+     "text": "So crowded you can't move, and the wings were cold by the time they reached us.",
+     "time": "1 weeks ago",
+     "ts": 1792213200
+    },
+    {
+     "author": "Google reviewer 9",
+     "date": "2026-10-06",
+     "rating": 4,
+     "ref": "R9",
+     "text": "Huge place, tons of screens, fun crowd. Expect a wait on game days.",
+     "time": "2 weeks ago",
+     "ts": 1791262800
+    }
+   ],
+   "unrated": false,
+   "vicinity": "W Addison St, Wrigleyville"
+  },
+  {
+   "custom": false,
+   "distance_m": 760,
+   "match_basis": "same cuisine type and similar price level",
+   "name": "Corner Kick Tavern",
+   "place_id": "hr-comp-cornerkick",
+   "price_level": 1,
+   "rating": 4.3,
+   "rating_is_provisional": false,
+   "review_count": 615,
+   "reviews": [
+    {
+     "author": "Google reviewer 10",
+     "date": "2026-10-21",
+     "rating": 5,
+     "ref": "R10",
+     "text": "Cheap drinks and the friendliest bartenders in Lakeview. A real neighborhood tavern.",
+     "time": "5 days ago",
+     "ts": 1792558800
+    },
+    {
+     "author": "Google reviewer 11",
+     "date": "2026-10-11",
+     "rating": 3,
+     "ref": "R11",
+     "text": "Love the vibe, but the menu is short — mostly fried food and not much else.",
+     "time": "2 weeks ago",
+     "ts": 1791694800
+    },
+    {
+     "author": "Google reviewer 12",
+     "date": "2026-09-28",
+     "rating": 4,
+     "ref": "R12",
+     "text": "Great for soccer mornings, they open early for the big matches.",
+     "time": "4 weeks ago",
+     "ts": 1790571600
+    }
+   ],
+   "unrated": false,
+   "vicinity": "N Sheffield Ave, Lakeview"
+  },
+  {
+   "custom": false,
+   "distance_m": 400,
+   "match_basis": "same cuisine type and similar price level",
+   "name": "Ashland Ember Grill",
+   "place_id": "hr-comp-ashland",
+   "price_level": 2,
+   "rating": 4.5,
+   "rating_is_provisional": false,
+   "review_count": 1122,
+   "reviews": [
+    {
+     "author": "Google reviewer 13",
+     "date": "2026-10-24",
+     "rating": 5,
+     "ref": "R13",
+     "text": "Best burger I've had in Chicago, and booking ahead meant no wait even on a Bears Sunday.",
+     "time": "2 days ago",
+     "ts": 1792818000
+    },
+    {
+     "author": "Google reviewer 14",
+     "date": "2026-10-15",
+     "rating": 5,
+     "ref": "R14",
+     "text": "Reservations, attentive service and a burger worth the trip. Calm even on game nights.",
+     "time": "1 weeks ago",
+     "ts": 1792040400
+    },
+    {
+     "author": "Google reviewer 15",
+     "date": "2026-09-30",
+     "rating": 4,
+     "ref": "R15",
+     "text": "Pricier than the bars by Wrigley, but the food is a step above.",
+     "time": "3 weeks ago",
+     "ts": 1790744400
+    }
+   ],
+   "unrated": false,
+   "vicinity": "N Ashland Ave, Roscoe Village"
+  },
+  {
+   "custom": true,
+   "distance_m": 940,
+   "match_basis": "added by you",
+   "name": "Ivy Hall Taproom",
+   "place_id": "hr-comp-ivyhall",
+   "price_level": 2,
+   "rating": 4.1,
+   "rating_is_provisional": false,
+   "review_count": 432,
+   "reviews": [
+    {
+     "author": "Google reviewer 16",
+     "date": "2026-10-19",
+     "rating": 4,
+     "ref": "R16",
+     "text": "New taproom with a great patio. Food menu is still finding its feet.",
+     "time": "1 weeks ago",
+     "ts": 1792386000
+    },
+    {
+     "author": "Google reviewer 17",
+     "date": "2026-10-07",
+     "rating": 3,
+     "ref": "R17",
+     "text": "Beer was great, food took forever and came out in the wrong order.",
+     "time": "2 weeks ago",
+     "ts": 1791349200
+    },
+    {
+     "author": "Google reviewer 18",
+     "date": "2026-09-23",
+     "rating": 4,
+     "ref": "R18",
+     "text": "Good spot before a game, quieter than the places on Clark.",
+     "time": "4 weeks ago",
+     "ts": 1790139600
+    }
+   ],
+   "unrated": false,
+   "vicinity": "N Halsted St, Lakeview"
+  }
+ ],
+ "has_data": true,
+ "intro": "Halsted & Rye holds its own on a block crowded with game-day bars: Ashland Ember Grill is the one rated above you, and Bleacher & Brine is the busiest room with the most complaints about waits.",
+ "market_effective_reviews": 2932,
+ "market_excluded_widened": 0,
+ "market_matched_n": 6,
+ "market_radius_km": 1.1,
+ "market_rating": 4.3,
+ "market_rating_n": 6,
+ "market_rating_reviews": 7285,
+ "nothing_to_act_on": false,
+ "ok": true,
+ "own_rating": 4.5,
+ "own_rating_basis": "google_all_time",
+ "own_rating_count": 895,
+ "own_vs_market": 0.2,
+ "owner_name": "Will Demo",
+ "recommendation_items": [
+  {
+   "answerable": true,
+   "cites": [
+    {
+     "competitor": "Bleacher & Brine",
+     "date": "2026-10-23",
+     "rating": 2,
+     "ref": "R7",
+     "text": "Waited over an hour on a Cubs Saturday with no call-ahead list. Wings came out lukewarm.",
+     "time": "3 days ago"
+    }
+   ],
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "a model-written line from 6 nearby competitors compared — an inference, not a measured cause",
+      "corroborating": 0,
+      "kind": "competitors",
+      "n": 6,
+      "n_full": 3,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-26",
+      "basis": "Competitors read 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "competitor",
+      "stalest_basis": "Competitors read 10/26/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "key": "insight_intel:3a84cec874",
+   "rec_key": "insight_intel:3a84cec874",
+   "text": "Run a call-ahead list for Cubs and Bears nights and say so on the listing; the wait is the block's most common complaint"
+  },
+  {
+   "answerable": true,
+   "cites": [
+    {
+     "competitor": "Ashland Ember Grill",
+     "date": "2026-10-24",
+     "rating": 5,
+     "ref": "R13",
+     "text": "Best burger I've had in Chicago, and booking ahead meant no wait even on a Bears Sunday.",
+     "time": "2 days ago"
+    }
+   ],
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "a model-written line from 6 nearby competitors compared — an inference, not a measured cause",
+      "corroborating": 0,
+      "kind": "competitors",
+      "n": 6,
+      "n_full": 3,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-26",
+      "basis": "Competitors read 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "competitor",
+      "stalest_basis": "Competitors read 10/26/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "key": "insight_intel:e961aec2aa",
+   "rec_key": "insight_intel:e961aec2aa",
+   "text": "Put the smash burger front and centre on game-day menus; guests single out Ashland Ember Grill's"
+  },
+  {
+   "answerable": true,
+   "cites": [
+    {
+     "competitor": "Northbound Alehouse",
+     "date": "2026-10-22",
+     "rating": 5,
+     "ref": "R4",
+     "text": "The rotating local draft list is why we keep coming back. Bartenders know every beer on the board.",
+     "time": "4 days ago"
+    }
+   ],
+   "confidence": {
+    "band": "medium",
+    "caps": {
+     "against_below": 50,
+     "beats_at": 95,
+     "freshness_unmeasured": 49,
+     "max": 99,
+     "no_track_record": 70,
+     "record_against": 49,
+     "record_unproven": 70,
+     "stale": 49,
+     "stale_below": 50
+    },
+    "caps_applied": [
+     "no_track_record"
+    ],
+    "caution": "No track record here yet — it can't read high until 5 results of this kind are measured here.",
+    "confidence_impact": null,
+    "dimensions": {
+     "accuracy": {
+      "basis": "Not enough history yet — 0 measured, needs 5",
+      "cohort_label": null,
+      "high": null,
+      "improved": 0,
+      "lift": null,
+      "low": null,
+      "n": 0,
+      "pct": null,
+      "prior": null,
+      "prior_rung": null,
+      "prior_unlock": "confirm_profile",
+      "source": "none"
+     },
+     "evidence": {
+      "basis": "a model-written line from 6 nearby competitors compared — an inference, not a measured cause",
+      "corroborating": 0,
+      "kind": "competitors",
+      "n": 6,
+      "n_full": 3,
+      "pct": 74
+     },
+     "freshness": {
+      "as_of": "<volatile>",
+      "as_of_iso": "2026-10-26",
+      "basis": "Competitors read 10/26/26",
+      "errors": [],
+      "pct": 100,
+      "stalest": "competitor",
+      "stalest_basis": "Competitors read 10/26/26"
+     }
+    },
+    "label": "70% confidence",
+    "meaning": "How well supported this is — not the chance it works",
+    "pct": 70,
+    "reason": "no track record here yet — it can't read above 70% until 5 results of this kind are measured here",
+    "sample": false,
+    "score": 0.7,
+    "thresholds": {
+     "high": 75,
+     "medium": 50
+    },
+    "version": 2
+   },
+   "key": "insight_intel:9ac0afaeb8",
+   "rec_key": "insight_intel:9ac0afaeb8",
+   "text": "Rotate one local draft each week and name it on the board; Northbound Alehouse's regulars praise their list"
+  }
+ ],
+ "recommendations": [
+  "Run a call-ahead list for Cubs and Bears nights and say so on the listing; the wait is the block's most common complaint",
+  "Put the smash burger front and centre on game-day menus; guests single out Ashland Ember Grill's",
+  "Rotate one local draft each week and name it on the board; Northbound Alehouse's regulars praise their list"
+ ],
+ "recommendations_unverified": null,
+ "recommendations_withheld": 0,
+ "restaurant_name": "Halsted & Rye",
+ "sections": [
+  {
+   "bullets": [
+    "Ashland Ember Grill: guests single out the burger and the reservations on game nights [R13, R14].",
+    "Northbound Alehouse: regulars praise the rotating local draft list [R4].",
+    "Seventh Inning Social: guests love the rooftop patio on warm Cubs afternoons [R1]."
+   ],
+   "name": "What competitors are doing well"
+  },
+  {
+   "bullets": [
+    "Bleacher & Brine: guests describe long game-day waits with no call-ahead list, and cold wings [R7, R8].",
+    "Seventh Inning Social: guests say service slows once the game lets out [R2].",
+    "Corner Kick Tavern: guests call the menu short and mostly fried food [R11]."
+   ],
+   "name": "What competitors are doing poorly"
+  },
+  {
+   "bullets": [
+    "5 of the 6 competitors that list a Google price level sit at $$ (moderate) (1 at $, 5 at $$)."
+   ],
+   "name": "Price positioning"
+  }
+ ],
+ "stale": false,
+ "standing": "ahead",
+ "standing_basis": "6 restaurants matched on cuisine and price within 0.7 miles · a gap inside ±0.1★ reads as level",
+ "standing_label": "You lead the block",
+ "standing_margin": 0.1,
+ "standing_tone": "good",
+ "standing_why_not": null,
+ "updated_at": "<volatile>",
+ "validation": {
+  "caveats": [],
+  "codes": [],
+  "controls": true,
+  "intel_check": 3,
+  "verdict": "pass",
+  "version": "rv4"
+ }
+}

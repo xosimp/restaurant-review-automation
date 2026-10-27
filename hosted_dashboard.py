@@ -248,6 +248,11 @@ static_bundles.install(app)
 # across a deploy otherwise runs the old JavaScript against the new routes
 # (audit 10/26/26 A06-13).
 app.context_processor(lambda: {"cavnar_build": config.build_id()})
+# The iPhone app's build on every /mobile/api and /staff/api request: a build
+# under MOBILE_MIN_BUILD gets 426 {update_required} (client_compat, audit #25
+# A06-02); one with no header is served until MOBILE_HEADERLESS_CUTOFF.
+import client_compat
+client_compat.install(app)
 
 
 @app.after_request

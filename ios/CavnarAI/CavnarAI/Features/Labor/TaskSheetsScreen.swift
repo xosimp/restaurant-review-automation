@@ -1024,6 +1024,7 @@ enum OwnerProofPhoto {
         guard isToken(token), let bearer = Keychain.activeSessionToken() else { return nil }
         var request = URLRequest(url: AppEnvironment.baseURL.appendingPathComponent("/mobile/api/task-sheets/photo/" + token))
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        ClientIdentity.stamp(&request)
         request.timeoutInterval = 15
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),

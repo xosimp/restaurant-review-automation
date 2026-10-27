@@ -238,7 +238,8 @@ final class ReviewsListViewModel {
         reviews[index] = reviews[index].withDraft(draft)
     }
 
-    private struct ReviewsResponse: Decodable {
+    /// Internal for ResponseShapeContractTests (Fixtures/reviews.json).
+    struct ReviewsResponse: Decodable {
         let ok: Bool
         let reviews: [Review]
         let total: Int?

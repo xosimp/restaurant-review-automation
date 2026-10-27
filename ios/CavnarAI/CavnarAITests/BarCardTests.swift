@@ -2,13 +2,13 @@ import XCTest
 @testable import CavnarAI
 
 /// The Bar card (UIX-10 / F6), Count the bar, and the alcohol targets'
-/// parsing (V47 / UIX-18). Fixtures/food_cost_bar.json is a recording of
+/// parsing (V47 / UIX-18). Fixtures/food_cost_bar_scenario.json is a recording of
 /// bar_cost.build for Simple EJ's, trimmed to the keys the app decodes —
 /// every value as the server sent it.
 final class BarCardTests: XCTestCase {
 
     private func fixture() throws -> BarPayload {
-        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "food_cost_bar", withExtension: "json"))
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "food_cost_bar_scenario", withExtension: "json"))
         return try JSONDecoder.cavnar.decode(BarPayload.self, from: Data(contentsOf: url))
     }
 

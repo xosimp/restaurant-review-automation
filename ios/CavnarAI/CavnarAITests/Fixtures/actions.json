@@ -1,0 +1,25 @@
+{
+ "items": [
+  {
+   "action": {
+    "label": "Open Reviews",
+    "module": "reviews",
+    "nav": "reviews?filter=pending"
+   },
+   "answerable": true,
+   "count": 5,
+   "detail": "1 at 2 stars or worse",
+   "key": "no_response",
+   "kind": "reviews",
+   "module": "reviews",
+   "nav": "reviews?filter=pending",
+   "rec_key": "no_response",
+   "severity": "critical",
+   "title": "5 reviews from the last 30 days waiting on a reply"
+  }
+ ],
+ "note": "Everything still open, across every module. Snoozing puts an item back tomorrow — it never goes away on its own.",
+ "ok": true,
+ "shown_elsewhere": 0,
+ "snoozed": 0
+}

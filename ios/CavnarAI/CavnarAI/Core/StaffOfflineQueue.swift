@@ -184,7 +184,8 @@ actor StaffOfflineQueue {
         // venue Wi-Fi's sign-in page) never reached the server.
         if error is URLError { return true }
         if let api = error as? APIClient.APIError {
-            if let status = api.status { return [408, 429, 500, 502, 503, 504].contains(status) }
+            // 426: the app must be updated first — parked, never dropped.
+            if let status = api.status { return [408, 426, 429, 500, 502, 503, 504].contains(status) }
             return api.kind == .offline || api.kind == .timedOut
         }
         return false
@@ -194,7 +195,7 @@ actor StaffOfflineQueue {
     /// a session matter and 408/429 pass; everything else in 4xx is final.
     nonisolated static func refusalReason(_ error: Error) -> String? {
         guard let api = error as? APIClient.APIError, let status = api.status,
-              (400..<500).contains(status), ![401, 408, 429].contains(status) else { return nil }
+              (400..<500).contains(status), ![401, 408, 426, 429].contains(status) else { return nil }
         return api.message
     }
 
