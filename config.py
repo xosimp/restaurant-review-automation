@@ -195,6 +195,8 @@ def sends_refused_reason() -> str:
 # show for it. /health and the console read `refused_sends()`.
 _REFUSED_SENDS = {}
 _REFUSED_LOCK = threading.Lock()
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("config._REFUSED_SENDS", _REFUSED_SENDS)
 
 
 def refused_send(channel) -> str:

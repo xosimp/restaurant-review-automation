@@ -24,6 +24,9 @@ import people
 import schedule_publish as sp
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 LONG_AGO = "2000-01-01 00:00:00.00000000"           # older than any lease
 
 

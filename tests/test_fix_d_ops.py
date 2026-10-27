@@ -12,6 +12,9 @@ import models
 import ops
 import strategy_jobs  # noqa: F401 — binds get_conn at import: bind it here, at collection
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect(db_path, monkeypatch):

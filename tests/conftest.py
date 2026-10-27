@@ -90,6 +90,11 @@ os.environ.setdefault("HOME_SNAPSHOT_COLD", "request")
 # (emails.postal_address, #159). Set here as production must set it; the
 # tests of the unset case delete it.
 os.environ.setdefault("CAVNAR_POSTAL_ADDRESS", "100 Test St, Testville, IL 60000")
+# Every test has a ceiling (pytest-timeout, requirements-dev.txt; blind
+# re-audit 10/27/26 B1 F16): a deadlocked thread or barrier names its test
+# instead of burning the CI job's whole timeout. Generous by default (600 s);
+# CI passes --timeout=300. Inert where the plugin is not installed.
+os.environ.setdefault("PYTEST_TIMEOUT", "600")
 
 # The default database (models.DB_PATH, used by every call that passes no
 # db_path — init_db's ensure_columns(), status_manager, lazily imported
@@ -308,11 +313,18 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "browser: a Playwright browser test (tests/browser/), nightly")
 
 
+# `contract`, or `contract and not <marker>...` (the gate's own expression,
+# "contract and not quarantine"): an expression that can only select
+# contract-marked tests.
+import re as _re_markexpr
+_CONTRACT_ONLY = _re_markexpr.compile(r"^contract(\s+and\s+not\s+\w+)*$")
+
+
 def pytest_ignore_collect(collection_path, config):
     """`pytest -m contract` (the gate's slice) imports only the files that
     carry the marker: collecting all ~1,000 files to deselect them took most
     of the slice's minute. Any other marker expression collects as usual."""
-    if (config.getoption("markexpr", "") or "").strip() != "contract":
+    if not _CONTRACT_ONLY.match((config.getoption("markexpr", "") or "").strip()):
         return None
     name = collection_path.name
     if collection_path.suffix == ".py" and name.startswith("test_"):
@@ -335,7 +347,33 @@ PG_MODE_SKIP_FILES = {
 }
 
 
+def _quarantine_problems(items):
+    """[nodeid: what is wrong] for every quarantined test whose mark does
+    not say why and since when: `@pytest.mark.quarantine(reason="…",
+    since="10/27/26")` (blind re-audit 10/27/26 B1 F16). scripts/promote.py
+    accepts a quarantined failure only while the mark is younger than
+    promote.QUARANTINE_MAX_DAYS — a quarantine is a deadline, not a home."""
+    from datetime import datetime as _datetime
+    bad = []
+    for item in items:
+        for mark in item.iter_markers(name="quarantine"):
+            reason = str(mark.kwargs.get("reason") or "").strip()
+            since = str(mark.kwargs.get("since") or "").strip()
+            try:
+                _datetime.strptime(since, "%m/%d/%y")
+                dated = True
+            except ValueError:
+                dated = False
+            if not reason or not dated:
+                bad.append(f"{item.nodeid}: quarantine needs reason=\"…\" and since=\"M/D/YY\" "
+                           f"(got reason={reason!r}, since={since!r})")
+    return bad
+
+
 def pytest_collection_modifyitems(config, items):
+    bad = _quarantine_problems(items)
+    if bad:
+        raise pytest.UsageError("A quarantine mark must say why and since when:\n  " + "\n  ".join(bad[:20]))
     if not _PG_BASE:
         return
     skip = pytest.mark.skip(reason="reads the SQLite file itself; the Postgres mode routes the database elsewhere")
@@ -507,14 +545,32 @@ if _RECORD_DIR and not _PG_BASE:
     _models_rec._note_write = _note_write_recording
 
 
+def _unreported_blocks():
+    """The blocked connections no test's report carried: made during
+    collection, or in a module or session fixture."""
+    return [hit for i, hit in enumerate(_NET_BLOCKED) if i not in _NET_REPORTED]
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """(xdist controller) A worker's blocked connections that no test
+    reported (blind re-audit 10/27/26 B1 F12): they stayed in that worker's
+    process, and the run passed."""
+    _BLOCKED_ON_WORKERS.extend(tuple(x) for x in (getattr(node, "workeroutput", {}) or {}).get("cavnar_net_blocked", ()))
+
+
 def pytest_sessionfinish(session, exitstatus):
+    if hasattr(session.config, "workerinput"):
+        session.config.workeroutput["cavnar_net_blocked"] = _unreported_blocks()
     _enforce_expected_skips(session)
     # With CAVNAR_ENFORCE_SKIPS=1 (CI), a test that tried to reach the
     # network fails the run too: the guard refused it, so the test passed
     # on whatever the refusal made of it — two did, reaching RPOWER's and
     # Google's real APIs on every run until the guard listed them (audit #25).
+    # So does an attempt outside any test (collection, a module or session
+    # fixture), on the controller or handed over by a worker.
     if (os.getenv("CAVNAR_ENFORCE_SKIPS") or "").strip() == "1" and \
-            (_BLOCKED_BY_TEST or (_NET_BLOCKED and not hasattr(session.config, "workerinput"))):
+            (_BLOCKED_BY_TEST or _BLOCKED_ON_WORKERS or (_NET_BLOCKED and not hasattr(session.config, "workerinput"))):
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if not (_RECORD_DIR and _RECORDED):
         return
@@ -533,6 +589,8 @@ def pytest_sessionfinish(session, exitstatus):
 # SKIPPED. CI also passes -rs, so every reason is printed.
 _SKIPS = []
 _BLOCKED_BY_TEST = []
+_BLOCKED_ON_WORKERS = []
+_NET_REPORTED = set()       # indexes into _NET_BLOCKED a test's report carried
 
 
 def _skip_reason(report):
@@ -540,6 +598,16 @@ def _skip_reason(report):
     if isinstance(lr, tuple) and len(lr) == 3:
         return str(lr[2]).replace("Skipped: ", "", 1)
     return str(lr or "")
+
+
+def pytest_collectreport(report):
+    """A module-level skip (`pytest.importorskip` at the top of a file,
+    `pytest.skip(..., allow_module_level=True)`) is a collection report, not
+    a test report: it turned a whole file into "1 skipped" and passed the
+    enforcement (blind re-audit 10/27/26 B1 F11). Under xdist the workers
+    forward skipped collection reports to the controller, which runs this."""
+    if report.skipped:
+        _SKIPS.append((report.nodeid or "(collection)", _skip_reason(report)))
 
 
 def pytest_runtest_logreport(report):
@@ -585,13 +653,15 @@ def _network_attempts_reported(request):
     report, so the xdist controller can list them at the end of the run."""
     start = len(_NET_BLOCKED)
     yield
-    hits = [host for _where, host in _NET_BLOCKED[start:]]
+    end = len(_NET_BLOCKED)
+    hits = [host for _where, host in _NET_BLOCKED[start:end]]
     if hits:
+        _NET_REPORTED.update(range(start, end))
         request.node.user_properties.append(("network_blocked", hits))
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    blocked = _BLOCKED_BY_TEST or [(where, host) for where, host in _NET_BLOCKED]
+    blocked = (_BLOCKED_BY_TEST + _BLOCKED_ON_WORKERS) or [(where, host) for where, host in _NET_BLOCKED]
     if blocked:
         terminalreporter.section("network connections blocked (stub these calls)", yellow=True)
         for nid, host in blocked[:40]:
@@ -1173,3 +1243,26 @@ def _reset_process_caches():
     process_caches.clear_all()
     yield
     process_caches.clear_all()
+
+
+@pytest.fixture(scope="module")
+def module_db_path(tmp_path_factory):
+    """db_path for a whole module: one copy of the boot-schema template that
+    every test in the file shares (blind re-audit 10/27/26). The twin smoke's
+    ~150 routes each copied a database, and on Postgres each copy is a
+    template clone — 3.5 minutes of the gate's Postgres job. Only for a
+    module whose tests keep to rows of their own (a restaurant per test)."""
+    import shutil
+    path = str(tmp_path_factory.mktemp("module-db") / "test_reviews.db")
+    shutil.copyfile(_db_template(), path)
+    if not _PG_BASE:
+        yield path
+        return
+    import models
+    name = _pg_new_database(template=_PG_TEMPLATE)
+    models._PG_ROUTES[path] = _pg_url(name)
+    try:
+        yield path
+    finally:
+        models._PG_ROUTES.pop(path, None)
+        _pg_drop(name)

@@ -4,6 +4,9 @@ import pytest
 
 import ops
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 def _use_tmp_db(monkeypatch, db_path):
     """Point ops' models.get_conn at the test database. Patching DB_PATH is

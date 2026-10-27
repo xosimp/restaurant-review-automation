@@ -16,6 +16,9 @@ from value_delivered import (avoided, breakdown, compute_total_value_delivered,
                              delivered, get_value_history, opportunity,
                              record_value_snapshot, REPLY_RATE)
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect_db(monkeypatch, db_path):

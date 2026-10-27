@@ -3351,6 +3351,7 @@ def check_platform_sla(send=True, db_path=None, write_ok=None) -> dict:
 # When the claims table cannot be written (the case the page is about),
 # the cooldown lives here instead — one page per key per cooldown per process.
 _page_memory = {}
+_process_caches.register("ops._page_memory", _page_memory)
 _page_lock = threading.Lock()
 _page_lock_open = threading.Lock()
 _page_local = threading.local()

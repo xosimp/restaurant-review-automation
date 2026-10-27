@@ -29,6 +29,9 @@ import food_cost_intelligence as fci
 import models
 from models import Restaurant, create_restaurant, get_restaurant, update_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIRST = date(2026, 10, 1)                 # a Thursday
 DAYS = [FIRST + timedelta(days=i) for i in range(7)]

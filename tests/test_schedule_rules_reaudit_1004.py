@@ -542,6 +542,8 @@ def test_build_constraints_reads_a_mid_week_expiry(db):
 
 # ── RULES-15 ──────────────────────────────────────────────────────────────
 
+# In the deploy gate's contract slice: the manager-every-minute rule (blind re-audit 10/27/26).
+@pytest.mark.contract
 def test_approving_the_only_managers_drop_says_the_floor_goes_unmanaged(db, monkeypatch):
     import schedule_versions as sv
     import shift_requests as srq

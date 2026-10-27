@@ -16,17 +16,33 @@ name: Nightly
 #   shifted-tz       the whole suite at UTC-11 (at 07:00 UTC that is the
 #                    previous evening, the opposite side of Chicago's date)
 #   quarantine       the known-flaky tests: run and reported, never failing
-#   browser          the Playwright smoke (tests/browser/)
+#   browser          the Playwright smoke (tests/browser/), as an owner and a
+#                    manager
+#   containment      production is a protected branch (read-only; reported,
+#                    never failing the night)
 #   summary          the failed tests of the night, for scripts/promote.py
+#
+# Every job checks out ONE commit: main's head on the schedule, or the `sha`
+# input when scripts/promote.py dispatches the nightly for the SHA it is
+# asked to promote (blind re-audit 10/27/26 B1 F3: a promotion used to ride
+# on the last nightly, which tested an older commit). The run-name carries
+# that commit; promote.py matches on it.
+
+run-name: Nightly ${{ inputs.sha || github.sha }}
 
 on:
   schedule:
     # 07:00 UTC = 2am Chicago in daylight time (1am in winter).
     - cron: "0 7 * * *"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "The commit to test (empty: the branch's head)"
+        required: false
+        default: ""
 
 concurrency:
-  group: nightly-${{ github.ref }}
+  group: nightly-${{ inputs.sha || github.ref }}
   cancel-in-progress: false
 
 # bash with -o pipefail, so a piped command's failure fails its step.
@@ -50,6 +66,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -60,7 +78,7 @@ jobs:
       - run: pip install --no-deps -r requirements-dev.txt
       - name: Every test on SQLite
         run: >-
-          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider
+          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider --timeout=300
           -m "not quarantine and not browser" --junitxml=junit/full-sqlite.xml
         env:
           CAVNAR_RECORD_SQL: ${{ runner.temp }}/recorded-sql
@@ -99,6 +117,8 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -139,6 +159,8 @@ jobs:
       CAVNAR_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -150,7 +172,7 @@ jobs:
       - name: Shard ${{ matrix.shard }} of 4 on Postgres
         run: >-
           pytest $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 4)
-          -n auto --dist loadfile -q -rs -p no:warnings -p no:cacheprovider
+          -n auto --dist loadfile -q -rs -p no:warnings -p no:cacheprovider --timeout=300
           -m "not quarantine and not browser" --junitxml=junit/postgres-${{ matrix.shard }}.xml
       - if: always()
         uses: actions/upload-artifact@v4
@@ -170,6 +192,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -180,7 +204,7 @@ jobs:
       - run: pip install --no-deps -r requirements-dev.txt
       - name: Determinism and the benchmark, serially
         run: >-
-          pytest -p no:xdist -q -rs -p no:cacheprovider
+          pytest -p no:xdist -q -rs -p no:cacheprovider --timeout=600
           tests/test_solver_behaviour.py tests/test_schedule_benchmark.py
           --junitxml=junit/solver-serial.xml
       - name: At most one case skipped
@@ -213,6 +237,8 @@ jobs:
       TZ: Pacific/Pago_Pago
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -223,7 +249,7 @@ jobs:
       - run: pip install --no-deps -r requirements-dev.txt
       - name: Every test at UTC-11
         run: >-
-          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider
+          pytest tests/ -n auto --dist loadfile -q -rs -p no:cacheprovider --timeout=300
           -m "not quarantine and not browser" --junitxml=junit/shifted-tz.xml
       - if: always()
         uses: actions/upload-artifact@v4
@@ -243,6 +269,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -254,7 +282,7 @@ jobs:
       - name: The quarantined tests
         run: |
           set +e
-          pytest tests/ -m quarantine -n auto --dist loadfile -q -rs -p no:cacheprovider | tee quarantine.log
+          pytest tests/ -m quarantine -n auto --dist loadfile -q -rs -p no:cacheprovider --timeout=300 | tee quarantine.log
           code=${PIPESTATUS[0]}
           { echo '### Quarantined tests'; echo '```'; tail -40 quarantine.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           # 5 = no test carries the marker: nothing is quarantined, which is good.
@@ -269,6 +297,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -277,15 +307,11 @@ jobs:
             requirements.txt
             requirements-dev.txt
       - run: pip install --no-deps -r requirements-dev.txt
-      - name: Playwright and Chromium
-        if: hashFiles('tests/browser/**/*.py') != ''
-        run: |
-          pip install playwright==1.48.0 greenlet==3.1.1 pyee==12.0.0
-          python -m playwright install --with-deps chromium
+      - name: Chromium (playwright itself is pinned in requirements-dev.txt)
+        run: python -m playwright install --with-deps chromium
       - name: The browser smoke
-        if: hashFiles('tests/browser/**/*.py') != ''
         run: >-
-          pytest tests/browser -m browser -q -rs -p no:cacheprovider -p no:xdist
+          pytest tests/browser -m browser -q -rs -p no:cacheprovider -p no:xdist --timeout=600
           --junitxml=junit/browser.xml
       - if: always()
         uses: actions/upload-artifact@v4
@@ -294,6 +320,31 @@ jobs:
           path: junit/
           if-no-files-found: ignore
           retention-days: 14
+
+  containment:
+    # Production is a protected branch once promotion is live (blind
+    # re-audit 10/27/26 B5 P0). Read-only (the branch API's `protected`
+    # flag); reported here, never failing the night: a red night holds the
+    # promotion, and an unprotected branch is a setting to fix, not a reason
+    # to stop releasing. promote.py says the same on every run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: The production branch exists and is protected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE: ${{ vars.PROMOTION_LIVE }}
+        run: |
+          set +e
+          protected=$(gh api "repos/$GITHUB_REPOSITORY/branches/production" --jq .protected 2>/dev/null)
+          if [ "$protected" = "true" ]; then echo "production is protected"; exit 0; fi
+          state="missing"; [ "$protected" = "false" ] && state="not protected"
+          msg="the production branch is $state: require gate, gate-postgres and gate-boot on it and let only Actions push (docs/ops/RECOVERY.md)"
+          if [ "$LIVE" = "true" ]; then echo "::error::$msg"; exit 1; fi
+          echo "::warning::$msg (PROMOTION_LIVE is not set: main still deploys)"
 
   summary:
     # The night's failed tests, by job, for scripts/promote.py: a red night
@@ -304,6 +355,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
@@ -315,6 +368,7 @@ jobs:
       - name: Summarise
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
+          TESTED_SHA: ${{ inputs.sha || github.sha }}
         run: python scripts/promote.py --summarize-junit junit --out nightly-summary.json
       - uses: actions/upload-artifact@v4
         with:

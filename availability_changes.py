@@ -253,7 +253,7 @@ def record(restaurant_id, employee_name, cuts, off, bounds, windows, source="app
     return _shape(row)
 
 
-def leaves_no_manager(restaurant_id, employee_name, cuts, off, bounds, windows, today=None, db_path=DB_PATH):
+def leaves_no_manager(restaurant_id, employee_name, cuts, off, bounds, windows, today=None, db_path=None):
     """Whether filing these cut days would take a manager off shifts staff
     already have and leave a minute of a published week with no manager on
     (or that can't be read) — such a cut is never put in force by the "no
@@ -402,7 +402,7 @@ def decide(restaurant_id, change_id, approve, decided_by=None, effective_from=No
     return row
 
 
-def _conflicts_of(restaurant_id, change, db_path=DB_PATH) -> list:
+def _conflicts_of(restaurant_id, change, db_path=None) -> list:
     """published_conflicts, raising when the weeks can't be read — for the
     manager rule, which refuses on no answer."""
     import staff_settings as _ss

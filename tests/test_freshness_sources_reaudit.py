@@ -514,11 +514,16 @@ def test_s16_admin_settings_post_the_stored_reviews_live(db, monkeypatch):
 
 # ── S17: small integrity items ─────────────────────────────────────────────
 
-def test_s17_reporter_labor_history_needs_sales():
+def test_s17_reporter_labor_history_needs_sales(db):
     # The digest's trend reads models.get_labor_history (blind re-audit
-    # 10/26/26 B3: on the headline's pay basis), which keeps the rule.
+    # 10/26/26 B3: on the headline's pay basis), which keeps the rule: a
+    # period with no sales is never a trend point.
     assert "get_labor_history" in _src("reporter.py")
-    assert "WHERE restaurant_id=? AND total_sales > 0" in _src("models.py")
+    rid = models.create_restaurant(models.Restaurant(name="S17", owner_email="s17@x.test"), db_path=db)
+    models.save_labor_snapshot(rid, "2026-09-07", "2026-09-13", 30.0, 3000.0, 10000.0, db_path=db)
+    models.save_labor_snapshot(rid, "2026-09-14", "2026-09-20", 0.0, 500.0, 0.0, db_path=db)
+    starts = [p["period_start"] for p in models.get_labor_history(rid, limit=12, db_path=db)]
+    assert starts == ["2026-09-07"]
 
 
 def test_s17_forecast_log_get_conn_resolves_at_call_time(monkeypatch):

@@ -1609,6 +1609,7 @@ _breaker_lock = threading.Lock()
 BREAKER_SYNC_SECONDS = float(os.getenv("AI_BREAKER_SYNC_SECONDS", "5"))
 _breaker_synced = {}            # provider -> (time read, the row's updated_at seen)
 _timeouts_seen = {}             # family key -> {restaurant id (or None): last timeout time}
+_process_caches.register("ai_utils._timeouts_seen", _timeouts_seen)
 
 _TENANT_DOWN_MESSAGE = ("Cavnar AI couldn't get answers for this restaurant in time just now — nothing is lost; "
                         "try again in a minute.")
@@ -4384,6 +4385,7 @@ def usage_summary(restaurant_id=None, since_days=30, db_path=None):
 # when the table cannot be reached — bounded, with empty keys dropped
 # (#151: the per-IP buckets used to grow for the life of the process).
 _ai_call_log = {}
+_process_caches.register("ai_utils._ai_call_log", _ai_call_log)
 _ai_call_log_lock = threading.Lock()
 _AI_CALL_LOG_MAX_KEYS = 5000
 _rate_prune_state = {"at": 0.0}

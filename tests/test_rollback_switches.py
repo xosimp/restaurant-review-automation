@@ -21,6 +21,9 @@ import pytest
 
 import models
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_DOC = os.path.join(ROOT, "docs", "ops", "ENVIRONMENT.md")
 SECTION = "## Rollback and kill switches"

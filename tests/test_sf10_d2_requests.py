@@ -115,6 +115,8 @@ def _mia_and_ben(db):
     return rid, hid
 
 
+# In the deploy gate's contract slice: the manager-every-minute rule (blind re-audit 10/27/26).
+@pytest.mark.contract
 def test_a_swap_that_takes_the_only_manager_off_saturday_is_refused(db):
     rid, hid = _mia_and_ben(db)
     req = {"employee_name": "Mia", "date": W1[5], "shift_start": "5:00pm",
@@ -451,6 +453,8 @@ def test_a_drop_that_weakens_the_shift_past_the_limit_waits_on_the_manager(db):
     assert "Shift Quality falls" in why["refusals"][0]
 
 
+# In the deploy gate's contract slice: the manager-every-minute rule (blind re-audit 10/27/26).
+@pytest.mark.contract
 def test_a_drop_that_takes_the_manager_off_never_approves_itself(db):
     rid = _restaurant(db, [("Ana", "Server"), ("Max", "Manager")])
     ss.upsert(rid, "Max", floor_manager=True)

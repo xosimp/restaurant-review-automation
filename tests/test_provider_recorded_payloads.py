@@ -59,6 +59,9 @@ import pos_io
 import rpower
 import webhook_routes
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "providers")
 
 

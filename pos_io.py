@@ -519,6 +519,8 @@ _schema_seen = {}         # provider -> {store: time of its last contract error}
 _schema_captured = {}     # (provider, endpoint) -> time an ops event last said so
 _breaker_memo = {}        # row key -> (monotonic read time, row dict or None)
 import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("pos_io._store_runs", _store_runs)   # blind re-audit 10/27/26 B1 F15
+_process_caches.register("pos_io._schema_seen", _schema_seen)
 _process_caches.register("pos_io._breaker_memo", _breaker_memo)
 
 

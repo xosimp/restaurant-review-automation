@@ -24,6 +24,9 @@ import staff_settings as ss
 from models import create_restaurant, Restaurant, get_conn
 from tests.publish_overrides import overrides_for, override_list  # noqa: F401
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
 # A Monday week always ahead of the real clock: request_drop takes `today`,
 # decide() and claim() read the clock, so a fixed week failed from the

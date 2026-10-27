@@ -4,21 +4,23 @@ name: Refresh season files
 # team's published schedule every day: game times the leagues set or move,
 # results, playoff games added (owner, 10/8/26: "nothing should have to be
 # ran by hand"). A changed file is validated, the event tests run, then it
-# is committed and pushed to main — never to `production`: main no longer
-# deploys, and the commit reaches customers with the next promotion
-# (scripts/promote.py), after its own gate run (audit #25 A01-20, A05-03:
-# a bot push made with this workflow's token starts no workflow, so the
-# commit used to deploy with no CI at all; the gate is now dispatched for
-# it explicitly). The app itself never calls these sources (owner,
-# 10/1/26). A source that can't be read fails the run, so it shows red
-# here, after the others were saved.
+# is committed and pushed to main — never to `production` (audit #25 A01-20,
+# A05-03). ONCE RAILWAY DEPLOYS THE `production` BRANCH, the commit reaches
+# customers with the next promotion (scripts/promote.py), after its own gate
+# run. UNTIL THEN a push to main still deploys at once, so the run is timed
+# to land before lunch, never at dinner (blind re-audit 10/27/26 B1 F10: the
+# 19:30 UTC run, started up to 3.7 hours late by GitHub, deployed at 6:15pm
+# CT). A bot push made with this workflow's token starts no workflow, so the
+# gate is dispatched for the commit explicitly. The app itself never calls
+# these sources (owner, 10/1/26). A source that can't be read fails the run,
+# so it shows red here, after the others were saved.
 
 on:
   schedule:
-    # 19:30 UTC = 2:30pm Chicago in daylight time (1:30pm in winter): between
-    # the morning jobs and dinner, so the deploy lands in a quiet hour and a
-    # time set for tonight is in before service.
-    - cron: "30 19 * * *"
+    # 14:00 UTC = 9am Chicago in daylight time (8am in winter): GitHub's
+    # usual 2-4 hour delay on a scheduled run still lands before the lunch
+    # rush, and a time set for tonight is in before service.
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 permissions:

@@ -13352,6 +13352,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
 
 
 _HISTORY_COLUMNS_OK = set()
+_process_caches.register("models._HISTORY_COLUMNS_OK", _HISTORY_COLUMNS_OK)
 
 
 def _row_get(row, key):

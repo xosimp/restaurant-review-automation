@@ -33,6 +33,9 @@ import re
 
 import pytest
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # literal -> why it names no route (it is not a request).
@@ -312,3 +315,26 @@ def test_every_ios_path_reaches_a_route(rules):
 def test_every_not_a_request_entry_is_still_in_the_app():
     raws = {x[2] for x in _swift_literals() + _web_literals()}
     assert set(NOT_A_REQUEST) <= raws, set(NOT_A_REQUEST) - raws
+
+
+def test_the_url_map_app_leaves_the_real_blueprints_unregistered(monkeypatch):
+    """url_map_app registers copies (blind re-audit 10/27/26 B4): the shared
+    blueprint objects stay as they were, so a later csrf_protect /
+    before_request on one still works (Flask refuses a new hook on a
+    blueprint any app has registered), and the copies carry every route. No
+    blueprint nests another (a copy would share the child)."""
+    import blueprints
+    from flask import Blueprint
+    real = blueprints.all_blueprints()
+    assert all(not bp._blueprints for bp in real), "a nested blueprint: url_map_app's copies would share it"
+    app = blueprints.url_map_app()
+    assert {bp.name for bp in real} <= set(app.blueprints)
+    assert all(app.blueprints[bp.name] is not bp for bp in real)
+    # On a blueprint no app has registered, so the test does not depend on
+    # what an earlier test in this process registered.
+    fresh = Blueprint("fresh_probe", __name__)
+    fresh.add_url_rule("/fresh-probe", "probe", lambda: "ok")
+    monkeypatch.setattr(blueprints, "all_blueprints", lambda: (fresh,))
+    probe_app = blueprints.url_map_app()
+    assert "/fresh-probe" in {r.rule for r in probe_app.url_map.iter_rules()}
+    fresh.before_request(lambda: None)      # raises if url_map_app had registered `fresh` itself

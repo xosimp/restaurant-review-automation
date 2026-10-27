@@ -2116,6 +2116,8 @@ def tick(db_path=None) -> dict:
 
 
 _unknown_swept = {"at": 0.0}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("job_queue._unknown_swept", _unknown_swept)
 
 
 def expire_unknown_kinds(db_path=None, now=None, days=None) -> dict:

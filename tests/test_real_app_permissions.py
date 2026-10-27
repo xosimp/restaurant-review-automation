@@ -13,6 +13,9 @@ import pytest
 
 from real_app import real_app  # noqa: F401  (the module-scoped fixture)
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(scope="module")
 def world(real_app):

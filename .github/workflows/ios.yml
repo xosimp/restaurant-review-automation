@@ -9,6 +9,15 @@ name: iOS
 # The runner image needs an Xcode with the iOS 26 SDK (the app uses its
 # glass APIs); IOS_RUNNER (a repository variable) overrides the image when
 # GitHub renames it.
+#
+# The checkout is the FULL history: generate.sh stamps the build number from
+# the commit count and refuses a shallow clone (blind re-audit 10/27/26 B1
+# F4 — the default depth-1 checkout failed every run at "Generate the
+# project"). scripts/promote.py requires this workflow green on a SHA whose
+# promotion carries an ios/ change, and dispatches it with the `sha` input
+# when it has not run there; the run-name carries the commit it tested.
+
+run-name: iOS ${{ inputs.sha || github.sha }}
 
 on:
   push:
@@ -20,9 +29,14 @@ on:
     # 07:30 UTC, after the nightly Python run starts.
     - cron: "30 7 * * *"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "The commit to test (empty: the branch's head)"
+        required: false
+        default: ""
 
 concurrency:
-  group: ios-${{ github.ref }}
+  group: ios-${{ inputs.sha || github.ref }}
   cancel-in-progress: true
 
 # bash with -o pipefail, so a piped command's failure fails its step.
@@ -39,12 +53,24 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          # generate.sh's build number is `git rev-list --count HEAD`.
+          fetch-depth: 0
 
       - name: The newest Xcode on the runner
         run: |
           latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
+
+      - name: The Metal toolchain (EmberCore.metal)
+        # Xcode 26 ships without it; without it the build stops at the first
+        # .metal file ("cannot execute tool 'metal' due to missing Metal
+        # Toolchain"). Earlier Xcodes bundle it and have no such component.
+        run: |
+          major=$(xcodebuild -version | awk '/^Xcode/ {split($2, v, "."); print v[1]}')
+          if [ "${major:-0}" -ge 26 ]; then xcodebuild -downloadComponent MetalToolchain; fi
 
       - name: xcodegen
         run: command -v xcodegen >/dev/null || brew install xcodegen

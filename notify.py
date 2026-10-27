@@ -4085,7 +4085,7 @@ def check_daily_alerts(db_path: str = DB_PATH, local_hour: int = None):
                                           title=words["title"])])
 
 
-def _labor_alert_figure(restaurant_id, period, db_path=DB_PATH):
+def _labor_alert_figure(restaurant_id, period, db_path=None):
     """{all_in_pct, hourly_pct, hourly_only} for one stored labor period on
     the owner's basis (the target judges all-in labor), or None when the
     period cannot be read. Through models.get_labor_history in the owner's
@@ -4095,7 +4095,7 @@ def _labor_alert_figure(restaurant_id, period, db_path=DB_PATH):
     (labor_alert_words)."""
     try:
         with models.salary_view(True):
-            hist = models.get_labor_history(restaurant_id, limit=12, db_path=db_path)
+            hist = models.get_labor_history(restaurant_id, limit=12, db_path=db_path or models.DB_PATH)
     except Exception as e:
         print(f"[notify] labor history unreadable for rid={restaurant_id}: {e!r}")
         return None

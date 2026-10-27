@@ -9,6 +9,9 @@ from ai_utils import (
     log_ai_usage, usage_summary,
 )
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 class FakeBlock:
     def __init__(self, **kwargs):

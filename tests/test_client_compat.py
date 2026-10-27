@@ -22,6 +22,9 @@ import models
 import ops
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

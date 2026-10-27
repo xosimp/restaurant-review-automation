@@ -42,6 +42,19 @@ def test_a_good_deploy_passes():
     assert all(line.startswith("PASS") for line in out)
 
 
+def test_a_production_smoke_without_a_token_fails():
+    """B1 F8 / B5: only /health, /login and static files were checked, so a
+    deploy whose signed-in reads all 500 passed."""
+    def h(env):
+        return 200, {}, json.dumps({"status": "ok", "build": SHA[:12], "env": env}).encode()
+    pages = {"/health": h("production"), "/login": LOGIN, "/static/a.js?v=1": (200, {}, b"x"),
+             "/b/abc.css": (200, {}, b"x")}
+    out = []
+    assert smoke.run(_fake(pages), expect_sha=SHA, expect_env="production", token=None, out=out.append,
+                     sleep=lambda s: None) == 1
+    assert any(line.startswith("FAIL reads: no SMOKE_TOKEN") for line in out)
+
+
 def test_the_wrong_build_fails_with_the_rollback_step():
     out = []
     fetch = _fake({"/health": _health("000000000000"), "/login": LOGIN, "/static/a.js?v=1": (200, {}, b""),
@@ -223,4 +236,10 @@ def test_release_workflow_smokes_each_production_deploy_and_checks_lag_hourly():
     lag_runs = " ".join(s.get("run", "") for s in lag_job["steps"])
     assert "scripts/release_lag.py" in lag_runs and "--repo" in lag_runs
     assert any(s.get("env", {}).get("GITHUB_TOKEN") for s in lag_job["steps"])
+    # The script comes from main's checkout, so a rollback to a SHA from before
+    # it existed is still smoked (B1 F8); a failed smoke tells someone.
+    checkout = next(s for s in smoke_job["steps"] if "actions/checkout" in str(s.get("uses", "")))
+    assert checkout["with"]["ref"] == "main"
+    alert = [s for s in smoke_job["steps"] if "failure()" in str(s.get("if", ""))]
+    assert alert and "SMOKE_ALERT_URL" in str(alert[0].get("env", {})) and "--max-time" in alert[0]["run"]
     assert wf["permissions"] == {"contents": "read", "deployments": "read"}

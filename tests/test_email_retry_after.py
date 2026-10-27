@@ -12,6 +12,9 @@ import pytest
 import emails
 import models
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture(autouse=True)
 def _redirect_db(monkeypatch, db_path):

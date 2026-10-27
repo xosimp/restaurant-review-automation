@@ -168,6 +168,8 @@ MIN_BUILD_SEEN_DAYS = 7
 # {raw, enforced, ignored, newest, why}. Empty until one ran — a minimum is
 # enforced as set until then.
 _MIN_BUILD_CHECK = {}
+import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
+_process_caches.register("client_compat._MIN_BUILD_CHECK", _MIN_BUILD_CHECK)
 
 
 def _truthy(value) -> bool:

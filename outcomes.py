@@ -266,19 +266,19 @@ class _on_basis:
 PAY_METRICS = frozenset({"labor_pct", "labor_pct_day", "labor_pct_part"})
 
 
-def _pay_key(restaurant_id, metric, db_path=DB_PATH):
+def _pay_key(restaurant_id, metric, db_path=None):
     """models.labor_rates_key for a PAY_METRICS tracker, else None."""
     if metrics.parse(metric)[0] not in PAY_METRICS:
         return None
     try:
-        return _models_mod.labor_rates_key(restaurant_id) if db_path == DB_PATH \
+        return _models_mod.labor_rates_key(restaurant_id) if db_path in (None, DB_PATH) \
             else _models_mod.labor_rates_key(restaurant_id, db_path)
     except Exception as e:
         print(f"[outcomes] pay key unreadable for {restaurant_id}: {e!r}")
         return None
 
 
-def _pay_recosted(r, db_path=DB_PATH) -> bool:
+def _pay_recosted(r, db_path=None) -> bool:
     """Whether a labor-cost tracker's pay changed since its baseline was read
     (its stored pay_key against today's): the baseline and the "after" are
     then on two pay bases — three managers made salaried leave the hourly

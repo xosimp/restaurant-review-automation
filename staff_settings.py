@@ -472,7 +472,7 @@ def planned_change(restaurant_id, fields) -> dict:
     return out
 
 
-def live_shifts_on_days(restaurant_id, employee_name, days, today=None, db_path=DB_PATH) -> list:
+def live_shifts_on_days(restaurant_id, employee_name, days, today=None, db_path=None) -> list:
     """`employee_name`'s shifts on live published weeks from today that fall
     on the weekdays `days` ([{date, shift_start, ...}]) — the shifts a
     manager's save marking those weekdays unavailable takes them off.

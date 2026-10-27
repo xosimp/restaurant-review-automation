@@ -26,6 +26,9 @@ import webhook_routes
 from auth import create_user, init_auth
 from models import Restaurant, Review, create_restaurant, save_reviews, update_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 def _redirect_db(monkeypatch, db_path):
     real = models.get_conn

@@ -14,6 +14,9 @@ import pytest
 import models
 from models import Restaurant, create_restaurant
 
+# The deploy gate's contract slice (TESTING.md, Tiers; blind re-audit 10/27/26).
+pytestmark = pytest.mark.contract
+
 
 @pytest.fixture
 def db(db_path, monkeypatch):
