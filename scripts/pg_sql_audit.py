@@ -128,8 +128,9 @@ def static_statements(root=ROOT):
 # SQLite.
 _NATIVE = {"db_dialect.py", "pg_copy.py", "pg_sql_audit.py", "pg_partitions.py",
            # scripts/build_index.py: its catalog reads go to psycopg directly
-           # (release-safety audit 10/26/26, A05-04).
-           "build_index.py"}
+           # (release-safety audit 10/26/26, A05-04); so do
+           # scripts/upgrade_boot_check.py's (blind re-audit 10/27/26 RF6).
+           "build_index.py", "upgrade_boot_check.py"}
 
 
 def _nodes(root=ROOT):

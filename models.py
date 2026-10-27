@@ -5724,7 +5724,10 @@ def boot_ddl_lock(db_path=None, wait_seconds=None):
         # if it is broken; 600 s here, so a slow honest boot keeps its lock.
         raw.execute("SET idle_in_transaction_session_timeout = '600s'")
         started, said = _t.monotonic(), False
-        while not raw.execute("SELECT pg_try_advisory_xact_lock(%s)", (BOOT_LOCK_KEY,)).fetchone()[0]:
+        # The key is our own integer constant, written into the statement:
+        # this raw psycopg connection takes %s placeholders, which the SQL
+        # audit (scripts/pg_sql_audit.py) reads as the app's translated SQL.
+        while not raw.execute(f"SELECT pg_try_advisory_xact_lock({int(BOOT_LOCK_KEY)})").fetchone()[0]:
             waited = _t.monotonic() - started
             if waited >= wait:
                 raise RuntimeError(

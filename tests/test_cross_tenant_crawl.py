@@ -233,6 +233,10 @@ def _crawl_main(out_path):
         f"{SALARY_ANNUAL:.0f}", f"{SALARY_ANNUAL:,.0f}", f"{_share:.2f}", f"{_share:,.2f}", f"{_share:,.0f}",
         f"{round(_share):d}") if len(s.replace(",", "")) >= 4})
     out["salary_canaries"] = [s.decode() for s in salary_canaries]
+    # A canary counts only as a whole figure: never inside a longer number
+    # or a token ("5147" is in session id 451473fd…, which failed a run).
+    salary_figures = [(s, re.compile(rb"(?<![0-9A-Za-z.,])" + re.escape(s) + rb"(?![0-9A-Za-z])"))
+                      for s in salary_canaries]
 
     # ── tenant B: the restaurant row at B_ID, then one marked row per table ─
     b_tmp = create_restaurant(Restaurant(name=f"Bravo {MARKER}", owner_email=f"bravo-{MARKER.lower()}@crawl.test",
@@ -544,11 +548,12 @@ def _crawl_main(out_path):
         m_requests += 1
         if 200 <= status < 300:
             m_reached += 1
-        found = next((s for s in salary_canaries if s in data), None)
+        hit = next((m for m in (rx.search(data) for _s, rx in salary_figures) if m), None)
+        found = hit.group(0) if hit else None
         km = key_leak.search(data.decode("utf-8", "replace")) if not found else None
         if (found or km) and not any(l[0] == rule.rule for l in salary_leaks):
             what = found.decode() if found else km.group(0)
-            i = data.find(found) if found else data.find(km.group(0).encode())
+            i = hit.start() if hit else data.find(km.group(0).encode())
             salary_leaks.append([rule.rule, status, what, data[max(0, i - 160):i + 60].decode("utf-8", "replace")])
         keep_a()
         conn.execute("UPDATE users SET role='manager', is_active=1 WHERE id=?", (a_mgr,))
