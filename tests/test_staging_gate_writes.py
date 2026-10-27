@@ -21,6 +21,10 @@ import requests
 
 import config
 
+# The deploy gate's contract slice (TESTING.md, Tiers): a few seconds, and what it
+# guards reaches real people (a send) or every installed phone (a path).
+pytestmark = pytest.mark.contract
+
 _ENV_VARS = ("CAVNAR_ENV", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID",
              "RAILWAY_SERVICE_ID", "ALLOW_LOCAL_SCHEDULER", "ALLOW_NONPROD_SENDS", "RESTORE_FROM",
              "MAINTENANCE_READ_ONLY")

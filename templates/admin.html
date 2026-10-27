@@ -3546,7 +3546,21 @@ function engSystem(S, sE){
     ${['pg_restore', 'rollback'].map(k => { const d = (S.release_drills || {})[k] || {}; return sysRow(d.label || k, d.state === 'ok' ? 'good' : 'warn', d.done_at ? fmtD(d.done_at) + (d.minutes != null ? ' · ' + fmtN(d.minutes) + ' min' : '') : 'never rehearsed', d.state === 'ok' ? 'rehearsed within 100 days' : 'over 100 days or never — docs/ops/RECOVERY.md, Release drills'); }).join('')}
     ${sysRow('Credentials', cr.error ? 'neu' : cr.key === 'ok' && !cr.plaintext ? 'good' : 'bad', cr.error ? unknownV(cr.error) : `key ${esc(cr.key || '—')}`, cr.error ? '' : `${fmtN(cr.encrypted)} encrypted · ${fmtN(cr.plaintext)} still plain text`)}
     ${sysRow('AI', ai.error ? 'neu' : ({operational:'good', degraded:'warn', outage:'bad'}[ai.status] || 'neu'), ai.error ? unknownV(ai.error) : esc(ai.status || '—'), brk.length ? 'breaker open: ' + esc(brk.join(', ')) : esc(ai.reason || 'breakers closed'))}
+    ${engMobile(S.mobile_clients || {})}
   </div></div>`;
+}
+// The iPhone app's compatibility (blind re-audit 10/27/26): live sessions
+// that name their build against the ones from before the header (those send
+// no build and no decode report), decode reports per build over a week, and
+// a MOBILE_MIN_BUILD the server is ignoring.
+function engMobile(mc){
+  if(mc.error) return sysRow('iPhone app', 'neu', unknownV(mc.error), '');
+  const ins = mc.installed || {}, by = mc.decode_by_build_7d || [], share = ins.headerless_share_pct;
+  const tone = ins.min_build_problem ? 'bad' : (share != null && share > 50 ? 'warn' : 'good');
+  const sub = (ins.min_build_problem ? `<span style="color:var(--red-t)">${esc(ins.min_build_problem)}</span> · ` : '')
+    + (by.length ? 'decode reports, 7 days: ' + by.slice(0, 4).map(b => `${esc(b.client_app)} <span class="n">${fmtN(b.reports)}</span> (${fmtN(b.users)} signed in)`).join(' · ')
+                 : 'no decode report in 7 days');
+  return sysRow('iPhone app', tone, `${fmtN(ins.header_sessions || 0)} name a build · ${fmtN(ins.headerless_sessions || 0)} headerless${share != null ? ' (' + share + '%)' : ''}`, sub);
 }
 function engProviders(S, sE){
   const p = S.providers || {}, keys = Object.keys(p).filter(k => k !== 'error');

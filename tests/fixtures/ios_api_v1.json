@@ -2,7 +2,7 @@
  "about": "What the supported iPhone builds call: tests/test_ios_api_v1.py. Replace only in the commit that raises MOBILE_MIN_BUILD.",
  "generated_from": [
   "abc4d51ff7da",
-  "e50371e3fae5"
+  "8d22c2f5612e"
  ],
  "reads": [
   {
@@ -621,9 +621,7 @@
    "prefix": false
   },
   {
-   "methods": [
-    "POST"
-   ],
+   "methods": [],
    "path": "/mobile/api/client-errors",
    "prefix": false
   },

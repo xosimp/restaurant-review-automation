@@ -48,6 +48,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_client_paths_resolve as paths_test  # noqa: E402
 import test_ios_request_body_parity as body_test  # noqa: E402
 
+# The deploy gate's contract slice (TESTING.md, Tiers): a few seconds, and what it
+# guards reaches real people (a send) or every installed phone (a path).
+pytestmark = pytest.mark.contract
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SNAPSHOT = os.path.join(ROOT, "tests", "fixtures", "ios_api_v1.json")
 
