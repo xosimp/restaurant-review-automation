@@ -95,11 +95,14 @@ def test_a_bucket_is_its_beers_and_a_misread_bottle_never_judges_a_price(db):
     rid = _rid(db)
     conn = models.get_conn(db)
     day = (restaurant_today() - timedelta(days=3)).isoformat()
-    lines = [("b1", "Surfside Bucket", 1.0)] + [(f"s{i}", "Surfside`Bucket", 1.0) for i in range(5)] \
-        + [("b2", "Domestic Bucket", 2.0)] + [(f"d{i}", "Miller Lite`Bucket", 1.0) for i in range(10)]
-    for lid, name, q in lines:
+    lines = [("t1", "b1", "Surfside Bucket", 1.0)] + [("t1", f"s{i}", "Surfside`Bucket", 1.0) for i in range(5)] \
+        + [("t2", "b2", "Domestic Bucket", 2.0)] + [("t2", f"d{i}", "Miller Lite`Bucket", 1.0) for i in range(10)]
+    # Checks whose beers rang without the `Bucket mark: an average read 4 (owner, 10/27/26).
+    for t in range(3):
+        lines += [(f"u{t}", f"ub{t}", "Domestic Bucket", 1.0), (f"u{t}", f"ux{t}", "Miller Lite`Bucket", 1.0)]
+    for tid, lid, name, q in lines:
         conn.execute("INSERT INTO pos_ticket_lines (restaurant_id, provider, line_id, ticket_id, business_date, "
-                     "item_name, kind, qty) VALUES (?,?,?,?,?,?,?,?)", (rid, "rpower", lid, "t1", day, name, "sale", q))
+                     "item_name, kind, qty) VALUES (?,?,?,?,?,?,?,?)", (rid, "rpower", lid, tid, day, name, "sale", q))
     conn.commit()
     conn.close()
     assert bm.bucket_size(rid, db_path=db) == 5

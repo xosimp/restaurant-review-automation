@@ -118,7 +118,7 @@ struct GuestOverview: Decodable {
         var linkChars: Int = 41
         var linkExample: String = ""
         var stopChars: Int = 28
-        var max: Int = 300
+        var max: Int = 500
         var sender: String = ""
 
         init() {}
