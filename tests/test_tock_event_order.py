@@ -164,13 +164,87 @@ def test_the_event_time_is_read_from_the_change_stamp_never_the_booking_time():
     wrapped = {"eventId": "x", "timestamp": "2026-10-01T12:00:00Z",
                "reservation": {"id": "R", "dateTime": "2026-10-05T19:00:00", "updatedAt": "2026-10-01T11:00:00Z"}}
     assert gh._event_ms(wrapped, gh._body(wrapped, "reservations")) == 1790852400000   # the record's updatedAt
-    no_change_stamp = {"eventId": "y", "timestamp": 1790856000,
-                       "reservation": {"id": "R", "dateTime": "2026-10-05T19:00:00"}}
-    assert gh._event_ms(no_change_stamp, gh._body(no_change_stamp, "reservations")) == 1790856000000
+    occurred = {"eventId": "o", "occurredAt": 1790856000, "reservation": {"id": "R", "dateTime": "2026-10-05T19:00:00"}}
+    assert gh._event_ms(occurred, gh._body(occurred, "reservations")) == 1790856000000
     # A bare record's "timestamp" may be its seating: not an event time.
     bare = {"id": "R", "timestamp": "2026-10-05T19:00:00Z", "partySize": 2}
     assert gh._event_ms(bare, gh._body(bare, "reservations")) is None
     assert gh._event_ms({"eventId": "z", "reservation": {"id": "R"}}, {"id": "R"}) is None
+
+
+def test_a_delivery_time_is_never_read_as_the_change_time():
+    """An envelope's timestamp, createdAt, sentAt, publishedAt or deliveredAt
+    may be stamped by the delivery attempt (blind re-audit 10/27/26): never
+    an ordering key. An event with only those is applied in arrival order."""
+    for key in ("timestamp", "createdAt", "created_at", "created", "sentAt", "publishedAt", "deliveredAt"):
+        event = {"eventId": "d", key: "2026-10-01T12:00:00Z", "reservation": {"id": "R", "partySize": 2}}
+        assert gh._event_ms(event, gh._body(event, "reservations")) is None, key
+    # A retried envelope carries a newer createdAt; the record's own updatedAt decides.
+    retried = {"eventId": "r", "createdAt": "2026-10-09T12:00:00Z",
+               "reservation": {"id": "R", "updatedAt": "2026-10-01T11:00:00Z"}}
+    assert gh._event_ms(retried, gh._body(retried, "reservations")) == 1790852400000
+
+
+def test_a_retried_envelope_with_a_newer_delivery_time_is_still_stale(rid):
+    day, when = _night(rid)
+    _send("reservations", _event("c1", "reservation.created", "2026-10-01T15:00:00Z", when))
+    _send("reservations", _event("c2", "reservation.cancelled", "2026-10-01T17:00:00Z", when))
+    late = _event("c3", "reservation.modified", "2026-10-01T16:00:00Z", when, party=6)
+    late.update(createdAt="2026-10-02T09:00:00Z", sentAt="2026-10-02T09:00:01Z", timestamp=1790950000)
+    _send("reservations", late)
+    assert _one("SELECT status, party_size FROM tock_bookings") == {"status": "cancelled", "party_size": 4}
+    assert _covers(rid, day) == 0
+
+
+def test_a_stale_event_that_loses_the_race_never_touches_the_contact(rid, monkeypatch):
+    """Two deliveries racing both pass the read check; the guarded write
+    takes only the newer. The loser used to have updated the guest's
+    contact (party, opt-in, Tock id) already."""
+    _day, when = _night(rid)
+    _send("reservations", _event("n1", "reservation.created", "2026-10-01T17:00:00Z", when, party=4,
+                                 firstName="Robin", phone="(312) 555-0142", marketingOptIn=True, guestId="G-1"))
+    contact = _one("SELECT id, last_party_size, tock_marketing_optin, tock_guest_id FROM guest_contacts "
+                   "WHERE restaurant_id=?", (rid,))
+    assert contact["last_party_size"] == 4
+    # The older event, as if its read ran before the newer write landed.
+    monkeypatch.setattr(gh, "_older", lambda event_ms, prev: False)
+    touched = []
+    real_touch = gh._touch_contact
+    monkeypatch.setattr(gh, "_touch_contact", lambda *a, **k: touched.append(a) or real_touch(*a, **k))
+    out = gh.apply_tock_event(rid, "reservations",
+                              _event("o1", "reservation.modified", "2026-10-01T16:00:00Z", when, party=9,
+                                     firstName="Robin", phone="(312) 555-0142", marketingOptIn=False,
+                                     guestId="G-OLD"))
+    assert out["applied"] is False and out["stale"] is True
+    assert touched == [], "the losing event touched the contact"
+    after = _one("SELECT last_party_size, tock_marketing_optin, tock_guest_id FROM guest_contacts WHERE id=?",
+                 (contact["id"],))
+    assert after == {"last_party_size": 4, "tock_marketing_optin": 1, "tock_guest_id": "G-1"}
+    assert _one("SELECT party_size, contact_id FROM tock_bookings") == {"party_size": 4, "contact_id": contact["id"]}
+
+
+def test_a_booking_level_phone_is_kept_when_the_guest_object_has_none(rid):
+    """`{reservation: {phone, guest: {name}}}`: the booking's own top-level
+    phone is the guest's when the guest object carries none — never a
+    deeper one (the venue's)."""
+    _day, when = _night(rid)
+    event = {"eventId": "bp1", "type": "reservation.created",
+             "reservation": {"id": "RES-60", "partySize": 3, "dateTime": when, "phone": "312-555-0163",
+                             "email": "booker@fixture.test",
+                             "venue": {"phone": "(312) 555-0100"},
+                             "guest": {"firstName": "Dana", "lastName": "Reyes"}}}
+    _send("reservations", event)
+    booking = _one("SELECT phone, email, contact_id FROM tock_bookings")
+    assert booking["phone"] == "+13125550163" and booking["email"] == "booker@fixture.test"
+    assert booking["contact_id"] is not None
+    contact = _one("SELECT name, phone FROM guest_contacts WHERE id=?", (booking["contact_id"],))
+    assert contact == {"name": "Dana Reyes", "phone": "+13125550163"}
+    # The guest object's own phone still wins over the booking's.
+    event2 = {"eventId": "bp2", "type": "reservation.created",
+              "reservation": {"id": "RES-61", "partySize": 2, "dateTime": when, "phone": "312-555-0164",
+                              "guest": {"firstName": "Kim", "phone": "312-555-0165"}}}
+    _send("reservations", event2)
+    assert _one("SELECT phone FROM tock_bookings WHERE tock_id='RES-61'")["phone"] == "+13125550165"
 
 
 def test_a_guest_profile_event_reads_its_own_nested_contact_details(rid):

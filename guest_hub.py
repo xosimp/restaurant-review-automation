@@ -333,31 +333,39 @@ def _guest_value(body, g, *names, profile=False):
     if profile:
         return _find(g, *names) or (_find(body, *names) if g is not body else None)
     if g is not body:
-        return _find(g, *names)
+        # The guest object first; when it lacks the field, the booking's own
+        # TOP-LEVEL field (depth 1) — `{reservation: {phone, guest: {name}}}`
+        # carries the guest's phone on the booking — never one deeper in it
+        # (blind re-audit 10/27/26: the fallback was dropped with the venue's).
+        return _find(g, *names) or _find(body, *names, depth=1)
     return _find(body, *names, depth=1)
 
 
-# Where an event says WHEN it happened, newest-first meaning: the record's
-# own last-change time, else the event's. Never the booking's own date and
-# time (`_when`), and never a creation time on the record, which every event
-# about one booking shares. A generic "timestamp" or "createdAt" is the
-# event's only on an envelope around the record; on a bare record it could
-# be the booking's own, and ordering by that would drop a move to an
-# earlier seating as "older".
+# Where an event says WHEN the change it reports happened: the record's own
+# last-change time, else the event's stated occurrence. Never the booking's
+# own date and time (`_when`), never a creation time on the record (every
+# event about one booking shares it), and never a time that may be the
+# DELIVERY's (blind re-audit 10/27/26): an envelope's `timestamp`,
+# `createdAt`/`created`, `sentAt`, `publishedAt` or `deliveredAt` can be
+# stamped by the attempt that carried it, so a retried "booked" would
+# outrank the "cancelled" it preceded. An event with no change time is
+# applied in arrival order and never called stale. Tock's format is still
+# unconfirmed: name its real change-time key first here once a captured
+# payload shows it (docs/integrations/TOCK_WEBHOOKS.md).
 _EVENT_TIME_BODY = ("updatedAt", "updated_at", "modifiedAt", "modified_at", "lastModified", "lastModifiedAt",
-                    "lastUpdated", "lastUpdatedAt", "dateModified")
-_EVENT_TIME_EVENT = ("occurredAt", "occurred_at", "eventTime", "eventTimestamp", "eventDateTime", "sentAt",
-                     "publishedAt")
-_EVENT_TIME_ENVELOPE = _EVENT_TIME_EVENT + ("timestamp", "createdAt", "created_at", "created")
+                    "lastUpdated", "lastUpdatedAt", "dateModified", "changedAt", "changed_at", "lastChangedAt")
+_EVENT_TIME_EVENT = ("occurredAt", "occurred_at", "eventTime", "eventTimestamp", "eventDateTime")
+# Read as a time by nothing here, named so the next reader does not add one.
+_DELIVERY_TIMES = ("timestamp", "createdAt", "created_at", "created", "sentAt", "publishedAt", "deliveredAt")
 
 
 def _event_ms(event, body):
-    """The event's own time as UTC epoch milliseconds, or None when it
-    carries none this build can read (such an event is never called stale)."""
+    """The time of the change the event reports, as UTC epoch milliseconds,
+    or None when it carries none this build can read (such an event is never
+    called stale)."""
     enveloped = body is not event
     raw = _get(body, *_EVENT_TIME_BODY) if enveloped else None
-    raw = raw or _get(event, *_EVENT_TIME_BODY) or _get(event, *(_EVENT_TIME_ENVELOPE if enveloped
-                                                                  else _EVENT_TIME_EVENT))
+    raw = raw or _get(event, *_EVENT_TIME_BODY) or _get(event, *_EVENT_TIME_EVENT)
     if raw is None or isinstance(raw, (dict, list, bool)):
         return None
     s = str(raw).strip()
@@ -543,12 +551,13 @@ def apply_tock_event(rid, hook, event, db_path=DB_PATH) -> dict:
         # booking, its covers and the guest stay as the newer event left
         # them (audit #25 A06-09; stripe_billing_clock's rule).
         return {"applied": False, "stale": True, "kind": kind, "status": status}
-    cid = _touch_contact(rid, phone, name=name, email=email, source="tock", party=party, tock_guest=guest_ref,
-                         tock_optin=optin, db_path=db_path) if phone else None
     conn = get_conn(db_path)
     try:
         # The guard is in the write too: of two deliveries racing, the older
-        # one's update matches no row.
+        # one's update matches no row. The guest's contact is touched only
+        # AFTER this write took (below): a stale event used to update the
+        # contact's name, party and opt-in before losing the race (blind
+        # re-audit 10/27/26).
         wrote = conn.execute(
             "INSERT INTO tock_bookings (restaurant_id, kind, tock_id, status, party_size, booked_for, business_date, "
             "guest_ref, guest_name, phone, email, marketing_optin, contact_id, event_ms) "
@@ -564,12 +573,24 @@ def apply_tock_event(rid, hook, event, db_path=DB_PATH) -> dict:
             "WHERE excluded.event_ms IS NULL OR tock_bookings.event_ms IS NULL "
             "OR excluded.event_ms >= tock_bookings.event_ms",
             (rid, kind, tock_id, status, party, when.isoformat(timespec="seconds"), bday.isoformat(), guest_ref, name,
-             phone, (str(email).strip().lower() if email else None), None if optin is None else int(optin), cid,
+             phone, (str(email).strip().lower() if email else None), None if optin is None else int(optin), None,
              event_ms)).rowcount
-        if not wrote:
-            conn.commit()
-            return {"applied": False, "stale": True, "kind": kind, "status": status, "contact_id": cid}
-        visited = False
+        conn.commit()
+    finally:
+        conn.close()
+    if not wrote:
+        return {"applied": False, "stale": True, "kind": kind, "status": status, "contact_id": None}
+    cid = _touch_contact(rid, phone, name=name, email=email, source="tock", party=party, tock_guest=guest_ref,
+                         tock_optin=optin, db_path=db_path) if phone else None
+    visited = False
+    conn = get_conn(db_path)
+    try:
+        if cid:
+            # The contact this event names, while this event is still the
+            # booking's newest (a newer one may have landed meanwhile).
+            newest = "" if event_ms is None else " AND (event_ms IS NULL OR event_ms <= ?)"
+            conn.execute("UPDATE tock_bookings SET contact_id=? WHERE restaurant_id=? AND kind=? AND tock_id=?"
+                         + newest, (cid, rid, kind, tock_id) + (() if event_ms is None else (event_ms,)))
         # One visit per booking, claimed in the write (two "seated"
         # deliveries at once count it once).
         if status in ("seated", "completed") and cid and conn.execute(

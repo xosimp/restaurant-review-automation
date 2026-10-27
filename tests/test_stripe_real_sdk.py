@@ -219,6 +219,24 @@ def test_stripe_api_version_pins_the_version_every_call_is_made_at(sdk_globals, 
     assert mod.max_network_retries == config.STRIPE_MAX_NETWORK_RETRIES == 1
 
 
+# The API version the LOCKED stripe SDK sends when STRIPE_API_VERSION is
+# unset (blind re-audit 10/27/26): a stripe bump in requirements.txt changes
+# it — and the shape of every object read back — silently. The bump fails
+# here, in its own commit, until this pair is updated on purpose (and
+# billing_jobs' readers checked against the new version).
+LOCKED_SDK = ("11.6.0", "2025-02-24.acacia")
+
+
+def test_the_locked_sdks_default_api_version_is_pinned():
+    from stripe._api_version import _ApiVersion
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "requirements.txt"),
+              encoding="utf-8") as fh:
+        locked = re.search(r"^stripe==(\S+)", fh.read(), re.M).group(1)
+    assert (locked, stripe.VERSION, _ApiVersion.CURRENT) == (LOCKED_SDK[0], LOCKED_SDK[0], LOCKED_SDK[1]), (
+        "the stripe SDK in the lock changed, and with it the API version every call is made at when "
+        "STRIPE_API_VERSION is unset: check the shapes billing_jobs and the webhooks read, then update LOCKED_SDK")
+
+
 def test_a_failure_to_install_the_bounded_client_is_logged_once(monkeypatch, caplog):
     monkeypatch.setattr(config, "_stripe_unbounded_logged", False)
 
