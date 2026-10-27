@@ -21,6 +21,23 @@ import ops
 import rpower_health as rh
 
 
+@pytest.fixture(autouse=True)
+def _midday():
+    """The rollup owes a night only once the grace after it has passed
+    (`_expected_nights`: 24h + 5h past midnight), so before 5am Chicago the
+    last owed night is a day earlier and every "the last two nights" case
+    here reads one night stale. Run each test at the latest noon, Chicago,
+    that has already happened — never the hour the suite happens to start,
+    and never ahead of the stamps the database writes from its own clock."""
+    from tests.clock import frozen, restaurant_now
+    now = restaurant_now()
+    noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+    if noon > now:
+        noon -= timedelta(days=1)
+    with frozen(noon, tick=True):
+        yield
+
+
 def _store(db_path, name="Store", token="tok-1", cg=101, mid="M1", **kw):
     rid = models.create_restaurant(models.Restaurant(name=name, owner_email=f"{name[:4].lower()}@x.test"),
                                    db_path=db_path)
