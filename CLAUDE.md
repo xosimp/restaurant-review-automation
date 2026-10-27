@@ -208,7 +208,15 @@ A deletion is only "verified" when the trace is written down alongside it.
   before the deploy (`scripts/build_index.py`, CONCURRENTLY) and listed in
   `migrations/prebuilt_indexes.txt` (`tests/test_boot_ddl_rules.py`); schema
   changes are additive and format markers compare with `==`
-  (ARCHITECTURE_MANIFEST.md, Release compatibility). The chain: `init_db()` (which also calls `ops.init_ops`,
+  (ARCHITECTURE_MANIFEST.md, Release compatibility). Boot DDL is one booter at
+  a time on Postgres (`models.boot_ddl_lock`, an advisory lock held for the
+  whole `boot_schema`), and `RECURRING_BOOT_WRITES`
+  (`tests/test_ws2_boot_schema.py`) may only shrink. `/health` is strict only
+  for the sign-in tables (`status_manager.STRICT_SCHEMA_TABLES`) and missing
+  tables: a missing column elsewhere is `schema_gaps` (degraded 200), named in
+  the log, never the body. A `DATABASE_URL` set but unusable on Railway raises
+  (`config.database_url_problem`) instead of opening the volume's frozen
+  SQLite copy; `DB_BACKEND=sqlite` is the deliberate SQLite path. The chain: `init_db()` (which also calls `ops.init_ops`,
   `billing_jobs.init_billing`, `admin_events.init_admin_events`,
   `offboarding.init_offboarding`, `admin_ops.init_admin_ops` and
   `ai_utils.init_ai_ops`, and since 10/11/26 `job_queue.init_job_queue`,
@@ -236,11 +244,17 @@ A deletion is only "verified" when the trace is written down alongside it.
   both deliberately. The scheduler also stands down while
   `MAINTENANCE_READ_ONLY` is set (the Postgres cutover's write freeze).
 - **Staging never reaches real people.** `config.outbound_sends_allowed()` is
-  false outside `production` (and `local`) and is checked at the send points
-  themselves — `emails.deliver`, the Twilio send, APNs and Web Push,
-  `config.stripe_api` with a live key, DocuSign's live account, Google replies
-  and posts, customer webhooks. A new send point checks it too;
-  `ALLOW_NONPROD_SENDS=1` is the deliberate override.
+  false outside `production` (and `local`) and is checked at the provider call
+  of every write to a third party on a customer's behalf — `emails.deliver`,
+  the Twilio send, APNs and Web Push, `config.stripe_api` with a live key,
+  DocuSign's live account, Google replies, posts, retractions and listing
+  edits, customer webhooks, the RPOWER and Toast schedule pushes, every Meta
+  Graph write. A new send point checks it too and refuses through
+  `config.refused_send("<channel>")` (counted on `/health`), never
+  `sends_refused_reason()` alone; `ALLOW_NONPROD_SENDS=1` is the deliberate
+  override. Set `CAVNAR_ENV` explicitly on Railway: a production-looking
+  service not named `production` is `/health`'s `not_production_env` and a
+  CRITICAL at boot (`config.environment_name_problem`, the one check).
 - **Never run a copy of the app from a worktree with Flask's own `.env`
   loading.** `hosted_dashboard.py` loads the `.env` beside it and runs
   `app.run(..., load_dotenv=False)`, because Flask's lookup walks up from the
@@ -267,7 +281,10 @@ A deletion is only "verified" when the trace is written down alongside it.
   `QUEUE_WORKER=0`. A generation gives its CPU slot back while the model
   writes (`job_queue.model_wait`). A deploy hands running rows back and the next
   process resumes them from their checkpoints (`schedule_resume`), never
-  paying for a model answer twice. The single-runner guarantee is
+  paying for a model answer twice. At the deploy's SIGTERM the queue worker
+  hands back in parallel with the web worker's 30 s graceful window (35 s
+  budget); `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60` must be set — Railway's
+  default is 0, and the boot logs an ERROR while it is unset. The single-runner guarantee is
   `ops.acquire_scheduler_lease()`, and the lease lives in the SQLite file:
   the lease keeper renews it every minute, a kept lease silent for 4 minutes
   is taken over, and the web process's supervisor restarts a dead scheduler
@@ -341,6 +358,18 @@ A deletion is only "verified" when the trace is written down alongside it.
   `eligible`); a partial run of a non-sending `retry` job that failed ≥ 20%
   retries once, 30 minutes later. `job_queue` defers a kind it has no handler
   for (never fails it).
+- **A queue handler whose work failed but must not be retried returns
+  `job_queue.dead_letter(result, error)`** — the row ends `failed` and the
+  dead-letter rules read it (a schedule generation that failed on the
+  platform's side does; an owner-actionable refusal does not). A partial retry
+  re-runs only the restaurants whose failures the run captured (`ops.capture`
+  naming `restaurant_id=N`), only for a job that goes through
+  `scheduler.resumable_sweep`, never work that succeeded.
+- **Paging thresholds are rates with absolute minimums**, never a bare count
+  that pages at any volume; platform conditions reach the pager one dedup key
+  each (`sla:<condition>`) and are resolved when they clear; release health is
+  keyed on `RAILWAY_DEPLOYMENT_ID` and never advises a rollback for a
+  provider's outage.
 - **Recovery lives in `docs/ops/RECOVERY.md`.** The local backup snapshot is
   deliberately NOT redacted (it never leaves the volume and is the restore
   artifact); only the off-site copies are — the object-storage and emailed
@@ -388,14 +417,19 @@ A deletion is only "verified" when the trace is written down alongside it.
   organisation's tokens a minute. The fleet AI ceiling is per paying
   restaurant (`AI_GLOBAL_PER_CLIENT_USD`) with a runaway detector and
   `AI_EMERGENCY_STOP` — never an absolute fleet-wide cap again.
-- **A model change ships with its eval.** Changing `ai_utils.MODELS`, a tier
-  default or T1's previous model fails `tests/test_ai_model_change_needs_eval.py`
-  until every eval surface has a measured baseline on its new model
-  (`scripts/run_ai_eval.py freeze` / `run --baseline` on Railway, commit
-  `eval_baselines/` — scores only, never customer text — then `fingerprint
-  --write`); a tier's default model changing names the tier in
-  `ai_workflows.TIER_CANARY_DEFAULT` for at least a week. A call with a
-  registered workflow policy goes through `route_for(...).apply(...)`.
+- **A model change, or an edit to an eval surface's prompt, ships with its
+  eval.** `tests/test_ai_model_change_needs_eval.py` re-checks every
+  baseline's verdict: measured on the model and prompt in force, accepted
+  against the baseline in force before it on the SAME frozen set, over the
+  floors (≥10 scored, ≤10% provider errors, ≤30% refused). On Railway:
+  `scripts/run_ai_eval.py freeze` / `run --surface S --baseline` (what is in
+  force first), then `--model M`; a prompt: `template --surface S` locally,
+  then `run --surface S --candidate - --baseline < file` on Railway; commit
+  `eval_baselines/` (scores only, never customer text), then `fingerprint
+  --write`. The CLI never writes an invalid run, and a regression only with
+  `--accept-regression "<why>"`. A tier's default model changing names the
+  tier in `ai_workflows.TIER_CANARY_DEFAULT` for at least a week. A call with
+  a registered workflow policy goes through `route_for(...).apply(...)`.
 - **Silent handlers only go down.** `scripts/check_silent_handlers.py` reads
   every app module (packages too) and holds each file's count of broad handlers
   that leave no trace to `scripts/silent_handlers_baseline.json`; a new one logs
@@ -408,6 +442,42 @@ A deletion is only "verified" when the trace is written down alongside it.
   the owner as "labor %". A cached read whose figures carry labor is kept per
   salary view. `scripts/check_labor_math.py` fails new labor-cost ÷ sales
   arithmetic outside `metrics.py`, `labor.py` and `dsr/`.
+- **A manager never sees salaries — in any surface, text, alert, cache or AI
+  output.** `models.viewer_sees_salaries()` is False off a request (a job is
+  manager-safe) and for support acting through view-as;
+  `permissions.sees_salaries(user)` is the per-login rule. Every registered
+  job runs in `models.salary_view(False)` (`ops._job_context`) unless its
+  `jobs_registry` entry says `salary_view="owner"` (listed in
+  `OWNER_SALARY_JOBS` with the reason) — only when every output goes to the
+  account holder alone. A job that sends to owners and managers builds each
+  recipient in their own view. Anything shared (an issue, an alert's text, a
+  stored read, a diagnosis, a cache key) is hourly or kept per salary view:
+  with anyone salaried it names the hourly figure, never the all-in % or the
+  points over. A pool thread carries no view — wrap the unit in
+  `models.in_salary_view`.
+- **Two labor figures are compared only on one pay basis**: read periods
+  through `models.get_labor_history` (`pay_basis`) or `metrics.labor_figures`,
+  never the stored hourly `labor_pct` (`check_labor_math.py`'s second
+  ratchet). Prime cost's parts are both over net sales (`food_share_pct` +
+  `labor_pct` = `prime_cost_pct`; `metrics.prime_cost_pct` for a closed
+  window); food cost % is over food sales and is never added to labor %.
+- **The manager rule holds after publish too.** Anything that changes who can
+  be on a published shift — time off, an availability change (approved, a
+  manager's save, or one applied without approval), deactivating someone, the
+  floor-manager / acting / trainee settings, a weekday set off — goes through
+  `shift_requests.hold_manager_rule` before it is written: refused with the
+  gap (`ManagerGapRefused` → 409 `needs_cover`) unless who runs the floor is
+  named (`covered_by`), and refused when the rule can't be read (never
+  approved on no answer). Support and admins (view-as included) never cover a
+  gap by naming themselves (`shift_requests.acting_admin`). A new path that
+  changes who can work a live shift calls it too, on web and iPhone
+  (`FloorCoverAsk`); `manager_watch` (hourly) is the backstop, not the gate.
+- **A restaurant's time zone is either chosen or flagged.** A write of
+  `restaurants.timezone` through `update_restaurant` stamps
+  `timezone_confirmed_at`; never set the zone with raw SQL.
+  `data_health.timezone_problem` flags a zone nobody chose (unless the
+  restaurant's location agrees), one the location contradicts, or an unknown
+  name.
 - **Blueprints live in one list, `blueprints.plan()`.** hosted_dashboard
   registers only through `blueprints.register_all(app)`; the module-gate sweep,
   the cross-tenant crawl, the client-path and twin-wiring tests read
@@ -424,14 +494,24 @@ A deletion is only "verified" when the trace is written down alongside it.
 - **A module-level cache registers with `process_caches`**
   (`process_caches.register("module._NAME", _NAME)` beside its definition);
   the suite clears them all per test (`tests/test_process_caches.py`).
-- **Cohort rollout:** `rollout.enabled(feature, restaurant_id)`;
-  `ROLLOUT_<FEATURE>` wins over the console's `rollout_flags` row
-  (`POST /admin/api/rollout`, audited).
+- **A risky new behaviour ships behind a cohort switch:**
+  `rollout.enabled("<feature>", restaurant_id, default=…)`, registered in
+  `rollout.FEATURES`. New owner-visible behaviour: default off, 0% →
+  allow-list → 10% → 100% from the console. A change that must reach
+  everyone: default on, the flag is its kill switch. `ROLLOUT_<FEATURE>` wins
+  over the console's `rollout_flags` row (`POST /admin/api/rollout`, audited).
 - **The phone's payloads are a contract.** `tests/test_ios_response_shapes.py`
   holds every main iOS read to `ios/CavnarAI/CavnarAITests/Fixtures/<route>.json`
   and `<route>.v1.json` (what installed builds read): a v1 key is never renamed,
   removed or re-typed until `MOBILE_MIN_BUILD` retires the builds that read it.
-  Fixtures are re-captured (`CAVNAR_WRITE_IOS_FIXTURES=1`), never typed. Every
+  Fixtures are re-captured (`CAVNAR_WRITE_IOS_FIXTURES=1`), never typed; a
+  null under a non-optional Swift field fails. The paths, methods and body keys
+  installed builds send are frozen in `tests/fixtures/ios_api_v1.json`, and
+  the web's main reads in `tests/fixtures/web/<name>.v1.json`; regenerate
+  `ios_api_v1.json` (`python tests/test_ios_api_v1.py --write --ref <store
+  build> --ref HEAD`) and the v1 fixtures only in the commit that raises the
+  minimum. A new phone read goes in `tests/ios_shape_capture.ROUTES` with a
+  decode line in `ResponseShapeContractTests.swift`. Every
   request the app builds names its build (`X-Cavnar-App`); `ios/CavnarAI/generate.sh`
   stamps the build number from the commit count — archive only from a project it
   generated.
