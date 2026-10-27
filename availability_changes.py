@@ -253,6 +253,28 @@ def record(restaurant_id, employee_name, cuts, off, bounds, windows, source="app
     return _shape(row)
 
 
+def leaves_no_manager(restaurant_id, employee_name, cuts, off, bounds, windows, today=None, db_path=DB_PATH):
+    """Whether filing these cut days would take a manager off shifts staff
+    already have and leave a minute of a published week with no manager on
+    (or that can't be read) — such a cut is never put in force by the "no
+    approval needed" rule: a manager decides it (blind re-audit 10/26/26
+    B2)."""
+    planned = {"employee_name": " ".join(str(employee_name or "").split()),
+               "effective_from": effective_default(restaurant_id, today=today, db_path=db_path),
+               "days": {d: _day_payload(off, bounds, windows, d) for d in cuts}}
+    try:
+        import shift_requests as _srq
+        return bool(_srq.live_manager_gaps(restaurant_id, planned["employee_name"],
+                                           off=_conflicts_of(restaurant_id, planned, db_path),
+                                           today=_today(restaurant_id, today),
+                                           db_path=None if db_path in (None, DB_PATH) else db_path))
+    except Exception as e:
+        import ops
+        ops.capture(e, job="availability_changes", context=f"restaurant_id={restaurant_id} manager check",
+                    kind="request")
+        return True
+
+
 def _shape(row) -> dict:
     out = dict(row)
     try:
@@ -310,11 +332,18 @@ class ChangeError(ValueError):
 
 
 def decide(restaurant_id, change_id, approve, decided_by=None, effective_from=None, note=None, db_path=DB_PATH,
-           today=None) -> dict:
+           today=None, covered_by=None) -> dict:
     """A manager's answer: approved for its date (or the date given, never
     in the past) or denied. The person is told. A change whose date has
     come is put in force at once. Returns the row, or None when it is not
-    pending here."""
+    pending here.
+
+    Approving a cut that rules a manager off shifts staff already have is
+    judged by the manager rule first (blind re-audit 10/26/26 B2): refused
+    (shift_requests.ManagerGapRefused) when it would leave any minute of a
+    published week with no manager on, unless `covered_by` names who runs
+    the floor instead — then the managers are told and the row carries
+    `manager_gap`. A rule that can't be read refuses it."""
     eff = None
     if approve and effective_from:
         try:
@@ -323,6 +352,26 @@ def decide(restaurant_id, change_id, approve, decided_by=None, effective_from=No
             raise ChangeError("That isn't a date.")
         if eff < _today(restaurant_id, today):
             raise ChangeError("The date it starts can't be in the past.")
+    gap = None
+    floor = (covered_by or "").strip()[:120] or None
+    if approve:
+        conn = get_conn(db_path)
+        try:
+            pend = conn.execute("SELECT * FROM staff_availability_changes WHERE id=? AND restaurant_id=? "
+                                "AND status='pending'", (int(change_id), restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if pend is None:
+            return None
+        planned = _shape(dict(pend))
+        if eff:
+            planned["effective_from"] = eff.isoformat()
+        import shift_requests as _srq
+        gap = _srq.hold_manager_rule(
+            restaurant_id, planned["employee_name"],
+            f"approving {planned['employee_name']}'s availability change", covered_by=floor,
+            today=_today(restaurant_id, today), db_path=None if db_path in (None, DB_PATH) else db_path,
+            off=lambda: _conflicts_of(restaurant_id, planned, db_path))
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -344,7 +393,30 @@ def decide(restaurant_id, change_id, approve, decided_by=None, effective_from=No
         # A date the manager moved into a week staff already have: the shifts
         # it rules out are named with the answer, to cover or move.
         row["conflicts"] = published_conflicts(restaurant_id, row, db_path=db_path)
+        if gap:
+            # Approved only because the decider named who runs the floor.
+            import shift_requests as _srq_a
+            _srq_a._tell_managers(restaurant_id, "No manager on", gap + ".",
+                                  db_path if db_path not in (None, DB_PATH) else _models_mod.DB_PATH)
+            row["manager_gap"], row["floor_covered_by"] = gap, floor
     return row
+
+
+def _conflicts_of(restaurant_id, change, db_path=DB_PATH) -> list:
+    """published_conflicts, raising when the weeks can't be read — for the
+    manager rule, which refuses on no answer."""
+    import staff_settings as _ss
+    import time_off as _to
+    eff = date.fromisoformat(str(change["effective_from"])[:10])
+    days = change.get("days") or {}
+    off = {d for d, s in days.items() if s.get("status") == "off"}
+    bounds = {d: {"from": s.get("from"), "until": s.get("until")} for d, s in days.items()
+              if s.get("status") == "off" and (s.get("from") or s.get("until"))}
+    wins = {d: {k: s.get(k) for k in ("earliest", "latest", "from", "until") if s.get(k)}
+            for d, s in days.items() if s.get("status") == "window"}
+    shifts = _to.published_conflicts(restaurant_id, change["employee_name"], eff, eff + timedelta(days=70),
+                                     db_path=None if db_path in (None, DB_PATH) else db_path)
+    return _ss._conflicts(shifts, {"off": off, "bounds": bounds, "windows": wins})
 
 
 def published_conflicts(restaurant_id, change, db_path=DB_PATH) -> list:
@@ -352,18 +424,7 @@ def published_conflicts(restaurant_id, change, db_path=DB_PATH) -> list:
     that its cut days rule out ([{date, shift_start, shift_end, role,
     reason}]). Never raises: [] when they can't be read."""
     try:
-        import staff_settings as _ss
-        import time_off as _to
-        eff = date.fromisoformat(str(change["effective_from"])[:10])
-        days = change.get("days") or {}
-        off = {d for d, s in days.items() if s.get("status") == "off"}
-        bounds = {d: {"from": s.get("from"), "until": s.get("until")} for d, s in days.items()
-                  if s.get("status") == "off" and (s.get("from") or s.get("until"))}
-        wins = {d: {k: s.get(k) for k in ("earliest", "latest", "from", "until") if s.get(k)}
-                for d, s in days.items() if s.get("status") == "window"}
-        shifts = _to.published_conflicts(restaurant_id, change["employee_name"], eff, eff + timedelta(days=70),
-                                         db_path=None if db_path in (None, DB_PATH) else db_path)
-        return _ss._conflicts(shifts, {"off": off, "bounds": bounds, "windows": wins})
+        return _conflicts_of(restaurant_id, change, db_path)
     except Exception as e:
         print(f"[availability_changes] conflicts unread rid={restaurant_id}: {e!r}")
         return []

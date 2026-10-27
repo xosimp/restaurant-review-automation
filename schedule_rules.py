@@ -2604,10 +2604,14 @@ def _in_read_scope(fn):
 
 
 @_in_read_scope
-def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_path=DB_PATH) -> Constraints:
+def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_path=DB_PATH,
+                      roster_change=None) -> Constraints:
     """Everything the pipeline needs to know about who can work when,
     gathered once. Every source is optional; a missing one costs a rule,
-    never the generation."""
+    never the generation. `roster_change` ({"name", "active"?, "settings"?},
+    staff_settings.planned_change) reads one person as a settings save not
+    yet written would leave them — the manager rule judges such a save
+    against the live weeks before it is made (blind re-audit 10/26/26 B2)."""
     from models import get_restaurant, get_staff_availability, get_close_times, get_role_close_buffers, get_staff_notes
     restaurant = restaurant or get_restaurant(restaurant_id, db_path)
     c = Constraints(restaurant_id=restaurant_id, week_dates=list(week_dates or []), week_days=list(week_days or []))
@@ -2684,6 +2688,8 @@ def build_constraints(restaurant_id, week_dates, week_days, restaurant=None, db_
     try:
         import staff_settings as _ss
         _people = list(_ss.roster(restaurant_id, db_path=db_path, include_inactive=True))
+        if roster_change:
+            _people = _ss.roster_after(_people, roster_change.get("name"), roster_change)
     except Exception as exc:
         _people = []
         _input_problem(c, "roster", exc)

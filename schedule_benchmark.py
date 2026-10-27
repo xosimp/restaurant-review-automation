@@ -928,17 +928,25 @@ def _independent(rows, spec, c, week_dates, sibling_rows=()) -> dict:
         for a, b, r in by_person[name]:
             if a < base + sp[1] and base + sp[0] < b:
                 add("double_booked_across_locations", (r["employee"], r["date"]))
-    # every minute someone is on and no manager is, within the open hours
+    # every minute someone is on and no manager is — from the day's first
+    # person on to its last off, not only the open hours (blind re-audit
+    # 10/26/26 B2: closers left 90 minutes past close with no manager were
+    # never counted), less the owner's two allowances read from the spec's
+    # own settings: the closing manager's stay after the last manager's end
+    # to the last person off (when no longer than the stay), and the prep
+    # before an opening manager who arrives at least the lead before open.
     unmanaged = 0
     if managers:
+        comp = dict(sr.DEFAULTS, **(spec.get("compliance") or {}))
+        stay, lead = sr.closing_stay_minutes(comp), sr.opening_lead_minutes(comp)
         for i, d in enumerate(week_dates):
             wd = _date.fromisoformat(d).strftime("%A")
             if d in closed:
                 continue
-            o, cl = _m(spec["open"][wd]), _m(spec["close"][wd])
-            if cl <= o:
-                cl += 1440
-            lo, hi = i * 1440 + o, i * 1440 + cl
+            spans = [(a, b) for lst in by_person.values() for a, b, r in lst if r.get("date") == d]
+            if not spans:
+                continue
+            lo, hi = min(a for a, _b in spans), max(b for _a, b in spans)
             floor, mgr = [0] * (hi - lo), [0] * (hi - lo)
             for name, lst in by_person.items():
                 for a, b, _r in lst:
@@ -946,7 +954,23 @@ def _independent(rows, spec, c, week_dates, sibling_rows=()) -> dict:
                         floor[t - lo] += 1
                         if name in managers:
                             mgr[t - lo] += 1
-            unmanaged += sum(1 for t in range(hi - lo) if floor[t] and not mgr[t])
+            open_at = i * 1440 + _m(spec["open"][wd])
+            t = 0
+            while t < hi - lo:
+                if not floor[t] or mgr[t]:
+                    t += 1
+                    continue
+                s_ = t
+                while t < hi - lo and floor[t] and not mgr[t]:
+                    t += 1
+                start, end = lo + s_, lo + t
+                after_mgr = s_ > 0 and mgr[s_ - 1]
+                last_on = not any(floor[u] for u in range(t, hi - lo))
+                if after_mgr and last_on and end - start <= stay:
+                    continue                    # the closing manager stays until the last person leaves
+                if lead > 0 and t < hi - lo and mgr[t] and end <= open_at - lead:
+                    continue                    # prep before an opening manager in by the lead
+                unmanaged += end - start
     return {"breaches": {k: len(v) for k, v in out.items()}, "examples": {k: v[:3] for k, v in out.items()},
             "unmanaged_open_minutes": unmanaged}
 
@@ -1172,7 +1196,8 @@ def dst_rows(rows, tz, change_date) -> list:
 INVARIANTS = {
     "legal": "no independent legal breach (overlap, closed or time-off date, off roster, federal 14-15 rules, "
              "double-booked across locations)",
-    "manager": "no minute of the open hours with someone on and no manager",
+    "manager": "no minute with someone on and no manager, from the first person on to the last off, beyond the "
+               "owner's closing-stay and opening-prep allowances",
     "deterministic": "every Generate press gives the same week",
     "no_long_shifts": f"no shift over {LONG_SHIFT_HOURS:g}h unless the restaurant works them",
     "usual_days": f"at least {USUAL_DAYS_KEPT_MIN:g}% of each person's usual days kept",

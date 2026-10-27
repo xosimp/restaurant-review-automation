@@ -269,9 +269,17 @@ def payload(user, restaurant=None, include_value=True, surface="web") -> dict:
 
     # Profile: the four details the AI writes with.
     missing = [label for attr, label in (("owner_name", "your name"), ("owner_phone", "a phone number"),
-                                         ("timezone", "your timezone"),
                                          ("voice_notes", "your brand voice (how you sound)"))
                if not str(getattr(r, attr, None) or "").strip()]
+    # The zone is never blank (the column defaults to Chicago), so "missing"
+    # is what data_health says of it: nobody chose it, or the location says
+    # another zone (blind re-audit 10/26/26 B2 — this check could never fire).
+    try:
+        import data_health as _dh_tz
+        if _dh_tz.timezone_problem(r):
+            missing.insert(2, "your timezone")
+    except Exception as e:
+        print(f"[account_health] time zone check unreadable for {rid}: {e!r}")
     have = 4 - len(missing)
     if have >= 4:
         pts += 1

@@ -422,9 +422,38 @@ def recent(restaurant_id, limit=30, db_path=None, today=None):
     return [dict(dict(r), span_label=span_label(dict(r))) for r in rows]
 
 
-def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_path=None):
+def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_path=None, covered_by=None):
     """A manager's answer. Only a pending request can be decided; the
-    decision is final (a changed mind is a new request)."""
+    decision is final (a changed mind is a new request).
+
+    Approving time off over a shift staff already have is judged by the
+    manager rule first, like a drop (blind re-audit 10/26/26 B2): when it
+    would leave any minute of a published week with no manager on, it is
+    refused (shift_requests.ManagerGapRefused) unless `covered_by` names
+    who runs the floor instead — then the managers are told, and the
+    answer carries `manager_gap`. A rule that can't be read refuses it
+    (ShiftRequestError); nothing changes either way."""
+    gap = None
+    floor = (covered_by or "").strip()[:120] or None
+    if approve:
+        conn = get_conn(db_path)
+        try:
+            pend = conn.execute("SELECT * FROM staff_time_off WHERE id=? AND restaurant_id=? AND status='pending'",
+                                (int(request_id), restaurant_id)).fetchone()
+        finally:
+            conn.close()
+        if pend is None:
+            return None
+        pend = dict(pend)
+        import shift_requests as _srq
+        today = _today(restaurant_id)
+        if _as_date(pend["end_date"]) >= today:
+            gap = _srq.hold_manager_rule(
+                restaurant_id, pend["employee_name"], f"approving {pend['employee_name']}'s time off",
+                covered_by=floor, today=today, db_path=db_path,
+                off=lambda: published_conflicts(restaurant_id, pend["employee_name"],
+                                                max(_as_date(pend["start_date"]), today), pend["end_date"],
+                                                db_path=db_path, part=pend))
     conn = get_conn(db_path)
     try:
         cur = conn.execute(
@@ -450,6 +479,11 @@ def decide(restaurant_id, request_id, approve, decided_by=None, note=None, db_pa
                 shift_requests._refresh_task_sheets(restaurant_id, [today.isoformat()])
         except Exception as e:
             print(f"[time_off] task sheets not refreshed rid={restaurant_id}: {e!r}")
+        if gap:
+            # Approved only because the decider named who runs the floor.
+            import shift_requests as _srq_t
+            _srq_t._tell_managers(restaurant_id, "No manager on", gap + ".", db_path or _srq_t._models.DB_PATH)
+            row["manager_gap"], row["floor_covered_by"] = gap, floor
     # The same shape as recent(): the decided row replaces the listed one on
     # the phone, and without its label a part-day request ("10/7/26, until
     # 4:00pm") read as the whole day off once answered (schedule re-audit

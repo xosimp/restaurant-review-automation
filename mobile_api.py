@@ -5171,13 +5171,33 @@ def mobile_labor_availability_save(current_user):
     available, blocked, notes, err = availability_from_submission(sorted(blocked_in), data.get("notes"))
     if err:
         return jsonify(ok=False, error="Every day is blocked. Tick at least one day they can work."), 400
+    # A weekday blocked under a manager's published shifts is judged by the
+    # manager rule first (blind re-audit 10/26/26 B2): 409 needs_cover
+    # unless `covered_by` names who runs the floor instead.
+    import shift_requests as _sq_req
+    import staff_settings as _ss_av
+    rid_av = current_user["restaurant_id"]
+    covered = (data.get("covered_by") or "").strip() if isinstance(data.get("covered_by"), str) else None
+    refused = _sq_req.self_cover_refused(current_user, covered)
+    if refused:
+        return jsonify(ok=False, error=refused), 400
+    try:
+        floor_gap = _sq_req.hold_manager_rule(
+            rid_av, name, f"saving {name}'s availability", covered_by=covered,
+            off=lambda: _ss_av.live_shifts_on_days(rid_av, name, blocked))
+    except _sq_req.ManagerGapRefused as e:
+        return jsonify(ok=False, needs_cover=True, manager_gap=e.gap, error=str(e)), 409
+    except _sq_req.ShiftRequestError as e:
+        return jsonify(ok=False, error=str(e)), 503
+    if floor_gap:
+        _sq_req._tell_managers(rid_av, "No manager on", floor_gap + ".", _sq_req._models.DB_PATH)
     save_staff_availability(
         current_user["restaurant_id"], name,
         available_days=available,
         unavailable_days=blocked,
         notes=notes,
     )
-    return jsonify(ok=True)
+    return jsonify(ok=True, **({"manager_gap": floor_gap + ".", "warning": floor_gap + "."} if floor_gap else {}))
 
 
 @mobile_bp.route("/labor/availability/delete", methods=["POST"])

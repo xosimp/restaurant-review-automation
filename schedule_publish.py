@@ -1615,8 +1615,9 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         # shifts).
         import schedule_shifts as _ss_st
         rows = _ss_st.rows_of(schedule_id, "working", conn=conn)
-        added = _cover_rows(rows, covers) if covers else []
-        rows = rows + added
+        # Each manager named over a gap, on the week (judged before the
+        # stamp — cover_refusal); a shift of theirs touching it is extended.
+        rows, _cover_takers, _added = _with_covers(rows, covers) if covers else (rows, [], [])
         if mode == "publish":
             live = _models_mod.live_week_row(conn, restaurant_id, row["week_start"])
             old_live = _ss_st.rows_of(live["id"], "live", conn=conn) if (live and live["id"] != schedule_id
@@ -1653,7 +1654,7 @@ def _stamp(restaurant_id, schedule_id, mode, actor_name, authority, gate_sig, ve
         else:
             # A cover added at this Send is on the working copy too, so the
             # two copies never disagree about it.
-            _sv.store_week(conn, restaurant_id, schedule_id, published=text, working=text if added else None,
+            _sv.store_week(conn, restaurant_id, schedule_id, published=text, working=text if _cover_takers else None,
                            sets=("republished_at=datetime('now')",), allow_overlaps=True)
             # A shift the Studio moved to someone else keeps its floor
             # section now that staff have the change.
@@ -2049,8 +2050,12 @@ def publish(restaurant_id, schedule_id=None, actor=None, acknowledge=False, vers
     regates = 0
     while True:
         try:
+            covers = cover_specs(review, override_reasons)
+            refused = cover_refusal(rid, schedule_id, covers)
+            if refused:
+                raise _Refused(refused, 409)
             stamped = _stamp(rid, schedule_id, "publish", actor_name, authority, gate_sig, version=version,
-                             covers=cover_specs(review, override_reasons))
+                             covers=covers)
             break
         except _Refused as r:
             if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
@@ -2174,8 +2179,12 @@ def send_changes(restaurant_id, schedule_id, actor=None, acknowledge=False, vers
     try:
         while True:
             try:
+                covers = cover_specs(review, override_reasons)
+                refused = cover_refusal(rid, row["id"], covers)
+                if refused:
+                    raise _Refused(refused, 409)
                 stamped = _stamp(rid, row["id"], "changes", who, _sv.authority_of(actor), gate_sig, version=version,
-                                 covers=cover_specs(review, override_reasons))
+                                 covers=covers)
                 break
             except _Refused as r:
                 if r.payload.get("changed") and version is None and regates < GATE_RETRIES:
@@ -2539,47 +2548,145 @@ def cover_specs(review, override_reasons) -> list:
         match = next((n for n in (b.get("cover_candidates") or [])
                       if " ".join(str(n).split()).casefold() == named.casefold()), None)
         if match and b.get("date"):
-            out.append({"date": str(b["date"])[:10], "start": int(gap[0]), "end": int(gap[1]), "name": match})
+            out.append({"date": str(b["date"])[:10], "start": int(gap[0]), "end": int(gap[1]), "name": match,
+                        "candidates": list(b.get("cover_candidates") or [])})
     return out
 
 
 COVER_NOTE = "Running the floor (manager gap covered at Send)"
 
 
-def _cover_rows(rows, covers) -> list:
-    """The rows `covers` (cover_specs) add to `rows`: the named person on
-    the gap's date from its start to its end, in their own manager role of
-    the week when they have one. None added where they are already on
-    across the whole gap."""
+def _with_covers(rows, covers):
+    """(rows, takers, added) — `rows` with each cover (cover_specs) on the
+    week: the named person across the gap, in their own manager role of the
+    week when they have one. A shift of theirs that day which overlaps or
+    touches the gap is EXTENDED over it (two of them that straddle it become
+    one) instead of a second, overlapping row staff would be told about
+    (blind re-audit 10/26/26 B2); nothing changes where one already spans
+    the whole gap. `takers` [(index, name)] are the rows the covers put the
+    person on (for schedule_rules.judge_change), `added` the new rows."""
     import uuid as _uuid_c
     import schedule_time as _stime_c
     import schedule_rules as _sr_c
     from datetime import date as _date_c
-    out = []
+    out = [dict(r) for r in rows]
+    gone, added, touched = set(), [], []
     for cv in covers or []:
         key = " ".join(cv["name"].split()).casefold()
-        mine = [r for r in rows if " ".join(str(r.get("employee") or "").split()).casefold() == key]
-        covered = False
-        for r in mine:
-            if str(r.get("date") or "")[:10] != cv["date"]:
+        mine = [i for i, r in enumerate(out) if i not in gone
+                and " ".join(str(r.get("employee") or "").split()).casefold() == key]
+        day_rows = []
+        for i in mine:
+            if str(out[i].get("date") or "")[:10] != cv["date"]:
                 continue
-            sp = _stime_c.span(r)
-            if sp and sp[0] <= cv["start"] and sp[1] >= cv["end"]:
-                covered = True
-        if covered:
+            sp = _stime_c.span(out[i])
+            if sp:
+                day_rows.append((i, sp))
+        if any(sp[0] <= cv["start"] and sp[1] >= cv["end"] for _i, sp in day_rows):
             continue
-        role = next((r.get("role") for r in mine if _sr_c.manager_role_kind(r.get("role")) in ("manager", "owner")), None) or \
-            next((r.get("role") for r in mine if r.get("role")), None) or "Manager"
+        near = [(i, sp) for i, sp in day_rows if sp[0] <= cv["end"] and sp[1] >= cv["start"]]
+        if near:
+            lo = min([cv["start"]] + [sp[0] for _i, sp in near])
+            hi = max([cv["end"]] + [sp[1] for _i, sp in near])
+            keep = near[0][0]
+            r = out[keep]
+            r["shift_start"] = _stime_c.fmt_minutes(lo % (24 * 60))
+            r["shift_end"] = _stime_c.fmt_minutes(hi % (24 * 60))
+            r["scheduled_hours"] = str(round((hi - lo) / 60.0, 2))
+            r["notes"] = ((r.get("notes") or "").strip() + " · " if (r.get("notes") or "").strip() else "") + COVER_NOTE
+            gone |= {i for i, _sp in near[1:]}
+            touched.append(r)
+            continue
+        role = next((out[i].get("role") for i in mine
+                     if _sr_c.manager_role_kind(out[i].get("role")) in ("manager", "owner")), None) or \
+            next((out[i].get("role") for i in mine if out[i].get("role")), None) or "Manager"
         try:
             day = _date_c.fromisoformat(cv["date"]).strftime("%A")
         except ValueError:
             day = ""
-        out.append({"date": cv["date"], "day": day, "employee": cv["name"], "role": role,
-                    "shift_start": _stime_c.fmt_minutes(cv["start"] % (24 * 60)),
-                    "shift_end": _stime_c.fmt_minutes(cv["end"] % (24 * 60)),
-                    "scheduled_hours": str(round((cv["end"] - cv["start"]) / 60.0, 2)),
-                    "notes": COVER_NOTE, "shift_id": _uuid_c.uuid4().hex})
-    return out
+        new = {"date": cv["date"], "day": day, "employee": cv["name"], "role": role,
+               "shift_start": _stime_c.fmt_minutes(cv["start"] % (24 * 60)),
+               "shift_end": _stime_c.fmt_minutes(cv["end"] % (24 * 60)),
+               "scheduled_hours": str(round((cv["end"] - cv["start"]) / 60.0, 2)),
+               "notes": COVER_NOTE, "shift_id": _uuid_c.uuid4().hex}
+        added.append(new)
+        touched.append(new)
+    final = [r for i, r in enumerate(out) if i not in gone] + added
+    takers = [(i, r["employee"]) for i, r in enumerate(final) if any(r is t for t in touched)]
+    return final, takers, added
+
+
+def _cover_rows(rows, covers) -> list:
+    """The rows `covers` (cover_specs) add to `rows` as new shifts
+    (_with_covers; a shift of theirs that touches the gap is extended
+    instead, and is not among these)."""
+    return _with_covers(rows, covers)[2]
+
+
+def cover_refusal(restaurant_id, schedule_id, covers):
+    """None, or the 409 payload refusing a Send whose named cover breaks a
+    rule (blind re-audit 10/26/26 B2): a manager named to run the floor
+    through a gap is put on the week like any other assignment, so they are
+    held to the same checks — their availability, part-day time off, rest,
+    hours, overlaps, minors (schedule_rules.judge_change with them as the
+    taker) — and to the overtime rule: never into overtime while another
+    manager who could be named has the room. Read with no lock held, on
+    the rows the gate checked (the stamp refuses rows that changed since)."""
+    if not covers:
+        return None
+    import schedule_rules as _sr_c
+    import schedule_engine as _se_c
+    import schedule_shifts as _ss_c
+    from datetime import date as _dc
+    from time_utils import mdy
+    rows = _ss_c.rows_of(schedule_id, "working")
+
+    def _refused(text):
+        return {"ok": False, "cover_refused": True, "schedule_id": schedule_id, "error": text}
+    try:
+        dates = sorted({r["date"] for r in rows if r.get("date")})
+        c = _sr_c.build_constraints(restaurant_id, dates,
+                                    [_dc.fromisoformat(d).strftime("%A") for d in dates])
+        before = _sr_c.breach_profile(rows, c)
+
+        def _check(cv):
+            after, takers, _a = _with_covers(rows, [cv])
+            worse = _sr_c.judge_change(rows, after, c, takers=takers, before=before) if takers else []
+            if worse:
+                return _se_c._breach_reason(worse[0]), 0.0
+            extra = 0.0
+            for i, nm in takers:
+                extra = max(extra, _sr_c.overtime_added(c, nm, after[i], [r for j, r in enumerate(after) if j != i]))
+            return None, extra
+        for cv in covers:
+            when = f"{_dc.fromisoformat(cv['date']).strftime('%a')} {mdy(cv['date'])} " \
+                   f"{_sr_c._fmt_minutes(cv['start'] % 1440)} to {_sr_c._fmt_minutes(cv['end'] % 1440)}"
+            why, extra = _check(cv)
+            if why:
+                return _refused(f"{cv['name']} can't run the floor {when}: {why} — name another manager, or add "
+                                "a manager's shift that covers it.")
+            if extra > 0.05:
+                def _clean_cover(n):
+                    w, x = _check(dict(cv, name=n))
+                    return w is None and x <= 0.05
+                other = next((n for n in cv.get("candidates") or []
+                              if " ".join(str(n).split()).casefold() != " ".join(cv["name"].split()).casefold()
+                              and _clean_cover(n)), None)
+                if other:
+                    return _refused(f"Covering {when} puts {cv['name']} {extra:g}h into overtime while {other} "
+                                    f"can cover it without — name {other}, or add a manager's shift that covers it.")
+        if len(covers) > 1:
+            after, takers, _a = _with_covers(rows, covers)
+            worse = _sr_c.judge_change(rows, after, c, takers=takers, before=before) if takers else []
+            if worse:
+                return _refused(f"The managers named to cover the gaps can't all be on: {_se_c._breach_reason(worse[0])} "
+                                "— name someone else for one of them.")
+    except Exception as e:
+        import ops
+        ops.capture(e, job="schedule_publish", context=f"restaurant_id={restaurant_id} history={schedule_id} cover check",
+                    kind="request")
+        return _refused("We couldn't check the manager named to cover the gap just now — try again in a minute.")
+    return None
 
 
 def override_policy(b) -> dict:
@@ -2638,11 +2745,19 @@ def override_problem(b, reasons, actor=None):
             return "Name who runs the floor through it."
         who = _reader(actor)
         ok = {" ".join(str(n).split()).casefold() for n in (b.get("cover_candidates") or [])}
-        if who["authority"] in LEGAL_ACK_AUTHORITIES:
+        import shift_requests as _srq_o
+        support = _srq_o.acting_admin(actor)
+        if who["authority"] == "principal" and not support:
             # The account owner sending it runs the floor themselves — by
             # their name, or "Owner"/"me" (the override row keeps the actor).
+            # Never support or an admin acting through view-as (blind
+            # re-audit 10/26/26 B2): "me" from them put nobody on the floor —
+            # they name a manager on the roster.
             ok |= who["names"] | {"owner", "the owner", "me", "myself"}
         if covered.casefold() not in ok:
+            if (support or who["authority"] == "admin") and \
+                    covered.casefold() in (who["names"] | {"owner", "the owner", "me", "myself"}):
+                return "Name the manager who runs the floor — support can't cover a shift for the restaurant."
             return (f"{covered} isn't a manager or owner on the roster who can work that day — pick one, or add "
                     "a manager's shift that covers it.")
         return None

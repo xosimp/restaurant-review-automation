@@ -1826,14 +1826,31 @@ def _do_time_off_decide(u, request_id):
     decision = (b.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return {"ok": False, "error": "decision must be approve or deny."}, 400
-    row = time_off.decide(_rid(u), request_id, decision == "approve", decided_by=u.get("id"), note=b.get("note"))
+    import shift_requests as _sq_req
+    # `covered_by`: who runs the floor when approving leaves part of a
+    # published week with no manager on (blind re-audit 10/26/26 B2) —
+    # without it such time off is refused with the gap (409 needs_cover).
+    covered = (b.get("covered_by") or "").strip() if isinstance(b.get("covered_by"), str) else None
+    refused = _sq_req.self_cover_refused(u, covered)
+    if refused:
+        return {"ok": False, "error": refused}, 400
+    try:
+        row = time_off.decide(_rid(u), request_id, decision == "approve", decided_by=u.get("id"), note=b.get("note"),
+                              covered_by=covered)
+    except _sq_req.ManagerGapRefused as e:
+        return {"ok": False, "needs_cover": True, "manager_gap": e.gap, "error": str(e)}, 409
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 503
     if not row:
         return {"ok": False, "error": "That request was already answered, or is not yours."}, 404
     from time_utils import mdy_range
     # The account log is owner-facing: M/D/YY, not the stored ISO (A-25).
     log_account_event(_rid(u), "time_off_decided", current_user=u,
-                      detail=f"{row['employee_name']} {time_off.span_label(row)}: {row['status']}")
+                      detail=f"{row['employee_name']} {time_off.span_label(row)}: {row['status']}"
+                             + (f" — {row['floor_covered_by']} runs the floor" if row.get("floor_covered_by") else ""))
     out = {"ok": True, "request": row}
+    if row.get("manager_gap"):
+        out["manager_gap"] = row["manager_gap"]
     if row["status"] == "approved":
         # A week staff already have may put them on those days: name each
         # shift so the manager covers it (SCHED-22 / MOD-EMP-8).
@@ -1849,6 +1866,8 @@ def _do_time_off_decide(u, request_id):
             out["warning"] = (f"{row['employee_name']} is still on the published schedule for {shifts}"
                               + (f" and {len(conflicts) - 4} more" if len(conflicts) > 4 else "")
                               + " — cover or move those shifts.")
+        if row.get("manager_gap"):
+            out["warning"] = row["manager_gap"] + (". " + out["warning"] if out.get("warning") else ".")
     return out, 200
 
 
@@ -2021,6 +2040,33 @@ def _do_staff_settings_set(u):
         _roster = {e["name"].strip().lower() for e in _ss.roster(_rid(u), include_inactive=True)}
         if not isinstance(_nm, str) or _nm.strip().lower() not in _roster:
             return {"ok": False, "error": "That name isn't on the roster."}, 400
+    # Who counts as the manager on shifts staff already have — deactivated,
+    # no longer a floor manager, training to manage, a weekday off — is
+    # judged against the live weeks before it is saved (blind re-audit
+    # 10/26/26 B2): a save that leaves a published minute with no manager on
+    # needs `covered_by`, who runs the floor instead (409 needs_cover).
+    floor_gap = None
+    _who_name = b.get("employee_name") or b.get("name")
+    if isinstance(_who_name, str) and _who_name.strip() and any(b.get(k) is not None
+                                                                for k in _ss.MANAGER_RULE_FIELDS):
+        import shift_requests as _sq_req
+        covered = (b.get("covered_by") or "").strip() if isinstance(b.get("covered_by"), str) else None
+        refused = _sq_req.self_cover_refused(u, covered)
+        if refused:
+            return {"ok": False, "error": refused}, 400
+        try:
+            change = _ss.planned_change(_rid(u), b)
+            if change:
+                floor_gap = _sq_req.hold_manager_rule(_rid(u), _who_name.strip(),
+                                                      f"saving {' '.join(_who_name.split())}'s settings",
+                                                      covered_by=covered, roster_change=change,
+                                                      today=_local_today(u))
+        except _ss.StaffSettingsError as e:
+            return {"ok": False, "error": str(e)}, 400
+        except _sq_req.ManagerGapRefused as e:
+            return {"ok": False, "needs_cover": True, "manager_gap": e.gap, "error": str(e)}, 409
+        except _sq_req.ShiftRequestError as e:
+            return {"ok": False, "error": str(e)}, 503
     try:
         row = _ss.upsert(_rid(u), b.get("employee_name") or b.get("name"),
                          active=b.get("active"), employment_type=b.get("employment_type"),
@@ -2040,8 +2086,14 @@ def _do_staff_settings_set(u):
                            "time_windows", "certifications", "preferred_dayparts", "desired_hours",
                            "experienced", "minor_age_band") + _F1_STAFF_FIELDS if k in b]
     log_account_event(_rid(u), "staff_settings_changed", current_user=u,
-                      detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}")
+                      detail=f"{row['employee_name']}: {', '.join(changed) or 'no change'}"
+                             + (f" — {(b.get('covered_by') or '').strip()} runs the floor" if floor_gap else ""))
     out = {"ok": True, "settings": row}
+    if floor_gap:
+        # Saved only because the owner named who runs the floor.
+        import shift_requests as _sq_told
+        _sq_told._tell_managers(_rid(u), "No manager on", floor_gap + ".", _sq_told._models.DB_PATH)
+        out["manager_gap"] = out["warning"] = floor_gap + "."
     if b.get("active") is False:
         # Off the roster: the weeks to come that still give them shifts are
         # said now, not first at Publish (owner, 10/14/26).
@@ -4369,6 +4421,9 @@ def _do_shift_request_decide(u, request_id):
     if decision not in ("approve", "deny"):
         return {"ok": False, "error": "decision must be approve or deny."}, 400
     note = b.get("note") if isinstance(b.get("note"), str) else None
+    refused = _sq_req.self_cover_refused(u, b.get("covered_by") if isinstance(b.get("covered_by"), str) else None)
+    if refused:
+        return {"ok": False, "error": refused}, 400
     try:
         # `note` reaches the employee with the answer (COM-14).
         # `covered_by`: who runs the floor when approving leaves no manager on
@@ -4562,22 +4617,38 @@ def _do_availability_change_decide(u, change_id):
     decision = (b.get("decision") or "").strip().lower()
     if decision not in ("approve", "deny"):
         return {"ok": False, "error": "decision must be approve or deny."}, 400
+    import shift_requests as _sq_req
+    # `covered_by`: who runs the floor when the cut leaves part of a
+    # published week with no manager on (blind re-audit 10/26/26 B2).
+    covered = (b.get("covered_by") or "").strip() if isinstance(b.get("covered_by"), str) else None
+    refused = _sq_req.self_cover_refused(u, covered)
+    if refused:
+        return {"ok": False, "error": refused}, 400
     try:
         row = availability_changes.decide(_rid(u), change_id, decision == "approve", decided_by=_who(u),
                                           effective_from=b.get("effective_from") if isinstance(b.get("effective_from"), str) else None,
-                                          note=b.get("note") if isinstance(b.get("note"), str) else None)
+                                          note=b.get("note") if isinstance(b.get("note"), str) else None,
+                                          covered_by=covered)
     except availability_changes.ChangeError as e:
         return {"ok": False, "error": str(e)}, 400
+    except _sq_req.ManagerGapRefused as e:
+        return {"ok": False, "needs_cover": True, "manager_gap": e.gap, "error": str(e)}, 409
+    except _sq_req.ShiftRequestError as e:
+        return {"ok": False, "error": str(e)}, 503
     if not row:
         return {"ok": False, "error": "That change was already answered."}, 404
     from time_utils import mdy
     log_account_event(_rid(u), "availability_change_decided", current_user=u,
-                      detail=f"{row['employee_name']} from {mdy(row['effective_from'])}: {row['status']}")
+                      detail=f"{row['employee_name']} from {mdy(row['effective_from'])}: {row['status']}"
+                             + (f" — {row['floor_covered_by']} runs the floor" if row.get("floor_covered_by") else ""))
     out = {"ok": True, "change": row}
     if row.get("conflicts"):
         import staff_settings
         out["warning"] = (f"{row['employee_name']} is still on the published schedule for "
                           + staff_settings._listed(row["conflicts"][:4]) + " — cover or move those shifts.")
+    if row.get("manager_gap"):
+        out["manager_gap"] = row["manager_gap"]
+        out["warning"] = row["manager_gap"] + (". " + out["warning"] if out.get("warning") else ".")
     return out, 200
 
 

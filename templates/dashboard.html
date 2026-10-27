@@ -3144,6 +3144,30 @@ function cField(anchor, o) {
   inp.focus(); inp.select();
 }
 window.cField = cField;
+/* A change to a published week that would leave part of it with no manager
+   on (409 needs_cover — a drop, time off, an availability cut, a manager
+   taken off the roster or the floor) goes through only with who runs the
+   floor instead: asked inline, the same body sent again to the url with
+   covered_by (re-audit 10/11/26 STRESS-16; blind re-audit 10/26/26 B2).
+   ok(answer, who) runs once it went through. */
+function floorCoverAgain(anchor, url, body, d, ok, saveLabel) {
+  cField(anchor, {label: 'Who runs the floor instead?', placeholder: 'A manager, or you',
+    hint: (d && (d.manager_gap || d.error)) || '', save: saveLabel || 'Approve',
+    onSave: function (v, close) {
+      var who = String(v || '').replace(/^\s+|\s+$/g, '');
+      if (!who) { close('Name who runs the floor through it'); return; }
+      var b2 = {}, k;
+      for (k in body) { if (Object.prototype.hasOwnProperty.call(body, k)) b2[k] = body[k]; }
+      b2.covered_by = who;
+      fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(b2)}).then(apiJson).then(function (r) {
+        if (!r || !r.ok) { close((r && r.error) || 'That didn\u2019t go through'); return; }
+        close();
+        if (ok) ok(r, who);
+      }).catch(function () { close('Network error \u2014 check your connection.'); });
+    }});
+}
+window.floorCoverAgain = floorCoverAgain;
 </script>
 
 <!-- The full-width "Measured results" strip that sat here is gone. Home's
@@ -6750,6 +6774,7 @@ svg:hover .hb-xh{opacity:1}
     }
     h+=dhDistrustHtml(d.distrusted);
     h+=dhLaborNotesHtml(d.labor_notes);
+    h+=dhSetupNotesHtml(d.setup_notes);
     var nc=d.not_connected||[];
     if(nc.length){
       h+='<div class="cf-p-k">Not connected</div>';
@@ -6779,6 +6804,15 @@ svg:hover .hb-xh{opacity:1}
   // labor.data_health_notes): punches still open, a record that behaves
   // like a station login (the owner's two answers, POST
   // /api/data-health/station), a job the POS renamed.
+  /* What the setup can't vouch for — a time zone nobody chose, or one the
+     restaurant's own location contradicts (blind re-audit 10/26/26 B2). */
+  function dhSetupNotesHtml(list){
+    var h='',i;list=list||[];
+    for(i=0;i<list.length;i++){var x=list[i]||{};if(!x.text)continue;
+      h+='<div class="cf-p-row '+(x.tone==='warn'?'warn':'mid')+'"><div class="cf-p-h"><span class="t"><i class="dh-dot" aria-hidden="true"></i>'+esc(x.label||'Setup')+'</span></div>'
+        +'<div class="b">'+num(x.text)+'</div></div>';}
+    return h?'<div class="cf-p-k">Setup to check</div>'+h:'';
+  }
   function dhLaborNotesHtml(list){
     var h='',i;list=list||[];
     for(i=0;i<list.length;i++){var x=list[i]||{},a=x.action||null;if(!x.text)continue;
@@ -23956,8 +23990,11 @@ function lb2LoadTimeOff(){
 }
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-timeoff]'):null;if(!t)return;
-  var done=cbtnBusy(t,'\u2026');
-  fetch('/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:t.getAttribute('data-decision')})}).then(apiJson).then(function(d){
+  var done=cbtnBusy(t,'\u2026'),toUrl='/api/labor/time-off/'+encodeURIComponent(t.getAttribute('data-timeoff'))+'/decide',toBody={decision:t.getAttribute('data-decision')};
+  fetch(toUrl,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(toBody)}).then(apiJson).then(function(d){
+    // Time off that leaves a published minute with no manager on goes only
+    // with who runs the floor instead (blind re-audit 10/26/26 B2).
+    if(d&&d.needs_cover){done();shrNeedsCover(t,null,toBody,d,function(r){lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(r);},toUrl);return;}
     // An approval over a week staff already have names the shifts to cover.
     done();if(typeof toast==='function')toast(d&&d.ok?(d.warning?('Approved \u2014 '+d.warning):(d.request.status==='approved'?'Approved \u2014 kept off the next draft':'Not approved')):((d&&d.error)||'Could not decide'),d&&d.ok?(d.warning?'warning':'success'):'error');lb2LoadTimeOff();if(window.lb2AfterTimeOff)lb2AfterTimeOff(d);
   }).catch(function(){done();});
@@ -27108,11 +27145,21 @@ function saveAvailability() {
     else unDays.push(dayMap[checks[i].value] || checks[i].value);
   }
   var notes = (document.getElementById('av-notes').value || '').trim();
+  var avBody = {employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null};
   fetch('/api/labor/availability', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
+    body: JSON.stringify(avBody)
   }).then(apiJson).then(function(d){
+    /* A day blocked under a manager's published shift: saved only with who
+       runs the floor instead (blind re-audit 10/26/26 B2). */
+    if (d.needs_cover && window.floorCoverAgain) {
+      floorCoverAgain(document.getElementById('av-name'), '/api/labor/availability', avBody, d, function (r) {
+        toast('Saved \u2014 ' + (r.warning || ''), 'warning');
+        loadAvailability();
+      }, 'Save');
+      return;
+    }
     if (d.ok) {
       document.getElementById('av-name').value = '';
       document.getElementById('av-notes').value = '';
@@ -37474,9 +37521,19 @@ document.addEventListener('click', function(e) {
     if (!window.confirm((yes ? 'Approve' : 'Deny') + ' this request? It can\u2019t be changed afterwards.')) return;
     var base = n.request_kind === 'time_off' ? '/api/labor/time-off/' : '/api/labor/shift-requests/';
     var done = (typeof cbtnBusy === 'function') ? cbtnBusy(btn, yes ? 'Approving\u2026' : 'Denying\u2026') : function() {};
-    fetch(base + encodeURIComponent(n.request_id) + '/decide', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision: decision})})
+    var url = base + encodeURIComponent(n.request_id) + '/decide';
+    fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision: decision})})
       .then(apiJson).then(function(d) {
         done();
+        /* No manager on the floor without it: who runs the floor instead
+           (STRESS-16 for a drop; blind re-audit 10/26/26 B2 for time off). */
+        if (d && d.needs_cover && window.floorCoverAgain) {
+          floorCoverAgain(btn, url, {decision: decision}, d, function (r, who) {
+            _rowSettled(n, 'Approved');
+            if (typeof toast === 'function') toast('Approved \u2014 ' + (r.warning || (who + ' runs the floor')), 'warning');
+          });
+          return;
+        }
         if (!d || !d.ok) { n.can_decide = false; renderList(); if (typeof toast === 'function') toast((d && d.error) || 'That request was already answered.', 'error'); return; }
         _rowSettled(n, yes ? 'Approved' : 'Denied');
         // An approval over a published week names the shifts to cover.
@@ -39506,6 +39563,11 @@ window._cuRole=window.CAV_BOOT.role;
   function _rstSave(name,patch,after){
     patch.employee_name=name;
     jsend('/api/labor/staff-settings',patch,function(d){
+      /* Leaves a published minute with no manager on: saved only with who
+         runs the floor instead (blind re-audit 10/26/26 B2). */
+      if(d.needs_cover&&window.floorCoverAgain){var anc=document.querySelector('[data-rst="'+(window.CSS&&CSS.escape?CSS.escape(name):name)+'"]');
+        floorCoverAgain(anc,'/api/labor/staff-settings',patch,d,function(r){toast('Saved \u2014 '+(r.warning||''),'warning');if(window.loadRoster)loadRoster();if(after)after();},'Save');
+        renderRoster();return;}
       if(!d.ok){toast(d.error||'Could not save that','error');renderRoster();return;}
       var e=_rstFind(name);
       if(e){var s=d.settings||{},k;e.settings=e.settings||{};for(k in s)if(s.hasOwnProperty(k))e.settings[k]=s[k];if(s.active!==undefined)e.active=s.active;}
@@ -40425,20 +40487,11 @@ window._cuRole=window.CAV_BOOT.role;
   /* A drop whose approval leaves part of the day with no manager on is
      approved only with who runs the floor instead (the owner counts) —
      asked inline, sent again with covered_by (re-audit 10/11/26 STRESS-16). */
-  window.shrNeedsCover=function(btn,id,body,d,after){
-    cField(btn,{label:'Who runs the floor instead?',placeholder:'A manager, or you',hint:d.manager_gap||d.error||'',save:'Approve',
-      onSave:function(v,close){
-        var who=String(v||'').replace(/^\s+|\s+$/g,'');
-        if(!who){close('Name who runs the floor through it');return;}
-        var b2={};for(var k in body){if(Object.prototype.hasOwnProperty.call(body,k))b2[k]=body[k];}
-        b2.covered_by=who;
-        jsend('/api/labor/shift-requests/'+id+'/decide',b2,function(r){
-          if(!r.ok){close(r.error||'Could not approve that');return;}
-          close();
-          toast('Approved \u2014 '+(r.warning||(who+' runs the floor')),'warning');
-          if(after)after();
-        });
-      }});
+  window.shrNeedsCover=function(btn,id,body,d,after,url){
+    floorCoverAgain(btn,url||('/api/labor/shift-requests/'+id+'/decide'),body,d,function(r,who){
+      toast('Approved \u2014 '+(r.warning||(who+' runs the floor')),'warning');
+      if(after)after(r);
+    });
   };
   window.decideShiftRequest=function(id,decision,btn){
     var row=btn;while(row&&!(row.getAttribute&&row.getAttribute('data-shr')))row=row.parentNode;
@@ -41973,6 +42026,14 @@ function sfw1RatingLine(s) {
     var done = busy(btn, decision === 'approve' ? 'Approving…' : 'Denying…');
     jpost('/api/labor/availability-changes/' + id + '/decide', {decision: decision}, function (d) {
       done();
+      if (d.needs_cover && window.floorCoverAgain) {
+        floorCoverAgain(btn, '/api/labor/availability-changes/' + id + '/decide', {decision: decision}, d, function (r) {
+          say('Approved \u2014 ' + (r.warning || 'they are told'), 'warning');
+          sfw1LoadAvailChanges();
+          if (window.lb2LoadWaiting) lb2LoadWaiting();
+        });
+        return;
+      }
       if (!d.ok) { say(d.error || 'Could not answer that', 'error'); return; }
       say(d.warning ? 'Approved — ' + d.warning : (decision === 'approve' ? 'Approved — they are told' : 'Denied — they are told'), d.warning ? 'warning' : 'success');
       sfw1LoadAvailChanges();
@@ -46611,6 +46672,13 @@ function sfw2RuleCheck(chk) {
     if (box) box.textContent = '';
     jpost('/api/labor/staff-settings', patch, function (d) {
       done();
+      if (d.needs_cover && window.floorCoverAgain) {
+        floorCoverAgain(btn, '/api/labor/staff-settings', patch, d, function (r) {
+          say('Saved \u2014 ' + (r.warning || ''), 'warning');
+          if (window.loadRoster) window.loadRoster();
+        }, 'Save');
+        return;
+      }
       if (!d.ok) { if (box) box.textContent = d.error || 'Couldn’t save that.'; else say(d.error || 'Couldn’t save that', 'error'); return; }
       say(after || 'Saved — the next draft keeps it');
       if (window.loadRoster) window.loadRoster();
@@ -46698,6 +46766,13 @@ function sfw2RuleCheck(chk) {
       var off = t.getAttribute('data-sfw2-dorm') === 'off', fin2 = busy(t, '');
       jpost('/api/labor/staff-settings', {employee_name: name, active: !off}, function (d) {
         fin2();
+        if (d.needs_cover && window.floorCoverAgain) {
+          floorCoverAgain(t, '/api/labor/staff-settings', {employee_name: name, active: !off}, d, function (r) {
+            say('Saved \u2014 ' + (r.warning || ''), 'warning');
+            if (window.loadRoster) window.loadRoster();
+          }, 'Save');
+          return;
+        }
         if (!d.ok) { say(d.error || 'Couldn’t save that', 'error'); return; }
         if (!(off && staffHoldingSay(name, d.weeks_holding)))
           say(off ? name + ' is off the roster — Still here on their row brings them back' : name + ' stays on the roster — asked again if six more weeks pass with no shift');
