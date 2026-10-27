@@ -1312,7 +1312,7 @@ def outside_fintech(restaurant_id, db_path=None, es=None) -> dict:
             any_num[exact(f["invoice_number"])].append(f)
     for d in order:                                   # 1b. its number AND amount at another house
         # A distributor that bills through a sister house's Fintech account
-        # (EJ's, 10/16/26: Euclid's W-4638130 $208 is on Fintech under "Relax
+        # (EJ's, 10/16/26: Euclid's W-3182296 $208 is on Fintech under "Relax
         # LLC - North Aurora"): the same number to the cent, in the window,
         # is that invoice — never held to confirm or counted a second time.
         # Only for a vendor that supplies through Fintech itself, and the
