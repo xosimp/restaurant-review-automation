@@ -229,6 +229,40 @@ def _pg_admin(sql):
         c.execute(sql)
 
 
+# A frozen clock and a Postgres connect (10/26/26 integration run): time-
+# machine freezes time.monotonic too, and psycopg's binary connect then trips
+# its own connect_timeout at once — and a connect that failed that way left
+# the process unable to connect at all, so every later test on that worker
+# errored (7,066 setup errors). While a travel is active the test process
+# connects with no wall-clock deadline once time-machine is loaded (the scratch
+# server is local).
+if _PG_BASE:
+    import psycopg as _psycopg_for_clock
+    _real_psycopg_connect = _psycopg_for_clock.connect
+
+    def _clock_safe_psycopg_connect(*args, **kwargs):
+        # Once time-machine has patched the clock (its first travel), its
+        # monotonic is no longer the one psycopg's binary connect measures
+        # against, even between travels: no deadline from then on.
+        if "time_machine" in sys.modules:
+            kwargs.pop("connect_timeout", None)
+        return _real_psycopg_connect(*args, **kwargs)
+
+    _psycopg_for_clock.connect = _clock_safe_psycopg_connect
+
+
+_PG_VERSION = []
+
+
+def _pg_server_version():
+    """The scratch server's server_version_num (e.g. 160015), read once."""
+    if not _PG_VERSION:
+        import psycopg
+        with psycopg.connect(_PG_BASE, autocommit=True, connect_timeout=10) as c:
+            _PG_VERSION.append(int(c.execute("SHOW server_version_num").fetchone()[0]))
+    return _PG_VERSION[0]
+
+
 _PG_SEQ = [0]
 
 
@@ -241,7 +275,12 @@ def _pg_new_database(template=None):
     _pg_admin(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
     if template:
         db_dialect.close_idle(_pg_url(template))
-        _pg_admin(f"CREATE DATABASE {name} TEMPLATE {template}")
+        # FILE_COPY on Postgres 15+: its default (WAL_LOG) copies the ~40 MB
+        # template through the WAL — 0.86 s against 0.27 s a clone here, and
+        # under 12 workers the WAL traffic timed every connection out (the
+        # 10/26/26 integration run: 7,066 setup errors). CI's PG16 too.
+        strategy = " STRATEGY FILE_COPY" if _pg_server_version() >= 150000 else ""
+        _pg_admin(f"CREATE DATABASE {name} TEMPLATE {template}{strategy}")
     else:
         _pg_admin(f"CREATE DATABASE {name}")
     return name
