@@ -117,13 +117,19 @@ def test_auth_alters_raise_unless_already_applied(db_path, monkeypatch):
 # models.run_once_sql / a (name, sql) entry in init_db's list) or, if it truly
 # must run on every boot, add it here with why. The list may only shrink
 # (RECURRING_BOOT_WRITES_CEILING). Blind re-audit 10/27/26 (RF6, B5 P3)
-# moved the hot-table ones to the ledger — sessions, users, login_history
-# (the nightly retention prune alone), ai_usage, the legacy 2FA scrub,
+# moved the hot-table ones to the ledger — sessions, login_history (the
+# nightly retention prune alone), ai_usage, the legacy 2FA scrub,
 # demand_signals, market_events, capability_changes, email_suppressions,
 # membership_pin_attempts — after checking that no writer produces their
 # legacy shape any more. What is left, each a candidate for future cleanup
 # after additional verification of its writers:
 RECURRING_BOOT_WRITES = {
+    "UPDATE users SET role='employee'": "auth.init_auth — ONGOING guard (SEC-1): a users row written outside "
+                                        "create_user (a seed, a by-hand fix) for a PIN identity is an employee; "
+                                        "users is small",
+    "UPDATE users SET username = LOWER(username)": "auth.init_auth — ONGOING guard: a mixed-case username written "
+                                                   "outside create_user can never sign in; repaired on the next "
+                                                   "deploy (tests/test_auth.py holds it)",
     "UPDATE ask_cavnar_conversations SET user_id": "models._attribute_ownerless_ask_chats — a caller may still "
                                                    "save a login-less turn (user_id None); kept until every writer "
                                                    "requires a login",
@@ -145,14 +151,13 @@ RECURRING_BOOT_WRITES = {
                                                                    "expiry backfill; writer not yet verified",
 }
 # The ratchet: this number only ever goes down.
-RECURRING_BOOT_WRITES_CEILING = 11
+RECURRING_BOOT_WRITES_CEILING = 13
 
 # What init_db put on the ledger (A05-08): none of these may run again.
 LEDGERED = ("temp_password", "marketing_content_log SET reach=NULL", "DELETE FROM recipe_ingredients",
             "labor_daily_history SET sales=NULL",
             # blind re-audit 10/27/26 (RF6): moved off every boot
             "UPDATE sessions SET", "DELETE FROM sessions WHERE device_type='admin-view-as'",
-            "UPDATE users SET role='employee'", "UPDATE users SET username = LOWER(username)",
             "UPDATE restaurants SET two_fa_code=NULL", "DELETE FROM login_history", "UPDATE ai_usage SET",
             "DELETE FROM membership_pin_attempts", "DELETE FROM market_events", "demand_signals SET kind",
             "DELETE FROM demand_signals", "UPDATE capability_changes SET attribute",
@@ -195,7 +200,7 @@ def test_a_second_boot_runs_no_unrecorded_rewrite(db_path, monkeypatch):
 
 
 # The run-once names blind re-audit 10/27/26 (RF6) gave the rewrites it moved.
-RF6_RUN_ONCE = ("pin_identity_role_v1", "usernames_lowercased_v1", "legacy_two_fa_scrub",
+RF6_RUN_ONCE = ("legacy_two_fa_scrub",
                 "session_rows_normalised_v1", "pin_attempt_orphans_swept_v1", "ai_usage_vendor_outcome_v1",
                 "ai_usage_price_version_v1", "market_events_churn_retracted_v1", "post_signals_migrated_v1",
                 "capability_rating_subject_split_v1", "email_suppression_scope_all_v1")
@@ -234,7 +239,7 @@ def test_moved_rewrites_run_on_an_upgraded_database_and_never_again(db_path):
         assert conn.execute("SELECT scope FROM email_suppressions WHERE email='s@x.test'").fetchone()[0] == "all"
         names = {r[0] for r in conn.execute("SELECT name FROM data_migrations")}
         assert set(RF6_RUN_ONCE) <= names, set(RF6_RUN_ONCE) - names
-        conn.execute("UPDATE users SET username='AgainMixed' WHERE id=?", (uid,))
+        conn.execute("UPDATE sessions SET expires_at='2031-01-01T10:00:00+00:00' WHERE token='tok-rf6'")
         conn.commit()
     finally:
         conn.close()
@@ -242,7 +247,9 @@ def test_moved_rewrites_run_on_an_upgraded_database_and_never_again(db_path):
         models.boot_schema(db_path)
     conn = sqlite3.connect(db_path)
     try:
-        assert conn.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()[0] == "AgainMixed"
+        # A legacy-shaped row written since is not the boot's business any more.
+        assert conn.execute("SELECT expires_at FROM sessions WHERE token='tok-rf6'").fetchone()[0] == \
+            "2031-01-01T10:00:00+00:00"
     finally:
         conn.close()
 

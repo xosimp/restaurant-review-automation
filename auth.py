@@ -630,42 +630,53 @@ def init_auth(db_path: str = DB_PATH):
     # a refused duplicate costs SQLite a full schema parse.
     add_missing_columns(db_path, _alters)
 
-    # Legacy fixes, ONCE per database (data_migrations — blind re-audit
-    # 10/27/26 B5 P3: each scanned users on every boot, inside the deploy's
-    # outage). Every writer now produces the fixed shape, so a row written
-    # since can never need them:
+    # Every boot, on purpose (kept off the run-once ledger — blind re-audit
+    # 10/27/26 RF6): both are guards against a users row written OUTSIDE
+    # create_user (a seed script, a by-hand fix in a railway ssh session),
+    # and users is small enough that the scan costs milliseconds.
     #  - A PIN identity is an employee, never a console login. They were
     #    created with users.role's column default 'client', which is what the
     #    session fell back to whenever no active membership resolved (SEC-1,
-    #    SEC-29); create_user now gives an @staff.invalid address 'employee'.
-    #  - Mixed-case usernames written outside create_user() (raw SQL in a
-    #    seed/"ensure" script, as _ensure_gia_mia_vibe() in hosted_dashboard.py
-    #    used to) could never log in: the column has no COLLATE NOCASE. Every
-    #    writer lower-cases now (create_user, the console's rename, the demo
-    #    seed's constant).
-    #  - The 2FA code and pending secret used to live in plaintext on the
-    #    restaurants row (SEC-20/SEC-39); two_fa_challenges replaced them and
-    #    update_restaurant refuses to write them (RETIRED_SECRET_FIELDS).
-    import models as _models_once
-    for _name, _sql in (
-            ("pin_identity_role_v1", "UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
-                                     "AND (role IS NULL OR role='client')"),
-            ("usernames_lowercased_v1", "UPDATE users SET username = LOWER(username) "
-                                        "WHERE username != LOWER(username)"),
-            ("legacy_two_fa_scrub", "UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, "
-                                    "two_fa_pending=NULL WHERE COALESCE(two_fa_code,'')!='' "
-                                    "OR COALESCE(two_fa_pending,'')!=''")):
+    #    SEC-29).
+    #  - Mixed-case usernames (raw SQL, as _ensure_gia_mia_vibe() in
+    #    hosted_dashboard.py used to write) can never log in: get_user_by_
+    #    username lower-cases its input and the column has no COLLATE NOCASE.
+    #    Repaired on the next deploy, with no manual fix.
+    for _sql in ("UPDATE users SET role='employee' WHERE email LIKE '%@staff.invalid' "
+                 "AND (role IS NULL OR role='client')",
+                 "UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)"):
         try:
-            _c_once = boot_conn(db_path)
+            _c_users = boot_conn(db_path)
             try:
-                _models_once.run_once_sql(_c_once, _name, _sql)
+                _c_users.execute(_sql)
+                _c_users.commit()
             finally:
-                _c_once.close()
-        except Exception as _e_once:
-            # restaurants not created yet on a bare file (init_db runs first at
-            # boot); anything else is retried by the next boot.
-            import logging as _lg_once
-            _lg_once.getLogger(__name__).warning("[auth] %s not applied (retried next boot): %s", _name, _e_once)
+                _c_users.close()
+        except Exception as _e_users:
+            import logging as _lg_users
+            _lg_users.getLogger(__name__).warning("[auth] boot users repair not applied: %s", _e_users)
+
+    # The 2FA code and pending secret used to live in plaintext on the
+    # restaurants row (SEC-20/SEC-39); two_fa_challenges replaced them and
+    # update_restaurant refuses to write them (RETIRED_SECRET_FIELDS). Blanked
+    # ONCE per database (data_migrations — it ran on every boot until blind
+    # re-audit 10/27/26).
+    import models as _models_once
+    try:
+        _c_once = boot_conn(db_path)
+        try:
+            _models_once.run_once_sql(
+                _c_once, "legacy_two_fa_scrub",
+                "UPDATE restaurants SET two_fa_code=NULL, two_fa_expires=NULL, two_fa_pending=NULL "
+                "WHERE COALESCE(two_fa_code,'')!='' OR COALESCE(two_fa_pending,'')!=''")
+        finally:
+            _c_once.close()
+    except Exception as _e_once:
+        # restaurants not created yet on a bare file (init_db runs first at
+        # boot); anything else is retried by the next boot.
+        import logging as _lg_once
+        _lg_once.getLogger(__name__).warning("[auth] legacy_two_fa_scrub not applied (retried next boot): %s",
+                                             _e_once)
 
     # Indexes last: they name columns the ALTERs above add.
     try:
