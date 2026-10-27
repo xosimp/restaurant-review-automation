@@ -254,8 +254,18 @@ def test_a_clean_schema_is_not_rechecked_on_every_hit_but_a_change_is_seen(db, s
     conn.commit()
     conn.close()
     payload, status = sm.health_snapshot(db)
-    assert status == 500 and payload["error"] == "schema_mismatch" and payload["missing_count"] >= 1
+    # forecast_log is not a sign-in table: degraded with a counted gap, not a
+    # 500 that fails the deploy (blind re-audit 10/27/26 B8 P3 — status_manager.
+    # STRICT_SCHEMA_TABLES); a sign-in table's column is still a 500.
+    assert status == 200 and "schema_gaps" in payload["problems"] and payload["schema_gaps_count"] == 1
     assert "forecast_log" not in json.dumps(payload), "names go to the log, not the public body"
+    conn = sqlite3.connect(db)
+    conn.execute("ALTER TABLE users DROP COLUMN email_change_pending")
+    conn.commit()
+    conn.close()
+    payload, status = sm.health_snapshot(db)
+    assert status == 500 and payload["error"] == "schema_mismatch" and payload["missing_count"] >= 1
+    assert "users" not in json.dumps(payload)
 
 
 def test_the_reference_schema_can_be_built_at_boot():

@@ -9,8 +9,8 @@ A05-05, A05-12, A05-15; R9, R10).
    allow-list below (the SQLite-only table rebuilds, a no-op on Postgres).
 3. A boot UNIQUE index over duplicate rows does not fail the boot: it is
    recorded and /health reports constraint_missing.
-4. gunicorn's graceful window plus the queue worker's drain fit inside the
-   deploy's documented drain."""
+4. gunicorn's graceful window and the queue worker's drain (in parallel since
+   blind re-audit 10/27/26) fit inside the deploy's documented drain."""
 import ast
 import contextlib
 import importlib.util
@@ -195,8 +195,114 @@ def _gunicorn_conf():
 
 
 def test_graceful_timeout_and_queue_drain_fit_inside_the_documented_drain():
+    """The queue worker hands back DURING the web worker's graceful window
+    (blind re-audit 10/27/26 B5 P2), so the shutdown needs the longer of the
+    two plus a margin — and graceful is gunicorn's 30 again (20 killed 30-60 s
+    Ask requests at every deploy)."""
     conf = _gunicorn_conf()
-    assert isinstance(conf.graceful_timeout, int) and conf.graceful_timeout > 0
-    assert conf.graceful_timeout + conf._DRAIN_SECONDS <= conf.DEPLOY_DRAIN_SECONDS
+    assert isinstance(conf.graceful_timeout, int) and conf.graceful_timeout >= 30
+    assert conf.SHUTDOWN_SECONDS == max(conf.graceful_timeout, conf._DRAIN_SECONDS) + conf._MARGIN_SECONDS
+    assert conf.SHUTDOWN_SECONDS <= conf.DEPLOY_DRAIN_SECONDS
     recovery = open(os.path.join(ROOT, "docs", "ops", "RECOVERY.md"), encoding="utf-8").read()
     assert f"RAILWAY_DEPLOYMENT_DRAINING_SECONDS={conf.DEPLOY_DRAIN_SECONDS}" in recovery
+
+
+class _Proc:
+    """A child process stand-in: poll() None while alive."""
+
+    def __init__(self, pid):
+        self.pid, self.terminated, self.waited, self.alive = pid, 0, [], True
+
+    def poll(self):
+        return None if self.alive else 0
+
+    def terminate(self):
+        self.terminated += 1
+
+    def wait(self, timeout=None):
+        self.waited.append(timeout)
+        self.alive = False
+        return 0
+
+    def kill(self):
+        self.alive = False
+
+
+def test_the_sigterm_tells_the_queue_worker_at_once_and_on_exit_waits_from_then(monkeypatch):
+    conf = _gunicorn_conf()
+    queue, sched, draining = _Proc(11), _Proc(12), _Proc(13)
+    conf._state.update(proc=queue, sched=sched, draining=[draining])
+    clock = [1000.0]
+    monkeypatch.setattr(conf.time, "time", lambda: clock[0])
+    conf._begin_drain()                                      # the SIGTERM
+    assert conf._state["stop"] is True and conf._state["drain_started"] == 1000.0
+    assert (queue.terminated, sched.terminated, draining.terminated) == (1, 1, 1)
+    conf._begin_drain()                                      # a second SIGTERM: nothing told twice
+    assert (queue.terminated, sched.terminated, draining.terminated) == (1, 1, 1)
+    clock[0] = 1030.0                                        # graceful_timeout later, gunicorn's on_exit
+    conf.on_exit(server=None)
+    assert queue.terminated == 1, "on_exit must not SIGTERM a worker already handing back"
+    # Its _DRAIN_SECONDS ran from the SIGTERM: nothing left to wait for.
+    assert queue.waited and queue.waited[0] == 0.1
+
+
+def test_the_master_sigterm_handler_chains_gunicorns(monkeypatch):
+    import signal as _signal
+    conf = _gunicorn_conf()
+    seen = []
+    previous = _signal.getsignal(_signal.SIGTERM)
+    try:
+        _signal.signal(_signal.SIGTERM, lambda s, f: seen.append(("gunicorn", s)))
+        monkeypatch.setattr(conf, "_begin_drain", lambda: seen.append(("drain", None)))
+        handler = conf.install_drain_on_sigterm()
+        assert _signal.getsignal(_signal.SIGTERM) is handler
+        handler(_signal.SIGTERM, None)
+    finally:
+        _signal.signal(_signal.SIGTERM, previous)
+    assert seen == [("drain", None), ("gunicorn", _signal.SIGTERM)]
+
+
+def test_the_web_worker_stops_claiming_at_the_sigterm(monkeypatch):
+    import signal as _signal
+    import job_queue
+    conf = _gunicorn_conf()
+    seen = []
+    previous = _signal.getsignal(_signal.SIGTERM)
+    monkeypatch.setattr(job_queue, "stop_claiming", lambda: seen.append("stop_claiming"))
+    try:
+        _signal.signal(_signal.SIGTERM, lambda s, f: seen.append("worker_exit"))
+        handler = conf.post_worker_init(worker=None)
+        handler(_signal.SIGTERM, None)
+    finally:
+        _signal.signal(_signal.SIGTERM, previous)
+    assert seen == ["stop_claiming", "worker_exit"]
+
+
+def test_stop_claiming_stops_claims():
+    import job_queue
+    try:
+        job_queue.stop_claiming()
+        assert job_queue.claim("w-test") is None
+    finally:
+        job_queue.reset_for_tests()
+
+
+def test_when_ready_publishes_what_the_shutdown_needs(monkeypatch):
+    conf = _gunicorn_conf()
+    # Set first, so monkeypatch restores both to what they were after the test.
+    monkeypatch.setenv("CAVNAR_SHUTDOWN_SECONDS", "0")
+    monkeypatch.setenv("CAVNAR_WEB_WORKERS", os.environ.get("CAVNAR_WEB_WORKERS", "1"))
+    monkeypatch.setattr(conf, "install_drain_on_sigterm", lambda: None)
+    monkeypatch.setattr(conf, "scheduler_process_wanted", lambda: False)
+    monkeypatch.setenv("QUEUE_WORKER", "0")
+
+    class _Server:
+        class cfg:
+            workers = 1
+
+        class log:
+            info = error = staticmethod(lambda *a, **k: None)
+    conf.when_ready(_Server)
+    import config
+    assert os.environ["CAVNAR_SHUTDOWN_SECONDS"] == str(conf.SHUTDOWN_SECONDS)
+    assert config.shutdown_seconds_needed() == conf.SHUTDOWN_SECONDS

@@ -1292,6 +1292,10 @@ _demo_seed.start_background_seed()
 def _post_boot():
     import atexit
     import threading
+    # What this deployment is, and loudly what is wrong with its settings: an
+    # environment name that stands a production-looking service down, a drain
+    # shorter than the shutdown (blind re-audit 10/27/26 RF6).
+    _sm_boot.boot_environment_report()
     # The reference schema /health compares against, built now rather than
     # inside the first /health — i.e. inside Railway's deploy check (#134).
     try:

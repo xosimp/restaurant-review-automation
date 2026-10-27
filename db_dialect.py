@@ -1992,6 +1992,23 @@ def run_ddl_bounded(conn, run):
 WRITE_HOOKS = []
 
 
+def _note_invalid_index(name, unique):
+    """A boot's CREATE INDEX IF NOT EXISTS met an INVALID index of that name:
+    recorded through models.note_missing_index (the boot's missing-index
+    record: logged, ops.capture, /health constraint_missing for a UNIQUE
+    one, index_missing otherwise) — models is already loaded whenever a boot
+    runs; logged here regardless."""
+    import logging
+    import sys
+    reason = (f"index {name} exists but is INVALID (a failed CREATE INDEX CONCURRENTLY): not counted as "
+              f"built — run scripts/build_index.py --rebuild-invalid with its CREATE statement")
+    models = sys.modules.get("models")
+    if models is not None and hasattr(models, "note_missing_index"):
+        models.note_missing_index(name, reason, unique=unique)
+    else:
+        logging.getLogger("db_dialect").error(reason)
+
+
 class PgConnection:
     """A Postgres connection with the sqlite3.Connection surface the app
     uses. `raw` is a DB-API connection (psycopg's)."""
@@ -2132,8 +2149,16 @@ class PgConnection:
             # An index (or any relation) of that name exists: answered from
             # the catalog, no lock taken — Postgres's own IF NOT EXISTS
             # outcome. A new one waits for its lock bounded and builds under
-            # its own time limit (A05-04).
-            if self._exists(m.group(2).lower()):
+            # its own time limit (A05-04). An INVALID index (a failed CREATE
+            # INDEX CONCURRENTLY leaves one) is not counted as built: it is
+            # recorded as missing (/health constraint_missing / index_missing)
+            # and left for scripts/build_index.py --rebuild-invalid to replace
+            # CONCURRENTLY — never rebuilt here, under a lock, on what is by
+            # the prebuilt rule a big existing table (blind re-audit B5 P3).
+            state = self._index_state(m.group(2).lower())
+            if state is not None:
+                if state[0] == "invalid":
+                    _note_invalid_index(m.group(2).lower(), unique=state[1])
                 cur._load()
                 return cur
             self._build_index_bounded(sql, params, cur)
@@ -2281,6 +2306,21 @@ class PgConnection:
                          _tx_status(self._raw, self._in_tx) != "idle").fetchone()
         self._in_tx = True
         return bool(row and row[0])
+
+    def _index_state(self, name):
+        """None when no relation is called `name`; else ("valid" | "invalid",
+        unique) — a relation that is not an index reads ("valid", False),
+        Postgres's own IF NOT EXISTS outcome. One catalog read, no lock."""
+        row = run_atomic(self._raw,
+                         "SELECT c.relkind, i.indisvalid, i.indisunique FROM pg_class c "
+                         "LEFT JOIN pg_index i ON i.indexrelid = c.oid WHERE c.oid = to_regclass(%s)",
+                         (name,), _tx_status(self._raw, self._in_tx) != "idle").fetchone()
+        self._in_tx = True
+        if not row:
+            return None
+        if row[1] is False:
+            return ("invalid", bool(row[2]))
+        return ("valid", bool(row[2]))
 
     def _add_ready_foreign_keys(self):
         pending = _PENDING_FKS.get(self._catalog.db_key) or {}

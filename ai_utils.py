@@ -4895,11 +4895,15 @@ def init_ai_ops(db_path=None):
         conn.commit()
     finally:
         conn.close()
-    for step in (_backfill_vendor, _reprice_legacy_rows):
-        try:
-            step(db_path=path)
-        except Exception as e:
-            log.error("init_ai_ops: %s failed: %s", step.__name__, e)
+    # Legacy ledger rows, ONCE per database (data_migrations — blind re-audit
+    # 10/27/26 B5 P3): every writer (log_ai_usage) stamps vendor, outcome and
+    # price_version, so a row written since never needs either. Every boot
+    # used to run both over ai_usage, the busiest ledger there is, and the
+    # 'legacy' stamp would have marked a new unversioned row as old. A
+    # failure is logged and retried by the next boot (models.run_once).
+    import models as _models_once
+    _models_once.run_once("ai_usage_vendor_outcome_v1", lambda: _backfill_vendor(db_path=path), db_path=path)
+    _models_once.run_once("ai_usage_price_version_v1", lambda: _reprice_legacy_rows(db_path=path), db_path=path)
 
 
 def _backfill_vendor(db_path=None):

@@ -40,6 +40,7 @@ log = logging.getLogger("marker_store")
 
 DEFAULT_PREFIX = "cavnar-markers/"
 EXISTS_TTL_SECONDS = 30.0
+_UNREADABLE = object()          # exists()'s cached "the store did not answer"
 _exists_cache = {}
 import process_caches as _process_caches  # noqa: E402 (registered beside each cache, A04-13)
 _process_caches.register("marker_store._exists_cache", _exists_cache)
@@ -85,12 +86,22 @@ def _path(name):
     return os.path.join(directory(), name)
 
 
-def read(name):
+class MarkerUnreadable(RuntimeError):
+    """The object store answered with an error other than "not there" (or
+    no bucket is configured): the marker's presence is unknown."""
+
+
+def read(name, strict=False):
     """The marker's JSON (a dict), or None when there is none or it cannot be
-    read."""
+    read. `strict` (the guards — blind re-audit 10/27/26 B5 P3): an
+    object-storage error other than a 404, or no bucket configured, raises
+    MarkerUnreadable instead of reading as "no marker", so the caller can
+    fail closed."""
     if backend() == "object":
         cfg = object_config()
         if cfg is None:
+            if strict:
+                raise MarkerUnreadable(f"marker {name}: no object storage configured (BLOB_S3_* or BACKUP_S3_*)")
             return None
         import offsite_backup
         try:
@@ -98,10 +109,19 @@ def read(name):
         except offsite_backup.OffsiteError as e:
             if "404" not in str(e):
                 log.warning("marker %s unreadable: %s", name, e)
+                if strict:
+                    raise MarkerUnreadable(f"marker {name}: {e}") from e
             return None
         except (ValueError, UnicodeDecodeError) as e:
             log.warning("marker %s unreadable: %s", name, e)
+            if strict:
+                raise MarkerUnreadable(f"marker {name}: {e}") from e
             return None
+        except Exception as e:           # a network error below offsite_backup's own
+            if not strict:
+                raise
+            log.warning("marker %s unreadable: %s", name, e)
+            raise MarkerUnreadable(f"marker {name}: {e}") from e
         return data if isinstance(data, dict) else None
     try:
         with open(_path(name), encoding="utf-8") as f:
@@ -146,18 +166,29 @@ def remove(name) -> None:
         pass
 
 
-def exists(name, ttl=EXISTS_TTL_SECONDS) -> bool:
+def exists(name, ttl=EXISTS_TTL_SECONDS, strict=False) -> bool:
     """Whether the marker is there. In object storage, answered from a cache
     at most `ttl` seconds old: config.restore_frozen() asks on every gate
-    check."""
+    check. `strict`: an unreadable store raises MarkerUnreadable (and that
+    answer is cached for `ttl` too, so a failing store is not asked on every
+    gate check)."""
     if backend() != "object":
         return os.path.exists(_path(name))
     now = time.monotonic()
     with _cache_lock:
         hit = _exists_cache.get(name)
         if hit is not None and now - hit[0] < ttl:
-            return hit[1]
-    found = read(name) is not None
+            if hit[1] is _UNREADABLE:
+                if strict:
+                    raise MarkerUnreadable(f"marker {name}: object storage unreadable (cached)")
+            else:
+                return hit[1]
+    try:
+        found = read(name, strict=strict) is not None
+    except MarkerUnreadable:
+        with _cache_lock:
+            _exists_cache[name] = (now, _UNREADABLE)
+        raise
     with _cache_lock:
         _exists_cache[name] = (now, found)
     return found

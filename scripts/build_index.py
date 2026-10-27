@@ -18,8 +18,11 @@ the boot would translate it, so the index built is the one the boot expects.
 A monthly-partitioned table (db_dialect.PARTITIONED) has its index built on
 each partition CONCURRENTLY, then created ON ONLY the parent and each
 partition's attached — Postgres has no CONCURRENTLY on a partitioned parent.
-A build that fails leaves an INVALID index behind: this says so and how to
-drop it. Writes nothing but the index; sends nothing. Dry run unless --apply.
+A build that fails leaves an INVALID index behind: this says so, the boot
+records it as missing (/health constraint_missing / index_missing — blind
+re-audit 10/27/26 B5 P3), and --rebuild-invalid drops it CONCURRENTLY and
+builds it again. Writes nothing but the index; sends nothing. Dry run unless
+--apply.
 """
 import argparse
 import hashlib
@@ -66,7 +69,19 @@ def plan(sql, translate, partitions):
     return steps
 
 
-def run(sql, url, apply=False, out=print):
+def _invalid_drops(name, table, parts, index_valid):
+    """The DROPs --rebuild-invalid runs first: the INVALID index itself on a
+    plain table (CONCURRENTLY: no lock on writers); on a partitioned one each
+    INVALID partition index — the parent's ON ONLY index is kept (dropping
+    it would drop every attached partition index) and is valid again once
+    every partition's index is attached."""
+    if not parts:
+        return [f"DROP INDEX CONCURRENTLY IF EXISTS {name}"]
+    return [f"DROP INDEX CONCURRENTLY IF EXISTS {_child_name(name, p)}" for p in parts
+            if index_valid(_child_name(name, p)) is False]
+
+
+def run(sql, url, apply=False, out=print, rebuild_invalid=False):
     import psycopg
     sys.path.insert(0, _ROOT)
     import db_dialect
@@ -82,13 +97,28 @@ def run(sql, url, apply=False, out=print):
                                "JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = %s "
                                "AND p.relkind = 'p' ORDER BY c.relname", (t,)).fetchall()
             return [r[0] for r in rows]
+
+        def index_valid(n):
+            """True / False for an index called `n`, None when there is none."""
+            row = raw.execute("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(%s)", (n,)).fetchone()
+            return None if row is None else bool(row[0])
+
+        drops = []
         exists = raw.execute("SELECT to_regclass(%s) IS NOT NULL", (name,)).fetchone()[0]
         if exists:
-            valid = raw.execute("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(%s)",
-                                (name,)).fetchone()
-            out(f"{name} already exists ({'valid' if valid and valid[0] else 'INVALID'}) — nothing to build.")
-            return 0 if valid and valid[0] else 2
-        steps = plan(sql, translate, partitions)
+            valid = index_valid(name)
+            if valid is None:
+                out(f"{name} names a relation that is not an index — nothing built.")
+                return 2
+            if valid:
+                out(f"{name} already exists (valid) — nothing to build.")
+                return 0
+            if not rebuild_invalid:
+                out(f"{name} already exists (INVALID) — the boot records it as missing (/health "
+                    "constraint_missing / index_missing). Run this again with --rebuild-invalid to replace it.")
+                return 2
+            drops = _invalid_drops(name, table, partitions(table), index_valid)
+        steps = [(d, True) for d in drops] + plan(sql, translate, partitions)
         for stmt, concurrent in steps:
             out(("RUN  " if apply else "PLAN ") + stmt)
         if not apply:
@@ -103,7 +133,7 @@ def run(sql, url, apply=False, out=print):
         valid = raw.execute("SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass(%s)",
                             (name,)).fetchone()
         if not (valid and valid[0]):
-            out(f"{name} was built INVALID. Drop it (DROP INDEX CONCURRENTLY {name}) and run this again.")
+            out(f"{name} was built INVALID. Run this again with --rebuild-invalid.")
             return 2
         out(f"{name} built and valid. Add it to migrations/prebuilt_indexes.txt.")
         return 0
@@ -120,12 +150,15 @@ def main(argv=None):
     ap.add_argument("statement", help="the boot's CREATE [UNIQUE] INDEX IF NOT EXISTS statement")
     ap.add_argument("--apply", action="store_true", help="build it (default: print the plan)")
     ap.add_argument("--database-url", default=None, help="default: DATABASE_URL")
+    ap.add_argument("--rebuild-invalid", action="store_true",
+                    help="an INVALID index of this name (a failed concurrent build) is dropped CONCURRENTLY and "
+                         "built again")
     args = ap.parse_args(argv)
     url = args.database_url or os.getenv("DATABASE_URL") or ""
     if not url.startswith(("postgres://", "postgresql://")):
         print("No Postgres URL (DATABASE_URL or --database-url).")
         return 1
-    return run(args.statement, url, apply=args.apply)
+    return run(args.statement, url, apply=args.apply, rebuild_invalid=args.rebuild_invalid)
 
 
 if __name__ == "__main__":

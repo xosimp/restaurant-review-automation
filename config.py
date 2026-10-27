@@ -236,16 +236,26 @@ def restore_frozen() -> bool:
     if volume_optional() and not (os.getenv("RAILWAY_VOLUME_MOUNT_PATH") or "").strip() and on_railway():
         # No volume (release-safety audit 10/26/26, P3): the freeze lives in
         # object storage (marker_store), answered from a 30-second cache.
+        # A store that cannot answer reads as FROZEN (blind re-audit 10/27/26
+        # B5 P3): during an object-storage outage on the day of a restore,
+        # "no freeze" resumed briefs and alerts against a rewound database.
+        # Scheduling and sends wait until the store answers; serving does not.
         try:
             import marker_store
-            return marker_store.exists(".restore_freeze")
-        except Exception as e:     # a guard that cannot read never stops the platform (restore_guard)
-            import logging
-            logging.getLogger("config").warning("restore freeze unreadable in object storage: %s", e)
-            return False
+            return marker_store.exists(".restore_freeze", strict=True)
+        except Exception as e:
+            import time as _t_rf
+            if _t_rf.monotonic() - _freeze_unreadable_logged[0] > 60:
+                _freeze_unreadable_logged[0] = _t_rf.monotonic()
+                logging.getLogger("config").error("restore freeze unreadable in object storage (%s): scheduling "
+                                                  "and sends held until it can be read", e)
+            return True
     models = sys.modules.get("models")
     path = getattr(models, "DB_PATH", None) or os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "."), "reviews.db")
     return os.path.exists(os.path.join(os.path.dirname(os.path.abspath(path)) or ".", ".restore_freeze"))
+
+
+_freeze_unreadable_logged = [-1e9]   # restore_frozen's error line, at most once a minute
 
 
 def volume_optional() -> bool:
@@ -255,6 +265,167 @@ def volume_optional() -> bool:
     storage. Off by default: production keeps its volume until Will detaches
     it (docs/ops/RECOVERY.md → Retiring the volume)."""
     return (os.getenv("VOLUME_OPTIONAL") or "").strip().lower() in _TRUTHY
+
+
+# ── Boot-time checks of the deployment's own settings (blind re-audit
+# 10/27/26, RF6). Each returns a sentence naming what is wrong, or None.
+# Pure reads of the environment (`environ` for tests); the boot logs them
+# (status_manager.boot_environment_report) and /health reports them.
+
+# Railway sets these in a deployed container beside the markers; a process
+# carrying one of them but no marker is on the container with its markers
+# lost (a maintenance shell, a future process type). Never
+# RAILWAY_VOLUME_MOUNT_PATH alone: the test suite and boot_check set it.
+RAILWAY_CONTAINER_HINTS = ("RAILWAY_DEPLOYMENT_ID", "RAILWAY_REPLICA_ID", "RAILWAY_SERVICE_NAME",
+                           "RAILWAY_PROJECT_NAME", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_PRIVATE_DOMAIN",
+                           "RAILWAY_VOLUME_NAME", "RAILWAY_VOLUME_ID")
+
+
+def _env_of(environ):
+    return os.environ if environ is None else environ
+
+
+def database_url_problem(environ=None):
+    """Why this process must not quietly open SQLite in place of the
+    DATABASE_URL it was given, or None (blind re-audit B8 P3: a refused
+    DATABASE_URL fell back to SQLite — on the production container that is
+    the volume's frozen pre-cutover reviews.db, plausible and stale, and every
+    write landed in a file nobody reads). On Railway (a marker, or a
+    container hint with the markers lost) a DATABASE_URL that is set but is
+    not a Postgres URL (a typo, an unresolved ${{Postgres.DATABASE_URL}}, the
+    wrong scheme), or a Postgres one refused for want of a marker, is a
+    problem. DB_BACKEND=sqlite (the deliberate rollback to SQLite) and a
+    local run (A01-06: ignored with a warning, as before) are not."""
+    env = _env_of(environ)
+    url = (env.get("DATABASE_URL") or "").strip()
+    if not url or (env.get("DB_BACKEND") or "").strip().lower() == "sqlite":
+        return None
+    marked = any((env.get(v) or "").strip() for v in RAILWAY_MARKERS)
+    hinted = any((env.get(v) or "").strip() for v in RAILWAY_CONTAINER_HINTS)
+    if not (marked or hinted):
+        return None
+    if not url.startswith(("postgres://", "postgresql://")):
+        scheme = url.split("://", 1)[0][:20] if "://" in url else url[:12]
+        return (f"DATABASE_URL is set on Railway but is not a Postgres URL (it starts {scheme!r}): refusing to "
+                "open the SQLite file instead — on the production container that is the frozen pre-cutover "
+                "copy. Fix the variable (DATABASE_URL=${{Postgres.DATABASE_URL}}), or set DB_BACKEND=sqlite "
+                "for a deliberate rollback to SQLite (docs/ops/RECOVERY.md).")
+    if not marked and (env.get("ALLOW_LOCAL_PG") or "").strip().lower() not in ("1", "true", "yes"):
+        return ("DATABASE_URL names a Postgres but this process carries none of Railway's markers "
+                f"({', '.join(RAILWAY_MARKERS)}) although it runs on the Railway container: refusing to open "
+                "the SQLite file instead. Run it with the service's variables (railway ssh / railway run).")
+    return None
+
+
+# Environment names that say "not production" on purpose: a staging copy,
+# a PR environment, a drill.
+_NONPRODUCTION_NAMES = ("staging", "stage", "dev", "test", "preview", "qa", "sandbox", "demo", "drill")
+KNOWN_ENVIRONMENTS = ("production", "staging", "local")
+
+
+def _nonproduction_on_purpose(name) -> bool:
+    import re
+    name = str(name or "").lower()
+    return any(w in name for w in _NONPRODUCTION_NAMES) or bool(re.search(r"\bpr[-_ ]?\d+\b", name))
+
+
+def _production_signs(env) -> list:
+    """What makes this service look like production: the operator's own
+    flag, a live Stripe key, or DATABASE_URL on the production Postgres
+    service's private host (PRODUCTION_DB_HOST, default Railway's name for
+    the `Postgres` service)."""
+    signs = []
+    if (env.get("CAVNAR_PRODUCTION_SERVICE") or "").strip().lower() in _TRUTHY:
+        signs.append("CAVNAR_PRODUCTION_SERVICE is set")
+    if str(env.get("STRIPE_SECRET_KEY") or "").strip().startswith(("sk_live_", "rk_live_")):
+        signs.append("a live Stripe key")
+    url = (env.get("DATABASE_URL") or "").strip()
+    host = (env.get("PRODUCTION_DB_HOST") or "postgres.railway.internal").strip().lower()
+    if host and url.startswith(("postgres://", "postgresql://")):
+        try:
+            from urllib.parse import urlsplit
+            if (urlsplit(url).hostname or "").lower() == host:
+                signs.append(f"DATABASE_URL on {host}")
+        except ValueError:
+            pass
+    return signs
+
+
+def environment_name_problem(environ=None):
+    """The scheduler, every send point and the paging stand down unless
+    deploy_env() is "production" (A05-06), and the name comes from Railway's
+    environment or CAVNAR_ENV — so a production service whose environment is
+    renamed ("prod"), or a CAVNAR_ENV typo set in an incident, went silent
+    with /health still "ok" (blind re-audit B8 P2). A sentence when this is
+    Railway, the name is not production and does not say "not production" on
+    purpose, and the service looks like production; else None."""
+    env = _env_of(environ)
+    if not any((env.get(v) or "").strip() for v in RAILWAY_MARKERS):
+        return None
+    name = None
+    for var in ("CAVNAR_ENV", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_ENVIRONMENT"):
+        name = (env.get(var) or "").strip().lower()
+        if name:
+            break
+    if name == "production":
+        return None
+    cavnar = (env.get("CAVNAR_ENV") or "").strip().lower()
+    if cavnar and (cavnar in KNOWN_ENVIRONMENTS or _nonproduction_on_purpose(cavnar)):
+        return None
+    if not cavnar and _nonproduction_on_purpose(name):
+        return None
+    signs = _production_signs(env)
+    if not signs:
+        return None
+    where = (f"CAVNAR_ENV={cavnar!r} is not a known environment name" if cavnar else
+             f"Railway names this environment {name!r}, not 'production', and CAVNAR_ENV is unset")
+    return (f"{where}, but this service looks like production ({', '.join(signs)}): its scheduler, every "
+            "email, text and push, and the paging all stand down. Set CAVNAR_ENV=production if it is "
+            "production, or CAVNAR_ENV=staging if it is not.")
+
+
+# The seconds a deploy's shutdown needs (gunicorn.conf.py publishes its own
+# figure as CAVNAR_SHUTDOWN_SECONDS to the web worker; this is the fallback).
+DEFAULT_SHUTDOWN_SECONDS = 35
+
+
+def shutdown_seconds_needed(environ=None) -> int:
+    env = _env_of(environ)
+    try:
+        return max(1, int(str(env.get("CAVNAR_SHUTDOWN_SECONDS") or DEFAULT_SHUTDOWN_SECONDS)))
+    except ValueError:
+        return DEFAULT_SHUTDOWN_SECONDS
+
+
+def drain_seconds(environ=None):
+    """RAILWAY_DEPLOYMENT_DRAINING_SECONDS as an int, or None when unset or
+    unreadable — Railway's default is 0: SIGKILL straight after SIGTERM."""
+    raw = str(_env_of(environ).get("RAILWAY_DEPLOYMENT_DRAINING_SECONDS") or "").strip()
+    try:
+        return int(float(raw)) if raw else None
+    except ValueError:
+        return None
+
+
+def drain_budget_problem(environ=None):
+    """On Railway, a sentence when the deploy's drain (SIGTERM to SIGKILL)
+    is shorter than the shutdown needs, else None (blind re-audit B5 P2 /
+    B8 P3: nothing read the setting; unset, Railway's default of 0 kills the
+    container mid hand-back, rows wait out their lease and the next
+    scheduler waits for the lease)."""
+    env = _env_of(environ)
+    if not any((env.get(v) or "").strip() for v in RAILWAY_MARKERS):
+        return None
+    need = shutdown_seconds_needed(env)
+    have = drain_seconds(env)
+    if have is None:
+        return (f"RAILWAY_DEPLOYMENT_DRAINING_SECONDS is unset, so Railway kills the old container at once "
+                f"(its default is 0 s) — the shutdown needs {need} s to finish requests, hand queue rows back "
+                "and release the scheduler lease. Set it to 60 on the web service.")
+    if have < need:
+        return (f"RAILWAY_DEPLOYMENT_DRAINING_SECONDS is {have} s but the shutdown needs {need} s (finish "
+                "requests, hand queue rows back, release the scheduler lease). Set it to 60 on the web service.")
+    return None
 
 
 def google_places_key() -> str:

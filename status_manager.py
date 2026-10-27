@@ -656,11 +656,13 @@ def _schema_gaps(conn) -> list:
     return gaps
 
 
-# A clean schema is re-checked at most this often. The check is ~170
-# PRAGMA table_info reads, and /health is public and polled every minute
+# A schema is re-checked at most this often. The check is ~170 PRAGMA
+# table_info reads, and /health is public and polled every minute
 # (RELIABILITY-25). The cache is keyed by the database's schema_version,
-# which SQLite bumps on every CREATE, ALTER and DROP, so a schema change or
-# a different file is checked on its next /health regardless.
+# which SQLite bumps on every CREATE, ALTER and DROP (on Postgres: the
+# column count), so a schema change or a different file is checked on its
+# next /health regardless. Gaps are cached too (a degraded answer), so the
+# check and its log line run once per schema, not on every poll.
 SCHEMA_RECHECK_SECONDS = 600
 _schema_ok = {}
 
@@ -673,14 +675,47 @@ def _schema_gaps_cached(conn, path):
         version = None
     key = (os.path.abspath(path), version)
     seen = _schema_ok.get(key)
-    if seen is not None and _time.monotonic() - seen < SCHEMA_RECHECK_SECONDS:
-        return []
+    if seen is not None and _time.monotonic() - seen[0] < SCHEMA_RECHECK_SECONDS:
+        return list(seen[1])
     gaps = _schema_gaps(conn)
-    if not gaps:
-        if len(_schema_ok) > 64:
-            _schema_ok.clear()
-        _schema_ok[key] = _time.monotonic()
+    if len(_schema_ok) > 64:
+        _schema_ok.clear()
+    _schema_ok[key] = (_time.monotonic(), tuple(gaps))
+    if gaps:
+        log.error("health: the database lacks %d table(s)/column(s) this code expects: %s",
+                  len(gaps), ", ".join(gaps[:20]))
     return gaps
+
+
+# /health's schema check (blind re-audit 10/27/26 B8 P3): every table the
+# boot migrates is in the reference, so a column that drifted on any of ~470
+# tables answered 500 and failed the deploy. Now only these stay STRICT — a
+# missing column here is a 500 (`schema_mismatch`): sign-in, sessions, the
+# second factor, staff PIN and portal access, the tenant row every request
+# reads, and the boot's own migration ledger. A missing TABLE anywhere is
+# strict too (a skipped migration or the wrong database — DATA-33). A
+# missing column on any other table answers 200 degraded with the problem
+# `schema_gaps` — the watchdog alerts on it, the deploy
+# goes through, and the feature that reads the column is what fails. The
+# names are logged (ERROR, once per schema version), never put in the public
+# body — /health carries `schema_gaps_count`.
+STRICT_SCHEMA_TABLES = frozenset({
+    "restaurants", "users", "sessions", "memberships", "login_history", "login_attempts",
+    "two_fa_challenges", "user_backup_codes", "user_totp", "user_passkeys", "passkey_challenges",
+    "trusted_devices", "view_as_sessions", "permission_grants", "login_prefs",
+    "membership_pin_attempts", "pin_change_attempts", "staff_pin_resets", "staff_otp_sends",
+    "staff_portal_tokens", "portal_attempts", "portal_nonces", "data_migrations",
+})
+
+
+def split_schema_gaps(gaps):
+    """(strict, soft): missing tables and columns of STRICT_SCHEMA_TABLES,
+    then the other tables' missing columns."""
+    strict, soft = [], []
+    for gap in gaps or ():
+        table, _, col = str(gap).partition(".")
+        (strict if not col or table in STRICT_SCHEMA_TABLES else soft).append(gap)
+    return strict, soft
 
 
 # A write probe waits this long for the write lock, then reads as busy.
@@ -737,10 +772,8 @@ def health_snapshot(db_path=None):
         return {"status": "error", "error": "db_unavailable"}, 500
     try:
         conn.execute("SELECT 1").fetchone()
-        missing = _schema_gaps_cached(conn, path)
+        missing, soft_gaps = split_schema_gaps(_schema_gaps_cached(conn, path))
         if missing:
-            log.error("health: the database lacks %d table(s)/column(s) this code expects: %s",
-                      len(missing), ", ".join(missing[:20]))
             return {"status": "error", "error": "schema_mismatch", "missing_count": len(missing)}, 500
         journal = str(conn.execute("PRAGMA journal_mode").fetchone()[0] or "").lower()
         emptied = platform_emptied(conn, path)
@@ -827,6 +860,24 @@ def health_snapshot(db_path=None):
         problems.append("constraint_missing")
     if any(not v.get("unique") for v in missing_ix.values()):
         problems.append("index_missing")
+    # A column the code expects missing on a non-strict table (split_schema_
+    # gaps — blind re-audit 10/27/26 B8 P3): degraded and named, not a 500.
+    if soft_gaps:
+        problems.append("schema_gaps")
+    # A production-looking Railway service whose environment name stands its
+    # scheduler, sends and paging down (config.environment_name_problem — B8
+    # P2). Degraded, so the watchdog alerts; never on a correctly named one.
+    import config as _cfg_health
+    # The code only: the sentence (which names what makes the service look
+    # like production) goes to the boot log, not to a public endpoint.
+    if _cfg_health.environment_name_problem():
+        problems.append("not_production_env")
+    # The deploy's drain against what the shutdown needs (B5 P2 / B8 P3):
+    # reported, never a problem — an unset drain is not an outage until a
+    # deploy, and the boot logs it loudly (boot_environment_report).
+    drain = _cfg_health.drain_seconds()
+    shutdown = {"drain_seconds": drain, "needs_seconds": _cfg_health.shutdown_seconds_needed()}
+    shutdown["fits"] = drain is not None and drain >= shutdown["needs_seconds"]
 
     payload = {"status": "degraded" if problems else "ok", "problems": problems,
                "db": "ok",
@@ -842,6 +893,12 @@ def health_snapshot(db_path=None):
                "jobs_overdue": [j["job"] for j in overdue]}
     if missing_ix:
         payload["indexes_missing"] = sorted(missing_ix)
+    if soft_gaps:
+        # The count only: the names go to the log (the boot's and this
+        # check's), never to the public body (#134).
+        payload["schema_gaps_count"] = len(soft_gaps)
+    if _cfg_health.railway_marked():
+        payload["shutdown"] = shutdown
     if sched.get("beat_age_minutes") is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(sched["beat_age_minutes"], 1)
     if sched.get("loop_completed_age_minutes") is not None:
@@ -1374,9 +1431,23 @@ def client_restaurant_count(conn) -> int:
         return conn.execute("SELECT COUNT(*) FROM restaurants WHERE id > 0").fetchone()[0]
 
 
-def read_volume_marker(db_path=None):
+class MarkerUnreadable(RuntimeError):
+    """The volume marker could not be read (object storage failing) — not
+    the same as "there is no marker"."""
+
+
+def read_volume_marker(db_path=None, strict=False):
+    """The marker, or None when there is none. In object storage an
+    unreadable marker is None too, unless `strict` — then MarkerUnreadable,
+    so a guard can fail closed instead of reading "never held clients"
+    (blind re-audit 10/27/26 B5 P3)."""
     if _marker_in_object_store(db_path):
         import marker_store
+        if strict:
+            try:
+                return marker_store.read(VOLUME_MARKER, strict=True)
+            except marker_store.MarkerUnreadable as e:
+                raise MarkerUnreadable(str(e)) from e
         return marker_store.read(VOLUME_MARKER)
     try:
         with open(volume_marker_path(db_path), encoding="utf-8") as f:
@@ -1413,7 +1484,10 @@ def record_volume_marker(db_path=None, conn=None):
     prev = read_volume_marker(db_path) or {}
     marker = {"version": 1, "db": os.path.basename(os.path.abspath(db_path or _db_path())),
               "first_seen_at": prev.get("first_seen_at") or now, "updated_at": now,
-              "clients_seen": max(int(prev.get("clients_seen") or 0), int(n))}
+              "clients_seen": max(int(prev.get("clients_seen") or 0), int(n)),
+              # Which database held them (assert_platform_not_emptied refuses a
+              # boot that would quietly serve SQLite after Postgres did).
+              "backend": _platform_backend(db_path)}
     if _marker_in_object_store(db_path):
         try:
             import marker_store
@@ -1454,40 +1528,140 @@ def platform_emptied(conn, db_path=None) -> bool:
         return True        # no restaurants table at all on a volume that had clients
 
 
+def _platform_backend(db_path=None) -> str:
+    """"postgres" when the platform's database (or `db_path`) is served by
+    Postgres, else "sqlite"."""
+    try:
+        import models
+        return "postgres" if models._pg_url_for(db_path or models.DB_PATH) else "sqlite"
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log.warning("volume marker: backend unknown: %s", e)
+        return "sqlite"
+
+
+def _empty_reason(path):
+    """Why the platform database holds no client data ("missing", "no
+    restaurants table", "no client restaurants"), None when it holds some,
+    or False when it could not be read for another reason (locked, I/O,
+    unreachable) — not proof the data is gone. Read only: SQLite opened
+    mode=ro so a missing file is not created; Postgres read through
+    db_dialect (the database the app serves — this read the volume's SQLite
+    file even on Postgres, i.e. the frozen pre-cutover copy, so an emptied
+    Postgres passed and, with no volume, every boot after the first was
+    refused; blind re-audit 10/27/26 RF6)."""
+    import models
+    url = models._pg_url_for(path) if os.path.abspath(path) == os.path.abspath(models.DB_PATH) else \
+        models._PG_ROUTES.get(path)
+    if url:
+        try:
+            import db_dialect
+            conn = db_dialect.connect(url)
+        except Exception as e:
+            log.warning("boot: could not reach Postgres to check for client data: %s", e)
+            return False
+        try:
+            return None if client_restaurant_count(conn) > 0 else "the database holds no client restaurants"
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e).lower():
+                return "the database has no restaurants table"
+            log.warning("boot: could not check the database for client data: %s", e)
+            return False
+        finally:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception as e:
+                log.warning("boot: the client-data check's connection did not close cleanly: %s", e)
+    from urllib.request import pathname2url
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return "the database file is missing or empty"
+    try:
+        conn = sqlite3.connect(f"file:{pathname2url(path)}?mode=ro", uri=True, timeout=10)
+        try:
+            return None if client_restaurant_count(conn) > 0 else "the database holds no client restaurants"
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            log.warning("boot: could not check the database for client data: %s", e)
+            return False
+        return "the database has no restaurants table"
+
+
 def assert_platform_not_emptied(db_path=None):
     """Boot guard, run BEFORE init_db and the seeds (which would otherwise
     build a fresh schema and an admin over the evidence). Raises
-    RuntimeError when the marker says client data existed and the database
-    file is missing, empty or holds no client restaurant. Opens the file
-    read-only, so a missing database is not created by the check."""
+    RuntimeError when the marker says client data existed and the platform
+    database (Postgres when it is served there) is missing, empty or holds
+    no client restaurant; when the marker says Postgres held it and this
+    boot would serve SQLite (DATABASE_URL gone, with no DB_BACKEND=sqlite
+    saying so); and — failing closed — when the marker cannot be read from
+    object storage and the database holds no client restaurant."""
     if _allow_empty():
         return
-    marker = read_volume_marker(db_path)
+    path = os.path.abspath(db_path or _db_path())
+    try:
+        marker = read_volume_marker(db_path, strict=True)
+    except MarkerUnreadable as e:
+        reason = _empty_reason(path)
+        if reason:
+            raise RuntimeError(
+                f"Refusing to boot: the platform marker {VOLUME_MARKER} could not be read from object "
+                f"storage ({e}) and {reason}. A guard that cannot read fails closed: fix object storage and "
+                "redeploy, or set ALLOW_EMPTY_DATABASE=1 if this database is meant to be empty.")
+        log.warning("boot: %s unreadable in object storage (%s); the database holds client data, booting", VOLUME_MARKER, e)
+        return
     if not marker or int(marker.get("clients_seen") or 0) < 1:
         return
-    from urllib.request import pathname2url
-    path = os.path.abspath(db_path or _db_path())
-    reason = None
-    if not os.path.exists(path) or os.path.getsize(path) == 0:
-        reason = "the database file is missing or empty"
-    else:
-        try:
-            conn = sqlite3.connect(f"file:{pathname2url(path)}?mode=ro", uri=True, timeout=10)
-            try:
-                if client_restaurant_count(conn) == 0:
-                    reason = "the database holds no client restaurants"
-            finally:
-                conn.close()
-        except sqlite3.OperationalError as e:
-            if "no such table" not in str(e).lower():
-                # Unreadable for some other reason (locked, I/O): not proof
-                # the data is gone, and init_db will fail on it loudly anyway.
-                log.warning("boot: could not check the database for client data: %s", e)
-                return
-            reason = "the database has no restaurants table"
+    if marker.get("backend") == "postgres" and _platform_backend(db_path) != "postgres" and \
+            (os.getenv("DB_BACKEND") or "").strip().lower() != "sqlite":
+        raise RuntimeError(
+            f"Refusing to boot on SQLite: {VOLUME_MARKER} says this platform's client data is on Postgres "
+            f"(as of {marker.get('updated_at')}), but DATABASE_URL names no Postgres, so this boot would serve "
+            "the volume's frozen SQLite copy. Restore DATABASE_URL=${{Postgres.DATABASE_URL}}, or set "
+            "DB_BACKEND=sqlite for a deliberate rollback to SQLite (docs/ops/RECOVERY.md).")
+    reason = _empty_reason(path)
     if reason:
         raise RuntimeError(
             f"Refusing to boot on an empty platform: {reason}, but {VOLUME_MARKER} on this volume "
             f"says it held {marker.get('clients_seen')} client restaurant(s) as of "
             f"{marker.get('updated_at')}. Restore it (RESTORE_FROM, docs/ops/RECOVERY.md), or set "
             f"ALLOW_EMPTY_DATABASE=1 if emptying it was deliberate.")
+
+
+# ── What this deployment is, said at boot (blind re-audit 10/27/26 RF6) ─────
+
+def boot_environment_report(db_path=None) -> dict:
+    """At boot on Railway: one line naming the deployment's gates
+    (deploy_env, scheduling_allowed, outbound_sends_allowed, the build), and
+    LOUDLY whatever config's boot checks find — a production-looking service
+    whose environment name stands everything down (CRITICAL + ops.capture;
+    /health says not_production_env) and a drain shorter than the shutdown
+    needs (ERROR; /health's `shutdown`). Off Railway, nothing. Returns what it
+    found, for the tests. Never raises."""
+    import config
+    out = {"railway": config.railway_marked(), "env_problem": None, "drain_problem": None}
+    if not out["railway"]:
+        return out
+    try:
+        out.update(deploy_env=config.deploy_env(), scheduling_allowed=config.scheduling_allowed(),
+                   outbound_sends_allowed=config.outbound_sends_allowed(), build=config.build_label())
+        log.info("deployment: env=%s scheduling_allowed=%s outbound_sends_allowed=%s build=%s",
+                 out["deploy_env"], out["scheduling_allowed"], out["outbound_sends_allowed"], out["build"])
+        out["env_problem"] = config.environment_name_problem()
+        if out["env_problem"]:
+            log.critical("deployment environment: %s", out["env_problem"])
+            try:
+                import ops
+                ops.capture(RuntimeError(out["env_problem"]), job="boot_environment", context="not_production_env",
+                            db_path=db_path)
+            except Exception as e:
+                log.warning("could not record the environment problem: %s", e)
+        out["drain_problem"] = config.drain_budget_problem()
+        if out["drain_problem"]:
+            log.error("deploy shutdown budget: %s", out["drain_problem"])
+    except Exception as e:
+        log.exception("boot environment report failed: %s", e)
+    return out

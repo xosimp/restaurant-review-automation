@@ -2204,6 +2204,15 @@ def shutdown(db_path=None) -> int:
     return n
 
 
+def stop_claiming() -> None:
+    """Claim nothing more in this process (a deploy's SIGTERM reached it —
+    gunicorn.conf.py's post_worker_init): the queue worker is handing its
+    rows back at the same moment, and the web process must not pick them up
+    in its last seconds only to be killed holding them. Rows this process
+    runs carry on; shutdown() hands them back at exit."""
+    _draining.set()
+
+
 _shutdown_registered = False
 
 
