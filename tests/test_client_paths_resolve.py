@@ -99,7 +99,10 @@ _JS_POST_HELPERS = {"postJ", "jpost", "asPost", "tsPost", "gxPost", "_cpPost", "
 # APIClient's transports and the method each uses when the call names none.
 _SWIFT_DEFAULT = {"send": "GET", "sendKeepingBody": "GET", "sendInsight": "GET", "sendWithBearer": "GET",
                   "sendUnauthenticated": "GET", "fetchFile": "GET", "upload": "POST", "stream": "POST",
-                  "sendWithHeaders": "POST"}
+                  "sendWithHeaders": "POST",
+                  # The staff tier's transport (StaffSessionStore.authed, method: .get by default)
+                  # and its GET-only wrapper (StaffRequestsViews.staffGet).
+                  "authed": "GET", "staffGet": "GET"}
 
 
 def call_args(src, open_paren, swift=False):
