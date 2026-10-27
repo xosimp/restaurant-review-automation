@@ -4,11 +4,12 @@ the same window and its night runs - the POS sync, the ticket archive, the repor
 with the workers and bounds production uses. Prints, per stage, wall time, restaurants done, restaurants
 left for the next night (hit_bound), and failures; and the job queue's depth while it drains.
 
-Same guard as seed_staging.py: LOADTEST_STAGING=1 and no provider keys. The POS is the simulator; the
+Same guard as seed_staging.py: the deploy environment is staging (CAVNAR_ENV=staging), no provider key is
+set, and the database holds only the kit's restaurants. The POS is the simulator; the
 report's narrative model call is refused without a key (the report still writes its figures), which
 measures everything but model latency - add it from the AI ledger's measured averages.
 
-  LOADTEST_STAGING=1 DATABASE_URL=... python scripts/loadtest/nightly_sim.py --stages pos_sync,pos_archive,dsr
+  CAVNAR_ENV=staging DATABASE_URL=... python scripts/loadtest/nightly_sim.py --stages pos_sync,pos_archive,dsr
 """
 import argparse
 import json

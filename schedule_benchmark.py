@@ -616,7 +616,10 @@ def _write_people(rid, spec, week_dates) -> None:
         got, err = to.request_time_off(rid, name, week_dates[a], week_dates[b], reason="benchmark")
         if err:
             raise RuntimeError(f"time off for {name} refused: {err}")
-        to.decide(rid, dict(got)["id"], True, decided_by="owner")
+        # decided_by is a login id (an INTEGER column — Postgres refuses the
+        # string "owner"; audit #25 WS10, the staging seeder runs this there):
+        # no login decided a seeded request.
+        to.decide(rid, dict(got)["id"], True, decided_by=None)
 
 
 def build(spec, today=None) -> dict:

@@ -347,8 +347,14 @@ Defaults change nothing in production: the queue is consumed in the web process,
 | `DB_BACKEND` | — | `sqlite` pins SQLite even with `DATABASE_URL` set (the rollback). | models.py, db_dialect.py |
 | `SHADOW_DATABASE_URL` | — | The Postgres the shadow writes the normalized schedule model to while SQLite is primary. | pg_shadow.py |
 | `PG_SHADOW_WRITE` | — | `1` notes every schedule revision in `pg_shadow_outbox`; the `pg_shadow` job writes them to `SHADOW_DATABASE_URL`. | pg_shadow.py |
-| `LOADTEST_STAGING` | unset | `1` lets `scripts/loadtest/seed_staging.py` and `nightly_sim.py` run — on a STAGING database with no provider keys only, never production (scale audit 10/19/26). | scripts/loadtest |
-| `LOADTEST_USERS` | `scripts/loadtest/users.csv` | The logins file `scripts/loadtest/locustfile.py` reads (written by `seed_staging.py`; git-ignored). | scripts/loadtest |
+| `CAVNAR_ENV` | — | The deploy environment's name (WS2's `config.deploy_env()`: `CAVNAR_ENV`, else `RAILWAY_ENVIRONMENT_NAME`, else `local`). `scripts/loadtest/seed_staging.py` and `nightly_sim.py` run only where it says `staging` (audit #25 WS10; they replace `LOADTEST_STAGING=1`), and never where `RAILWAY_ENVIRONMENT_NAME` / `RAILWAY_ENVIRONMENT` is `production`. | config.py, scripts/loadtest |
+| `RAILWAY_ENVIRONMENT_NAME` | — | Set by Railway: the environment's name (`production`, `staging`). The load kit refuses a `production` one whatever `CAVNAR_ENV` says. | config.py, scripts/loadtest |
+| `LOADTEST_STAGING` | unset | Retired (audit #25 WS10): the load kit's guard is `CAVNAR_ENV=staging`, no provider key in the shell, and a database holding only the kit's own restaurants (`seed_staging.check_environment` / `check_database`). | scripts/loadtest |
+| `LOADTEST_USERS` | `scripts/loadtest/users.csv` | The logins file `scripts/loadtest/locustfile.py` reads (written by `seed_staging.py`, with each store's timezone and kind; git-ignored). | scripts/loadtest |
+| `LOADTEST_SCENARIO` | `sustained` | The run's scenario (`morning_burst`, `sustained`, `stress`, `soak`): the results file is judged against its pass line; `morning_burst` also drives the user count itself (the `MorningBurst` shape). | scripts/loadtest |
+| `LOADTEST_BURST_MODE` | `synchronized` | The morning burst's shape: `synchronized` (every zone's morning at once — the worst case) or `rolling` (each zone's wave, east to west, 10 minutes apart). | scripts/loadtest |
+| `LOADTEST_RESULTS_DIR` | `scripts/loadtest/results` | Where the results file is written (`results.py`). | scripts/loadtest |
+| `LOADTEST_NOTES` | `""` | A line of context written into the results file. | scripts/loadtest |
 | `PG_POOL_MAX` | `20` | On Postgres: connections a process may have checked out by threads holding none — the per-process cap (blind re-audit 10/11/26 SCALE-11). The web process plus `worker.py` stay under Railway's `max_connections` (100) at the defaults. | db_dialect.py |
 | `PG_POOL_OVERFLOW` | `20` | More connections, only for a thread that already holds one (a nested `get_conn`; a wait there could deadlock). Process ceiling = `PG_POOL_MAX + PG_POOL_OVERFLOW`. | db_dialect.py |
 | `PG_POOL_IDLE` | `5` | Idle Postgres connections a process keeps for reuse. | db_dialect.py |
