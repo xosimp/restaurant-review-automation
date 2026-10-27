@@ -219,7 +219,10 @@ def test_cached_ai_insight_is_included_but_never_generated(db_path, monkeypatch)
     rid = _seed(db_path)
     p, _ = home_brief.build_home_brief(_user(rid), fresh=True)
     assert p["ai_insight"] is None
-    client_api._cache_set("review-insight:" + str(rid), "Guests love the patio; service speed slipped on Fridays.")
+    # Under this login's own Reviews read key (client_api.review_cache_key:
+    # kept per salary view and Food Cost access, blind re-audit 10/26/26 B3).
+    client_api._cache_set(client_api.review_cache_key(rid, _user(rid)),
+                          "Guests love the patio; service speed slipped on Fridays.")
     p2, _ = home_brief.build_home_brief(_user(rid), fresh=True)
     assert p2["ai_insight"]["source"] == "reviews" and "patio" in p2["ai_insight"]["text"]
     client_api._insight_cache.clear()

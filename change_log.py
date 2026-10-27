@@ -174,6 +174,9 @@ RESTAURANT_UNTRACKED = frozenset({
     # Stamped whenever auto_draft_weekday is written (that change is the
     # tracked one): the day is somebody's choice, not the spread default.
     "auto_draft_weekday_chosen",
+    # Stamped whenever timezone is written (that change is the tracked one):
+    # the zone is somebody's choice (blind re-audit B2, data_health).
+    "timezone_confirmed_at",
     # A consent acknowledgement is its own record (who and when).
     "optin_invites_ack_at", "optin_invites_ack_by",
     # The operator's private notes about the account (support_notes is the

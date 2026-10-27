@@ -212,9 +212,20 @@ def test_health_fails_on_a_database_with_no_restaurants_table(tmp_path, monkeypa
 
 
 def test_health_fails_on_a_database_missing_a_column_the_code_expects(tmp_path, monkeypatch):
+    """A column missing from a sign-in table (status_manager.
+    STRICT_SCHEMA_TABLES) fails /health; one missing elsewhere is a degraded
+    200 that names the gap's count, never its name (blind re-audit 10/27/26
+    B8 P3: a non-critical gap took the whole platform down on a deploy)."""
     path = _live_db(str(tmp_path / "live.db"), monkeypatch)
     conn = sqlite3.connect(path)
     conn.execute("ALTER TABLE forecast_log DROP COLUMN signed_error_pct")
+    conn.commit()
+    conn.close()
+    payload, status = status_manager.health_snapshot(path)
+    assert status == 200 and payload["status"] == "degraded" and "schema_gaps" in payload["problems"]
+    assert payload["schema_gaps_count"] == 1 and "signed_error_pct" not in str(payload)
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE login_history DROP COLUMN user_agent")
     conn.commit()
     conn.close()
     _payload, status = status_manager.health_snapshot(path)

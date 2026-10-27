@@ -1129,6 +1129,12 @@ def live_manager_gaps(restaurant_id, name, off=None, roster_change=None, today=N
     return sorted(out, key=lambda g: (g["date"], g["start"]))
 
 
+# hold_manager_rule's answer when the published weeks or their rules can't
+# be read: refused, never allowed on no answer.
+RULE_UNREADABLE = ("We couldn't check the manager rule against the published schedule just now — "
+                   "try again in a minute. Nothing changed.")
+
+
 def hold_manager_rule(restaurant_id, name, what, covered_by=None, off=None, roster_change=None, today=None,
                       db_path=None):
     """The owner's highest rule held over a change to the live weeks, before
@@ -1147,8 +1153,7 @@ def hold_manager_rule(restaurant_id, name, what, covered_by=None, off=None, rost
         import ops
         ops.capture(e, job="shift_request_rules", context=f"restaurant_id={restaurant_id} live manager check",
                     kind="request")
-        raise ShiftRequestError("We couldn't check the manager rule against the published schedule just now — "
-                                "try again in a minute. Nothing changed.")
+        raise ShiftRequestError(RULE_UNREADABLE)
     if not gaps:
         return None
     said = f"{what} leaves {_gap_words(gaps)} with no manager on the published schedule"

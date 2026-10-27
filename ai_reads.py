@@ -162,6 +162,14 @@ STORE_LINE_PREFIX = {"food": "insight_food", "marketing": "insight_marketing", "
 # reads are the *_hourly surfaces (audit #25 F13). Rows kept before the
 # split may be either view's, so they fail closed the same way.
 SALARY_VIEW_SURFACES = ("labor_read", "food_read", "review_read", "review_read_locations")
+# The stored reads kept per salary view, and the surfaces their hourly
+# twins' claims are filed under (STORE_SURFACE): one memory_context surface
+# builds both, so the read being written in the salary view continues from
+# its own claims, and the hourly one from the hourly twin's — never the
+# owner's (blind re-audit 10/26/26 B3; merge fix 10/27/26: filtering alone
+# left both without any LAST READ).
+HOURLY_TWINS = {"labor_read": ("labor_read_hourly",), "food_read": ("food_read_hourly",),
+                "review_read": ("review_read_hourly", "review_read_team")}
 
 
 # ── the claims ───────────────────────────────────────────────────────────────
@@ -1210,12 +1218,14 @@ def _interim(restaurant_id, row, db_path=None):
         return None
 
 
-def _sees_salaries_for(user) -> bool:
+def _sees_salaries_for(user, surface=None) -> bool:
     """Whether output built for `user` (memory_context.viewer_user) may
-    carry the salaries: a shared output (TEAM) never, a login by
-    permissions.sees_salaries, and an internal caller or the account
-    holders' unattended view (None / PRINCIPALS) by the work's own salary
-    view (models.viewer_sees_salaries — a job reads manager-safe unless it
+    carry the salaries: a shared output (TEAM) never — except a stored read
+    kept per salary view (HOURLY_TWINS), whose all-in copy only logins that
+    see salaries are served, so it follows the work's own view; a login by
+    permissions.sees_salaries; an internal caller or the account holders'
+    unattended view (None / PRINCIPALS) by the work's own salary view
+    (models.viewer_sees_salaries — a job reads manager-safe unless it
     reports to the owner alone)."""
     try:
         import memory_context as _mc
@@ -1223,6 +1233,9 @@ def _sees_salaries_for(user) -> bool:
             from models import viewer_sees_salaries
             return bool(viewer_sees_salaries())
         if _mc.is_team(user):
+            if surface in HOURLY_TWINS:
+                from models import viewer_sees_salaries
+                return bool(viewer_sees_salaries())
             return False
         from permissions import sees_salaries
         return bool(isinstance(user, dict) and sees_salaries(user))
@@ -1272,20 +1285,6 @@ def claim_lines(req):
             marks = ",".join("?" for _ in subjects)
             queries.append((base + [f"(subject IN ({marks}) OR rec_key IN ({marks}) OR signature IN ({marks}))"],
                             base_args + subjects * 3))
-        if surface in CLAIM_CROSS_READERS or (not subjects and surface in CROSS_SURFACES):
-            queries.append((base, base_args))  # a read over the whole restaurant: every surface's latest claims
-        elif not subjects:
-            if not surface:
-                return []
-            queries.append((base + ["surface=?"], base_args + [surface]))
-        # The newest four the viewer may read (memory_context.visible on the
-        # claim's surface scope): an owner-level claim is dropped BEFORE the
-        # cut, so a manager (or a shared output, memory_context.TEAM) is not
-        # left with nothing because the four newest were the owner's (INT).
-        # Both the viewer's surfaces and the latest claim per subject are
-        # chosen in SQL, before each LIMIT (memory re-audit 9/29/26,
-        # INVENTORY-13): the LIMIT was a cut too, so 40 newest owner-level
-        # claims left a manager's Ask with no LAST READ at all.
         viewer = getattr(req, "viewer", None)
         import memory_context as _mc
         user = _mc.viewer_user(viewer) if viewer is not None else None
@@ -1294,7 +1293,22 @@ def claim_lines(req):
         # so its claims reach only a viewer who sees salaries — never a
         # manager's prompt, a shared (TEAM) output, or a job's manager-safe
         # read (blind re-audit 10/26/26 B3).
-        no_salaries = not _sees_salaries_for(user)
+        no_salaries = not _sees_salaries_for(user, surface)
+        if surface in CLAIM_CROSS_READERS or (not subjects and surface in CROSS_SURFACES):
+            queries.append((base, base_args))  # a read over the whole restaurant: every surface's latest claims
+        elif not subjects:
+            if not surface:
+                return []
+            own = HOURLY_TWINS[surface] if no_salaries and surface in HOURLY_TWINS else (surface,)
+            queries.append((base + [f"surface IN ({','.join('?' for _ in own)})"], base_args + list(own)))
+        # The newest four the viewer may read (memory_context.visible on the
+        # claim's surface scope): an owner-level claim is dropped BEFORE the
+        # cut, so a manager (or a shared output, memory_context.TEAM) is not
+        # left with nothing because the four newest were the owner's (INT).
+        # Both the viewer's surfaces and the latest claim per subject are
+        # chosen in SQL, before each LIMIT (memory re-audit 9/29/26,
+        # INVENTORY-13): the LIMIT was a cut too, so 40 newest owner-level
+        # claims left a manager's Ask with no LAST READ at all.
         if user is not None or no_salaries:
             known = [r[0] for r in conn.execute(
                 "SELECT DISTINCT surface FROM ai_claims WHERE restaurant_id=?", (rid,)).fetchall()]

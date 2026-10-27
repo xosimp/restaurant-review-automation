@@ -5186,9 +5186,11 @@ def mobile_labor_availability_save(current_user):
             rid_av, name, f"saving {name}'s availability", covered_by=covered,
             off=lambda: _ss_av.live_shifts_on_days(rid_av, name, blocked))
     except _sq_req.ManagerGapRefused as e:
-        return jsonify(ok=False, needs_cover=True, manager_gap=e.gap, error=str(e)), 409
-    except _sq_req.ShiftRequestError as e:
-        return jsonify(ok=False, error=str(e)), 503
+        # The refusal's own sentence (ManagerGapRefused.gap), never an
+        # exception's text (test_intel_integrity's rule).
+        return jsonify(ok=False, needs_cover=True, manager_gap=e.gap, error=e.gap), 409
+    except _sq_req.ShiftRequestError:
+        return jsonify(ok=False, error=_sq_req.RULE_UNREADABLE), 503
     if floor_gap:
         _sq_req._tell_managers(rid_av, "No manager on", floor_gap + ".", _sq_req._models.DB_PATH)
     save_staff_availability(

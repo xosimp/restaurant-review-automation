@@ -289,8 +289,11 @@ def test_missing_data_is_said_never_a_zero():
     kpis = rc.section(rid, "kpis")
     assert "no complete payroll week" in kpis.text.lower() and "none on file" in kpis.text.lower()
     # Its labor figure is all-in only where the salaries may be seen, and
-    # its cache scope says which (outside a request: a job, the owner's).
-    assert kpis.scope == "principals;salaries"
+    # its cache scope says which: outside a request a job reads hourly,
+    # manager-safe (blind re-audit B3 P0); an owner-only job reads all-in.
+    assert kpis.scope == "principals;hourly"
+    with models.salary_view(True):
+        assert rc.section(rid, "kpis").scope == "principals;salaries"
 
 
 def test_sales_by_week_from_the_nightly_archive_with_partial_weeks_said():
