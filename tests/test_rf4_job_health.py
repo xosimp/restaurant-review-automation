@@ -243,6 +243,7 @@ def test_each_condition_is_its_own_incident_and_a_cleared_one_is_resolved(db, mo
     _beat(db)
     state = {"disk": {"state": "critical", "free_mb": 10, "pct_free": 1}}
     monkeypatch.setattr(status_manager, "disk_state", lambda *a, **k: state["disk"])
+    monkeypatch.setattr(status_manager, "pg_volume_state", lambda *a, **k: {"state": "n/a"})
     monkeypatch.setattr(ops, "backup_status", lambda db_path=None: {"state": "stale", "summary": "backup stale"})
     out = ops.check_platform_sla(send=True)
     triggers = {p["dedup_key"]: p for p in posted if p["event_action"] == "trigger"}
