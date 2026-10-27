@@ -619,3 +619,51 @@ def test_the_owner_can_set_a_drink_aside_and_it_never_reads_as_a_match(db):
         bm.set_drink_map(rid, "rpower", "K1", "skip:because", db_path=db)
     bm.set_drink_map(rid, "rpower", "K1", None, db_path=db)
     assert bm.set_aside_map(rid, db_path=db) == {}
+
+
+def test_an_open_card_carries_its_confirmed_ingredients(db, tmp_path):
+    """Owner, 10/27/26: the Chocolate Martini read "0 of 2 confirmed" with its
+    confirmed Baileys left off the card, so Baileys looked missing from the bar."""
+    rid = _rid(db)
+    _miller(db, rid)
+    _invoice(db, rid, "A3", _iso(1), [("4004", "KETEL ONE VODKA 750ML", "BO", 6, 22.0),
+                                       ("5005", "BAILEYS IRISH CRM 1L", "BO", 2, 30.0)])
+    cards = {"recipes": [{"name": "Chocolate Martini", "alcoholic": True, "rpower_item": "Chocolate Martini",
+                          "ingredients": [{"item": "Vanilla vodka", "amount": 1.5, "unit": "oz"},
+                                          {"item": "Baileys Irish Cream", "amount": 0.5, "unit": "oz"}]}]}
+    path = tmp_path / "cards.json"
+    path.write_text(json.dumps(cards))
+    for i in range(3):
+        _ring(db, rid, 10, "C1", "Chocolate Martini", "Liquor", "Cocktails", sales=12.0)
+    bv.load_recipe_cards(rid, path=str(path), db_path=db)
+    baileys = next(s for s in bv.drink_specs(rid, db_path=db) if s["ingredient"] == "Baileys Irish Cream")
+    bv.set_drink_spec(rid, baileys["id"], confirm=True, db_path=db)
+    v = bv.compute(rid, today=TODAY, db_path=db)["variance"]
+    assert [s["ingredient"] for s in v["suggestions"]] == ["Vanilla vodka"] and v["suggestions_total"] == 1
+    assert [(s["ingredient"], s["status"]) for s in v["card_confirmed"]] == [("Baileys Irish Cream", "confirmed")]
+    # A card with nothing left open carries nothing.
+    vodka = next(s for s in bv.drink_specs(rid, db_path=db) if s["ingredient"] == "Vanilla vodka")
+    bv.set_drink_spec(rid, vodka["id"], product_key="lakeshore beverage|4004", confirm=True, db_path=db)
+    v = bv.compute(rid, today=TODAY, db_path=db)["variance"]
+    assert v["suggestions"] == [] and v["card_confirmed"] == []
+
+
+def test_a_drink_says_what_it_is_and_whether_any_invoice_names_it():
+    """Owner, 10/27/26: "no one is ordering a Malibu shot". A button named for
+    a spirit is a pour of that bottle however it is served (EJ's rang Malibu
+    on the rocks, with pineapple, with OJ); a made drink needs its card."""
+    for name, cat, kind in [("Malibu", "liquor", "spirit"), ("Bombay", "liquor", "spirit"),
+                            ("Dewars 12yr", "liquor", "spirit"), ("Espresso Shot", "liquor", "made"),
+                            ("Midway Crusher", "liquor", "made"), ("Salt Caramel Tini", "liquor", "made"),
+                            ("Strawbry Burb Bck", "liquor", "made"), ("Gl Moet Brut", "wine", "glass"),
+                            ("Wycliff Mimosa Glass", "wine", "made"), ("Ambigam 22oz", "beer", "beer")]:
+        assert bv.serve_kind(name, cat) == kind, name
+    def cand(desc, cat):
+        return (desc, bv._words(desc), cat, False, bv.variants(desc), None)
+    cands = {"z": cand("ZARDETTO PROSECCO BRUT", "wine"), "t": cand("TITOS HANDMADE VODKA 1L", "liquor")}
+    assert bv.named_on_invoices("Titos", "liquor", cands) is True
+    assert bv.named_on_invoices("Bombay", "liquor", cands) is False
+    assert bv.named_on_invoices("Gl Moet Brut", "wine", cands) is False
+    # "Brut" is a style, not a house: Moet is never offered Zardetto.
+    assert bv.suggest_pour("Gl Moet Brut", "wine", cands) == {}
+    assert bv.suggest_pour("Gl Zardetto", "wine", cands)["product_key"] == "z"

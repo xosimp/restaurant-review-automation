@@ -48392,9 +48392,12 @@ function sfw2RuleCheck(chk) {
 .br-nm2 .a>span,.br-nm2 .b>span{display:block;margin-top:5px;font-size:13.5px;color:var(--ink3)}
 .br-nm2 .ar{color:var(--ember2);display:flex}
 .br-nm2 .act{display:flex;gap:6px;align-items:center;white-space:nowrap}
-/* Recipe cards flow as balanced columns, so a short card never leaves a hole beside a tall one (owner, 10/16/26). */
-.br-rcps{column-count:2;column-gap:14px}
-.br-rcps>.br-rcp{break-inside:avoid;margin-bottom:14px;width:100%}
+/* Recipe cards in two balanced columns, so a short card never leaves a hole beside a tall one (owner, 10/16/26);
+   the script deals each card to the shorter column - CSS columns painted a card's shadow into the empty one in
+   Safari (10/27/26). */
+.br-rcps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+.br-rcol{display:flex;flex-direction:column;gap:14px;min-width:0}
+.br-rcol:empty{display:none}
 .br-rcp{display:flex;flex-direction:column;border-radius:22px;border:1px solid var(--br-hair2);background:var(--br-plate);box-shadow:var(--elev-1);overflow:hidden}
 .br-rcp>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:20px 22px 14px}
 .br-rcp>header b{display:block;font-family:'Clash Display',sans-serif;font-weight:500;font-size:21px;color:var(--ink)}
@@ -48455,7 +48458,7 @@ function sfw2RuleCheck(chk) {
   .br-top{margin-bottom:32px}
   #bar .cbtn.br-tab{padding:0 14px;font-size:14.5px}
   .br-feat,.br-insl,.br-cstat,.br-cform .br-ccats,.br-mhead,.br-cfigs{grid-template-columns:minmax(0,1fr)}
-  .br-rcps{column-count:1}
+  .br-rcps{grid-template-columns:minmax(0,1fr)}
   .br-sigs,.br-sigs.few{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   #bar .cbtn.br-sig.lead,#bar .br-sigs.few .cbtn.br-sig.lead{grid-column:span 2;grid-row:auto;min-height:200px}
   #bar .cbtn.br-sig{min-height:0;padding:18px 16px 14px;border-radius:18px}
@@ -49129,15 +49132,35 @@ function sfw2RuleCheck(chk) {
       + (x.not_bought_in_span ? '<div class="r">—<span>poured from stock bought before this span</span></div></div>'
         : '<div class="r">' + (gap > 0 ? '+' : (gap < 0 ? '−' : '')) + units(Math.abs(gap), w) + '<span>' + (gap > 0 ? 'bought, not sold' : (gap < 0 ? 'sold beyond what was bought' : 'even')) + ' · ' + hn(money(Math.abs(x.gap_usd || 0))) + '</span></div></div>');
   }
+  /* What a drink button is (owner, 10/27/26: "no one is ordering a Malibu shot"): a button named for a spirit is
+     a pour of that bottle however it is served (the mixer rings on its own line); a made drink pours from more
+     than one bottle and needs its recipe card; a wine button is a glass. bar.variance.serve_kind decides. */
+  function serveLine(u) {
+    if (u.serve === 'spirit') return 'A pour of ' + esc2(posName(u.item)) + ' — neat, on the rocks or with a mixer';
+    if (u.serve === 'made') return 'A made drink — it pours from more than one bottle';
+    if (u.serve === 'glass') return 'A glass of wine';
+    return '';
+  }
+  function pourDefault(cat) {
+    var b = (DATA && DATA.bar_settings) || {};
+    return cat === 'liquor' ? b.liquor_oz : (cat === 'wine' ? b.wine_oz : null);
+  }
+  function noSuggestion(u) {
+    if (u.serve === 'made') return '<span class="nos">Needs its recipe card — or match the spirit it mostly pours</span>';
+    var since = ((DATA && DATA.invoices) || {}).from_mdy;
+    if (u.on_invoices === false && since) return '<span class="nos">No ' + esc2(posName(u.item)) + ' on an invoice since ' + hn(since) + '</span>';
+    return '<span class="nos">No suggestion</span>';
+  }
   function varUnmapped(u) {
-    var sg = u.suggest || null;
+    var sg = u.suggest || null, sl = serveLine(u), pd = pourDefault(u.category);
     // One row of the matching queue: the drink and what it sold, the
     // suggestion when there is one, and the match on the same line.
     return '<div class="br-mrow' + (sg ? ' sg' : '') + '" data-br-nm="' + esc2((String(u.item || '') + ' ' + posName(u.item)).toLowerCase()) + '"><div class="n"><b>' + esc2(posName(u.item)) + '</b><span><i class="br-swt" style="--s:' + seriesOf(u.category).css + '"></i>' + esc2(LABELS[u.category] || u.category || '') + ' · ' + hn(u.rung_units) + ' sold · ' + hn(money(u.sales_usd)) + '</span>'
+      + (sl ? '<span class="br-serve">' + sl + '</span>' : '')
       + (u.spec_suggested ? '<span class="br-tagx">Recipe card suggests one</span>' : '') + '</div>'
-      + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : '<span class="nos">No suggestion</span>') + '</div>'
+      + '<div class="m">' + (sg ? '<span class="br-sug">Suggested</span><b>' + esc2(sg.product) + '</b>' + (sg.oz != null ? '<span class="oz">' + hn(sg.oz + ' oz') + '</span>' : '') : noSuggestion(u)) + '</div>'
       + '<div class="r">' + (OWNER ? '<div class="br-form br-vmf"><select class="br-sel" data-br-vmapto="' + esc2(u.item_id) + '" aria-label="Product ' + esc2(posName(u.item)) + ' pours">' + prodOptions(u.category, 'Pours from…', sg && sg.product_key) + '<optgroup label="Not a drink to match"><option value="skip:not_a_drink">Set aside — not a drink</option><option value="skip:not_on_invoices">Set aside — not bought on any invoice</option></optgroup></select>'
-        + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="oz" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink">'
+        + '<input class="br-in2" style="width:84px" type="text" inputmode="decimal" data-br-vmapoz="' + esc2(u.item_id) + '" placeholder="' + (pd ? esc2(pd + ' oz') : 'oz') + '" value="' + (sg && sg.oz != null ? esc2(String(sg.oz)) : '') + '" aria-label="Ounces a drink' + (pd ? ' — ' + esc2(String(pd)) + ' if left empty' : '') + '">'
         + '<button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-vmap="' + esc2(u.item_id) + '" data-provider="' + esc2(u.provider) + '">Match</button></div>' : '') + '</div></div>';
   }
   // A recipe card's ingredient, inside its cocktail's card: the owner picks
@@ -49921,9 +49944,13 @@ function sfw2RuleCheck(chk) {
     if (!un.length) return '';
     for (i = 0; i < un.length; i++) { if (i < FIRST) h += varUnmapped(un[i]); else rest += varUnmapped(un[i]); }
     var tot = v.unmapped_total || un.length;
+    var lz = pourDefault('liquor');
     return '<section class="br-sec2" id="br-unm">' + head('Drinks to match', hn(tot) + ' · ' + hn(money(v.unmapped_sales_usd)) + ' sold',
-        'A POS drink counts in bought vs sold once it is matched to the product it pours from. Most arrive with a suggestion — the bottle or keg its name points at and the ounces its name states — saved only when you press Match. A drink not matched is left out, never counted as zero.'
-        + (tot > un.length ? ' The ' + hn(un.length) + ' with the most sales show; the rest come up as these are matched.' : ''), null,
+        '<b class="cav-tl-lead">A drink counts in bought vs sold once it is matched to what it pours from.</b><ul class="cav-tl">'
+        + '<li>Named for a spirit (Malibu, Bombay): a pour of that bottle — neat, on the rocks or with a mixer the POS rings on its own. It counts ' + (lz ? hn(lz + ' oz') : 'the house pour') + ' unless you set one, twice for a Double.</li>'
+        + '<li>A made drink (a shot, a martini, a mule) pours from more than one bottle: it needs its recipe card.</li>'
+        + '<li>A suggestion is the bottle or keg its name points at, saved only when you press Match.</li>'
+        + '<li>A drink not matched is left out, never counted as zero.' + (tot > un.length ? ' The ' + hn(un.length) + ' with the most sales show; the rest come up as these are matched.' : '') + '</li></ul>', null,
         '<input class="br-q br-mq" id="br-mq" type="search" placeholder="Find a drink" aria-label="Find a drink to match" aria-controls="br-unm-list">')
       + '<div class="br-mlist" id="br-unm-list">' + h + (rest ? fold('br-unm-rest', hn(un.length - FIRST) + ' more', null, rest, 'br-mlist') : '') + '</div>'
       + '<div class="br-empty" id="br-mq-none" hidden>No drink matches that.</div>' + setAsideList(v) + '</section>';
@@ -49956,7 +49983,10 @@ function sfw2RuleCheck(chk) {
   }
   /* Recipe cards grouped by cocktail: one card a drink, its ingredients in it. */
   function recipes(v) {
-    var sg = (ST.specs && ST.specs.specs) || v.suggestions || [], groups = [], by = {}, i, h = '';
+    // An open card carries its confirmed ingredients too (card_confirmed), so it shows the whole recipe and its
+    // count includes them (owner, 10/27/26: the Chocolate Martini read "0 of 2", its confirmed Baileys left off).
+    var open = v.suggestions || [], sg = (ST.specs && ST.specs.specs) || open.concat(v.card_confirmed || []);
+    var groups = [], by = {}, i, cols = ['', ''], tall = [0, 0];
     for (i = 0; i < sg.length; i++) {
       if (sg[i].status === 'removed') continue;
       var k = String(sg[i].item_name || '').toLowerCase();
@@ -49965,14 +49995,19 @@ function sfw2RuleCheck(chk) {
     }
     if (!groups.length) return '';
     for (i = 0; i < groups.length; i++) {
-      var g = groups[i], done = 0, rh = '', j;
+      var g = groups[i], done = 0, rh = '', j, c;
+      g.rows.sort(function (a, b) { return (+a.id || 0) - (+b.id || 0); });
       for (j = 0; j < g.rows.length; j++) { if (g.rows[j].status === 'confirmed') done++; rh += specRow(g.rows[j]); }
       var st = done === g.rows.length ? '<span class="br-stc ok">Confirmed</span>' : '<span class="br-stc">' + hn(done) + ' of ' + hn(g.rows.length) + ' confirmed</span>';
-      h += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(posName(g.name)) + '</b>' + (g.recipe && g.recipe !== g.name && g.recipe !== posName(g.name) ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
+      // Two columns, each card to the shorter one (header plus its rows): the balance CSS columns gave, without
+      // their painting a card's shadow into the empty column in Safari (owner, 10/27/26).
+      c = tall[0] <= tall[1] ? 0 : 1;
+      tall[c] += 2 + g.rows.length;
+      cols[c] += '<article class="br-rcp br-rise" style="animation-delay:' + (0.04 * i) + 's"><header><div><b>' + esc2(posName(g.name)) + '</b>' + (g.recipe && g.recipe !== g.name && g.recipe !== posName(g.name) ? '<span>' + esc2(g.recipe) + '</span>' : '') + '</div>' + st + '</header><div class="ings">' + rh + '</div></article>';
     }
-    var more = !ST.specs && (v.suggestions_total || 0) > sg.length;
+    var more = !ST.specs && (v.suggestions_total || 0) > open.length;
     return '<section class="br-sec2" id="br-specs">' + head('Recipe cards', hn(groups.length) + ' ' + plural(groups.length, 'cocktail'), 'Each cocktail’s spirits from its recipe card, against the bought product its name matches best. A card counts in bought vs sold once its ingredients are confirmed; until then it is only a suggestion.')
-      + '<div class="br-rcps">' + h + '</div>'
+      + '<div class="br-rcps"><div class="br-rcol">' + cols[0] + '</div><div class="br-rcol">' + cols[1] + '</div></div>'
       + (more ? '<div class="br-showall"><button type="button" class="cbtn cbtn-secondary cbtn-sm" data-br-specall="1">Show all ' + hn(v.suggestions_total) + '</button></div>' : '') + '</section>';
   }
   function matchPanel(d) {

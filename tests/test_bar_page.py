@@ -1069,3 +1069,21 @@ def test_a_match_says_on_its_row_what_happened():
     assert "row.classList.add('br-busy')" in js and "rowSay(row, doneMsg, 'ok')" in js
     css = _bar_css()
     assert ".br-mrow .br-msg.err{" in css and ".br-mrow.br-busy::after{" in css
+
+
+def test_a_drink_to_match_says_what_it_is_and_cards_sit_in_dealt_columns():
+    """Owner, 10/27/26: a spirit's button read as a shot, "No suggestion" never
+    said nothing was bought, and CSS columns painted a card's shadow into the
+    empty column in Safari."""
+    js = _bar_script()
+    row = js[js.index("  function serveLine(u) {"):js.index("  function specRow(s) {")]
+    assert "'A pour of ' + esc2(posName(u.item)) + ' — neat, on the rocks or with a mixer'" in row
+    assert "A made drink — it pours from more than one bottle" in row and "Needs its recipe card" in row
+    assert "' on an invoice since '" in row and "u.on_invoices === false" in row
+    assert "pourDefault(u.category)" in row and "if left empty" in row
+    rec = js[js.index("  function recipes(v) {"):js.index("  function matchPanel(d) {")]
+    assert "open.concat(v.card_confirmed || [])" in rec and "(v.suggestions_total || 0) > open.length" in rec
+    assert '<div class="br-rcol">' in rec
+    css = _bar_css()
+    assert "column-count" not in css.split(".br-rcps", 1)[1].split("}", 1)[0]
+    assert ".br-rcol{display:flex" in css
