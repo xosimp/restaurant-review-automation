@@ -152,6 +152,9 @@ class _NarrativeClient:
 def build_world(monkeypatch, db_path):
     """The demo store in `db_path`, a little shorter than the showcase's
     (weeks, not a year), with an owner, a manager and one employee login."""
+    # The night's intel block reads the weather: answered here as the failed
+    # read the network guard made of it, never api.weather.gov (audit #25).
+    monkeypatch.setattr(weather, "_fetch_periods_ex", lambda lat, lon: ([], "transient"))
     _sweep(monkeypatch, db_path)
     rid = demo_build.ensure_account()
     demo_build.fill_settings(rid)
