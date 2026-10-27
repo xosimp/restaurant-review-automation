@@ -1206,8 +1206,9 @@ def init_schedule_experiments(db_path: str = DB_PATH):
         reverted_by    TEXT,
         reverted_at    TEXT
     )""")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_exp_promotion_live ON "
-                 "schedule_experiment_promotions(experiment) WHERE reverted_at IS NULL")
+    import models as _models_ix   # duplicates refuse a unique index: recorded, the boot goes on (A05-15)
+    _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS uq_sched_exp_promotion_live ON "
+                                         "schedule_experiment_promotions(experiment) WHERE reverted_at IS NULL")
     # What the readout said, week by week: one row per experiment and ISO
     # week, the first of the week standing. Kept forever (a few rows a year
     # per experiment).

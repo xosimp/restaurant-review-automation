@@ -163,8 +163,9 @@ def init_billing(db_path=None):
         # One ledger row per Stripe event however often Stripe redelivers it
         # (#50). Partial, so every non-Stripe row (external_id NULL) is free.
         try:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_events_external "
-                         "ON admin_events(source, external_id) WHERE external_id IS NOT NULL")
+            import models as _models_ix   # duplicates: recorded, the boot goes on (A05-15)
+            _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_events_external "
+                                                 "ON admin_events(source, external_id) WHERE external_id IS NOT NULL")
         except Exception as e:
             # Only a database without admin_events (a partial fixture) lands
             # here; init_db always creates it first.

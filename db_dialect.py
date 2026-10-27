@@ -1918,6 +1918,20 @@ _END = re.compile(r"^\s*(COMMIT|END|ROLLBACK)(\s+TRANSACTION)?\s*;?\s*$", re.I)
 _ADD_COLUMN = re.compile(r"^\s*ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?\"?([A-Za-z_]\w*)\"?\s+ADD\s+(?:COLUMN\s+)?"
                          r"(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z_]\w*)\"?", re.I)
 _NOT_A_COLUMN = {"CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "EXCLUDE", "COLUMN"}
+# A boot's `CREATE [UNIQUE] INDEX IF NOT EXISTS name ON …` (release-safety
+# audit 10/26/26 A05-04). Postgres takes the table's SHARE lock before it
+# looks for the name, so each of the ~700 boot statements for an index that
+# exists queued behind any open writer — and blocked every writer after it.
+_CREATE_INDEX_INE = re.compile(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+\"?([A-Za-z_]\w*)\"?\s+ON\b",
+                               re.I)
+# A NEW index built at boot gets this long (PG_BOOT_INDEX_TIMEOUT_MS) before
+# Postgres cancels it — and with it its lock — rather than the 300 s
+# statement_timeout: past gunicorn's 120 s the worker was killed while the
+# server kept building and holding the lock, and the next boot waited on it
+# (a crash loop). An index on an existing big table is built before the
+# deploy, CONCURRENTLY, by scripts/build_index.py; the boot then finds it.
+BOOT_INDEX_TIMEOUT_MS_DEFAULT = 60000
+INDEX_BUILD_TIMED_OUT = "index build timed out"
 
 # Schema changes wait for their table's lock at most DDL_LOCK_TIMEOUT_MS at
 # a time, DDL_LOCK_TRIES times: an ALTER or a partition's CREATE/DETACH
@@ -2089,6 +2103,17 @@ class PgConnection:
                 raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
             run_ddl_bounded(self, lambda: self._run(text, params, cur))
             return cur
+        m = _CREATE_INDEX_INE.match(sql)
+        if m:
+            # An index (or any relation) of that name exists: answered from
+            # the catalog, no lock taken — Postgres's own IF NOT EXISTS
+            # outcome. A new one waits for its lock bounded and builds under
+            # its own time limit (A05-04).
+            if self._exists(m.group(2).lower()):
+                cur._load()
+                return cur
+            self._build_index_bounded(sql, params, cur)
+            return cur
         m = _UPDATE_OR.match(sql)
         if m:
             return self._update_or_ignore(m, sql, params, cur)
@@ -2105,6 +2130,40 @@ class PgConnection:
             cur.lastrowid = got[0] if got else None
             cur._rows, cur._pos = [], 0
         return cur
+
+    def _build_index_bounded(self, sql, params, cur):
+        """One new index, built under PG_BOOT_INDEX_TIMEOUT_MS (transaction-
+        local) with run_ddl_bounded's lock waits. A timeout raises
+        sqlite3.OperationalError carrying INDEX_BUILD_TIMED_OUT, which the
+        boot's migration runner records instead of failing the boot.
+
+        Translated inside the bounded wait, uncached: the translation reads
+        the table's columns (information_schema), which waits behind an
+        ACCESS EXCLUSIVE holder for the whole session lock_timeout, and a
+        translation made while that read timed out must not be kept."""
+        ms = _env_int(os.getenv("PG_BOOT_INDEX_TIMEOUT_MS"), BOOT_INDEX_TIMEOUT_MS_DEFAULT)
+        prev = self.execute_native("SELECT current_setting('statement_timeout')").fetchone()[0]
+
+        def build():
+            try:
+                text = self._final_text(sql)[0]
+            except TranslationError as e:
+                raise sqlite3.OperationalError(f"not translatable to Postgres: {e}") from e
+            return self._run(text, params, cur)
+        try:
+            if ms:
+                self.execute_native("SELECT set_config('statement_timeout', %s, true)", (f"{int(ms)}ms",))
+            try:
+                run_ddl_bounded(self, build)
+            except sqlite3.OperationalError as e:
+                if "statement timeout" in str(e).lower():
+                    raise sqlite3.OperationalError(f"{INDEX_BUILD_TIMED_OUT} after {ms} ms: {e}") from e
+                raise
+        finally:
+            try:
+                self.execute_native("SELECT set_config('statement_timeout', %s, true)", (str(prev),))
+            except Exception:
+                pass
 
     def _has_column(self, table, column) -> bool:
         """Whether `table` (this schema's) has `column` — the catalog read,

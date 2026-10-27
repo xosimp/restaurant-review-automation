@@ -813,6 +813,21 @@ def health_snapshot(db_path=None):
     if backup["offsite"] == "stale":
         problems.append("offsite_backup_stale")
 
+    # An index this process's boot could not build (models.note_missing_index
+    # — release-safety audit 10/26/26 A05-15 / A05-04): a UNIQUE one over
+    # duplicate rows is a guarantee the data does not have; any other ran
+    # past its build limit. Degraded, never a 500: the boot went on on
+    # purpose, and failing the deploy check would not fix the data.
+    try:
+        import models as _models_ix
+        missing_ix = dict(_models_ix.BOOT_MISSING_INDEXES)
+    except Exception:
+        missing_ix = {}
+    if any(v.get("unique") for v in missing_ix.values()):
+        problems.append("constraint_missing")
+    if any(not v.get("unique") for v in missing_ix.values()):
+        problems.append("index_missing")
+
     payload = {"status": "degraded" if problems else "ok", "problems": problems,
                "db": "ok",
                "database": {"write": write["state"], "write_ms": write["ms"], "journal": journal,
@@ -825,6 +840,8 @@ def health_snapshot(db_path=None):
                           # ok | stale | no_offsite | failed | never.
                           "last_run": (backup.get("raw") or {}).get("state")},
                "jobs_overdue": [j["job"] for j in overdue]}
+    if missing_ix:
+        payload["indexes_missing"] = sorted(missing_ix)
     if sched.get("beat_age_minutes") is not None:
         payload["scheduler_heartbeat_age_minutes"] = round(sched["beat_age_minutes"], 1)
     if sched.get("loop_completed_age_minutes") is not None:

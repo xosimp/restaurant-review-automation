@@ -924,6 +924,10 @@ def ensure_active_name_index(db_path: str = DB_PATH) -> bool:
             _ops_ix.capture(exc, job="memberships_name_index", context=f"duplicates: {dupes}"[:500])
         except Exception:
             pass
+        if dupes:
+            # /health says so too (release-safety audit 10/26/26 A05-15).
+            import models as _models_ix
+            _models_ix.BOOT_MISSING_INDEXES.setdefault(ACTIVE_NAME_INDEX, {"unique": True, "error": str(exc)[:300]})
         return False
 
 

@@ -1105,8 +1105,9 @@ def init_people(db_path=None):
             created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
         )""")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_people_live_key ON people(restaurant_id, name_key) "
-                     "WHERE merged_into IS NULL")
+        import models as _models_ix   # duplicates refuse a unique index: recorded, the boot goes on (A05-15)
+        _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_live_key ON people"
+                                             "(restaurant_id, name_key) WHERE merged_into IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_rest ON people(restaurant_id)")
         conn.execute("""CREATE TABLE IF NOT EXISTS person_aliases (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1120,10 +1121,11 @@ def init_people(db_path=None):
             last_seen      TEXT,
             created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
         )""")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_person_alias_ext ON person_aliases"
-                     "(restaurant_id, source, external_id) WHERE external_id IS NOT NULL")
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_person_alias_spelling ON person_aliases"
-                     "(restaurant_id, person_id, source, name_key) WHERE external_id IS NULL")
+        _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_person_alias_ext ON person_aliases"
+                                             "(restaurant_id, source, external_id) WHERE external_id IS NOT NULL")
+        _models_ix.create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_person_alias_spelling ON "
+                                             "person_aliases(restaurant_id, person_id, source, name_key) "
+                                             "WHERE external_id IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_person_alias_key ON person_aliases(restaurant_id, name_key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_person_alias_person ON person_aliases(person_id)")
         conn.execute("""CREATE TABLE IF NOT EXISTS person_questions (

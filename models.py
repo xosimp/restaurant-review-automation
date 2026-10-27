@@ -2282,15 +2282,70 @@ _MIGRATION_ALREADY_APPLIED = ("duplicate column name", "already exists")
 
 def _apply_migration(conn, sql, also_tolerate=()):
     """Run one boot migration. True if it applied, False if it was already
-    applied; any other failure raises."""
+    applied; any other failure raises — except an index this boot could not
+    build (release-safety audit 10/26/26 A05-15 / A05-04): a UNIQUE index
+    over duplicate rows, or a new index that ran past its build limit on
+    Postgres, is recorded (note_missing_index: ops.capture, /health
+    degraded) and the boot goes on. An all-tenant outage until a rollback,
+    redeployed into the same failure, was the alternative."""
     try:
         conn.execute(sql)
         return True
+    except sqlite3.IntegrityError as e:
+        if _UNIQUE_INDEX_RE.match(sql):
+            note_missing_index(_UNIQUE_INDEX_RE.match(sql).group(1), e, unique=True)
+            return False
+        raise
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
         if any(s in msg for s in _MIGRATION_ALREADY_APPLIED + tuple(also_tolerate)):
             return False
+        m = _ANY_INDEX_RE.match(sql)
+        if m and "index build timed out" in msg:
+            note_missing_index(m.group(2), e, unique=bool(m.group(1)))
+            return False
         raise
+
+
+# ── Indexes a boot could not build (release-safety audit A05-15 / A05-04) ───
+_UNIQUE_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+_ANY_INDEX_RE = _re_alter.compile(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", _re_alter.I)
+# {index name: {"unique": bool, "error": str}} — this process's boot. /health
+# reads it (constraint_missing for a UNIQUE one, index_missing otherwise);
+# the next boot that builds the index clears it.
+BOOT_MISSING_INDEXES = {}
+
+
+def note_missing_index(name, error, unique=True):
+    """Record an index this boot did not build, once per process: logged,
+    ops.capture (the console's failures, Sentry) and /health degraded. A
+    unique index over duplicates ships with its dedup, verified read-only on
+    production before the deploy (ARCHITECTURE_MANIFEST.md, Release
+    compatibility); this is the net when that was missed."""
+    if name in BOOT_MISSING_INDEXES:
+        return
+    BOOT_MISSING_INDEXES[name] = {"unique": bool(unique), "error": str(error)[:300]}
+    logging.getLogger(__name__).error("boot: index %s not built (%s) — %s", name,
+                                      "duplicate rows" if unique else "build limit", error)
+    try:
+        import ops
+        exc = error if isinstance(error, BaseException) else RuntimeError(str(error))
+        ops.capture(exc, job="boot_index_missing", context=f"index={name} unique={int(bool(unique))}")
+    except Exception as cap_e:
+        logging.getLogger(__name__).warning("could not record the missing index %s: %s", name, cap_e)
+
+
+def create_unique_index(conn, sql) -> bool:
+    """A boot CREATE UNIQUE INDEX outside init_db's list: True when it is in
+    place, False when duplicate rows refused it (recorded, the boot goes
+    on). Any other error raises."""
+    try:
+        conn.execute(sql)
+        return True
+    except sqlite3.IntegrityError as e:
+        m = _UNIQUE_INDEX_RE.match(sql)
+        note_missing_index(m.group(1) if m else sql[:60], e, unique=True)
+        return False
 
 
 # The tracker columns the learning sync reads (intelligence.feedback.sync):
@@ -2481,6 +2536,8 @@ def _ensure_place_id_uniqueness(conn):
                 print(f"[migrate] google_place_id {d[0]} is on live restaurants {d[1]} — "
                       f"reviews for it can only reach one of them. Clear it on the duplicates, "
                       f"or mark them is_demo=1, then redeploy to enable the unique index.")
+            note_missing_index("idx_restaurants_place_id_live",
+                               f"google_place_id on more than one live restaurant: {dupes[0][0]} ({dupes[0][1]})")
             return
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurants_place_id_live "
@@ -9943,6 +10000,7 @@ def init_shift_requests(db_path: str = DB_PATH):
         # Duplicates from before the index: the transactional check still
         # guards new requests; the index lands once they are answered.
         print(f"[models] uq_shift_requests_live not created yet: {e}")
+        note_missing_index("uq_shift_requests_live", e)
     # One live request per shift BY ITS ID (ARCH-6): a retimed or renamed
     # shift is still the one shift.
     try:
@@ -9951,6 +10009,7 @@ def init_shift_requests(db_path: str = DB_PATH):
                      "AND shift_id IS NOT NULL AND shift_id <> ''")
     except sqlite3.IntegrityError as e:
         print(f"[models] uq_shift_requests_live_sid not created yet: {e}")
+        note_missing_index("uq_shift_requests_live_sid", e)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_shift_requests_sid ON shift_change_requests(restaurant_id, shift_id)")
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shift_sections'").fetchone():
         if "shift_id" not in {r[1] for r in conn.execute("PRAGMA table_info(shift_sections)")}:
@@ -10274,8 +10333,8 @@ def init_ask_memory(db_path: str = DB_PATH):
     _migrate_ask_memory_key(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ask_memory_rest "
                  "ON ask_memory(restaurant_id, created_at)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
-                 "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
+    create_unique_index(conn, "CREATE UNIQUE INDEX IF NOT EXISTS idx_ask_memory_fact_author "
+                              "ON ask_memory(restaurant_id, fact, COALESCE(user_id, 0))")
     have = {r[1] for r in conn.execute("PRAGMA table_info(ask_memory)").fetchall()}
     for col, decl in _ASK_MEMORY_COLUMNS:
         if col not in have:
@@ -15250,6 +15309,8 @@ def ensure_pos_binding_indexes(db_path: str = DB_PATH) -> dict:
                 pass
             dup = pos_binding_duplicates(provider, db_path=db_path)
             out[provider] = "duplicates" if dup else f"error: {type(e).__name__}"
+            if dup:
+                note_missing_index(name, e)
             logging.getLogger(__name__).error("POS binding index %s not made (%s): duplicates %s",
                                               name, e, dup)
             try:
