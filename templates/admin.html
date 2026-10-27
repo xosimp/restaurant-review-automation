@@ -739,8 +739,14 @@ const ICONS = {
 function ico(n, size){ return `<svg class="i${size?' '+size:''}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]||''}</svg>`; }
 function pill(tone, text, dot){ return `<span class="pill ${tone}${dot===false?' nd':''}"><i></i>${text}</span>`; }
 const TONE = {critical:'bad', warning:'warn'};
+// A chart drawn at the width it is shown, so its 11px axis text reads 11px
+// at every width (admin audit 10/27/26 V12): drawn first at a default, then
+// again at its container's own width, before the page paints. ES5.
+function fitChart(id, draw){ var el = $(id); if(!el) return; var w = Math.round(el.clientWidth || 0); if(w >= 200) el.innerHTML = draw(w); }
 // A line with a soft area under it and a glowing endpoint: the web app's
-// glowLine language, drawn whole (DESIGN_SYSTEM 11: no private tween).
+// glowLine language, drawn whole (DESIGN_SYSTEM 11: no private tween). The
+// end dot is HTML over the line (V24): a circle inside a stretched SVG
+// (preserveAspectRatio none) was drawn as an ellipse.
 function spark(vals, w, h, color, id){
   vals = (vals||[]).map(v => +v || 0); if(vals.length < 2) vals = [vals[0]||0, vals[0]||0];
   const lo = Math.min(...vals), hi = Math.max(...vals), rng = (hi-lo) || 1, pad = 6;
@@ -748,7 +754,7 @@ function spark(vals, w, h, color, id){
   const line = xs.map((x,i)=>x.toFixed(1)+','+ys[i].toFixed(1)).join(' ');
   const area = 'M'+xs[0].toFixed(1)+','+h+' L'+xs.map((x,i)=>x.toFixed(1)+','+ys[i].toFixed(1)).join(' L')+' L'+xs[xs.length-1].toFixed(1)+','+h+' Z';
   const ex = xs[xs.length-1], ey = ys[ys.length-1];
-  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true" style="display:block;overflow:visible"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><polyline points="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="6" fill="${color}" fill-opacity=".18"/><circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3" fill="${color}"/></svg>`;
+  return `<div class="spk"><svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true" style="display:block;overflow:visible"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><polyline points="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg><i class="spk-end" style="left:${(ex/w*100).toFixed(2)}%;top:${(ey/h*100).toFixed(2)}%;color:${color}"></i></div>`;
 }
 function runSquares(seq){ return `<span class="sq">${seq.map(s=>`<i class="${s===null?'e':(s?'':'x')}"></i>`).join('')}</span>`; }
 function head(kicker, title, sub, right){
@@ -876,8 +882,11 @@ function menuFilter(inp){ const q = inp.value.trim().toLowerCase(); inp.closest(
 
 // ── Overview ────────────────────────────────────────────────────────────────
 // What needs me, what changed, what is growing — ranked: four hero figures,
-// a status strip, a watch list, then the things to act on. The sentence at
-// the top is written by rules from the same payload (no model on load).
+// a three-cell strip of what the ring doesn't carry (the support queue, AI
+// spend, API latency), then the things to act on. Each figure is shown once:
+// the watch row that repeated the ring, the legend and the issue list went
+// (admin audit 10/27/26 V03). The sentence at the top is written by rules
+// from the same payload (no model on load).
 // Every figure is the server's (fix round C): MRR from the Stripe mirror with
 // its source, the charts computed and zero-filled on the server (no browser
 // back-cast), issue counts per segment — an internal account (demo, test,
@@ -969,15 +978,15 @@ function healthCard(d, mh){
 // Accounts by week (paying, from the daily snapshots — or labelled as a
 // reconstruction) and signups by week, both from overview.series. An empty
 // week is an empty slot, never skipped (#158); the axis scales to the data.
-function growthChart(s){
+function growthChart(s, w0){
   const acc = (s && s.accounts) || [], sg = (s && s.signups) || [], n = Math.max(acc.length, sg.length);
   if(!n) return '<div class="empty">No history yet.</div>';
-  const w = 470, h = 176, pl = 26, pb = 26, top = 10, cw = (w-pl-8)/n;
+  const w = w0 || 470, h = 176, pl = 26, pb = 26, top = 10, cw = (w-pl-8)/n;
   const paying = acc.map(a => a.paying == null ? null : +a.paying), signups = sg.map(x => +x.n || 0);
   const peak = Math.max.apply(null, [0].concat(paying.filter(v => v != null), signups));
   const ymax = Math.max(4, Math.ceil(peak * 1.15)), y = v => top + (1 - v/ymax) * (h-pb-top);
   const ticks = [0, Math.round(ymax/2), ymax];
-  const grid = ticks.map(v=>`<line x1="${pl}" x2="${w-4}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="rgba(255,255,255,.05)"/><text x="${pl-8}" y="${(y(v)+4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${v}</text>`).join('');
+  const grid = ticks.map(v=>`<line x1="${pl}" x2="${w-4}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="rgba(255,255,255,.05)"/><text x="${pl-8}" y="${(y(v)+4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${v}</text>`).join('');
   const wk = i => { const x = sg[i] || acc[i] || {}; return dayOf(x.week_start); };
   const bars = signups.map((v,i)=>{ const x = pl + i*cw + cw*.28, bh = v ? Math.max(4, (h-pb-top) * v / ymax) : 2; return `<rect x="${x.toFixed(1)}" y="${(h-pb-bh).toFixed(1)}" width="${(cw*.44).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${v?'var(--ember2)':'rgba(255,255,255,.1)'}" fill-opacity="${v?'.85':'1'}"><title>Week of ${mdy(wk(i))}: ${v} new</title></rect>`; }).join('');
   const pts = paying.map((v,i) => v == null ? null : [pl + i*cw + cw/2, y(v)]).filter(Boolean);
@@ -989,7 +998,7 @@ function growthChart(s){
     dot = `<circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="7" fill="var(--green-t)" fill-opacity=".18"/><circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="3.5" fill="var(--green-t)"/>`;
   }
   const idx = n > 3 ? [0, Math.round((n-1)/3), Math.round(2*(n-1)/3), n-1] : sg.map((_x,i)=>i);
-  const labels = idx.map(i=>`<text x="${(pl + i*cw + cw/2).toFixed(1)}" y="${h-7}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${esc(mdy(wk(i)).replace(/\/\d+$/,''))}</text>`).join('');
+  const labels = idx.map(i=>`<text x="${(pl + i*cw + cw/2).toFixed(1)}" y="${h-7}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${esc(mdy(wk(i)).replace(/\/\d+$/,''))}</text>`).join('');
   return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="Paying accounts by week and new signups, ${n} weeks"><defs><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--green)" stop-opacity=".22"/><stop offset="1" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs>${grid}${area}${bars}${line}${dot}${labels}</svg>`;
 }
 // Issue categories from the server's own category (the key's kind).
@@ -1044,10 +1053,14 @@ function changesList(events){
     out += `<div style="display:flex;align-items:center;gap:12px;padding:7px 0"><i style="display:block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 0 4px rgba(255,255,255,.04);flex-shrink:0"></i><span class="ink2" style="flex:1;min-width:0;font-size:13px">${esc(e.label)}${e.restaurant_id?' · '+clientLink(e.restaurant_id, e.restaurant):(e.restaurant?' · '+esc(e.restaurant):'')}</span><span class="n muted" style="font-size:12px;white-space:nowrap">${d?fmtT(d):''}</span></div>`; });
   return out || '<div class="empty">Quiet.</div>';
 }
+// A strip cell links where its figure is acted on; with no href (the page
+// already open) it is a plain cell, never a link that goes nowhere (V01).
 function stripCell(href, icn, tone, label, value, sub){
-  return `<a href="${href}"><span class="hd"><span class="ico ${tone}">${ico(icn)}</span><span class="lbl">${label}</span></span><span class="v">${value}</span><span class="s">${sub}</span></a>`;
+  const inner = `<span class="hd"><span class="ico ${tone}">${ico(icn)}</span><span class="lbl">${label}</span></span><span class="v">${value}</span><span class="s">${sub}</span>`;
+  return href ? `<a href="${href}">${inner}</a>` : `<div>${inner}</div>`;
 }
-// A watch-list figure that links where it is acted on.
+// A watch-list figure that links where it is acted on. (Unused since the
+// Overview watch row went, admin audit 10/27/26 V03; kept for the record.)
 function watchKpi(href, v, l, cls, title){ return `<a class="kpi ${cls||''}" href="${href}"${title?` title="${esc(title)}"`:''}><div class="v">${v}</div><div class="l">${esc(l)}</div></a>`; }
 const MRR_SRC = {mirror:'billed', list:'list price', mixed:'billed + list price'};
 async function overview(){
@@ -1057,7 +1070,6 @@ async function overview(){
   _ov = d; _ovMsg = undefined; applyBadges(d);
   const k = d.kpis || {}, ic = d.issue_counts || {}, s = d.series || {}, issues = d.issues || [];
   const fleetErr = readFailed(d, ['restaurants']), money = t => figOr(d, ['restaurants', 'stripe_subscriptions'], t);
-  const crit = issues.filter(i=>i.severity==='critical');
   const mrr = (s.mrr || []).map(m => +m.mrr || 0), months = (s.mrr || []).map(m => dayOf(m.month));
   // "Up this month" only from real snapshots — a reconstruction can't say it.
   let mrrMove = null;
@@ -1066,64 +1078,51 @@ async function overview(){
   const u0 = {{ (current_user.username or '')|tojson }}, who = u0 ? u0.charAt(0).toUpperCase() + u0.slice(1) : '';
   const att = ic.attention != null ? ic.attention : issues.length;
   const sentence = (fleetErr ? "<b>The fleet couldn't be read</b> — what needs you is unknown."
-      : (att ? `<b>${att} thing${att===1?' needs':'s need'} you</b>${ic.critical?' — '+ic.critical+' critical':''}.` : '<b>Nothing needs you.</b>'))
+      : (att ? `<b>${att} thing${att===1?' needs':'s need'} you</b>.` : '<b>Nothing needs you.</b>'))
     + (mrrMove ? ` MRR is ${mrrMove > 0 ? 'up' : 'down'} <span class="n">${fmtUSD(Math.abs(mrrMove))}</span> on last month.` : '')
     + ((ic.internal || {}).total ? ` <span class="dim">${ic.internal.total} on internal accounts, kept apart.</span>` : '');
   const cu = ic.customer || {}, older48 = issues.filter(i=>i.restaurant_id && tsMs(i.since_at) && (Date.now()-tsMs(i.since_at)) > 48*36e5).length;
-  const emTot = (k.emails_today||0) + (k.email_failures_today||0), emPct = emTot ? Math.round((k.emails_today||0)/emTot*1000)/10 : null;
-  const tc = k.trial_conversion || {}, r7 = ((k.email_rates || {})['7d']) || {};
+  const tc = k.trial_conversion || {};
   const sgv = (s.signups || []).map(x => +x.n || 0), sgMax = Math.max.apply(null, [1].concat(sgv));
   const paid = [[k.active,'var(--green)','paying'],[k.trial,'var(--blue)','trial'],[k.past_due,'var(--red)','past due'],[k.paused,'var(--amber)','paused']];
   const srcNote = s.source === 'reconstructed' ? `<span class="chip warn" title="${esc(s.note||'')}">reconstructed</span>` : (s.source === 'snapshots' ? `<span class="chip" title="${esc(s.note||'')}">daily snapshots</span>` : '');
   $('view').innerHTML = `
     ${head('Executive overview', `${hello}${who?', '+esc(who):''}.`, sentence, `${asOf(d)}<button class="btn g ic" title="Refresh (a fresh build)" aria-label="Refresh" onclick="_fresh=true;route();badges()">${ico('refresh','s')}</button>`)}
     ${errBanner(d)}
-    <section style="display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px">
-      <a class="card kc glow" href="#customers/billing" style="grid-column:span 4;padding-bottom:14px" title="${esc(k.mrr_source==='list'?'No Stripe subscription mirror yet — list price, once per billing group.':'Stripe subscription mirror: amount ÷ interval, once per subscription, after discount.')}">
+    <section class="ovhero">
+      <a class="card kc glow" href="#customers/billing" style="padding-bottom:14px" title="${esc(k.mrr_source==='list'?'No Stripe subscription mirror yet — list price, once per billing group.':'Stripe subscription mirror: amount ÷ interval, once per subscription, after discount.')}">
         <span class="lbl">MRR · ${esc(MRR_SRC[k.mrr_source] || 'list price')}</span>
         <span style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="big">${money(fmtUSD(k.mrr))}</span>${k.mrr_committed?pill('neu','+'+fmtUSD(k.mrr_committed)+' committed',false):''}</span>
         <span class="s" style="display:flex;gap:10px;flex-wrap:wrap">${k.mrr_past_due?`<span style="color:var(--red-t)"><span class="n">${fmtUSD(k.mrr_past_due)}</span> past due</span>`:''}${k.mrr_list!=null&&k.mrr_source!=='list'?`<span>list <span class="n">${fmtUSD(k.mrr_list)}</span></span>`:''}${k.mrr_mismatches?`<span style="color:var(--amber-t)"><span class="n">${k.mrr_mismatches}</span> billed ≠ list</span>`:''}${k.mrr_fallback_accounts?`<span style="color:var(--amber-t)" title="These have no Stripe mirror row yet"><span class="n">${k.mrr_fallback_accounts}</span> at list price</span>`:''}</span>
         <div style="margin-top:4px">${mrr.length ? spark(mrr, 440, 76, 'var(--ember2)', 'mrrg') : '<div class="dim" style="height:76px;display:flex;align-items:center">No MRR history yet.</div>'}</div>
-        <div class="n muted" style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;padding:0 4px">${months.map(m=>'<span>'+(m?esc(m.toLocaleString(undefined,{month:'short'})):'')+'</span>').join('')}${srcNote}</div>
+        <div class="n muted" style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:0 4px">${months.map(m=>'<span>'+(m?esc(m.toLocaleString(undefined,{month:'short'})):'')+'</span>').join('')}${srcNote}</div>
       </a>
-      <a class="card kc" href="#customers/restaurants" style="grid-column:span 2">
+      <a class="card kc" href="#customers/restaurants">
         <span class="lbl">Paying restaurants</span><span class="big">${money(fmtN(k.active))}</span><span class="s">of <span class="n">${fmtN(k.clients)}</span> accounts</span>
         <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:10px"><div style="display:flex;gap:3px;height:8px">${paid.filter(x=>x[0]).map(x=>`<i style="flex:${x[0]};background:${x[1]};border-radius:4px" title="${x[0]} ${x[2]}"></i>`).join('')||'<i style="flex:1;background:rgba(255,255,255,.07);border-radius:4px"></i>'}</div>
-        <span class="s" style="font-size:11.5px;display:flex;gap:10px;flex-wrap:wrap">${paid.filter(x=>x[0]).map(x=>`<span style="color:${x[1]}">● <span class="n">${x[0]}</span> ${x[2]}</span>`).join('')}</span>
-        <span class="s" style="font-size:11.5px">${k.covered_locations?`<span class="n">${k.covered_locations}</span> covered by a group's subscription · `:''}<span class="n">${fmtN(k.internal_accounts||0)}</span> internal, kept apart</span></div>
+        <span class="s" style="font-size:12px;display:flex;gap:4px 10px;flex-wrap:wrap">${paid.filter(x=>x[0]).map(x=>`<span style="color:${x[1]}">● <span class="n">${x[0]}</span> ${x[2]}</span>`).join('')}</span>
+        <span class="s" style="font-size:12px" title="Covered: a location a group's subscription pays for. Internal: demo, test and Cavnar AI's own accounts, never counted.">${k.covered_locations?`<span class="n">${k.covered_locations}</span> covered · `:''}<span class="n">${fmtN(k.internal_accounts||0)}</span> internal</span></div>
       </a>
-      <a class="card kc" href="#customers/onboarding" style="grid-column:span 2">
+      <a class="card kc" href="#customers/onboarding">
         <span class="lbl">New signups</span><span class="big">${money(fmtN(k.new_this_month))}</span><span class="s">this month</span>
-        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:11.5px">last <span class="n">${sgv.length}</span> weeks</span>
-        <span class="s" style="font-size:11.5px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
+        <div style="margin-top:auto;padding-top:10px"><span style="display:flex;align-items:flex-end;gap:4px;height:34px">${sgv.map((v,i)=>`<i style="display:block;flex:1;max-width:9px;height:${v ? Math.max(4, Math.round(34*v/sgMax)) : 2}px;border-radius:2px;background:${v?'var(--ember2)':'rgba(255,255,255,.09)'}" title="Week of ${esc(mdy(dayOf((s.signups[i]||{}).week_start)))}: ${v}"></i>`).join('')}</span><span class="s" style="font-size:12px">last <span class="n">${sgv.length}</span> weeks</span>
+        <span class="s" style="font-size:12px;display:block;margin-top:4px">${tc.available ? `Trial → paid: <span class="n">${tc.rate_pct==null?'—':tc.rate_pct+'%'}</span> of ${fmtN(tc.started)} in ${tc.window_days||90}d${tc.median_days_to_convert!=null?' · median '+tc.median_days_to_convert+'d':''}` : `<span title="${esc(tc.reason||'')}">Trial conversion: not measurable yet</span>`}</span></div>
       </a>
-      <a class="card kc" href="#operations" style="grid-column:span 4;flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
+      <a class="card kc" href="#operations" style="flex-direction:row;align-items:center;gap:20px" id="ov-health">${healthCard(d, undefined)}</a>
     </section>
     <section class="card strip">
-      ${stripCell('#overview', 'alert', fleetErr?'neu':(ic.critical?'bad':'good'), 'Critical', fleetErr?unknownV(fleetErr):fmtN(ic.critical||0), crit[0] ? esc(crit[0].restaurant||'Platform') : 'none open')}
       ${stripCell('#customers/support', 'inbox', fleetErr?'neu':(cu.total?'warn':'good'), 'Support queue', fleetErr?unknownV(fleetErr):fmtN(cu.total||0), older48 ? older48 + (d.issues_truncated?'+':'') + ' older than 48h' : 'nothing aging')}
-      ${stripCell('#operations/jobs', 'clock', readFailed(d,['job_failures'])?'neu':(k.job_failures_24h||k.jobs_overdue?'warn':'good'), 'Failed jobs', figOr(d, ['job_failures'], fmtN(k.job_failures_24h||0)), k.jobs_overdue ? k.jobs_overdue + ' overdue' : (k.jobs_failing ? k.jobs_failing + ' job' + (k.jobs_failing===1?'':'s') + ' · 24h' : 'all on schedule · 24h'))}
-      ${stripCell('#operations/ai', 'spark', readFailed(d,['ai_usage'])?'neu':(k.ai_failures_24h?'warn':'neu'), 'AI activity', figOr(d, ['ai_usage'], fmtN(k.ai_calls_today)), `<span class="n">${fmtUSD(k.ai_cost_today,2)}</span> today · ${fmtN(k.ai_failures_24h)} failed${k.ai_quality_24h?' · '+fmtN(k.ai_quality_24h)+' quality':''}`)}
-      ${stripCell('#engineering', 'gauge', k.server_error_rate==null?'neu':(k.server_error_rate>=5?'bad':'good'), 'API health', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.server_error_rate==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : `p95 · <span class="n">${k.server_error_rate}%</span> 5xx · ${esc(k.api_window_label||'last 5 minutes')}`)}
-      ${stripCell('#operations/email', 'mail', readFailed(d,['email_log'])?'neu':(k.email_failures_today?'warn':'good'), 'Email delivery', figOr(d, ['email_log'], emPct==null?'—':`${emPct}<small>%</small>`), emTot ? `<span class="n">${fmtN(k.email_bounced_today||0)}</span> bounced · <span class="n">${fmtN(k.email_complained_today||0)}</span> complaints today` : 'none sent today')}
-    </section>
-    <section class="grid g8">
-      ${watchKpi('#customers/billing', money(fmtN(k.paused||0)), 'Paused', k.paused?'warn':'')}
-      ${watchKpi('#customers/support?view=deletions', figOr(d, ['restaurants'], fmtN(k.deletion_requests||0)), 'Closing', k.deletion_requests?'bad':'', 'Deletion requests: accounts that asked to close — 30 days to finish')}
-      ${watchKpi('#operations/ai', figOr(d, ['reviews'], fmtN(k.stalled_reviews||0)), 'AI stalled', k.stalled_reviews?'warn':'', 'Stalled reviews: the AI gave up on them after repeated failures')}
-      ${watchKpi('#operations/jobs', figOr(d, ['restaurants'], fmtN(k.fetch_behind||0)), 'Fetch behind', k.fetch_behind?'warn':'', 'Restaurants whose review fetch missed two or more slots')}
-      ${watchKpi('#engineering', fmtN(k.request_errors_24h||0), 'Req. errors', k.request_errors_24h?'warn':'', 'Request errors in 24 hours — console and request failures, apart from failed jobs')}
-      ${watchKpi('#operations/ai', figOr(d, ['ai_quality_events'], fmtN(k.ai_quality_24h||0)), 'AI quality', '', 'AI quality findings in 24 hours — guard and validation, apart from failed jobs')}
-      ${watchKpi('#operations/email', figOr(d, ['email_log'], r7.enough && r7.bounce_rate != null ? r7.bounce_rate + '<small>%</small>' : '—'), 'Bounce 7d', r7.enough && r7.bounce_rate >= (((k.email_rates||{}).thresholds||{}).bounce_warn_pct||4) ? 'warn' : '', r7.enough ? r7.bounces + ' of ' + r7.accepted + ' accepted sends' : 'Too few sends to call a rate yet')}
-      ${watchKpi('#operations/email', figOr(d, ['email_log'], r7.enough && r7.complaint_rate != null ? r7.complaint_rate + '<small>%</small>' : '—'), 'Spam 7d', r7.enough && r7.complaint_rate >= (((k.email_rates||{}).thresholds||{}).complaint_warn_pct||.1) ? 'warn' : '', r7.enough ? r7.complaints + ' of ' + r7.accepted + ' accepted sends' : 'Too few sends to call a rate yet')}
+      ${stripCell('#operations/ai', 'dollar', 'neu', 'AI spend', figOr(d, ['ai_usage'], fmtUSD(k.ai_cost_today,2)), `<span class="n">${fmtN(k.ai_calls_today)}</span> calls today`)}
+      ${stripCell('#engineering', 'gauge', 'neu', 'API latency', k.p95_ms==null?'—':`${fmtN(Math.round(k.p95_ms))}<small> ms</small>`, k.p95_ms==null ? 'no traffic · ' + esc(k.api_window_label||'last 5 minutes') : 'p95 · ' + esc(k.api_window_label||'last 5 minutes'))}
     </section>
     <section class="split">
       <div class="card" style="overflow:hidden" id="ov-needs">${needsList()}</div>
       <div class="stack">
-        <div class="card" style="padding:18px 18px 12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Growth</h2><span class="muted" style="font-size:12px;display:flex;gap:12px;align-items:center"><span><span style="color:var(--green-t)">━</span> paying</span><span><span style="color:var(--ember2)">▮</span> signups</span>${srcNote}</span></div><div style="margin-top:12px">${growthChart(s)}</div>${s.source==='reconstructed'?`<div class="dim" style="font-size:11.5px;margin-top:6px">${esc(s.note||'')}</div>`:''}</div>
+        <div class="card" style="padding:18px 18px 12px"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Growth</h2><span class="muted" style="font-size:12px;display:flex;gap:12px;align-items:center"><span><span style="color:var(--green-t)">━</span> paying</span><span><span style="color:var(--ember2)">▮</span> signups</span>${srcNote}</span></div><div style="margin-top:12px" id="ov-growth">${growthChart(s)}</div>${s.source==='reconstructed'?`<div class="dim" style="font-size:12px;margin-top:6px">${esc(s.note||'')}</div>`:''}</div>
         <div class="card" style="padding:4px 18px 14px"><div style="display:flex;align-items:center;justify-content:space-between;padding-top:14px"><h2>What changed</h2><span class="muted" style="font-size:12px">14 days</span></div><div id="ov-chg">${changesList((d.activity||[]).slice(0,8))}</div>${(d.activity||[]).length>8?`<button class="lnk" style="margin-top:8px" onclick="this.remove();$('ov-chg').innerHTML=changesList(_ov.activity)">Show all ${d.activity.length}</button>`:''}</div>
       </div>
     </section>`;
+  fitChart('ov-growth', w => growthChart(s, w));
   // SMS joins the ring once messaging health answers; its failure is its own.
   api('/admin/api/messaging/health').then(mh => { _ovMsg = mh; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, mh); })
     .catch(e => { if(e && e.message === STALE) return; _ovMsg = null; if(_ov === d && $('ov-health')) $('ov-health').innerHTML = healthCard(d, null); });
@@ -3623,7 +3622,7 @@ function engKeys(sys, sE){
 // red tick on the axis (an hour when every thread was busy).
 function lineChart(points, series, o){
   o = o || {};
-  const w = 680, h = o.h || 180, pl = 58, pr = 12, pb = 24, top = 12, n = points.length;
+  const w = o.w || 680, h = o.h || 180, pl = 58, pr = 12, pb = 24, top = 12, n = points.length;
   const val = (p, s) => { const v = s.get(p); return v == null || !isFinite(+v) ? null : +v; };
   const all = []; points.forEach(p => series.forEach(s => { const v = val(p, s); if(v != null) all.push(v); }));
   const ymax = Math.max(o.floor || 1, ...all) * 1.08, y = v => top + (1 - v / ymax) * (h - pb - top);
@@ -3631,27 +3630,28 @@ function lineChart(points, series, o){
   const fy = o.fmt || (v => fmtN(Math.round(v)));
   const path = s => { let d = '', on = false; points.forEach((p, i) => { const v = val(p, s); if(v != null){ d += (on ? ' L' : ' M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); on = true; } else on = false; }); return d.trim(); };
   const dots = s => points.map((p, i) => { const v = val(p, s); return v == null ? '' : `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${n > 40 ? 1.6 : 2.4}" fill="${s.color}"><title>${esc(o.label ? o.label(p) : '')} · ${esc(s.label)}: ${esc(fy(v))}${o.note ? esc(o.note(p, s)) : ''}</title></circle>`; }).join('');
-  const grid = [0, ymax / 2, ymax].map(v => `<line x1="${pl}" x2="${w - pr}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)"/><text x="${pl - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${esc(fy(v))}</text>`).join('');
+  const grid = [0, ymax / 2, ymax].map(v => `<line x1="${pl}" x2="${w - pr}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)"/><text x="${pl - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${esc(fy(v))}</text>`).join('');
   const marks = o.mark ? points.map((p, i) => o.mark(p) ? `<rect x="${(x(i) - 3).toFixed(1)}" y="${h - pb + 3}" width="6" height="4" rx="1" fill="var(--red)"><title>${esc(o.mark(p))}</title></rect>` : '').join('') : '';
-  const ticks = n ? [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i).map(i => `<text x="${x(i).toFixed(1)}" y="${h - 4}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:10.5px">${esc(o.label ? o.label(points[i]) : '')}</text>`).join('') : '';
+  const ticks = n ? [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i).map(i => `<text x="${x(i).toFixed(1)}" y="${h - 4}" text-anchor="middle" fill="var(--ink4)" style="font-family:var(--num);font-size:11px">${esc(o.label ? o.label(points[i]) : '')}</text>`).join('') : '';
   return `<svg width="100%" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(o.aria || series.map(s => s.label).join(', '))}"><g>${grid}</g>${series.map(s => `<path d="${path(s)}" fill="none" stroke="${s.color}" stroke-width="${s.dash ? 1.8 : 2.2}" stroke-linejoin="round" stroke-linecap="round"${s.dash ? ' stroke-dasharray="4 3"' : ''}/>`).join('')}${series.map(dots).join('')}${marks}${ticks}</svg>`;
 }
 // Latency by hour, customer and console traffic as separate lines (#77):
 // p95 is a rollup bucket's upper edge ("95% within 500 ms"); an hour with
 // no requests is a gap in its line.
-function latencyChart(hourly, threads){
+function latencyChart(hourly, threads, w){
   const g = k => p => ((p[k] || {}).requests ? (p[k] || {}).p95_le_ms : null);
   return lineChart(hourly, [{get: g('admin'), color: 'var(--blue)', dash: true, label: 'console'}, {get: g('customer'), color: 'var(--ember2)', label: 'customers'}],
-    {floor: 100, fmt: v => fmtN(Math.round(v)) + 'ms', label: p => fmtT(parseTs(p.hour) || new Date()), aria: '95th percentile latency by hour, customer and console traffic',
+    {w: w, floor: 100, fmt: v => fmtN(Math.round(v)) + 'ms', label: p => fmtT(parseTs(p.hour) || new Date()), aria: '95th percentile latency by hour, customer and console traffic',
      note: (p, s) => { const c = p[s.label === 'console' ? 'admin' : 'customer'] || {}; return ' · ' + fmtN(c.requests) + ' requests' + (c.errors_5xx ? ', ' + fmtN(c.errors_5xx) + ' 5xx' : ''); },
      mark: p => threads && p.peak_inflight >= threads ? fmtDT(p.hour) + ': every thread busy (peak ' + p.peak_inflight + ')' : ''});
 }
 function engLatency(S, sE){
   const r = S.rollups_24h || {}, hourly = r.hourly || [], cls = r.classes || {};
   const body = sE ? unknownV(sE) : (!hourly.length ? '<div class="empty">No request rollups in the last 24 hours yet — the supervisor writes them every minute.</div>' : latencyChart(hourly, r.threads));
+  if(!sE && hourly.length) setTimeout(() => fitChart('eng-lat', w => latencyChart(hourly, r.threads, w)), 0);
   return `<div class="card" style="padding:16px 18px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2>Latency &amp; saturation</h2><span class="muted" style="font-size:12.5px">p95 by hour · last 24 hours</span></div>
     <span class="muted" style="font-size:12px;display:flex;gap:12px"><span><span style="color:var(--ember2)">━</span> customers</span><span><span style="color:var(--blue)">╌</span> console</span><span><span style="color:var(--red-t)">▬</span> every thread busy</span></span></div>
-    ${body}
+    <div id="eng-lat">${body}</div>
     ${sE ? '' : `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px"><span><span class="n">${fmtN(r.saturated_minutes)}</span> <span class="dim">minutes with every thread busy</span></span><span><span class="n">${fmtN(r.peak_inflight)}</span> <span class="dim">peak in flight of ${fmtN(r.threads)}</span></span>${Object.keys(cls).map(k => `<span><span class="dim">${esc(k)}</span> <span class="n">${fmtN(cls[k].requests)}</span> <span class="dim">· p95 ≤${fmtN(cls[k].p95_le_ms)}ms · ${fmtN(cls[k].errors_5xx)} 5xx</span></span>`).join('')}</div>`}
     ${sE ? '' : engTenants((r.tenants || {}))}</div>`;
 }
@@ -3964,7 +3964,7 @@ function rasFig(T, minN){
 // back-cast from today's accounts.
 function anaHistory(bm, bmE){
   const days = `<div class="seg">${[30, 90, 365].map(n => `<button class="${_bmDays === n ? 'on' : ''}" onclick="_bmDays=${n};route()">${n} days</button>`).join('')}</div>`;
-  const hdr = (sub) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2>The business, day by day</h2><span class="muted" style="font-size:12.5px">${sub}</span></div>${days}</div>`;
+  const hdr = (sub) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div style="display:flex;align-items:baseline;gap:12px"><h2 title="One point per night the snapshot ran; a night it did not run is a gap in the lines and an empty slot in the bars.">The business, day by day</h2><span class="muted" style="font-size:12.5px">${sub}</span></div>${days}</div>`;
   if(bmE) return `<div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">${hdr('')}${unknownV(bmE)} — the daily snapshots couldn't be read.</div>`;
   const got = bm.rows || [];
   if(!got.length) return `<div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:12px">${hdr('from the daily snapshot')}<div class="empty">No snapshot yet. History starts the first night the daily snapshot runs — nothing before it is reconstructed.</div></div>`;
@@ -3977,13 +3977,15 @@ function anaHistory(bm, bmE){
     rows.push(by[k] || {date: k});
   }
   const last = got[got.length - 1], dl = p => mdy(dayOf(p.date));
-  const money = lineChart(rows, [{get: p => p.committed_mrr, color: 'var(--blue)', dash: true, label: 'committed'}, {get: p => p.mrr, color: 'var(--ember2)', label: 'MRR'}], {h: 160, floor: 10, fmt: v => fmtUSD(v), label: dl, aria: 'MRR and committed MRR by day'});
-  const accts = lineChart(rows, [{get: p => p.trial_accounts, color: 'var(--blue)', dash: true, label: 'trial'}, {get: p => p.past_due_accounts, color: 'var(--amber)', dash: true, label: 'past due'}, {get: p => p.paying_accounts, color: 'var(--green-t)', label: 'paying'}], {h: 160, floor: 4, label: dl, aria: 'Paying, trial and past-due accounts by day'});
+  const moneyAt = w => lineChart(rows, [{get: p => p.committed_mrr, color: 'var(--blue)', dash: true, label: 'committed'}, {get: p => p.mrr, color: 'var(--ember2)', label: 'MRR'}], {w: w, h: 160, floor: 10, fmt: v => fmtUSD(v), label: dl, aria: 'MRR and committed MRR by day'});
+  const acctsAt = w => lineChart(rows, [{get: p => p.trial_accounts, color: 'var(--blue)', dash: true, label: 'trial'}, {get: p => p.past_due_accounts, color: 'var(--amber)', dash: true, label: 'past due'}, {get: p => p.paying_accounts, color: 'var(--green-t)', label: 'paying'}], {w: w, h: 160, floor: 4, label: dl, aria: 'Paying, trial and past-due accounts by day'});
+  const money = moneyAt(460), accts = acctsAt(460);
+  setTimeout(() => { fitChart('ana-mrr', moneyAt); fitChart('ana-acc', acctsAt); }, 0);
   return `<div class="card" style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">${hdr(`history starts ${esc(mdy(dayOf(bm.first_date || rows[0].date)))}, the first snapshot — nothing before it is reconstructed`)}
-    <div class="grid g2" style="gap:18px"><div><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="lbl">MRR</span><span class="muted" style="font-size:12px"><span style="color:var(--ember2)">━</span> MRR <span class="n">${fmtUSD(last.mrr)}</span> · <span style="color:var(--blue)">╌</span> committed <span class="n">${fmtUSD(last.committed_mrr)}</span></span></div>${money}</div>
-      <div><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="lbl">Accounts</span><span class="muted" style="font-size:12px"><span style="color:var(--green-t)">━</span> paying <span class="n">${fmtN(last.paying_accounts)}</span> · <span style="color:var(--blue)">╌</span> trial <span class="n">${fmtN(last.trial_accounts)}</span> · <span style="color:var(--amber-t)">╌</span> past due <span class="n">${fmtN(last.past_due_accounts)}</span></span></div>${accts}</div></div>
+    <div class="grid g2" style="gap:18px"><div><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="lbl">MRR</span><span class="muted" style="font-size:12px"><span style="color:var(--ember2)">━</span> MRR <span class="n">${fmtUSD(last.mrr)}</span> · <span style="color:var(--blue)">╌</span> committed <span class="n">${fmtUSD(last.committed_mrr)}</span></span></div><div id="ana-mrr">${money}</div></div>
+      <div><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="lbl">Accounts</span><span class="muted" style="font-size:12px"><span style="color:var(--green-t)">━</span> paying <span class="n">${fmtN(last.paying_accounts)}</span> · <span style="color:var(--blue)">╌</span> trial <span class="n">${fmtN(last.trial_accounts)}</span> · <span style="color:var(--amber-t)">╌</span> past due <span class="n">${fmtN(last.past_due_accounts)}</span></span></div><div id="ana-acc">${accts}</div></div></div>
     <div class="grid g3" style="gap:14px"><div><div class="lbl" style="margin-bottom:8px">Signups a day</div>${bars(rows.map(p => ({day: p.date, n: p.signups})), 'n')}</div><div><div class="lbl" style="margin-bottom:8px">Cancellations a day</div>${bars(rows.map(p => ({day: p.date, n: p.churns})), 'n')}</div><div><div class="lbl" style="margin-bottom:8px">Accounts active in 7 days</div>${bars(rows.map(p => ({day: p.date, n: p.active_accounts_7d})), 'n')}</div></div>
-    <span class="muted" style="font-size:12px">One point per night the snapshot ran; a night it did not run is a gap in the lines and an empty slot in the bars. ${esc(bm.note || '')}</span></div>`;
+    ${bm.note ? `<span class="muted" style="font-size:12px">${esc(bm.note)}</span>` : ''}</div>`;
 }
 
 // ── Clients ─────────────────────────────────────────────────────────────────

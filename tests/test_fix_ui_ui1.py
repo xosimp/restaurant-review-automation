@@ -77,8 +77,11 @@ def test_every_fleet_view_carries_the_failed_read_banner_and_its_age(page):
 
 def test_overview_figures_built_on_a_failed_read_say_unknown(page):
     ov = _fn(page, "overview")
-    # Each figure is tied to the tables its value came from.
-    for tables in ("['job_failures']", "['ai_usage']", "['email_log']", "['restaurants', 'stripe_subscriptions']"):
+    # Each figure is tied to the tables its value came from. (The strip's
+    # Failed jobs and Email delivery cells, which read job_failures and
+    # email_log, went in admin audit 10/27/26 V03: they repeated the health
+    # ring, which says unknown for those systems itself.)
+    for tables in ("['ai_usage']", "['restaurants', 'stripe_subscriptions']"):
         assert tables in ov, tables
     assert "figOr(" in ov and "unknownV(fleetErr)" in ov
     helper = _fn(page, "figOr")
