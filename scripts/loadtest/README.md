@@ -9,7 +9,11 @@ called; model calls are refused without a key (the narrative-free paths still ru
 1. A Railway environment `staging` cloned from production's service settings, with its OWN Postgres (never
    production's) and **no provider keys**: unset `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `TWILIO_*`,
    `STRIPE_SECRET_KEY`, `GOOGLE_PLACES_API_KEY`, `PERPLEXITY_API_KEY`, `DOCUSIGN_*`, `APNS_*`.
-   Same instance sizes as production, so results transfer.
+   Same instance sizes as production, so results transfer. Set `CAVNAR_ENV=staging` (release-safety audit
+   10/26/26, A05-06): the code then never starts the scheduler and refuses every send — email, texts,
+   push, live-key Stripe, DocuSign's live account, Google replies, customer webhooks — even if a key was
+   left behind (`config.outbound_sends_allowed()`, docs/ops/RECOVERY.md → Deploys). The same environment
+   is the one Railway deploys `main` to before a promotion.
 2. Seed it: `LOADTEST_STAGING=1 python scripts/loadtest/seed_staging.py --restaurants 100` (then 500, 1,500).
    It writes `scripts/loadtest/users.csv` - keep that file out of git.
 3. `pip install locust` on the machine driving the test (not in requirements.in - it is a tool, not the app).
